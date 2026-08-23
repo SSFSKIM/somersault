@@ -2,126 +2,168 @@
 
 **Date:** 2026-08-23 · **Owner approval:** design A of the product-trio presentation, approved verbatim.
 **Grounding:** `docs/superpowers/grounding/2026-08-23-product-trio-ground.md` §1.
+**Rev 2** after the adversarial spec review (nine findings, all accepted — Revision Notes).
 
 ## Purpose
 
 A fleet-origin app-server thread cannot send an image at all today — the app-server names no image
 surface (scorecard gap 11), while the engine layer underneath it has accepted validated base64 image
 blocks since F9 and the host wire has a negotiated staging protocol. This round gives `turn/start` an
-input-items form mirroring Codex's `UserInput` list, delivers images over BOTH thread origins using only
-existing, tested parts, and closes gap 11 with the decision recorded rather than open.
+input-items form mirroring Codex's `UserInput` list, delivers images over BOTH thread origins using
+existing, tested parts, and closes gap 11 with the decision — and its measured bounds — recorded.
 
 Non-goals, decided: no staging method on the app-server wire (the host's staging protocol stays
 host-local; the app-server *uses* it as a client), no `turn/steer` items (X-gated surface, YAGNI), no
-http(s) URL fetching (v1 is data:-URL and local-path only; API url-source passthrough is a delegated
-unknown, probe-gated on the 2026-08-26 quota reset).
+remote http(s) URLs — **which is Codex parity, not a shortfall**: Codex's own app-server refuses remote
+image URLs (`codex-rs/app-server/src/request_processors/turn_processor.rs`,
+`validate_user_input_image_urls` → `REMOTE_IMAGE_URL_ERROR`).
+
+**The honest v1 bound, published rather than hidden:** the app-server wire caps inbound frames at
+256 KiB (`peer.ts` MAX_IN), so a `data:` image tops out around ~190 KB decoded. Bigger images reach the
+model via `localImage` (shared filesystem). A REMOTE client with a >190 KB image has NO v1 path — named
+as the follow-up (a staged/chunked upload, the D-M4-8 bridge family), and the scorecard row says so
+instead of scoring the gap fully closed.
 
 ## Wire design
-
-`turn/start`'s `input` widens from `z.string()` to a union:
 
 ```ts
 // appserver/schema/turns.ts
 const inputItem = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
-  z.object({ type: z.literal("image"), url: z.string().startsWith("data:") }),
-  z.object({ type: z.literal("localImage"), path: z.string().min(1) }),
+  z.object({ type: z.literal("image"), url: z.string().startsWith("data:").max(MAX_DATA_URL_CHARS) }),
+  z.object({ type: z.literal("localImage"), path: z.string().min(1).refine(isAbsolute) }),
 ]);
 export const turnStartParams = z.object({
   threadId: z.string().min(1),
-  input: z.union([z.string(), z.array(inputItem).min(1)]),
+  input: z.union([z.string(), z.array(inputItem).min(1).max(MAX_INPUT_ITEMS)]),
   queue: z.boolean().optional(),
 });
 ```
 
 - **Loud skew by shape, not by op** (the F9 lesson): an OLD server's `z.string()` refuses an items array
-  with `-32602 INVALID_PARAMS` — a new client can never have its images silently stripped. No
-  capability negotiation is needed for that guarantee.
-- **`image.url` admits `data:` only, in the schema itself** — an `https://` URL is a schema refusal
-  (-32602), not a runtime degrade. The refusal is the honest v1 answer: nothing downstream can deliver
-  it yet, and quietly running the turn without the image would be data loss reported as success.
-  (Codex's `Image{url}` passes URLs through to a model API that fetches them; whether OUR engine's
-  stream-json input accepts a url-source block is unmeasured and needs a live turn — parked with a
-  named probe, not assumed either way.)
-- **`localImage.path` is a client-named absolute or relative path** the server reads. Trust posture is
-  `workspace.ts`'s, unchanged: the app-server already deliberately accepts client roots; the path is
-  client-owned information, so echoing it in a degrade message leaks nothing of the server's.
+  with `-32602 INVALID_PARAMS` — a new client can never have its images silently stripped.
+- **`image.url` admits `data:` only, in the schema, with a published length cap**:
+  `MAX_DATA_URL_CHARS = 240_000` (≈180 KB decoded — what the 256 KiB frame carries after the JSON
+  envelope, with headroom). An `https://` URL is a schema refusal — matching Codex's own refusal of
+  remote URLs.
+- **`localImage.path` must be absolute** (schema-refined). A relative path would resolve against the
+  app-server process cwd — a third cwd that is neither the thread's nor the client's; `workspace.ts`
+  refuses relative reads for the same reason. The path is client-owned information, so echoing it in a
+  degrade message leaks nothing of the server's.
+- **`MAX_INPUT_ITEMS` (64) bounds the array in the schema; image-item count is bounded by the host's own
+  `MAX_IMAGES_PER_PROMPT` (20) in the resolver, counted BEFORE any I/O** — an over-limit declaration
+  degrades excess images without reading a byte (amplification guard; review finding 2).
 - `turn/steer`'s `input` stays `z.string()` (decision log).
+
+## Canonical ordering — one contract for both origins
+
+The items form is **canonicalized, and the canonical form is the contract**: the text items concatenate
+in declaration order into ONE text fold; images follow in declaration order; degrade notes append at the
+end, in image order. This is exactly what the engine's `assembleUserContent` builds and what the host
+already reassembles on the staging path (`host.ts` — text, then staged images, then failure notes) — so
+inProcess and fleet turns deliver the model **the same input**, and an interleaved
+`text A → image → text B` request is defined (fold `AB`, then the image) rather than
+origin-dependent. (Review finding 4: without this, the two origins provably diverged.)
 
 ## Item → engine delivery
 
-A new module `appserver/turnItems.ts` owns the ONE conversion (both handlers call it):
+A new module `appserver/turnItems.ts` owns the ONE conversion:
 
 ```ts
-export interface ResolvedInput { input: UserTurnInput }   // string | UserContentBlock[]
-export async function resolveInputItems(items: InputItem[]): Promise<ResolvedInput>
+export async function resolveInputItems(items: InputItem[]): Promise<UserTurnInput>
 ```
 
-- `text` items concatenate in order (matching `chatAdapter`'s defensive multi-text fold).
-- `image` items: parse the data: URL (`data:<mediaType>;base64,<data>`); the block is
-  `{type:"image", source:{type:"base64", media_type, data}}`. A malformed data: URL degrades **in
-  place** to the failure-text convention `normalizeTurnInput` established (the turn is never refused
-  wholesale; four good images and one bad one still run as four images and one apology line).
-- `localImage` items: `stat` first and treat a size above the engine's own 5 MiB aggregate ceiling as
-  the degrade *before* reading (never buffer unbounded bytes to discover they are too big); otherwise
-  read and sniff media type from the actual bytes (PNG/JPEG headers, the `turnInput.ts` helpers). An
-  unreadable path, oversize file, or non-image all degrade in place the same way, the degrade text
-  naming the client's own path.
-- **Validation stays where it lives**: the assembled block array then flows through the existing
-  authoritative seam — `normalizeTurnInput` at the Session builder for inProcess, and the staging
-  client's own header-decode for fleet. `turnItems.ts` converts; it does not duplicate the cap suite.
+- Runs **inside the turn's execution slot, never before admission** (see "Admission and the queue").
+- `image` items: parse `data:<mediaType>;base64,<data>`. The block's `media_type` is **derived from the
+  sniffed bytes** (PNG/JPEG headers — the `turnInput.ts` helpers), not copied from the declaration: a
+  valid PNG labeled `application/pdf` would pass local validation and then fail the WHOLE engine request
+  against the SDK's media-type union (review finding 7). Non-PNG/JPEG bytes, malformed base64, or a
+  media-type only the label claims all degrade **to an appended note** (canonical ordering above).
+- `localImage` items: the **one-descriptor bounded read** `workspace.ts:80-124` established — open once,
+  `fstat` the descriptor, require a regular file, read bounded chunks up to cap+1, close always. Never
+  `stat`-then-`readFile` (TOCTOU swap, growth between calls, FIFO/device hang — review finding 1).
+  Per-image budget (`POST_PROCESS_BYTE_BUDGET`, 512,000 bytes) and the running per-turn aggregate
+  (5 MiB) are enforced **during conversion, before each additional read** — an over-budget file is never
+  materialized (review finding 2). Unreadable, non-regular, oversize, or non-image all degrade to an
+  appended note naming the client's own path.
+- The assembled block array then flows through the existing authoritative seam (`normalizeTurnInput` at
+  the Session builder; the staging client's own header-decode for fleet) — `turnItems.ts` converts and
+  pre-bounds; it does not replace the cap suite.
+
+## Admission and the queue — reservation before I/O
+
+`resolveInputItems` is async, and **no admission decision may sit on the far side of that await** (the
+M6 lesson: an added await turns every check before it stale; review finding 3 names the concrete
+stranding — a busy-check taken, the running turn settling during resolution, the entry landing after
+the only drain edge). So:
+
+- `turn/start` admits, replies, and (if busy+queue) **enqueues the RAW input synchronously** — exactly
+  today's control flow, with `QueuedTurn.input` widened to `string | InputItem[]`. The queue byte cap
+  counts `Buffer.byteLength(typeof input === "string" ? input : JSON.stringify(input))` — raw items are
+  bounded by the 256 KiB frame they arrived in, so the accounting is exact and small.
+- Resolution runs inside `submitRunner` (already async), in the turn's ordered execution slot — for a
+  direct start and a drained queued turn identically, so a queued items turn is byte-for-byte a started
+  one. The user item echo (`flattenForDisplay`) and live prompt echo use the RESOLVED input.
 
 ### inProcess threads
 
-`submitRunner` (turns.ts) widens its `input` param from `string` to `UserTurnInput` and passes it to
-`record.session.submit(...)` — the `ChatSession` contract has taken `UserTurnInput` since F9. The user
-item echo uses `flattenForDisplay(input)` (the established `[Image #N]` placeholder convention), as does
-the live prompt echo.
+`submitRunner` widens `input` to `string | InputItem[]`, resolves in-slot, and passes the result to
+`record.session.submit(...)` (`ChatSession` has taken `UserTurnInput` since F9).
 
 ### fleet threads
 
-The staging loop that `client/chatAdapter.ts`'s `submit` already runs (mint → write bytes → claim,
-client-owned cleanup on every failure path, `MAX_IMAGES_PER_PROMPT` gate before staging) is **extracted
-into a shared helper** (`client/stagedSubmit.ts`), used byte-for-byte by both `chatAdapter` and
-`fleetEngine`. `fleetEngine.submit`'s `prompt` param widens to `UserTurnInput`; a block array routes
-through the helper to `stageImageOp` + `prompt(text, uuid, claims)`. An old host answers `stageImage`
-with unknown-op — the negotiated protocol's loud skew, surfaced as the turn refusal it already is on the
-TUI path. The extraction is a refactor of working code: the helper must be moved, not rewritten, and
-`chatAdapter`'s existing tests keep covering it.
-
-### queue
-
-`QueuedTurn.input` widens to `UserTurnInput`; the byte cap counts
-`Buffer.byteLength(typeof input === "string" ? input : JSON.stringify(input))` — the cap protects THIS
-server's buffer (queue.ts's own words), and JSON length is the size actually held. Drained turns replay
-through the same `submitRunner`, so a queued items turn is byte-for-byte a started one.
+The staging loop in `client/chatAdapter.ts`'s `submit` is **extracted into a shared helper**
+(`client/stagedSubmit.ts`) used by both `chatAdapter` and `fleetEngine` — moved, not rewritten, **with
+one named repair**: today a minted path is tracked only after `writeFile` succeeds
+(`chatAdapter.ts:171-187`), so a failed write leaks the just-minted file until the orphan sweep,
+contradicting the loop's own every-failure-cleans contract. The helper tracks the path the moment
+`stageImageOp` returns it, before the write (review finding 9), and gains write-failure tests
+(first image, middle image, cleanup of previously staged files). `fleetEngine.submit` widens to
+`string | InputItem[]` (resolved to blocks in-slot, then staged). An old host answers `stageImage` with
+unknown-op — the negotiated protocol's loud skew, surfaced as the turn refusal it already is on the TUI
+path.
 
 ## Scorecard closure (same change, not a follow-up)
 
-`docs/parity/appserver.md`: gap 11 closes with the decision — the app-server's image surface is
-turn-input items; `stageImage`'s row moves `unscored → N/A` ("host-local transport by design; the
-app-server bridges to it as a staging CLIENT on the fleet path"); the `prompt` row's gap-11 note and the
-`turn/start` row update; the per-landing sweep restates. `node scripts/drift-check.mjs` exits 0 with
-`unparsed 0`.
+`docs/parity/appserver.md`: gap 11 closes **with the bound stated** — the app-server's image surface is
+turn-input items; remote images are bounded by the frame cap (~190 KB decoded) with larger-remote named
+as open follow-up; `stageImage`'s row moves `unscored → N/A` ("host-local transport by design; the
+app-server bridges to it as a staging CLIENT on the fleet path"); the `prompt` row's gap-11 note and
+the `turn/start` row update (the row now names the input union so the name-level walker's blindness to
+field shapes is at least written down); the per-landing sweep restates. `node scripts/drift-check.mjs`
+exits 0 with `unparsed 0`.
 
 ## Acceptance (behavior-phrased)
 
 Keyless (all must pass, run from `CC-to-SDK/harness`):
 
-1. `npx vitest run test/unit/appserver/turns.test.ts` — new rows green: items array reaches the engine
-   as blocks (fake engine records `UserTurnInput`); a malformed data: URL degrades in place; an
-   `https://` URL and an empty items array are refused `-32602`; a queued items turn drains identically;
+1. `npx vitest run test/unit/appserver/turns.test.ts` — new rows: items reach a fake engine as blocks in
+   canonical order; an interleaved `text/image/text` request with one bad image resolves to fold + good
+   image + appended note (the mixed-success interleave row); an `https://` URL, an over-`MAX_DATA_URL_CHARS`
+   data: URL, a relative path, an empty array, and a >64-item array are each refused `-32602`; a
+   21st image degrades without I/O; a queued items turn drains byte-for-byte identical to a direct one;
+   queue byte accounting is exact at the boundary (array JSON length at cap passes, +1 refuses);
    the user item text shows `[Image #N]`.
-2. `npx vitest run test/unit/appserver` — full suite green (no regression).
-3. `npx vitest run test/unit/stageImage.test.ts test/unit/client-chat-adapter.test.ts` — green after
-   the staging-loop extraction, unmodified assertions (these are the files that earned the
-   ownership/cleanup semantics; they keep covering the moved code).
-4. `node scripts/drift-check.mjs` (from `CC-to-SDK`) — exit 0, `unparsed 0`, 100 rows accounted.
+2. `npx vitest run test/unit/turn-items.test.ts` — the resolver alone: sniffed-bytes media-type
+   derivation (PNG labeled PDF → PNG block), bounded-read semantics via a FIFO/non-regular fixture
+   (degrades, never hangs), per-image and aggregate budgets enforced before reads, absolute-path
+   requirement.
+3. `npx vitest run test/unit/stageImage.test.ts test/unit/client-chat-adapter.test.ts test/unit/appserver/fleet-engine.test.ts`
+   — green after the extraction; plus NEW rows: the write-failure leak repair (path tracked pre-write),
+   and `fleetEngine.submit` with items staging through the helper.
+4. `npx vitest run test/integration/host-image-transport.test.ts` — the existing end-to-end staging
+   transport suite, green against the extracted helper (this is the file `stageImage.test.ts` defers
+   full transport coverage to — review finding 6).
+5. Legacy-skew fixtures: yesterday's `turnStartParams` (string-only zod) refuses today's items array
+   with -32602 (no silent submit); the old-host unknown-op path refuses loudly (existing TUI-path test
+   extended to the fleet engine).
+6. `npx vitest run test/unit/appserver` — full suite green.
+7. `node scripts/drift-check.mjs` (from `CC-to-SDK`) — exit 0, `unparsed 0`.
 
 Keyed (quota-gated — run after 2026-08-26 1pm):
 
-5. A live test in `test/live/` sends one small PNG via `input` items on an inProcess thread and asserts
-   the model's reply references the image content; skips cleanly keyless.
+8. A live test sends one small PNG via `input` items on an inProcess thread and asserts the model's
+   reply references the image content; skips cleanly keyless.
 
 ## Decision Log
 
@@ -129,26 +171,35 @@ Keyed (quota-gated — run after 2026-08-26 1pm):
   stripped by an old server — the exact failure F9's stageImage op was built to make loud. The union
   makes the skew a -32602 by construction. Rejected: capability advertisement (heavier, and the union
   already guarantees loudness).
-- **data:-only v1; https refused in schema.** Passthrough of url-source blocks to the engine is
-  unmeasured (needs a live turn; quota returns 2026-08-26). Refusing in the schema keeps the failure
-  honest and the widening compatible (accepting more later breaks no one). Rejected: server-side http
-  fetch (SSRF surface nobody asked for; Codex does not fetch either).
-- **Degrade-in-place for bad bytes, refuse-in-schema for bad shapes.** Matches `normalizeTurnInput`'s
-  established convention exactly; the schema owns what the request IS, the degrade owns what the bytes
-  ARE.
-- **Fleet delivery via the existing staging client flow, extracted not rewritten.** The
-  ownership/cleanup semantics in `chatAdapter.submit` took a final-review round to get right (findings
-  3/4 are cited in its comments); a second implementation would re-earn those bugs. Rejected: widening
-  the host `prompt` op to carry base64 (256 KiB frame cap; and the negotiated protocol exists precisely
-  to avoid bytes on that socket).
-- **`turn/steer` stays text.** X-gated, no consumer asked, and a steer aims at a running turn where
-  image semantics are unexplored. Revisit on demand.
-- **stageImage row → `N/A`, not shipped.** The op is deliberately not mirrored; the decision is now
-  made, which is what that row was waiting for (its `unscored` said "nobody has decided").
+- **data:-only, bounded, published.** Codex refuses remote URLs too (turn_processor.rs — the rev-1 claim
+  that Codex passes them to the model was WRONG and is corrected); the frame cap makes the real remote
+  bound ~190 KB decoded, and the spec publishes it instead of discovering it in production. Rejected:
+  server-side http fetch (SSRF surface, and not even parity); raising the frame cap (a protocol-wide
+  knob moved for one field); v1 chunked upload (real, but its own design — named follow-up).
+- **Resolution inside the execution slot; admission on raw input.** The M6 stale-check lesson applied
+  in advance: enqueue synchronously, resolve in-slot, queue stores raw items. Rejected: resolve-then-
+  admit (reorders concurrent starts), admit-then-await-then-enqueue (strands the entry past the drain
+  edge).
+- **Canonical ordering (text fold + images + appended notes) as the public contract.** The host wire
+  cannot express interleaving or in-place notes; the engine's own `assembleUserContent` is already this
+  shape; making it the contract is what makes the two origins identical. Rejected: position metadata in
+  the host claim grammar (host-wire revision for a nuance no consumer asked for).
+- **Sniffed-bytes media type.** The declaration is a claim; the bytes are the fact; the SDK union makes
+  a wrong claim fatal to the whole request where a derived type degrades one image.
+- **Degrade-in-place for bad bytes, refuse-in-schema for bad shapes** — unchanged from rev 1, with
+  "in-place" now meaning the canonical appended-note position.
+- **Extraction with one named repair** (the pre-write tracking gap) rather than byte-for-byte — a moved
+  bug is still a bug, and the review found it before the move did.
+- **`turn/steer` stays text; stageImage row → `N/A`** — unchanged from rev 1.
 
 ## Surprises & Discoveries
 
-Pending — written during execution.
+- **The rev-1 spec mis-claimed Codex's URL behavior**, and the adversarial review caught it against the
+  fork's own tree: Codex app-server refuses remote image URLs (`REMOTE_IMAGE_URL_ERROR`). data:-only is
+  parity, not a compromise. A parity claim about canon is checkable in this repo and must be checked.
+- **The staging loop's cleanup contract had a hole its own tests never hit** (mint-then-write-then-track;
+  a failed write leaks the minted file until the sweep). Found by the spec review reading the code
+  against the spec's "every failure path cleans" sentence — the sentence was the trap that exposed it.
 
 ## Outcomes & Retrospective
 
@@ -157,3 +208,10 @@ Pending — written at finish.
 ## Revision Notes
 
 - rev 1 (2026-08-23): initial spec from the approved design-A presentation.
+- rev 2 (2026-08-23): adversarial review (codex, nine findings, all accepted after verification):
+  one-descriptor bounded reads replace stat-then-read; item-count + pre-I/O budget guards; resolution
+  moved inside the execution slot with raw-input admission/queueing; canonical ordering published as
+  the cross-origin contract; data:-URL length cap published + the wrong Codex-URL parity claim
+  corrected at its source; sniffed-bytes media types; absolute-path requirement; the staging-loop
+  extraction now repairs the pre-write tracking leak; acceptance strengthened (interleave, transport
+  integration, fleet engine, legacy skew, queue boundaries).
