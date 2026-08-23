@@ -10,7 +10,7 @@ import { ERR } from "./rpc.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import { fleetTurnId, mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
-import type { ThreadRecord, BufferedItemEvent } from "./registry.js";
+import type { ThreadRecord, BufferedItemEvent, EngineSession } from "./registry.js";
 import type { FleetEngineSession } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
@@ -299,6 +299,27 @@ export function beginTurn(
  *  a truncated text-only prompt (the F9 failure mode this whole track exists to end). */
 export class EngineCapabilityError extends Error {}
 
+/** Resolves `submitContent`, or throws `EngineCapabilityError` naming the capability by name — the ONE
+ *  place that check is spelled, so `submitRunner` below and any future caller (the queue drain reaches
+ *  it through `submitRunner` already) report the identical refusal rather than each re-deriving "does
+ *  this engine have submitContent" inline (F10 T-IMGREACH Task 9/I3c). */
+export function requireSubmitContent(session: EngineSession): NonNullable<EngineSession["submitContent"]> {
+  const fn = session.submitContent;
+  if (!fn) throw new EngineCapabilityError("engine does not support content submission");
+  return fn;
+}
+
+/** `steerContent`'s own gate (Task 9/I3c) — deliberately NOT a fallback onto `requireSubmitContent` or
+ *  onto the string-only `steer` member: an engine can have either, both, or neither of the two content
+ *  capabilities, and a mis-route through the wrong one would start a NEW turn (submitContent) or feed an
+ *  array to a string-only embedder (steer) instead of honestly refusing. The future `turn/steerContent`
+ *  handler (Task 11) calls this before touching anything else. */
+export function requireSteerContent(session: EngineSession): NonNullable<EngineSession["steerContent"]> {
+  const fn = session.steerContent;
+  if (!fn) throw new EngineCapabilityError("engine does not support content steering");
+  return fn;
+}
+
 /** The prompt-submitting runner, shared by `turn/start` and the queue drain (F10 T-IMGREACH Task 8/I3b
  *  widened it from a bare string to `UserTurnInput`): it ROUTES on the input's form — a string goes to
  *  `submit` (the unchanged, always-present embedder contract) and a content-block array goes to
@@ -331,9 +352,7 @@ export function submitRunner(srv: AppServer, record: ThreadRecord, input: UserTu
     emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(input), userUuid) }]);
     const onMessage = (m: unknown) => emitItems(srv, record, turnId, mapper.ingest(m));
     if (typeof input === "string") return record.session.submit(input, onMessage, { uuid: userUuid });
-    const submitContent = record.session.submitContent;
-    if (!submitContent) throw new EngineCapabilityError("engine does not support content submission");
-    return submitContent.call(record.session, input, onMessage, { uuid: userUuid });
+    return requireSubmitContent(record.session).call(record.session, input, onMessage, { uuid: userUuid });
   };
 }
 

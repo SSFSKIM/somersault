@@ -40,6 +40,13 @@ export interface EngineSession {
    *  Declared here only — the in-process implementation, `steerContent` and the fleet refusals land in
    *  Task 9. */
   submitContent?(input: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** OPTIONAL capability, its OWN one (F10 T-IMGREACH Task 9/I3c) — never routed through `submitContent`
+   *  (that starts a NEW turn) and never through `steer` (that engine's own string-only embedder would
+   *  receive an array it never asked to handle). Absent → "engine does not support content steering",
+   *  raised by `requireSteerContent` (turns.ts) BEFORE any staged image data is taken, exactly like
+   *  `submitContent`'s own gate above. The in-process implementation and the fleet-origin refusal land
+   *  here too — declared alongside `submitContent` because the two capabilities are proven together. */
+  steerContent?(input: UserTurnInput): void;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   /** `replay` is additive and OPTIONAL — only an engine that can hand back buffered history ever passes it

@@ -166,6 +166,16 @@ export class Session implements ControllableSession {
     return this.enqueueTurn(prompt, onMessage, "human", "normal", opts?.uuid);
   }
 
+  /** `EngineSession.submitContent` (F10 T-IMGREACH Task 9/I3c), the OPTIONAL capability's in-process
+   *  implementation — one line over `submit`, because `submit` already accepts `UserTurnInput` (Task
+   *  4/I3a) and `userTurn` normalizes unconditionally. This method exists ONLY so the capability is
+   *  EXPRESSIBLE on `EngineSession`: an engine that cannot carry content blocks simply has no such method
+   *  to declare, while this one satisfies it trivially. Do not "simplify" this away into a bare alias
+   *  export or delete it as dead code — the interface distinction, not a second code path, is the point. */
+  submitContent(input: UserTurnInput, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<TurnOutcome> {
+    return this.submit(input, onMessage, opts);
+  }
+
   /** Mid-turn STEER (probe 103b, ALIVE): push a user message into the live prompt stream so the model
    *  abandons what it is doing and follows the injection, WITHOUT registering a result waiter.
    *
@@ -184,10 +194,26 @@ export class Session implements ControllableSession {
    *  present-but-unknown uuid as "no waiter" (uuid-bearing results are turn-owned, deliberately), so an
    *  engine that correlated a steered turn's result to the STEER's uuid rather than the prompt's would
    *  leave the turn unsettled. Fixing that on a guess would mean weakening turn-ownership for every
-   *  result, so it stays a live-acceptance question rather than a speculative widening here. */
-  steer(text: string): void {
+   *  result, so it stays a live-acceptance question rather than a speculative widening here.
+   *
+   *  UNPINNED from `string` to `UserTurnInput` (F10 T-IMGREACH Task 9/I3c, spec I3): `userTurn` already
+   *  normalizes unconditionally regardless of which public method built the message, so widening this
+   *  signature needed no change to the body — only the type. `EngineSession.steer?` (registry.ts) stays
+   *  `string`-only on purpose (turn/steer's wire schema never widened, and never will — content steering
+   *  is `steerContent`'s own capability, below), and a wider Session parameter still satisfies that
+   *  narrower interface member (contravariant, safe). */
+  steer(input: UserTurnInput): void {
     this.assertRunning();
-    this.input.push(userTurn(text, randomUUID() as UserMessageUUID, "human"));
+    this.input.push(userTurn(input, randomUUID() as UserMessageUUID, "human"));
+  }
+
+  /** `EngineSession.steerContent` (Task 9/I3c), the OPTIONAL capability's in-process implementation — one
+   *  line over `steer`, for the identical reason `submitContent` is one line over `submit`: the interface
+   *  distinction is the point, not a second code path. Its OWN capability, never a `submitContent` call
+   *  (that would start a NEW turn mid-turn) and never routed through the STRING-only `steer` member other
+   *  engines may declare on `EngineSession` — this is what a content-carrying steer actually reaches. */
+  steerContent(input: UserTurnInput): void {
+    this.steer(input);
   }
 
   /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */

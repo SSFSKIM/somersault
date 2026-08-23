@@ -504,9 +504,17 @@ describe("Session — I1 stranding rule at the builder boundary", () => {
     } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
   });
 
-  // Task 9 widens `Session.steer` from `string` to `UserTurnInput` — until then, an image-array steer
-  // is not a valid call at all, so this stays a named TODO rather than dead or vacuously-green code.
-  it.todo("I1: a steer with an image-only array is labelled too — one builder, one rule (Task 9 widens Session.steer to UserTurnInput)");
+  it("I1: a steer with an image-only array is labelled too — one builder, one rule (Task 9 widened Session.steer to UserTurnInput)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    s.steer([imgBlock()]);
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); }
+  });
 
   it("I1: a text-bearing turn is byte-identical at the builder — no label appears", async () => {
     const { frames, turns, query } = framedQuery();
