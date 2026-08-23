@@ -15,8 +15,9 @@ import type { FleetEngineSession } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
-import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
+import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_ENTRY_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
+import { flattenForDisplay, type UserTurnInput } from "../session/turnInput.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
@@ -291,27 +292,48 @@ export function beginTurn(
   return true;
 }
 
-/** The prompt-submitting runner, shared by `turn/start` and the queue drain — one input string in, the
- *  engine call plus its live prompt echo out. Factored out so a drained turn is byte-for-byte the same
- *  turn it would have been had the client sent it when the thread was idle.
+/** Thrown SYNCHRONOUSLY by `submitRunner` when a content-block turn reaches an engine that never
+ *  declared `submitContent` (registry.ts's OPTIONAL capability) — the drain-time engine-swap window,
+ *  where the capability was present at enqueue time and gone by the time this turn's slot came up.
+ *  Never a silent downgrade: an engine that cannot carry the blocks says so, loudly, rather than running
+ *  a truncated text-only prompt (the F9 failure mode this whole track exists to end). */
+export class EngineCapabilityError extends Error {}
+
+/** The prompt-submitting runner, shared by `turn/start` and the queue drain (F10 T-IMGREACH Task 8/I3b
+ *  widened it from a bare string to `UserTurnInput`): it ROUTES on the input's form — a string goes to
+ *  `submit` (the unchanged, always-present embedder contract) and a content-block array goes to
+ *  `submitContent` (the OPTIONAL capability). There is no flattening arm: an array reaching a
+ *  string-only engine is a REFUSAL, not a downgrade. It also carries the live prompt echo
+ *  (`flattenForDisplay`, session/turnInput.ts) so a drained image turn and a live one render identically.
+ *  Factored out so a drained turn is byte-for-byte the same turn it would have been had the client sent
+ *  it when the thread was idle.
  *
- *  The returned function is NOT `async`: a plain function so `record.session.submit(...)` throwing
- *  SYNCHRONOUSLY still propagates synchronously out of the runner call — exactly as it did in the
- *  pre-extraction code, where submit() was called directly inside beginTurn's own try. Wrapping it in
- *  `async`/`await` would have the JS engine absorb that synchronous throw into a REJECTED promise instead,
- *  routing it through onFailure (which consults interruptRequested) rather than the try/catch's
- *  reportFailed (which always reports "failed") — a real divergence for a turn/interrupt landing the same
- *  tick as a synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's
- *  onSuccess can read Wave T t14's additive `error` tag off the resolve. */
-function submitRunner(srv: AppServer, record: ThreadRecord, input: string) {
+ *  The returned function is NOT `async`: a plain function so a synchronous throw — `record.session.submit`
+ *  throwing, or the `submitContent` capability check above failing — still propagates synchronously out
+ *  of the runner call, exactly as it did in the pre-extraction code where submit() was called directly
+ *  inside beginTurn's own try. Wrapping it in `async`/`await` would have the JS engine absorb that
+ *  synchronous throw into a REJECTED promise instead, routing it through onFailure (which consults
+ *  interruptRequested) rather than the try/catch's reportFailed (which always reports "failed") — a real
+ *  divergence for a turn/interrupt landing the same tick as a synchronously-throwing submit(), and
+ *  exactly the guarantee `EngineCapabilityError` above needs: it must reach `beginTurn`'s own try and be
+ *  reported `failed` with its message, not silently swallowed into an interrupted-looking rejection.
+ *  The submit/submitContent promise is returned AS-IS so beginTurn's onSuccess can read Wave T t14's
+ *  additive `error` tag off the resolve. */
+export function submitRunner(srv: AppServer, record: ThreadRecord, input: UserTurnInput) {
   return (turnId: string, mapper: TurnMapper) => {
     // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
     // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
     // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
     // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
     const userUuid = randomUUID();
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(input, userUuid) }]);
-    return record.session.submit(input, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
+    // ONE display string for both forms, so a live user item and its replayed twin are one function's
+    // output (Task 11 wires the replay half).
+    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(input), userUuid) }]);
+    const onMessage = (m: unknown) => emitItems(srv, record, turnId, mapper.ingest(m));
+    if (typeof input === "string") return record.session.submit(input, onMessage, { uuid: userUuid });
+    const submitContent = record.session.submitContent;
+    if (!submitContent) throw new EngineCapabilityError("engine does not support content submission");
+    return submitContent.call(record.session, input, onMessage, { uuid: userUuid });
   };
 }
 
@@ -416,12 +438,13 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   });
 }
 
-/** The two queue-full refusals, spelled off the caps themselves so the message can never drift from the
+/** The three queue-full refusals, spelled off the caps themselves so the message can never drift from the
  *  number it quotes. Which cap was hit is the whole content of the message: the client's next move is the
- *  same either way (retry after the drain), but a queue full of small turns and a queue full of one huge
- *  one are different things to have done. */
-const QUEUE_FULL: Record<"entries" | "bytes", string> = {
+ *  same either way (retry after the drain), but "too many turns", "this one entry is too big" and "the
+ *  queue as a whole is too full" are different things to have done. */
+const QUEUE_FULL: Record<"entries" | "entry" | "bytes", string> = {
   entries: `turn queue is full (max ${MAX_QUEUED_TURNS} queued turns)`,
+  entry: `turn entry too large (max ${MAX_QUEUED_ENTRY_BYTES / 1024 / 1024} MiB per entry)`,
   bytes: `turn queue is full (max ${MAX_QUEUED_BYTES / 1024 / 1024} MiB queued input)`,
 };
 
