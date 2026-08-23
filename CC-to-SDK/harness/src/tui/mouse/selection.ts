@@ -140,6 +140,29 @@ export function multiClick(state: SelectionState, cell: Cell, count: 2 | 3, row:
   state.anchorSpan = count === 3 ? lineSpan(cell, row) : wordSpan(cell, row);
 }
 
+/** Canon's `w0p` (L198781-198798), dispatched from `handleSelectionDrag` exactly as canon dispatches it
+ *  (`if (r.anchorSpan) w0p(...) else y0p(...)`, L203468-203475). Recompute the granular span under the
+ *  pointer — a word, or the whole row for a triple-click's `kind: "line"` — and pivot on the ORIGINAL span:
+ *  before it, the span's HIGH end becomes the anchor and the fresh span's low end the focus; after it, the
+ *  low end anchors and the fresh high end follows; inside it, collapse back to the span itself.
+ *    `anchorSpan` IS RETAINED, deliberately: it is the pivot for every later step of the same drag, so a
+ *  sweep that runs right, comes back inside, and then runs left still pivots on the word the user
+ *  double-clicked. That is what makes `selectedSpans` prefer a live `focus` over the span (see there) —
+ *  before F10 the span's absolute priority was what made the whole gesture dead. */
+export function dragToSpanned(state: SelectionState, cell: Cell, rows: readonly HitRow[]): void {
+  const span = state.anchorSpan;
+  if (!span) return;
+  const row = rows[cell.row - 1];
+  if (!row) return;
+  const fresh = span.kind === "line" ? lineSpan(cell, row) : wordSpan(cell, row);
+  if (!fresh) return;
+  const before = cell.row < span.lo.row || (cell.row === span.lo.row && cell.col < span.lo.col);
+  const after = cell.row > span.hi.row || (cell.row === span.hi.row && cell.col >= span.hi.col);
+  if (before) { state.anchor = span.hi; state.focus = fresh.lo; return; }
+  if (after) { state.anchor = span.lo; state.focus = fresh.hi; return; }
+  state.anchor = span.lo; state.focus = null;      // inside: collapse back to the span, which paints it again
+}
+
 /** Per-row highlighted COLUMN range — `colStart` inclusive, `colEnd` exclusive, both 1-based terminal
  *  columns, mirroring `CellAddress`'s own half-open `charStart`/`charEnd` convention (T1) rather than
  *  inventing a second one. `row` is the SAME 1-based index into the `rows` array `Cell.row` already uses. */
@@ -201,40 +224,57 @@ function lineGroupSpans(clickRow: number, rows: readonly HitRow[]): RowSpan[] {
  *  ccx row opts out yet — nothing in this track needs one) and minus scrolled-off capture (recorded
  *  divergence, spec M5: v1 clamps to the rows it was handed, canon's `Cka` snapshot of rows that scrolled out
  *  mid-drag has no ccx equivalent). Three cases, in priority order:
- *    1. `anchorSpan` set (a multi-click happened) — `kind: "word"` is already a single-row `lo`/`hi` in
- *       terminal columns (no re-snapping needed, `wordSpan` built it through the very same helpers this
- *       function uses); `kind: "line"` re-derives the row GROUP via `lineGroupSpans` since `multiClick` could
- *       only stake out its own one row.
- *    2. No `focus` (or no `anchor`) — nothing dragged past a plain click: no span, matching `hasSelection`.
- *    3. An ordinary two-endpoint drag — `lo`/`hi` ordered by row then column, boundary rows get a
- *       grapheme-snapped PARTIAL range on the anchor/focus side, every row strictly between gets its full
- *       width, and a single-row drag naturally collapses cases 1(start)/1(end) below into ONE partial span. */
+ *    1. A real two-endpoint sweep (`anchor` AND `focus` both set) — `lo`/`hi` ordered by row then column,
+ *       boundary rows get a grapheme-snapped PARTIAL range on the anchor/focus side, every row strictly
+ *       between gets its full width, and a single-row drag naturally collapses start/end into ONE partial
+ *       span. F10 S2 — THE SWEEP WINS OVER THE SPAN. F9 gave `anchorSpan` absolute priority, which is correct
+ *       for a multi-click that has not been dragged (`multiClick` leaves `focus` null) and was the whole
+ *       reason a double-click-then-drag painted nothing: `dragToSpanned` writes real endpoints and keeps the
+ *       span as its pivot, so "a real two-endpoint sweep exists" has to be the first question, not the second.
+ *    2. `anchorSpan` set (a multi-click happened, not yet dragged into a sweep) — `kind: "word"` is already a
+ *       single-row `lo`/`hi` in terminal columns (no re-snapping needed, `wordSpan` built it through the very
+ *       same helpers this function uses); `kind: "line"` re-derives the row GROUP via `lineGroupSpans` since
+ *       `multiClick` could only stake out its own one row.
+ *    3. Neither — no span, matching `hasSelection`. */
 export function selectedSpans(state: SelectionState, rows: readonly HitRow[]): RowSpan[] {
+  if (state.anchor && state.focus) {
+    const [lo, hi] = orderCells(state.anchor, state.focus);
+    const loRow = Math.max(1, lo.row);
+    const hiRow = Math.min(rows.length, hi.row);
+    // F10 S2 — a PIVOTED sweep (`state.anchorSpan` still live — see `dragToSpanned`, which never clears it)
+    // carries `lo`/`hi` columns that `wordSpan`/`lineSpan` already resolved through `columnToChar`/
+    // `charToColumn` into a proper half-open [lo, hi) boundary; re-running them through `snappedColumnRange`
+    // (built for a RAW, still-unresolved terminal click) treats the already-exclusive `hi` as if it were a
+    // literal click and walks one cluster further whenever that boundary happens to land on a real character
+    // (e.g. dragging left out of `beta` back toward `alpha`: column 11 is simultaneously "one past beta" AND
+    // "the space's own address" — snapping it again silently swallows that space). Only a boundary that sits
+    // at the row's own true end survives the double-snap by clamping accident; every other pivoted boundary
+    // does not, which is what the "drag LEFT past the span" test caught. An ordinary raw two-endpoint drag
+    // never has `anchorSpan` set (a fresh `startSelection` always nulls it, `dragTo` never sets it), so this
+    // branch changes nothing for the pre-F10 sweep this file already tests.
+    const pivoted = state.anchorSpan !== null;
+    const spans: RowSpan[] = [];
+    for (let r = loRow; r <= hiRow; r++) {
+      const row = rows[r - 1];
+      if (!row) continue;
+      if (r === lo.row && r === hi.row) {
+        const start = pivoted ? lo.col : snappedColumnRange(row, lo.col).start;
+        const end = pivoted ? hi.col : snappedColumnRange(row, hi.col).end;
+        spans.push({ row: r, colStart: start, colEnd: Math.max(start, end) });
+      } else if (r === lo.row) {
+        spans.push({ row: r, colStart: pivoted ? lo.col : snappedColumnRange(row, lo.col).start, colEnd: row.width + 1 });
+      } else if (r === hi.row) {
+        spans.push({ row: r, colStart: row.gutterWidth + 1, colEnd: pivoted ? hi.col : snappedColumnRange(row, hi.col).end });
+      } else {
+        spans.push(fullRowSpan(r, row));
+      }
+    }
+    return spans;
+  }
   if (state.anchorSpan) {
     const { lo, hi, kind } = state.anchorSpan;
     if (kind === "line") return lineGroupSpans(lo.row, rows);
     return [{ row: lo.row, colStart: lo.col, colEnd: hi.col }];
   }
-  if (!state.anchor || !state.focus) return [];
-
-  const [lo, hi] = orderCells(state.anchor, state.focus);
-  const loRow = Math.max(1, lo.row);
-  const hiRow = Math.min(rows.length, hi.row);
-  const spans: RowSpan[] = [];
-  for (let r = loRow; r <= hiRow; r++) {
-    const row = rows[r - 1];
-    if (!row) continue;
-    if (r === lo.row && r === hi.row) {
-      const start = snappedColumnRange(row, lo.col).start;
-      const end = snappedColumnRange(row, hi.col).end;
-      spans.push({ row: r, colStart: start, colEnd: Math.max(start, end) });
-    } else if (r === lo.row) {
-      spans.push({ row: r, colStart: snappedColumnRange(row, lo.col).start, colEnd: row.width + 1 });
-    } else if (r === hi.row) {
-      spans.push({ row: r, colStart: row.gutterWidth + 1, colEnd: snappedColumnRange(row, hi.col).end });
-    } else {
-      spans.push(fullRowSpan(r, row));
-    }
-  }
-  return spans;
+  return [];
 }

@@ -307,6 +307,72 @@ run_caret_busy_live_cell() {
   record "caret-busy-live" "$rc"
 }
 
+# ── cell: word-drag (keyless) — F10 S2's own acceptance shape: a double-click drag extends by whole words ─
+# Stages "alpha beta gamma" through `!echo` (a local bash-mode command — no model turn, no credential),
+# double-clicks `alpha`, drags into `gamma`, releases, and checks BOTH observable halves of the gesture: the
+# painted `selectionBg` run (via `capture-pane -e`, matching the general truecolor-background SGR shape
+# `Line.tsx`'s chalk styling always emits, not one theme's own literal RGB triple) and the real OSC 52 write
+# a completed sweep's default `copyOnSelect` latch fires on release (`ChatApp.performAutoCopy`) — read back
+# from the `pipe-pane` raw log (armed before any keystroke, see `launch`) by grepping for the base64 payload
+# itself: base64 never contains the ESC bytes tmux's own `$TMUX`-forced DCS passthrough doubles, so the
+# encoded text survives that wrapping byte-for-byte and needs no un-escaping to find.
+WORD_DRAG_B64="YWxwaGEgYmV0YSBnYW1tYQ=="   # `printf '%s' "alpha beta gamma" | base64`
+run_word_drag_cell() {
+  local s="wd-$RUN_ID" home rc=0
+  echo "  cell word-drag (keyless): !echo stages 'alpha beta gamma', double-click alpha, drag into gamma"
+  home=$(launch "$s" 100 24 "node $BIN") || { record "word-drag" 1; kill_cell "$s"; return; }
+  wait_ready "$s" || { record "word-drag" 1; kill_cell "$s"; return; }
+  tmux -L "$TM" send-keys -t "$s" -l "!echo alpha beta gamma"
+  tmux -L "$TM" send-keys -t "$s" Enter
+  local i=0
+  # Anchored on the leading two-space indent `formatBashOutput` (bash.ts) always puts on a command's own
+  # output line — the immediate `! echo alpha beta gamma` ECHO line above it also contains the substring
+  # "alpha beta gamma" (inside the typed command itself), so an unanchored match would grab the wrong row.
+  while [ "$i" -lt 40 ]; do frame "$s" | grep -qE '^  alpha beta gamma$' && break; sleep 0.25; i=$((i+1)); done
+  local cap="$SELECT_ROOT/wd-cap"; frame "$s" > "$cap"
+  local row; row=$(LC_ALL=C awk '/^  alpha beta gamma$/ {print NR; exit}' "$cap")
+  if [ -z "$row" ]; then
+    echo "      FAIL word-drag: the command's own output line never painted"
+    cat "$cap" | sed 's/^/      | /'
+    kill_cell "$s"; record "word-drag" 1; return
+  fi
+  local col_a col_g; col_a=$(LC_ALL=C awk -v n="$row" 'NR==n {print index($0, "alpha")}' "$cap")
+  col_g=$(LC_ALL=C awk -v n="$row" 'NR==n {print index($0, "gamma")}' "$cap")
+  local click_col=$((col_a + 2))   # inside "alpha", off either edge
+  local drag_col=$((col_g + 2))    # inside "gamma"
+  # THE GESTURE, ZERO SLEEP INSIDE IT (header's own rule): press+release is click 1, the second press is
+  # click 2 — `multiClickSelectionAt` fires HERE, at press time, no drag needed for `hasSelection` — then the
+  # drag pivots via `dragToSpanned` and the release both keeps the paint and fires the auto-copy latch.
+  press   "$s" "$click_col" "$row"
+  release "$s" "$click_col" "$row"
+  press   "$s" "$click_col" "$row"
+  drag    "$s" "$drag_col" "$row"
+  release "$s" "$drag_col" "$row"
+  sleep 0.5
+  local frame_e; frame_e=$(tmux -L "$TM" capture-pane -t "$s" -p -e)
+  local esc; esc=$(printf '\033')
+  # The closing code is a bare `ESC[0m` on a real terminal render (measured, this run) rather than
+  # `ink-testing-library`'s own `ESC[49m` bg-only reset (`selectionPaint.test.tsx`'s own probed constant) —
+  # a real Ink instance's SGR reset is a full reset, not the narrower one the virtual-DOM harness emits, so
+  # both closers are accepted here.
+  if printf '%s' "$frame_e" | grep -aqE "${esc}\[48;2;[0-9]+;[0-9]+;[0-9]+malpha beta gamma${esc}\[(0|49)m"; then
+    echo "      ok   word-drag: the selectionBg run covers all of 'alpha beta gamma', one contiguous span"
+  else
+    echo "      FAIL word-drag: no contiguous selectionBg run over 'alpha beta gamma'"
+    printf '%s' "$frame_e" | sed 's/^/      | /'
+    rc=1
+  fi
+  local log="$SELECT_ROOT/$s.log"
+  if grep -aqF "$WORD_DRAG_B64" "$log"; then
+    echo "      ok   word-drag: the OSC 52 payload base64-decodes to exactly 'alpha beta gamma'"
+  else
+    echo "      FAIL word-drag: no OSC 52 payload for 'alpha beta gamma' in the raw log"
+    rc=1
+  fi
+  kill_cell "$s"
+  record "word-drag" "$rc"
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────────────────────────────────
 echo "F10 T-SELECT S1 — the caret-origin pty harness (FULLSCREEN renderer, CLAUDE_CODE_NO_FLICKER=1)"
 self_test || { echo "SELF-TEST FAILED — aborting before any session is launched"; exit 1; }
@@ -326,6 +392,7 @@ want_cell() {
 want_cell caret-wrap      && run_caret_wrap_cell
 want_cell caret-busy      && run_caret_busy_cell
 want_cell caret-busy-live && run_caret_busy_live_cell
+want_cell word-drag       && run_word_drag_cell
 
 echo
 echo "select-pty: $pass_count passed, $fail_count failed"

@@ -10,6 +10,7 @@ import {
   createSelectionState,
   startSelection,
   dragTo,
+  dragToSpanned,
   multiClick,
   hasSelection,
   selectedSpans,
@@ -274,5 +275,83 @@ describe("gutter exclusion", () => {
     const spans = selectedSpans(s, [row]);
     expect(spans).toEqual([{ row: 1, colStart: 6, colEnd: row.width + 1 }]);
     expect(extractText(spans, [row])).toBe("body only");
+  });
+});
+
+describe("F10 S2 — dragToSpanned: canon's w0p, the pivot on a live multi-click span", () => {
+  // "alpha beta gamma" with no gutter: columns are 1-based, so `alpha` is [1,6), `beta` [7,11), `gamma` [12,17).
+  // Built through the file's OWN `mkRow` factory (`:29`) rather than a fresh object literal — Task 4 makes
+  // `charStart`/`charEnd`/`textStart` required and updates every HitRow constructor, and one factory per test
+  // file is what keeps that a one-line change instead of a sweep through every fixture.
+  const one = mkRow({ text: "alpha beta gamma" });
+  const rows = [one];
+
+  it("double-click `beta`, drag RIGHT into `gamma`: the selection covers all three words' worth of span", () => {
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, one);             // `beta`
+    expect(s.anchorSpan).toEqual({ lo: { row: 1, col: 7 }, hi: { row: 1, col: 11 }, kind: "word" });
+    dragToSpanned(s, { row: 1, col: 14 }, rows);           // inside `gamma`
+    expect(s.anchor).toEqual({ row: 1, col: 7 });          // pivot: the span's LOW end
+    expect(s.focus).toEqual({ row: 1, col: 17 });          // `gamma`'s own hi
+    expect(selectedSpans(s, rows)).toEqual([{ row: 1, colStart: 7, colEnd: 17 }]);
+  });
+
+  it("drag LEFT past the span flips the pivot to its HIGH end", () => {
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, one);
+    dragToSpanned(s, { row: 1, col: 3 }, rows);            // inside `alpha`
+    expect(s.anchor).toEqual({ row: 1, col: 11 });         // the span's hi
+    expect(s.focus).toEqual({ row: 1, col: 1 });           // `alpha`'s own lo
+    expect(selectedSpans(s, rows)).toEqual([{ row: 1, colStart: 1, colEnd: 11 }]);
+  });
+
+  it("a drag onto the span's OWN low column is INSIDE it, not before it — the `<` boundary itself", () => {
+    // The sabotage guard (step 2.8) flips `before`'s `<` to `<=`; only a pointer sitting exactly ON
+    // `span.lo.col` tells the two operators apart. Under `<=` this drag takes the before-branch and writes
+    // `focus = fresh.lo`, so the null-focus assertion is what turns red — the painted span is identical
+    // either way, which is precisely why the paint alone cannot guard this comparison.
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, one);
+    expect(s.anchorSpan!.lo).toEqual({ row: 1, col: 7 });
+    dragToSpanned(s, { row: 1, col: 7 }, rows);
+    expect(s.focus).toBeNull();
+    expect(s.anchor).toEqual({ row: 1, col: 7 });
+    expect(selectedSpans(s, rows)).toEqual([{ row: 1, colStart: 7, colEnd: 11 }]);
+  });
+
+  it("double-click the FIRST word and drag into the THIRD covers all three (acceptance cell 2's shape)", () => {
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 3 }, 2, one);               // `alpha`
+    dragToSpanned(s, { row: 1, col: 14 }, rows);             // inside `gamma`
+    expect(selectedSpans(s, rows)).toEqual([{ row: 1, colStart: 1, colEnd: 17 }]);
+  });
+
+  it("dragging back INSIDE the original span collapses to it, and the span is still the pivot afterwards", () => {
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, one);
+    dragToSpanned(s, { row: 1, col: 14 }, rows);
+    dragToSpanned(s, { row: 1, col: 9 }, rows);            // back inside `beta`
+    expect(s.focus).toBeNull();
+    expect(selectedSpans(s, rows)).toEqual([{ row: 1, colStart: 7, colEnd: 11 }]);
+    dragToSpanned(s, { row: 1, col: 3 }, rows);            // …and the pivot still works
+    expect(s.anchor).toEqual({ row: 1, col: 11 });
+  });
+
+  it("triple-click then drag down takes WHOLE rows", () => {
+    const a = mkRow({ text: "first line here" }), b = mkRow({ text: "second line here" }), two = [a, b];
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 4 }, 3, a);
+    dragToSpanned(s, { row: 2, col: 5 }, two);
+    expect(selectedSpans(s, two)).toEqual([
+      { row: 1, colStart: 1, colEnd: a.width + 1 },
+      { row: 2, colStart: 1, colEnd: b.width + 1 },
+    ]);
+  });
+
+  it("a drag onto a row that is not in the window is a no-op, never a throw", () => {
+    const s = createSelectionState();
+    multiClick(s, { row: 1, col: 8 }, 2, one);
+    dragToSpanned(s, { row: 9, col: 2 }, rows);
+    expect(s.focus).toBeNull();
   });
 });

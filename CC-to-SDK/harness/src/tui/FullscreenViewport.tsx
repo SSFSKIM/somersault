@@ -89,7 +89,7 @@ import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
 import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
 import { HoverContext } from "./mouse/hoverContext.js";
-import { createSelectionState, dragTo, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
+import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
 import { charRangeOf, extractText } from "./mouse/extract.js";
 import type { LineSelection } from "./Line.js";
 import { stripSgr } from "./sgrFoldRow.js";
@@ -394,7 +394,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   const dragSelectionTo = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
-    dragTo(selectionStateRef.current, cell);
+    // F10 S2 — canon's own dispatch (L203468-203475): a drag while a multi-click span is live extends by
+    // WORDS (or whole rows), pivoting on that span; anything else is the plain two-endpoint drag.
+    if (selectionStateRef.current.anchorSpan) dragToSpanned(selectionStateRef.current, cell, hit.current.rows);
+    else dragTo(selectionStateRef.current, cell);
     snapshotSelectionKeys();
     repaint();
   }, [repaint]);
