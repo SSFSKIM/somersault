@@ -241,6 +241,54 @@ describe("F10 S4c — document-order resolution: a backward or reversed drag sel
     expect(reversedText.length).toBeGreaterThan(0);
     expect(reversedText).toBe(directText);
   });
+
+  // Review finding (F10 T-SELECT Task 6 fix round): the two cells above are BOTH rescued by `selectedSpans`'
+  // own row/column re-sort (`orderCells`) the instant `orderEndpoints` is skipped in `address.ts`'s remap
+  // path — proven by mutating that call site to pass the raw, unordered pair and watching both stay green.
+  // The reason is structural, not a gap in those two cases specifically: a SINGLE remap of a plain mouse
+  // click can only ever relabel which raw endpoint becomes `anchor` and which becomes `focus` (each endpoint's
+  // OWN resolved row/column is identical whichever of `"lower"`/`"upper"` locates it, since a click always
+  // names one whole grapheme that belongs to exactly one row) — and `selectedSpans` re-sorts `anchor`/`focus`
+  // by screen position before painting, so a pure relabelling is invisible downstream no matter which two
+  // cells were clicked or in which order.
+  //   Catching the mutation needs a SECOND remap that consumes the FIRST one's damage: `recordSelectionAddresses`
+  // re-reads its `anchor` address off `state.anchor` as the previous remap left it, not off the original press
+  // cell — so once a wrong `orderEndpoints` skip leaves the wrong raw endpoint sitting in `state.anchor`, the
+  // very next drag step feeds that WRONG endpoint into the pair, genuinely changing the resolved span (not
+  // just its anchor/focus label). This is the only way a real backward drag can distinguish the two.
+  it("backward drag across a soft-wrap boundary, then a further backward step, never bleeds into the wrapped row's own start", async () => {
+    // ONE item, no spaces, so `wrapAnsi`'s `hard: true` breaks it by CHARACTER at `columns` rather than at a
+    // word boundary: two physical rows of the SAME wrapped item, source offsets [0,10) then (continuation)
+    // [10,20) — verified directly against `wrap-ansi` before writing this case.
+    const WRAP: RenderItem = { kind: "line", id: "WRAP", line: { text: "0123456789ABCDEFGHIJ" } };
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(scene({ items: [WRAP], hitmap, columns: 10 }));
+    await settle();
+    const rowA = rowOfIncluding(lastFrame(), "0123456789");
+    const rowB = rowOfIncluding(lastFrame(), "ABCDEFGHIJ");
+    expect(rowB).toBe(rowA + 1);                            // premise: one item, two contiguous wrapped rows
+
+    // Leg 1: press on the LATER row's own first character (source offset 10), drag BACKWARD across the wrap
+    // boundary onto the EARLIER row's last character (offset 9). This alone is the classic backward-drag
+    // shape the two cells above already cover, and it is exactly the shape the review proved is rescued —
+    // asserting a text/paint check here would pass even with `orderEndpoints` skipped, so none is made yet.
+    hitmap.current!.startSelectionAt(1, rowB);
+    hitmap.current!.dragSelectionTo(10, rowA);
+    await settle();
+
+    // Leg 2: drag further backward, STILL within the earlier row. With document ordering intact,
+    // `state.anchor` after leg 1 always holds the offset-9 endpoint (the document-lower one, regardless of
+    // which direction the mouse actually moved), so this leg's own remap never leaves the earlier row. Skip
+    // `orderEndpoints` and `state.anchor` is left holding the offset-10 endpoint instead — which this leg's
+    // `recordSelectionAddresses` now feeds through as the pair's `anchor`, pulling the wrapped row's own
+    // leading character into a selection that should never have reached it.
+    hitmap.current!.dragSelectionTo(4, rowA);
+    await settle();
+
+    expect(hitmap.current!.selectedText()).toBe("3456789");
+    expect(rawRowIncluding(lastFrame(), "0123456789")).toContain(`${SEL_BG}3456789${RESET_BG}`);
+    expect(rawRowIncluding(lastFrame(), "ABCDEFGHIJ")).not.toContain(SEL_BG);
+  });
 });
 
 describe("F10 S4c — a live sweep survives a streamed delta arriving ABOVE it, still held", () => {
