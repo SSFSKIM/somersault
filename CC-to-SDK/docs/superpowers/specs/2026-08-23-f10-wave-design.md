@@ -1,8 +1,7 @@
 # F10 Wave — Selection Maturity, Hover Truth, Image Reach, Maintenance
 
-**Status:** v3 — owner approved the design 2026-08-23 (composition + two forks; Decision Log);
-v2 folded in Codex round 1's 17 findings, v3 folds in round 2's 11 (all verified — Revision
-Notes). Canon = installed Claude Code **2.1.236**
+**Status:** v4 — owner approved the design 2026-08-23 (composition + two forks; Decision Log);
+three Codex rounds folded in (17 + 11 + 5 findings, all verified — Revision Notes). Canon = installed Claude Code **2.1.236**
 (`/Users/new/claude-code-bundle/2.1.236/cli.pretty.js`; all `L…` refs are that file). SDK =
 installed `@anthropic-ai/claude-agent-sdk` **0.3.237**.
 
@@ -84,15 +83,22 @@ bufferTop      = bufferBottom - (bufferPhysicalRows - 1)
   contract as `DockTopContext`).
 - Replace the `dockCrowded: boolean` prop with `footerRows: number`; keep `dockTop` as a sanity
   floor and the composer-local `waitingForPermission` term.
-- **Overflow refusal must be reactive to the WHOLE dock, not just the composer** (round-2 F10:
-  `bufferTop < dockTop` observes composer geometry only — a task panel/palette/live-turn row can
-  push the combined dock over `dockCap` while that comparison stays false, and the clipped footer
-  then invalidates the bottom-up anchor). The frame `measureElement`s the dock slot in an effect
-  that re-runs on every commit (size read is cheap), guarded by the same signature stamp
-  `regionRows` uses; when `dockTop + measuredDockRows - 1 > frameLastRow` (the clip is active),
-  it publishes not-addressable through `DockBottomContext`. One frame of refusal after a height
-  change is the accepted cost (r1's fallback shape, now the overflow watchdog). Cells: composer
-  growth after mount; task panel + spinner + composer growth combined crossing `dockCap`.
+- **Overflow refusal is TWO complementary checks, each covering the other's blind spot**
+  (round-2 F10 + round-3 F1: the frame's effects do not re-run on composer-local `setState`
+  growth — `FullscreenFrame.tsx:29-36` documents exactly this ancestor-effect blind spot — while
+  a composer-only check misses co-occupant growth):
+  1. **Composer-local**: the composer computes `bufferTop` each render from its own
+     `bufferPhysicalRows`; `bufferTop < dockTop` → it publishes not-addressable. This is reactive
+     to every composer-local geometry change by construction (it re-renders on its own state).
+     The existing `hoisted`-palette gate stays — palette growth is composer-local too and already
+     covered by it.
+  2. **Frame watchdog**: the frame `measureElement`s the dock slot in a no-dep effect (guarded by
+     the `regionRows` signature stamp); `dockTop + measuredDockRows - 1 > frameLastRow` →
+     not-addressable via `DockBottomContext`. Every non-composer occupant (task panel, spinner,
+     compaction row) mounts/unmounts through `ChatApp` state, which re-renders the frame — so
+     the watchdog's "runs on frame renders only" limitation is exactly sufficient for them.
+  Cells: composer growth **after `ChatApp`'s parent state has stabilized** (the round-3 trap);
+  task panel + spinner + composer growth combined crossing `dockCap`; palette hoisted.
 - Delete `dockCrowded` and its threading; do NOT extend `dockDialogRows` (already wrong by one for
   every compaction — r1).
 
@@ -153,9 +159,14 @@ interface SelectionAddr { itemKey: string; charOffset: number }   // grapheme-bo
   contributes its grapheme's `charEnd` — a half-open source range that is direction-independent.
   Backward-drag and mid-drag direction-reversal tests are mandatory.
 - **Read** (each publish, during render, before `selectedSpans` — an effect would paint one wrong
-  frame): binary-search the fresh rows for the row whose `[charStart, charEnd)` contains each
-  ordered endpoint, convert back to `(paintedRow, col)`, clamping to the item's current char
-  count when the item shrank.
+  frame): binary-search the fresh rows with **side-specific containment** (round-3 F2 — one
+  half-open lookup loses the trailing grapheme at wrap edges): the **lower** endpoint locates the
+  row with `charStart <= v < charEnd`; the **upper** endpoint locates the row with
+  `charStart < v <= charEnd` (at a soft-wrap boundary the value belongs to the *preceding* row's
+  trailing edge; at a hard-row `\n` gap it snaps to the preceding row's end; at item EOF it is
+  the last row's end). Convert back to `(paintedRow, col)`, clamping to the item's current char
+  count when the item shrank. Soft-wrap-edge, hard-row-edge, and final-grapheme cells are
+  mandatory.
 - Endpoint's item scrolled out of window → keep the address, clamp painted position to the window
   edge, mark virtual (canon's `virtualAnchorRow/Col`); restores on scroll back. Both ends off the
   same edge → retain, paint nothing, copy nothing (canon's `ELt`). `itemKey` absent from the new
@@ -284,9 +295,15 @@ and `Harness.run` entry points. **Owner fork (settled): fix forward only — no 
   into **one** bounded sentinel text block (`[+N more blocks dropped: …]`), never N fragments.
 - Total-text ceiling: **`MAX_TOTAL_TEXT = 1_048_576` UTF-16 code units**, summed over all text
   blocks (synthetic failure text included) — and it applies to the **bare-string form too**
-  (a string is one text block). Policy: over-ceiling text is **truncated at the ceiling minus the
-  suffix length**, with a bounded `…[+N chars truncated]` suffix appended — deterministic, never
-  a refusal (matching the normalizer's degrade-don't-throw posture for images).
+  (a string is one text block). **One output-accounting algorithm closes both caps together**
+  (round-3 F4 — the sentinel and the ceiling otherwise conflict at the joint boundary):
+  (1) reserve `SENTINEL_TEXT_RESERVE = 256` units for the block sentinel and
+  `TRUNCATION_SUFFIX_RESERVE = 64` units for the truncation suffix out of the ceiling;
+  (2) collapse excess blocks into the sentinel (sentinel text hard-capped at its reserve);
+  (3) if total text still exceeds the ceiling, truncate **retained user text from the last text
+  block backward** to `ceiling − suffix reserve`, append the suffix — the sentinel is never
+  truncated and the output is deterministic for any input. Combined boundary cell: 65 blocks
+  whose 63 survivors already sit at exactly the ceiling.
 - Accounting stated: image caps in decoded bytes (existing), text ceiling in UTF-16 code units,
   block/image caps in block count, all checked **before** decode where the check doesn't need the
   bytes. Boundary tests cap−1/cap/cap+1 on every cap — including 63-vs-64-vs-65 blocks with and
@@ -314,8 +331,15 @@ like the host's:
   stage**, expiry deletes the stage (a stage exists before any turn does, so "till turn end" is
   not an expiry); **claims are atomic** — a claim that fails queue admission, capability check,
   or schema validation releases nothing it didn't take and the stage stays claimable until its
-  deadline; disconnect deletes the connection's stages. Old servers answer **METHOD_NOT_FOUND** —
-  the loud-skew signal; the client surfaces the REPL's version-skew notice shape.
+  deadline; disconnect deletes the connection's stages. **Validation and normalization happen
+  ONCE, at stage completion** (round-3 F5 — otherwise repeated failed claims re-decode the same
+  multi-megabyte images for the stage's whole lifetime): when the last chunk lands, the server
+  decodes, dimension-checks, and canonicalizes the image, caching the normalized block and its
+  serialized queue charge on the stage; a claim reuses the cache, so a failed queue admission
+  costs no decode work, and a bad image fails at completion rather than at claim. Repeated
+  failed-claim test proves image bytes decode at most once. Old servers answer
+  **METHOD_NOT_FOUND** — the loud-skew signal; the client surfaces the REPL's version-skew
+  notice shape.
 - **`turn/startContent`** (new method): text + `stagedImageIds`, claims staged images into the
   normalizer path. **`turn/steerContent`** ships beside it (review F15 — v1 widened `steer` in
   place, repeating the exact unnegotiated pattern it rejected for `start`); `Session.steer`
@@ -361,13 +385,21 @@ idle, steer during a live turn); fleet-unsupported cell.
   raises the explicit "daemon does not support image submission (pre-F10 daemon)" notice. Test
   against the **current pre-F10 server implementation over a real socket** (checkout-pinned or
   vendored fixture server), not a simulation.
-- **Inbound frame cap, derived from the content maximum** (round-2 F9: a 1 MiB cap would reject
-  normalizer-valid submissions — two 512,000-byte images alone serialize to ~1.37 MiB of
-  base64): cap = **16 MiB**, derived as the normalizer's maxima fully serialized (20 images ×
-  ~683 KB base64 ≈ 13.7 MiB, + `MAX_TOTAL_TEXT` at 2 bytes/unit worst case ≈ 2 MiB, + JSON
-  overhead) — the daemon is a same-user unix socket, so a generous derived bound beats a staging
-  protocol here. The derivation is a code comment beside the constant; a real-socket test submits
-  one- and two-maximum-image prompts and both succeed, plus cap-plus-one drops.
+- **Inbound frame cap, derived from the CANONICAL content maximum — and the client ships
+  canonical form** (round-2 F9 + round-3 F3: v3's 16 MiB derivation used 2 bytes/UTF-16 unit,
+  but the wire is UTF-8 JSON where escapes cost up to 6 bytes/unit, and non-canonical
+  whitespace-padded base64 could stretch an admitted frame toward 100 MiB):
+  - The daemon **client runs `normalizeTurnInput` before transport** (it is in-process with the
+    library), so the wire carries the normalizer's canonical output — and the normalizer
+    **canonicalizes every passing image's data to `decoded.toString("base64")`** (a new
+    normalizer guarantee, shared by all surfaces: padding/whitespace never survives).
+  - The client **preflights `Buffer.byteLength(JSON.stringify(op))`** and refuses over-cap with a
+    typed client-side error before writing a byte.
+  - Server cap = **24 MiB**, derived from canonical maxima: 20 × ~683 KB canonical base64
+    ≈ 13.7 MiB (base64 alphabet needs no JSON escapes) + `MAX_TOTAL_TEXT` × 6 bytes/unit
+    worst-case escaped ≈ 6 MiB + envelope overhead → ~20 MiB, +20% margin. Derivation is a code
+    comment beside the constant. Real-socket tests: one- and two-maximum-image prompts succeed;
+    a maximum JSON-escaped-text prompt succeeds; cap-plus-one drops.
 - **No-newline peers get a deadline, not just a byte cap** (round-2 F11: one byte held forever
   still exhausts connections): a partial line older than **10 s** without a newline drops the
   connection with a logged reason; EOF with a non-empty partial buffer is a drop, not a parse.
@@ -556,6 +588,22 @@ flags; swarm/kairos seed widening; Segmenter memoization (watch-item); §2/§4 b
   matrix mandatory (review).
 - **Layering cut scoped to flagged sites; Segmenter no-change** (research).
 
+### Round-3 decisions (v4)
+
+- **Overflow refusal = composer-local check + frame watchdog, jointly** — a single watchdog
+  rejected (frame effects blind to descendant `setState`, `FullscreenFrame.tsx:29-36`); a single
+  composer check rejected (blind to co-occupants) (round-3 F1).
+- **Side-specific endpoint containment** (lower `start<=v<end`, upper `start<v<=end`, gap/EOF
+  snap rules) — symmetric half-open lookup rejected (loses the trailing grapheme at wrap edges)
+  (round-3 F2).
+- **Normalizer canonicalizes base64; daemon client normalizes + preflights before transport;
+  server cap 24 MiB derived from canonical UTF-8/escape-aware maxima** — v3's 16 MiB (2-byte/unit
+  arithmetic, non-canonical input admitted) rejected (round-3 F3).
+- **One output-accounting algorithm with reserved sentinel/suffix budgets** — independent caps
+  rejected (conflict at the joint 65-block/exact-ceiling boundary) (round-3 F4).
+- **Stage validation/normalization once at completion, cached charge, claim reuses cache** —
+  validate-at-claim rejected (failed-claim decode amplification) (round-3 F5).
+
 ### Round-2 decisions (v3)
 
 - **HitRow carries source `[charStart, charEnd)` minted at wrap time** — cumulative painted-row
@@ -613,6 +661,12 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- v4 (2026-08-23): round 3 (v3 deltas only) returned 5 findings, all adopted: dual overflow
+  checks (composer-local + frame watchdog); side-specific endpoint containment with gap/EOF
+  rules; base64 canonicalization in the normalizer + daemon client-side normalize/preflight +
+  24 MiB escape-aware cap; one output-accounting algorithm with reserved sentinel/suffix
+  budgets; stage validation-once-at-completion with cached claim charge. Convergence 17→11→5,
+  each round strictly narrower; converged — implementation proceeds on v4.
 - v3 (2026-08-23): focused Codex re-review of v2's redesigned parts returned 11 findings (9
   high); all adopted. S4 rebuilt on wrap-time source ranges (`HitRow.charStart/charEnd`) with
   document-ordered half-open endpoints; S1's projection now counts paint-time cursor/ghost rows
