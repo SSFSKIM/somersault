@@ -300,6 +300,16 @@ Found during execution (T1–T5):
   bounded the whole URL while the resolver bounded the payload, so an image at the published 180,000-byte
   bound was refused by the 22-character prefix. The cap now binds the payload at both layers; the
   emitted `maxLength` (240,064) is a backstop, not the build-to number.
+- **A cap suite that names only upper bounds trusts parsers never to report zero** (review round 3): a
+  crafted PNG header with width 0 passed `admitBytes` and rode the `stageImage` op into the host schema's
+  `positive()`, failing the whole turn -32603 where one image should have degraded. The lower bound is
+  now the resolver's, like every other bound. (The REPL paste path shares the defect class but is
+  reachable only via a crafted OS-clipboard image — left as a known residual, out of this round.)
+- **A sweep keyed on the filesystem never reaps state whose file someone else removed** (review round 3):
+  aborted fleet image turns unlink staged files client-side, and the host's `sweepOrphans` walked only
+  the directory — the `staged` map entries for those paths lived forever. The sweep now runs a second,
+  `mintedAt`-age-gated loop over the map itself; the same cutoff protects the legitimate mint→write
+  window.
 - **A serialization slot must cover the work it was taken for, not the call that opens it** (final review
   round 2, P1). `turn/start` takes an ordered slot on the thread's chain so its prompt reaches the engine
   behind anything the client sent first — and the slot released the moment the runner was INVOKED, which
