@@ -4,12 +4,12 @@ import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } 
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, insertImageChip, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, caretFromLocalPosition, type ComposerSubmission, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, insertImageChip, setMentionFiles, setCommandCatalog, setSuggestionIndex, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, caretFromLocalPosition, type ComposerSubmission, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 // F9 T-MOUSE Task 4 — the composer's published origin, the SAME "computed constant" idiom
 // `FullscreenViewport` reads `useRegionTop` through (FullscreenFrame.tsx's own header comment on
 // `DockTopContext`). Absent (0) outside a bounded fullscreen frame, exactly like `useRegionTop`.
 import { useDockTop } from "./FullscreenFrame.js";
-import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
+import { catalogColumnWidth, SuggestPopup, type PopupHitHandle, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
@@ -306,7 +306,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, dockCrowded = false }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, dockCrowded = false, popupHitRef }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -324,6 +324,9 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  only to suppress `caretAt`'s addressability (see `originExact` below); defaults false so a bare mount
    *  with no `ChatApp` above it keeps whatever `useDockTop()` alone would answer. */
   dockCrowded?: boolean;
+  /** F10 T-HOVER Task 2 (CM33) — `ChatApp`'s mouse sink holds this; a bare mount with nothing above it
+   *  simply has no reader, exactly like `originRef`/`hitmapRef`. */
+  popupHitRef?: React.MutableRefObject<PopupHitHandle | null>;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -508,6 +511,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
   const [pasteHint, setPasteHint] = useState(false);
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // F10 T-HOVER Task 2 (CM33) — canon's `hoveredSuggestionId` (L602029-602033). Composer-local because the
+  // element that reads it is built here (`hoisted` below) — and the setter BAILS when unchanged, canon's
+  // own `Pe.hoveredSuggestionId === Ft ? Pe : {…}`, so a pointer sweeping within one row is free.
+  const [hoveredSuggestionId, setHoveredSuggestionId] = useState<string | null>(null);
+  const onSuggestionHover = useCallback((id: string | null) => setHoveredSuggestionId((p) => (p === id ? p : id)), []);
   // CM56. `searchHintFired` is upstream's `m.current` — fired ONCE, and deliberately not reset by the walk's
   // own reset (`G` at L489628 clears every other ref in the hook and leaves `m` alone).
   //
@@ -886,6 +894,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // `rows` is passed positionally after `now`, so `now` is given explicitly here — same value the default
     // would have produced. A paste-tagged event is the only consumer (editor.ts's `KeyFlags.paste` arm).
     const r = applyKey(s, input, key, Date.now(), rowsRef.current?.());
+    // F10 T-HOVER Task 2 (CM33) — canon clears the hover on popup navigation (L602029/L602031) —
+    // unconditional on the RECOGNIZED ACTION, which is exactly what `suggestionNav` reports: the
+    // keyboard taking the highlight back is the whole point, whether or not the index could move.
+    if (r.suggestionNav) setHoveredSuggestionId(null);
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
       // WAVE C TASK 2: `kill-paste-hint` (annex §C1.6, L395652) — `immediate`, 5000 ms. The queue owns the
       // deadline now, so this site holds no timer of its own; `yankHintMs` became its `timeoutMs`.
@@ -937,6 +949,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     commitState(r.state);
   };
   submitBufferRef.current = () => handleKey(ENTER);
+  // F10 T-HOVER Task 2 (CM33) — canon's `onSelect(I)` (L536295) with `I = windowStart + P`. Two steps
+  // rather than one because ccx's accept reads the lane's own `index`, where canon's consumer takes the
+  // index as an argument: point the index at the clicked row, then run the Enter arm. `commitState`
+  // first, so `handleKey` reads the moved index off `stateRef.current` (it is set synchronously there).
+  const acceptSuggestionAt = useCallback((absoluteIndex: number) => {
+    if (!completionActive(stateRef.current)) return;
+    commitState(setSuggestionIndex(stateRef.current, absoluteIndex));
+    handleKey(ENTER);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // The gate that matters most (F6 t5): the fallback is where every printable character, digit and unbound key
   // lands, and an inline dialog reads its numbered rows and legacy letters through ITS fallback. Inactive here
   // means "not registered", so the dialog's is the innermost live one — `handleKey`'s own owner guard stays as
@@ -1304,8 +1326,18 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // `popupHeight(rows)`, and no blank padding under the last match. Here they are not a nicety — the slot is IN
   // FLOW, so canon's padding would charge the transcript twelve rows at a 24-row pane to show one command. The
   // inline arm below passes neither and is unchanged.
+  // F10 T-HOVER Task 2 (CM33) — read HERE, ahead of `hoisted`, because the popup's own hit region needs it
+  // as `hitTop`. The inversion this sets up (research §4.2): the palette being HOISTED is what makes the
+  // COMPOSER's origin inexact below (`originExact`'s `!hoisted` term) — and it is SIMULTANEOUSLY the
+  // palette's own EXACT origin, because the palette is the dock's first child (ChatApp.tsx). So the
+  // popup's addressability condition is `fullscreen && dockTop > 0`, with no occupant term at all —
+  // unlike `originExact`, nothing can paint ABOVE the palette inside `dock` (it is that band's first
+  // child by construction), so `dockCrowded` has nothing to say about it.
+  const dockTop = useDockTop();
   const hoisted = fullscreen && popupShown && suggest
-    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad />
+    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad
+        hitRef={popupHitRef} hitTop={dockTop} hoveredId={hoveredSuggestionId}
+        onHoverChange={onSuggestionHover} onSelect={acceptSuggestionAt} />
     : null;
   usePaletteHoist(hoisted);
   // ── F9 T-MOUSE TASK 4 — CLICK-TO-CARET'S ORIGIN ───────────────────────────────────────────────────────────
@@ -1340,7 +1372,8 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // busy turn or an open task panel (occupant-height accounting, R1 §2.6's general case); ccx v1 defers that
   // and a click during those states is simply refused rather than silently wrong — the follow-up is threading
   // each occupant's own painted row count into this arithmetic instead of a single crowded/not flag.
-  const dockTop = useDockTop();
+  // (`dockTop` itself is read above, ahead of `hoisted` — F10 T-HOVER Task 2 — since the popup's own hit
+  // region needs it too; nothing else in this block moved.)
   const originExact = fullscreen && dockTop > 0 && !dockCrowded && !hoisted;
   const bufferTopRow = originExact ? dockTop + (waitingForPermission ? 2 : 0) + 1 : 0;
   const caretAt = useCallback((col: number, row: number): boolean => {

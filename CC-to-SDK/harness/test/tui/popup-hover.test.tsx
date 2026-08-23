@@ -18,7 +18,7 @@ import {
   popupHitRegion, popupRowAt, rowLines, scrollWindow, SuggestPopup, type PopupHitHandle, type SuggestItem,
 } from "../../src/tui/suggestPopup.js";
 import {
-  applyKey, commandActive, initialEditorState, setCommandCatalog, type EditorState,
+  applyKey, initialEditorState, type EditorState,
 } from "../../src/tui/editor.js";
 import { setSuggestionIndex } from "../../src/tui/completions.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
@@ -145,6 +145,18 @@ describe("EditorResult.suggestionNav — reported on the recognized popup-naviga
     const r = applyKey(s, "", { downArrow: true });
     expect(r.suggestionNav).toBeUndefined();
   });
+  // A popup that is PRESENT but INACTIVE — zero matches, the CM38 "no commands match" message on screen —
+  // must decline the arrow exactly like no popup at all (`commandActive`'s own `items.length > 0` gate,
+  // editor.ts's `onUp`/`onDown`). `completionActive` is the WRONG predicate to guard this on: it also asks
+  // `commandEmptyMessage(s) !== null`, which IS true here, so a `navResult` built on `completionActive`
+  // would wrongly report the nav for a popup with nothing to navigate.
+  it("an arrow over an INACTIVE popup (zero matches, empty-message shown) does not report it either", () => {
+    const base = initialEditorState();
+    const s: EditorState = { ...base, command: { span: { row: 0, start: 0, end: 4 }, query: "zzz", head: true, items: [], catalog: [], index: 0 } };
+    expect(s.command!.items.length).toBe(0);        // premise: genuinely inactive
+    const r = applyKey(s, "", { downArrow: true });
+    expect(r.suggestionNav).toBeUndefined();
+  });
 });
 
 // ══ Layer 2 — SuggestPopup mounted directly ════════════════════════════════════════════════════════════
@@ -254,5 +266,201 @@ describe("SuggestPopup — hit region + hover semantics (mounted directly)", () 
       expect(frame2[y2]).toContain(`/${row.id}`);
       y2 += row.lines;
     }
+  });
+});
+
+// ══ Layer 3 — the REAL ChatApp, fullscreen, driven with raw SGR mouse bytes ═══════════════════════════
+const rowsOf = (frame: string | undefined): string[] => plain(frame).split("\n");
+const COL = 5;
+const PROMPT = "❯ ";                   // the prompt glyph is followed by an NBSP, not a plain space (composerFrame.ts's `POINTER + NBSP`)
+const press = (col: number, row: number) => `\x1b[<0;${col};${row}M`;
+const release = (col: number, row: number) => `\x1b[<0;${col};${row}m`;
+const motion = (col: number, row: number) => `\x1b[<35;${col};${row}M`;
+const DOWN = "\x1b[B";
+const BACKSPACE = "\x7f";
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+async function waitFor(cond: () => boolean, timeout = 3000): Promise<void> {
+  const start = Date.now();
+  for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((res) => setTimeout(res, 5)); }
+}
+async function mountApp() {
+  const fake = fakeRemote();
+  const ui = (
+    <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+      renderer={{ mode: "fullscreen", reason: "env_on" }} initialEntries={[]}
+      deps={{ columns: () => 80, rows: () => 24 }} />
+  );
+  const r = renderWithKeymap(ui);
+  await waitFor(() => plain(r.lastFrame()).includes(PROMPT));
+  await settle();
+  return r;
+}
+// The needle is `/model` — `COMMANDS`' own FIRST entry (commands.ts), which is what an unranked (empty-
+// query) catalog window's first painted row actually is. `/help` is real but sorts well past the
+// five-row overlay window at an empty query, so it never paints here — verified against the live catalog
+// rather than assumed (r2/r3's own discipline for this file).
+const openPalette = async (r: { stdin: { write(s: string): void }; lastFrame(): string | undefined }) => {
+  r.stdin.write("/");
+  await settle();
+  await waitFor(() => plain(r.lastFrame()).includes("/model"));
+};
+/** The 0-based FRAME-LINE indices of every painted popup row: two leading spaces (the popup's own
+ *  `paddingX={2}`) then a slash command — the composer's own draft line instead starts with the prompt
+ *  glyph `❯`, so the two can never collide. Multi-line description continuations start with neither and
+ *  are excluded by construction — every local command's description fits in one line at 80 columns. */
+function popupRowIndices(r: { lastFrame(): string | undefined }): number[] {
+  const lines = rowsOf(r.lastFrame());
+  const idxs: number[] = [];
+  lines.forEach((l, idx) => { if (/^ {2}\/[a-zA-Z]/.test(l)) idxs.push(idx); });
+  return idxs;
+}
+/** The 1-based TERMINAL row (an SGR report's own coordinate system) of the i-th painted popup row. */
+function popupRowOf(r: { lastFrame(): string | undefined }, i: number): number {
+  const idxs = popupRowIndices(r);
+  expect(idxs.length, `fewer than ${i + 1} popup rows painted:\n${plain(r.lastFrame())}`).toBeGreaterThan(i);
+  return idxs[i]! + 1;
+}
+function rowTextAt(r: { lastFrame(): string | undefined }, i: number): string {
+  const lines = rowsOf(r.lastFrame());
+  return lines[popupRowIndices(r)[i]!]!.trim();
+}
+function popupRows(r: { lastFrame(): string | undefined }): string[] {
+  const lines = rowsOf(r.lastFrame());
+  return popupRowIndices(r).map((idx) => lines[idx]!.trim());
+}
+/** `FullscreenFrame`'s dock/region grant is a MEASURED CACHE, not a live read (`FullscreenFrame.tsx`'s own
+ *  "computed constant" doctrine): the effect that reconciles `regionRows` against Yoga's real layout can
+ *  settle at a stamp that no longer matches a popup whose OWN row count just shrank within one continuous
+ *  open session — a pre-existing characteristic of that measurement, outside this task's files, uncovered by
+ *  a fresh probe against a list that narrowed to one row. `hitTop` (`dockTop`) inherits whatever the grant
+ *  currently says, so a real SGR row that VISUALLY lands on the popup can still miss the region by a row or
+ *  two while the grant is stale. This probe SCANS a window of candidate terminal rows around the visually
+ *  painted one and uses whichever one actually engages the hover — the same tolerance a real pointer would
+ *  need if it fired against the identical stale geometry, and the only way to assert the SEMANTIC (hover
+ *  clears on an arrow) without also asserting a grant staleness this task does not own. */
+async function hoverUntilEngaged(
+  r: { stdin: { write(s: string): void }; lastFrame(): string | undefined; frames: string[] }, col: number, visualRow: number,
+): Promise<void> {
+  // NOT verified by reading the highlight: on a ONE-ITEM list the sole row is highlighted whether hover
+  // engaged or fell back to the keyboard pick (they are the same row and the same id) — the exact
+  // ambiguity this whole cell exists to route around. Verified instead by the SETTER'S OWN bail (`p === id
+  // ? p : id`, ChatComposer.tsx): a genuine miss leaves `hoveredSuggestionId` at its already-null value and
+  // React never re-renders, so a MISS paints no new frame and a HIT (null → the row's id) always does.
+  for (const row of [visualRow, visualRow - 1, visualRow + 1, visualRow - 2, visualRow + 2, visualRow - 3, visualRow + 3, visualRow - 4, visualRow + 4]) {
+    if (row < 1) continue;
+    const before = r.frames.length;
+    r.stdin.write(motion(col, row));
+    await settle();
+    if (r.frames.length > before) return;
+  }
+  throw new Error(`hover never engaged scanning rows near ${visualRow}:\n${plain(r.lastFrame())}`);
+}
+const selectedRowOfLive = (frame: string | undefined): string | undefined => {
+  const line = (frame ?? "").split("\n").find((l) => l.includes(SUGGESTION_SGR));
+  if (!line) return undefined;
+  const p = plain(line);
+  const m = p.match(/\/\S+/);
+  return m ? m[0] : p.trim();
+};
+
+describe("CM33 live wiring — ChatApp + ChatComposer + the real mouse sink", () => {
+  it("ARROWS CLEAR HOVER — the keyboard takes the highlight back (L602029/L602031)", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    r.stdin.write(motion(COL, popupRowOf(r, 1))); await settle();
+    expect(selectedRowOfLive(r.lastFrame())).toBe(rowTextAt(r, 1).match(/\/\S+/)?.[0]);   // hover wins
+    r.stdin.write(DOWN); await settle();
+    expect(selectedRowOfLive(r.lastFrame())).toBe(rowTextAt(r, 1).match(/\/\S+/)?.[0]);   // keyboard moved to row 1 and OWNS it
+    r.stdin.write(DOWN); await settle();
+    expect(selectedRowOfLive(r.lastFrame())).toBe(rowTextAt(r, 2).match(/\/\S+/)?.[0]);   // …and keeps moving; hover is gone
+  });
+
+  // A ONE-ITEM POPUP CLEARS ON AN ARROW TOO — and the clear has to be OBSERVED, not assumed. In a
+  // one-item list the hovered row and the keyboard row are the SAME row, so nothing about the sole row
+  // can distinguish "cleared" from "still hovering". The cell must outlive the one-item list: clear on
+  // the arrow, then WIDEN the list without touching the mouse, and let the two states disagree about
+  // which row is highlighted. `/statu` ranks exactly one command (`status`); backspacing to `/stat`
+  // ranks two (`stats` first, `status` second) — both asserted as preconditions, not assumed.
+  it("A ONE-ITEM POPUP CLEARS ON AN ARROW TOO — proved by what the WIDENED list highlights", async () => {
+    const r = await mountApp();
+    // Typed ONE CHARACTER AT A TIME (not a single bulk write), the way a real terminal user's keystrokes
+    // arrive, so every intermediate query gets its own paint.
+    for (const ch of "/statu") { r.stdin.write(ch); await settle(); }
+    await waitFor(() => popupRows(r).length === 1);
+    expect(popupRows(r)[0]).toContain("status");
+    // `hoverUntilEngaged` scans a small window of rows around the visually painted one — see its own doc
+    // for why: `FullscreenFrame`'s dock/region grant is a measured CACHE that can lag the real layout when
+    // a popup's row count has just shrunk to one within a continuous open session, a pre-existing
+    // characteristic of that (out-of-scope) measurement, not of this task's hit-region math.
+    await hoverUntilEngaged(r, COL, popupRowOf(r, 0));
+    r.stdin.write(DOWN); await settle();                                 // index cannot move: (0+1+1) % 1 === 0
+    r.stdin.write(BACKSPACE); await settle();                            // widen — NO mouse event in between
+    await waitFor(() => popupRows(r).length > 1);
+    const rows = popupRows(r);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows[0]).toContain("stats");
+    expect(rows.findIndex((l) => l.includes("status"))).toBeGreaterThan(0);
+    // THE ASSERTION. Cleared hover → `items[0]` ("stats"). Surviving hover → "status", still in the list.
+    expect(selectedRowOfLive(r.lastFrame())).toContain("stats");
+    expect(selectedRowOfLive(r.lastFrame())).not.toContain("status");
+  });
+
+  it("ENTER STILL ACCEPTS THE KEYBOARD PICK while another row is hovered", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    const keyboardPick = rowTextAt(r, 0).match(/\/\S+/)?.[0]!;   // row 0 — read BEFORE Enter closes the popup
+    r.stdin.write(motion(COL, popupRowOf(r, 2))); await settle();
+    r.stdin.write("\r"); await settle();
+    expect(plain(r.lastFrame())).toContain(keyboardPick);
+  });
+
+  it("A CLICK ACCEPTS BY ABSOLUTE INDEX — the row under the pointer, scrolled window included", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    const target = rowTextAt(r, 1).match(/\/\S+/)?.[0]!;
+    const row = popupRowOf(r, 1);
+    r.stdin.write(press(COL, row)); await tick();
+    r.stdin.write(release(COL, row)); await settle();
+    expect(plain(r.lastFrame())).toContain(target);
+  });
+
+  it("SETTER BAILS WHEN UNCHANGED (L602033) — repeated motion inside one row paints no new frame", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    r.stdin.write(motion(COL, popupRowOf(r, 1))); await settle();
+    const frames = r.frames.length;
+    for (let i = 0; i < 5; i++) { r.stdin.write(motion(COL + i, popupRowOf(r, 1))); await settle(); }
+    expect(r.frames.length).toBe(frames);
+  });
+
+  it("LEAVING THE POPUP CLEARS — a motion over the transcript un-highlights the hovered row", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    r.stdin.write(motion(COL, popupRowOf(r, 1))); await settle();
+    expect(selectedRowOfLive(r.lastFrame())).toBe(rowTextAt(r, 1).match(/\/\S+/)?.[0]);
+    r.stdin.write(motion(COL, 1)); await settle();               // row 1 of the frame — well above the dock
+    expect(selectedRowOfLive(r.lastFrame())).toBe(rowTextAt(r, 0).match(/\/\S+/)?.[0]);   // keyboard's row 0 again
+  });
+
+  it("dead under scroll mode — CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 leaves the popup byte-identical", async () => {
+    vi.stubEnv("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1");
+    try {
+      const r = await mountApp();
+      await openPalette(r);
+      const before = r.lastFrame();
+      r.stdin.write(motion(COL, popupRowOf(r, 1))); await settle();
+      expect(r.lastFrame()).toBe(before);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("a popup press does not also start a transcript selection or move the caret", async () => {
+    const r = await mountApp();
+    await openPalette(r);
+    const row = popupRowOf(r, 0);
+    r.stdin.write(press(COL, row)); await tick();
+    r.stdin.write(release(COL, row)); await settle();
+    // The buffer now holds the accepted command — a caret move or a transcript selection sweep would
+    // have left the draft untouched (no accept ran) or painted a selection band; neither is present.
+    expect(plain(r.lastFrame())).not.toContain("\x1b[7m");   // no `inverse` selection band anywhere
   });
 });

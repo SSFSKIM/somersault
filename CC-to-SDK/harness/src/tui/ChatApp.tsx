@@ -54,7 +54,7 @@ import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
 import { editExternal, openInEditor } from "./externalEditor.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
-import { popupHeight } from "./suggestPopup.js";
+import { popupHeight, type PopupHitHandle } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
 import { paintedHeight } from "./wrapItems.js";
 import { renderItemHeight } from "./pager.js";
@@ -910,6 +910,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // F9 T-MOUSE Task 4 — the composer's own click seam, on the same ref-channel family as `hitmapRef` and for
   // the same reason (ComposerCaret's own doc: geometry current only for the render that produced it).
   const composerRef = useRef<ComposerCaret>(null);
+  // F10 T-HOVER Task 2 (CM33) — the hoisted popup's own hit region, same ref-channel family again.
+  const popupHitRef = useRef<PopupHitHandle | null>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
   // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
   // timestamp AND resolved anchor, so the NEXT press can tell "is this a continuation of the same click
@@ -964,7 +966,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (!state.copyOnSelect) return;
     performAutoCopy();
   };
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); popupHitRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
   useMouseSink((e: MouseInputEvent) => {
     // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
     // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
@@ -976,7 +978,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // dispatch gate that already drops motion in every other mode (KeymapProvider.tsx), and kept here anyway
     // for the reason that gate's own `fullscreen` term is kept: "hover does nothing off `full`" should be true
     // by construction at the consumer, not only by a coincidence one layer up a later refactor could remove.
-    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") hitmapRef.current?.hoverAt(e.col, e.row); }
+    // F10 T-HOVER Task 2 (CM33) — both regions, same gate, same event. They are disjoint bands (the popup
+    // is in the dock, the transcript in the region), so each answers `undefined`/no-op for the other's
+    // cells by construction; calling both is how "container-leave clears" is implemented without a second
+    // mouse-sink registration (the registry resolves only the innermost one — `registry.ts:98-100`).
+    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") { popupHitRef.current?.hoverAt(e.col, e.row); hitmapRef.current?.hoverAt(e.col, e.row); } }
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;
@@ -996,6 +1002,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
     if (e.action === "press") {
+      // F10 T-HOVER Task 2 (CM33). The popup owns the dock band it painted; a press it claims is not a
+      // transcript press, and `lastPressRef` is dropped so the release that follows cannot pair with
+      // anything (`tapAnchorRef.current` is already nulled above this branch by the sink's own preamble).
+      // Same single `useMouseSink` as everything else here — the registry resolves only the innermost sink
+      // (`registry.ts:98-100`), so a second registration would simply never fire.
+      if (popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
       const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
       tapAnchorRef.current = { col: e.col, row: e.row, anchor };
       // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
@@ -1778,7 +1790,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} originRef={composerRef} dockCrowded={dockCrowded} />
+                      fullscreen={fullscreen} originRef={composerRef} popupHitRef={popupHitRef} dockCrowded={dockCrowded} />
   );
   const dock = (
     <>
