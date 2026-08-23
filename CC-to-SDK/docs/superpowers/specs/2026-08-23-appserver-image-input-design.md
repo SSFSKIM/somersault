@@ -259,6 +259,25 @@ Found during execution (T1–T5):
   bivariant.** Five app-server suites still declare `submit(prompt: string, …)` and compile clean against
   the `UserTurnInput` signature. A widening the typechecker cannot fail is a widening no existing test
   notices — the new coverage had to be written deliberately rather than provoked.
+- **On a shared-host origin, a record-wide stop flag is not a stop signal for pending work** (final
+  review P1). Cancellation of a still-resolving items turn rode `record.interruptRequested`, which the
+  fleet event layer clears on EVERY host turn-start — foreign turns included, because the terminal owner
+  can start and finish a turn inside our resolution window while the thread looks idle from the host's
+  side. The interrupt was silently erased and the stopped turn submitted anyway. The fix is shape, not
+  bookkeeping: a per-pending-turn latch (`PendingFleetStop`) that only interrupt/close raise and only
+  that turn's own settlement removes. The record's lifecycle flags belong to the HOST's turn lifecycle;
+  any future stop signal for work not yet handed to the host must take the per-unit shape.
+- **Staged-file ownership on the fleet path is a three-way split, not a binary** (final review P2a). The
+  prompt-op catch treated every rejection as pre-acceptance and unlinked the staged files — but a socket
+  death across the op is INDETERMINATE: the host may have accepted and `runTask` reads the claims lazily
+  during the turn, so the unlink degraded images under an accepted turn. Now: explicit refusal → ours,
+  clean immediately; accepted → the host's; connection death → leave the files for the host's orphan
+  sweep, which exists precisely for unclaimed staging and already tolerates an already-reaped path.
+- **A wire that admits what its downstream refuses converts a client error into a server error** (final
+  review P2b). `text: z.string()` admitted `""`, so a zero-content items array crossed our schema and
+  died at the host's "text or at least one image" refine as -32603 INTERNAL. Our array refine now mirrors
+  the host's rule and answers -32602 — the general rule: every reachable downstream refusal of a
+  request SHAPE must have an admission-time counterpart, or schema-valid input reads as a server bug.
 
 ## Outcomes & Retrospective
 
@@ -296,6 +315,13 @@ were all real and all structural — an interrupt arriving mid-staging reaching 
 (which became `fleetEngine.submit`'s `aborted` hook), the nothing-left-to-degrade contract needing its
 own row, the fleet items happy path being unpinned, and a stopped turn reporting `completed` to every
 subscriber. None was a rewrite; each was a property the code did not yet state.
+
+The final whole-branch review (codex, base `e7777bf9be`) found what no per-task review could: three
+defects living in the SEAMS between tasks — the pending-turn cancellation clobbered by a foreign turn's
+lifecycle, staged-file cleanup on an indeterminate ack, and a zero-content array our wire admitted but
+the host's refused (all three in Surprises). Fixed in one wave with per-finding sabotage proofs; the
+per-task reviews were each scoped to their own diff, and every one of these needed two tasks' code in
+view at once.
 
 **Gaps left open, each deliberately:**
 
