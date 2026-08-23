@@ -109,10 +109,12 @@ describe("emit-appserver-schema", () => {
     for (const [name, entry] of Object.entries(methodSchemas)) expect(entry.experimental ? experimental : stable, name).toContain(name);
   });
 
-  it("marks turn/steer experimental and leaves queue-flagged turn/start stable", () => {
-    // The spec's one X method that shipped. `turn/start`'s `queue` FLAG is the experimental part of Wave
+  it("marks turn/steer, image/stage and turn/startContent experimental and leaves queue-flagged turn/start stable", () => {
+    // The spec's one X method that shipped, plus F10 T-IMGREACH Task 10's negotiated staged-image pair
+    // (task brief: an old server must answer METHOD_NOT_FOUND for either rather than accepting a widened
+    // `turn/start` input it cannot honour). `turn/start`'s `queue` FLAG is the experimental part of Wave
     // 4's queue, not the method — a client pinning the stable artifact must still find `turn/start`.
-    expect(Object.keys(vendored("experimental").methods)).toEqual(["turn/steer"]);
+    expect(Object.keys(vendored("experimental").methods)).toEqual(["turn/steer", "image/stage", "turn/startContent"]);
     expect(vendored("stable").methods).toHaveProperty(["turn/start"]);
   });
 

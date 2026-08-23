@@ -15,3 +15,12 @@ export const turnInterruptParams = z.object({ threadId: z.string().min(1), cance
  *  RIGHT NOW, and the thread can only be running one turn; naming an id would invite a client to steer a
  *  turn that has already ended. `input` mirrors `turn/start`'s (a bare string, empty allowed). */
 export const turnSteerParams = z.object({ threadId: z.string().min(1), input: z.string() });
+/** `turn/startContent` (F10 T-IMGREACH Task 10/I3d): the wire completion of a staged-image turn.
+ *  `stagedImageIds` names completed `image/stage` reservations (Task 7) in the ORDER they should join the
+ *  turn, and requires at least one — a content turn with no image is just `turn/start`, so an empty array
+ *  here is a caller mistake, not a degenerate valid case. `text` is optional (an image-only turn is a
+ *  supported shape, I1's stranding label covers it); `queue` mirrors `turn/start`'s own flag. */
+export const turnStartContentParams = z.object({
+  threadId: z.string().min(1), text: z.string().optional(),
+  stagedImageIds: z.array(z.string().min(1)).min(1), queue: z.boolean().optional(),
+});

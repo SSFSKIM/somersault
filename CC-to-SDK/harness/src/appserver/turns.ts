@@ -12,12 +12,13 @@ import type { ItemEvent, ItemDeltaChannel } from "./items/types.js";
 import { fleetTurnId, mintTurnId, threadBusyReason, threadStatus, ORIGIN_REFUSAL_MESSAGE } from "./registry.js";
 import type { ThreadRecord, BufferedItemEvent, EngineSession } from "./registry.js";
 import type { FleetEngineSession } from "./fleetEngine.js";
+import { refuseFleetContent } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_ENTRY_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
-import { turnStartParams, turnInterruptParams, turnSteerParams } from "./schema/turns.js";
-import { flattenForDisplay, type UserTurnInput } from "../session/turnInput.js";
+import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams } from "./schema/turns.js";
+import { flattenForDisplay, normalizeValidatedBlocks, MAX_AGGREGATE_BYTES, type UserTurnInput, type UserContentBlock } from "../session/turnInput.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
@@ -515,6 +516,71 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   // fleet thread answers the same refusals in the same order as an inProcess one.
   if (record.origin === "fleet") { fleetTurnStart(srv, ctx, id, record, parsed.data.input); return; }
   beginTurn(srv, ctx, id, record, submitRunner(srv, record, parsed.data.input));
+};
+
+/** `turn/startContent` (F10 T-IMGREACH Task 10/I3d): the wire completion of a staged-image turn — the
+ *  handler side of the `image/stage` + `turn/startContent` pair, both registered `experimental: true`
+ *  (schema/index.ts) because an old server must answer METHOD_NOT_FOUND for either rather than silently
+ *  accepting a widened `turn/start` and running a text-only turn with nobody told (the F9 failure this
+ *  whole track exists to end).
+ *
+ *  THE GATE ORDER IS THE CORRECTNESS (task brief) — every refusal below runs BEFORE the reservation it
+ *  would otherwise have to unwind, and every refusal that lands AFTER the reservation aborts it rather
+ *  than leaking it:
+ *    1. params            -> INVALID_PARAMS
+ *    2. thread lookup     -> THREAD_NOT_FOUND
+ *    3. fleet origin gate -> UNSUPPORTED_FOR_ORIGIN (F10 ships no fleet staging client — a fact about the
+ *       ORIGIN, `refuseFleetContent`, fleetEngine.ts — never an absent-capability accident)
+ *    4. busy gate / enqueue arm — `queue:true` on a thread busy WITH A TURN enqueues instead of refusing,
+ *       exactly like `turn/start`'s own arm; every other busy reason refuses outright
+ *    5. ENGINE CAPABILITY, but ONLY on the immediate (non-enqueued) path — an engine-swap window between
+ *       enqueue and drain is the queue drain's own problem (`submitRunner`/`requireSubmitContent`, already
+ *       proven end to end by queue-content-drain.test.ts's I3b cell), not a reason to refuse the enqueue
+ *    6. reserve, ATOMIC — takes every staged id or none (imageStage.ts's `reserve`)
+ *    7. assemble via `normalizeValidatedBlocks`, NEVER the full `normalizeTurnInput`: the staged blocks
+ *       were already decoded once, at stage completion (the validate-once contract Task 7 exists to keep),
+ *       and re-running the decode half of the normalizer would defeat the whole point of that cache
+ *    8. per-turn aggregate, from the reservation's own cached `decodedBytes` (no second decode either)
+ *    9. queue admission / begin — a refusal here happens before any turn id is minted (`enqueueTurn`'s own
+ *       invariant; `beginTurn`'s busy gate cannot fire here, since step 4 already established the thread
+ *       is not busy on this path, but the abort-on-refusal is kept for defensive symmetry)
+ *   10. commit — only now are the staged entries actually deleted */
+export const turnStartContent: Handler = (srv, ctx, id, params) => {
+  const parsed = turnStartContentParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const record = srv.registry.get(parsed.data.threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  const fleetRefusal = refuseFleetContent(record.origin);
+  if (fleetRefusal) { ctx.peer.replyError(id, fleetRefusal.code, fleetRefusal.message); return; }
+  const busyReason = threadBusyReason(record);
+  const enqueueArmed = busyReason === "turn" && parsed.data.queue === true;
+  if (busyReason && !enqueueArmed) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
+  if (!enqueueArmed) {
+    try { requireSubmitContent(record.session); }
+    catch (e) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, e instanceof Error ? e.message : String(e)); return; }
+  }
+  const reserved = srv.imageStages.reserve(ctx.connId, parsed.data.stagedImageIds);
+  if (!reserved.ok) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, reserved.message); return; }
+  const { reservation } = reserved;
+  const textBlock: UserContentBlock[] = parsed.data.text === undefined ? [] : [{ type: "text", text: parsed.data.text }];
+  const blocks = normalizeValidatedBlocks([...textBlock, ...reservation.blocks]);
+  if (reservation.decodedBytes > MAX_AGGREGATE_BYTES) {
+    srv.imageStages.abort(reservation.token);
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `turn's total image size exceeds the ${MAX_AGGREGATE_BYTES}-byte limit`);
+    return;
+  }
+  if (enqueueArmed) {
+    const q = enqueueTurn(record, blocks);
+    if (!q.ok) { srv.imageStages.abort(reservation.token); ctx.peer.replyError(id, ERR.BUSY, QUEUE_FULL[q.reason]); return; }
+    srv.imageStages.commit(reservation.token);
+    ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position });
+    const queued = queuedNotification(record.id, q.id, q.position);
+    srv.broadcast(record.id, queued.method, queued.params);
+    return;
+  }
+  const started = beginTurn(srv, ctx, id, record, submitRunner(srv, record, blocks));
+  if (!started) { srv.imageStages.abort(reservation.token); return; } // beginTurn already replied BUSY
+  srv.imageStages.commit(reservation.token);
 };
 
 /** `turn/steer` (X) — M2b Task 5, promoted from probe 103b (ALIVE: a mid-turn injection makes the model

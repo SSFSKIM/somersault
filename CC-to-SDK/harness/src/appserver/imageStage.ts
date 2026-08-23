@@ -28,6 +28,11 @@ export const MAX_STAGES_GLOBAL = 64;                        // per-connection ca
                                                              // under unbounded connections)
 export const STAGE_IDLE_MS = 60_000;                        // since the LAST chunk
 export const STAGE_ABSOLUTE_MS = 600_000;                   // 10 min per stage, from the first chunk
+/** F10 T-IMGREACH Task 10 (I3d): how often `AppServer` calls `sweep()` on its own registry instance —
+ *  well under `STAGE_IDLE_MS` so an abandoned stage's bytes are reclaimed promptly rather than riding
+ *  out most of its own idle window before the sweep even looks at it. Lives here, not in server.ts,
+ *  because it is a property of THIS module's own expiry policy, not of the transport wiring around it. */
+export const IMAGE_STAGE_SWEEP_INTERVAL_MS = 30_000;
 
 /** A single JSON-RPC-agnostic refusal code every `chunk()` failure carries. The wire mapping to a real
  *  JSON-RPC error code is the handler's job (Task 10) — this registry has no wire, so it needs SOME
