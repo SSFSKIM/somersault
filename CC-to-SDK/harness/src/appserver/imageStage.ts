@@ -270,20 +270,33 @@ export class ImageStageRegistry {
     }
   }
 
+  /** Drops every stage entry for `connId` (via `deleteEntry`, whether or not it is reserved — a reservation
+   *  does not shield a stage from its OWN connection dying) AND every `ReservationRecord` opened by that
+   *  connection. The second half is required, not optional: once the stage entries are gone, no caller can
+   *  ever `commit`/`abort` a token minted on this connection, so a record left in `this.reservations` would
+   *  sit there forever — unbounded growth under repeated connect→reserve→disconnect cycles that none of the
+   *  stage-side caps bound, because the stage entries themselves ARE reclaimed above. */
   dropConnection(connId: number): void {
     const ids = this.connStages.get(connId);
-    if (!ids) return;
-    for (const stageId of Array.from(ids)) {
-      const key = this.key(connId, stageId);
-      const entry = this.stages.get(key);
-      if (entry) this.deleteEntry(key, entry);
+    if (ids) {
+      for (const stageId of Array.from(ids)) {
+        const key = this.key(connId, stageId);
+        const entry = this.stages.get(key);
+        if (entry) this.deleteEntry(key, entry);
+      }
+    }
+    for (const [token, record] of Array.from(this.reservations)) {
+      if (record.connId === connId) this.reservations.delete(token);
     }
   }
 
-  /** READ-ONLY, for tests and for the server's own logging. Never a mutation seam. */
-  stats(): { stagedBytes: number; stageCount: number; reservedCount: number; connections: number } {
+  /** READ-ONLY, for tests and for the server's own logging. Never a mutation seam. `reservedCount` counts
+   *  stage ENTRIES still holding a token (drops to 0 once `dropConnection` deletes them); `reservationCount`
+   *  counts outstanding entries in `this.reservations` itself — the two can diverge only as a leak signal,
+   *  since every live reservation's stages are still in `this.stages` until commit/abort/dropConnection. */
+  stats(): { stagedBytes: number; stageCount: number; reservedCount: number; reservationCount: number; connections: number } {
     let reservedCount = 0;
     for (const entry of this.stages.values()) if (entry.reservedToken) reservedCount++;
-    return { stagedBytes: this.stagedBytes, stageCount: this.stages.size, reservedCount, connections: this.connStages.size };
+    return { stagedBytes: this.stagedBytes, stageCount: this.stages.size, reservedCount, reservationCount: this.reservations.size, connections: this.connStages.size };
   }
 }

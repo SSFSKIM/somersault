@@ -207,6 +207,17 @@ describe("I3a: validate-once and the reservation lifecycle", () => {
     expect(reg.reserve(1, ["b"]).ok).toBe(true);                     // nothing was taken by the failed call
   });
 
+  it("F10-T7 fix: dropConnection purges reservations opened on that connection, not just their stage entries", () => {
+    const { reg } = harness();
+    reg.chunk(1, chunkOf(PNG_1X1));
+    const r = reg.reserve(1, ["s1"]);
+    expect(r.ok).toBe(true);
+    expect(reg.stats().reservationCount).toBe(1);
+    reg.dropConnection(1);
+    expect(reg.stats().reservationCount).toBe(0);          // no leaked ReservationRecord for the dead connection
+    expect(() => reg.commit((r as any).reservation.token)).toThrow();  // token is truly dead, not just its stages
+  });
+
   it("I3a: commit releases the bytes; abort does not", () => {
     const { reg } = harness();
     reg.chunk(1, chunkOf(PNG_1X1));
