@@ -3,7 +3,7 @@
 import type { z } from "zod/v4";
 import { threadIdParams, initializeParams, okResult, serverStatusParams } from "./core.js";
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
-import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams } from "./turns.js";
+import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams, turnSteerContentParams } from "./turns.js";
 import { imageStageParams } from "./images.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./settings.js";
@@ -97,6 +97,9 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // and `turn/startContent` is the thread-scoped completion that resolves staged ids into blocks.
   "image/stage": { params: imageStageParams, experimental: true },
   "turn/startContent": { params: turnStartContentParams, experimental: true },
+  // Task 11 (I3e): the mid-turn twin, negotiated for the identical reason — an old server must answer
+  // METHOD_NOT_FOUND rather than accepting a widened `turn/steer` input it cannot honour.
+  "turn/steerContent": { params: turnSteerContentParams, experimental: true },
   "plugin/reload": { params: threadIdParams },
   "skill/reload": { params: threadIdParams },
   // M3 Task 7's adoption pair (§1e). STABLE, not experimental: neither rides an unproven SDK seam — both

@@ -13,6 +13,11 @@
 // refusal a client actually sees is the REGISTRY's own message (`... needs a mediaType in [...]`), proven
 // already at Task 7's unit level (image-stage.test.ts). The cells below assert that real message rather
 // than inventing a second one the handler would have to re-map.
+//
+// Task 11 (I3e) extends this file with `turn/steerContent` — the two handlers share ONE gate helper
+// (turns.ts's `prepareStagedContent`), so the cells below prove the two substitutions (gate 4: "no turn
+// in flight" instead of busy/enqueue; gate 5: `steerContent` instead of `submitContent`) rather than
+// re-deriving the fleet/reserve/assemble/aggregate gates a second time — those are already proven above.
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -21,7 +26,7 @@ import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { ImageStageRegistry, IMAGE_STAGE_CHUNK_MAX } from "../../../src/appserver/imageStage.js";
 import { imageStageParams } from "../../../src/appserver/schema/images.js";
-import { turnStartContentParams } from "../../../src/appserver/schema/turns.js";
+import { turnStartContentParams, turnSteerContentParams } from "../../../src/appserver/schema/turns.js";
 import { validateImageBlock, MAX_AGGREGATE_BYTES, type UserContentBlock, type UserTurnInput } from "../../../src/session/turnInput.js";
 import { emptyFlagPerms, type EngineSession, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
@@ -70,13 +75,17 @@ function boot(deps: Record<string, unknown> = {}) {
 }
 
 /** The default DI engine: `submitContent` records every call's FULL blocks array, in order, onto
- *  `contents` — the assertion surface every positive cell below reads. */
+ *  `contents` — the assertion surface every positive cell below reads. `steerContent` (Task 11) is the
+ *  same recording shape onto `steers`, so the I3e cells below can assert the exact blocks a steer
+ *  pushed without a second engine fixture. */
 function contentEngine() {
   const contents: UserContentBlock[][] = [];
+  const steers: UserContentBlock[][] = [];
   const submit = vi.fn(async () => ({ result: {} }));
   const submitContent = vi.fn(async (i: UserTurnInput) => { contents.push(i as UserContentBlock[]); return { result: "ok" }; });
-  const session: EngineSession = { submit, submitContent, interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {} };
-  return { session, contents, submit, submitContent };
+  const steerContent = vi.fn((i: UserTurnInput) => { steers.push(i as UserContentBlock[]); });
+  const session: EngineSession = { submit, submitContent, steerContent, interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {} };
+  return { session, contents, steers, submit, submitContent, steerContent };
 }
 
 /** Boots a real thread on the given (or default) engine, initializes and subscribes — the positive-path
@@ -320,5 +329,122 @@ describe("I3d: the sweep interval", () => {
   it("is unref'd — a staged image can never hold the process open", () => {
     const srv = new AppServer({}, {});
     expect(srv.imageStageSweepTimer.hasRef()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// I3e (Task 11): `turn/steerContent` — the mid-turn twin of `turn/startContent`. Both handlers run
+// `prepareStagedContent` (turns.ts), so every gate proven above (fleet origin, reserve, assemble via
+// normalizeValidatedBlocks, the aggregate cap, no second decode) already covers this method too; the
+// cells below exercise only what genuinely differs: gate 4 ("no turn in flight" instead of busy/enqueue)
+// and gate 5 (`steerContent` instead of `submitContent`).
+// ---------------------------------------------------------------------------------------------------
+
+/** An engine whose `submit` is PARKED (never resolves until `releaseSubmit` fires) — the same shape the
+ *  I3d queue-refusal cell above uses to get a thread genuinely mid-turn, extended with `submitContent`
+ *  and `steerContent` spies so a steer cell can assert BOTH what was pushed and what was NOT reached. */
+function parkedContentEngine() {
+  let releaseSubmit!: () => void;
+  const parked = new Promise<{ result: unknown }>((r) => { releaseSubmit = () => r({ result: {} }); });
+  const contents: UserContentBlock[][] = [];
+  const steers: UserContentBlock[][] = [];
+  const submit = vi.fn(() => parked);
+  const submitContent = vi.fn(async (i: UserTurnInput) => { contents.push(i as UserContentBlock[]); return { result: "ok" }; });
+  const steerContent = vi.fn((i: UserTurnInput) => { steers.push(i as UserContentBlock[]); });
+  const session: EngineSession = {
+    submit, submitContent, steerContent,
+    interrupt: async () => { releaseSubmit(); return {}; },
+    dispose: async () => {}, onFrame: () => () => {},
+  };
+  return { session, contents, steers, submit, submitContent, steerContent };
+}
+
+describe("I3e: schema — turnSteerContentParams", () => {
+  it("requires threadId and a non-empty stagedImageIds array, and carries no `queue` (a steer never enqueues)", () => {
+    expect(turnSteerContentParams.safeParse({ threadId: "t", stagedImageIds: ["a"] }).success).toBe(true);
+    expect(turnSteerContentParams.safeParse({ threadId: "t", text: "hi", stagedImageIds: ["a", "b"] }).success).toBe(true);
+    expect(turnSteerContentParams.safeParse({ stagedImageIds: ["a"] }).success).toBe(false); // missing threadId
+    expect(turnSteerContentParams.safeParse({ threadId: "t", stagedImageIds: [] }).success).toBe(false); // empty array
+    expect(turnSteerContentParams.safeParse({ threadId: "t", stagedImageIds: [""] }).success).toBe(false); // empty string id
+    expect(turnSteerContentParams.safeParse({ threadId: "t", stagedImageIds: "a" }).success).toBe(false); // wrong type
+    expect(turnSteerContentParams.safeParse({ threadId: "", stagedImageIds: ["a"] }).success).toBe(false); // empty threadId
+    // `queue` is not part of this method's shape at all — passing it is simply an unrecognized extra key,
+    // which zod's default (non-strict) object schema ignores rather than rejects.
+    expect(turnSteerContentParams.safeParse({ threadId: "t", stagedImageIds: ["a"], queue: true }).success).toBe(true);
+  });
+});
+
+describe("I3e: the positive mid-turn cell", () => {
+  it("a staged PNG reaches steerContent as exact, canonical blocks — no new turn starts", async () => {
+    const engine = parkedContentEngine();
+    const { client, threadId, srv } = await realPeerPair({ session: engine.session });
+    await client.call("turn/start", { threadId, input: "first" }); // now busy WITH A TURN
+    const before = srv.registry.get(threadId)!.currentTurnId;
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    await client.call("turn/steerContent", { threadId, text: "look", stagedImageIds: ["s1"] });
+    expect(engine.steers).toHaveLength(1);
+    const b64 = fixture("rgb8-64x48.png").toString("base64");
+    expect(engine.steers[0]).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
+    ]);
+    expect(engine.submitContent).not.toHaveBeenCalled(); // a steer never starts a new turn
+    expect(srv.registry.get(threadId)!.currentTurnId).toBe(before); // the running turn is unchanged
+  });
+});
+
+describe("I3e: gate 4 — eligibility is a property of the thread, not the engine build", () => {
+  it("on an idle thread, turn/steerContent answers \"no turn in flight\" and the stage stays reservable", async () => {
+    const engine = contentEngine();
+    const { client, registry, threadId } = await realPeerPair({ engine });
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    await expect(client.call("turn/steerContent", { threadId, stagedImageIds: ["s1"] })).rejects.toThrow(/no turn in flight/);
+    expect(registry.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 }); // never reserved — gate 4 runs before reserve
+    expect(engine.submitContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("I3e: gate 5 — steerContent is its OWN capability, never a submitContent fallback", () => {
+  it("an engine WITH submitContent but WITHOUT steerContent still refuses steering — a mis-route would start a new turn", async () => {
+    const parked = new Promise<{ result: unknown }>(() => {}); // never resolves — keeps the thread busy for the whole test
+    const submitContent = vi.fn(async () => ({ result: "ok" }));
+    const session: EngineSession = {
+      submit: () => parked, submitContent, interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {},
+    }; // no steerContent member at all
+    const { client, registry, threadId } = await realPeerPair({ session });
+    await client.call("turn/start", { threadId, input: "first" }); // busy with a turn — gate 4 passes
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    await expect(client.call("turn/steerContent", { threadId, stagedImageIds: ["s1"] })).rejects.toThrow(/engine does not support content steering/);
+    expect(registry.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 }); // refused before reservation
+    expect(submitContent).not.toHaveBeenCalled(); // never routed through the wrong capability
+  });
+});
+
+describe("I3e: old-server skew — turn/steerContent is negotiated, never assumed", () => {
+  it("dispatching against a handler map WITHOUT it answers METHOD_NOT_FOUND, and zero turns/steers run", async () => {
+    const engine = parkedContentEngine();
+    const { client, threadId, srv } = await realPeerPair({ session: engine.session });
+    await client.call("turn/start", { threadId, input: "first" });
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    delete (srv as unknown as { handlers: Record<string, unknown> }).handlers["turn/steerContent"];
+    await expect(client.call("turn/steerContent", { threadId, stagedImageIds: ["s1"] })).rejects.toMatchObject({ code: ERR.METHOD_NOT_FOUND });
+    expect(engine.submit).toHaveBeenCalledTimes(1); // only the original turn/start — the deleted method never ran
+    expect(engine.submitContent).not.toHaveBeenCalled();
+    expect(engine.steerContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("I3e: the fleet-origin content gate", () => {
+  it("refuses a fleet-origin thread with UNSUPPORTED_FOR_ORIGIN, touches no host op, and leaves the stage reservable", async () => {
+    const engine = contentEngine();
+    const { srv, call } = boot({ sessionFactory: () => engine.session as never });
+    await call("initialize", { clientInfo: { name: "t" } });
+    const threadId = addFleetRecord(srv, engine.session);
+    await stageWhole({ call }, "s1", fixture("rgb8-64x48.png"), "image/png");
+    await expect(call("turn/steerContent", { threadId, stagedImageIds: ["s1"] })).rejects.toMatchObject({ code: ERR.UNSUPPORTED_FOR_ORIGIN });
+    expect(engine.submit).not.toHaveBeenCalled();
+    expect(engine.submitContent).not.toHaveBeenCalled();
+    expect(engine.steerContent).not.toHaveBeenCalled();
+    expect(srv.imageStages.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 });
   });
 });

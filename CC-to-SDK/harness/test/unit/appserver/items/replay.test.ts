@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { TurnMapper } from "../../../../src/appserver/items/mapper.js";
 import { itemsFromTranscript } from "../../../../src/appserver/items/replay.js";
+import { flattenForDisplay, type UserTurnInput } from "../../../../src/session/turnInput.js";
 import type { Item } from "../../../../src/appserver/items/types.js";
 const frames = [
   { type: "user", uuid: "u-p", message: { content: "run ls" } },
@@ -60,5 +61,27 @@ describe("itemsFromTranscript", () => {
       { type: "user", uuid: "u-r", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "file.txt" }] } },
     ];
     expect(itemsFromTranscript(withPhantoms)).toEqual(itemsFromTranscript(frames)); // identical to the phantom-free fixture
+  });
+
+  // I3e (Task 11): the persisted content array for an image turn is exactly `UserContentBlock[]` —
+  // `session.ts`'s `userTurn` builds the SDKUserMessage from `normalizeTurnInput(input)`, the SAME wire
+  // shape `turns.ts`'s `submitRunner` flattens live via `flattenForDisplay(input)` — so proving replay.ts
+  // now calls the identical function on the identical block shape IS the "replayed equals live" claim:
+  // both sides are one function's output, never two flatteners that happen to agree today.
+  it("I3e: an image-turn frame flattens through flattenForDisplay — replayed text is byte-identical to the live path's, [Image #N] label included", () => {
+    const blocks: UserTurnInput = [
+      { type: "text", text: "hi " },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+    ];
+    const liveText = flattenForDisplay(blocks); // exactly what turns.ts's submitRunner emits live
+    const frame = { type: "user", uuid: "u-img", message: { content: blocks } };
+    expect(itemsFromTranscript([frame])).toEqual([{ type: "userMessage", id: "u-img", text: liveText }]);
+    expect(liveText).toBe("hi [Image #1]");
+  });
+
+  it("I3e: an image-only frame (no text block) still labels the image — the I1 stranding label survives replay too", () => {
+    const blocks: UserTurnInput = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }];
+    const frame = { type: "user", uuid: "u-img2", message: { content: blocks } };
+    expect(itemsFromTranscript([frame])).toEqual([{ type: "userMessage", id: "u-img2", text: flattenForDisplay(blocks) }]);
   });
 });

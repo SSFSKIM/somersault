@@ -17,7 +17,7 @@ import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { cancelQueued, enqueueTurn, flushQueue, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_ENTRY_BYTES, MAX_QUEUED_TURNS, type QueuedTurn } from "./queue.js";
-import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams } from "./schema/turns.js";
+import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams, turnSteerContentParams } from "./schema/turns.js";
 import { flattenForDisplay, normalizeValidatedBlocks, MAX_AGGREGATE_BYTES, type UserTurnInput, type UserContentBlock } from "../session/turnInput.js";
 
 const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buffer (reset every turn/start), drop-oldest
@@ -518,69 +518,152 @@ export const turnStart: Handler = (srv, ctx, id, params) => {
   beginTurn(srv, ctx, id, record, submitRunner(srv, record, parsed.data.input));
 };
 
-/** `turn/startContent` (F10 T-IMGREACH Task 10/I3d): the wire completion of a staged-image turn — the
- *  handler side of the `image/stage` + `turn/startContent` pair, both registered `experimental: true`
- *  (schema/index.ts) because an old server must answer METHOD_NOT_FOUND for either rather than silently
- *  accepting a widened `turn/start` and running a text-only turn with nobody told (the F9 failure this
- *  whole track exists to end).
- *
- *  THE GATE ORDER IS THE CORRECTNESS (task brief) — every refusal below runs BEFORE the reservation it
- *  would otherwise have to unwind, and every refusal that lands AFTER the reservation aborts it rather
- *  than leaking it:
- *    1. params            -> INVALID_PARAMS
+/** The result of `prepareStagedContent`'s gates 1-8 (params validation stays with each caller, since the
+ *  two methods' param shapes differ): the blocks are assembled and capped, the reservation is live, and
+ *  `enqueueArmed` tells the caller which of its OWN step-9/10 arms to run. Returned only on a path that
+ *  did NOT already reply — every refusal below replies for itself and returns `undefined` instead. */
+interface PreparedContent { record: ThreadRecord; blocks: UserContentBlock[]; token: string; enqueueArmed: boolean }
+
+/** Gates 2-8 of the staged-image content pipeline, shared byte-for-byte by `turn/startContent` (Task
+ *  10/I3d) and `turn/steerContent` (Task 11/I3e) — the task brief's "one helper, not two copies of ten
+ *  gates". THE GATE ORDER IS THE CORRECTNESS (both briefs): every refusal below runs BEFORE the
+ *  reservation it would otherwise have to unwind, and every refusal that lands AFTER the reservation
+ *  aborts it rather than leaking it:
  *    2. thread lookup     -> THREAD_NOT_FOUND
  *    3. fleet origin gate -> UNSUPPORTED_FOR_ORIGIN (F10 ships no fleet staging client — a fact about the
  *       ORIGIN, `refuseFleetContent`, fleetEngine.ts — never an absent-capability accident)
- *    4. busy gate / enqueue arm — `queue:true` on a thread busy WITH A TURN enqueues instead of refusing,
- *       exactly like `turn/start`'s own arm; every other busy reason refuses outright
- *    5. ENGINE CAPABILITY, but ONLY on the immediate (non-enqueued) path — an engine-swap window between
- *       enqueue and drain is the queue drain's own problem (`submitRunner`/`requireSubmitContent`, already
- *       proven end to end by queue-content-drain.test.ts's I3b cell), not a reason to refuse the enqueue
+ *    4. THE ONE GATE THAT GENUINELY DIFFERS PER CALLER, injected as `busyGate`: `turn/startContent`
+ *       enqueues on "busy WITH A TURN" when `queue:true`; `turn/steerContent` has no queue at all and
+ *       instead REQUIRES a turn in flight ("no turn in flight" otherwise, mirroring `turnSteer`'s own
+ *       gate). The callback replies its OWN refusal (the two wire errors are shaped differently) and
+ *       returns `undefined` to signal "already answered"; `{enqueueArmed}` to proceed.
+ *    5. THE OTHER GATE THAT DIFFERS, injected as `requireCapability`: `requireSubmitContent` for
+ *       `turn/startContent`, `requireSteerContent` for `turn/steerContent` — Task 9's two capabilities,
+ *       never routed through each other. Checked ONLY on the immediate (non-enqueued) path: an
+ *       engine-swap window between enqueue and drain is the queue drain's own problem
+ *       (`submitRunner`/`requireSubmitContent`, already proven by queue-content-drain.test.ts's I3b
+ *       cell), not a reason to refuse the enqueue — and `turn/steerContent` never enqueues, so this
+ *       check always runs on that path.
  *    6. reserve, ATOMIC — takes every staged id or none (imageStage.ts's `reserve`)
  *    7. assemble via `normalizeValidatedBlocks`, NEVER the full `normalizeTurnInput`: the staged blocks
  *       were already decoded once, at stage completion (the validate-once contract Task 7 exists to keep),
  *       and re-running the decode half of the normalizer would defeat the whole point of that cache
  *    8. per-turn aggregate, from the reservation's own cached `decodedBytes` (no second decode either)
- *    9. queue admission / begin — a refusal here happens before any turn id is minted (`enqueueTurn`'s own
- *       invariant; `beginTurn`'s busy gate cannot fire here, since step 4 already established the thread
- *       is not busy on this path, but the abort-on-refusal is kept for defensive symmetry)
- *   10. commit — only now are the staged entries actually deleted */
-export const turnStartContent: Handler = (srv, ctx, id, params) => {
-  const parsed = turnStartContentParams.safeParse(params);
-  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const record = srv.registry.get(parsed.data.threadId);
-  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+ *  Gates 9 (queue admission/begin vs. push onto the live prompt stream) and 10 (commit) are NOT shared:
+ *  they are the one place the two methods are not the same operation at all, so they stay in each
+ *  handler below. */
+function prepareStagedContent(
+  srv: AppServer, ctx: ConnCtx, id: RequestId, threadId: string, text: string | undefined, stagedImageIds: string[],
+  busyGate: (record: ThreadRecord) => { enqueueArmed: boolean } | undefined,
+  requireCapability: (session: EngineSession) => unknown,
+): PreparedContent | undefined {
+  const record = srv.registry.get(threadId);
+  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return undefined; }
   const fleetRefusal = refuseFleetContent(record.origin);
-  if (fleetRefusal) { ctx.peer.replyError(id, fleetRefusal.code, fleetRefusal.message); return; }
-  const busyReason = threadBusyReason(record);
-  const enqueueArmed = busyReason === "turn" && parsed.data.queue === true;
-  if (busyReason && !enqueueArmed) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return; }
-  if (!enqueueArmed) {
-    try { requireSubmitContent(record.session); }
-    catch (e) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, e instanceof Error ? e.message : String(e)); return; }
+  if (fleetRefusal) { ctx.peer.replyError(id, fleetRefusal.code, fleetRefusal.message); return undefined; }
+  const gated = busyGate(record);
+  if (!gated) return undefined; // busyGate already replied its own refusal
+  if (!gated.enqueueArmed) {
+    try { requireCapability(record.session); }
+    catch (e) { ctx.peer.replyError(id, ERR.METHOD_NOT_FOUND, e instanceof Error ? e.message : String(e)); return undefined; }
   }
-  const reserved = srv.imageStages.reserve(ctx.connId, parsed.data.stagedImageIds);
-  if (!reserved.ok) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, reserved.message); return; }
+  const reserved = srv.imageStages.reserve(ctx.connId, stagedImageIds);
+  if (!reserved.ok) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, reserved.message); return undefined; }
   const { reservation } = reserved;
-  const textBlock: UserContentBlock[] = parsed.data.text === undefined ? [] : [{ type: "text", text: parsed.data.text }];
+  const textBlock: UserContentBlock[] = text === undefined ? [] : [{ type: "text", text }];
   const blocks = normalizeValidatedBlocks([...textBlock, ...reservation.blocks]);
   if (reservation.decodedBytes > MAX_AGGREGATE_BYTES) {
     srv.imageStages.abort(reservation.token);
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, `turn's total image size exceeds the ${MAX_AGGREGATE_BYTES}-byte limit`);
-    return;
+    return undefined;
   }
+  return { record, blocks, token: reservation.token, enqueueArmed: gated.enqueueArmed };
+}
+
+/** `turn/startContent` (F10 T-IMGREACH Task 10/I3d): the wire completion of a staged-image turn — the
+ *  handler side of the `image/stage` + `turn/startContent` pair, both registered `experimental: true`
+ *  (schema/index.ts) because an old server must answer METHOD_NOT_FOUND for either rather than silently
+ *  accepting a widened `turn/start` and running a text-only turn with nobody told (the F9 failure this
+ *  whole track exists to end). Gates 2-8 run inside `prepareStagedContent`; steps 9-10 (queue admission
+ *  or begin, then commit) are this method's own, since a fresh turn is what makes it `turn/startContent`
+ *  rather than `turn/steerContent`. */
+export const turnStartContent: Handler = (srv, ctx, id, params) => {
+  const parsed = turnStartContentParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const prepared = prepareStagedContent(
+    srv, ctx, id, parsed.data.threadId, parsed.data.text, parsed.data.stagedImageIds,
+    (record) => {
+      // Gate 4 (`turn/start`'s own arm, verbatim): `queue:true` on a thread busy WITH A TURN enqueues
+      // instead of refusing; every other busy reason refuses outright with the reason named.
+      const busyReason = threadBusyReason(record);
+      const enqueueArmed = busyReason === "turn" && parsed.data.queue === true;
+      if (busyReason && !enqueueArmed) { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return undefined; }
+      return { enqueueArmed };
+    },
+    requireSubmitContent,
+  );
+  if (!prepared) return;
+  const { record, blocks, token, enqueueArmed } = prepared;
+  // Step 9: queue admission (a refusal here happens before any turn id is minted, `enqueueTurn`'s own
+  // invariant) or begin (`beginTurn`'s busy gate cannot fire here, since gate 4 already established the
+  // thread is not busy on this path, but the abort-on-refusal is kept for defensive symmetry).
   if (enqueueArmed) {
     const q = enqueueTurn(record, blocks);
-    if (!q.ok) { srv.imageStages.abort(reservation.token); ctx.peer.replyError(id, ERR.BUSY, QUEUE_FULL[q.reason]); return; }
-    srv.imageStages.commit(reservation.token);
+    if (!q.ok) { srv.imageStages.abort(token); ctx.peer.replyError(id, ERR.BUSY, QUEUE_FULL[q.reason]); return; }
+    srv.imageStages.commit(token); // step 10 — only now are the staged entries actually deleted
     ctx.peer.reply(id, { queued: true, turn: { id: q.id, status: "queued" }, position: q.position });
     const queued = queuedNotification(record.id, q.id, q.position);
     srv.broadcast(record.id, queued.method, queued.params);
     return;
   }
   const started = beginTurn(srv, ctx, id, record, submitRunner(srv, record, blocks));
-  if (!started) { srv.imageStages.abort(reservation.token); return; } // beginTurn already replied BUSY
-  srv.imageStages.commit(reservation.token);
+  if (!started) { srv.imageStages.abort(token); return; } // beginTurn already replied BUSY
+  srv.imageStages.commit(token); // step 10
+};
+
+/** `turn/steerContent` (F10 T-IMGREACH Task 11/I3e): the mid-turn twin of `turn/startContent` — a
+ *  content-carrying injection onto the RUNNING turn's own input stream, never a new turn. Gates 2-8 are
+ *  `prepareStagedContent`'s (shared, byte-for-byte, with `turn/startContent` above); the two
+ *  substitutions the task brief calls for are gate 4 and gate 5 below.
+ *
+ *  Gate 4 mirrors `turnSteer`'s own eligibility check exactly (see that handler's header for the full
+ *  reasoning): eligibility is `record.busy && record.turnStartedBroadcast`, not `busy` alone — a
+ *  same-tick `turn/start`+`turn/steerContent` pair, or any turn whose chain callback is parked behind
+ *  earlier engine I/O, would otherwise let this jump ahead of the prompt it means to steer. "closing"/
+ *  "swapping" answer the standard -33001 (there is no turn a steer could reach); idle answers -32602 "no
+ *  turn in flight" — the busy convention's inverse, since nothing about the thread is unavailable, the
+ *  request simply has no referent. There is no enqueue arm at all: `turnSteerContentParams` carries no
+ *  `queue`, so `enqueueArmed` is always `false` here and gate 5 always runs.
+ *
+ *  Gate 5 is `requireSteerContent`, never `requireSubmitContent` — routing through the wrong capability
+ *  would either start a brand-new turn (`submitContent`) or hand an array to a string-only `steer`
+ *  member, both of which Task 9's two-capability split exists to prevent.
+ *
+ *  No queue admission, no `beginTurn`, no turn/started, no item broadcast — pushing onto the engine's
+ *  own input queue is all a steer ever does (`turnSteer`'s own header: "a steer is not a turn edge"),
+ *  so step 9 here is just the capability call, and step 10 is the same commit every content method
+ *  ends on. */
+export const turnSteerContent: Handler = (srv, ctx, id, params) => {
+  const parsed = turnSteerContentParams.safeParse(params);
+  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  const prepared = prepareStagedContent(
+    srv, ctx, id, parsed.data.threadId, parsed.data.text, parsed.data.stagedImageIds,
+    (record) => {
+      const busyReason = threadBusyReason(record);
+      if (busyReason && busyReason !== "turn") { ctx.peer.replyError(id, ERR.BUSY, `Thread is busy (${busyReason})`); return undefined; }
+      if (!(record.busy && record.turnStartedBroadcast)) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "no turn in flight"); return undefined; }
+      return { enqueueArmed: false };
+    },
+    requireSteerContent,
+  );
+  if (!prepared) return;
+  const { record, blocks, token } = prepared;
+  requireSteerContent(record.session)(blocks); // step 9 — already proven present by gate 5 above
+  record.updatedAt = nowSec(); // the content half of `turnSteer`'s own bump
+  srv.imageStages.commit(token); // step 10
+  // {ok:true} means "the injection was pushed onto the live input stream", exactly `turnSteer`'s own
+  // contract — whether it changed the turn's course is visible only in that turn's own output.
+  ctx.peer.reply(id, { ok: true });
 };
 
 /** `turn/steer` (X) — M2b Task 5, promoted from probe 103b (ALIVE: a mid-turn injection makes the model

@@ -13,7 +13,7 @@ import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt, turnSteer, turnStartContent, requestInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, turnSteer, turnStartContent, turnSteerContent, requestInterrupt } from "./turns.js";
 import { ImageStageRegistry, IMAGE_STAGE_SWEEP_INTERVAL_MS } from "./imageStage.js";
 import { imageStageParams } from "./schema/images.js";
 import { flushQueue } from "./queue.js";
@@ -515,6 +515,7 @@ export class AppServer {
     },
     "turn/start": turnStart,
     "turn/startContent": turnStartContent,
+    "turn/steerContent": turnSteerContent,
     "turn/interrupt": turnInterrupt,
     "thread/subscribe": threadSubscribe,
     "thread/unsubscribe": threadUnsubscribe,

@@ -24,3 +24,11 @@ export const turnStartContentParams = z.object({
   threadId: z.string().min(1), text: z.string().optional(),
   stagedImageIds: z.array(z.string().min(1)).min(1), queue: z.boolean().optional(),
 });
+/** `turn/steerContent` (F10 T-IMGREACH Task 11/I3e): the content-carrying twin of `turn/steer` — a
+ *  mid-turn injection whose blocks may include images. No `queue` (a steer targets the turn running
+ *  RIGHT NOW, exactly like `turnSteerParams`; there is nothing to enqueue) and no `turnId` for the same
+ *  reason `turn/steer` has none. Otherwise identical to `turnStartContentParams`'s content fields. */
+export const turnSteerContentParams = z.object({
+  threadId: z.string().min(1), text: z.string().optional(),
+  stagedImageIds: z.array(z.string().min(1)).min(1),
+});

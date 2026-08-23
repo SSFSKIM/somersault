@@ -82,6 +82,31 @@
         "stagedImageIds"
       ],
       "additionalProperties": false
+    },
+    "turn/steerContent": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "stagedImageIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "threadId",
+        "stagedImageIds"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {}
