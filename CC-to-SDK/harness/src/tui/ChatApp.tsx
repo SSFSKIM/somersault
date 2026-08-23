@@ -1063,6 +1063,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (SELECTION_CLEAR_EXEMPT_BARE.has(e.name)) return false;
       if ((e.name === "home" || e.name === "end") && e.ctrl) return false;
       if (SELECTION_EXTEND_KEYS.has(e.name) && (e.shift || e.alt || e.super)) return false;
+      // F10 T-SELECT Task 7 fix — canon L551764-551772: the pre-table plain-ctrl+c intercept above (line
+      // 1057, gated on `!e.shift`) coexists with the two BINDABLE copy chords (`ctrl+shift+c`, `cmd+c` →
+      // `selection:copy`, Task 3/S3, bindings.ts:192) rather than shadowing them. Without this exemption
+      // both chords fall through to the discard below before the table's own `hasSelection()`-gated
+      // handler ever runs, so neither chord could ever copy anything — the exact cross-task defect this
+      // fix closes.
+      if (e.name === "c" && ((e.ctrl && e.shift) || e.super)) return false;
     }
     hitmapRef.current?.discardSelection();
     copyLatchRef.current = false;
