@@ -45,6 +45,7 @@ export class LiveTurn {
   // source is LOCAL ARRIVAL, measured here, which the probe showed tracks the wire to within 1–14 ms
   // over an 8.5 s span (the SDK spawns the CLI on this very host; it is the same clock).
   private msgId?: string;                                 // id of the API message currently streaming (message_start)
+  private msgOrdinal = 0;                                 // F10 T-HOVER: bumped on every message_start, the fallback hover key
   private openThinking = new Map<string, number>();       // `${msgId}:${index}` → local arrival of its content_block_start
   private thoughtMs = new Map<string, number>();          // message id → summed ms of its STOPPED thinking blocks
   // ── Wave C Task 6: the spinner meter ─────────────────────────────────────────────────────────────
@@ -99,6 +100,12 @@ export class LiveTurn {
       ...(this.burst && { lastBurst: this.burst }),
     };
   }
+
+  /** F10 T-HOVER: the in-flight API message, as a hover key. `message_start` clears `current` and a completed
+   *  assistant message clears it too (`ingest`), so the region NEVER holds two messages at once — this value
+   *  changes exactly when the hover unit does. The ordinal fallback exists because `message_start.message.id`
+   *  is optional on the wire (P82) and a hover key may not be undefined. */
+  messageKey(): string { return this.msgId ?? `#${this.msgOrdinal}`; }
 
   /** Assistant `message.id` → total thinking ms observed on THIS turn's wire. A stopped block is frozen at
    *  its `content_block_stop` arrival; a block still open reports elapsed-so-far against `now`, so a caller
@@ -164,6 +171,7 @@ export class LiveTurn {
     if (e.type === "message_start") {
       this.committedTokens += this.currentMsgTokens; this.currentMsgTokens = 0; this.current = [];
       this.msgId = typeof e.message?.id === "string" && e.message.id ? e.message.id : undefined;
+      this.msgOrdinal++;
       return;
     }
     if (e.type === "content_block_start") {

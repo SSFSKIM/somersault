@@ -17,7 +17,7 @@ import { createSelectionState, type SelectionState } from "../../src/tui/mouse/s
  *  required `ownerKey` field to `HitRow`, has exactly ONE place in this file to extend — this module never
  *  references `ownerKey` itself. */
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
-  itemKey: "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
+  itemKey: "k", ownerKey: overrides.itemKey ?? "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
   charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
 });
 

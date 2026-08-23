@@ -22,7 +22,7 @@ import { documentSelectionText } from "../../src/tui/mouse/documentText.js";
 // `selectionAddress.test.ts`'s own `mkRow` factory, reused verbatim (this file's fixtures are ASCII,
 // gutter-free, single-width rows throughout, so column N is always char index N-1).
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
-  itemKey: "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
+  itemKey: "k", ownerKey: overrides.itemKey ?? "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
   charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
 });
 

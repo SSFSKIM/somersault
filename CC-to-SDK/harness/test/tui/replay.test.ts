@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { replayDocument } from "../../src/tui/replay.js";
-import { projectCompact, projectDetail } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectDetail, localOwnerKey } from "../../src/tui/toolRenderer.js";
 import { READ_CALL, READ_RESULT_FLAT, NESTED_READ_CALL } from "../fixtures/f1-tool-transcript.js";
 
 // Shared by every projection assertion in this task; Task 7 uses the identical shape.
@@ -29,8 +29,8 @@ const toolRows = (items: readonly { kind: string; id: string }[]) =>
 describe("replayDocument", () => {
   it("frames the replay with a derived header (label · turns · hh:mm) and a live divider", () => {
     const items = projectCompact(replayDocument([userText("fix the parser"), asstText("done")], {}), projectionOptions);
-    expect(items[0]).toEqual({ kind: "line", id: "local:replay:session:head:line:0", line: { text: "─── resumed: fix the parser · 1 turn · 15:58 ───", dim: true } });
-    expect(items.at(-1)).toEqual({ kind: "line", id: "local:replay:session:live:line:0", line: { text: "─── resumed here · live ───", dim: true } });
+    expect(items[0]).toEqual({ kind: "line", id: "local:replay:session:head:line:0", ownerKey: localOwnerKey("replay:session:head"), line: { text: "─── resumed: fix the parser · 1 turn · 15:58 ───", dim: true } });
+    expect(items.at(-1)).toEqual({ kind: "line", id: "local:replay:session:live:line:0", ownerKey: localOwnerKey("replay:session:live"), line: { text: "─── resumed here · live ───", dim: true } });
   });
   // `frame: false` (wave2 T8) is for a surface that only READS a transcript — the /resume preview pane, which
   // is not rejoining anything and must not claim to be live. Everything but the two dividers is unaffected.
@@ -124,7 +124,11 @@ describe("replayDocument", () => {
   it("projects the same complete local line payload and stable ID in compact and detail", () => {
     const doc = new TranscriptDocument(); doc.appendFollowGap("follow-gap:7"); doc.appendLocal({ kind: "visual", lines: [{ text: "Usage: /help" }, { text: "second", dim: true }] }, "help:7");
     for (const items of [projectCompact(doc, projectionOptions), projectDetail(doc, { ...projectionOptions, projection: "detail-all" })]) {
-      expect(items).toEqual(expect.arrayContaining([{ kind: "line", id: "local:follow-gap:7:line:0", line: { text: "Earlier live output unavailable while attaching", dim: true } }, { kind: "line", id: "local:help:7:line:0", line: { text: "Usage: /help" } }, { kind: "line", id: "local:help:7:line:1", line: { text: "second", dim: true } }]));
+      expect(items).toEqual(expect.arrayContaining([
+        { kind: "line", id: "local:follow-gap:7:line:0", ownerKey: localOwnerKey("follow-gap:7"), line: { text: "Earlier live output unavailable while attaching", dim: true } },
+        { kind: "line", id: "local:help:7:line:0", ownerKey: localOwnerKey("help:7"), line: { text: "Usage: /help" } },
+        { kind: "line", id: "local:help:7:line:1", ownerKey: localOwnerKey("help:7"), line: { text: "second", dim: true } },
+      ]));
     }
   });
   it("publishes local visual output before the later result-anchored tool row in compact and detail", () => {

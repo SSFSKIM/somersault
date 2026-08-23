@@ -62,6 +62,14 @@ import { bufferText, rebuildChips, type EditorState, type PastedMap } from "./ed
  *  mint is `"now"` and the ladder that would use the other two (`getCommandsByMaxPriority`, L149130) is not
  *  ported, so the field is carried, not invented. `origin` is the other half of `P5`'s check. */
 export interface QueueEntry {
+  /** F10 T-HOVER (r3): stable for this entry's whole life in the queue, and never reused. `useChat.ts`'s
+   *  `makeQueueEntry` mints it from a monotonic per-session counter. ccx renders queued prompts INTO the
+   *  transcript document (`queuedTranscriptItems`), where every item needs an identity that survives its
+   *  neighbours being drained — the queue's head drain (`useChat.ts`'s `drainNext`, `q.slice(1)`) shifts every
+   *  survivor down one slot while the pointer has not moved, so a hover/React key derived from ARRAY POSITION
+   *  is a key the survivors INHERIT. Upstream has no such need — its queue paints in a band it rebuilds
+   *  wholesale. */
+  id: string;
   value: string;
   mode: "prompt" | "bash";
   priority: "now";

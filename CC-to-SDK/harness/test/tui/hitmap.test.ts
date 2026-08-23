@@ -159,8 +159,32 @@ describe("F10 S4 — HitRow carries the SOURCE range, minted at wrap time (or it
   });
 });
 
+// ── F10 T-HOVER H1: HitRow.ownerKey — the hover unit, through the real publish path ─────────────────────
+describe("hitRowsOf publishes HitRow.ownerKey — message-level, not per-row", () => {
+  const proseFS = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 80, now: 0 };
+  const proseDoc = (text: string, id: string): readonly RenderItem[] => {
+    const d = new TranscriptDocument();
+    d.appendSdk("host", { type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "text", text }] } });
+    return projectCompact(d, proseFS);
+  };
+
+  it("every painted row of one multi-line message carries that message's ownerKey, and its own itemKey", () => {
+    const rows = publish(proseDoc("alpha\nbeta\ngamma", "m1"), 80);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(rows.map((r) => r.ownerKey)).size).toBe(1);
+    expect(new Set(rows.map((r) => r.itemKey)).size).toBe(rows.length);   // itemKey stays per-item
+  });
+
+  it("a wrap fragment keeps both keys of the row it came from", () => {
+    const rows = publish(proseDoc("x".repeat(100), "m2"), 20);           // narrow width forces wrapping
+    expect(rows.length).toBeGreaterThan(1);                              // premise: it really wrapped
+    expect(new Set(rows.map((r) => r.ownerKey)).size).toBe(1);
+    expect(new Set(rows.map((r) => r.itemKey)).size).toBe(1);            // one source item, one itemKey
+  });
+});
+
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
-  itemKey: "k", width: stringWidth(overrides.text), gutterWidth: 0, softWrap: "hard", kind: "line",
+  itemKey: "k", ownerKey: "o", width: stringWidth(overrides.text), gutterWidth: 0, softWrap: "hard", kind: "line",
   charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
 });
 

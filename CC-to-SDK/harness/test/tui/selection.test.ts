@@ -30,7 +30,7 @@ import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 // would silently truncate every full-row span computed against it.
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => {
   const gutterWidth = overrides.gutterWidth ?? 0;
-  return { itemKey: "k", width: gutterWidth + stringWidth(overrides.text), gutterWidth, softWrap: "hard", kind: "line",
+  return { itemKey: "k", ownerKey: "o", width: gutterWidth + stringWidth(overrides.text), gutterWidth, softWrap: "hard", kind: "line",
     charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides };
 };
 

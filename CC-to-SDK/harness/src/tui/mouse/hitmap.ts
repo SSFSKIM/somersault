@@ -25,9 +25,17 @@ import type { RenderLine } from "../render.js";
  *  streams in above it, which would silently repoint every later row's identity at the wrong source item on
  *  the very next frame. `wrapItems.ts`'s `sourceId` is how a caller recovers it from a (possibly wrap-
  *  fragmented) `RenderItem.id` — every fragment of one wrapped item resolves to the SAME `sourceId`, which is
- *  what makes "all wrap fragments of one item share one key" true by construction rather than by convention. */
+ *  what makes "all wrap fragments of one item share one key" true by construction rather than by convention.
+ *
+ *  `ownerKey` (F10 T-HOVER, H1) is the HOVER unit — `item.ownerKey ?? sourceId(item.id)`, always a real
+ *  string so no consumer needs the `??` a second time. `itemKey` KEEPS ITS MEANING: it is still the source
+ *  ITEM's durable id, and a later track's character-offset addressing keys its own state on it — a coarser
+ *  value there would collide two items' offset spaces. `ownerKey` is coarser ON PURPOSE (canon's hover unit
+ *  is one whole SDK message, not one line/call), which is exactly why the two fields cannot be collapsed
+ *  into one. */
 export interface HitRow {
   itemKey: string;
+  ownerKey: string;
   anchor?: string;
   width: number;
   text: string;
