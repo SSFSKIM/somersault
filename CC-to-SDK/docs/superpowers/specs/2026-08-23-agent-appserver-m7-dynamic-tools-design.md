@@ -24,6 +24,12 @@ matching elicitation).
 
 ### Declaration — `thread/start` (and `thread/resume`, rev 2p) gain `dynamicTools`
 
+**Downgrade detection (rev 3, planning round 7 — the F9 lesson):** an OLD server's `z.object` silently
+STRIPS the unknown optional field and starts the thread toolless — no refusal, no signal. The server's
+capability surface (`initialize` result or `server/status`, whichever carries capabilities) therefore
+gains a `dynamicTools: true` marker; a client that intends to declare MUST check it and treat its
+absence as "this server cannot host my tools".
+
 A typed param BESIDE `config`, so the config identity guard is untouched — and so the declarations are
 **never part of config at all**: they live in dedicated thread state (below), which is what keeps
 `review/start`'s config inheritance and the `extraOptions` merge structurally unable to carry or
