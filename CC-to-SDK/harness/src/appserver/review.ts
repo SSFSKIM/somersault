@@ -24,6 +24,7 @@ import { harvestFindings, type ReviewFinding } from "./reviewFindings.js";
 import { reviewStartParams } from "./schema/review.js";
 import { turnFailureOf } from "../session/turnResult.js";
 import { READONLY_DISALLOW } from "../config/agents.js";
+import { SESSION_IDENTITY, stripIdentityHatch } from "./sessionIdentity.js";
 
 /** Names the path that DOES work, because "not supported" without it leaves a client guessing whether the
  *  method exists at all (D-M4-2 is a deferral, not a rejection of the idea). */
@@ -35,13 +36,6 @@ const INLINE_REFUSAL =
  *  the thread that was named, and silently substituting this server's tree would report another repo's
  *  defects against this thread. */
 const NO_CWD = "the target thread's working directory is unknown, so there is nothing to root a review at";
-
-/** Every knob that names, reopens or re-anchors an EXISTING conversation — in this repo's vocabulary
- *  (config/types.ts) and then in the SDK's own, since `extraOptions` reaches `Options` directly. Kept as two
- *  lists rather than one mapping because they are two different wires, and a rename on either side should
- *  fail loudly here rather than silently stop stripping. */
-const SESSION_IDENTITY = ["resume", "resumeAt", "droppedTurnUuid", "forkSession", "sessionId", "continueSession"] as const;
-const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn", "forkSession", "sessionId", "continue"] as const;
 
 /** The review thread's start config: the TARGET's, re-rooted and read-only.
  *
@@ -57,9 +51,11 @@ const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn"
  *     target's session id, `continueSession` reopens the most recent conversation in the cwd — which is the
  *     target's, since we just re-rooted there — and `resumeAt`/`droppedTurnUuid`/`forkSession` are the same
  *     anchor by other names. Stripping one of the six is not a detached review. The list is dropped TWICE,
- *     once in this vocabulary and once in the SDK's, because `extraOptions` is inherited too and reaches the
- *     SDK `Options` without passing through a typed field at all (resolveOptions.ts). (The broker needs no
- *     such care — the creation spine overwrites it with the review thread's own.)
+ *     once in this vocabulary and once in the SDK's (`stripIdentityHatch`), because `extraOptions` is
+ *     inherited too and reaches the SDK `Options` without passing through a typed field at all
+ *     (resolveOptions.ts). Both lists are sessionIdentity.ts's, shared with the swap family that needs the
+ *     same two strips. (The broker needs no such care — the creation spine overwrites it with the review
+ *     thread's own.)
  *   - the edit tools are disallowed — see below.
  *
  *  READ-ONLY IN POLICY, NOT ONLY IN THE PROMPT — AND THIS IS RISK REDUCTION, NOT A GUARANTEE. The prompt
@@ -97,14 +93,8 @@ const SESSION_IDENTITY_OPTIONS = ["resume", "resumeSessionAt", "resumeDropsTurn"
  *  that, a target carrying `{cwd, disallowedTools}` in its escape hatch turned this whole function into a
  *  suggestion (its `SERVER_OWNED` note is the other half of this one). */
 function reviewConfig(target: ThreadRecord, cwd: string): Record<string, unknown> {
-  const inherited = { ...(target.config ?? {}) };   // a copy: the target's own config belongs to its live engine
+  const inherited = stripIdentityHatch({ ...(target.config ?? {}) });   // a copy: the target's own config belongs to its live engine
   for (const key of SESSION_IDENTITY) delete inherited[key];
-  const extra = inherited.extraOptions;
-  if (extra && typeof extra === "object") {
-    const hatch = { ...(extra as Record<string, unknown>) };
-    for (const key of SESSION_IDENTITY_OPTIONS) delete hatch[key];
-    inherited.extraOptions = hatch;
-  }
   const denied = Array.isArray(inherited.disallowedTools) ? (inherited.disallowedTools as string[]) : [];
   return { ...inherited, cwd, disallowedTools: [...new Set([...denied, ...READONLY_DISALLOW])] };
 }

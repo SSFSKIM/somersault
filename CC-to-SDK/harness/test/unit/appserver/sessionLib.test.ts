@@ -7,7 +7,7 @@
 // fake session never latches an id) because the merge's dedup key IS sessionId, and a thread that cannot
 // offer one cannot be matched against a store row by definition. That is tested explicitly, not left
 // implicit in the happy-path cases.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { AppServer, threadView, type AppServerDeps } from "../../../src/appserver/server.js";
 import { storeOnlyView } from "../../../src/appserver/sessionLib.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -87,7 +87,7 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     expect(live.queueDepth).toBe(0);
   });
 
-  it("store-only rows carry id=sessionId (no thr_ id), status idle and SECONDS timestamps; pages with the merged-array cursor", async () => {
+  it("store-only rows carry id=sessionId (no thr_ id), status idle and SECONDS timestamps; pages newest-first with the keyset cursor", async () => {
     const { lines, c } = boot({
       // lastModified/createdAt are MILLISECONDS-since-epoch on SDKSessionInfo (per sdk.d.ts) — realistic
       // ms-scale values here (not small round numbers) so a /1000 unit bug would actually show up as a
@@ -106,13 +106,14 @@ describe("thread/list — store-merged (Task 12, gap 4)", () => {
     // updatedAt/createdAt are unix SECONDS on the wire (registry.ts's ThreadRecord convention, which
     // threadView passes straight through for live rows) — a store-only row must match that unit, not
     // SDKSessionInfo's own milliseconds.
-    expect(page1.data[0]).toMatchObject({ id: "store-a", sessionId: "store-a", title: "A", status: { state: "idle" }, preview: "hi a", updatedAt: 1_700_000_010, createdAt: 1_700_000_009 });
-    expect(page1.nextCursor).toBe("1");
+    // store-b leads: M6 orders the merge by `updatedAt` DESCENDING, and it is the newer of the two.
+    expect(page1.data[0]).toMatchObject({ id: "store-b", sessionId: "store-b", title: "B", status: { state: "idle" }, preview: "hi b", updatedAt: 1_700_000_020, createdAt: 1_700_000_019 });
+    expect(page1.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
 
     send(c, { id: 3, method: "thread/list", params: { limit: 1, cursor: page1.nextCursor } });
     const page2 = (await waitReply(lines, 3)).result;
     expect(page2.data).toHaveLength(1);
-    expect(page2.data[0].id).toBe("store-b");
+    expect(page2.data[0]).toMatchObject({ id: "store-a", sessionId: "store-a", title: "A", updatedAt: 1_700_000_010, createdAt: 1_700_000_009 });
     expect(page2.nextCursor).toBeNull();
   });
 
@@ -304,6 +305,217 @@ describe("thread/delete — the ROSTER arm (D-M5-21c, Task 9 re-review)", () => 
       if (prev === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = prev;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// ══ M6: the keyset walk ════════════════════════════════════════════════════════════════════════════════
+//
+// Everything below drives the REAL wire — `thread/list` interleaved with `thread/archive`/
+// `thread/unarchive` — because the claim is about what happens BETWEEN two requests, and the mutator it is
+// about is a method a client of this same server calls. A test that reached into the marker directory
+// itself would prove the same arithmetic while skipping the part that makes it a defect: that moving a
+// session across the partition is a first-party operation, not an act of some other process.
+
+const m6temps: string[] = [];
+const m6tmp = (): string => { const d = mkdtempSync(join(tmpdir(), "m6list-")); m6temps.push(d); return d; };
+afterAll(() => { for (const d of m6temps.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+/** Store rows NEWEST-FIRST in argument order, so every expectation below reads in list order. The spacing
+ *  is a million ms because the wire unit is SECONDS (`storeOnlyView` divides): rows a millisecond apart
+ *  would land on one `updatedAt` and be ordered by the id tie-break instead, testing the wrong half. */
+const storeRows = (...ids: string[]) => ids.map((sessionId, i) => ({ sessionId, summary: `s-${sessionId}`, lastModified: (ids.length - i) * 1_000_000 }));
+/** `thread/archive`'s existence oracle (D-M5-20) is a DIFFERENT store from `listSessions` and has to be
+ *  injected on its own — a session the listing knows and this does not is refused THREAD_NOT_FOUND, and
+ *  the walk under test never gets its mutation. */
+const knowsAll = async (sessionId: string) => ({ sessionId, summary: `s-${sessionId}`, lastModified: 1 });
+
+/** One request/reply channel over a booted server, so a walk reads as the sequence of calls it is. The
+ *  request-id counter is MODULE-scoped rather than per-channel: `waitReply` matches on id alone, so two
+ *  channels over one sink that both started at 500 would each read the other's oldest reply and assert
+ *  confidently against the wrong frame (measured — it cost this file a green run). */
+let m6reqId = 500;
+function wire(b: { lines: string[]; c: { feed(ch: string): void } }) {
+  return async (method: string, params: unknown): Promise<Record<string, any>> => {
+    const rid = m6reqId++;
+    send(b.c, { id: rid, method, params });
+    return await waitReply(b.lines, rid);
+  };
+}
+
+/** Walks to exhaustion, returning every id delivered IN ORDER plus the per-page `nextCursor`s, and running
+ *  `between` after each page — which is where the mutation goes. Bounded: a walk that stopped making
+ *  progress would otherwise hang the suite instead of failing it. */
+async function walk(call: ReturnType<typeof wire>, params: Record<string, unknown>, between?: (page: number) => Promise<void>): Promise<{ ids: string[]; cursors: (string | null)[] }> {
+  const ids: string[] = [];
+  const cursors: (string | null)[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const reply = await call("thread/list", cursor === null ? params : { ...params, cursor });
+    expect(reply.error, `page ${page} refused`).toBeUndefined();
+    for (const row of reply.result.data as { id: string }[]) ids.push(row.id);
+    cursors.push(reply.result.nextCursor);
+    if (between) await between(page);
+    if (reply.result.nextCursor === null) return { ids, cursors };
+    cursor = reply.result.nextCursor;
+  }
+  throw new Error("walk did not terminate within 20 pages");
+}
+
+describe("thread/list — the keyset walk (M6)", () => {
+  it("a stable walk returns every row exactly once, newest first, and `nextCursor` is null EXACTLY on the last page", async () => {
+    const b = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("n1", "n2", "n3", "n4", "n5") });
+    init(b.c, 1);
+    const { ids, cursors } = await walk(wire(b), { limit: 2 });
+    expect(ids).toEqual(["n1", "n2", "n3", "n4", "n5"]);
+    expect(cursors.map((x) => (x === null ? null : "cursor"))).toEqual(["cursor", "cursor", null]);
+
+    // …and the exact-multiple case, which is where "null on the last page" is usually got wrong: a walk
+    // whose last page is FULL must still end there, not mint a cursor for an empty page after it.
+    const even = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("e1", "e2", "e3", "e4") });
+    init(even.c, 1);
+    const walked = await walk(wire(even), { limit: 2 });
+    expect(walked.ids).toEqual(["e1", "e2", "e3", "e4"]);
+    expect(walked.cursors.map((x) => (x === null ? null : "cursor"))).toEqual(["cursor", null]);
+  });
+
+  it("ARCHIVING a row that has already been returned, mid-walk, skips nothing and repeats nothing", async () => {
+    // THE ROW THIS WHOLE CHANGE EXISTS FOR. Under the offset cursor the first page consumed 2, `a1` then
+    // left the partition, and `slice(2, 4)` of the now-5-long array began at `a4` — `a3` was skipped, in a
+    // reply that reported nothing wrong. The mutation is a first-party `thread/archive` from the same
+    // client that holds the cursor, not an exotic race.
+    const b = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("a1", "a2", "a3", "a4", "a5", "a6"), getSessionInfo: knowsAll });
+    init(b.c, 1);
+    const call = wire(b);
+    const { ids } = await walk(call, { limit: 2 }, async (page) => {
+      if (page === 0) expect((await call("thread/archive", { threadId: "a1" })).result).toEqual({ ok: true });
+    });
+    expect(ids).toEqual(["a1", "a2", "a3", "a4", "a5", "a6"]);
+    // Stated separately from the list above: "every row exactly once" is two claims, and a walk that
+    // skipped one row while repeating another satisfies neither on its own.
+    expect(new Set(ids).size).toBe(ids.length);
+    // …and the mutation really did land, or this row passes by testing an ordinary walk.
+    expect((await call("thread/list", { archived: true })).result.data.map((r: any) => r.id)).toEqual(["a1"]);
+  });
+
+  it("UNARCHIVING a session INTO the partition being walked repeats nothing", async () => {
+    // The other direction, and it fails the other way: the returning row joins AHEAD of the cursor (it is
+    // the newest), so under an offset every later position shifted right by one and the next page began on
+    // a row the client already held — `a3` delivered twice. A tuple is unmoved by an insertion before it.
+    const b = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("a1", "a2", "a3", "a4", "a5", "a6"), getSessionInfo: knowsAll });
+    init(b.c, 1);
+    const call = wire(b);
+    expect((await call("thread/archive", { threadId: "a1" })).result).toEqual({ ok: true });
+    const { ids } = await walk(call, { limit: 2 }, async (page) => {
+      if (page === 0) expect((await call("thread/unarchive", { threadId: "a1" })).result).toEqual({ ok: true });
+    });
+    // `a1` is absent, and that is the honest answer rather than a miss: it rejoined the partition behind a
+    // cursor that had already passed its place. What the walk owes the client is that the rows it WAS
+    // walking each arrive once — the claim an offset breaks.
+    expect(ids).toEqual(["a2", "a3", "a4", "a5", "a6"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect((await call("thread/list", { archived: true })).result.data).toEqual([]);
+  });
+
+  it("an undecodable cursor is REFUSED -32602 — including the decimal offset an older server minted", async () => {
+    // Silently restarting at the top would answer a duplicate first page under a reply that looks like
+    // success — the same skip/repeat failure the keyset removes, arriving through the error path. The
+    // legacy decimal is the case this change costs and therefore the case that must be pinned: `"2"` is
+    // admitted by the base64url pattern, so the refusal it gets is the DECODER's, not the schema's.
+    const b = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("c1", "c2", "c3") });
+    init(b.c, 1);
+    const call = wire(b);
+    // Written as raw JSON TEXT, not through `JSON.stringify`: the non-finite case cannot be expressed the
+    // other way round — `JSON.stringify(Infinity)` is `"null"` — which is the whole reason a decoded
+    // `Infinity` is definitionally forged, and the reason the payload has to be composed by hand here.
+    const b64 = (json: string) => Buffer.from(json, "utf8").toString("base64url");
+    const bad: [string, string][] = [
+      ["2", "the decimal offset a pre-M6 server minted for this same method"],
+      ["0", "…including the one whose silent restart would have looked harmless"],
+      ["!!not-base64url!!", "refused one door earlier, by the pattern"],
+      [b64("nope"), "base64url that is not JSON"],
+      [b64('{"v":1,"s":"c1","r":0,"q":"","g":""}'), "a thread/search cursor — same v and s, but it addresses ROWS"],
+      [b64('{"v":"1","s":"c1"}'), "a stringly-typed sort value no mint emits"],
+      [b64('{"v":1e999,"s":"c1"}'), "a non-finite sort value, which JSON.parse produces and no mint can"],
+      [b64('{"v":1,"s":7}'), "a non-string id"],
+    ];
+    for (const [cursor, why] of bad) {
+      const r = await call("thread/list", { cursor });
+      expect([why, r.error?.code, r.result]).toEqual([why, ERR.INVALID_PARAMS, undefined]);
+    }
+    // …and a cursor this server DID mint still works, so none of the above is a blanket refusal.
+    const page1 = (await call("thread/list", { limit: 1 })).result;
+    expect((await call("thread/list", { limit: 1, cursor: page1.nextCursor })).result.data.map((r: any) => r.id)).toEqual(["c2"]);
+  });
+
+  it("a cursor minted in one WALK is refused in another — the show-archived-toggle door", async () => {
+    // `archived` selects a PARTITION, so a cursor carried across the toggle still DECODES and still finds a
+    // place in the other partition's ordering: the next page would begin after everything sorting before
+    // that tuple, in a reply reporting nothing wrong. That is this method's original defect arriving by a
+    // different door, and a client with a show-archived checkbox reaches it just by keeping its cursor.
+    // `cwd` binds on the same argument. `thread/search`'s two cursors have carried this fingerprint since
+    // M5 (D-M5-26); `thread/list` shipping without it would have left the sibling methods disagreeing about
+    // whether a cursor names a position or a walk.
+    const b = boot({ ccxDir: m6tmp(), listSessions: async () => storeRows("a1", "a2", "a3"), getSessionInfo: knowsAll });
+    init(b.c, 1);
+    const call = wire(b);
+    expect((await call("thread/archive", { threadId: "a3" })).result).toEqual({ ok: true });
+
+    const page1 = (await call("thread/list", { limit: 1 })).result;
+    expect(page1.data.map((r: any) => r.id)).toEqual(["a1"]);
+
+    for (const [params, why] of [
+      [{ archived: true }, "the other partition"],
+      [{ cwd: "/somewhere/else" }, "a different cwd selects a different set of rows"],
+    ] as [Record<string, unknown>, string][]) {
+      const crossed = await call("thread/list", { limit: 1, ...params, cursor: page1.nextCursor });
+      expect([why, crossed.error?.code, crossed.result]).toEqual([why, ERR.INVALID_PARAMS, undefined]);
+    }
+    // …and the SAME walk still resumes, so none of the above is a blanket refusal.
+    expect((await call("thread/list", { limit: 1, cursor: page1.nextCursor })).result.data.map((r: any) => r.id)).toEqual(["a2"]);
+  });
+
+  it("rows with no usable `updatedAt` sort LAST and page deterministically", async () => {
+    // `lastModified` reaches `storeOnlyView` from a bring-your-own store and is divided, so a NaN or an
+    // absent value arrives at the comparator as NaN — which `.sort()` reads as "no opinion", answering by
+    // leaving unrelated rows unordered, and which a cursor then serializes as `null` (JSON has no NaN),
+    // claiming a position the unscreened comparator does not put the row at. Screened, both spellings are
+    // one thing: sorts last, tie-broken by id ascending, and walks like any other row.
+    const b = boot({
+      ccxDir: m6tmp(),
+      listSessions: async () => [
+        { sessionId: "z-nan", summary: "nan", lastModified: NaN },
+        { sessionId: "m-old", summary: "old", lastModified: 1_000_000 },
+        { sessionId: "a-missing", summary: "missing" }, // no lastModified at all
+        { sessionId: "m-new", summary: "new", lastModified: 3_000_000 },
+      ],
+    });
+    init(b.c, 1);
+    const call = wire(b);
+    const { ids, cursors } = await walk(call, { limit: 1 });
+    expect(ids).toEqual(["m-new", "m-old", "a-missing", "z-nan"]);
+    expect(cursors[cursors.length - 1]).toBeNull();
+    // The two unusable rows are indistinguishable ON THE WIRE — JSON has no NaN — which is exactly why the
+    // screen has to happen before the comparator rather than at serialization.
+    const all = (await call("thread/list", {})).result.data as { id: string; updatedAt: number | null }[];
+    expect(all.filter((r) => r.updatedAt === null).map((r) => r.id)).toEqual(["a-missing", "z-nan"]);
+  });
+
+  it("the order is TOTAL over the merge, not live-rows-then-store-rows", async () => {
+    // The grouping `[...liveViews, ...storeOnlyViews]` is dropped rather than kept as an outer sort key,
+    // and this is the row that says so: a store row NEWER than the live thread sorts ahead of it. Keeping
+    // the grouping would reintroduce the same bug class one level up — a store row that goes live mid-walk
+    // changes group, and so moves across every row of the other group at once.
+    const b = boot({
+      ccxDir: m6tmp(),
+      listSessions: async () => [
+        { sessionId: "store-older", summary: "older", lastModified: 1_000_000 },
+        { sessionId: "store-newer", summary: "newer", lastModified: Date.now() + 10_000_000 },
+      ],
+    });
+    init(b.c, 1);
+    const thread = await startThread(b.c, b.lines, 2);
+    const { ids } = await walk(wire(b), { limit: 1 });
+    expect(ids).toEqual(["store-newer", thread.id, "store-older"]);
   });
 });
 

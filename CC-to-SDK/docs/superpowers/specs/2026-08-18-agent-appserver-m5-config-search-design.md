@@ -431,6 +431,101 @@ flips the `full-potential.md` rows and ships nothing.
     `thread/list` walk while archiving. Fix shape: the keyset `thread/search` already ships (D-M5-16) — a
     tuple naming the next position rather than an offset counting to it.
 
+### Closed in the M6 backlog round (owner-scoped 2026-08-22, branch `m6-backlog`)
+
+Five of the parking-lot items above were taken in one round. Recorded here rather than by deleting them,
+because in four of the five what was found was **larger than the item as written** — and an item that
+understated its own scope is the more useful thing to remember.
+
+- **`KNOWN_TOP_LEVEL` drift detection — closed.** The item called it low-stakes and hypothetical. It was
+  neither by the time it was read: the list had drifted **71 keys in one direction and 9 in the other**,
+  and the SDK bump that opened this round shipped `spellcheck`, so the server was warning about a key
+  Claude Code supports. The gate is `scripts/drift-check.mjs`, both directions, against the SDK's own
+  generated `interface Settings` — a versioned artifact the February reference snapshot is not. It compares
+  the INSTALLED sdk.d.ts, never npm HEAD: the advisory must describe the SDK we ship against, and gating on
+  HEAD would turn someone else's release into our red build. Run red first, on purpose, to see it name all
+  80 divergences before it was allowed to go green.
+- **The conformance gate certifies unusable numbers — closed, with one deliberate deviation.** The item's
+  proposed fix shape was "finite, non-negative integer"; what shipped is `Number.isInteger`, which is
+  finite and integral but says nothing about sign. `sdk.d.ts` defines the field as "integer Unix epoch
+  milliseconds (floor fractional sources)" and says nothing about non-negative, so refusing pre-1970 would
+  be inventing a constraint upstream does not state — and a gate that invents constraints is the same
+  category of error as one that omits them. The gate had also never been pointed at an adapter that
+  misbehaves, so it is now sabotaged on purpose in `test/unit/session-store.test.ts`.
+- **`forkSession` survives into the rewind swap — closed, and it was not confined to rewind.** The item
+  named one site. The same class was live at `thread/clear`, which inherited a caller-chosen `sessionId`
+  (honored by the engine, probe 53) and wrote its fresh conversation back into the id it had just dropped
+  — defeating the `undefined` post-swap id that method passes precisely so the init latch can learn a new
+  one. All three swap paths now share `swapBaseConfig`. The M6 review then found the half BOTH lists had
+  missed: `resolveOptions` spreads `extraOptions` last, so an identity value in that escape hatch overrides
+  the strip entirely. `review.ts` had known this since M4 and stripped twice; the swap family stripped
+  once. The vocabulary now has one home (`appserver/sessionIdentity.ts`) instead of two lists with
+  different holes.
+- **`thread/start` carrying `resume` is unguarded / the delete fence does not reach it — closed together,
+  as the item predicted they would be.** Owner's scope call: the two surfaces ARE peers, with the
+  requirement that resuming a session we do not currently hold keeps working (an abnormally terminated
+  agent, or a follow-up to a finished one). That requirement is satisfied without a carve-out: a dead
+  holder's roster row fails the pid probe, so the guard admits it. Both surfaces now run one
+  `admitResume`. The delete fence applies to every shape including a fork (a fork READS the parent
+  transcript, so erasing it mid-admission breaks the session being opened); the live-holder refusals apply
+  only when the request admits the id. **The M6 review found the guard's first version incomplete in a way
+  its own test missed:** the local-holder check ran at arrival but the roster path awaits a pid probe
+  afterwards, so two admissions could both pass and both register — and the shutdown latch, previously
+  safe because that path was synchronous end to end, acquired the same staleness. Both are now rechecked
+  after the await. Lesson worth its own line: *adding an `await` does not only make a path slower — it
+  converts every check before it into a check that can go stale.*
+- **`thread/list`'s bare offset cursor — closed, and it is a real wire change.** Now a keyset over
+  `updatedAt` descending, `id` ascending, bound to its walk by `thread/search`'s own `q` fingerprint over
+  `cwd`+`archived`. Three things worth remembering. (1) A keyset needs a TOTAL order and this merge never
+  had one — it was registry-insertion order followed by whatever the store returned, and the SDK documents
+  its own listing order as unspecified — so the sort is new but breaks no contract. (2) The live-first
+  grouping was dropped deliberately: a store row that goes live mid-walk changes group, which is the same
+  skip/repeat one level up where a keyset cannot see it. (3) A legacy decimal cursor is REFUSED, not
+  silently restarted — a silent restart hands that client a duplicate first page under a reply that looks
+  like success, which is the failure the keyset exists to remove, arriving through the error path instead.
+
+**Declined in that round, with reasons, rather than silently dropped:**
+
+- **A compatibility shim for the cursor change.** Honoring legacy decimal cursors means honoring offset
+  semantics for them, which reinstates the exact skip-and-repeat defect for those clients while reporting
+  success. The refusal is the honest option, and the wire change was owner-scoped going in.
+- **Snapshot-binding the keyset.** Correct as a criticism — neither `updatedAt` nor `id` is immutable for a
+  logical session, so a concurrent writer can still carry an unseen row across the cursor, and a store-only
+  row that goes live changes which tuple it sorts as. But binding a walk to a snapshot means HOLDING one,
+  which is an architecture with an owner and not a repair. It is strictly smaller than the offset it
+  replaced (that one lost rows to a client's own first-party archive; this needs a concurrent writer), and
+  it is now PUBLISHED — in `listCursorParam`'s `describe`, where a client actually reads it — pointing at
+  `thread/search`'s `sortKey: created_at` as the exhaustive-walk escape this method has no version of.
+
+**Added to the parking lot by that round:**
+
+- **The four-process marker-store race test is intermittently red, and it is NOT this round's doing.**
+  `archive.test.ts`'s "four processes creating the marker store at once" fails by leaving one racer's
+  marker absent. Measured on the M6 machine: **3 failures in roughly 9 standalone runs**, plus one in a
+  full `test:unit` run — and the missing racer VARIES (`sess-0` twice, `sess-3` once), so it is a real race
+  and not a fixed ordering bug. The test's own docblock records 300 of 300 succeeding when the repair
+  landed in M5, so either the environment moved under it or the repair is narrower than measured.
+  **Attribution is firm:** `src/appserver/archive.ts` and `src/fleet/` are byte-identical to the M6 base
+  commit, and the only two hunks in `archive.test.ts` this round are at lines 1127 and 1194, far from the
+  race test at ~1425. Code under test and test are both unchanged, so the behaviour is the base's.
+  **What is still unknown is the errno.** Each racer writes `OK` or `<code> <message>` to a report file,
+  but the directory assertion fires before the test surfaces them and the temp dirs are cleaned up on the
+  way out. A temporary diagnostic that printed the reports did not reproduce in 3 runs — plausibly the
+  logging perturbing the timing, which is itself worth knowing. First step for whoever takes this: capture
+  the report contents on failure (the assertion order is the only thing in the way), since the child sets
+  `umask(0o200)` deliberately and the whole question is which syscall loses to a half-made directory.
+  Do NOT "fix" this by relaxing the assertion: a guard that has gone quiet is worse than one that is red.
+  Trigger: it is already triggering — `npm run test:unit` cannot be used as a clean gate until it is
+  settled, which is the real cost and the reason it is filed at the top of this list.
+
+- **`extraArgs` is a third identity vocabulary nobody strips.** Neither `review.ts` nor the swap family
+  touches it, and in the installed SDK its entries are appended to argv AFTER the typed identity flags
+  (`--resume`, `--fork-session`, `--session-id`, …). `thread/start`'s `config` is an unrestricted
+  `z.record`, so a client can set it. **Impact is plausible, not proven** — the CLI's own last-flag-wins
+  behavior was not verified — and it is recorded at that strength deliberately. Trigger: any client that
+  sets `extraArgs`; fix shape: a third strip beside the two in `sessionIdentity.ts`, once the parser
+  precedence is measured rather than assumed.
+
 ## Decision Log
 
 - **D-M5-1 — three writable layers, default user.** `target ∈ user|project|local`; managed is

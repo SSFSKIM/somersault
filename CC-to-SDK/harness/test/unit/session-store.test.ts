@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { InMemorySessionStore } from "@anthropic-ai/claude-agent-sdk";
+import type { SessionStore } from "@anthropic-ai/claude-agent-sdk";
 import { createRedisSessionStore } from "../../src/store/redisSessionStore.js";
 import { sessionStoreConformance } from "../../src/store/conformance.js";
 import { createFakeRedis } from "./helpers/fakeRedis.js";
@@ -10,6 +11,40 @@ import { resolveOptions } from "../../src/config/resolveOptions.js";
 // the reference semantics), and our Redis adapter must ALSO pass the SHOULD-level dedup checks.
 sessionStoreConformance("InMemorySessionStore (SDK reference)", () => new InMemorySessionStore(), { describe, it, expect });
 sessionStoreConformance("RedisSessionStore (fake client)", () => createRedisSessionStore(createFakeRedis()), { describe, it, expect }, { uuidDedup: true });
+
+describe("the conformance gate itself", () => {
+  // A gate is worth exactly what it REFUSES, and this one had only ever been pointed at adapters that
+  // behave — so `typeof mtime === "number"` looked like a check for years while passing NaN, the one value
+  // that makes every downstream ordering meaningless. Nothing could go red: the suite's own subjects were
+  // all correct. So sabotage the adapter on purpose and assert the gate rejects it.
+  const captureCases = () => {
+    const cases: Array<{ name: string; fn: () => Promise<void> | void }> = [];
+    const fns = { describe: (_n: string, f: () => void) => f(), it: (n: string, f: () => Promise<void> | void) => void cases.push({ name: n, fn: f }), expect };
+    return { cases, fns };
+  };
+  /** Only what the mtime case touches: it appends, lists, and reads the timestamps back. */
+  const storeReporting = (mtime: number) => ({
+    load: async () => null,
+    append: async () => {},
+    listSessions: async () => [{ sessionId: "s4", mtime }, { sessionId: "s5", mtime }],
+  }) as unknown as SessionStore;
+  const runMtimeCase = async (mtime: number) => {
+    const { cases, fns } = captureCases();
+    sessionStoreConformance("sabotaged", () => storeReporting(mtime), fns);
+    await cases.find((c) => c.name.startsWith("listSessions()"))!.fn();
+  };
+
+  it("rejects the timestamps `typeof === number` used to bless", async () => {
+    for (const bad of [NaN, 1.5, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      await expect(runMtimeCase(bad), `an adapter reporting ${String(bad)} must fail the gate`)
+        .rejects.toThrow(/integer Unix epoch ms/);
+    }
+  });
+
+  it("still passes an adapter that honours the contract", async () => {
+    await expect(runMtimeCase(1_755_000_000_000)).resolves.toBeUndefined();
+  });
+});
 
 describe("RedisSessionStore specifics", () => {
   it("namespaces by prefix and encodes hostile key components", async () => {

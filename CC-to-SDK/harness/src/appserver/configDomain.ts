@@ -157,30 +157,51 @@ export const configRead: Handler = async (srv, ctx, id, params) => {
  *  `disableBypassPermissionsMode` and `additionalDirectories`, which live inside `permissions` and are
  *  genuinely wrong at the top level, so the one case a warning would have helped was silent.
  *
- *  Transcribed from `Claude Code Src/src/utils/settings/types.ts` → `SettingsSchema`: every key of the
- *  outer `z.object`, including the ones behind an env/feature gate there (`.passthrough()` keeps those
- *  alive in a settings file regardless of the flag, so warning about them would be the same false
- *  positive). It will drift as upstream moves — a stale entry costs a missing warning, never a refusal. */
+ *  Derived from the SDK's own `export declare interface Settings` in the installed `sdk.d.ts`, which
+ *  upstream generates from the very `SettingsSchema` the real harness validates against — so it arrives
+ *  already correct with every bump, and it carries the env/feature-gated keys too (`.passthrough()` keeps
+ *  those alive in a settings file regardless of the flag, so warning about them would be a false positive).
+ *  The first list was hand-transcribed from the February reference snapshot instead, and by 0.3.237 had
+ *  drifted 71 keys in one direction and 9 in the other: `spellcheck` had just shipped upstream and we
+ *  warned about it. Nothing caught that, because every way this list can be wrong costs a missing or a
+ *  spurious advisory and never a visible failure — the instrument rotting under the code it verifies.
+ *  `scripts/drift-check.mjs` now gates both directions against the installed SDK and prints the corrected
+ *  body, so the bump that moves the schema fails loudly and the fix is a paste, not another re-read. */
 const KNOWN_TOP_LEVEL = new Set([
-  "$schema", "apiKeyHelper", "awsCredentialExport", "awsAuthRefresh", "gcpAuthRefresh", "xaaIdp",
-  "fileSuggestion", "respectGitignore", "cleanupPeriodDays", "env", "attribution", "includeCoAuthoredBy",
-  "includeGitInstructions", "permissions", "model", "availableModels", "modelOverrides",
-  "enableAllProjectMcpServers", "enabledMcpjsonServers", "disabledMcpjsonServers", "allowedMcpServers",
-  "deniedMcpServers", "hooks", "worktree", "disableAllHooks", "defaultShell", "allowManagedHooksOnly",
-  "allowedHttpHookUrls", "httpHookAllowedEnvVars", "allowManagedPermissionRulesOnly",
-  "allowManagedMcpServersOnly", "strictPluginOnlyCustomization", "statusLine", "enabledPlugins",
-  "extraKnownMarketplaces", "strictKnownMarketplaces", "blockedMarketplaces", "forceLoginMethod",
-  "forceLoginOrgUUID", "otelHeadersHelper", "outputStyle", "language", "skipWebFetchPreflight", "sandbox",
-  "feedbackSurveyRate", "spinnerTipsEnabled", "spinnerVerbs", "spinnerTipsOverride",
-  "syntaxHighlightingDisabled", "terminalTitleFromRename", "alwaysThinkingEnabled", "effortLevel",
-  "advisorModel", "fastMode", "fastModePerSessionOptIn", "promptSuggestionEnabled",
-  "showClearContextOnPlanAccept", "agent", "companyAnnouncements", "pluginConfigs", "remote",
-  "disableDeepLinkRegistration", "classifierPermissionsEnabled", "autoUpdatesChannel", "minimumVersion",
-  "plansDirectory", "minSleepDurationMs", "maxSleepDurationMs", "voiceEnabled", "assistant",
-  "assistantName", "channelsEnabled", "allowedChannelPlugins", "defaultView", "prefersReducedMotion",
-  "autoMemoryEnabled", "autoMemoryDirectory", "autoDreamEnabled", "showThinkingSummaries",
-  "skipDangerousModePermissionPrompt", "skipAutoPermissionPrompt", "useAutoModeDuringPlan", "autoMode",
-  "disableAutoMode", "sshConfigs", "claudeMdExcludes", "pluginTrustMessage"]);
+  "$schema", "additionalMarketplaces", "advisorModel", "agent", "agentPushNotifEnabled",
+  "allowAllClaudeAiMcps", "allowManagedHooksOnly", "allowManagedMcpServersOnly",
+  "allowManagedPermissionRulesOnly", "allowedChannelPlugins", "allowedHttpHookUrls", "allowedMarketplaces",
+  "allowedMcpServers", "alwaysThinkingEnabled", "apiKeyHelper", "askUserQuestionTimeout", "attribution",
+  "autoCompactEnabled", "autoCompactWindow", "autoContinueAtUsageLimit", "autoDreamEnabled",
+  "autoMemoryDirectory", "autoMemoryEnabled", "autoScrollEnabled", "autoUpdatesChannel",
+  "autoUploadSessions", "availableModels", "awsAuthRefresh", "awsCredentialExport", "blockedMarketplaces",
+  "channelsEnabled", "claudeMd", "claudeMdExcludes", "cleanupPeriodDays", "companyAnnouncements",
+  "crossSessionInbound", "daemonColdStart", "defaultShell", "defaultView", "deniedMcpServers",
+  "dialogExpiry", "disableAgentView", "disableAllHooks", "disableArtifact", "disableAutoMode",
+  "disableBundledSkills", "disableClaudeAiConnectors", "disableCommandPluginSources",
+  "disableDeepLinkRegistration", "disableRemoteControl", "disableSideloadFlags",
+  "disableSkillShellExecution", "disableWorkflows", "disabledMcpjsonServers", "editorMode", "effortLevel",
+  "emojiCompletionEnabled", "enableAllProjectMcpServers", "enableArtifact", "enableWorkflows",
+  "enabledMcpjsonServers", "enabledPlugins", "enforceAvailableModels", "env", "extraKnownMarketplaces",
+  "fallbackModel", "fastMode", "fastModePerSessionOptIn", "feedbackDrafts", "feedbackSurveyRate",
+  "fileCheckpointingEnabled", "fileSuggestion", "footerLinksRegexes", "forceLoginGatewayUrl",
+  "forceLoginMethod", "forceLoginOrgUUID", "forceRemoteSettingsRefresh", "gcpAuthRefresh", "hooks",
+  "httpHookAllowedEnvVars", "includeCoAuthoredBy", "includeGitInstructions", "inputNeededNotifEnabled",
+  "isolatePeerMachines", "language", "minimumVersion", "model", "modelOverrides", "otelHeadersHelper",
+  "outputStyle", "parentSettingsBehavior", "permissions", "plansDirectory", "pluginConfigs",
+  "pluginSuggestionMarketplaces", "pluginTrustMessage", "policyHelper", "prUrlTemplate",
+  "precomputeCompactionEnabled", "preferredNotifChannel", "prefersReducedMotion", "processWrapper",
+  "promptSuggestionEnabled", "proxyAuthHelper", "remote", "remoteControlAtStartup",
+  "requiredMaximumVersion", "requiredMinimumVersion", "respectGitignore", "respondToBashCommands",
+  "sandbox", "showClearContextOnPlanAccept", "showMessageTimestamps", "showThinkingSummaries",
+  "showTurnDuration", "skillListingBudgetFraction", "skillListingMaxDescChars", "skillOverrides",
+  "skipDangerousModePermissionPrompt", "skipWebFetchPreflight", "spellcheck", "spinnerTipsEnabled",
+  "spinnerTipsOverride", "spinnerVerbs", "sshConfigs", "statusLine", "strictKnownMarketplaces",
+  "strictPluginOnlyCustomization", "subagentStatusLine", "switchModelsOnFlag", "syncClaudeAiSkills",
+  "syntaxHighlightingDisabled", "teammateMode", "terminalProgressBarEnabled", "terminalTitleFromRename",
+  "theme", "todoFeatureEnabled", "tui", "ultracode", "verbose", "viewMode", "vimInsertModeRemaps", "voice",
+  "voiceEnabled", "wheelScrollAccelerationEnabled", "workflowKeywordTriggerEnabled",
+  "workflowSizeGuideline", "worktree", "wslInheritsWindowsSettings"]);
 
 type WriteData = { edits: Array<{ keyPath: string[]; value: unknown; mergeStrategy: "replace" | "upsert" }>; target: "user" | "project" | "local"; cwd?: string; expectedVersion?: string };
 

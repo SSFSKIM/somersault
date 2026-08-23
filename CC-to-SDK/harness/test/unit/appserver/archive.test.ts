@@ -1127,10 +1127,11 @@ describe("thread/archive + thread/unarchive (Task 9)", () => {
 // both. One row saying "the archived session is hidden" would stay green under a mutation that hid the
 // wrong two sessions instead.
 
-/** The store side of every row below. `lastModified` ascends with the argument order, so the merged list
- *  order IS the argument order and each expectation can be a literal id list — read off the fixture, never
- *  off the handler's own view builder. */
-const listing = (...ids: string[]) => async () => ids.map((sessionId, i) => ({ sessionId, summary: `s-${sessionId}`, lastModified: (i + 1) * 1_000 }));
+/** The store side of every row below. `lastModified` DESCENDS with the argument order — M6 sorts the merge
+ *  by `updatedAt` descending — so the listed order IS the argument order and each expectation can be a
+ *  literal id list, read off the fixture and never off the handler's own view builder. (It ascended until
+ *  M6, for the same reason: the fixture states the order these rows are about, and the order changed.) */
+const listing = (...ids: string[]) => async () => ids.map((sessionId, i) => ({ sessionId, summary: `s-${sessionId}`, lastModified: (ids.length - i) * 1_000 }));
 /** The reply projected down to the one field these rows are about. `sessionId` is `threadView`'s field and
  *  `storeOnlyView`'s alike, so it reads the same for a live row and a cold one — including `undefined` for
  *  a live record whose engine has not reported an id yet. */
@@ -1194,13 +1195,15 @@ describe("thread/list {archived} — the archived partition (Task 10)", () => {
     boot({ ccxDir, listSessions: listing("a", "b", "c", "d", "e") });
     await createArchiveMarker("b", { ccxDir });
     await createArchiveMarker("d", { ccxDir });
+    // The cursor is opaque since M6, so what a page's own row can pin is that ONE was minted (and, at the
+    // end of each walk, that one was not); the ids it carries the client to are the assertion.
     const p1 = (await send("thread/list", { limit: 2 })).result;
-    expect([p1.data.map((r: any) => r.sessionId), p1.nextCursor]).toEqual([["a", "c"], "2"]);
+    expect([p1.data.map((r: any) => r.sessionId), typeof p1.nextCursor]).toEqual([["a", "c"], "string"]);
     const p2 = (await send("thread/list", { limit: 2, cursor: p1.nextCursor })).result;
     expect([p2.data.map((r: any) => r.sessionId), p2.nextCursor]).toEqual([["e"], null]);
     // The archived side pages off its OWN length too — the second side, which is the one that gets forgotten.
     const q1 = (await send("thread/list", { archived: true, limit: 1 })).result;
-    expect([q1.data.map((r: any) => r.sessionId), q1.nextCursor]).toEqual([["b"], "1"]);
+    expect([q1.data.map((r: any) => r.sessionId), typeof q1.nextCursor]).toEqual([["b"], "string"]);
     const q2 = (await send("thread/list", { archived: true, limit: 1, cursor: q1.nextCursor })).result;
     expect([q2.data.map((r: any) => r.sessionId), q2.nextCursor]).toEqual([["d"], null]);
   });

@@ -1,6 +1,9 @@
 // src/appserver/searchScan.ts — pure search primitives (spec D-M5-15/16/17 rev 3). ONE tuple ordering
 // shared by the sort and the cursor resume — the rev-1 plan let them diverge and the review caught a
-// session locator masquerading as a keyset (F8). Two cursor codecs live beside it for the same reason.
+// session locator masquerading as a keyset (F8). The cursor codecs live beside it for the same reason,
+// and that is now three of them: `thread/list` re-cursored onto the same comparator and screening (M6),
+// so its codec sits here rather than in sessionLib.ts. A second implementation of a keyset is a second
+// place to get the null/non-finite screening wrong, which is the class of bug that screening exists for.
 import { createHash } from "node:crypto";
 import { rowKind, promptText } from "../sessions/index.js";
 
@@ -15,8 +18,13 @@ export type SortKey = "created_at" | "updated_at" | "recency_at";
  *  comparator does NOT sort last, so the two halves of this one module contradict each other. Screening
  *  the source makes the cursor's claim true and closes both halves at once. Live, not hypothetical:
  *  `lastModified` arrives straight from a bring-your-own `SessionStore`'s `mtime`, and the adapter
- *  conformance gate's `typeof mtime === "number"` is satisfied by NaN. */
-const finite = (x: number | undefined): number | null => (Number.isFinite(x) ? (x as number) : null);
+ *  conformance gate's `typeof mtime === "number"` is satisfied by NaN.
+ *
+ *  EXPORTED, and taking `unknown`, since `thread/list` sorts on the same comparator (M6): its rows are
+ *  already-projected wire views whose `updatedAt` is typed `unknown`, so a caller that narrowed it first
+ *  would be writing the screen a second time to satisfy a signature. Widening the parameter costs the two
+ *  callers below nothing — a `number | undefined` is an `unknown`. */
+export const finite = (x: unknown): number | null => (Number.isFinite(x) ? (x as number) : null);
 
 export function sortValueOf(info: { createdAt?: number; lastModified: number }, key: SortKey): number | null {
   if (key === "created_at") return finite(info.createdAt);
@@ -129,6 +137,35 @@ export function decodeOccCursor(s: string): OccCursor | null {
   if (!p || typeof p.s !== "string" || !offset(p.r) || !offset(p.c)) return null;
   if (typeof p.q !== "string" || typeof p.g !== "string" || "v" in p) return null;
   return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g };
+}
+
+/** `thread/list`'s keyset (M6): the SORT POSITION of the last row a page delivered — nothing more, because
+ *  there is nothing more to name. The two above address rows INSIDE a transcript, which is why they carry a
+ *  row offset and a generation to qualify it against; this one addresses a place in an ordering of whole
+ *  sessions, and that ordering is recomputed from the store on every request. It carries no `q` either:
+ *  `thread/list` publishes no sort/term choice a client could vary between pages, so there is no walk
+ *  binding to check that the two request parameters it does have (`cwd`, `archived`) do not already decide
+ *  by selecting a different set of rows.
+ *
+ *  `"r" in p` is the cross-codec guard the two above already run on each other, and one clause covers both
+ *  of them: a row offset is exactly what a session-ordering position does not have, and both other shapes
+ *  carry one. Without it a `thread/search` cursor would decode here as a valid list position — same `v`,
+ *  same `s`, with its `r`/`q`/`g` silently dropped — and resume the picker at a place in a different walk.
+ *
+ *  It DOES carry `q`, for the same reason the two above do (D-M5-26): a cursor names a position in ONE
+ *  walk, and `thread/list` has two request parameters that choose which walk it is. `archived` is the
+ *  sharp one — it selects a PARTITION, so a cursor minted while listing unarchived sessions and replayed
+ *  with `archived:true` still decodes, still finds a place in the other partition's ordering, and silently
+ *  begins after everything sorting before that tuple. That is the same "a page quietly starts in the wrong
+ *  place" this whole re-cursoring removes, arriving by a different door, and a client with a
+ *  show-archived toggle reaches it by holding onto its cursor. `cwd` rides along on the same argument. */
+export interface ListCursor { v: number | null; s: string; q: string }
+export function encodeListCursor(c: ListCursor): string { return b64(c); }
+export function decodeListCursor(s: string): ListCursor | null {
+  const p = unb64(s) as { v?: unknown; s?: unknown; q?: unknown; r?: unknown; c?: unknown } | null;
+  if (!p || !finiteOrNull(p.v) || typeof p.s !== "string" || typeof p.q !== "string") return null;
+  if ("r" in p || "c" in p) return null;
+  return { v: p.v, s: p.s, q: p.q };
 }
 
 /** THE ONE FOLD, for the term and for every corpus string it is matched against (fix wave G / P2-2#4).
