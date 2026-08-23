@@ -76,9 +76,11 @@ describe("actions", () => {
     for (const { context, key, action } of all) if (action !== null)
       expect(VALID_ACTIONS, `${context} ${key} → undeclared action ${action}`).toContain(action);
   });
-  it("VALID_ACTIONS is exactly the table's actions plus the rebind-only help:show", () => {
+  // …plus the two rebind-only names: `help:show` (the `?` is composer-local) and `selection:clear` (canon
+  // declares it unbound, L174997).
+  it("VALID_ACTIONS is exactly the table's actions plus the rebind-only help:show and selection:clear", () => {
     const used = new Set(all.map((x) => x.action).filter((a): a is string => a !== null));
-    expect([...VALID_ACTIONS].sort()).toEqual([...new Set([...used, "help:show"])].sort());
+    expect([...VALID_ACTIONS].sort()).toEqual([...new Set([...used, "help:show", "selection:clear"])].sort());
   });
   it("has no duplicates", () => expect(new Set(VALID_ACTIONS).size).toBe(VALID_ACTIONS.length));
 });
@@ -107,7 +109,11 @@ describe("reserved keys", () => {
   // `Help ctrl+c` (QA wave 2 delta) joins on the `Transcript ctrl+c` precedent and then some: it does not
   // shadow Global's exit gesture, it NAMES Global's own `app:interrupt` so the same arm runs — the binding
   // exists only because a swallowing context cannot inherit (see bindings.ts).
-  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Help ctrl+c", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d"];
+  // `Scroll super+c` (F10 S3): `super+c` is error-reserved as "macOS system copy", and this binding names
+  // exactly that meaning — canon binds the same chord to the same action (L174817). The key stays blocked
+  // from USER rebinding by `RESERVED_KEYS`; the default table binds it so the resolver and the hints can see
+  // it, on the `Transcript ctrl+c` precedent.
+  const GRANDFATHERED = ["Global ctrl+c", "Global ctrl+d", "Chat ctrl+d", "Help ctrl+c", "Transcript ctrl+c", "Transcript ctrl+d", "HistorySearch ctrl+c", "SelectDecision ctrl+d", "Scroll super+c"];
   it("no default binding collides with an error-reserved key beyond the grandfathered pairs", () =>
     expect(reservedCollisions(DEFAULT_BINDINGS).sort()).toEqual([...GRANDFATHERED].sort()));
   it("the collision check bites — a new reserved binding is caught", () =>
@@ -119,6 +125,19 @@ describe("reserved keys", () => {
   // `reservedCollisions` only ever reported non-null bindings, so deleting six nulls adds and removes nothing.
   it("an explicit unbind of a reserved key is not a collision", () =>
     expect(reservedCollisions([{ context: "Confirmation", bindings: { "ctrl+d": null } }])).toEqual([]));
+});
+
+describe("F10 S3 — the Scroll context's selection actions (canon L174817 / L174997)", () => {
+  it("binds ctrl+shift+c and cmd+c to selection:copy, and nothing else to it", () => {
+    expect(block("Scroll").bindings["ctrl+shift+c"]).toBe("selection:copy");
+    expect(block("Scroll").bindings["cmd+c"]).toBe("selection:copy");
+    const copies = all.filter((x) => x.action === "selection:copy").map((x) => `${x.context} ${canon(x.key)}`);
+    expect(copies.sort()).toEqual(["Scroll ctrl+shift+c", "Scroll super+c"]);
+  });
+  it("selection:clear is declared but bound nowhere — canon L174997 leaves it for users", () => {
+    expect(VALID_ACTIONS).toContain("selection:clear");
+    expect(all.some((x) => x.action === "selection:clear")).toBe(false);
+  });
 });
 
 describe("no key is bound twice inside one context", () => {
@@ -272,12 +291,14 @@ describe("overlay gating, expressed as null bindings", () => {
   // have been a dishonest rebind. The owner's bug report ends that: with the alt-screen guard arming
   // `?1000h ?1006h` a wheel tick IS produced, as the key `wheelup`/`wheeldown` (canon `RUu`, L169140), and
   // one tick is one LINE (canon L181212 dispatches a ±1 delta). Selection-extension and copy stay unbound.
-  it("Scroll binds the four keyboard scroll keys, the two wheel ticks and the v dump, and nothing else", () => {
+  // F10 S3 adds the copy pair (canon L174817) — the whole-object pin below grows by exactly those two keys.
+  it("Scroll binds the four keyboard scroll keys, the two wheel ticks, the v dump and the copy pair, and nothing else", () => {
     expect(block("Scroll").bindings).toEqual({
       "pageup": "scroll:halfPageUp", "pagedown": "scroll:halfPageDown",
       "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
       "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
       "v": "scroll:dumpTranscript",
+      "ctrl+shift+c": "selection:copy", "cmd+c": "selection:copy",
     });
   });
   // The wheel is bound in BOTH reading surfaces, and it has to be: the fullscreen tree SWAPS them rather than

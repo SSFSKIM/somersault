@@ -153,6 +153,25 @@ describe("validation: each rule drops ONLY the offending entry", () => {
     expect(layers).toEqual([{ context: "Scroll", bindings: { "alt+v": "scroll:dumpTranscript" } }]);
     expect(resolve(layers, ev("v", { alt: true }), ["Scroll"])).toMatchObject({ type: "match", action: "scroll:dumpTranscript" });
   });
+  // F10 S3: both new action names round-trip through a user file exactly as any other declared action does —
+  // `selection:copy` (already bound by default elsewhere in Scroll) rebinds cleanly to a second chord, and
+  // `selection:clear` (declared but unbound by default, canon L174997) becomes bindable for the first time.
+  it("selection:copy rebinds to a user chord with no issues", () => {
+    const { layers, issues } = loadUserBindings(fileWith({ bindings: [
+      { context: "Scroll", bindings: { "ctrl+shift+y": "selection:copy" } },
+    ] }));
+    expect(issues).toEqual([]);
+    expect(layers).toEqual([{ context: "Scroll", bindings: { "ctrl+shift+y": "selection:copy" } }]);
+    expect(resolve(layers, ev("y", { ctrl: true, shift: true }), ["Scroll"])).toMatchObject({ type: "match", action: "selection:copy" });
+  });
+  it("selection:clear — declared but unbound by default — binds cleanly through a user file", () => {
+    const { layers, issues } = loadUserBindings(fileWith({ bindings: [
+      { context: "Scroll", bindings: { "ctrl+shift+x": "selection:clear" } },
+    ] }));
+    expect(issues).toEqual([]);
+    expect(layers).toEqual([{ context: "Scroll", bindings: { "ctrl+shift+x": "selection:clear" } }]);
+    expect(resolve(layers, ev("x", { ctrl: true, shift: true }), ["Scroll"])).toMatchObject({ type: "match", action: "selection:clear" });
+  });
   it("invalid_action: a non-string, non-null action (a number, an object) is dropped", () => {
     const { layers, issues } = loadUserBindings(fileWith({ bindings: [{ context: "Chat", bindings: { "alt+q": 7, "alt+w": { a: 1 } } }] }));
     expect(types(issues)).toEqual(["invalid_action", "invalid_action"]);

@@ -183,6 +183,13 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "ctrl+home": "scroll:top", "ctrl+end": "scroll:bottom",
     "wheelup": "scroll:lineUp", "wheeldown": "scroll:lineDown",
     "v": "scroll:dumpTranscript",
+    // F10 S3 — canon's own two copy chords for this context (L174817). `cmd+c` is bound because the parser
+    // really does deliver a `super` modifier (CSI-u bit 8, parse.ts:20-25); on a terminal that swallows the
+    // chord it simply never arrives, which costs nothing and is the same trade `ctrl+v`/`alt+v` already
+    // take in Chat. `selection:clear` is declared in VALID_ACTIONS and bound NOWHERE — canon leaves it for
+    // users (L174997) — and the pre-table ctrl+c hook (`useSelectionLifetime`) stays: canon keeps both, its
+    // own interception at L551764-551772 sitting beside these bindable actions.
+    "ctrl+shift+c": "selection:copy", "cmd+c": "selection:copy",
   }},
   { context: "HistorySearch", bindings: {
     "ctrl+r": "historySearch:next", "escape": "historySearch:accept", "tab": "historySearch:accept",
@@ -422,6 +429,7 @@ export const VALID_ACTIONS: readonly string[] = [
   "confirm:yes", "confirm:no", "confirm:previous", "confirm:next", "confirm:cycleMode", "confirm:editExternal", "confirm:toggleExplanation",
   "settings:search",
   "tabs:next", "tabs:previous",
+  "selection:copy", "selection:clear",   // F10 S3 — canon L174817 (bound) / L174997 (declared, unbound)
 ];
 
 /** Keys a USER may not rebind (upstream `vQr`/`d_s`/`p_s`, 06 §1.4), keyed by the canonical spec string — so

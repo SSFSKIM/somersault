@@ -837,6 +837,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
     "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
+    // F10 S3 — the bindable half of the selection's copy/clear pair. The pre-table ctrl+c hook below
+    // (`useSelectionLifetime`) is unchanged and canon keeps both too (L551764-551772 beside L174817).
+    // Registered unconditionally: `handlerFor` resolves by ACTION across the whole stack, so the `Scroll`
+    // context's chords reach these, and with no selection live both are a no-op rather than a fall-through
+    // (neither chord means anything else here).
+    "selection:copy": () => { if (hitmapRef.current?.hasSelection() ?? false) performAutoCopy(); },
+    "selection:clear": () => { hitmapRef.current?.discardSelection(); copyLatchRef.current = false; },
   });
 
   // ── TOOL-STREAM T10 — THE TAP: PRESS + RELEASE ON ONE CELL, TURNED INTO ONE FOLD TOGGLE ──────────────────
