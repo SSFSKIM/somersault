@@ -115,9 +115,13 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
    *  So a terminal event of a trivially-fast OR socket-killed OWN turn flushes AFTER those starts, preserving
    *  the item lifecycle (SR2). Registration order is what makes it correct: onFrame registered the item
    *  starts on the ack when the frames arrived (before this turn-end/death); this registers the terminal
-   *  after, and `.then` callbacks on one promise run in registration order → starts flush first. A FOREIGN
-   *  turn (or one whose reply is already out, so the ack was cleared) sets no ack → `emit` runs live, exactly
-   *  as today. */
+   *  after, and `.then` callbacks on one promise run in registration order → starts flush first.
+   *  WHEN THERE IS NO ACK — no own turn between its prompt write and its reply — `emit` runs live. That is
+   *  every foreign turn while this client is idle, every own turn past its reply, and (final review round 4)
+   *  every turn of either kind while an own items turn is still STAGING: turns.ts arms the ack at the
+   *  engine's dispatch edge, so the armed span is one host round trip and not the staging sequence that
+   *  precedes it. Held frames are therefore only ever the ones that raced our own reply, which is the
+   *  narrowest bracket that still covers our own. */
   const afterAck = (emit: () => void): void => {
     const ack = record.fleetStartAck;
     if (ack) void ack.then(emit); else emit();
@@ -171,9 +175,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       // ahead of) that reply routes SYNCHRONOUSLY here. Unheld, a subscriber then sees an assistant item
       // before the user item and before the turn/start reply. `fleetStartAck` is set while that reply is
       // pending and resolved the instant it publishes (the same barrier the turn/completed edge below uses),
-      // so hold own-turn item emission behind it and flush in order. Foreign turns set no ack, so their
-      // items emit live. Snapshotted BEFORE the defer because TurnMapper mutates its items in place — the
-      // deferred flush must carry the item as it was at ingest, not as later frames leave it.
+      // so hold own-turn item emission behind it and flush in order. Outside that one-round-trip window
+      // there is no ack and items emit live — including a foreign turn's whole lifecycle running while an
+      // own items turn stages its bytes (round 4; see `afterAck`). Snapshotted BEFORE the defer because
+      // TurnMapper mutates its items in place — the deferred flush must carry the item as it was at
+      // ingest, not as later frames leave it.
       const evs = mapper.ingest(m).map(snapshot);
       if (evs.length === 0) return;
       const ack = record.fleetStartAck;

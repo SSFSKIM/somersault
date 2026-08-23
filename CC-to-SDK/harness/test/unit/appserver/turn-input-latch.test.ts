@@ -50,6 +50,32 @@ vi.mock("../../../src/appserver/turnItems.js", async (importOriginal) => {
   };
 });
 
+/** THE STAGING WINDOW (final review round 4) — the OTHER await an items turn opens, and the one that sits
+ *  between the fleet arm's `dispatch` call and the prompt op itself. Held the same way and for the same
+ *  reason as the resolver above, with one difference: the real `stageBlocks` runs first and its host round
+ *  trip really happens — only the RETURN is parked, so a held row sits exactly where a real items turn sits
+ *  with its bytes staged and its prompt not yet written. */
+const stageGate = vi.hoisted(() => {
+  let release: (() => void) | undefined;
+  let pending: Promise<void> = Promise.resolve();
+  return {
+    hold(): void { pending = new Promise<void>((r) => { release = r; }); },
+    release(): void { const r = release; release = undefined; pending = Promise.resolve(); r?.(); },
+    wait(): Promise<void> { return pending; },
+  };
+});
+vi.mock("../../../src/client/stagedSubmit.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/client/stagedSubmit.js")>();
+  return {
+    ...actual,
+    stageBlocks: async (...args: Parameters<typeof actual.stageBlocks>) => {
+      const staged = await actual.stageBlocks(...args);
+      await stageGate.wait();
+      return staged;
+    },
+  };
+});
+
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
@@ -187,6 +213,7 @@ describe("post-resolution latch re-check — fleet", () => {
   const savedRoot = process.env.CCX_FLEET_ROOT;
   beforeEach(() => { root = mkdtempSync(join(tmpdir(), "ccx-latch-")); process.env.CCX_FLEET_ROOT = root; });
   afterEach(async () => {
+    stageGate.release();   // a row that failed while parked must not wedge the shutdown below, or the next row
     for (const srv of servers.splice(0)) await srv.shutdown().catch(() => {});
     for (const fh of hosts.splice(0)) await fh.close().catch(() => {});
     if (savedRoot === undefined) delete process.env.CCX_FLEET_ROOT; else process.env.CCX_FLEET_ROOT = savedRoot;
@@ -307,5 +334,54 @@ describe("post-resolution latch re-check — fleet", () => {
     await waitFor(() => expect(parsed(lines).some((f) => f.method === "item/completed" && f.params?.item?.type === "userMessage")).toBe(true));
     const user = parsed(lines).find((f) => f.method === "item/completed" && f.params?.item?.type === "userMessage");
     expect(user.params.item.text).toBe("look[Image #1]");
+  });
+
+  // THE START-ACK'S ARMING POINT (final review round 4). `record.fleetStartAck` is the promise the event
+  // layer holds an OWN turn's frames on until its inProgress reply is out (F2/R4/SR2) — and it must bracket
+  // THAT window and nothing more. Armed when `dispatch` was called it also spanned the items path's whole
+  // staging sequence, one host round trip per image, and fleet.ts defers whatever arrives while it is armed:
+  // a FOREIGN turn running in that window had its items and its turn/completed parked behind OUR ack and
+  // reached the client after our reply — another client's finished turn reordered behind our starting one.
+  // The engine now arms it in the tick it writes the prompt op, so nothing of ours can precede it and
+  // nothing of theirs is held by it. The window is HELD rather than merely slow for the reason the resolver
+  // gate is: a real round trip that happens to outlast the foreign turn is a false green.
+  it("a foreign turn's whole lifecycle stays LIVE while our items turn is still staging — it is not parked behind our start-ack", async () => {
+    const { fh, conn, lines, threadId } = await bootAttached();
+    stageGate.hold();
+    send(conn, { id: 10, method: "turn/start", params: { threadId, input: ITEMS } });
+    // Staged for real — the op reached the host — and parked on the far side of it: no prompt has been written.
+    await waitFor(() => expect(fh.ops).toContain("stageImage"));
+    expect(fh.ops.filter((op) => op === "prompt")).toEqual([]);
+
+    // …and NOW the terminal owner (or any other client of this host) runs a turn of their own, start to
+    // finish, inside that window.
+    fh.beginTurn(7);
+    fh.emitMessage({ type: "assistant", message: { id: "m9", content: [{ type: "text", text: "stranger" }] } });
+    fh.endTurn(7, { result: "someone else's turn" });
+    await waitFor(() => expect(parsed(lines).some((f) => f.method === "turn/completed" && f.params?.turn?.id === "t7@e0")).toBe(true));
+
+    // ALL THREE of their frames are on the wire in order, and OUR reply is not out yet — which is the whole
+    // claim: their completed turn precedes our inProgress, exactly as it happened.
+    expect(frame(lines, 10)).toBeUndefined();
+    const staging = parsed(lines);
+    const iTheirStart = staging.findIndex((f) => f.method === "turn/started" && f.params?.turn?.id === "t7@e0");
+    const iTheirItem = staging.findIndex((f) => f.method === "item/started" && f.params?.item?.type === "agentMessage");
+    const iTheirEnd = staging.findIndex((f) => f.method === "turn/completed" && f.params?.turn?.id === "t7@e0");
+    expect(iTheirStart).toBeGreaterThanOrEqual(0);
+    expect(iTheirItem).toBeGreaterThan(iTheirStart);
+    expect(iTheirEnd).toBeGreaterThan(iTheirItem);
+
+    // Released, our prompt goes out and our own turn opens BEHIND theirs — the seq the host hands us is the
+    // one after the turn it just finished.
+    stageGate.release();
+    await waitFor(() => expect(frame(lines, 10)).toBeTruthy());
+    expect(frame(lines, 10).result.turn).toEqual({ id: "t8@e0", status: "inProgress" });
+    const after = parsed(lines);
+    const iOurReply = after.findIndex((f) => f.id === 10 && f.result);
+    const iOurStart = after.findIndex((f) => f.method === "turn/started" && f.params?.turn?.id === "t8@e0");
+    const iTheirEndAfter = after.findIndex((f) => f.method === "turn/completed" && f.params?.turn?.id === "t7@e0");
+    expect(iOurReply).toBeGreaterThan(iTheirEndAfter);
+    expect(iOurStart).toBeGreaterThan(iTheirEndAfter);
+    expect(fh.ops.filter((op) => op === "stageImage" || op === "prompt")).toEqual(["stageImage", "prompt"]);
   });
 });

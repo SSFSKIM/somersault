@@ -251,7 +251,11 @@ export interface ThreadRecord {
                                  // failed before it accepted a seq. inProcess threads latch `busy` itself, so
                                  // this stays undefined for them.
   fleetStartAck?: Promise<void>; // FLEET ONLY (external review F2): set by fleetTurnStart (turns.ts) while an
-                                 // OWN turn's turn/start REPLY is still pending — its inProgress reply + user
+                                 // OWN turn's turn/start REPLY is still pending — armed at the engine's
+                                 // dispatch edge (fleetEngine's `onPromptDispatch`, the tick the prompt op is
+                                 // written), so an items turn's staging round trips sit OUTSIDE it: a foreign
+                                 // turn running while we stage must not be deferred behind us (round 4).
+                                 // Its inProgress reply + user
                                  // item are published on the microtask after the host's prompt reply resolves
                                  // (onAccepted), while the event layer (fleet.ts) broadcasts turn/started and
                                  // turn/completed synchronously off the host's turn frames. A trivially-fast

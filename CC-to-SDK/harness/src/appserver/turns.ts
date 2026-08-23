@@ -466,12 +466,19 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
     releaseSlot();   // one rule, one site: the reservation ending IS "the host has it, or never will"
   };
   // F2: the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge (and, for
-  // R4, this turn's own item emissions) behind until the inProgress reply is out. Set on the chain right
-  // before submit (NOT at arrival): set at arrival it would sit armed while a slow prior chain item ran and
-  // wrongly defer a FOREIGN turn's completed that ran in that gap. Resolved the instant onAccepted publishes
-  // the reply, and on the failure path so a deferred completed is never stranded.
+  // R4, this turn's own item emissions) behind until the inProgress reply is out. ARMED AT THE DISPATCH
+  // EDGE — the engine's `onPromptDispatch`, one tick before the prompt op is written (final review round 4)
+  // — and never earlier: every earlier moment defers a FOREIGN turn that ran in the gap, which is a
+  // reordering of another client's turn behind ours. At arrival the gap is a slow prior chain item; at
+  // submit-time (round 3's arming point) it is the whole staging sequence, one host round trip per image.
+  // Nothing of OURS can arrive before that edge — the host has not been told about this prompt — so the
+  // barrier protects nothing it gives up. Resolved the instant onAccepted publishes the reply, and on the
+  // failure path so a deferred completed is never stranded.
   let releaseAck!: () => void;
   const ack = new Promise<void>((r) => { releaseAck = r; });
+  // Identity-guarded, which is also what makes it a safe no-op on a turn that never reached the dispatch
+  // edge (a latch caught inside staging, a staging failure): there is no ack on the record to take down,
+  // and resolving `ack` releases a promise nobody is holding.
   const clearAck = (): void => { if (record.fleetStartAck === ack) record.fleetStartAck = undefined; releaseAck(); };
   // The ONE refusal both this turn's awaits answer with — the chain wait below, and the item resolution
   // after it. A fleet turn has no id until the host's seq arrives, so it cannot broadcast a synthesized
@@ -488,10 +495,10 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // engine never fires. `record.origin === "fleet"` is the guarantee behind it — fleet.ts is the only
   // writer of that pair.
   const engine = record.session as unknown as FleetEngineSession;
-  /** Everything from `fleetStartAck` to the host's reply, for whichever prompt this turn ended up with —
-   *  the resolved blocks for an items turn, the string itself otherwise. `onAccepted` lives in here
-   *  because the user item it echoes is the RESOLVED input's flat preview (an image reads as its
-   *  `[Image #N]` placeholder), which does not exist until the prompt does. */
+  /** Everything from the submit to the host's reply, for whichever prompt this turn ended up with — the
+   *  resolved blocks for an items turn, the string itself otherwise. `onAccepted` lives in here because
+   *  the user item it echoes is the RESOLVED input's flat preview (an image reads as its `[Image #N]`
+   *  placeholder), which does not exist until the prompt does. */
   const dispatch = (prompt: UserTurnInput): void => {
     const onAccepted = (seq: number): void => {
       const turnId = fleetTurnId(record, seq);
@@ -501,8 +508,11 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
       emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(prompt), userUuid) }]);
       clearAck();   // the reply is out — release any completed edge (and own-turn items, R4) the event layer deferred onto it
     };
-    record.fleetStartAck = ack;   // bracket only THIS turn's reply window (see the ack note above)
-    engine.submit(prompt, () => {}, { uuid: userUuid, onAccepted, aborted: refusal }).catch((e: unknown) => {
+    // ARMED BY THE ENGINE, at the tick it writes the prompt op (see the ack note above) — not here, where
+    // an items turn's staging still stands between this call and the wire. A string prompt reaches that
+    // edge inside this same tick, so its arming is where it always was.
+    const onPromptDispatch = (): void => { record.fleetStartAck = ack; };
+    engine.submit(prompt, () => {}, { uuid: userUuid, onAccepted, aborted: refusal, onPromptDispatch }).catch((e: unknown) => {
       clearReservation();
       clearAck();   // the reply will never come — don't strand a deferred turn/completed (F2)
       // Once the reply is out, this turn's outcome belongs to `turn/completed` off the host's own turn end
@@ -534,8 +544,8 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
     // mirrors beginTurn's own re-read (turns.ts:197), which settles the turn TERMINALLY on either latch —
     // but the fleet turn has NO id until the host's seq arrives on onAccepted, so it cannot broadcast a
     // synthesized turn/completed the way beginTurn does; the honest answer is the same -33001 the busy gate
-    // gives, exactly as the `closing` branch already documents. `fleetStartAck` is assigned AFTER this guard,
-    // so no ack cleanup is owed on either path.
+    // gives, exactly as the `closing` branch already documents. `fleetStartAck` is assigned AFTER this guard
+    // (since round 4, later still — at the engine's dispatch edge), so no ack cleanup is owed on either path.
     // `dispatched` is returned on EVERY path out of this callback, and the refusal paths have already
     // resolved it through `refuse` -> `clearReservation`: the chain item ends exactly when this turn's
     // reservation does, which is one rule rather than a per-branch judgement.
