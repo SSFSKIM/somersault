@@ -24,11 +24,18 @@ matching elicitation).
 
 ### Declaration — `thread/start` (and `thread/resume`, rev 2p) gain `dynamicTools`
 
-**Downgrade detection (rev 3, planning round 7 — the F9 lesson):** an OLD server's `z.object` silently
-STRIPS the unknown optional field and starts the thread toolless — no refusal, no signal. The server's
-capability surface (`initialize` result or `server/status`, whichever carries capabilities) therefore
-gains a `dynamicTools: true` marker; a client that intends to declare MUST check it and treat its
-absence as "this server cannot host my tools".
+**Downgrade detection (rev 3, planning rounds 7-8 — the F9 lesson):** an OLD server's `z.object`
+silently STRIPS the unknown optional field and starts the thread toolless — no refusal, no signal. The
+`initialize` RESULT therefore gains a `dynamicTools: true` marker, and `initialize` gets a REGISTERED
+result schema so the published artifact's `results` map carries the marker; a client that intends to
+declare MUST check it and treat its absence as "this server cannot host my tools".
+
+**A published bound (planning round 8):** a CallTool request from an interrupted turn delayed past the
+NEXT turn's submit dispatch can be attributed to the successor turn — the park barrier holds from
+`turn/interrupt` until the next dispatch, which closes the window the in-process transport can
+realistically hit; beyond it, provenance does not exist on the MCP path. Media URLs in
+`tool/callResult` are deliberately NOT schema-validated: a malformed data: URL must reach the
+conversion layer and settle the call `isError` rather than die `-32602` with the call still parked.
 
 A typed param BESIDE `config`, so the config identity guard is untouched — and so the declarations are
 **never part of config at all**: they live in dedicated thread state (below), which is what keeps
