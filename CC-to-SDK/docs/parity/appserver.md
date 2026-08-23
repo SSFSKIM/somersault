@@ -496,7 +496,13 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     (`codex-rs/app-server/src/request_processors/turn_processor.rs`, `validate_user_input_image_urls` →
     `REMOTE_IMAGE_URL_ERROR`) — and its length is capped in the schema at `MAX_DATA_URL_CHARS` =
     240,000 characters, **which is exactly 180,000 bytes ≈ 180 KB decoded**. That is THE number a client
-    builds to. The 256 KiB inbound frame cap (`appserver/peer.ts` `MAX_IN`) is the reason the schema cap
+    builds to, and the cap is measured on the base64 PAYLOAD — everything after the first comma — not on
+    the whole URL: an image AT the bound is a 240,022-character string once the `data:image/png;base64,`
+    prefix is paid for, and a cap that measured the prefix too would refuse the very number published
+    here (final review round 2). The emitted `maxLength` is therefore 240064, the payload cap plus a
+    64-character prefix allowance: it is a BACKSTOP on the serialized string, not the number to build to,
+    and the payload rule that binds is stated in the field's own `.describe` because a zod `.refine`
+    cannot be emitted into JSON Schema. The 256 KiB inbound frame cap (`appserver/peer.ts` `MAX_IN`) is the reason the schema cap
     exists, but it is not the binding one: a full 256 KiB frame is 256 KiB × ¾ ≈ 192 KiB of decoded image
     at most, before the JSON envelope is paid for, and the 240,000-character cap deliberately undercuts
     that. Sizing to the FRAME is therefore how a client gets a `-32602` it did not expect — 190 KB of
@@ -517,9 +523,12 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     at all**, because `admitBytes` derives the media type by sniffing (`pngDimensions`, then
     `jpegDimensions`) rather than trusting the declaration, so a GIF or WebP degrades with
     `unreadable image data`. Neither is expressible in the published JSON Schema — `image.url` carries a
-    `maxLength` of 240000 and a `data:` `pattern`, and a `.describe` that reads in full "A base64 `data:`
-    URL. Remote URLs are refused.", so the artifact says nothing about format or pixel dimensions — which
-    is exactly why they are written out here.
+    `maxLength` of 240064 (the whole-URL backstop above) and a `data:` `pattern`, and a `.describe` that
+    reads in full "A base64 `data:` URL. Remote URLs are refused. The cap is on the base64 PAYLOAD —
+    everything after the first comma — which may be at most 240000 characters (exactly 180,000 decoded
+    bytes); the published `maxLength` is that cap plus 64 characters of `data:<mediaType>;base64,`
+    prefix, so it is a backstop and not the number to build to.", so the artifact says nothing about
+    format or pixel dimensions — which is exactly why they are written out here.
 
     Two things were worth separating, because only one of them was catchable — and that half outlives the
     gap. The MISSING ROW went red on the registry-coverage gate the moment the op landed — correctly, and

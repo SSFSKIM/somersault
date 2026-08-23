@@ -373,17 +373,32 @@ class FleetEngine implements FleetEngineSession {
     const pending: unknown[] = [];
     this.turnSink = (m) => { pending.push(m); };
     let rep: { ok: boolean; accepted?: boolean; seq?: number; error?: string };
-    // THE STAGED BYTES SPLIT THREE WAYS HERE, on what this one op came back as — not two (whole-branch
-    // review P2). A REFUSAL and an ACCEPTANCE are both definite answers and are handled below. A
-    // REJECTION is neither: the socket can die AFTER the host accepted the prompt and BEFORE its reply
-    // reached us, and the host's `runTask` survives a client disconnect and reads the claimed files
-    // lazily as the turn runs. So the files are LEFT STANDING — unlinking them would make every later
-    // image of an accepted turn degrade as missing, while leaving them costs nothing when the prompt
-    // really never arrived: the host's own orphan sweep reaps them (host/imageStaging.ts,
-    // ORPHAN_MAX_AGE_MS), and a file the sweep already took is exactly the "missing" verdict
-    // `readAndValidate` already tolerates.
+    // THE STAGED BYTES SPLIT FOUR WAYS HERE, on what this one op came back as (whole-branch review P2,
+    // widened in round 2). An explicit REFUSAL and an ACCEPTANCE are both definite answers and are
+    // handled below: refused, the bytes are still ours and go back; accepted, the host owns them.
+    // A REJECTION is two cases wearing one face, and `sendOp` is what tells them apart:
+    //  - NEVER SENT. `sendOp` checks `this.closed` BEFORE it writes anything, so a prompt op invoked on
+    //    an already-dead engine rejects without a byte leaving. Acceptance is then impossible AND the
+    //    dead host's orphan sweeper died with the host, so these files would sit on disk until someone
+    //    restarted it — up to a full 5 MiB per turn. They are ours: taken back. Reachable without a race
+    //    to win: every staging reply arrives, the host dies during the client-local `writeFile`, and
+    //    `stageBlocks` returns into an engine that closed while it worked.
+    //  - INDETERMINATE. The socket died ACROSS the op: the host can have accepted the prompt before its
+    //    reply reached us, and its `runTask` survives a client disconnect and reads the claimed files
+    //    lazily as the turn runs. So those files are LEFT STANDING — unlinking them would make every
+    //    later image of an accepted turn degrade as missing, while leaving them costs nothing when the
+    //    prompt really never arrived: the host's own orphan sweep reaps them (host/imageStaging.ts,
+    //    ORPHAN_MAX_AGE_MS), and a file the sweep already took is exactly the "missing" verdict
+    //    `readAndValidate` already tolerates.
+    // Sampled SYNCHRONOUSLY, in the same tick as the call it describes — no await between the sample and
+    // the `sendOp`, so it reads the very state that decides which branch inside `sendOp` was taken.
+    const neverSent = this.closed;
     try { rep = await this.sendOp({ op: "prompt", ...body, ...(opts?.uuid ? { uuid: opts.uuid } : {}) }); }
-    catch (e) { this.turnSink = undefined; this.discardWindowEnds(); throw e; }
+    catch (e) {
+      this.turnSink = undefined; this.discardWindowEnds();
+      if (neverSent) await staged?.cleanup();
+      throw e;
+    }
     if (!rep.ok || rep.seq === undefined) {
       this.turnSink = undefined;
       this.discardWindowEnds();

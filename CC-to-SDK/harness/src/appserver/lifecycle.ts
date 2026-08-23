@@ -29,8 +29,9 @@
 // The busy-gate here is load-bearing, not redundant with `record.chain`: `record.chain` only serializes
 // handler BODIES against each other (this op against settings.ts's setters, thread/close, etc) — it does
 // NOT, by itself, wait for an in-flight turn's engine call, because `beginTurn` (turns.ts) deliberately
-// does not return the runner's promise into `record.chain` (a turn completes via `settleTurn`, not via
-// the chain resolving). Without an explicit `threadBusyReason` check here, a `turn/start` immediately
+// holds its chain slot only until the turn's prompt is DISPATCHED and never returns the runner's whole
+// promise into `record.chain` (a turn completes via `settleTurn`, not via the chain resolving). Without
+// an explicit `threadBusyReason` check here, a `turn/start` immediately
 // followed by `thread/reinitialize` would call `reinitialize()` on the same engine session while
 // `submit()` was still in flight (a real bug an external review caught in an earlier draft of this file,
 // whose header used to claim record.chain alone provided this guarantee — it does not).
@@ -89,9 +90,16 @@ export const threadCompactStart: Handler = (srv: AppServer, ctx, id, params) => 
   // NOT `async` — same reasoning as turns.ts's turnStart runner: a plain function lets compact()
   // throwing SYNCHRONOUSLY propagate synchronously into beginTurn's try/catch (reportFailed), rather than
   // being absorbed into a rejected promise that would route through onFailure instead.
-  beginTurn(srv, ctx, id, record, (turnId) => record.session.compact!().then((outcome) => {
-    srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId, outcome });
-  }));
+  beginTurn(srv, ctx, id, record, (turnId, _mapper, releaseSlot) => {
+    const compacted = record.session.compact!();
+    // The engine call is out — release the chain slot HERE, not on the compaction's own completion, or
+    // every op chained behind this one would wait out a whole compaction (beginTurn's runner contract:
+    // the slot covers preparation and dispatch, and this runner has no preparation to do).
+    releaseSlot();
+    return compacted.then((outcome) => {
+      srv.broadcast(record.id, "thread/compacted", { threadId: record.id, turnId, outcome });
+    });
+  });
 };
 
 export const threadReinitialize: Handler = (srv: AppServer, ctx, id, params) => {

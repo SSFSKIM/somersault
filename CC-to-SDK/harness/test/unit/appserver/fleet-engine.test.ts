@@ -104,7 +104,7 @@ interface StagingHost {
  *  show neither a per-image claim, nor the cleanup of a SPECIFIC file, nor a refusal that lands mid-loop
  *  after an earlier image already staged. So this speaks the wire by hand (the shape `startRawHost` above
  *  uses), answering every other op `{ok:true}` so `follow`/`unfollow` still complete. */
-async function startStagingHost(opts: { stageErrorAt?: { at: number; error: string }; holdStage?: true; prompt?: PromptReply } = {}): Promise<StagingHost> {
+async function startStagingHost(opts: { stageErrorAt?: { at: number; error: string }; holdStage?: true; dieAfterStage?: true; prompt?: PromptReply } = {}): Promise<StagingHost> {
   const dir = mkdtempSync(join(tmpdir(), "fleet-stage-"));
   const socketPath = join(dir, "h.sock");
   const ops: string[] = [];
@@ -132,6 +132,10 @@ async function startStagingHost(opts: { stageErrorAt?: { at: number; error: stri
           // inside its very first await for as long as the reservation row needs it there.
           if (opts.holdStage && n === 1) { held = { id: f.id, path }; continue; }
           reply(f.id, { ok: true, path });
+          // …and then the host dies, AFTER answering. `end()` flushes the reply before the FIN, so the
+          // client really does receive the path (and writes the file) and only then sees the socket go —
+          // the "staging finished into a closed engine" window, without a race to win.
+          if (opts.dieAfterStage) sock.end();
           continue;
         }
         if (f.op === "prompt") {
@@ -652,6 +656,24 @@ describe("FleetEngineSession", () => {
       await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toThrow(/closed/);
       expect(sh.staged).toHaveLength(1);                                  // it really did stage before the death
       expect(existsSync(sh.staged[0])).toBe(true);                        // …and the bytes are still there for it
+      eng = undefined;                                                    // the socket is gone; no unfollow to send
+    });
+
+    it("CLEANS the staged files when the engine was already closed before the prompt op — a never-sent prompt is still ours", async () => {
+      // THE FOURTH OWNERSHIP CASE (final review round 2), and the one the row above must not swallow. A
+      // rejection is indeterminate only when the op was WRITTEN; `sendOp` checks the death latch BEFORE it
+      // writes anything, so a prompt invoked on an already-closed engine never reached the wire at all —
+      // acceptance is impossible, and the dead host's orphan sweeper died with the host, so leaving these
+      // files means up to a full 5 MiB sitting on disk until someone restarts it. The window is real
+      // rather than contrived: the staging replies all arrive, the host dies while this client is still
+      // writing the bytes it was handed, and `stageBlocks` returns into an engine that closed underneath it.
+      sh = await startStagingHost({ dieAfterStage: true });
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toThrow(/closed/);
+      expect(sh.staged).toHaveLength(1);                                  // the path was minted and the bytes written
+      expect(s.isEnded()).toBe(true);                                     // …the death latch was up before the prompt op
+      expect(sh.ops).not.toContain("prompt");                             // …so nothing was written for the host to see
+      expect(existsSync(sh.staged[0])).toBe(false);                       // ownership never transferred — and nothing survives to sweep
       eng = undefined;                                                    // the socket is gone; no unfollow to send
     });
 

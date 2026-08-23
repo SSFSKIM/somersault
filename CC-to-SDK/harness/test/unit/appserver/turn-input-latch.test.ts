@@ -118,6 +118,33 @@ describe("post-resolution latch re-check — inProcess", () => {
     expect(srv.registry.get(threadId)).toBeUndefined();
   });
 
+  // THE CHAIN SLOT (final review round 2). `turn/start` takes an ordered slot on `record.chain` so its
+  // prompt reaches the engine behind anything the client sent first — but the slot released as soon as the
+  // RUNNER WAS INVOKED, which is the same instant as the engine call only for a string. An items turn
+  // resolves first, and an op the client sent AFTER the turn ran inside that window: `setModel` reached
+  // the engine before the prompt it was meant to configure. Both orderings answer {ok:true} to both
+  // requests, so ORDER AT THE ENGINE is the only place the difference is visible — and the resolution is
+  // held rather than merely slow, because a real resolution that happens to finish first is a false green.
+  it("holds the chain across the item resolution: a thread/model/set sent BEHIND an items turn reaches the engine behind its prompt", async () => {
+    const calls: string[] = [];
+    const { s, c, threadId } = await bootThread(() => ({
+      submit: async (prompt: UserTurnInput) => { calls.push("submit"); submits.push(prompt); return { result: {} }; },
+      setModel: async () => { calls.push("setModel"); },
+      interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-4",
+    }));
+    gate.hold();
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: ITEMS } });
+    await tick();                                                  // the chain callback ran; resolution is parked
+    send(c, { id: 4, method: "thread/model/set", params: { threadId, model: "opus" } });
+    await settle();
+    // The setter is genuinely PARKED behind the turn's preparation — not merely later in the log.
+    expect(calls).toEqual([]);
+    gate.release();
+    await settle();
+    expect(calls).toEqual(["submit", "setModel"]);
+    expect(frame(s.lines, 4).result).toEqual({ ok: true });        // …and holding the slot did not cost the setter its reply
+  });
+
   // THE STATUS ITSELF, which the row above cannot see (review important I-2). There the close's dispose
   // finishes first, so closeRecord has already dropped the record by the time the parked resolution
   // resumes — and `broadcast` no-ops for a record that has left the registry, swallowing the very
@@ -247,6 +274,23 @@ describe("post-resolution latch re-check — fleet", () => {
   // latch, so nothing here ever drove `dispatch(resolved)` — the fleet arm's whole items path (resolve,
   // stage the bytes onto the host's disk, claim them by path on the prompt op, echo the placeholder) could
   // have been deleted and every row stayed green. This one runs it end to end, unheld.
+  // THE FLEET HALF OF THE CHAIN SLOT (final review round 2). Here the window is not the resolution — the
+  // fleet arm already returned that promise into the chain — but the STAGING round trip that follows it:
+  // the chain item ended when `dispatch` was called, and the image's `stageImage` op plus the client-local
+  // write stand between that call and the prompt op. So a `thread/model/set` sent behind the turn reached
+  // the HOST first. Nothing is held artificially here: one host round trip is already longer than the
+  // microtask the setter needs, which is exactly why the defect was reachable without a race to win.
+  it("holds the chain across STAGING: a thread/model/set sent behind an items turn reaches the host behind the prompt", async () => {
+    const { fh, conn, lines, threadId } = await bootAttached();
+    send(conn, { id: 10, method: "turn/start", params: { threadId, input: ITEMS } });
+    send(conn, { id: 11, method: "thread/model/set", params: { threadId, model: "opus" } });
+    await waitFor(() => expect(frame(lines, 11)).toBeTruthy());
+    expect(frame(lines, 10).result.turn.status).toBe("inProgress");
+    expect(frame(lines, 11).result).toEqual({ ok: true });
+    expect(fh.ops.filter((op) => op === "stageImage" || op === "prompt" || op === "set_model"))
+      .toEqual(["stageImage", "prompt", "set_model"]);
+  });
+
   it("an items turn stages the image THEN prompts, claims it by path, and echoes it as [Image #1]", async () => {
     const { fh, conn, lines, threadId } = await bootAttached();
     send(conn, { id: 10, method: "turn/start", params: { threadId, input: ITEMS } });

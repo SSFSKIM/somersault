@@ -197,7 +197,15 @@ export function beginTurn(
   // report (compact) resolves void; onSuccess treats that as a clean completion.
   // `stopped` is the runner's own way of saying it never called the engine (submitRunner's post-resolution
   // latch re-check) — onSuccess reports it verbatim rather than deriving a terminal it cannot know.
-  runner: (turnId: string, mapper: TurnMapper) => Promise<TurnOutcome>,
+  //
+  // `releaseSlot` is the runner's OTHER obligation, and the whole of what keeps this turn ordered against
+  // the ops chained behind it (final review R2, round 2): the chain item below is held until the runner
+  // calls it, so a runner with PREPARATION to do before the engine call (submitRunner's item resolution)
+  // keeps the prompt ahead of the `thread/model/set` a client sent after it. Call it the instant the
+  // engine call is DISPATCHED — never at completion, which would park every chained op for the length of
+  // the turn. A runner that lets its own promise settle without calling it is released by that settlement
+  // (the belt below), so forgetting costs ordering, never liveness.
+  runner: (turnId: string, mapper: TurnMapper, releaseSlot: () => void) => Promise<TurnOutcome>,
   presetTurnId?: string, // M2b's queue drain passes the id minted at enqueue; otherwise mintTurnId()
 ): boolean {
   // Gate synchronously, at request-arrival time — NOT deferred inside the chain callback below. A
@@ -228,7 +236,9 @@ export function beginTurn(
   const turnId = presetTurnId ?? mintTurnId(record);
   record.currentTurnId = turnId;
   // The chain still gates the submit work below so it stays ordered after any prior thread-scoped chain
-  // item (e.g. a queued thread/close finishing its dispose first).
+  // item (e.g. a queued thread/close finishing its dispose first) — and, since round 2 of the final
+  // review, it is HELD until that submit is dispatched (the slot inside the callback), so an op chained
+  // BEHIND the turn reaches the engine behind its prompt as well.
   record.chain = record.chain.then(() => {
     // RE-READ the record before running anything. Every check above ran at request-arrival time, but this
     // callback can sit behind a chain item awaiting real engine I/O (a settings setter, a compact), and the
@@ -318,6 +328,14 @@ export function beginTurn(
       srv.broadcast(record.id, "turn/completed", { threadId: record.id, turn: turn2 });
       statusChanged(srv, record);
     };
+    // THE CHAIN SLOT, held through the runner's PREPARATION AND DISPATCH and not one step further
+    // (final review R2, round 2). Before this the callback returned as soon as the runner was INVOKED,
+    // which is the same instant only for a runner that dispatches synchronously: an items turn resolves
+    // its input first, and the chain released into that window, so a `thread/model/set` sent AFTER the
+    // turn reached the engine BEFORE its prompt. The outcome promise stays detached below, so the slot
+    // is never held for the turn's own duration — a setter mid-turn is a real feature (settings.ts).
+    let releaseSlot!: () => void;
+    const dispatched = new Promise<void>((r) => { releaseSlot = r; });
     try {
       // Guarded: the runner throwing SYNCHRONOUSLY (rather than returning a rejected promise) must
       // never leave record.chain rejected — an uncaught rejection here crashes the process AND wedges
@@ -326,10 +344,18 @@ export function beginTurn(
       // The try/catch below is belt-and-suspenders with the .catch(reportFailed): the try/catch covers
       // a throw before the runner ever returns a promise; the .catch covers onSuccess/onFailure
       // themselves throwing after the runner's promise settles.
-      runner(turnId, mapper).then(onSuccess, onFailure).catch(reportFailed);
+      const outcome = runner(turnId, mapper, releaseSlot);
+      // THE BELT ON THE SLOT: a path out of the runner that never dispatched and never released — an
+      // item resolution that REJECTED, say — must not leave the chain held forever, which would wedge
+      // this thread exactly as a rejected chain does. Resolving a promise twice is a no-op, so the
+      // ordinary path still releases at dispatch and this only ever covers what dispatch missed.
+      void outcome.then(releaseSlot, releaseSlot);
+      outcome.then(onSuccess, onFailure).catch(reportFailed);
     } catch (err) {
+      releaseSlot();   // a synchronous throw is a way out of the runner too, and the slot is owed a release on every one
       reportFailed(err);
     }
+    return dispatched;
   });
   return true;
 }
@@ -347,7 +373,7 @@ export function beginTurn(
  *  tick as a synchronously-throwing submit(). The submit promise is returned AS-IS so beginTurn's
  *  onSuccess can read Wave T t14's additive `error` tag off the resolve. */
 function submitRunner(srv: AppServer, record: ThreadRecord, input: string | InputItem[]) {
-  return (turnId: string, mapper: TurnMapper): Promise<TurnOutcome> => {
+  return (turnId: string, mapper: TurnMapper, releaseSlot: () => void): Promise<TurnOutcome> => {
     const drive = (resolved: UserTurnInput): Promise<TurnOutcome> => {
       // gap 6, probe-70 ALIVE branch: the server mints the transcript uuid itself and reuses it as the
       // live userMessage item's id, so the id equals what the SDK will persist — the item can safely join
@@ -361,16 +387,22 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string | Inpu
       return record.session.submit(resolved, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
     };
     // A STRING takes the exact path it always did, synchronously — see the header on why this function is
-    // not `async`. Only the items form has an await to put anything on the far side of.
-    if (typeof input === "string") return drive(input);
+    // not `async`. Only the items form has an await to put anything on the far side of. The slot is
+    // released the moment `drive` has been called, which for this form is before the caller gets the
+    // promise back at all: `session.submit` was already reached inside it.
+    if (typeof input === "string") { const submitted = drive(input); releaseSlot(); return submitted; }
     // The items form resolves HERE, in the turn's own ordered execution slot: a queued turn that drains
-    // into this runner is byte-for-byte the turn a direct start would have produced.
+    // into this runner is byte-for-byte the turn a direct start would have produced. The chain slot is
+    // held ACROSS that resolution — that is the whole point of it — and released on both of its ends.
     return resolveInputItems(input).then((resolved) => {
       // …and the latches are re-read before anything reaches the engine. Resolution opens files and can
       // take real time; a thread/close disposing this very engine, or a turn/interrupt, can land inside
       // it, and every check that admitted this turn ran before it.
       const stopped = stoppedBy(record);
-      return stopped ? { stopped } : drive(resolved);
+      if (stopped) { releaseSlot(); return { stopped }; }
+      const submitted = drive(resolved);
+      releaseSlot();       // the prompt is on the engine's input queue — anything chained behind this turn may go
+      return submitted;
     });
   };
 }
@@ -419,9 +451,19 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
   // uninstall can never blind a check that is still owed one.
   const pending: PendingFleetStop = { interrupted: false };
   record.fleetPendingStop = pending;
+  // THE CHAIN SLOT (final review R2, round 2), the fleet analog of beginTurn's own. Held from the chain
+  // callback below until this turn has either reached the host — `onAccepted`, the one race-free signal
+  // that the prompt op is in the host's hands — or terminally failed to. Before this the callback returned
+  // once dispatch STARTED, which for an items turn is a whole staging round trip before the prompt op
+  // leaves, so a `thread/model/set` chained behind the turn overtook its prompt on the host wire.
+  // No deadlock rides on it: `turn/interrupt` does not chain at all (it raises the latches directly), and
+  // every path out of `dispatch` clears the reservation, including the socket-death rejection.
+  let releaseSlot!: () => void;
+  const dispatched = new Promise<void>((r) => { releaseSlot = r; });
   const clearReservation = (): void => {
     record.fleetTurnPending = false;
     if (record.fleetPendingStop === pending) record.fleetPendingStop = undefined;   // identity-guarded, like clearAck
+    releaseSlot();   // one rule, one site: the reservation ending IS "the host has it, or never will"
   };
   // F2: the promise the event layer (fleet.ts) holds a trivially-fast turn's turn/completed edge (and, for
   // R4, this turn's own item emissions) behind until the inProgress reply is out. Set on the chain right
@@ -494,19 +536,24 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
     // synthesized turn/completed the way beginTurn does; the honest answer is the same -33001 the busy gate
     // gives, exactly as the `closing` branch already documents. `fleetStartAck` is assigned AFTER this guard,
     // so no ack cleanup is owed on either path.
+    // `dispatched` is returned on EVERY path out of this callback, and the refusal paths have already
+    // resolved it through `refuse` -> `clearReservation`: the chain item ends exactly when this turn's
+    // reservation does, which is one rule rather than a per-branch judgement.
     const stopped = refusal();
-    if (stopped) { refuse(stopped); return; }
-    if (typeof input === "string") { dispatch(input); return; }
+    if (stopped) { refuse(stopped); return dispatched; }
+    if (typeof input === "string") { dispatch(input); return dispatched; }
     // The items form resolves in THIS turn's slot, and the chain holds until it finishes — so the prompt
     // still leaves for the host behind any prior chain mutation (R2) rather than out of a callback that
-    // escaped the ordering. The RETURNED promise is what keeps that true.
+    // escaped the ordering. The RETURNED promise is what keeps that true. It holds past the resolution
+    // too, through the staging round trip `dispatch` opens, until the host answers.
     return resolveInputItems(input).then((resolved) => {
       // RE-CHECKED, on the far side of the read: a thread/close (which is about to dispose this engine) or
       // a turn/interrupt can land inside a resolution that opened files, and every check that admitted
       // this turn ran before it.
       const late = refusal();
-      if (late) { refuse(late); return; }
+      if (late) { refuse(late); return dispatched; }
       dispatch(resolved);
+      return dispatched;
     }, (e: unknown) => {
       // The resolver degrades rather than throwing, so reaching here is a bug or an out-of-memory — but an
       // unhandled rejection HERE would reject record.chain and wedge this thread forever (every later
@@ -514,6 +561,7 @@ function fleetTurnStart(srv: AppServer, ctx: ConnCtx, id: RequestId, record: Thr
       // reservation released, and the caller told.
       clearReservation();
       ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
+      return dispatched;   // already resolved by the line above — the same one rule as every branch here
     });
   });
 }

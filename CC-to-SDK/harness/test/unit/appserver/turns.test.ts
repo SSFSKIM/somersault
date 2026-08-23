@@ -567,7 +567,10 @@ describe("turn/start input items (spec 2026-08-23)", () => {
     const { s, c, threadId } = await bootThread(rec.instantFactory);
     const bad: Array<[number, unknown]> = [
       [10, [{ type: "image", url: "https://example.com/cat.png" }]],
-      [11, [{ type: "image", url: `data:image/png;base64,${"A".repeat(MAX_DATA_URL_CHARS)}` }]],
+      // OVER the cap by one quantum, measured the way the cap is measured — on the PAYLOAD (see (c2)).
+      // The whole URL is 240,026 characters, comfortably under the emitted `maxLength` backstop, so this
+      // row is refused by the payload refine and by nothing else.
+      [11, [{ type: "image", url: `data:image/png;base64,${"A".repeat(MAX_DATA_URL_CHARS + 4)}` }]],
       [12, [{ type: "localImage", path: "relative/cat.png" }]],
       [13, []],
       [14, Array.from({ length: MAX_INPUT_ITEMS + 1 }, () => ({ type: "text", text: "x" }))],
@@ -577,6 +580,30 @@ describe("turn/start input items (spec 2026-08-23)", () => {
     for (const [id] of bad) expect(parsed(s.lines).find((f) => f.id === id)?.error?.code, `frame ${id}`).toBe(ERR.INVALID_PARAMS);
     // A refusal is not a turn: nothing reached the engine, and the thread is still idle.
     expect(rec.submits).toEqual([]);
+  });
+
+  // THE BOUND IS THE PAYLOAD'S, NOT THE URL'S (final review round 2). The schema's `.max()` measured the
+  // whole string, prefix included, so an image at exactly the published bound — 240,000 base64 characters,
+  // the 180,000 decoded bytes the docs tell a client to build to — arrived as a 240,022-character URL and
+  // was refused -32602 by the very schema that published the number. The resolver had always measured the
+  // payload, so the two layers disagreed about one cap. Driven through the real dispatch, since what
+  // changed is which layer sees the request at all.
+  it("(c2) an image AT the published payload bound is ADMITTED and reaches the engine, prefix and all", async () => {
+    const rec = mkRecorder();
+    const { s, c, threadId } = await bootThread(rec.instantFactory);
+    const atCap = Buffer.alloc((MAX_DATA_URL_CHARS / 4) * 3);   // 180,000 bytes -> exactly 240,000 base64 chars
+    png().copy(atCap, 0);                                       // …still a sniffable 4x4 PNG, so it survives the resolver too
+    const b64 = atCap.toString("base64");
+    const url = `data:image/png;base64,${b64}`;
+    expect(b64.length).toBe(MAX_DATA_URL_CHARS);                // the payload is AT the cap
+    expect(url.length).toBe(MAX_DATA_URL_CHARS + 22);           // …and the URL is over it, which is the whole defect
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: [{ type: "image", url }] } });
+    await tick();
+    const reply = parsed(s.lines).find((f) => f.id === 3);
+    expect(reply.error).toBeUndefined();
+    expect(reply.result.turn.status).toBe("inProgress");
+    // END TO END, not merely admitted: the bytes the client sent are the bytes the engine was handed.
+    expect(rec.submits).toEqual([[{ type: "text", text: "" }, imageBlock(b64)]]);
   });
 
   it("(d) the 21st image degrades against the host's own per-turn image cap while the first 20 survive", async () => {

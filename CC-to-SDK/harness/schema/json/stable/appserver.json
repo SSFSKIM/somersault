@@ -216,9 +216,9 @@
                       },
                       "url": {
                         "type": "string",
-                        "maxLength": 240000,
+                        "maxLength": 240064,
                         "pattern": "^data:.*",
-                        "description": "A base64 `data:` URL. Remote URLs are refused."
+                        "description": "A base64 `data:` URL. Remote URLs are refused. The cap is on the base64 PAYLOAD — everything after the first comma — which may be at most 240000 characters (exactly 180,000 decoded bytes); the published `maxLength` is that cap plus 64 characters of `data:<mediaType>;base64,` prefix, so it is a backstop and not the number to build to."
                       }
                     },
                     "required": [

@@ -23,7 +23,11 @@ image URLs (`codex-rs/app-server/src/request_processors/turn_processor.rs`,
 256 KiB (`peer.ts` MAX_IN) — 256 KiB × ¾ ≈ 192 KiB of decoded image at best — and the SCHEMA caps one
 `data:` URL tighter still, at `MAX_DATA_URL_CHARS = 240_000` characters = **exactly 180,000 bytes
 (≈180 KB) decoded**. The schema cap is the binding one, so 180 KB is the number a client builds to;
-sizing to the frame instead earns a `-32602`. Bigger images reach the
+sizing to the frame instead earns a `-32602`. The cap binds the base64 PAYLOAD — everything after the
+first comma — and not the whole URL, because an image at exactly the published bound is a
+240,022-character string once `data:image/png;base64,` is paid for; the emitted `maxLength` is 240064
+(the payload cap plus a 64-character prefix allowance) and is a backstop on the serialized string
+rather than the number to build to. Bigger images reach the
 model via `localImage` (shared filesystem). A REMOTE client with a >180 KB image has NO v1 path — named
 as the follow-up (a staged/chunked upload, the D-M4-8 bridge family), and the scorecard row says so
 instead of scoring the gap fully closed.
@@ -48,8 +52,9 @@ export const turnStartParams = z.object({
   with `-32602 INVALID_PARAMS` — a new client can never have its images silently stripped.
 - **`image.url` admits `data:` only, in the schema, with a published length cap**:
   `MAX_DATA_URL_CHARS = 240_000` (≈180 KB decoded — what the 256 KiB frame carries after the JSON
-  envelope, with headroom). An `https://` URL is a schema refusal — matching Codex's own refusal of
-  remote URLs.
+  envelope, with headroom), measured on the base64 PAYLOAD, with the emitted `maxLength` of 240064
+  standing as the whole-URL backstop. An `https://` URL is a schema refusal — matching Codex's own
+  refusal of remote URLs.
 - **`localImage.path` must be absolute** (schema-refined). A relative path would resolve against the
   app-server process cwd — a third cwd that is neither the thread's nor the client's; `workspace.ts`
   refuses relative reads for the same reason. The path is client-owned information, so echoing it in a
@@ -248,9 +253,10 @@ Found during execution (T1–T5):
   only the side effect tells them apart.
 - **A zod `.refine` does not reach the published artifact — confirmed by regenerating it, not assumed.**
   `emit-schema` publishes `image.url`'s `maxLength`/`pattern` but nothing at all for `localImage`'s
-  absolute-path refinement, so the rule lives in the item's `.describe(…)`, where it does survive. The
-  published shape is looser than runtime validation; the spec's job was to make that stated rather than
-  silent, and the artifact now says so in prose a client reads.
+  absolute-path refinement, nor for `image.url`'s own payload-length refine (round 2), so both rules live
+  in the item's `.describe(…)`, where they do survive. The published shape is looser than runtime
+  validation; the spec's job was to make that stated rather than silent, and the artifact now says so in
+  prose a client reads.
 - **The per-item caps interact in a way that leaves one budget nearly dead on the wire path.** With
   `MAX_DATA_URL_CHARS` at 240,000 and `MAX_IMAGES_PER_PROMPT` at 20, data: URLs alone top out near 3.6 MB
   — under the 5 MiB per-turn aggregate — so the aggregate binds only on `localImage` turns. It is not
@@ -278,6 +284,30 @@ Found during execution (T1–T5):
   died at the host's "text or at least one image" refine as -32603 INTERNAL. Our array refine now mirrors
   the host's rule and answers -32602 — the general rule: every reachable downstream refusal of a
   request SHAPE must have an admission-time counterpart, or schema-valid input reads as a server bug.
+- **A serialization slot must cover the work it was taken for, not the call that opens it** (final review
+  round 2, P1). `turn/start` takes an ordered slot on the thread's chain so its prompt reaches the engine
+  behind anything the client sent first — and the slot released the moment the runner was INVOKED, which
+  equals "dispatched" only while dispatch is synchronous. The milestone gave the turn asynchronous
+  PREPARATION (item resolution on both origins, a host staging round trip on the fleet one), so an op
+  sent AFTER the turn reached the engine BEFORE its prompt. The general rule: when an ordered handler
+  gains an await ahead of its side effect, the ordering primitive must be re-anchored to the side effect
+  itself — and released there and not one step later, since holding it through completion would park
+  every subsequent op for the whole operation.
+- **"Indeterminate" has an exact boundary, and the transport usually knows where it is** (final review
+  round 2, P2a). Round 1 correctly stopped unlinking staged files on a prompt-op rejection, because a
+  socket death across the op cannot be told from an acceptance whose reply was lost. But the send path
+  checks its own death latch BEFORE it writes, so a rejection raised by that check means the op never
+  left — acceptance is impossible and the dead host's orphan sweeper died with it, stranding the bytes.
+  Generalized: before classing a failure as unknowable, ask whether the layer that raised it can separate
+  "never attempted" from "attempted, outcome unknown"; a pre-write guard is exactly that separation, and
+  sampling it in the same tick as the call keeps the answer exact.
+- **A shared cap has to be measured on the same substring everywhere it is stated** (final review round 2,
+  P2b). The schema measured the whole `data:` URL while the resolver measured the base64 payload and the
+  docs published the payload number, so an image at exactly the published bound was refused by the wire
+  that published it. Agreeing on the NUMBER is not agreeing on the cap. And where the enforceable form
+  cannot be emitted into a published artifact (a zod `.refine`), the artifact's own number must be
+  labelled for what it is — a backstop — with the binding rule stated in prose beside it, or a client
+  builds to the wrong one of the two.
 
 ## Outcomes & Retrospective
 
@@ -322,6 +352,14 @@ lifecycle, staged-file cleanup on an indeterminate ack, and a zero-content array
 the host's refused (all three in Surprises). Fixed in one wave with per-finding sabotage proofs; the
 per-task reviews were each scoped to their own diff, and every one of these needed two tasks' code in
 view at once.
+
+A second whole-branch round over the fixed tree found three more, and they rhyme: each was a property
+that had been TRUE before this milestone added an await or a prefix, and stayed written down as though
+nothing had moved. The chain slot still released at the call that used to be the dispatch; the
+staged-byte cleanup treated a pre-write refusal as the same unknown as a mid-flight death; the schema
+still measured the whole string for a cap the resolver and the docs measured on its payload. What the
+round is worth remembering for is the shape of the miss rather than the three sites: adding asynchrony
+in front of an effect silently re-points every invariant that was anchored to the call.
 
 **Gaps left open, each deliberately:**
 

@@ -15,14 +15,39 @@ import { MAX_IN } from "../peer.js";
  *  240,000 base64 characters decode to exactly 180,000 bytes. The 256 KiB inbound frame cap is why that
  *  cap sits where it does, not what the 180 KB measures.
  *
+ *  IT BINDS THE PAYLOAD, NOT THE URL (final review round 2). A `.max()` on the whole string measured the
+ *  `data:image/png;base64,` prefix too, so an image AT the published bound — 240,000 payload characters,
+ *  exactly the 180,000 bytes the docs promise — arrived 240,022 characters long and was refused by the
+ *  very schema that published the number. The resolver has always measured the payload
+ *  (`turnItems.ts`'s `decodeDataUrl`), so the two layers disagreed about the same cap. They now measure
+ *  the same substring: the `.max()` stays as the EMITTED backstop (the payload cap plus a prefix
+ *  allowance — `data:image/jpeg;base64,`, the longest real prefix, is 23 characters), and the refine is
+ *  what actually enforces the published number. A URL with no comma at all is left to the resolver,
+ *  which degrades it as "not a base64 data: URL" — a shape this refine has no payload to measure, and
+ *  refusing it here would answer -32602 where the item-level degrade is the established answer.
+ *  The payload rule rides `.describe()` for this file's own standing reason: a refine cannot be emitted
+ *  into the published JSON Schema, so a client validating against the artifact alone would otherwise
+ *  build to the backstop number and meet the real cap as a -32602 in production.
+ *
  *  `localImage.path` must be ABSOLUTE, because a relative one would resolve against THIS process's cwd —
  *  a third cwd that is neither the thread's nor the client's (workspace.ts refuses relative reads for the
  *  same reason). The rule is stated in `.describe()` as well as refined, because a refine CANNOT be
  *  emitted into the published JSON Schema: a client validating against the artifact alone would see a
  *  bare string and learn about the rule from a -32602 in production instead. */
+/** How much longer than its payload a real `data:` URL may be: `data:image/jpeg;base64,` is 23 characters,
+ *  so 64 leaves room for any media type a sniffable image can carry while keeping the emitted `maxLength`
+ *  a bound rather than a fiction. It is a BACKSTOP, not the cap — the refine below is the cap. */
+const DATA_URL_PREFIX_ALLOWANCE = 64;
+/** The resolver's own measurement (`decodeDataUrl`: everything after the FIRST comma), mirrored so the
+ *  wire and the resolver cannot disagree about what 240,000 characters counts. */
+const payloadWithinCap = (url: string): boolean => {
+  const comma = url.indexOf(",");
+  return comma < 0 || url.length - comma - 1 <= MAX_DATA_URL_CHARS;
+};
+
 const inputItem = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
-  z.object({ type: z.literal("image"), url: z.string().startsWith("data:").max(MAX_DATA_URL_CHARS).describe("A base64 `data:` URL. Remote URLs are refused.") }),
+  z.object({ type: z.literal("image"), url: z.string().startsWith("data:").max(MAX_DATA_URL_CHARS + DATA_URL_PREFIX_ALLOWANCE).refine(payloadWithinCap).describe(`A base64 \`data:\` URL. Remote URLs are refused. The cap is on the base64 PAYLOAD — everything after the first comma — which may be at most ${MAX_DATA_URL_CHARS} characters (exactly 180,000 decoded bytes); the published \`maxLength\` is that cap plus ${DATA_URL_PREFIX_ALLOWANCE} characters of \`data:<mediaType>;base64,\` prefix, so it is a backstop and not the number to build to.`) }),
   z.object({ type: z.literal("localImage"), path: z.string().min(1).refine(isAbsolute).describe("An ABSOLUTE path on the server's filesystem. A relative path is refused (-32602).") }),
 ]);
 
