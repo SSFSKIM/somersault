@@ -164,7 +164,10 @@ function buildRaw(width, height, bpp, withAlpha) {
   }
   return raw;
 }
-function buildPng({ width, height, colorType, bitDepth = 8, interlace = 0, filterMode = "adaptive", withAlpha = false, deflateLevel }) {
+/** Exported (Task 5 / I5b) so `test/unit/imageCodec-encode.test.ts`'s `syntheticPng`/`gradientPng`
+ *  helpers share this one from-scratch PNG writer rather than a second copy — same rationale as the
+ *  chunk primitives above: one implementation the decode AND encode suites both fixture against. */
+export function buildPng({ width, height, colorType, bitDepth = 8, interlace = 0, filterMode = "adaptive", withAlpha = false, deflateLevel }) {
   const bpp = colorType === 6 ? 4 : 3;
   const raw = buildRaw(width, height, bpp, withAlpha);
   const filtered = filterImage(raw, width, height, bpp, filterMode);

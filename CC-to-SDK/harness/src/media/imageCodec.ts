@@ -14,7 +14,8 @@
 // in progress. Nothing here claims a hang is impossible; what's asserted (and true) is stronger: with
 // the deadline stubbed to never expire, every hostile fixture still returns a coded failure, because
 // the structural cap is what actually carries the guarantee.
-import { inflateSync } from "node:zlib";
+import { inflateSync, deflateSync } from "node:zlib";
+import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "./imageDims.js";
 
 /** Decode results are a UNION, never one shape with optional fields (plan-review r2 F-CODEC). The
  *  palette / 16-bit / interlaced arm CANNOT produce pixels, so a caller that forgets it must fail to
@@ -312,4 +313,245 @@ export function decodeImage(buf: Buffer, mediaType: string, deadline: Deadline):
   if (buf.length >= 8 && PNG_SIG.every((b, i) => buf[i] === b)) return decodePng(buf, deadline);
   if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) return decodeBmp(buf, deadline);
   return { ok: false, code: "malformed", reason: "unrecognized image signature (not PNG or BMP)" };
+}
+
+// ===============================================================================================
+// ENCODE (F10 T-IMGREACH Task 5 / I5b) — box-average downscale, ADAPTIVE per-scanline PNG
+// filtering, and the bounded downscale-and-retry ladder `reencodeImage` walks to fit a caller's
+// byte budget. Always emits colourType 6 (RGBA)/bitDepth 8: `DecodedPixels.pixels` is ALWAYS RGBA
+// regardless of source (the decoder's `writeRgbaRow` guarantees it), so round-tripping through this
+// encoder can never lose or reinterpret a channel.
+
+/** Integer BOX average down to `maxDimension` on the longer side; a no-op (same object, not a copy)
+ *  when already within it. Each output pixel is the ROUNDED MEAN of an integer-bounded box of source
+ *  pixels — box edges are computed by `floor(i * srcLen / dstLen)` per axis, the standard exact-
+ *  coverage area-resize partition, which is what lets the long side land on `maxDimension` EXACTLY
+ *  (a fixed NxN factor cannot: 2001px at maxDimension 2000 needs a box just over 1px wide). */
+export function downscale(img: DecodedPixels, maxDimension: number): DecodedPixels {
+  const { width, height, pixels } = img;
+  if (Math.max(width, height) <= maxDimension) return img;
+  const scale = maxDimension / Math.max(width, height);
+  const newWidth = Math.max(1, Math.round(width * scale));
+  const newHeight = Math.max(1, Math.round(height * scale));
+  const out = Buffer.alloc(newWidth * newHeight * 4);
+  for (let oy = 0; oy < newHeight; oy++) {
+    const y0 = Math.floor((oy * height) / newHeight);
+    const y1 = Math.max(y0 + 1, Math.floor(((oy + 1) * height) / newHeight));
+    for (let ox = 0; ox < newWidth; ox++) {
+      const x0 = Math.floor((ox * width) / newWidth);
+      const x1 = Math.max(x0 + 1, Math.floor(((ox + 1) * width) / newWidth));
+      let r = 0, g = 0, b = 0, a = 0, count = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const so = (sy * width + sx) * 4;
+          r += pixels[so]; g += pixels[so + 1]; b += pixels[so + 2]; a += pixels[so + 3];
+          count++;
+        }
+      }
+      const po = (oy * newWidth + ox) * 4;
+      out[po] = Math.round(r / count);
+      out[po + 1] = Math.round(g / count);
+      out[po + 2] = Math.round(b / count);
+      out[po + 3] = Math.round(a / count);
+    }
+  }
+  return { kind: "pixels", width: newWidth, height: newHeight, pixels: out };
+}
+
+// ── the CRC32 this module's own PNG chunk WRITER needs (decode never checks a CRC, but a real
+//    consumer — the clipboard, a browser, `sips` — does; a self-authored PNG that only OUR decoder
+//    can read back is not a PNG). Independent of `test/fixtures/images/make.mjs`'s copy — that file
+//    builds hostile/golden fixtures for testing this module and must stay usable standalone even if
+//    this module were reverted, so it is not imported here (leaf hygiene, plan-review r2 F19).
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function encodedPngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const typeData = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(typeData), 0);
+  return Buffer.concat([len, typeData, crc]);
+}
+
+/** The forward mirror of `unfilterRow`'s five predictors, operating on RAW (unfiltered) neighbour
+ *  bytes — which is always what's available when filtering forward, unlike decode's cumulative
+ *  reconstruction. Shares `paeth` with the decoder; the predictor itself is direction-agnostic. */
+function filterByte(type: 0 | 1 | 2 | 3 | 4, cur: Buffer, prev: Buffer | null, x: number, bpp: number): number {
+  const raw = cur[x];
+  const a = x >= bpp ? cur[x - bpp] : 0;
+  const b = prev ? prev[x] : 0;
+  const c = x >= bpp && prev ? prev[x - bpp] : 0;
+  switch (type) {
+    case 0: return raw;
+    case 1: return (raw - a) & 0xff;
+    case 2: return (raw - b) & 0xff;
+    case 3: return (raw - ((a + b) >> 1)) & 0xff;
+    case 4: return (raw - paeth(a, b, c)) & 0xff;
+  }
+}
+/** The ADAPTIVE selector's heuristic: sum of each filtered byte's magnitude treated as a signed
+ *  residual mod 256 (the standard libpng "minimum sum of absolute differences" heuristic) — a cheap
+ *  proxy for post-deflate size that does not require actually compressing all five candidates. */
+function filterCost(row: Buffer): number {
+  let sum = 0;
+  for (const byte of row) sum += byte < 128 ? byte : 256 - byte;
+  return sum;
+}
+
+/** The one encoder body behind both `encodePng` and the test-only `encodePngWithFixedFilter`:
+ *  `fixedFilter === null` is the real ADAPTIVE path (try all five per scanline, keep the lowest
+ *  `filterCost`); a non-null value pins every scanline to that filter, for the sabotage guard that
+ *  proves adaptive selection is load-bearing (measured 193x smaller than filter-0, r3 §2). */
+function encodeCore(img: DecodedPixels, deadline: Deadline, fixedFilter: 0 | 1 | 2 | 3 | 4 | null): CodecResult<Buffer> {
+  if (deadline.expired()) {
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+  }
+  const { width, height, pixels } = img;
+  const bpp = 4;
+  const rowBytes = width * bpp;
+  const filtered = Buffer.alloc((1 + rowBytes) * height);
+  let prev: Buffer | null = null;
+  for (let y = 0; y < height; y++) {
+    const cur = pixels.subarray(y * rowBytes, (y + 1) * rowBytes);
+    let bestType: 0 | 1 | 2 | 3 | 4 = fixedFilter ?? 0;
+    let bestRow: Buffer;
+    if (fixedFilter !== null) {
+      bestRow = Buffer.alloc(rowBytes);
+      for (let x = 0; x < rowBytes; x++) bestRow[x] = filterByte(fixedFilter, cur, prev, x, bpp);
+    } else {
+      let bestCost = Infinity;
+      bestRow = Buffer.alloc(rowBytes);
+      for (let t = 0 as 0 | 1 | 2 | 3 | 4; t <= 4; t++) {
+        const candidate = Buffer.alloc(rowBytes);
+        for (let x = 0; x < rowBytes; x++) candidate[x] = filterByte(t, cur, prev, x, bpp);
+        const cost = filterCost(candidate);
+        if (cost < bestCost) { bestCost = cost; bestRow = candidate; bestType = t; }
+      }
+    }
+    const o = y * (1 + rowBytes);
+    filtered[o] = bestType;
+    bestRow.copy(filtered, o + 1);
+    prev = cur;
+    // ── the COOPERATIVE belt, same shape and cadence as the decoder's (see PROCESSING_BUDGET_MS doc).
+    if (y % 64 === 63 && deadline.expired()) {
+      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    }
+  }
+  const idat = deflateSync(filtered);
+  if (deadline.expired()) {
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // colour type 6: truecolour with alpha
+  ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0; // compression / filter method / interlace: always 0
+  const png = Buffer.concat([
+    Buffer.from(PNG_SIG),
+    encodedPngChunk("IHDR", ihdr),
+    encodedPngChunk("IDAT", idat),
+    encodedPngChunk("IEND", Buffer.alloc(0)),
+  ]);
+  return { ok: true, value: png };
+}
+
+/** PNG encode with ADAPTIVE per-scanline filtering (try all five, pick the lowest sum-of-absolute-
+ *  differences). Not a refinement — measured 193x smaller than filter-0 on the same input (r3 §2),
+ *  which is the whole reason the pure-JS floor is viable at all. */
+export function encodePng(img: DecodedPixels, deadline: Deadline): CodecResult<Buffer> {
+  return encodeCore(img, deadline, null);
+}
+/** TEST-ONLY seam for the sabotage guard: the same encoder with the adaptive selector pinned to
+ *  filter 0. */
+export function encodePngWithFixedFilter(img: DecodedPixels, filter: 0 | 1 | 2 | 3 | 4, deadline: Deadline): CodecResult<Buffer> {
+  return encodeCore(img, deadline, filter);
+}
+
+/** The floor `reencodeImage`'s retry ladder halves down to before giving up. Below this, a resized
+ *  image stops being a useful attachment regardless of whether it would fit the byte budget. */
+export const RETRY_FLOOR_DIMENSION = 256;
+
+/** The downscale-and-retry ladder: encode at the current size; if it still exceeds `byteBudget`,
+ *  halve the CURRENT actual long side (not the caller's `maxDimension` — an image already smaller
+ *  than `maxDimension`, or than `RETRY_FLOOR_DIMENSION`, still gets exactly this same one halving
+ *  per failed attempt) and retry. `downscale` always resamples from the ORIGINAL decoded pixels, so
+ *  quality never compounds across rungs. Termination: once a TRIED rung's long side is already at or
+ *  below `RETRY_FLOOR_DIMENSION` and it still doesn't fit, there is nowhere further to go.
+ *  `onRung` is a real, optional lifeline for a ladder whose rung count would otherwise be
+ *  unobservable — see the byte-budget boundary cells. */
+function encodeLadder(
+  px: DecodedPixels,
+  maxDimension: number,
+  byteBudget: number,
+  deadline: Deadline,
+  onRung: ((width: number) => void) | undefined,
+): CodecResult<{ data: Buffer; mediaType: "image/png"; dimensions: { width: number; height: number } }> {
+  let current = downscale(px, maxDimension);
+  let encoded = encodePng(current, deadline);
+  if (!encoded.ok) return encoded;
+  while (encoded.value.length > byteBudget) {
+    const target = Math.floor(Math.max(current.width, current.height) / 2);
+    current = downscale(px, target);
+    onRung?.(current.width);
+    encoded = encodePng(current, deadline);
+    if (!encoded.ok) return encoded;
+    if (encoded.value.length > byteBudget && Math.max(current.width, current.height) <= RETRY_FLOOR_DIMENSION) {
+      return {
+        ok: false, code: "encode-floor",
+        reason: `image could not be reencoded under the ${byteBudget}-byte budget even at the ${RETRY_FLOOR_DIMENSION}px floor`,
+      };
+    }
+  }
+  return { ok: true, value: { data: encoded.value, mediaType: "image/png", dimensions: { width: current.width, height: current.height } } };
+}
+
+/** The ladder the clipboard path calls: decode → (downscale to `maxDimension` if needed) → encode
+ *  PNG → if still over `byteBudget`, halve the long side and retry, down to `RETRY_FLOOR_DIMENSION`.
+ *  Always PNG out. Consumes the decode union EXHAUSTIVELY (plan-review r2 F-CODEC: the fallback arm
+ *  and the declared result type once contradicted each other — the fix is a `switch` the compiler
+ *  can check, so a new `DecodedImage` member breaks the BUILD, not a runtime fallback). */
+export function reencodeImage(
+  input: { data: Buffer; mediaType: string },
+  opts?: {
+    maxDimension?: number; byteBudget?: number; now?: () => number; budgetMs?: number;
+    onRung?: (width: number) => void;
+  },
+): CodecResult<{ data: Buffer; mediaType: "image/png"; dimensions: { width: number; height: number } }> {
+  const maxDimension = opts?.maxDimension ?? MAX_DIMENSION;
+  const byteBudget = opts?.byteBudget ?? POST_PROCESS_BYTE_BUDGET;
+  const deadline = deadlineFrom(opts?.now ?? Date.now, opts?.budgetMs ?? PROCESSING_BUDGET_MS);
+  const decoded = decodeImage(input.data, input.mediaType, deadline);
+  if (!decoded.ok) return decoded; // codes propagate unchanged
+  switch (decoded.value.kind) {
+    case "passthrough": {
+      // We never decoded these pixels, so we cannot resize them. Under budget, hand the ORIGINAL
+      // bytes back untouched (r3: passing a palette PNG through is strictly better than refusing
+      // it); over budget, fail with the variant code — there is no ladder rung available.
+      const v = decoded.value;
+      return v.data.length <= byteBudget && Math.max(v.width, v.height) <= maxDimension
+        ? { ok: true, value: { data: v.data, mediaType: "image/png", dimensions: { width: v.width, height: v.height } } }
+        : { ok: false, code: "unsupported-variant",
+            reason: `image uses a PNG variant this build cannot resize (${v.width}x${v.height}, ${v.data.length} bytes)` };
+    }
+    case "pixels":
+      return encodeLadder(decoded.value, maxDimension, byteBudget, deadline, opts?.onRung);
+    default: {
+      const _exhaustive: never = decoded.value; // a new union member must break the BUILD, not runtime
+      return _exhaustive;
+    }
+  }
 }
