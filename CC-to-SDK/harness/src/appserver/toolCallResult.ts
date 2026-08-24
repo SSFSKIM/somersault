@@ -1,7 +1,10 @@
-// appserver/toolCalls.ts — M7: `tool/callResult`, the one method a client uses to settle a parked dynamic
+// appserver/toolCallResult.ts — M7: `tool/callResult`, the one method a client uses to settle a parked dynamic
 // tool call. The park side lives in `server.ts` (`parkToolCall`, the `tool/callRequested` broadcast) and
 // the registry in `dynamicCalls.ts`; this is the wire half, kept out of `dynamicTools.ts` because that
 // module is declaration semantics and result conversion and touches neither the wire nor `ThreadRecord`.
+// NAMED FOR ITS METHOD rather than for its subject: `dynamicCalls.ts` holds the registry and
+// `dynamicTools.ts` the declaration semantics, so a `toolCalls.ts` sitting beside those two read as a third
+// subject instead of as the one handler behind `tool/callResult`.
 //
 // NOT IN THE DISPATCH TABLE YET, deliberately. Until a thread can DECLARE tools there is no way to obtain
 // a `callId`, so publishing the method would advertise a stable surface nothing can reach. Task 8 adds the

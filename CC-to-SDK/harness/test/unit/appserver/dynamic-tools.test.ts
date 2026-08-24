@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { AppServer, type ConnCtx } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { MAX_IN } from "../../../src/appserver/peer.js";
-import { toolCallResult } from "../../../src/appserver/toolCalls.js";
+import { toolCallResult } from "../../../src/appserver/toolCallResult.js";
 import { toolCallResultParams, toolCallResultResult } from "../../../src/appserver/schema/dynamicTools.js";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
 import type { CallToolResultLike } from "../../../src/appserver/dynamicCalls.js";
