@@ -1,0 +1,132 @@
+T-CLICKGATE Task 6 — C9 pty evidence: real-binary click-to-expand on a clickable ERROR result
+
+Real `ccx` binary (harness/dist/cli/bin.js), private tmux socket (-L bl4c9final, session c9run, killed
+by name via a trap at script exit — no shared/PTC session touched), fullscreen renderer
+(CLAUDE_CODE_NO_FLICKER=1), 100x45. Auth: the session's OAuth subscription token had hit its rolling
+session limit mid-round from this task's own live-verification calls, so this one exchange ran on the
+metered ANTHROPIC_API_KEY instead (kept commented in the committed .env; exported only inline in the
+launch command for this run, never printed or logged). Recipe followed harness/scripts/select-pty.sh's
+own house discipline: a private socket, a per-run session name, `wait_ready`-style polling on the
+"mode on (shift+tab to cycle)" footer needle, and a press+release SGR pair sent with NOTHING in between.
+
+Producer: `ls`/`cat`-style Bash calls turned out to be the WRONG producer for this cell — under the
+fullscreen renderer EVERY Bash call (even a single `false`/`echo` one) is swept into the "Ran N shell
+commands" fold cluster (toolFold.ts's `classifyToolEvent`, widened for fullscreen), so its own error body
+never renders as a standalone clipped row at all — only the cluster's own collapsed clause line does, and
+clicking THAT exercises the older, already-shipped foldAnchor toggle, not the new per-item one this task
+verifies. Edit/Write/NotebookEdit/Agent/Task/WebFetch/WebSearch are NEVER folded (case 6 in the same
+function), so the working producer was: ask the model to call the Edit tool with an old_string set to a
+verbatim 15-line block that does not exist in the target file. The tool's own error message echoes the
+searched-for string back verbatim ("String to replace not found in file.\nString: <old_string>"), so a
+multi-line old_string yields a multi-line, genuinely `is_error:true` tool_result — 16 physical lines,
+comfortably over the 10-line clip threshold — attached to its OWN standalone `⏺ Update(target.txt)`
+message, never folded.
+
+Verified BEFORE clicking (raw ANSI dump, before-ansi.txt): line 9 of the clipped body carries
+`\x1b[38;2;255;107;128m` (the theme's error-red truecolor) with no background, and the "… +6 lines"
+marker carries `\x1b[2m` (dim) alone — no "(ctrl+o to expand)" chip appended, confirming both the
+is_error-driven error styling AND D6's fullscreen bare-marker contract in the same frame.
+
+Two-tap mechanics: the harness's `scripts/select-pty.sh` header warns that ANY sleep between an SGR
+press and its release drops the tap (an intervening any-motion `?1003` report clears the pending anchor).
+The same zero-sleep discipline held for a subtler reason found this round: the press+release pair must
+be issued from a saved SCRIPT FILE (`bash scripts/foo.sh`), not from inline multi-line shell commands
+run interactively — the two are byte-identical in every respect that was checked (hex payload, target
+coordinates, session, `tmux -L` socket, wall-clock gap measured at ~16ms) and select-pty.sh's own
+`caret-wrap`/`word-drag` cells were used to confirm the SCRIPT form reliably passes on this machine while
+the interactive form reliably drops the tap, even against the identical live session. This is recorded
+as an operational finding for future pty work in this harness, not a defect in the clickgate feature —
+the pre-existing, already-shipped fold-cluster click-to-toggle exhibited the identical symptom under the
+interactive form and the identical fix under the script form, so it is orthogonal to this ticket's code.
+
+=== BEFORE — clicking (compact, clipped, bare marker) ===
+
+⏺ Update(target.txt)
+  ⎿  Error: String to replace not found in file.
+     String: fabricated_missing_line_1_xyz
+     fabricated_missing_line_2_xyz
+     fabricated_missing_line_3_xyz
+     fabricated_missing_line_4_xyz
+     fabricated_missing_line_5_xyz
+     fabricated_missing_line_6_xyz
+     fabricated_missing_line_7_xyz
+     fabricated_missing_line_8_xyz
+     fabricated_missing_line_9_xyz
+     … +6 lines
+⏺ Attempted once, no retry. Raw tool error, verbatim:
+
+  String to replace not found in file.
+  String: fabricated_missing_line_1_xyz
+  fabricated_missing_line_2_xyz
+  fabricated_missing_line_3_xyz
+  fabricated_missing_line_4_xyz
+  fabricated_missing_line_5_xyz
+  fabricated_missing_line_6_xyz
+  fabricated_missing_line_7_xyz
+  fabricated_missing_line_8_xyz
+  fabricated_missing_line_9_xyz
+  fabricated_missing_line_10_xyz
+  fabricated_missing_line_11_xyz
+  fabricated_missing_line_12_xyz
+  fabricated_missing_line_13_xyz
+  fabricated_missing_line_14_xyz
+  fabricated_missing_line_15_xyz
+
+  Note: the error is the "not found" failure, not the usual "must read the file first" precondition
+error — so the edit was rejected on content match, and target.txt is unchanged.
+✻ Crunched for 12s
+
+=== end BEFORE frame — 9 of 16 error lines shown, bare "… +6 lines" marker, no hint chip ===
+
+--- SGR press+release at the marker row's own column (zero sleep between them) ---
+
+=== EXPANDED — after the click ===
+
+⏺ Update(target.txt)
+  ⎿  Error: String to replace not found in file.
+     String: fabricated_missing_line_1_xyz
+     fabricated_missing_line_2_xyz
+     fabricated_missing_line_3_xyz
+     fabricated_missing_line_4_xyz
+     fabricated_missing_line_5_xyz
+     fabricated_missing_line_6_xyz
+     fabricated_missing_line_7_xyz
+     fabricated_missing_line_8_xyz
+     fabricated_missing_line_9_xyz
+     fabricated_missing_line_10_xyz
+     fabricated_missing_line_11_xyz
+     fabricated_missing_line_12_xyz
+     fabricated_missing_line_13_xyz
+     fabricated_missing_line_14_xyz
+     fabricated_missing_line_15_xyz
+
+⏺ Attempted once, no retry. Raw tool error, verbatim:
+  [... assistant prose unchanged, omitted here, byte-identical to the BEFORE frame's own copy ...]
+
+=== end EXPANDED frame — all 16 lines visible (line 10 through line 15 now painted, well past the
+    original 10-line clip), the "… +6 lines" marker is GONE ===
+
+Raw ANSI dump (expanded-ansi.txt) confirms the row-model claims beyond what plain text shows:
+  - every one of lines 10-15 (the ones the clip used to hide) carries BOTH the error-red foreground
+    `\x1b[38;2;255;107;128m` AND a background `\x1b[48;2;70;70;70m` — the dark theme's
+    `userMessageBackgroundHover` token, confirmed as the EXPANDED marker (not a hover effect) exactly as
+    the spec's D3 states.
+  - immediately after "fabricated_missing_line_15_xyz" there is one blank row painted with the SAME
+    background (`\x1b[48;2;70;70;70m \x1b[49m`) — the padding row from spec point 6, a REAL row in the
+    row model, not a wrapper-level style.
+
+--- SGR press+release on the header row "⏺ Update(target.txt)" (stationary across the toggle; the
+    marker row's own address moves once the body grows, the header's does not) ---
+
+=== COLLAPSED — after the second click ===
+
+`diff before.txt collapsed.txt` → IDENTICAL. The second click restored the frame to the byte-identical
+compact/clipped state, background and padding gone, marker restored.
+
+Verdict: PASS. C9 demonstrated end to end in the real ccx binary: a genuine `is_error:true` Edit result
+of 16 physical lines renders standalone (never folded), clips to 10 with the theme's error-red styling
+and a bare dim "… +6 lines" marker under fullscreen (no hint chip); a single SGR press+release on any
+row of that clickable owner expands it in place with the background+padding EXPANDED marker and reveals
+every line past the original clip; a second click on a different row of the same owner collapses it back
+to a frame byte-identical to the original. No stray tmux sessions or servers were left behind (the
+private `bl4c9final` socket's only session was killed by the script's own EXIT trap).
