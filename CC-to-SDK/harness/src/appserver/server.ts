@@ -3,17 +3,22 @@
 // list/close). Turn/decision/subscribe/read land in Tasks 7-9 on top of this spine.
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
-import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { classify, ERR, RpcRefusal, type RequestId } from "./rpc.js";
+import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type ThreadWaiter, type EngineSession } from "./registry.js";
 import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
+import { DynamicCalls, cancelledCallResult, toWireToolCall, type CallToolResultLike, type DynamicCallEvent, type PendingToolCall } from "./dynamicCalls.js";
+import { withDynamicServers } from "./dynamicServers.js";
+import { validateDeclarations, type DynamicToolSpec } from "./dynamicTools.js";
+import { INJECTED_SERVER_NAMES } from "../session/session.js";
+import { toolCallResult } from "./toolCallResult.js";
 import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt, turnSteer, turnStartContent, turnSteerContent, requestInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, turnSteer, turnStartContent, turnSteerContent, requestInterrupt, interruptParkedCalls } from "./turns.js";
 import { ImageStageRegistry, IMAGE_STAGE_SWEEP_INTERVAL_MS } from "./imageStage.js";
 import { imageStageParams } from "./schema/images.js";
 import { flushQueue } from "./queue.js";
@@ -116,7 +121,8 @@ export interface ConnCtx {
  *  for it; sessionLib.ts's merged thread/list is what fills that gap from a store match, on the VIEW it
  *  builds, without mutating the record. `preview` stays store-only (no registry equivalent exists) and is
  *  always `undefined` off this function. `status` goes through the one predicate+shape pair (registry.ts,
- *  spec D-M2-8) — `waitingOn` needs the decisions map, which the record itself does not have, hence `srv`.
+ *  spec D-M2-8) — `waitingOn` needs the two park registries, which the record itself does not have, hence
+ *  `srv` (and `srv.threadWaiter`, the one place their precedence is decided).
  *  `queueDepth` (M2b Task 8, flagged addition to §5) is ALWAYS present and 0 when the queue is empty,
  *  rather than omitted-when-zero: a thread row that answers "how many turns are waiting" with a missing
  *  key forces every consumer to write the `?? 0` itself, and one that forgets it renders "unknown" for the
@@ -135,7 +141,6 @@ export interface ConnCtx {
  *  including one another client raised. On the notification instead it would repeat a constant on every
  *  message and still leave a thread list unable to tell the two kinds apart. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
-  const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
     id: r.id,
     sessionId: r.sessionId,
@@ -146,7 +151,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     model: r.settings.model,
     permissionMode: r.settings.permissionMode,
     thinking: { maxTokens: r.settings.thinkingTokens },
-    status: threadStatus(r, waitingOn),
+    status: threadStatus(r, srv.threadWaiter(r.id)),
     queueDepth: r.queue.length,
     origin: r.origin,
     ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
@@ -162,6 +167,63 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
  *  engine would otherwise have to ask a connected client into a parked decision any client can answer. */
 function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker, onElicitation: OnElicitation): OpenSessionConfig {
   return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker, onElicitation };
+}
+
+/** M7: `dynamicToolServers` is the app server's own (config/types.ts) — a client declares TOOLS and the
+ *  server decides what publishes them. A client that writes the key itself would be mounting arbitrary
+ *  in-process servers into someone's engine and, worse, doing it on the config the RECORD keeps, so every
+ *  later engine of that thread would re-mount the same instances. Refused rather than stripped: silently
+ *  dropping a key a caller deliberately set is how a client comes to believe something is wired that is not.
+ *  Both spelling — the typed key and the `extraOptions` hatch it reaches the SDK through — because the two
+ *  are the same request. */
+export const SERVER_OWNED_OVERLAY = "dynamicToolServers is server-owned";
+function refuseServerOwnedOverlay(config: Record<string, unknown> | undefined): void {
+  const hatch = config?.extraOptions;
+  const inHatch = typeof hatch === "object" && hatch !== null && "dynamicToolServers" in hatch;
+  if ((config && "dynamicToolServers" in config) || inHatch) throw new RpcRefusal(ERR.INVALID_PARAMS, SERVER_OWNED_OVERLAY);
+}
+
+/** The MCP server names this config's engine would ALREADY have, so a declared namespace cannot take a
+ *  slot that is spoken for. Two sources, and neither is optional:
+ *
+ *  THE CLIENT'S OWN MAP, selected by `resolveOptions`' REPLACEMENT semantics rather than by a union. The
+ *  hatch is spread over the typed options (`{...options, ...extraOptions}`), so an OWN `mcpServers` key in
+ *  `extraOptions` — including one whose value is `null` or `{}` — is the map the engine ends up with, and
+ *  the typed one is gone. A `??` fallback would resurrect the typed map under an own `null` and refuse a
+ *  namespace that is genuinely free; a union would refuse one that only the discarded map held.
+ *
+ *  THE HARNESS'S INJECTED SERVERS (`cc-context`, `cc-compact`), which no client can see in its own config
+ *  and which are merged in AFTER `resolveOptions` by a plain spread — so a namespace colliding with one of
+ *  them would be admitted here and then silently lose every tool it published. Read off the session
+ *  layer's own constant so the two cannot drift.
+ *
+ *  Names are returned AS DECLARED; `validateDeclarations` canonicalizes both sides itself. */
+function occupiedServerNames(config: Record<string, unknown> | undefined): string[] {
+  const hatch = config?.extraOptions;
+  const selected = typeof hatch === "object" && hatch !== null && "mcpServers" in hatch
+    ? (hatch as Record<string, unknown>).mcpServers
+    : config?.mcpServers;
+  // Record-LIKE, because the value is a client passthrough: an array or a string would otherwise be
+  // enumerated into fabricated names ("0", "1", …) that occupy slots nothing holds.
+  const configured = typeof selected === "object" && selected !== null && !Array.isArray(selected)
+    ? Object.keys(selected as Record<string, unknown>)
+    : [];
+  return [...INJECTED_SERVER_NAMES, ...configured];
+}
+
+/** THE ADMISSION GATE BOTH SPINES STATE ONCE — everything that can refuse a thread before it exists, in
+ *  the order a client can act on. The overlay refusal runs for EVERY thread (a client writing the
+ *  server's own key is wrong whether or not it declares tools); the declaration gate runs only when there
+ *  is a declaration to judge. Called before either spine mints an id, so a refusal leaves nothing behind.
+ *
+ *  Throws `RpcRefusal`, which dispatch's catch answers with the code and the message intact — a
+ *  declaration refusal that reached the client as -32603 "internal error" would name nothing it could
+ *  fix, and the whole point of these messages is that they name the offender. */
+function admitDeclarations(config: Record<string, unknown> | undefined, specs: DynamicToolSpec[]): void {
+  refuseServerOwnedOverlay(config);
+  if (specs.length === 0) return;
+  const verdict = validateDeclarations(specs, occupiedServerNames(config));
+  if (!verdict.ok) throw new RpcRefusal(ERR.INVALID_PARAMS, verdict.message);
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -396,6 +458,18 @@ export class AppServer {
   readonly imageStageSweepTimer: NodeJS.Timeout;
   private conns = new Map<number, ConnCtx>();
   private decisions = new Map<string, ThreadDecisions>();
+  /** M7: one dynamic-tool-call registry per thread, minted and released exactly beside `decisions` — the
+   *  two are the same idea (an in-process await only a remote client can settle) for two different
+   *  subjects, so they share a lifetime by construction rather than by two matching call sites. */
+  private dynamicCalls = new Map<string, DynamicCalls>();
+  /** M7: threads whose parking is CLOSED — `turn/interrupt` latches one here and the next submit's
+   *  DISPATCH clears it (Task 5 owns both sites; this task owns the field and the check in
+   *  `parkToolCall`). A latch rather than `record.interruptRequested`, which the next turn's arrival
+   *  clears: a CallTool from the interrupted turn delayed past that point would then be rebound to its
+   *  successor — answered as if it belonged to a turn that never asked for it. Holding until dispatch is
+   *  what makes "the old engine's work is behind the new submit" provable rather than likely; a request
+   *  delayed past the next DISPATCH is the published residual bound, not a silently absorbed one. */
+  private parkBarriers = new Set<string>();
   private connSeq = 0;
   private startedAt = Date.now();
   private shuttingDown = false; // latched by shutdown(); refuses new thread admission (see shutdown())
@@ -456,7 +530,7 @@ export class AppServer {
       const resumeTarget = typeof cfg?.resume === "string" ? cfg.resume : undefined;
       const resuming = resumeTarget !== undefined && !forksSession(cfg) ? resumeTarget : undefined;
       const register = (): void => {
-        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
+        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools });
         // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
         // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
         // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
@@ -483,7 +557,7 @@ export class AppServer {
       // D-M5-21 shelf read), which is the property the reservation's placement depends on.
       const sessionId = parsed.data.sessionId;
       await admitResume(srv, ctx, id, { sessionId, admits: !forksSession(parsed.data.config) },
-        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }));
+        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools }));
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -567,7 +641,11 @@ export class AppServer {
       if (outcome.kind === "plan_approve" && outcome.mode !== "default") armPlanUpgrade(record, outcome.mode);
       // spec §6: EVERY answer variant may carry abortTurn, not just `deny` — and aborting goes through the
       // same flag-then-interrupt path turn/interrupt uses, else the turn it just aborted reports "completed"
-      if (parsed.data.abortTurn) await requestInterrupt(record);
+      // M7: the park side FIRST, and stated here rather than inside `requestInterrupt` — that one takes
+      // only the record and stays that way (it is also fleet.ts's path, where nothing can ever be parked),
+      // while closing parking needs the server's two registries. Both srv-bearing interrupt callers say it
+      // the same way, through the one helper.
+      if (parsed.data.abortTurn) { interruptParkedCalls(srv, record); await requestInterrupt(record); }
       ctx.peer.reply(id, { ok: true });
     },
     // F10 T-IMGREACH Task 10 (I3d): the staged-image chunk upload. SERVER-scoped — no `threadId` — a
@@ -727,6 +805,15 @@ export class AppServer {
     // two SERVER PROCESSES, which no in-process chain could ever see — to lose each other's update in.
     "thread/archive": threadArchive,
     "thread/unarchive": threadUnarchive,
+    // M7 (§the call): the settlement half of the dynamic-tool exchange, and the milestone's ONE new
+    // method. It NAMES A THREAD and is deliberately NOT `ENGINE_GONE_EXEMPT`: every exempt method answers
+    // off disk or off the record, while a settlement exists to unblock a live model turn — once the engine
+    // is gone there is nobody left holding the promise, and -33005 says so. It is not ORIGIN-gated either,
+    // and that is the honest answer rather than a gap: a fleet thread parks nothing here (its host owns
+    // its own tool calls), so its registry is empty and the handler's "no such pending tool call" is
+    // already true. Everything else the handler owes — thread, subscription authority, then the call's
+    // identity — is `toolCallResult.ts`'s own fixed order.
+    "tool/callResult": toolCallResult,
   };
 
   private readonly token: string;
@@ -754,15 +841,22 @@ export class AppServer {
    *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
    *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
    *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
-  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny" }): ThreadRecord {
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): ThreadRecord {
+    const specs = opts.dynamicTools ?? [];
+    admitDeclarations(opts.config, specs); // both spines, before either mints anything (see the helper)
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-    const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
+    // THE OVERLAY IS TRANSIENT (M7): the declared tools become MCP servers on the config THIS build
+    // receives, and `record.config` below stays the clean base every later engine is rebuilt from.
+    // `generation: 0` needs no record read — the epoch always starts there, which is what lets the factory
+    // keep running before the record exists.
+    const session = factory(withDynamicServers(this, { threadId, generation: 0, specs }, config as Record<string, unknown>)); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
     this.decisions.set(threadId, dec);
+    this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
     return record;
@@ -789,8 +883,10 @@ export class AppServer {
    *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
    *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
    *  rest. */
-  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): Promise<void> {
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
+    const specs = opts.dynamicTools ?? [];
+    admitDeclarations(opts.config, specs); // stated by BOTH spines, before either mints anything (see the helper)
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
@@ -798,8 +894,11 @@ export class AppServer {
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-    const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
+    // Transient exactly as in `createThread`, and for the same reason — `record.config` below is what every
+    // later engine of this thread is rebuilt from, and it must not carry a mounted server instance.
+    const session = factory(withDynamicServers(this, { threadId, generation: 0, specs }, config as Record<string, unknown>)); // same ordering as thread/start: register dec only once the factory hasn't thrown
     this.decisions.set(threadId, dec);
+    this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
     // `sessionId` is stamped EAGERLY with the resume target, at registration, ahead of any frame: this is
     // the one admission path where the registry legitimately knows the store id before the engine reports
@@ -811,11 +910,12 @@ export class AppServer {
     // above): then the engine opens a different id, the registry legitimately knows nothing, and the latch
     // is the only honest source. `deletingSessions` above still fences the parent for both shapes — a fork
     // READS that transcript to replay it, so erasing it mid-admission breaks the session being opened.
-    // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
-    // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
-    // swap too (registry.ts's field doc).
+    // `config` is the object the factory received MINUS the M7 overlay (broker and `resume` included) —
+    // M2b's rewind swap rebuilds the replacement engine from it, so anything dropped here is silently
+    // dropped by every later swap too (registry.ts's field doc), and anything the overlay added would be
+    // re-mounted by every later engine instead of rebuilt (dynamicServers.ts's carrier note).
     const admits = !forksSession(opts.config);
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
@@ -882,6 +982,11 @@ export class AppServer {
    *  has no start config to carry it. */
   admitFleetThread(record: ThreadRecord): void {
     this.decisions.set(record.id, this.makeDecisions(record.id, record.unattended));
+    // UNCONDITIONAL, fleet included. No fleet path can park a dynamic tool call today (the engine that
+    // would raise one belongs to the host), but every thread-scoped read — `pendingToolCalls`, the
+    // subscribe replay, Task 5's status derivation — then answers off a registry that always exists,
+    // instead of each having to decide what a missing one means.
+    this.dynamicCalls.set(record.id, this.makeDynamicCalls(record.id));
     this.registry.add(record);
   }
 
@@ -923,6 +1028,13 @@ export class AppServer {
     // promises `teardown()` MUST settle or the dispose below deadlocks on them (see the order note above).
     const decisions = this.decisions.get(record.id);
     if (record.origin === "fleet") decisions?.discard(); else decisions?.teardown();
+    // M7: no origin branch here, and for the reason the branch above exists. A parked DECISION on a fleet
+    // thread is a view of a park that lives on the host, so settling it would announce an answer nobody
+    // gave; a parked TOOL CALL is always local — the only thing that can raise one is an in-process engine
+    // this server owns — so there is never anything to leave standing. Torn down BEFORE the dispose await
+    // for the same circular-wait reason the decisions are: the engine's read loop cannot end while a turn
+    // sits blocked on one of these promises, and this is the only thing that settles them.
+    this.dynamicCalls.get(record.id)?.teardown("thread closed");
     record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
     record.fleetOff?.();  // …and, for a fleet thread, the event layer installed alongside it (M3 Task 9:
                           // the two are installed as a pair and are released as one, so no subscription
@@ -934,6 +1046,8 @@ export class AppServer {
       // deduped by Peer identity — fanout.ts owns that rule now that M2b's thread/rewound needs it too.
       broadcastToSubscribersAndWatchers(record.subscribers, this.watchers(), "thread/closed", { threadId: record.id, ...(reason ? { reason } : {}) });
       this.decisions.delete(record.id);
+      this.dynamicCalls.delete(record.id);
+      this.parkBarriers.delete(record.id);
       this.registry.delete(record.id);
     }
   }
@@ -965,6 +1079,12 @@ export class AppServer {
       // registry — after closeRecord deletes it, broadcast() no-ops and the client would never hear.
       r.closing = true;
       flushQueue(this, r);
+      // M7, the third member of that same synchronous pair. `closeRecord` tears the registry down too, but
+      // it runs BEHIND `r.chain` — so a chain item that is itself waiting on the engine would hold the
+      // teardown behind the very promises the engine is blocked on, which is the C1 circular wait one level
+      // out. Settled here instead, before anything is awaited, and named for what is actually happening:
+      // the reason string is the whole of what the model learns about its cancellation (D-M4-9).
+      this.dynamicCalls.get(r.id)?.teardown("server shutting down");
       r.chain = r.chain.then(async () => { if (this.registry.get(r.id)) await this.closeRecord(r); });
       return r.chain.catch(() => {});
     }));
@@ -982,6 +1102,89 @@ export class AppServer {
       () => unattended,
       () => this.hasWatchers(threadId),
     );
+  }
+
+  /** M7: this thread's dynamic-call registry. Nothing is captured per-thread beyond the id, exactly as
+   *  `makeDecisions` does it, so the instance stays valid across an engine swap (the record does too). */
+  private makeDynamicCalls(threadId: string): DynamicCalls {
+    return new DynamicCalls((ev) => this.broadcastToolCall(threadId, ev));
+  }
+
+  /** One thread's dynamic-call registry — `toolCallResult.ts`'s `tool/callResult` reads it to settle a park,
+   *  and Task 5's status derivation to see whether one is waiting. Narrow like `threadDecisions`: a caller
+   *  reaches the thread it names and nothing else. */
+  threadDynamicCalls(threadId: string): DynamicCalls | undefined { return this.dynamicCalls.get(threadId); }
+
+  /** The parked tool calls for one thread — subscribe.ts's replay reads this, as it reads
+   *  `pendingDecisions` two lines above it. */
+  pendingToolCalls(threadId: string): PendingToolCall[] {
+    return this.dynamicCalls.get(threadId)?.pending() ?? [];
+  }
+
+  /** WHAT this thread is waiting on a client for, if anything — the one derivation behind every `status`
+   *  on the wire (registry.ts's `threadStatus` takes the answer, never the registries). Two parks can be
+   *  outstanding at once and the wire names ONE, so the precedence is a statement about what the client
+   *  must do next: DECISIONS WIN, because a permission prompt gates the very tool whose call may be
+   *  waiting behind it — telling a client "answer the tool call" while an unanswered prompt blocks the
+   *  engine from ever consuming that answer would point it at the wrong half of its own queue. The
+   *  toolCall waiter surfaces the moment the decisions clear, which is exactly when it becomes actionable. */
+  threadWaiter(threadId: string): ThreadWaiter | undefined {
+    if (this.pendingDecisions(threadId).length > 0) return "decision";
+    if (this.pendingToolCalls(threadId).length > 0) return "toolCall";
+    return undefined;
+  }
+
+  /** Close this thread to new parks (the two interrupt sites), and reopen it (the next submit's dispatch).
+   *  Task 5 owns both call sites; see `parkBarriers` for why the latch is held that long.
+   *
+   *  LIVENESS IS THE SET'S OWN INVARIANT, not the caller's: `closeRecord` is the only sweep, so a latch
+   *  against a threadId it will never see is an entry nothing ever removes. Both callers hold a live record
+   *  today, which is precisely why the guard costs nothing and why "every member names a live thread" is a
+   *  property this set can actually keep. Refusing is also the right answer on its own terms — `parkToolCall`
+   *  already cancels a call on a thread with no record, so a barrier for one would gate nothing. */
+  latchParkBarrier(threadId: string): void { if (this.registry.get(threadId)) this.parkBarriers.add(threadId); }
+  clearParkBarrier(threadId: string): void { this.parkBarriers.delete(threadId); }
+
+  /** THE PARK SEAM: a client-declared tool was called by the model, and this is where that call waits for
+   *  the client to answer it. Task 6's per-namespace MCP handler is the only caller — it returns this
+   *  promise straight to the engine, which is what blocks the turn.
+   *
+   *  `generation` is the IMMUTABLE token the server-build closure captured when IT was built, not a live
+   *  read: a rewind bumps `record.epoch` BEFORE disposing the old engine, so a callback from that engine
+   *  arriving late must be able to say which generation it belongs to. Everything else the entry needs —
+   *  the thread, the epoch, the turn — is stamped HERE rather than passed in, because a caller that could
+   *  name its own turn could name the wrong one.
+   *
+   *  THREE EXITS REFUSE BEFORE THE REGISTRY EVER SEES THE CALL, and all three resolve rather than throw
+   *  (D-M4-9: the model is owed an answer, and `cancelledCallResult` is the one shape every cancellation
+   *  wears — the registry's own included, so a client cannot tell where its call died):
+   *
+   *    A SUPERSEDED GENERATION. Parking it would announce a call to clients that the epoch belt would then
+   *    refuse to settle — a request nobody can answer.
+   *
+   *    A LATCHED PARK BARRIER (see `parkBarriers`). The turn this call belongs to was interrupted; its
+   *    successor must not inherit the call.
+   *
+   *    NO ACTIVE TURN. A dynamic call only exists inside a turn — `tool/callRequested` carries a required
+   *    `turnId`, and a park that cannot name its turn would have to lie or omit it.
+   *
+   *  A missing record is the same fact one step further along (the thread closed and took its registry
+   *  with it), and answers with the reason `closeRecord`'s own teardown uses, so a callback that lost the
+   *  race with a close hears one story rather than two. */
+  parkToolCall(
+    threadId: string,
+    generation: number,
+    call: { namespace?: string; tool: string; arguments: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<CallToolResultLike> {
+    const record = this.registry.get(threadId);
+    const calls = this.dynamicCalls.get(threadId);
+    if (!record || !calls) return Promise.resolve(cancelledCallResult("thread closed"));
+    if (generation !== record.epoch) return Promise.resolve(cancelledCallResult("engine generation superseded"));
+    if (this.parkBarriers.has(threadId)) return Promise.resolve(cancelledCallResult("turn interrupted"));
+    const turnId = activeTurnId(record);
+    if (turnId === undefined) return Promise.resolve(cancelledCallResult("no active turn"));
+    return calls.park({ threadId, turnId, epoch: generation, ...(call.namespace !== undefined ? { namespace: call.namespace } : {}), tool: call.tool, arguments: call.arguments }, signal);
   }
 
   /** Task 9: a watcher is a real subscriber of THIS thread — not just any initialized connection on the
@@ -1040,7 +1243,22 @@ export class AppServer {
     // until the turn ends. Computed AFTER the event has been applied, so `pendingDecisions` is current.
     const record = this.registry.get(threadId);
     if (!record) return;
-    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.pendingDecisions(threadId).length > 0) });
+    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.threadWaiter(threadId)) });
+  }
+
+  /** The registry's events, on the wire. Only the REQUEST half travels as an event of its own: a
+   *  settlement's client-facing consequence is the thread's STATUS moving off `waitingOn`, broadcast
+   *  below. There is deliberately no `tool/callSettled` — whoever answered already has its reply, and the
+   *  rest of the thread learns from the status. */
+  private broadcastToolCall(threadId: string, ev: DynamicCallEvent): void {
+    if (ev.kind === "requested") this.broadcast(threadId, "tool/callRequested", toWireToolCall(ev.entry));
+    // BOTH arms move the status, which is the settled arm's entire client-facing consequence — and the
+    // requested arm's too, since a thread parked on a tool call is not merely busy (registry.ts's
+    // `ThreadWaiter`). Computed AFTER the event has been applied, so `threadWaiter` reads the new truth;
+    // `broadcastDecision` is the precedent line for line, so the two parks move the wire the same way.
+    const record = this.registry.get(threadId);
+    if (!record) return;
+    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.threadWaiter(threadId)) });
   }
 
   connect(sink: PeerSink): { peer: Peer; feed(chunk: string): void; close(): void } {
@@ -1086,7 +1304,11 @@ export class AppServer {
     ctx.clientName = parsed.data.clientInfo.name;
     ctx.watchThreads = parsed.data.watchThreads ?? false;
     for (const m of parsed.data.optOutNotificationMethods ?? []) ctx.optOut.add(m);
-    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform });
+    // `dynamicTools: true` is a CAPABILITY MARKER, not a setting (M7, schema/core.ts's initializeResult):
+    // a client cannot otherwise tell this server from one too old to know the param — an older `z.object`
+    // strips the declaration silently and starts the thread toolless. Answered here, in the reply every
+    // client already reads, before anything can be declared.
+    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true });
     ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
 
@@ -1124,6 +1346,10 @@ export class AppServer {
     try {
       await handler(this, ctx, id, params);
     } catch (e) {
+      // A refusal DECIDED IN A SPINE carries its own code out (rpc.ts's RpcRefusal) — the remap below would
+      // turn a request the client could fix into an internal error. First, because it is a statement about
+      // the REQUEST, made before the handler touched an engine at all.
+      if (e instanceof RpcRefusal) { ctx.peer.replyError(id, e.code, e.message); return; }
       // one guard for every current and future handler — a thrown/rejecting handler must still reply,
       // never leave the caller hanging or surface as an unhandled rejection (dispatch is fired `void`)
       const gone = this.engineGoneCode(params);

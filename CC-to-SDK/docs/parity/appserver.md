@@ -60,8 +60,12 @@ limit clamped to 500 + `warning`; disk-only on BOTH origins — M3 Task 11 verif
 no branch, since the pager already reads only persisted rows under `record.sessionId` and never merges
 the live per-turn buffer, which is exactly §1f's rule), `thread/compact/start` (compaction is a turn — same `beginTurn`
 spine — on an inProcess thread; a fleet thread forwards the bare host op with no turn at all, §1d),
-`turn/start` (Wave 4's `queue: true` flag enqueues instead of refusing when the thread is busy
-with a turn — see gap 1), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
+`turn/start` (its `input` is a UNION since 2026-08-23 — a plain string, or an items array of
+`text` / `image` / `localImage` mirroring Codex's own `UserInput` list, resolved to engine content blocks
+inside the turn's execution slot and delivered over BOTH origins; that is the app-server's image surface
+and the close of gap 11, with the caps it publishes stated there. Wave 4's `queue: true` flag enqueues
+instead of refusing when the thread is busy with a turn — see gap 1 — and it queues the RAW input, so a
+drained items turn is byte-for-byte a directly started one), `turn/interrupt` (Wave 4's `cancelQueued` / `turnId` arms, same gap),
 `decision/list`, `decision/respond`, `thread/model/set`,
 `thread/permissionMode/set` (`auto` self-heals the model first), `thread/thinking/set`,
 `thread/settings/apply`, `thread/capabilities/read` (M5 Task 13 adds ONE derived field beside the engine's
@@ -271,7 +275,46 @@ the transport; without the exemption the same session would be searchable and sh
 id while its own registry id was refused, which is a difference in the answer produced by how the client
 happened to spell the thread.
 
-**29 notifications** — a hand-carried total where the method count above is a printed one, so Totals
+Registered after all of those, and last of all, is **M7's `tool/callResult`**
+(`appserver/toolCallResult.ts`) — the one method in the registry whose caller is not asking this server for
+anything but ANSWERING it. A client declares tools at `thread/start` and **is** their runtime: the model's
+call parks in the server, travels to the thread's subscribers as `tool/callRequested`, and whichever
+subscriber answers `tool/callResult` first supplies what the model reads back. Its params are
+`{threadId, callId, contentItems, success}`, the items being Codex's own trio in camelCase
+(`inputText` / `inputImage` / `inputAudio`, media as `data:` URLs) and its reply the closed ack `{}` — the
+method's effect IS the settlement, and everything a client could want to know about that is either an error
+code or a later notification. Deliberately UNVALIDATED at the schema: media URLs are plain strings and
+`contentItems` carries no count bound, because every refusal raised before the handler leaves the call
+parked while the client believes it answered, and a model then waits forever (D-M4-9); the caps and the
+`data:` parse live in the conversion, which settles a bad result as `isError` naming the problem. Its two
+error codes say different things on purpose — an unknown or fabricated `callId` is `-32602` "no such
+pending tool call", a duplicate answer to a call already settled is `-33002 ALREADY_SETTLED` off a bounded
+tombstone ring — and a peer that is not in the thread's subscriber set is refused before either, subscribers
+being the same trust boundary the decision registry already draws. **On a FLEET thread it answers `-32602`,
+not `-33006`**, and that is a decision rather than an omission from `FLEET_UNSUPPORTED`: `thread/attach`
+mints the per-thread call registry unconditionally, so the registry genuinely exists and genuinely holds
+nothing, and "no such pending tool call" is the true statement. The case is unreachable in practice — a
+fleet thread never broadcasts `tool/callRequested`, so no honest client ever holds a fleet `callId` — and
+adding it to the origin gate would trade a true answer for a categorical one.
+
+The DECLARATION side of M7 registers no method of its own. `thread/start` and `thread/resume` each gain an
+optional **`dynamicTools`** array beside `config` — beside it, never inside it, which is what keeps
+`review/start`'s config inheritance and the `extraOptions` merge structurally unable to carry or clobber a
+declaration — refused loudly at admission for every cap and collision (32 functions, 8 KiB / 8 levels / 256
+nodes per schema, 2,000-character descriptions, a name colliding with the native catalog or a configured
+MCP server, a duplicate, the reserved `dyn` namespace, a `__` substring, a root that is not
+`type: "object"`, or a schema keyword outside the conversion subset — each message naming the offender).
+`initialize`'s result gains **`dynamicTools: true`**, the marker a declaring client MUST check: an older
+server's `z.object` strips the unknown field silently and starts the thread toolless, so its absence means
+"this server cannot host my tools" rather than nothing (the F9 lesson). And **`mcpServer/set` is refused
+`-32602` on a declaring thread**, naming the declaration: whether the SDK's runtime control frame can carry
+an in-process server INSTANCE is unverifiable keylessly, and a set that silently dropped the declarations
+would erase thread-lifetime state — conservative-first, relaxed only by a keyed survival row. Non-declaring
+threads are untouched, and the overlay itself needs no runtime set: every engine BUILD carries fresh
+instances, which is also how `thread/rewind`, `thread/clear` and `thread/reopen` keep a declaring thread's
+tools across a swap.
+
+**30 notifications** — a hand-carried total where the method count above is a printed one, so Totals
 below states the *recipe* that regenerates it rather than asking a later reader to trust this number —
 all envelope-stamped `emittedAtMs` and filtered by `optOutNotificationMethods`:
 connection-scoped `initialized` and `warning` (the latter also fans out — carrying a `threadId`, to
@@ -304,8 +347,14 @@ own watcher fan-out rather than a thread's subscriber list, because a client tha
 session is exactly the client whose list just went stale, and carrying `{sessionId}` for
 `thread/delete`'s reason (what is shelved is a store session, and the shelving server need hold no thread
 for it). They are fired by the archive pair and again by every admission that auto-unarchives what it
-opens (D-M5-21), and they are the only two notifications in this document that carry rows of their own —
-added at M5 Task 10; Totals says what earned them.
+opens (D-M5-21); and M7's thread-scoped `tool/callRequested`, the 30th — **SUBSCRIBERS only, never
+watchers**, which `fanout.ts` defines as thread-EXISTENCE observers and which must therefore receive
+neither a model's tool arguments nor a `callId`, that id being settlement authority rather than a label.
+It carries `{threadId, callId, turnId, namespace?, tool, arguments}` and is **replayable thread state**:
+`thread/subscribe` replays every still-pending call after the pending-decision replay it already performs,
+which is what makes "the declaring client died, a reattaching one answers" true rather than claimed. Those
+three are the only notifications in this document that carry rows of their own — the archive pair added at
+M5 Task 10, `tool/callRequested` at M7 Task 9; Totals says what earned them.
 
 **Decision wire** is main's Wave T shape, not the M2 branch's original: `plan_approve` carries the
 **granted mode** (`default|acceptEdits|bypassPermissions|auto`; `default` arms nothing — probe 97),
@@ -473,22 +522,71 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     otherwise recover TRUNCATED at a stale anchor, or fork to a new id while `record.sessionId` kept
     reporting the old one.
 
-11. **The app-server has no image surface, and the gate found only half of that** — gap 3's mirror
-    image. There, methods had no backing host op; here a host op has no method. F9 T-IMAGE (`9d823d0bf3`)
-    grew `host/ops.ts` a `stageImage` op and grew `prompt` an `images` claim array, and neither reached
-    `appserver/`: `git grep stageImage` under that directory returns nothing, so a fleet-origin thread
-    cannot send an image at all. **Whether it should is an open product question, deliberately not
-    answered here** — the scorecard's job is to stop the absence being invisible, not to commit the
-    roadmap to a `turn/stageImage`.
+11. **CLOSED 2026-08-23, with the bound published rather than left to be discovered** (kept at this
+    number so older references still resolve). This entry used to read "the app-server has no image
+    surface, and the gate found only half of that" — gap 3's mirror image, where a host op had no method
+    — and it deliberately left the product question open. The spec
+    [`2026-08-23-appserver-image-input-design.md`](../superpowers/specs/2026-08-23-appserver-image-input-design.md)
+    answers it, and the answer is NOT a `turn/stageImage`: **`turn/start`'s `input` widened from a string
+    to `string` or `InputItem[]`** (`text` / `image` / `localImage`, mirroring Codex's own `UserInput`
+    list), resolved once into engine content blocks and delivered over both origins — inProcess through
+    `session.submit`, fleet by staging those blocks over the host's `stageImage` op and claiming them in
+    `prompt.images`. A UNION rather than an optional `images` field, because a non-strict zod object
+    SILENTLY STRIPS an unknown optional field on an old server, while it refuses an items array outright
+    with `-32602 INVALID_PARAMS`: the same loud-skew property F9 gave `stageImage` its own op for,
+    obtained here by shape instead of by negotiation.
 
-    Two things are worth separating, because only one of them was catchable. The MISSING ROW went red
-    on the registry-coverage gate the moment the op landed — correctly, and it stayed red on `main`
-    from `9d823d0bf3` until this entry, because the gate is run as part of the drift ritual and the F9
-    wave did not run one. The `prompt.images` shortfall went undetected and would have stayed that way:
-    **the walker matches token NAMES, so an op that grows a new capability inside an existing schema
-    keeps its green row and its `both`.** A name-level instrument cannot see a field-level gap, which is
-    the same rot the M6 settings-key gate was built for, one level further down. Closing it means
-    walking op SHAPES, not op names — unbuilt, and named here rather than assumed.
+    **The v1 bound, stated because a client has to plan around it.** `image.url` admits `data:` URLs only
+    — Codex parity, not a shortfall: Codex's own app-server refuses remote image URLs
+    (`codex-rs/app-server/src/request_processors/turn_processor.rs`, `validate_user_input_image_urls` →
+    `REMOTE_IMAGE_URL_ERROR`) — and its length is capped in the schema at `MAX_DATA_URL_CHARS` =
+    240,000 characters, **which is exactly 180,000 bytes ≈ 180 KB decoded**. That is THE number a client
+    builds to, and the cap is measured on the base64 PAYLOAD — everything after the first comma — not on
+    the whole URL: an image AT the bound is a 240,022-character string once the `data:image/png;base64,`
+    prefix is paid for, and a cap that measured the prefix too would refuse the very number published
+    here (final review round 2). The emitted `maxLength` is therefore 240064, the payload cap plus a
+    64-character prefix allowance: it is a BACKSTOP on the serialized string, not the number to build to,
+    and the payload rule that binds is stated in the field's own `.describe` because a zod `.refine`
+    cannot be emitted into JSON Schema. The 256 KiB inbound frame cap (`appserver/peer.ts` `MAX_IN`) is the reason the schema cap
+    exists, but it is not the binding one: a full 256 KiB frame is 256 KiB × ¾ ≈ 192 KiB of decoded image
+    at most, before the JSON envelope is paid for, and the 240,000-character cap deliberately undercuts
+    that. Sizing to the FRAME is therefore how a client gets a `-32602` it did not expect — 190 KB of
+    image is a ~253,000-character data: URL, and the schema refuses it. A larger image reaches the model
+    over `localImage`, an ABSOLUTE path on a filesystem the server shares — so a LOCAL client has no
+    ceiling worth naming, and **a REMOTE client with an image over ~180 KB has no v1 path at all.** That
+    is the reason this gap closes with a bound rather than as a flat "images work": the remaining case is
+    named as the open follow-up (a staged or chunked upload — the D-M4-8 bridge family), not quietly
+    scored away. The rest of the published caps, so no client has to learn them by refusal:
+    `MAX_INPUT_ITEMS` = 64 items per turn and the data-URL length are SHAPE errors (`-32602`);
+    `MAX_IMAGES_PER_PROMPT` = 20, counted over the DECLARED items before a byte is read, plus a
+    512,000-byte per-image budget (`POST_PROCESS_BYTE_BUDGET`) and a 5 MiB per-turn aggregate, degrade
+    the offending image to an appended text note and let the turn run. Two more bounds bite on the BYTES
+    and degrade the same way, and they apply to `localImage` as much as to a data: URL, so a LOCAL
+    client's "no ceiling" is about length, not about content: **`MAX_DIMENSION` = 2000 px**
+    (`src/tui/clipboardImage.ts`, enforced in `turnItems.ts`'s `admitBytes`) drops any image wider or
+    taller than that — an ordinary retina screenshot exceeds it — and **only PNG and JPEG are readable
+    at all**, because `admitBytes` derives the media type by sniffing (`pngDimensions`, then
+    `jpegDimensions`) rather than trusting the declaration, so a GIF or WebP degrades with
+    `unreadable image data`. Neither is expressible in the published JSON Schema — `image.url` carries a
+    `maxLength` of 240064 (the whole-URL backstop above) and a `data:` `pattern`, and a `.describe` that
+    reads in full "A base64 `data:` URL. Remote URLs are refused. The cap is on the base64 PAYLOAD —
+    everything after the first comma — which may be at most 240000 characters (exactly 180,000 decoded
+    bytes); the published `maxLength` is that cap plus 64 characters of `data:<mediaType>;base64,`
+    prefix, so it is a backstop and not the number to build to.", so the artifact says nothing about
+    format or pixel dimensions — which is exactly why they are written out here.
+
+    Two things were worth separating, because only one of them was catchable — and that half outlives the
+    gap. The MISSING ROW went red on the registry-coverage gate the moment the op landed — correctly, and
+    it stayed red on `main` from `9d823d0bf3` until this entry was first written, because the gate is run
+    as part of the drift ritual and the F9 wave did not run one. The `prompt.images` shortfall went
+    undetected and would have stayed that way: **the walker matches token NAMES, so an op that grows a new
+    capability inside an existing schema keeps its green row and its `both`.** A name-level instrument
+    cannot see a field-level gap, which is the same rot the M6 settings-key gate was built for, one level
+    further down. Closing THAT means walking op SHAPES, not op names — still unbuilt, and still named here
+    rather than assumed. This landing is the same blindness from the other side: it widened `turn/start`'s
+    own params without moving a single walked token, so nothing generated could report it. Which is why
+    the `prompt` row — whose protocol-method cell IS `turn/start` — spells the union out in prose, here
+    and in the registration-order list above: the only instrument that can see a field is a sentence.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose
@@ -510,8 +608,8 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `stop` | host/ops.ts | `thread/stop` | both | shipped(M3) — ends the SESSION, origin-branched: the host op for a fleet thread (EOF is the contract — no receipt is awaited — then the roster row must turn terminal within a bounded poll, `-33008` naming the stuck state if it does not, record left standing), `thread/close`'s own path for an inProcess one. Both announce `thread/closed {reason:"stopped"}` |
 | `pending` | host/ops.ts | `decision/list` | both | shipped(M1) |
 | `answer` | host/ops.ts | `decision/respond` | both | shipped(M1) — Wave T wire shapes (see above) |
-| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) — **text only**: F9 T-IMAGE grew this op an `images` claim array that `turn/start` does not carry, so the row's `both` is true of the op and not of its whole schema (gap 11). A field-level shortfall the walker cannot see — it matches TOKEN names, so an op that grows a capability keeps a green row |
-| `stageImage` | host/ops.ts | **none** | N/A | **unscored — gap 11.** F9 T-IMAGE Task 5 (I3b): mints a staging file for ONE image and replies with the path the client writes the bytes to, over the filesystem rather than the socket, before claiming it in `prompt`'s `images`. Its own op deliberately, so an old host answers "unknown op" and the skew is LOUD (a bare field on `prompt` would be silently stripped). The app-server names no image surface at all — not this op, not `prompt.images` — so images are host-local today and a fleet thread cannot send one. Scored `unscored` rather than `N/A`: `N/A` in this table means *decided not to expose*, and nobody has decided this |
+| `prompt` | host/ops.ts | `turn/start` | both | shipped(M1) — **carries images since 2026-08-23** (gap 11, CLOSED): `turn/start`'s `input` is a string OR an `InputItem[]` of `text` / `image` / `localImage`, and on the fleet origin the resolved image blocks are staged over the host's `stageImage` op and claimed in THIS op's `images` array, through the loop `client/stagedSubmit.ts` shares with the TUI path. `both` is now true of the op's whole schema. It was not before, and the row said `shipped(M1) — text only` while staying green and `both` for as long as that lasted: the walker matches TOKEN names, so an op that grows a capability inside an existing schema keeps its row. The union is written here because nothing generated can see it |
+| `stageImage` | host/ops.ts | **none** | N/A | N/A — **host-local transport by design; the app-server bridges to it as a staging CLIENT on the fleet path** (gap 11's decision, 2026-08-23). F9 T-IMAGE Task 5 (I3b): mints a staging file for ONE image and replies with the path the client writes the bytes to, over the filesystem rather than the socket, before claiming it in `prompt`'s `images`. Its own op deliberately, so an old host answers "unknown op" and the skew is LOUD (a bare field on `prompt` would be silently stripped) — `fleetEngine.submit` surfaces exactly that as the turn refusal the TUI path already got. No app-server METHOD mirrors it and none should: staging is a filesystem handshake between a host and a process that shares its disk, so a remote client could not use a mirrored method anyway, and the app-server's own image surface is `turn/start`'s input union, which it resolves and then bridges DOWN to this op. This row read `unscored` for two sweeps because `N/A` here means *decided not to expose* and nobody had decided; the decision exists now, so the row states it |
 | `interrupt` | host/ops.ts | `turn/interrupt` | both | shipped(M1) — `cancelQueued` flushes the server queue since M2b (gap 1) |
 | `follow` | host/ops.ts | `thread/subscribe` | both | shipped(M1) |
 | `unfollow` | host/ops.ts | `thread/unsubscribe` | both | shipped(M1) |
@@ -525,7 +623,7 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `mcp_status` | host/ops.ts | `mcpServer/status/list` | both | shipped(M2b) |
 | `mcp_reconnect` | host/ops.ts | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `mcp_toggle` | host/ops.ts | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602; M3 T10: a fleet thread writes no `mcpToggles` row (the accumulator exists for `repushThreadState`, which this origin never runs) |
-| `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2 |
+| `resume` | host/ops.ts | `thread/resume` | both | shipped(M1) — via `resumeSession` (lib), see gap 2. M7: takes the same optional `dynamicTools` array `thread/start` does, validated identically — and it is the surface where **re-sending matters**, because declarations are in-memory thread state that the store does not persist: a resume without them rebuilds no dynamic servers, so a client resuming a conversation whose transcript references `mcp__ops__lookup` must re-declare or the model is offered nothing (see the dynamic-tools section's known limits) |
 | `tasks` | host/ops.ts | `task/list` | both | shipped(M2b) — un-chained read of the engine's live task set; answerable on a dead engine (cached set) |
 | `background` | host/ops.ts | `turn/background` | both | shipped(M2b) — relays the engine's boolean receipt |
 | `stop_task` | host/ops.ts | `task/stop` | both | shipped(M2b) |
@@ -607,7 +705,7 @@ are the item mapper's internals, not their own protocol seams (spec §10(c)).
 | `seedReadState` | sdk.d.ts (Query) | N/A — internal plumbing | N/A | N/A |
 | `reconnectMcpServer` | sdk.d.ts (Query) | `mcpServer/reconnect` | both | shipped(M2b) — SDK-type throw → -32602 |
 | `toggleMcpServer` | sdk.d.ts (Query) | `mcpServer/toggle` | both | shipped(M2b) — SDK-type throw → -32602 |
-| `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | shipped(M2b) |
+| `setMcpServers` | sdk.d.ts (Query) | `mcpServer/set` | inProcess | shipped(M2b) — M7: **refused `-32602` on a thread that declared dynamic tools**, the message naming the declaration. Whether this control frame can carry an in-process server INSTANCE is unverifiable keylessly, and an accepted set that silently dropped the declaration servers would erase thread-lifetime state; conservative-first, relaxed only once a keyed survival row proves instances ride a runtime set. Non-declaring threads are untouched |
 | `streamInput` | sdk.d.ts (Query) | `turn/steer` *(X)* | inProcess | shipped(M2b) — experimental; probe 103b (`probes/probes/103b-streaminput-steer.ts`) |
 | `stopTask` | sdk.d.ts (Query) | `task/stop` | both | shipped(M2b) |
 | `backgroundTasks` | sdk.d.ts (Query) | `turn/background` | both | shipped(M2b) — optional `toolUseId`; absent = background them all |
@@ -683,11 +781,18 @@ nothing walks `thread/start`: starting a review is this server's own act, and ne
 section that follows it, so it can be read beside the notification it emits; a method and its one
 announcement channel are one surface, and splitting them across two tables would hide that.
 
+M7's `tool/callResult` is an **eighteenth**, and the least walkable of all of them: its subject is a park
+this server owns, held for a client that is not asking a question but answering one. No host op, no
+`ControlFrame` verb and no `Query` method mirrors "settle a tool call" — the SDK's own MCP path has no
+notion of a result that arrives from outside the process that raised the call. Its row is in the
+dynamic-tools section after the review one, for the review pair's exact reason: `tool/callRequested` is the
+channel that makes the method reachable, and the two are one surface.
+
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
-| `initialize` | appserver/server.ts | `initialize` | N/A | shipped(M1) — Bearer-token handshake, connection-scoped; `watchThreads` opts into the server-scoped notifications |
+| `initialize` | appserver/server.ts | `initialize` | N/A | shipped(M1) — Bearer-token handshake, connection-scoped; `watchThreads` opts into the server-scoped notifications. M7 gives it a **registered RESULT schema** (it had only ever had params) so the published artifact's `results` map carries the new `dynamicTools: true` capability marker where a generated client can see it — see the dynamic-tools section for the API-stability consequence of that schema being `additionalProperties: false` |
 | `server/status` | appserver/server.ts | `server/status` | N/A | shipped(M1) |
-| `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession`. M5: a `config.resume` makes this one of D-M5-21's three ADMISSION surfaces, so it stamps that session id on the record eagerly (a real engine's own id arrives only with the first turn's init frame, and until then the record is invisible to every live-guard) and takes the conversation off the shelf through the same shared `autoUnarchive` its siblings use — **unless `config.forkSession` rides beside it** (D-M5-21b), which is the SDK's replay-into-a-NEW-session-id and therefore admits no existing session at all: verified against a real engine (the forked run's init reports a different id, the parent's transcript gains no messages, the fork's carries its history), so that request stamps nothing and unshelves nothing, and the record learns the id the engine actually opened from the init latch, exactly as a fresh thread does. Stamping there would name the parent permanently, since the latch early-returns on a stamped record |
+| `thread/start` | appserver/server.ts | `thread/start` | N/A | shipped(M1) — registers an `inProcess` thread; a client's whole `config` reaches `openSession`. M5: a `config.resume` makes this one of D-M5-21's three ADMISSION surfaces, so it stamps that session id on the record eagerly (a real engine's own id arrives only with the first turn's init frame, and until then the record is invisible to every live-guard) and takes the conversation off the shelf through the same shared `autoUnarchive` its siblings use — **unless `config.forkSession` rides beside it** (D-M5-21b), which is the SDK's replay-into-a-NEW-session-id and therefore admits no existing session at all: verified against a real engine (the forked run's init reports a different id, the parent's transcript gains no messages, the fork's carries its history), so that request stamps nothing and unshelves nothing, and the record learns the id the engine actually opened from the init latch, exactly as a fresh thread does. Stamping there would name the parent permanently, since the latch early-returns on a stamped record. **M7: an optional `dynamicTools` array rides BESIDE `config`** — never inside it, which is what keeps `review/start`'s config inheritance and the `extraOptions` merge structurally unable to carry or clobber it — validated at admission (every cap, every collision, each refusal naming its offender) and stamped on the record as SERIALIZABLE declarations; the live MCP server instances are built fresh onto the transient engine config at every build and never touch `record.config`. A client that intends to declare must first read `initialize`'s `dynamicTools: true` marker: an older server strips the unknown field silently |
 | `fleet/list` | appserver/fleet.ts | `fleet/list` | N/A | shipped(M3) — roster + live-projection join over the same probe seams `collectFleet` uses; terminal and unresponsive rows are listed, and `threadId` marks the rows this server holds |
 | `thread/attach` | appserver/fleet.ts | `thread/attach` | N/A | shipped(M3) — registers a `fleet` thread over `FleetEngineSession`; short/sessionId/name resolution with `-33008` on ambiguity, a terminal row or an unreachable socket; reservation-idempotent, and admitted behind the activation barrier |
 | `fs/read` | appserver/workspace.ts | `fs/read` | N/A | shipped(M3) — `{path}` → `{dataBase64, size}`, absolute paths only, trusted-client and unsandboxed (Codex's reads are sandbox-None). Refuses with `-32602` and nothing else: a relative path, a failing `stat` (the fs message verbatim), a path that is not a regular file — `not a regular file (directory\|FIFO\|socket\|character device\|block device)`, which is what keeps a FIFO from hanging the request forever and `/dev/zero` from reading without end, both invisible to the cap because `stat` sizes them at 0 — a failing read (`EACCES`), and a file over the **4 MiB cap** — `file exceeds the 4 MiB read cap (N bytes)`. The cap is a recorded deviation (Codex has none); the SDK seam that would have backed this, `Query.readFile`, is probe-dead (probe 104) and its own row is in the Query table |
@@ -725,16 +830,99 @@ git/diff seam, the reviewing agent fetching its own subject exactly as Codex's d
 | `review/start` | appserver/review.ts | `review/start` | both | shipped(M4) — `{threadId, target, delivery?}` → `{turn, reviewThreadId}`, Codex's shape verbatim including all four `target` variants (`uncommittedChanges`, `baseBranch`, `commit`, `custom`) and its method name (D-M4-4: adopting the vocabulary keeps every future parity comparison a lookup rather than a translation). **A review is an ordinary turn on a NEW thread** — no child session, no event re-stamping, no second engine loop: the request creates a thread, `turnStart` runs it verbatim, and the reply is the turn spine's own `{turn}` with `reviewThreadId` added. The review thread inherits the TARGET's config so it reads that repo with the same model, plugins and MCP topology, with three departures — `cwd` re-stamped from `registry.ts`'s `threadCwd` (the roster directory for a fleet target, not this process's), `resume` DROPPED (carrying it would open the "detached" review on the target's own transcript, the exact contamination detached delivery exists to prevent), and the edit tools merged into `disallowedTools` (`config/agents.ts`'s `READONLY_DISALLOW`, the read-only agents' own set). **Read-only in policy, and the limits are named rather than implied:** `Bash` stays open (a review needs git) and MCP write tools are namespaced so the three native denials miss them, while subagents are NOT a third door (probe 110: a top-level `disallowedTools` binds a dispatched child at depth 2 as well as 1, and `bypassPermissions` does not lift it). `permissionMode` is inherited VERBATIM and deliberately not clamped, so a target opened in `bypassPermissions`/`dontAsk` reviews with no broker to park at. **Origin scope is `both` and it is literal**: detached delivery needs exactly one thing from the target — its cwd — so the target's engine is never touched, there is no entry in `FLEET_UNSUPPORTED`, and a fleet-origin thread is as reviewable as an inProcess one. `baseBranch` is the one variant needing host-side git: `reviewTarget.ts` resolves the merge-base once and names the range in the prompt, DEGRADING to a note rather than failing when the repo cannot answer. Gates and refusals: `delivery:"inline"` → `-32602` naming detached as the path that works (D-M4-2 — Codex's inline path splices a child session's events onto the parent turn by re-stamping ids, which the SDK gives us no way to do, and running it as a plain turn on the caller's thread would contaminate the conversation); `-33004` for an unknown target, re-checked AFTER the git await because `thread/close`/`thread/delete` can drop the record while git runs and everything downstream reads a pre-yield capture; `-32602` when `threadCwd` is unknown (a review of "some directory" is not a review of the thread that was named); `-33007` if shutdown latched during that same window; and the standard `-33005`, since a dead thread reads consistently dead for everything a client can name on it. The `target` git identifiers are refused at the schema boundary if they carry any control character (`\p{Cc}` plus U+2028/U+2029) — they are interpolated UNFRAMED into the review prompt, and one line break is enough to forge a heading and countermand the `ReportFindings` instruction; `custom{instructions}` is exempt because it is multi-line by nature and the prompt fences it as data |
 | `review/findings` | appserver/review.ts | `review/findings` | both | shipped(M4) — the review verdict, broadcast to the REVIEW thread's subscribers as `{threadId, turnId, findings[], unstructured, level?, prose?, aborted?}`, each finding carrying `file`, `line`, `summary`, `short_summary`, `failure_scenario`, `category`, `verdict` and `outcome`. **Structured where Codex ships a flattened string** (D-M4-1). Harvested by intercepting the `ReportFindings` `tool_use` on the frame stream the app server already maps into items — no new engine seam — and every well-formed block in one assistant message is MERGED, so one frame is one notification (re-splitting would publish the number of tool calls a frame happened to carry). **Additive: a client APPENDS, and nothing here supersedes an earlier notification.** Nested/subagent frames are deliberately INCLUDED (D-M4-7), the opposite of the router's rule for to-dos and prose: a finding is about the review's SUBJECT, so whoever found it, it counts. The same verdict also goes out as a `review` ITEM through `emitItems`, so a client subscribed to items alone still renders the review inline — and, since that path buffers, a client joining mid-review is replayed the verdicts already reached. **The governing rule of the domain is on this row:** a turn that ends with no `ReportFindings` call yields `findings: []` PLUS `unstructured: true` PLUS the reviewer's own prose, never a bare empty array, which would be an authoritative all-clear no reviewer asserted (`prose` is OMITTED rather than sent empty when the reviewer never spoke — `""` is not something it said); PLUS **`aborted: true` when the turn did not finish**, the same rule one door further in, because an interrupt and a soft failure BOTH end on a real terminal frame and so both land in the fallback, and a client keyed on this channel would otherwise render a cancelled review as "no defects found" — the word is the item model's own (`mapper.finalize(true)` stamps `aborted` on every other item of an interrupted or failed turn, and the review item was the one type without it). A turn that produces no result frame at all (the engine died mid-review) fires NOTHING, because `turn/completed {status:"failed"}` already says so and announcing an empty array would claim a review happened. What a review thread is a review OF is **not** on this notification: `reviewOf` rides `threadView` instead, so it appears once on the row every client already reads (`thread/started`, `thread/list`) rather than repeating a constant on every message — which is also what lets a client identify a review thread raised by some OTHER client. Scoped to the TURN `review/start` began rather than to the review thread — the subscription is installed for one turn and unsubscribes at its end — because a review thread is an ordinary thread a client may take follow-up turns on, and a thread-wide harvest would fire the fallback on a turn nobody asked to be reviewed. Origin scope `both` for the same reason `review/start` has it: the notification fires identically for a review of a fleet-origin target, the review thread itself always being one this server created |
 
+## Dynamic tools domain — M7 (a method and the channel it announces on)
+
+Two rows, together for the review domain's exact reason: `tool/callResult` is the client's whole request
+surface for this milestone and `tool/callRequested` is the one channel that makes it reachable — a client
+cannot answer a call it was never told about, so the method and the channel are one contract. Neither is
+walkable: no host op, no `ControlFrame` verb, no session-store wrapper and no `Query` method mirrors either,
+so the seam-token column repeats the wire name as it does in the server-origin table above.
+
+**The two statuses differ, and the difference is the drift gate's own vocabulary rather than a difference in
+confidence.** `tool/callResult` is REGISTERED in `schema/index.ts`, and the gate refuses a `probe-gated`
+status on a registered method (drift-check.mjs:158) — correctly, since a dispatchable method is shipped
+whatever else is unobserved. So it reads `shipped(M7)` and its **keyed residual is named here in prose**:
+what no keyless row can reach is the far side of the ENGINE — that the declaration survives the SDK→CLI
+control-protocol hop as a mounted in-process MCP server with its `_meta` intact, that the model's call rides
+the ordinary permission surface (the broker's `decision/requested` first, then the tool call), that the
+stream classifies an `mcp__…` call as the `mcp` species end to end, and that the model actually USES the
+client's answer. `tool/callRequested` has no registry entry (notifications have none), so it carries
+`probe-gated`, which is the honest status for a channel whose end-to-end behaviour has been driven only by
+our own MCP client and never by a model. Both flip together after the first keyed run of
+`test/live/appserver-dynamic-tools.test.ts` — **due after 2026-08-26 1pm**, the file having been written and
+landed keyless under an exhausted weekly quota, its only run so far the clean skip.
+
+**Known limits, all client-facing contract statements with no code behind them.** (a) The occupied-name
+check reserves the harness's own injected server names UNCONDITIONALLY, `cc-context` and `cc-compact`
+included — so a thread with context and compaction injection switched off still refuses a namespace by
+those names, and the refusal can name a server that client would never have seen. Deliberate: the reserved
+set must not depend on flags a later build may re-read, and a refusal that moves with configuration is worse
+than one that is merely conservative. (b) **Declarations are NOT persisted into resume defaults.** They are
+in-memory thread state; nothing writes them to the session store and nothing reads them back. A client must
+RE-SEND `dynamicTools` on every `thread/resume`, and a resume that omits them rebuilds no dynamic servers at
+all — the thread comes back with a transcript full of `mcp__ops__…` calls and nothing behind those names.
+This is the contract, stated here because it is stated nowhere else. (c) `thread/fork` and `review/start`
+mint threads through the same admission spines with no declaration path, so a fork of a declaring thread and
+a review of one are both toolless. Deliberate for `review/start` (a review thread is a derived analysis
+engine, not the client's tool runtime, and the exclusion is structural because declarations live outside
+config); for `thread/fork` it follows from the fork inheriting no config at all. Either way the client gets
+no signal, which is the part worth knowing. (d) MCP servers the SDK loads from SETTINGS FILES are invisible
+to the occupied-name check: the occupied set is only what the request can see — the typed/hatch `mcpServers`
+map plus the injected names — while `settingSources` may bring in project- or user-level servers this server
+never enumerates. A declared namespace colliding with one of those is admitted, and which spread wins inside
+the SDK is unmeasured. Same class as the residual `INJECTED_SERVER_NAMES` closes for our own names, and a
+published bound rather than a refusal, since declaration time cannot enumerate them. (e) **Single execution
+is the CLIENT's contract, not the server's.** `tool/callRequested` goes to EVERY subscriber and the first
+`tool/callResult` settles the call, so several subscribers that each run a non-idempotent tool all run it
+and the losers hear `-33002 ALREADY_SETTLED` once the side effect has already happened. The server cannot
+prevent that: it does not know which subscriber hosts the client's tool runtime, and a lease protocol would
+be a wire redesign. Executing clients must coordinate among themselves — the same property the decisions
+surface has, where a broadcast `decision/requested` is likewise settled by whoever answers first.
+
+**API stability, one line, deliberately conventional:** `initialize`'s newly registered result schema is
+`additionalProperties: false`, so once a client pins the generated artifact and validates strictly, any
+future additive handshake field is a BREAKING change for it. That matches every other registered result in
+this protocol (`config/read`, `okResult`, and `tool/callResult`'s own `{}`), so it is consistent rather than
+wrong — but `initialize` is the one reply every client reads, which is why the consequence is written down
+instead of inherited silently.
+
+| seam token | source | protocol method | origin scope | status |
+|---|---|---|---|---|
+| `tool/callResult` | appserver/toolCallResult.ts | `tool/callResult` | both | shipped(M7) — `{threadId, callId, contentItems, success}` → `{}`, the method a client's tool runtime settles a parked dynamic tool call with; items are Codex's `inputText`/`inputImage`/`inputAudio` trio with media as `data:` URLs. Authority is checked twice: the peer must be in this thread's SUBSCRIBER set, and `callId`s are opaque `dyncall:<uuid>` rather than a guessable counter. First answer wins; a duplicate earns `-33002 ALREADY_SETTLED` off a 128-entry tombstone ring, a fabricated or previous-generation id earns `-32602` "no such pending tool call". The schema deliberately validates neither the media URLs nor a result-item count — a refusal raised before the handler would leave the call parked while the client believed it answered (D-M4-9), so the caps and the `data:` parse settle an `isError` result naming the problem instead. Scored `both` because a fleet thread ANSWERS it: `thread/attach` mints the call registry unconditionally, so the registry exists and holds nothing and `-32602` is the true statement — its absence from `FLEET_UNSUPPORTED` is that decision, not an oversight (a fleet thread never broadcasts a call, so no honest client holds a fleet `callId`). **Keyed residual named in the prose above** — the prose, not a `probe-gated` status, because the gate refuses that status on a registered method |
+| `tool/callRequested` | appserver/toolCallResult.ts | `tool/callRequested` | inProcess | probe-gated — NOT a method: the notification a parked call announces on, `{threadId, callId, turnId, namespace?, tool, arguments}`, delivered to the thread's SUBSCRIBERS only. Watchers are excluded by design (`fanout.ts` defines them as thread-EXISTENCE observers; tool arguments are execution data and the `callId` is settlement authority). Replayed in full by `thread/subscribe` after the pending-decision replay, so a call parked with zero subscribers waits and the first client to attach hears it — which is what makes "the declarer died, a reattaching client answers" true. `inProcess`, unlike the method beside it: only an inProcess engine can raise a dynamic call at all, so a fleet thread never emits this. `probe-gated` until the first keyed run of `test/live/appserver-dynamic-tools.test.ts` (after 2026-08-26 1pm) has driven it from a real model rather than from our own MCP client |
+
+Registered beside those, and NEGOTIATED rather than additive, are **F10's three staged-image methods** —
+`image/stage`, `turn/startContent`, `turn/steerContent`, each `experimental: true` in `schema/index.ts` so
+an old server answers METHOD_NOT_FOUND instead of accepting a widened input it cannot honour. They are the
+REMOTE client's image path: `turn/start`'s own input union (the `prompt` row above) carries images this
+server can already reach — a `data:` URL, or a `localImage` on shared disk — while a client with neither
+uploads the bytes itself, in base64 chunks against a connection-scoped `stageId`, and then names the
+completed stages in one of the two content methods. Those assemble the staged blocks beside the call's own
+`text`, cap the turn's total image bytes over the images actually RETAINED, and commit — deleting the
+staged entries — only once the turn has been admitted; every refusal before that point either precedes the
+reservation or aborts it, so a rejected call leaves nothing stranded. Blocks reach the engine over the
+OPTIONAL `submitContent` / `steerContent` capabilities and never over the string-only `submit`, which is
+also the route `turn/start`'s items array takes once its resolver has turned it into blocks: an engine that
+cannot carry content says so, loudly, rather than running a truncated text-only turn (the F9 lesson the
+`experimental` marker and the capability split both exist to honour).
+
+| seam token | source | protocol method | origin scope | status |
+|---|---|---|---|---|
+| `image/stage` | appserver/imageStage.ts | `image/stage` | N/A | shipped(F10) — `{stageId, seq, last, bytesTotal, mediaType?, data}` → `{complete}`, the chunked base64 upload a remote client stages an image with. **Connection-scoped: there is no `threadId`**, a stage belongs to `ctx.connId`, so neither the thread lookup nor the origin gate can fire on it and the origin column has nothing to score. `mediaType` is required on `seq 0` and allowlisted there (handler-enforced, since `seq` is a number rather than a discriminant); ordering, per-chunk and total size are the registry's (`imageStage.ts`), whose refusals already carry their own JSON-RPC codes and ride straight onto the wire. An idle+absolute sweep drops stages nobody ever claimed, and a connection's stages die with it, so an abandoned upload costs this server nothing permanent |
+| `turn/startContent` | appserver/turns.ts | `turn/startContent` | inProcess | shipped(F10) — `{threadId, text?, stagedImageIds[], queue?}` → `turn/start`'s own two replies (`{turn}`, or `{queued:true, turn, position}`), the staged-image completion of a NEW turn. Gates 2-8 are shared byte-for-byte with `turn/steerContent` (`prepareStagedContent`), and the order is the correctness: fleet origin refused `-33006` before anything is taken (F10 ships no fleet staging client — a fact about the ORIGIN, not an absent capability), then `turn/start`'s own busy/`queue:true` arm, then `requireSubmitContent` on the immediate path only (a drain-time engine swap is the queue's own problem), then the ATOMIC reservation, the assembly, and the per-turn aggregate. A queue-full refusal aborts the reservation and mints no turn id, exactly as `turn/start`'s does. `inProcess` because the fleet refusal is definitional, not a gap |
+| `turn/steerContent` | appserver/turns.ts | `turn/steerContent` | inProcess | shipped(F10) — `{threadId, text?, stagedImageIds[]}` → `{ok:true}`, the mid-turn twin: a content-carrying injection onto the RUNNING turn's input stream, never a new turn. Two gates differ from its sibling and both differ deliberately — eligibility is `turn/steer`'s own (`busy` AND `turnStartedBroadcast`, so a same-tick start+steer pair cannot jump ahead of the prompt it means to steer; idle answers `-32602` "no turn in flight", since nothing is unavailable, the request simply has no referent), and the capability is `requireSteerContent`, never routed through `submitContent` (that would start a new turn) or through the string-only `steer`. No queue arm, no `turn/started`, no item broadcast: a steer is not a turn edge |
+
 ## Totals
 
 35 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **80 walked tokens**,
-all rowed above — plus the 16 server-origin method rows and the 2 archive NOTIFICATION rows beside them,
-which no walker produces, plus M4's 2 review rows, for
-**100 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
+all rowed above — plus the 19 server-origin method rows and the 2 archive NOTIFICATION rows beside them,
+which no walker produces, plus M4's 2 review rows and M7's 2 dynamic-tools rows (a method and its
+notification, the same pairing), for
+**105 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
 until then, having missed Task 7's adoption pair as well as its own workspace pair; Task 13's
 `thread/shellCommand` is the eighth server-origin row and Task 14's `thread/reopen` the ninth. M3 Task 15
 is the last landing that had to recount by hand: the gate prints the row total itself now, and both counts
-agreed at 88 there, at 90 at M4 Task 9, at 91 at M5 Task 2 (`config/read`), at 93 at M5 Task 4 (the write pair), at 94 at M5 Task 7 (`thread/search`), at 95 at M5 Task 8 (`thread/searchOccurrences`), at 97 at M5 Task 9 (the archive pair) and at 99 here — M5 Task 10, which registers **no new method** and adds the two rows the archive pair's notifications had gone without. That asymmetry is the point of restating it: the row count and the method count move independently, and a landing that moves only one is exactly where a summary carried over from the last one goes wrong. **The gate would not have caught a miscount at this landing**, which is
+agreed at 88 there, at 90 at M4 Task 9, at 91 at M5 Task 2 (`config/read`), at 93 at M5 Task 4 (the write pair), at 94 at M5 Task 7 (`thread/search`), at 95 at M5 Task 8 (`thread/searchOccurrences`), at 97 at M5 Task 9 (the archive pair) and at 99 at M5 Task 10, which registers **no new method** and adds the two rows the archive pair's notifications had gone without. That asymmetry is the point of restating it: the row count and the method count move independently, and a landing that moves only one is exactly where a summary carried over from the last one goes wrong. M7 Task 9 moves BOTH — one new method (`tool/callResult`, the 67th registered) and two new rows, the method's and its notification's — for **102** there. **F10's three staged-image methods** (`image/stage`, `turn/startContent`, `turn/steerContent`) then landed registered but UNROWED, and were rowed when that wave met the M7 branch: three methods and three rows, both counts moving together, for **105 rows** over **70 registered methods** here. They were found by the gate's third pass — the registry→scorecard direction, which starts from the CODE — and not by any recount, which is what that pass exists for. **The gate would not have caught a miscount at this landing**, which is
 worth stating where the number is: its three passes check that walked tokens have rows and that a row's
 status matches the code, so a method or notification never registered and never rowed is invisible to all
 three — measured, not assumed, at M4 Task 9, where the script exited 0 and reported 58/88 with the whole
@@ -748,23 +936,38 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M6 scorecard repair, 2026-08-22** — restated per landing, never
-trusted between them): **100 rows, 97 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`), the
-remaining three being the `N/A` pair — `seedReadState`
-(internal plumbing, no protocol method by design) and `readFile` (probe-dead at 0.3.220, see its row) —
-plus `stageImage`, which the gate prints in a bucket of its own as **`unparsed 1`**. That bucket is
-deliberate and should stay: the row's status is outside the shipped/`N/A` vocabulary because the surface
-is genuinely unscored (gap 11), and forcing it to `N/A` would file an undecided question as a decision.
-An `unparsed` count above 1 means a row's status really is malformed.
+What those two lines say at this sweep (**M7 dynamic tools, 2026-08-24** — restated per landing, never
+trusted between them): **102 rows, 98 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`, 1
+`shipped(M7)` — `tool/callResult`), **1 `probe-gated`** (`tool/callRequested`), and the same `N/A` trio as
+the last two sweeps: `seedReadState` (internal plumbing, no protocol method by design), `readFile`
+(probe-dead at 0.3.220, see its row) and `stageImage` (host-local transport by design). No `unparsed`
+bucket, so **an `unparsed` count above zero still means a row's status really is malformed.**
 
-The previous sweep read **99 rows, 97 shipped** at M5 Task 11 (2026-08-19); the delta is `stageImage`'s
-row alone. The lesson the delta carries: that sweep was accurate the day it was written and wrong within
-two days, because a landing in ANOTHER wave (F9's image transport) grew a walked source without running
-this gate. Restating per landing only works if every landing that touches a walked source counts as one.
-**Three buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
-`thread/stop` shipped; `probe-gated` by M2b Wave 4's Task 5, which probed all four gated tokens live on
-2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one retired to `N/A`);
-and `fleet-only` by that same Task 9 (gap 4), a mirror scope that turned out to describe no method at all.
+The `probe-gated` bucket is the one that MOVED, and it is worth saying why rather than only that it did:
+it had been empty since M2b Wave 4's Task 5 promoted or retired all four of its members on 2026-08-11, and
+this landing re-opens it with exactly one row. That is the status doing its job rather than a regression —
+the channel is live in code and unobserved against a real model, which is the state the vocabulary has a
+word for. It empties again when `test/live/appserver-dynamic-tools.test.ts` first runs keyed, after
+2026-08-26 1pm. Note the asymmetry with its own method one row above: `tool/callResult` cannot carry this
+status, because the gate refuses `probe-gated` on a name the method registry holds, so its equal residual is
+written as prose in the section above. A reader comparing the two statuses is reading a rule about the gate's
+vocabulary, not a difference in what has been observed.
+
+The previous sweep read **100 rows, 97 shipped, no `unparsed`** at the app-server image-input landing
+(2026-08-23), which registered no method and added no row. The one before that read **100 rows, 97 shipped,
+`unparsed 1`** at the M6 scorecard repair (2026-08-22), and the sweep before that
+**99 rows, 97 shipped** at M5 Task 11 (2026-08-19), whose delta was `stageImage`'s row alone.
+The lesson that delta carries is still the one to keep: that sweep was accurate the day it was written and
+wrong within two days, because a landing in ANOTHER wave (F9's image transport) grew a walked source
+without running this gate. Restating per landing only works if every landing that touches a walked source
+counts as one — including a landing like the image-input one, which grew no walked source at all and still
+had to run the gate to be able to say so.
+**Two buckets are empty, each emptied by a nameable landing:** `planned(...)` by M3 Task 9, when
+`thread/stop` shipped; and `fleet-only` by that same Task 9 (gap 4), a mirror scope that turned out to
+describe no method at all. A third, `probe-gated`, was emptied by M2b Wave 4's Task 5, which probed all four
+gated tokens live on 2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one
+retired to `N/A`) and stayed empty for thirteen days; **M7 Task 9 re-opens it with `tool/callRequested`**,
+under a quota that forbids the keyed run until 2026-08-26.
 
 **Origin scope is the column that keeps moving**, so what is worth recording is which rows moved and why,
 not the split they add up to. Task 9 moved `thread/stop` from `fleet-only` to `both` (gap 4). Task 10
@@ -794,30 +997,41 @@ out — what they name is not even the thread's transcript but a marker file thi
 a fleet session is as shelvable as an inProcess one because shelving never reaches an engine at all; M5
 Task 10 added no method and moved none, but its two notification rows (`thread/archived`,
 `thread/unarchived`) score `both` by inheritance — a channel's origin scope is the scope of what fires it,
-which is the same reading `review/findings` takes from `review/start`. The rows that remain
+which is the same reading `review/findings` takes from `review/start`. **M7 Task 9 adds two rows that split
+where those pairs agreed**, and the split is the one thing worth reading its origin column for:
+`tool/callResult` is `both` while its own channel `tool/callRequested` is `inProcess`. A channel inheriting
+its method's scope was never a rule, only what had been true — here the method genuinely answers on a fleet
+thread (with `-32602`, the registry being real and empty) while the channel genuinely cannot fire there,
+because only an inProcess engine raises a dynamic call at all. The rows that remain
 `inProcess` are exactly the wire gaps: `FLEET_UNSUPPORTED`'s methods (§1c) plus the Query-side seams behind
 them — Task 14's `thread/reopen` joining that set as the one member whose absence from the host wire is a
 deliberate boundary rather than a missing op (the host owns its own engine lifecycle).
 
-**The live surface those rows cover: whatever the gate prints, and 29 notifications.** The registered-
+**The live surface those rows cover: whatever the gate prints, and 30 notifications.** The registered-
 method count is not restated here for the reason "Shipped, per the code" gives — `scripts/drift-check.mjs`
 prints the size of `appserver/schema/index.ts`'s `methodSchemas` on every run ("every row status matches
-the live surface (N registered methods)"), it read 51 at the M2b close-out, 58 at M3's, 59 at M4's, 60 at M5 Task 2's `config/read`, 62 at M5 Task 4's write pair, 63 at M5 Task 7's `thread/search`, 64 at M5 Task 8's `thread/searchOccurrences` and 66 at M5 Task 9's archive pair — **still 66 at M5 Task 10**, which adds a parameter to a method that was already registered and therefore moves this number not at all, and
+the live surface (N registered methods)"), it read 51 at the M2b close-out, 58 at M3's, 59 at M4's, 60 at M5 Task 2's `config/read`, 62 at M5 Task 4's write pair, 63 at M5 Task 7's `thread/search`, 64 at M5 Task 8's `thread/searchOccurrences`, 66 at M5 Task 9's archive pair — **still 66 at M5 Task 10**, which adds a parameter to a method that was already registered and therefore moves this number not at all — and 67 at M7 Task 8's `tool/callResult`, and
 the run is
 the only place it is ever current. Notifications have no registry to count, so they get a **recipe**
 instead of a number: every slash-shaped string literal under `appserver/` that is not a registered method
-(27 at this sweep — the same scan the staleness pass runs for its `liveWireStrings` set), plus the two
-that carry no slash, `initialized` and `warning`. That is **29**, the two most recent being M5 Task 9's
-`thread/archived` and `thread/unarchived` — which **now have rows of their own**, added at M5 Task 10 in
-the server-origin table beside the pair that fires them, once `thread/list {archived}` gave a client a
-partition to repaint and made the channels a contract rather than a detail of the methods. They are the
-only notifications in this document with rows, and the recipe above is still how the OTHER 27 are counted
-— by scan, not by row: a row per notification is not the convention here, it is what a consumed channel
-earns. Those two 27s are **not the same set**, and the coincidence is arithmetic rather than meaning: the
-recipe's 27 counts slash-shaped literals and INCLUDES this pair, while the other 27 is 29 less the two
-that gained rows — which excludes the pair and takes in the two slashless names instead. Read either one as
-the headline total and it comes out short by exactly two — the same error twice over for two different
-missing pairs, which is what the "Shipped, per the code" list above carried until M5 Task 11 rewalked it. Before those,
+— the same scan the staleness pass runs for its `liveWireStrings` set — **less the literals that are
+slash-shaped without being wire names**, plus the two wire names that carry no slash, `initialized` and
+`warning`. The scan yields 31 at this sweep and three of those are not channels at all: `image/png` and
+`image/jpeg` (the media types `turnItems.ts` stamps on a resolved image) and `anthropic/alwaysLoad` (the
+MCP `_meta` key M7's advertisement sets). That leaves 28, plus the two slashless, for **30** — the exclusion
+being stated here rather than assumed, because the scan's shape is "contains a slash" and the milestone that
+added a MIME literal is the one that showed the recipe needed the caveat spelled out. The three most recent
+names are M5 Task 9's `thread/archived` and `thread/unarchived` and M7's `tool/callRequested`, and all three
+**have rows of their own** — the archive pair added at M5 Task 10 in the server-origin table beside the pair
+that fires them, once `thread/list {archived}` gave a client a partition to repaint; `tool/callRequested` at
+M7 Task 9 in the dynamic-tools section, because a client that cannot answer the call it announces has no
+dynamic tools at all. They are the only notifications in this document with rows, and the OTHER 27
+are counted without one — 25 of them by the scan above, plus the two slashless names it cannot see: a row
+per notification is not the convention here, it is what a consumed channel earns. The recipe's 28 and that 27 are **not the same set**, and the near-match
+is arithmetic rather than meaning: the 28 counts slash-shaped wire literals and INCLUDES all three rowed
+channels, while the 27 is 30 less those three — which excludes them and takes in the two slashless names
+instead. Read either as the headline total and it comes out short, which is what the "Shipped, per the code"
+list above carried until M5 Task 11 rewalked it. Before those,
 **27**: 26 across all of M3 — `thread/closed`
 gained an optional `reason` (Task 9) and `thread/compacted` gained a fleet emission path (Task 10), but
 neither is a new name, and none of M3's seven methods emits a notification of its own — plus M4's

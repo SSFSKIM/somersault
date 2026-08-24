@@ -112,11 +112,21 @@ export const mcpToggle: Handler = (srv, ctx, id, params) => {
   });
 };
 
+/** M7: what a thread that DECLARED tools hears instead. `setMcpServers` replaces the server set wholesale,
+ *  and the servers a declaration is published under are in it — accepting this would leave the model still
+ *  being offered `mcp__<namespace>__<tool>` names with nothing behind them, and the accumulator would then
+ *  replay that same amputated set across every later engine swap. Refused rather than silently merged: the
+ *  overlay is the server's, and a client cannot be told it replaced a set that it did not. */
+export const DYNAMIC_TOOLS_DECLARED = "thread declared dynamic tools; mcpServer/set would drop the servers they are published under";
+
 export const mcpSet: Handler = (srv, ctx, id, params) => {
   const parsed = mcpSetParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
+  // Synchronously, before the chain — this is a statement about the THREAD, not about anything its engine
+  // might answer, so there is nothing to wait behind.
+  if (record.dynamicTools?.length) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, DYNAMIC_TOOLS_DECLARED); return; }
   // inProcess-only: the host wire has no op for a wholesale server-set replacement (nor for the rules-layer
   // override below), so a fleet thread is refused -33006 by the dispatch-level origin gate (registry.ts's
   // FLEET_UNSUPPORTED) before this handler runs. The live topology reads/reconnect/toggle above DO have

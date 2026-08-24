@@ -13,6 +13,13 @@ export const ERR = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -
 /** A refusal decided AWAY from the peer that will send it (registry.ts's origin gate is the first) — the
  *  three arguments `Peer.replyError` takes, carried as one value so the deciding code needs no peer. */
 export interface RpcError { code: number; message: string; data?: Record<string, unknown> }
+/** The same refusal, THROWN — for a spine that has no peer of its own and whose callers all sit under
+ *  dispatch's catch (`AppServer.createThread`, M7). That catch flattens every other throw to -32603, which
+ *  is the wrong answer for a malformed request the client could fix; this carries the real code out with
+ *  the message so the rule can be stated once, in the spine, instead of in each of its handlers. */
+export class RpcRefusal extends Error implements RpcError {
+  constructor(readonly code: number, message: string) { super(message); this.name = "RpcRefusal"; }
+}
 export interface RpcRequest { id: RequestId; method: string; params?: Record<string, unknown> }
 export interface RpcNotification { method: string; params?: Record<string, unknown> }
 export type Classified =

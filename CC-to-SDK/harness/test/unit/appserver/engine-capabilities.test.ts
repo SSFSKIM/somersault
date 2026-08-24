@@ -121,7 +121,7 @@ describe("I3c: the capability-gate helpers (turns.ts) refuse BY NAME, synchronou
     const srv = new AppServer({}, {});
     const record = fakeRecord(stringOnlyEngine());
     let caught: unknown;
-    try { submitRunner(srv, record, [img()])("t1", new TurnMapper()); } catch (e) { caught = e; }
+    try { submitRunner(srv, record, [img()])("t1", new TurnMapper(), () => {}); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(EngineCapabilityError);
     expect((caught as Error).message).toMatch(/engine does not support content submission/);
   });

@@ -1,7 +1,7 @@
 // appserver/schema/index.ts — the method→schema registry. Wave 4's generator and drift gate walk THIS
 // record: a shipped method missing here is a build failure, so wire and artifact cannot drift (spec §9).
 import type { z } from "zod/v4";
-import { threadIdParams, initializeParams, okResult, serverStatusParams } from "./core.js";
+import { threadIdParams, initializeParams, initializeResult, okResult, serverStatusParams } from "./core.js";
 import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams, turnSteerContentParams } from "./turns.js";
 import { imageStageParams } from "./images.js";
@@ -17,6 +17,7 @@ import { reviewStartParams } from "./review.js";
 import { configReadParams, configReadResult, configValueWriteParams, configBatchWriteParams, configWriteResult } from "./config.js";
 import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
 import { capabilitiesReadResult } from "./introspect.js";
+import { toolCallResultParams, toolCallResultResult } from "./dynamicTools.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -29,7 +30,11 @@ import { capabilitiesReadResult } from "./introspect.js";
  *  never "no response". `schema/emit.ts` emits every declared one into the artifact's `results` map. */
 export interface MethodSchema { params: z.ZodType; result?: z.ZodType; experimental?: true }
 export const methodSchemas: Record<string, MethodSchema> = {
-  "initialize": { params: initializeParams },
+  // M7: the FIRST server-scoped `result`, and the reason it exists is the handshake's `dynamicTools`
+  // marker — a client cannot detect a server too old to host its tools any other way (core.ts states the
+  // whole argument). Publishing it means the artifact's `results` map carries the marker, which is what
+  // makes the detection a contract rather than a convention.
+  "initialize": { params: initializeParams, result: initializeResult },
   "server/status": { params: serverStatusParams },
   "thread/start": { params: threadStartParams },
   "thread/resume": { params: threadResumeParams },
@@ -170,4 +175,14 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // a client that reads one reply reads the other, so two spellings could only ever drift.
   "thread/archive": { params: threadIdParams, result: okResult },
   "thread/unarchive": { params: threadIdParams, result: okResult },
+  // M7 (§the call) Task 8: the settlement method, registered LAST and registered NOW — Task 4 defined
+  // both shapes and deliberately left them out of this table, because a method whose `callId` can only be
+  // obtained by declaring tools is unreachable until `thread/start` accepts a declaration. That landed in
+  // this same change, so the method goes live beside the params that make it usable. STABLE: the shape is
+  // this milestone's own and rides no unproven SDK seam — the engine's side of it is an ordinary MCP
+  // server this process builds. Publishes a `result` (D-M5-19) because the ack is load-bearing in a way
+  // no params schema can state: `{}` means the answer was DELIVERED, and every other outcome — the race
+  // lost, the id unknown, the thread gone — is an error code, so a client that cannot validate the empty
+  // reply cannot tell "settled" from a reply it failed to understand.
+  "tool/callResult": { params: toolCallResultParams, result: toolCallResultResult },
 };

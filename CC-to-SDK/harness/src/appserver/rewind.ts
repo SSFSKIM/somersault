@@ -48,6 +48,7 @@ import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.j
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { SESSION_IDENTITY, stripIdentityHatch } from "./sessionIdentity.js";
+import { withThreadDynamicServers } from "./dynamicServers.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./schema/rewind.js";
 
@@ -206,6 +207,15 @@ export async function swapEngine(
   srv: AppServer, record: ThreadRecord, makeReplacement: () => EngineSession, nextSessionId: string | undefined,
 ): Promise<void> {
   record.epoch += 1;
+  // M7, and the position is the whole of it: IMMEDIATELY after the bump, BEFORE the dispose is awaited.
+  // `dispose()` awaits a read loop that cannot end while a turn sits blocked inside the dynamic-tool
+  // handler on one of these promises, and this is the only thing that settles them — resetting after the
+  // await is the same circular wait `closeRecord` orders around. Non-latching, because this same registry
+  // serves the replacement engine (dynamicCalls.ts's header). Both wire callers inherit it here rather
+  // than saying it themselves: `thread/rewind` and `thread/clear` differ only in the replacement they
+  // build. `thread/reopen`, the third, settles its own ghost parks with a truer reason at arrival time,
+  // and reaches this line with nothing left to cancel.
+  srv.threadDynamicCalls(record.id)?.reset("engine swapped");
   record.routerOff?.();
   try { await record.session.dispose(); } catch { /* see above — the replacement is what matters */ }
   record.session = makeReplacement();
@@ -225,6 +235,42 @@ export async function swapEngine(
   // then read as a CHANGE and put a `thread/capabilities/changed` on the wire for a value that never moved.
   installRouter(srv, record);
   await repushThreadState(srv, record);
+}
+
+/** THE SWAP LATCH, AND THE STATUS RETRACTION IT OWES — one implementation for the two methods that run a
+ *  LOCAL swap behind `record.chain` (`thread/rewind` below, `thread/clear` in settingsOps.ts). Shared
+ *  rather than stated twice because stating it twice is stating it wrong once: this is r7 finding 4's
+ *  defect, and it reappears on whichever sibling forgets.
+ *
+ *  `swapEngine`'s `reset("engine swapped")` above settles whatever the thread still had parked, and every
+ *  settle rides a `thread/status/changed` out (server.ts's `broadcastToolCall`) computed while
+ *  `swapInFlight` is latched — i.e. `{state:"active"}` for a thread that is about to be idle. The latch
+ *  then drops in a `finally` without a word, so a client that renders status off the wire rather than
+ *  re-reading `thread/get` would sit on "active" until some later turn edge moved it.
+ *
+ *  CAPTURE AND RELEASE ARE ONE OBJECT, deliberately: the predicate can only be sampled BEFORE the chain
+ *  (by the time it matters, the parks are gone) and the correction emitted only AFTER the latch drops, and
+ *  pairing them is what stops the next swap-family caller from latching without arranging the retraction.
+ *  `thread/reopen` states its own instead of taking this one — it settles at ARRIVAL with a truer reason,
+ *  reads both registries, and releases early on success so its announcements describe the recovered thread.
+ *
+ *  The DYNAMIC registry alone, where reopen reads both: both callers here refuse outright on a pending
+ *  decision (the C1 circular wait), so nothing can be in the decisions one by this line. Conditional, for
+ *  reopen's reason — a swap with nothing parked broadcast no status at all, and an unconditional emit would
+ *  invent a status edge the ordinary swap does not have. Recomputed rather than asserted idle: the latch is
+ *  the only term that moved, and the honest answer comes from the same `threadStatus`/`threadWaiter` pair
+ *  every other emit site uses.
+ *
+ *  FLEET latches nothing and so retracts nothing (see the file header and settingsOps.ts's clear): there is
+ *  no local swap for the latch to fence off, and no local registry that origin's engine can park into. */
+export function latchSwap(srv: AppServer, record: ThreadRecord): () => void {
+  if (record.origin === "fleet") return () => {};
+  record.swapInFlight = true;
+  const settledGhostParks = srv.pendingToolCalls(record.id).length > 0;
+  return () => {
+    record.swapInFlight = false;
+    if (settledGhostParks) srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.threadWaiter(record.id)) });
+  };
 }
 
 /** Re-send everything the thread accumulated on the OUTGOING engine to the replacement — the appserver's
@@ -473,7 +519,9 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
   // below sits behind record.chain, so a same-tick turn/start (two requests dispatched before any
   // microtask runs) would otherwise pass its own busy gate and drive an engine call against a thread that
   // is being swapped out from under it. Every gate reads it through threadBusyReason -> "swapping".
-  record.swapInFlight = true;
+  // Through `latchSwap`, which also captures — here, before the chain — whether this swap is about to
+  // settle a ghost park under that latch, and hands back the release that corrects the wire if it did.
+  const releaseSwap = latchSwap(srv, record);
   record.chain = record.chain.then(async () => {
     try {
       // FILE RESTORE, on the live engine, first (probe 68d: rewindFiles needs the open transport). The dry
@@ -502,7 +550,12 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
         // conversation while the `sessionId` passed to `swapEngine` re-stamps the old one, so the thread
         // would report an identity it no longer holds, permanently (routeInit's latch early-returns on a
         // stamped record, so the real id is never learned).
-        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, swapBaseConfig(record.config)), sessionId);
+        // …and through `withThreadDynamicServers` (M7): the replacement engine gets FRESH MCP servers built
+        // from `record.dynamicTools`, never the outgoing engine's — an MCP `Server` refuses a second
+        // transport, and the agent SDK swallows that failure, so a reused instance is a rewound thread that
+        // silently lost its declared tools. Inside the thunk, so the generation it captures is the bumped
+        // one `swapEngine` has already written.
+        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, withThreadDynamicServers(srv, record, swapBaseConfig(record.config))), sessionId);
       }
       record.updatedAt = nowSec(); // a rewind is a mutation like any other (registry.ts's updatedAt contract)
       // Both scopes at once: the thread's own subscribers, and every server-scoped watcher — a rewind
@@ -515,8 +568,9 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
       ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
     } finally {
       // Guaranteed: a throw from the dry run, the real restore or the swap itself must not leave the
-      // thread wedged reading "swapping" forever.
-      record.swapInFlight = false;
+      // thread wedged reading "swapping" forever — nor, when the swap settled a ghost park on its way
+      // past, leave the wire's last word on this thread reading "active" (`latchSwap`).
+      releaseSwap();
     }
   });
 };
@@ -608,8 +662,15 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   // Whether it settles ANYTHING is remembered, because each settle rides a `thread/status/changed` out
   // (server.ts's broadcastDecision) computed while `swapInFlight` is latched — i.e. `{state:"active"}` for
   // a thread that is mid-recovery — and the latch clears without a word. See the correction below.
-  const settledGhostParks = srv.pendingDecisions(threadId).length > 0;
+  // BOTH registries, on both halves of this (r7 finding 4). A dynamic tool call the dead engine abandoned
+  // still parked is a ghost of exactly the same kind — awaited by a read loop that has already ended, yet
+  // listed on the wire and settleable by any subscriber — and its settlement rides the same suppressed
+  // status broadcast, so the retraction below is owed whichever registry had something in it. Reset with
+  // this method's own reason rather than the swap's: what happened to that call is that the thread was
+  // recovered, which is the only thing its note will ever tell the model.
+  const settledGhostParks = srv.pendingDecisions(threadId).length > 0 || srv.pendingToolCalls(threadId).length > 0;
   srv.threadDecisions(threadId)?.reset();
+  srv.threadDynamicCalls(threadId)?.reset("thread reopened");
   const sessionId = record.sessionId;
   record.chain = record.chain.then(async () => {
     try {
@@ -618,7 +679,10 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // and this is a spread (see the header). This method's own three (`resumeAt`/`droppedTurnUuid` would
       // resume the recovery truncated at a stale anchor; `forkSession` would silently mint a new id) plus
       // the two it used to miss, now that `swapBaseConfig` states all six in one place.
-      await swapEngine(srv, record, () => factory({ ...swapBaseConfig(record.config), resume: sessionId }), sessionId);
+      // The M7 overlay is rebuilt here too (`withThreadDynamicServers`, applied outermost so the `resume`
+      // folded in above rides inside it): a recovered engine owes the client the tools it declared, and it
+      // owes them as NEW server instances — the dead engine's are spent.
+      await swapEngine(srv, record, () => factory(withThreadDynamicServers(srv, record, { ...swapBaseConfig(record.config), resume: sessionId })), sessionId);
       record.updatedAt = nowSec();
       // Released HERE, ahead of the announcements rather than only in the finally, because everything below
       // describes the RECOVERED thread and would otherwise describe the swap that is finishing. Nothing can
@@ -636,9 +700,9 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // until some later turn edge moved it. Conditional because a reopen with nothing parked broadcast no
       // status at all, and an unconditional emit here would give this method a status edge its swap-family
       // siblings do not have. Recomputed rather than asserted idle — the latch is the only term that
-      // changed, and the honest answer comes from the same `threadStatus`/`pendingDecisions` pair every
-      // other emit site uses.
-      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
+      // changed, and the honest answer comes from the same `threadStatus`/`threadWaiter` pair every other
+      // emit site uses.
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.threadWaiter(threadId)) });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
       // R11: the FAILURE twin of the success path's retraction above. reset() emitted one
@@ -648,7 +712,7 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // Clear the latch HERE (before the recompute) so the corrected status reads the true post-failure
       // state (idle — the corpse's turn is over), then name the failure.
       record.swapInFlight = false;
-      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.threadWaiter(threadId)) });
       // NOT `replyEngineThrow`: the record is still holding the corpse on this path (the factory threw
       // before `swapEngine` could install anything), so its -33005 re-check would fire and answer "Engine
       // is gone" — true, already known, and it would swallow the factory's own message, which is the only

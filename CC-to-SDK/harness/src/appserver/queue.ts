@@ -17,9 +17,31 @@
 // than a race (turn/start's enqueue arm refuses a `closing` thread, turns.ts).
 import { mintTurnId, type ThreadRecord } from "./registry.js";
 import type { AppServer } from "./server.js";
+import type { InputItem } from "./turnItems.js";
 import type { UserTurnInput } from "../session/turnInput.js";
 
-export interface QueuedTurn { id: string; input: UserTurnInput }
+/** What a queue entry can carry, and why it is a union rather than a plain `UserTurnInput`. Two wire
+ *  methods enqueue, and they hand the queue different things:
+ *    - `turn/start` with an items array stores it RAW — the items exactly as they came off the wire,
+ *      never the resolved blocks (spec 2026-08-23 rev 3, "Admission and the queue"). Resolution is async
+ *      and reads the filesystem; it belongs in the turn's own execution slot, on the far side of
+ *      admission, so that a queued items turn is byte-for-byte the turn it would have been had the client
+ *      sent it when the thread was idle — and so that no admission decision sits behind an await (the M6
+ *      stranding).
+ *    - `turn/startContent` stores ALREADY-VALIDATED blocks: their images were decoded once at stage
+ *      completion, and re-resolving them would defeat that cache (F10 T-IMGREACH Task 10).
+ *  The items arm is TAGGED because the two array forms cannot be told apart by shape — an all-text
+ *  `InputItem[]` and an all-text `UserContentBlock[]` are the same JSON — and sending validated blocks
+ *  back through the resolver, or raw items straight to `submitContent`, would be a silent mis-route. */
+export type QueuedInput = UserTurnInput | { items: InputItem[] };
+export interface QueuedTurn { id: string; input: QueuedInput }
+
+/** `turn/start`'s two input forms as the queue (and `submitRunner`) carry them: a string is itself, an
+ *  items array is tagged. The ONE place that tag is applied, so its two callers cannot drift. */
+export const asQueuedInput = (input: string | InputItem[]): QueuedInput => (typeof input === "string" ? input : { items: input });
+
+/** True for the tagged items arm — the one form that still owes a resolution before an engine sees it. */
+export const isQueuedItems = (input: QueuedInput): input is { items: InputItem[] } => typeof input === "object" && !Array.isArray(input);
 
 /** The queue's ADMISSION CAPS (fix wave 1; widened to a third cap by F10 T-IMGREACH Task 8). The queue is
  *  this server's own memory, held for as long as the running turn takes — so a client that keeps a thread
@@ -37,8 +59,10 @@ export const MAX_QUEUED_BYTES = 4 * 1_048_576; // 4 MiB total retained, summed a
  *  input forms: the pre-F10 string path measured bare UTF-8 bytes of the string itself, so a bare
  *  string's charge now includes the JSON quoting/escaping that wraps it, same as an array's blocks
  *  always did implicitly. */
-export function queuedInputBytes(input: UserTurnInput): number {
-  return Buffer.byteLength(JSON.stringify(input), "utf8");
+export function queuedInputBytes(input: QueuedInput): number {
+  // The items arm is measured by the RAW array it wraps, never by the wrapper: the number a client can
+  // predict is the JSON it actually sent, and the tag is this server's own bookkeeping.
+  return Buffer.byteLength(JSON.stringify(isQueuedItems(input) ? input.items : input), "utf8");
 }
 
 /** What an enqueue attempt answers. A refusal names WHICH cap it hit, so `turn/start` can say so on the
@@ -52,7 +76,7 @@ export type EnqueueResult = { ok: true; id: string; position: number } | { ok: f
  *  All three caps are checked BEFORE the mint, and that order is the invariant this module opens with:
  *  every minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal
  *  would be a gap in the sequence that no client could ever account for. */
-export function enqueueTurn(record: ThreadRecord, input: UserTurnInput): EnqueueResult {
+export function enqueueTurn(record: ThreadRecord, input: QueuedInput): EnqueueResult {
   if (record.queue.length >= MAX_QUEUED_TURNS) return { ok: false, reason: "entries" };
   const entryBytes = queuedInputBytes(input);
   if (entryBytes > MAX_QUEUED_ENTRY_BYTES) return { ok: false, reason: "entry" };
