@@ -385,7 +385,7 @@ describe("toolSummaries `Found N files` — the fourth expand-hint site", () => 
   });
   const sentence = (expandHint?: string) => {
     const event = grepEvent();
-    return texts(summaryLines(event, normalizeToolResult(event, { verbose: false }), opts(expandHint)))[0];
+    return texts(summaryLines(event, normalizeToolResult(event, { verbose: false }), opts(expandHint))?.lines)[0];
   };
   it("carries the THREADED chord, keeps the literal when nothing is threaded, and drops the clause when unbound", () => {
     expect(sentence("(ctrl+t to expand)")).toBe("Found 3 files (ctrl+t to expand)");

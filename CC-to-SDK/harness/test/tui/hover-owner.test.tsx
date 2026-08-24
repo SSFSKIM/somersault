@@ -247,6 +247,41 @@ describe("T-CLICKGATE Task 1: clickable is minted exactly on canon's kinds", () 
     const items = projectDetail(doc([prose("just some prose", "t-prose")]), ctx());
     for (const item of items) expect(item.clickable).toBeUndefined();
   });
+
+  // (g)/(h) FIX WAVE (external review): the predicate is PROJECTION-INDEPENDENT — computed as if the result
+  // were folded under COMPACT, never from the projection actually being rendered. `detail-all` folds nothing
+  // at all (it is the one unbounded projection), so a bit derived from the live fold would read `false` on
+  // exactly the row a later collapse-click needs to find clickable. Same fixtures as (a)/(c), rendered at
+  // `detail-all` instead of the default `detail-collapsed`.
+  it("(g) an ordinary result that would fold under compact stays clickable even rendered at detail-all", () => {
+    const items = projectDetail(doc([call("r-3", "Mystery", {}), result("r-3", foldableLines(6), false)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(h) a >10-line error stays clickable even rendered at detail-all, where the clip never triggers", () => {
+    const items = projectDetail(doc([call("e-3", "Mystery", {}), result("e-3", errorLines(12), true)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  // (i)/(j)/(k) FIX WAVE: TYPED successful results fold too — Bash's stdout/stderr fold inside its own
+  // `toolSummaries.bashRows` composition (F3's typed-row layer), not through `resultBody`'s generic fold, so
+  // a long successful Bash result needs its OWN truncation bit threaded up to the same mint site. No sidecar
+  // on `result()` here: `bashRows` falls back to the flat result text as stdout when no structured sidecar is
+  // present, same as every other flat-only Bash call in the census.
+  it("(i) a long successful Bash-style result carries clickable on its typed row", () => {
+    const items = projectDetail(doc([call("b-1", "Bash", { command: "seq 6" }), result("b-1", foldableLines(6), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(j) a short successful Bash-style result carries no clickable field", () => {
+    const items = projectDetail(doc([call("b-2", "Bash", { command: "echo hi" }), result("b-2", foldableLines(2), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(k) a long successful Bash-style result stays clickable even rendered at detail-all", () => {
+    const items = projectDetail(doc([call("b-3", "Bash", { command: "seq 6" }), result("b-3", foldableLines(6), false)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
 });
 
 // (i) NOTHING ESCAPES — one document exercising several species at once, across ALL FOUR TIERS.

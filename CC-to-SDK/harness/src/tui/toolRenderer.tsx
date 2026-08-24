@@ -77,7 +77,9 @@ const HINT_MAX_LINES = 10;
  *
  *  `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate, minted ONLY on the tool-result
  *  gutter block `toolEventItems` builds from `resultBody`: true for an ERROR result whose body physically
- *  exceeds `errorBody`'s ten-row clip, or a non-error result the fold actually truncated (`hidden > 0`).
+ *  exceeds `errorBody`'s ten-row clip, or a non-error result that WOULD fold under the COMPACT projection
+ *  (`resultBody`'s `wouldFoldUnderCompact`) — computed AS IF COMPACT regardless of the projection actually
+ *  being rendered, so an item re-projected to `detail-all` (unbounded, folds nothing) does not lose the bit.
  *  Every other row — a fold-group's own collapsed row or its active hint block, plain assistant/thinking/user
  *  text, and the `interrupted`/`rejected`/`running`/`suppressed` result surfaces — never carries it; absent
  *  means "not clickable", the same way `foldAnchor`'s absence means "not a cluster". A later task projects
@@ -230,15 +232,12 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
  *  so it never carries the error colour — and it appears only when the overflow is positive (`bM` returns null at
  *  count ≤ 0). `detail-all` is unbounded, exactly as it is for ordinary output. */
 const ERROR_PHYSICAL_ROWS = 10;
-/** `overflow` (T-CLICKGATE Task 1) is the same count the marker's presence already implies — returned rather
- *  than left for a caller to re-derive by re-counting `lines.length`, so the click-gate predicate and the
- *  marker can never read two different truncation answers off the same fold. */
-function errorBody(lines: readonly string[], options: ProjectionOptions, color: string): { rows: readonly RenderLine[]; overflow: number } {
+function errorBody(lines: readonly string[], options: ProjectionOptions, color: string): readonly RenderLine[] {
   const projection = options.projection;
   const rows = (projection === "detail-all" ? lines : lines.slice(0, ERROR_PHYSICAL_ROWS)).map((line) => ({ text: line.trimEnd(), color }));
   const overflow = projection === "detail-all" ? 0 : lines.length - ERROR_PHYSICAL_ROWS;
-  if (overflow <= 0) return { rows, overflow };
-  return { rows: [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }], overflow };
+  if (overflow <= 0) return rows;
+  return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }];
 }
 
 /** F3 Task 5 (LT1): the TYPED row is consulted first and is the result body in BOTH projections — a completed
@@ -260,11 +259,21 @@ function errorBody(lines: readonly string[], options: ProjectionOptions, color: 
 const isPlanRejection = (event: ToolEvent, normalized: NormalizedToolResult): boolean =>
   event.name === "ExitPlanMode" && !normalized.flatText.trim().startsWith(INTERRUPT_CANCELLED);
 
-/** `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate: true for an ERROR result whose body
- *  was physically clipped (`errorBody`'s `overflow > 0`), or a non-error result the fold actually hid rows
- *  from (`foldWithTruncation`'s `hidden > 0`). Every earlier return in this function — `running` (no body
- *  yet), `interrupted`/`rejected` (what the user did, not a result to expand) — is `false`, and so is a typed
- *  row (`summaryLines`): those are fixed-shape summaries (`Read 340 lines`) with nothing behind them to open. */
+/** `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate. FIX WAVE (external review): it must
+ *  be PROJECTION-INDEPENDENT — computed as if the result were folded under the COMPACT projection, regardless
+ *  of the projection actually being rendered. A row re-projected to `detail-all` (a later task's "expanded"
+ *  view) folds NOTHING there — `detail-all` is the one unbounded projection — so a bit derived from the real
+ *  fold would read `false` on exactly the row a later collapse-click needs to find clickable. So the error arm
+ *  checks the PHYSICAL line count directly (`errorBody`'s own ten-row clip, independent of projection), and
+ *  the ordinary arm asks `wouldFoldUnderCompact`, the same "as-if-compact" question `toolSummaries.bashRows`
+ *  answers for its own typed row — a fold FORCED to `compact`, never the caller's actual `options.projection`.
+ *  The RENDERED body below still uses the real projection; only the predicate is pinned.
+ *    Every earlier return in this function — `running` (no body yet), `interrupted`/`rejected` (what the user
+ *  did, not a result to expand) — is `false`. A typed row (`summaryLines`) carries whatever `clickable` its
+ *  own producer minted: `false` for every fixed-shape summary, but `bashRows`' own as-if-compact predicate for
+ *  a Bash result (see `toolSummaries.ts`'s inventory comment on `summaryLines`). */
+const wouldFoldUnderCompact = (lines: readonly string[], columns: number): boolean =>
+  foldWithTruncation(lines, columns, { projection: "compact", compactRows: 3, revealOneExtraWithoutMarker: true }).hidden > 0;
 function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { body: readonly RenderLine[]; clickable: boolean } {
   if (normalized.status === "running") return { body: [], clickable: false };
   // None of these surfaces is a failure: they are what the USER did, so they never take the error colour, and the
@@ -277,15 +286,12 @@ function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options:
       : { text: INTERRUPTED_TEXT, dim: true }], clickable: false };
   if (normalized.status === "rejected") return { body: [{ text: REJECTED_TEXT, dim: true }], clickable: false };   // upstream ignores the tool's text entirely: the row is always this literal
   const typed = summaryLines(event, normalized, options);
-  if (typed !== undefined) return { body: typed, clickable: false };
+  if (typed !== undefined) return { body: typed.lines, clickable: typed.clickable };
   const lines = withoutTrailingBlanks(normalized.outputLines);
   if (!lines.length) return { body: [], clickable: false };
-  if (normalized.status === "error") {
-    const { rows, overflow } = errorBody(lines, options, resolveThemeColor(themeTokens().error));
-    return { body: rows, clickable: overflow > 0 };
-  }
-  const { lines: folded, hidden } = foldWithTruncation(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
-  return { body: folded, clickable: hidden > 0 };
+  if (normalized.status === "error") return { body: errorBody(lines, options, resolveThemeColor(themeTokens().error)), clickable: lines.length > ERROR_PHYSICAL_ROWS };
+  const folded = foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
+  return { body: folded, clickable: wouldFoldUnderCompact(lines, options.columns) };
 }
 
 // ── F3 Task 7: the Agent unit (LT16 / LT17) ────────────────────────────────────────────────────────────

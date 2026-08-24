@@ -18,7 +18,14 @@ const eventFor = (name: string, input: unknown, content: unknown, sidecar?: unkn
 function rows(event: ToolEvent, projection: ResultProjection = "compact"): readonly RenderLine[] | undefined {
   const verbose = projection === "detail-all";
   const options: ProjectionOptions = { ...base, projection, verbose };
-  return summaryLines(event, normalizeToolResult(event, { verbose }), options);
+  return summaryLines(event, normalizeToolResult(event, { verbose }), options)?.lines;
+}
+/** T-CLICKGATE Task 1 fix wave: the truncation bit `summaryLines` mints beside its rows — `undefined` when
+ *  there is no typed row at all (mirrors `rows`' own `undefined`). */
+function clickable(event: ToolEvent, projection: ResultProjection = "compact"): boolean | undefined {
+  const verbose = projection === "detail-all";
+  const options: ProjectionOptions = { ...base, projection, verbose };
+  return summaryLines(event, normalizeToolResult(event, { verbose }), options)?.clickable;
 }
 const texts = (event: ToolEvent, projection?: ResultProjection) => (rows(event, projection) ?? []).map((line) => line.text);
 const one = (event: ToolEvent, projection?: ResultProjection) => texts(event, projection).join("\n");
