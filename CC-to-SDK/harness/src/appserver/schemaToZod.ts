@@ -37,6 +37,12 @@
 // `.min()`/`.max()` count UTF-16 code units. "😀" is one code point and two units, so `.max(1)` rejects a
 // string the client's `{maxLength:1}` accepts. Every length bound is therefore a `.refine` over
 // `[...value].length`, and `.min()`/`.max()` must never appear in this file.
+//
+// NOR MAY `.int()`, for the same class of reason on the numeric axis: zod v4's `.int()` bundles JavaScript's
+// SAFE-integer range into what reads as an integrality check, and would refuse 2^53 — a value JSON carries
+// exactly and a verbatim `{type:"integer"}` accepts. Integrality is a `Number.isInteger` refinement with no
+// range of its own. The rule behind both: a zod helper may only be used when its domain is EXACTLY the
+// keyword's; where it is narrower, the narrowing is a disagreement with the advertisement, so refine instead.
 import { z } from "zod/v4";
 
 /** A converted schema plus the object mode it was built in — `strict` is `additionalProperties === false`,
@@ -168,7 +174,14 @@ function baseSchema(raw: Record<string, unknown>, type: string, depth: number): 
     case "number":
       return { ok: true, schema: z.number() };
     case "integer":
-      return { ok: true, schema: z.number().int() };
+      // `.int()` IS A NARROWING, not just an integrality check: zod v4 attaches JavaScript's SAFE-integer
+      // range to it, so it refuses 2^53 — a value JSON represents exactly and the verbatim-advertised
+      // `{type:"integer"}` accepts. That would put the advertisement and the validator into exactly the
+      // disagreement this file exists to prevent, only in the other direction. Integrality is
+      // `Number.isInteger` and nothing more; the only range an integer field carries is the client's own
+      // `minimum`/`maximum`, which ride the refinements below. (`.int()` must never appear in this file,
+      // for the same reason `.min()`/`.max()` must not.)
+      return { ok: true, schema: z.number().refine((v) => typeof v !== "number" || Number.isInteger(v), "must be an integer") };
     case "boolean":
       return { ok: true, schema: z.boolean() };
     default: {

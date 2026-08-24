@@ -162,6 +162,30 @@ describe("jsonSchemaToZod — the field subset", () => {
     expect(schema.safeParse({ count: 3 }).success).toBe(false); // required name
   });
 
+  it("carries the WHOLE integer domain the advertised schema carries, 2^53 included", () => {
+    // `{type:"integer"}` reaches the model VERBATIM, so the validator has to accept every value that
+    // advertisement accepts. zod's `.int()` does not: v4 attaches the SAFE-integer range to it and refuses
+    // 9007199254740992 (2^53) as `too_big`, though JSON represents that value exactly and the client's
+    // schema admits it. Integrality here is therefore `Number.isInteger` and carries NO range of its own —
+    // the only range an integer field has is the `minimum`/`maximum` its client declared.
+    const { schema } = converted({
+      type: "object",
+      properties: { big: { type: "integer" }, floor: { type: "integer", minimum: 0 } },
+      required: ["big"],
+    });
+    expect(schema.parse({ big: 9007199254740992 })).toEqual({ big: 9007199254740992 });
+    expect(schema.parse({ big: -9007199254740992 })).toEqual({ big: -9007199254740992 });
+    // A DECLARED bound must not smuggle that range back in — it rides its own `.refine` over the declared
+    // number, and neither zod's numeric checks nor `multipleOf` carry a safe-integer clause.
+    expect(schema.parse({ big: 1, floor: 9007199254740992 })).toEqual({ big: 1, floor: 9007199254740992 });
+    expect(schema.safeParse({ big: 1, floor: -9007199254740992 }).success).toBe(false); // still under minimum
+    // What widened is the RANGE, not integrality: a fraction still refuses.
+    expect(schema.safeParse({ big: 1.5 }).success).toBe(false);
+    // `3.0` is not a distinct JSON value — `JSON.parse("3.0") === 3` and `Number.isInteger` says true — so
+    // an integer-valued float literal IS an integer here and is accepted.
+    expect(schema.parse({ big: JSON.parse("3.0") as number })).toEqual({ big: 3 });
+  });
+
   it("keeps a bound declared ALONGSIDE an enum — no silent widening", () => {
     const { schema } = converted({
       type: "object",
