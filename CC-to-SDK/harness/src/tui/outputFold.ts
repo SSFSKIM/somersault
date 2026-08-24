@@ -31,9 +31,15 @@ const visualRows = (line: string, width: number): string[] => wrapAnsi(line, wid
  *  and the 600 ms blink re-renders make it recurring. Upstream `y_s` bounds the work at `compactRows * width * 4`
  *  characters and pays for it with an ESTIMATED hidden count over the whole input, floored by the exact count the
  *  wrapped prefix already proves. `detail-all` is the one projection that must stay unbounded. */
-export function foldToolOutput(lines: readonly string[], columns: number, options: FoldOptions): readonly RenderLine[] {
+/** T-CLICKGATE Task 1: the SAME computation as `foldToolOutput`, but also reporting `hidden` — how many rows
+ *  the fold actually hid (`0` when nothing was clipped, including the whole `detail-all` projection). A
+ *  click-gate caller needs both the rendered body AND whether it is truncated, and two separate passes over
+ *  the same input risked the two answers drifting; `foldToolOutput` below is now a thin wrapper over this so
+ *  its OTHER two callers (`toolSummaries.ts`, `species.ts` — neither cares about truncation) see no change in
+ *  signature or behaviour at all. */
+export function foldWithTruncation(lines: readonly string[], columns: number, options: FoldOptions): { lines: readonly RenderLine[]; hidden: number } {
   const width = Math.max(columns - 10, 10);
-  if (options.projection === "detail-all") return lines.flatMap((line) => visualRows(line, width)).map((text) => ({ text }));
+  if (options.projection === "detail-all") return { lines: lines.flatMap((line) => visualRows(line, width)).map((text) => ({ text })), hidden: 0 };
   const bound = options.compactRows * width * 4, length = lines.reduce((sum, line) => sum + line.length, 0) + Math.max(lines.length - 1, 0);
   const prefix: string[] = [];                                               // exactly the logical lines of `text.slice(0, bound)`
   for (let i = 0, used = 0; i < lines.length; i++) {
@@ -45,10 +51,16 @@ export function foldToolOutput(lines: readonly string[], columns: number, option
   const visual = prefix.flatMap((line) => visualRows(line, width));
   // The no-marker path requires the WHOLE input inside the bound: SGR-heavy source can exceed the bound in bytes
   // while its clipped prefix wraps to few visual rows, and returning here would silently drop the tail.
-  if (length <= bound && visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return visual.map((text) => ({ text }));
+  if (length <= bound && visual.length <= options.compactRows + (options.revealOneExtraWithoutMarker ? 1 : 0)) return { lines: visual.map((text) => ({ text })), hidden: 0 };
   const estimated = length > bound ? Math.max(lines.length, Math.ceil(length / width)) - options.compactRows : 0;
   const hidden = Math.max(visual.length - options.compactRows, estimated);
-  return [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }];
+  return {
+    lines: [...visual.slice(0, options.compactRows).map((text) => ({ text })), { text: `… +${hidden} ${hidden === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }],
+    hidden,
+  };
+}
+export function foldToolOutput(lines: readonly string[], columns: number, options: FoldOptions): readonly RenderLine[] {
+  return foldWithTruncation(lines, columns, options).lines;
 }
 
 /** Upstream `y_s` `trimEnd`s the WHOLE result before it folds anything, so trailing blank rows never buy a fold slot

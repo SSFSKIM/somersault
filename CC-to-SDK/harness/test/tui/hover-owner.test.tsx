@@ -209,6 +209,46 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   });
 });
 
+// T-CLICKGATE Task 1 — `clickable` is minted exactly on canon's two kinds: an ERROR result whose body was
+// physically clipped, or a non-error result the fold actually hid rows from. Every other species — a short
+// result of either kind, a fold-group row, plain assistant text — carries no `clickable` field at all.
+describe("T-CLICKGATE Task 1: clickable is minted exactly on canon's kinds", () => {
+  const gutterBlockOf = (items: readonly RenderItem[]) => items.find((i) => i.kind === "gutter-block")!;
+  const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+  const foldableLines = (n: number) => Array.from({ length: n }, (_, i) => `out line ${i + 1}`).join("\n");
+
+  it("(a) an error result of 12 physical lines clips at ten, and the clipped block is clickable", () => {
+    const items = projectDetail(doc([call("e-1", "Mystery", {}), result("e-1", errorLines(12), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(b) an error result of 3 physical lines never clips, and carries no clickable field", () => {
+    const items = projectDetail(doc([call("e-2", "Mystery", {}), result("e-2", errorLines(3), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(c) an ordinary result long enough for the fold to hide rows is clickable", () => {
+    const items = projectDetail(doc([call("r-1", "Mystery", {}), result("r-1", foldableLines(6), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(d) a short ordinary result the fold never truncates carries no clickable field", () => {
+    const items = projectDetail(doc([call("r-2", "Mystery", {}), result("r-2", foldableLines(2), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(e) a fold-group's own collapsed row never carries clickable", () => {
+    const items = projectPending(doc([call("read-1", "Read", { file_path: "src/app.ts" })]), ctx());
+    const groupRow = items.find((i) => i.id === "group:read-1:pending-row")!;
+    expect(groupRow.clickable).toBeUndefined();
+  });
+
+  it("(f) plain assistant text never carries clickable", () => {
+    const items = projectDetail(doc([prose("just some prose", "t-prose")]), ctx());
+    for (const item of items) expect(item.clickable).toBeUndefined();
+  });
+});
+
 // (i) NOTHING ESCAPES — one document exercising several species at once, across ALL FOUR TIERS.
 describe("H1: nothing reaches the renderer without an ownerKey", () => {
   it("every RenderItem of every tier carries an ownerKey", () => {

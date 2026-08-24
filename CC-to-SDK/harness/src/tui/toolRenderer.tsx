@@ -22,7 +22,7 @@ import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
-import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
@@ -73,13 +73,22 @@ const HINT_MAX_LINES = 10;
  *  markdown renderer, PlanDialog) that legitimately IS its own hover unit, never a rollout license for a
  *  transcript producer: `test/tui/hover-owner.test.tsx`'s producer matrix fails a transcript producer that
  *  omits it, not just a typecheck. Like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
+ *  the same reason: every `wrapOne` arm spreads the source item.
+ *
+ *  `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate, minted ONLY on the tool-result
+ *  gutter block `toolEventItems` builds from `resultBody`: true for an ERROR result whose body physically
+ *  exceeds `errorBody`'s ten-row clip, or a non-error result the fold actually truncated (`hidden > 0`).
+ *  Every other row — a fold-group's own collapsed row or its active hint block, plain assistant/thinking/user
+ *  text, and the `interrupted`/`rejected`/`running`/`suppressed` result surfaces — never carries it; absent
+ *  means "not clickable", the same way `foldAnchor`'s absence means "not a cluster". A later task projects
+ *  this bit into the mouse hitmap, so like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
  *  the same reason: every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
+  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean; clickable?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
+  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean; clickable?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -221,12 +230,15 @@ function headerLine(event: ToolEvent, status: ToolStatus, options: ProjectionOpt
  *  so it never carries the error colour — and it appears only when the overflow is positive (`bM` returns null at
  *  count ≤ 0). `detail-all` is unbounded, exactly as it is for ordinary output. */
 const ERROR_PHYSICAL_ROWS = 10;
-function errorBody(lines: readonly string[], options: ProjectionOptions, color: string): readonly RenderLine[] {
+/** `overflow` (T-CLICKGATE Task 1) is the same count the marker's presence already implies — returned rather
+ *  than left for a caller to re-derive by re-counting `lines.length`, so the click-gate predicate and the
+ *  marker can never read two different truncation answers off the same fold. */
+function errorBody(lines: readonly string[], options: ProjectionOptions, color: string): { rows: readonly RenderLine[]; overflow: number } {
   const projection = options.projection;
   const rows = (projection === "detail-all" ? lines : lines.slice(0, ERROR_PHYSICAL_ROWS)).map((line) => ({ text: line.trimEnd(), color }));
   const overflow = projection === "detail-all" ? 0 : lines.length - ERROR_PHYSICAL_ROWS;
-  if (overflow <= 0) return rows;
-  return [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }];
+  if (overflow <= 0) return { rows, overflow };
+  return { rows: [...rows, { text: `… +${overflow} ${overflow === 1 ? "line" : "lines"}${foldHint(options)}`, dim: true }], overflow };
 }
 
 /** F3 Task 5 (LT1): the TYPED row is consulted first and is the result body in BOTH projections — a completed
@@ -248,23 +260,32 @@ function errorBody(lines: readonly string[], options: ProjectionOptions, color: 
 const isPlanRejection = (event: ToolEvent, normalized: NormalizedToolResult): boolean =>
   event.name === "ExitPlanMode" && !normalized.flatText.trim().startsWith(INTERRUPT_CANCELLED);
 
-function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
-  if (normalized.status === "running") return [];
+/** `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate: true for an ERROR result whose body
+ *  was physically clipped (`errorBody`'s `overflow > 0`), or a non-error result the fold actually hid rows
+ *  from (`foldWithTruncation`'s `hidden > 0`). Every earlier return in this function — `running` (no body
+ *  yet), `interrupted`/`rejected` (what the user did, not a result to expand) — is `false`, and so is a typed
+ *  row (`summaryLines`): those are fixed-shape summaries (`Read 340 lines`) with nothing behind them to open. */
+function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { body: readonly RenderLine[]; clickable: boolean } {
+  if (normalized.status === "running") return { body: [], clickable: false };
   // None of these surfaces is a failure: they are what the USER did, so they never take the error colour, and the
   // rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it. The two attributes are NOT
   // interchangeable — `zWo`'s generic prompt and the `rejected` row are upstream `dimColor`, but `EAr` paints the
   // plan-rejection heading with the `subtle` theme TOKEN (L421286, `color: "subtle"`), so that arm carries a colour.
   if (normalized.status === "interrupted")
-    return [isPlanRejection(event, normalized)
+    return { body: [isPlanRejection(event, normalized)
       ? { text: PLAN_REJECTED_TEXT, color: resolveThemeColor(themeTokens().subtle) }
-      : { text: INTERRUPTED_TEXT, dim: true }];
-  if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
+      : { text: INTERRUPTED_TEXT, dim: true }], clickable: false };
+  if (normalized.status === "rejected") return { body: [{ text: REJECTED_TEXT, dim: true }], clickable: false };   // upstream ignores the tool's text entirely: the row is always this literal
   const typed = summaryLines(event, normalized, options);
-  if (typed !== undefined) return typed;
+  if (typed !== undefined) return { body: typed, clickable: false };
   const lines = withoutTrailingBlanks(normalized.outputLines);
-  if (!lines.length) return [];
-  if (normalized.status === "error") return errorBody(lines, options, resolveThemeColor(themeTokens().error));
-  return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
+  if (!lines.length) return { body: [], clickable: false };
+  if (normalized.status === "error") {
+    const { rows, overflow } = errorBody(lines, options, resolveThemeColor(themeTokens().error));
+    return { body: rows, clickable: overflow > 0 };
+  }
+  const { lines: folded, hidden } = foldWithTruncation(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
+  return { body: folded, clickable: hidden > 0 };
 }
 
 // ── F3 Task 7: the Agent unit (LT16 / LT17) ────────────────────────────────────────────────────────────
@@ -475,8 +496,8 @@ function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, opti
     const agent = agentTerminalItems(event, options);
     if (agent !== undefined) return [...items, ...agent];
   }
-  const body = resultBody(event, normalized, options);
-  if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey: toolOwnerKey(event.id), gutter: TOOL_RESULT_GUTTER, body });
+  const { body, clickable } = resultBody(event, normalized, options);
+  if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey: toolOwnerKey(event.id), gutter: TOOL_RESULT_GUTTER, body, ...(clickable ? { clickable: true } : {}) });
   return items;
 }
 
