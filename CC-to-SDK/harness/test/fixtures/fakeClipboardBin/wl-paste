@@ -1,0 +1,19 @@
+#!/bin/sh
+# F10 T-IMGREACH Task 6 (I5c) fake `wl-paste` — same shape as the `xclip` fake, the `-l` listing form
+# in place of `-t TARGETS`, matching linuxCheckImageCommand()/linuxSaveImageCommand()'s fallback arm.
+# xclip always answers first in this suite's private-PATH order, so this fake mainly proves the `||`
+# fallback chain STAYS wired to a real second command rather than only being pinned by string tests.
+[ -n "$CCX_FAKE_CLIPBOARD_LOG" ] && printf 'wl-paste %s\n' "$*" >> "$CCX_FAKE_CLIPBOARD_LOG"
+case "$*" in
+  *-l*)
+    [ -n "$CCX_FAKE_CLIPBOARD_MIME" ] || exit 1
+    echo "$CCX_FAKE_CLIPBOARD_MIME"
+    exit 0 ;;
+  *image/bmp*)
+    [ "$CCX_FAKE_CLIPBOARD_MIME" = "image/bmp" ] && exec cat "$CCX_FAKE_CLIPBOARD_FIXTURE"
+    exit 1 ;;
+  *image/png*)
+    [ "$CCX_FAKE_CLIPBOARD_MIME" = "image/png" ] && exec cat "$CCX_FAKE_CLIPBOARD_FIXTURE"
+    exit 1 ;;
+esac
+exit 1

@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   ENTER_ALT, EXIT_ALT, MOUSE_OFF, MOUSE_ON_SCROLL, MOUSE_ON_FULL, CURSOR_SHOW, PASTE_OFF, SGR_RESET, KITTY_TERMINALS,
+  FOCUS_ON, FOCUS_OFF,
   kittyUpgrade, resolveTerminalName, createAltScreenGuard, resumePointer, exitAltScreen,
   createChatTeardown, mouseMode, mouseEnable,
 } from "../../src/tui/altScreen.js";
@@ -145,6 +146,13 @@ describe("alt-screen bytes (canon 2.1.220)", () => {
     expect(resumePointer("0d7a7a9d-1111-2222-3333-444455556666"))
       .toBe("\nResume this session with:\nccx --resume 0d7a7a9d-1111-2222-3333-444455556666\n");
   });
+
+  // I6 — DECSET 1004, terminal focus reporting. `parse.ts:132` already turns the CSI final `I`/`O` this
+  // produces into `ignored("focus", raw)`; what this pair adds is the enable/disable bytes themselves.
+  it("FOCUS_ON/FOCUS_OFF are DECSET/DECRST 1004", () => {
+    expect(FOCUS_ON).toBe("\x1b[?1004h");
+    expect(FOCUS_OFF).toBe("\x1b[?1004l");
+  });
 });
 
 describe("AltScreenGuard lifecycle", () => {
@@ -153,36 +161,41 @@ describe("AltScreenGuard lifecycle", () => {
   // same string for the same reason, and that placement is the whole of the change: `enterSeq` is ALSO the
   // handoff's return leg, and every leave/teardown leg already writes MOUSE_OFF, so the editor/suspend round
   // trips and the `/tui` flips stay symmetric with no new call site to keep in step.
-  it("enter writes smcup+clear+home, the terminal's upgrade and mouse-on, as ONE write", () => {
+  it("enter writes smcup+clear+home, the terminal's upgrade, mouse-on and focus-on, as ONE write", () => {
     const s = sink();
     const g = createAltScreenGuard({ writeSync: s.writeSync, termProgram: "ghostty" });
     expect(g.active()).toBe(false);
     g.enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1004h"]);
     expect(g.active()).toBe(true);
   });
 
-  it("enter on an unlisted terminal writes the bare enter sequence, mouse-on still appended", () => {
+  it("enter on an unlisted terminal writes the bare enter sequence, mouse-on and focus-on still appended", () => {
     const s = sink();
     createAltScreenGuard({ writeSync: s.writeSync, termProgram: "Apple_Terminal" }).enter();
-    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h"]);
+    expect(s.writes).toEqual(["\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1004h"]);
   });
 
   // THE PAIR THAT MUST NOT DRIFT. The enable is armed in exactly one place and disarmed in three (exit,
   // leave, handoff), and a terminal left reporting is the one damage this module exists to prevent — so the
-  // symmetry is pinned as a property rather than re-asserted byte by byte at each site.
+  // symmetry is pinned as a property rather than re-asserted byte by byte at each site. I6 rides the SAME
+  // three legs, right after MOUSE_OFF — sabotage guard: dropping `write(FOCUS_OFF)` from `handBack` (the
+  // `exit` case) or `leaveScreen` (`leave`/`handoff`) fails this cell.
   it.each([["exit", (g: ReturnType<typeof createAltScreenGuard>) => g.exit()],
            ["leave", (g: ReturnType<typeof createAltScreenGuard>) => g.leave()],
            ["handoff", (g: ReturnType<typeof createAltScreenGuard>) => { g.handoff(); }]] as const)(
-    "every %s leg turns the mouse back off, first", (_name, act) => {
+    "every %s leg turns the mouse AND focus reporting back off, first", (_name, act) => {
       const s = sink();
       const g = createAltScreenGuard({ writeSync: s.writeSync });
       g.enter();
       expect(s.writes.join("")).toContain(MOUSE_ON_FULL);
+      expect(s.writes.join("")).toContain(FOCUS_ON);
       s.writes.length = 0;
       act(g);
       expect(s.writes[0]).toBe(MOUSE_OFF);
+      expect(s.writes[1]).toBe(FOCUS_OFF);
       expect(s.writes.join("")).not.toContain(MOUSE_ON_FULL);
+      expect(s.writes.join("")).not.toContain(FOCUS_ON);
     });
 
   // A guard that never took the screen never armed the mouse either — a classic launch must not emit a
@@ -211,7 +224,7 @@ describe("AltScreenGuard lifecycle", () => {
     expect(g.active()).toBe(false);
   });
 
-  it("exit turns the mouse off FIRST, then rmcups, then ends bracketed paste and shows the cursor", () => {
+  it("exit turns the mouse off FIRST, then focus reporting off, then rmcups, then ends bracketed paste and shows the cursor", () => {
     const s = sink();
     const g = createAltScreenGuard({ writeSync: s.writeSync, termProgram: "kitty" });
     g.enter();
@@ -219,6 +232,7 @@ describe("AltScreenGuard lifecycle", () => {
     g.exit();
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",   // canon Gpe, unconditional and first (zuy L181498)
+      "\x1b[?1004l",                                    // I6 — FOCUS_OFF, right beside MOUSE_OFF
       "\x1b[<u\x1b[?1049l\x1b[>4m",                     // canon nj  (L177100)
       "\x1b[?2004l",                                    // canon Usr (Uho L180343) — F5 fix round
       "\x1b[?25h",                                      // canon nV  (Uho L180343), Usr's neighbour there too
@@ -248,6 +262,7 @@ describe("AltScreenGuard lifecycle", () => {
     expect(() => g.exit()).not.toThrow();
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",
       "<unmount threw>",
       "\x1b[<u\x1b[?1049l\x1b[>4m",
       "\x1b[?2004l",
@@ -284,11 +299,12 @@ describe("AltScreenGuard.aroundSubprocess", () => {
     // in this order, at L180654.
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",
       "\x1b[<u\x1b[?1049l\x1b[>4m",
       "\x1b[0m",
       "\x1b[?25h",
       "<spawnSync>",
-      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h",
+      "\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1004h",
     ]);
     expect(g.active()).toBe(true);      // the guard still owns the screen across the handoff
   });
@@ -299,7 +315,7 @@ describe("AltScreenGuard.aroundSubprocess", () => {
     g.enter();
     s.writes.length = 0;
     expect(() => g.aroundSubprocess(() => { throw new Error("editor died"); })).toThrow("editor died");
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1004h");
   });
 
   it("is a bare passthrough when the guard was never armed", () => {
@@ -323,13 +339,14 @@ describe("AltScreenGuard.handoff", () => {
     const back = g.handoff();
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",
       "\x1b[<u\x1b[?1049l\x1b[>4m",
       "\x1b[0m",
       "\x1b[?25h",
     ]);
     expect(g.active()).toBe(true);      // still ours across the stop: a kill while suspended must find a guard
     back();
-    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+    expect(s.writes.at(-1)).toBe("\x1b[?1049h\x1b[2J\x1b[H\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1004h");
   });
 
   it("hands back a no-op on an unarmed guard, so a classic ctrl+z writes nothing", () => {
@@ -397,6 +414,7 @@ describe("installSignalSafety", () => {
           lastListener("SIGINT")();
           expect(s.writes).toEqual([
             "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+            "\x1b[?1004l",
             "\x1b[<u\x1b[?1049l\x1b[>4m",
             "\x1b[?2004l",
             "\x1b[?25h",
@@ -438,6 +456,7 @@ describe("installSignalSafety", () => {
     (process.listeners("exit").at(-1) as () => void)();
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",
       "\x1b[<u\x1b[?1049l\x1b[>4m",
       "\x1b[?2004l",
       "\x1b[?25h",
@@ -465,6 +484,7 @@ describe("exitAltScreen — the one teardown every REPL exit funnels through", (
     exitAltScreen(g, "abc-123", (t) => { out.push(t); s.writes.push(t); });
     expect(s.writes).toEqual([
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",
       "\x1b[<u\x1b[?1049l\x1b[>4m",
       "\x1b[?2004l",
       "\x1b[?25h",
@@ -551,6 +571,7 @@ describe("createChatTeardown", () => {
       "\x1b[2K\x1b[G",                                  // the unpark — the write the trace caught landing late
       "<signal safety off>",
       "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l",
+      "\x1b[?1004l",                                    // I6 — FOCUS_OFF, beside MOUSE_OFF
       "\x1b[<u\x1b[?1049l\x1b[>4m",                     // RMCUP: nothing above may follow it, spec §A6
       "\x1b[?2004l",
       "\x1b[?25h",

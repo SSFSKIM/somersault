@@ -38,8 +38,9 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { BackgroundTaskInfo } from "../session/session.js";
 import type { TurnFailure } from "../session/turnResult.js";
-import type { EngineSession } from "./registry.js";
+import type { EngineSession, ThreadOrigin } from "./registry.js";
 import { ERR } from "./rpc.js";
+import type { RpcError } from "./rpc.js";
 
 /** Deadlines, and their reasons, are `client/remote.ts`'s — measured over `ccx attach` against real
  *  hosts. The default covers a wedged (not dead) host: a genuinely dead one rejects everything in flight
@@ -95,6 +96,24 @@ export interface FleetTurnEvent { phase: "start" | "end"; seq: number; truncated
 export class FleetBusyError extends Error {
   readonly code = ERR.BUSY;
   constructor(message = "Thread is busy (turn)") { super(message); this.name = "FleetBusyError"; }
+}
+
+/** The loud, ORIGIN-level refusal for both content ops on a fleet thread (F10 T-IMGREACH Task 9/I3c).
+ *  F10 ships no fleet staging client (spec non-goals) — a fleet thread can never carry image content
+ *  regardless of which engine build happens to sit behind it, so this is a fact about the ORIGIN, not an
+ *  absent-member accident `requireSubmitContent`/`requireSteerContent` (turns.ts) would otherwise report.
+ *  The future `turn/startContent` and `turn/steerContent` handlers (Tasks 10/11) call `refuseFleetContent`
+ *  FIRST — before reserving anything off `stagedImageIds` in the image stage registry — so a fleet thread
+ *  never claims, then releases, bytes it could never submit.
+ *
+ *  The message is deliberately its OWN string, distinct from `ORIGIN_REFUSAL_MESSAGE` (registry.ts):
+ *  "unsupported for fleet-origin threads" reads as a wire gap that might close later (and IS one, for
+ *  `FLEET_UNSUPPORTED`'s methods), while this refusal names a permanent architectural fact — a client
+ *  must never retry a content turn against a fleet thread hoping a newer host build changed the answer. */
+export const FLEET_CONTENT_REFUSAL_MESSAGE = "fleet threads cannot carry images";
+
+export function refuseFleetContent(origin: ThreadOrigin): RpcError | null {
+  return origin === "fleet" ? { code: ERR.UNSUPPORTED_FOR_ORIGIN, message: FLEET_CONTENT_REFUSAL_MESSAGE } : null;
 }
 
 export interface FleetEngineEvents {

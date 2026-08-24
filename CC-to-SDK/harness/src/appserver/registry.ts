@@ -6,6 +6,7 @@ import type { ItemEvent } from "./items/types.js";
 import type { QueuedTurn } from "./queue.js";
 import type { PlanGrantMode } from "../permissions/types.js";
 import type { TurnFailure } from "../session/turnResult.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 import { ERR, type RpcError } from "./rpc.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
@@ -32,6 +33,20 @@ export interface EngineSession {
    *  path has to read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn.
    *  Both are optional — a DI fake returning a bare `{result}` still satisfies this. */
   submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** OPTIONAL capability (F10 T-IMGREACH Task 8/I3b): carries content blocks. `submit(prompt: string)`
+   *  stays UNCHANGED — it is the public embedder contract, and widening a REQUIRED method breaks every
+   *  custom engine (review F5, round-2 F8). An engine without this cannot run an array turn, and every
+   *  path that might produce one must say so before it takes anything (turns.ts's `submitRunner`).
+   *  Declared here only — the in-process implementation, `steerContent` and the fleet refusals land in
+   *  Task 9. */
+  submitContent?(input: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** OPTIONAL capability, its OWN one (F10 T-IMGREACH Task 9/I3c) — never routed through `submitContent`
+   *  (that starts a NEW turn) and never through `steer` (that engine's own string-only embedder would
+   *  receive an array it never asked to handle). Absent → "engine does not support content steering",
+   *  raised by `requireSteerContent` (turns.ts) BEFORE any staged image data is taken, exactly like
+   *  `submitContent`'s own gate above. The in-process implementation and the fleet-origin refusal land
+   *  here too — declared alongside `submitContent` because the two capabilities are proven together. */
+  steerContent?(input: UserTurnInput): void;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   /** `replay` is additive and OPTIONAL — only an engine that can hand back buffered history ever passes it

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { TurnMapper } from "../../../../src/appserver/items/mapper.js";
 import { toolView } from "../../../../src/appserver/items/types.js";
 const asst = (msgId: string, content: unknown[]) => ({ type: "assistant", uuid: "u-" + msgId, message: { id: msgId, model: "m", content } });
@@ -68,5 +69,27 @@ describe("TurnMapper", () => {
     expect(toolView("Read")).toBe("fileRead"); expect(toolView("Grep")).toBe("search");
     expect(toolView("Task")).toBe("subagentTask"); expect(toolView("mcp__x__y")).toBe("mcp");
     expect(toolView("SendFeedback")).toBe("other");
+  });
+
+  // I3e (Task 11) regression pin: this task changes the USER-PROMPT flattener (replay.ts's `promptText`
+  // -> `flattenForDisplay`) and nothing else. `firstResultLine` is a SEPARATELY-typed, capped tool-result
+  // summarizer (review F7) — collapsing it into the same flattener would mislabel tool-result blocks
+  // (which carry no image ordinal at all) and unbound a summary meant to stay one trimmed line.
+  it("I3e: a tool_result with several text blocks still summarizes to its first non-blank line, unchanged", () => {
+    const m = new TurnMapper();
+    m.ingest(asst("msg_r", [{ type: "tool_use", id: "toolu_r", name: "Bash", input: { command: "ls" } }]));
+    const [done] = m.ingest({
+      type: "user",
+      uuid: "u-r2",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_r", content: [{ type: "text", text: "first" }, { type: "text", text: "\nsecond" }] }] },
+    });
+    // firstResultLine concatenates the text blocks with NO separator, then takes the first trimmed
+    // non-blank LINE — "first" + "\nsecond" joins to "first\nsecond", whose first line is "first".
+    expect(done).toMatchObject({ kind: "completed", item: { id: "toolu_r", status: "completed", result: "first" } });
+  });
+
+  it("I3e: firstResultLine is not routed through flattenForDisplay — it stays its own summarizer", () => {
+    const src = readFileSync(new URL("../../../../src/appserver/items/mapper.ts", import.meta.url), "utf8");
+    expect(src).not.toContain("flattenForDisplay");
   });
 });

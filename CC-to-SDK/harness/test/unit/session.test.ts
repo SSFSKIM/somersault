@@ -3,6 +3,7 @@ import type { SDKMessageOrigin } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, expect } from "vitest";
 import { Session } from "../../src/session/session.js";
 import { AsyncQueue } from "../../src/swarm/asyncQueue.js";
+import type { UserContentBlock } from "../../src/session/turnInput.js";
 
 function successFor(turn: any, result: string, origin?: SDKMessageOrigin) {
   return {
@@ -458,5 +459,94 @@ describe("Session", () => {
     const s = new Session({ query: methodQuery({}) }, {}, { label: "lib-sess" });
     await s.dispose();
     await expect(s.usage()).rejects.toThrow(/lib-sess is not running/);
+  });
+});
+
+// =====================================================================================================
+// F10 T-IMGREACH Task 1 (I1), builder-boundary cells: the normalizer runs one layer BELOW every
+// HostSession fake (plan-review r2 F-I1) — a capture at that seam (test/integration/host-image-
+// transport.test.ts's `drivable()`) sees only the HOST-assembled array, never the label. Only a
+// capture of the SDKUserMessage `userTurn` hands `query()` — `framedQuery()`'s `turns` — can observe
+// it, so these cells sit here, not in turnInput.test.ts's own `Session.submit` seam block.
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) { if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
+}
+const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const imgBlock = (data = PNG_1X1) => ({ type: "image", source: { type: "base64", media_type: "image/png", data } }) as const;
+
+describe("Session — I1 stranding rule at the builder boundary", () => {
+  it("I1: an image-only Session.submit reaches query() as a LABELLED user message", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit([imgBlock()], () => {});
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+
+  it("I1: an image-only Session.submitContent reaches query() as a LABELLED user message (Task 9/I3c: submitContent is a one-line delegation into submit, not a second builder path)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submitContent([imgBlock()], () => {});
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+
+  it("I1: the REPL wire shape — [{text:''},{image}] — reaches query() with the empty block SUBSTITUTED", async () => {
+    // This is the array the host assembles (assembleUserContent always emits one text block, even empty),
+    // i.e. exactly what test/integration/host-image-transport.test.ts:374-388 captures one layer up. That
+    // test's assertion is CORRECT and stays: the host hands off `{text:""}` and the normalizer, running
+    // inside Session's builder below it, is what turns it into the label. This cell is where that is seen.
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit([{ type: "text", text: "" }, imgBlock()], () => {});
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content).toHaveLength(2);                                     // substituted, not doubled
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
+  });
+
+  it("I1: a steer with an image-only array is labelled too — one builder, one rule (Task 9 widened Session.steer to UserTurnInput)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    s.steer([imgBlock()]);
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); }
+  });
+
+  it("I1: a steerContent with an image-only array is labelled too — one builder, one rule (Task 9/I3c: steerContent is a one-line delegation into steer, not a second builder path)", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    s.steerContent([imgBlock()]);
+    await waitFor(() => turns.length === 1);
+    try {
+      const content = turns[0].message.content as UserContentBlock[];
+      expect(content[0]).toEqual({ type: "text", text: "[Image #1]" });   // INSERTED — there was no text block
+      expect(content[1]!.type).toBe("image");
+    } finally { frames.close(); await s.dispose(); }
+  });
+
+  it("I1: a text-bearing turn is byte-identical at the builder — no label appears", async () => {
+    const { frames, turns, query } = framedQuery();
+    const s = new Session({ query }, {});
+    const turn = s.submit([{ type: "text", text: "look" }, imgBlock()], () => {});
+    await waitFor(() => turns.length === 1);
+    try {
+      expect(turns[0].message.content).toEqual([{ type: "text", text: "look" }, imgBlock()]);
+    } finally { frames.close(); await s.dispose(); await turn.catch(() => {}); }
   });
 });

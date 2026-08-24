@@ -1,0 +1,26 @@
+#!/bin/sh
+# F10 T-IMGREACH Task 6 (I5c) fake `powershell` — matches windowsCheckImageCommand()/
+# windowsSaveImageCommand()'s argv shape exactly (production invokes the literal name `powershell`,
+# resolved through PATH — plan-review r2 F-WIN: no injected-exec shortcut needed, a private-PATH fake
+# intercepts this exactly as it does `xclip`). The probe is the `ContainsImage()` guard; the save is
+# `$img.Save("<path>", ...)` — the scratch path is embedded in the -Command string, recovered here
+# with `sed` rather than trusted as a separate argv slot (production passes the whole script as ONE
+# -Command string, not one argv element per PowerShell token).
+#
+# Only the two RECOGNIZED shapes are logged to CCX_FAKE_CLIPBOARD_LOG (when set) — an unrelated
+# powershell invocation (the text-fallback tier's `Get-Clipboard -Raw`) falls through unlogged, which
+# is what lets a test assert "exactly one line, the probe's" without the fallback tier polluting the
+# count.
+case "$*" in
+  *ContainsImage*)
+    [ -n "$CCX_FAKE_CLIPBOARD_LOG" ] && printf 'probe\n' >> "$CCX_FAKE_CLIPBOARD_LOG"
+    [ -n "$CCX_FAKE_CLIPBOARD_FIXTURE" ] && exit 0
+    exit 1 ;;
+  *'.Save('*)
+    [ -n "$CCX_FAKE_CLIPBOARD_LOG" ] && printf 'save\n' >> "$CCX_FAKE_CLIPBOARD_LOG"
+    out=$(printf '%s' "$*" | sed -n 's/.*\.Save("\([^"]*\)".*/\1/p')
+    [ -n "$out" ] || exit 1
+    cat "$CCX_FAKE_CLIPBOARD_FIXTURE" > "$out"
+    exit 0 ;;
+esac
+exit 1

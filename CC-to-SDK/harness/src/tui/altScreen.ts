@@ -92,6 +92,13 @@ export const PASTE_OFF = "\x1b[?2004l";
 /** canon L180654's leave sequence, which resets SGR before handing the terminal to a child. */
 export const SGR_RESET = "\x1b[0m";
 
+/** DECSET 1004 — terminal focus reporting. The parser already recognizes what it produces (`parse.ts:132`
+ *  matches CSI final `I`/`O`); what was missing was the enable and a route. Rides `enterSeq` beside the
+ *  mouse enable, and is turned off wherever MOUSE_OFF is written, for the same reason: a leaked mode is
+ *  still visible in the user's own shell ten minutes later. */
+export const FOCUS_ON = "\x1b[?1004h";
+export const FOCUS_OFF = "\x1b[?1004l";
+
 /** canon `ocy` L177175 — the terminals whose keyboard protocol we upgrade, verbatim and in canon's order. */
 export const KITTY_TERMINALS: readonly string[] =
   ["iTerm.app", "kitty", "WezTerm", "ghostty", "tmux", "windows-terminal", "WarpTerminal"];
@@ -191,7 +198,7 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
   // `leaveScreen`) already writes MOUSE_OFF first, unconditionally. So appending the enable here makes the
   // editor/suspend round trips and T15's `/tui` flips symmetric by construction: there is no third place that
   // could forget it, and a classic launch (which never calls `enter()`) never arms tracking at all.
-  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram) + mouseEnable(mouseMode());
+  const enterSeq = ENTER_ALT + kittyUpgrade(deps.termProgram) + mouseEnable(mouseMode()) + FOCUS_ON;
   let armed = false;
   const write = (s: string) => { try { deps.writeSync(s); } catch { /* the fd is gone; nothing left to save */ } };
   const takeScreen = () => { write(enterSeq); armed = true; };
@@ -201,6 +208,7 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
   // `renderer: false` is the `process.on("exit")` limb, which must not run React (see `installSignalSafety`).
   const handBack = (renderer = true) => {
     write(MOUSE_OFF);
+    write(FOCUS_OFF);
     if (renderer) try { deps.unmount?.(); } catch { /* L181503: the hand-written rmcup below IS canon's fallback */ }
     write(EXIT_ALT);
     write(PASTE_OFF);
@@ -215,6 +223,7 @@ export function createAltScreenGuard(deps: AltScreenDeps): AltScreenGuard {
   // T15's mode flip, which are the same act with different futures (one comes back, one does not).
   const leaveScreen = (): void => {
     write(MOUSE_OFF);
+    write(FOCUS_OFF);
     write(EXIT_ALT);
     // …and whoever takes the terminal gets a cursor they can see. Ink's log-update hides one on every render
     // (`ink/build/log-update.js:9`) and only shows it again in `done()`, which no handoff runs, so `$EDITOR` /

@@ -36,6 +36,31 @@ describe("connectDaemon (DI transport)", () => {
     expect(req.calls[0]).toEqual({ op: "submit", id: "id1", prompt: "hi" });
   });
 
+  // F10 T-IMGREACH Task 12 (I4): submitContent over the fakeRequest DI seam — no real socket needed
+  // for these two; the real-socket suite lives in daemon-content.test.ts.
+  it("I4: submitContent() normalizes, parses against daemonOp, and sends the canonical op", async () => {
+    const req = fakeRequest({
+      submit_content: (_op, onLine) => {
+        const lines = [{ type: "chunk", message: { n: 1 } }, { type: "done", result: "R" }];
+        for (const l of lines) onLine?.(l);
+        return lines;
+      },
+    });
+    const c = connectDaemon("sock", req);
+    const seen: unknown[] = [];
+    const r = await c.submitContent("id1", [{ type: "text", text: "hi" }], (m) => seen.push(m));
+    expect(seen).toEqual([{ n: 1 }]);
+    expect(r.result).toBe("R");
+    expect(req.calls[0]).toEqual({ op: "submit_content", id: "id1", input: [{ type: "text", text: "hi" }] });
+  });
+
+  it("I4: submitContent() maps a bad-request-class fake answer to DAEMON_IMAGE_SKEW_NOTICE", async () => {
+    const { DAEMON_IMAGE_SKEW_NOTICE } = await import("../../src/daemon/connect.js");
+    const req = fakeRequest({ submit_content: () => [{ ok: false, error: "bad request: unrecognized op" }] });
+    const c = connectDaemon("sock", req);
+    await expect(c.submitContent("id1", [{ type: "text", text: "hi" }], () => {})).rejects.toThrow(DAEMON_IMAGE_SKEW_NOTICE);
+  });
+
   it("control() returns the raw ControlResponse (does NOT throw on ok:false)", async () => {
     const req = fakeRequest({ control: () => [{ ok: false, error: "boom" }] });
     const c = connectDaemon("sock", req);

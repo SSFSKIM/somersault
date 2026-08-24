@@ -24,13 +24,15 @@ import { commandKind, type CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
 // F9 T-IMAGE (I2): the Ctrl-V handler's one dependency — see `readClipboardImage`'s own prop doc above.
 import { defaultClipboardDeps, pasteClipboardImage, type ClipboardPasteOutcome } from "./clipboardImage.js";
+import { defaultCheckOnlyProcess, hasClipboardImage } from "./clipboardCheck.js";
+import { CLIPBOARD_HINT_DEBOUNCE_MS, CLIPBOARD_HINT_KEY, CLIPBOARD_HINT_TIMEOUT_MS, createClipboardHintModel, type ClipboardHintModel } from "./clipboardHint.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, POINTER, NBSP } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { NotificationSlot } from "./NotificationSlot.js";
 import { usePaletteHoist } from "./paletteSlot.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
-import { expandHintText, formatBindings, noImageInClipboardText } from "./keys/hints.js";
+import { expandHintText, formatBindings, imageInClipboardText, noImageInClipboardText } from "./keys/hints.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
@@ -309,7 +311,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, footerRows = 0, popupHitRef }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, onFocusChange, checkClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, footerRows = 0, popupHitRef }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -358,6 +360,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  `editExternal` uses just above, and for the same reason: a unit test drives Ctrl-V's four outcomes
    *  (image / image-failed / text / none) without ever shelling out to `osascript`/`sips`. */
   readClipboardImage?: () => Promise<ClipboardPasteOutcome>;
+  /** F10 T-IMGREACH Task 13 (I6) — the SUBSCRIBE half of `KeymapProvider`'s `onFocusChange` dep, threaded
+   *  down through `ChatApp` exactly as `onResize` is (`chatMain.tsx`'s `createFocusChain`). This is the
+   *  component's own primary trigger; the secondary one (the session's first keypress) needs no prop at
+   *  all, because every keypress already reaches `handleKey` below. */
+  onFocusChange?: (cb: (focused: boolean) => void) => () => void;
+  /** I6's check-only seam, mirroring `readClipboardImage` just above: a full override of "is there an
+   *  image on the clipboard right now", not the lower `CheckOnlyProcess`/`clipboardCheckCommand` pieces
+   *  `clipboardCheck.ts` itself is tested against. Defaults to the real platform-dispatched check. A test
+   *  seam: never spawns a process when supplied a fake. */
+  checkClipboardImage?: () => Promise<boolean>;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -754,6 +766,46 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useKeyScope("HistorySearch", { active: owns && search.searching });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
+  // F10 T-IMGREACH Task 13 (I6) — the NINTH of Footer.tsx's `priority:"immediate"` posters (see its own
+  // census), and the whole of the impure half `clipboardHint.ts`'s pure model needs: one debounce timer and
+  // the check-only subprocess. `readClipboardImageRef`'s existing
+  // availability gate (`!!readClipboardImage`, canon's own `y6i(r, !!e.onImagePaste)`) doubles as this
+  // hint's gate — a composer with no paste path at all has nothing this hint could offer ctrl+v FOR, so the
+  // check-only seam is never even invoked. `checkClipboardImageRef` mirrors that same shape.
+  const clipboardHintModelRef = useRef<ClipboardHintModel>(); if (!clipboardHintModelRef.current) clipboardHintModelRef.current = createClipboardHintModel();
+  const checkClipboardImageRef = useRef(checkClipboardImage); checkClipboardImageRef.current = checkClipboardImage;
+  const clipboardHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClipboardHint = () => {
+    if (clipboardHintTimerRef.current) { clearTimeout(clipboardHintTimerRef.current); clipboardHintTimerRef.current = null; }
+  };
+  const armClipboardHint = () => {
+    cancelClipboardHint();                                              // a fresh arm restarts the window (rare: two edges before the first fires)
+    clipboardHintTimerRef.current = setTimeout(() => {
+      clipboardHintTimerRef.current = null;
+      void (async () => {
+        if (!readClipboardImageRef.current) return;                      // no paste path — nothing this hint could offer
+        if (!clipboardHintModelRef.current!.shouldFire(Date.now())) return;  // throttled — and the clock does NOT advance
+        const check = checkClipboardImageRef.current ?? (() => hasClipboardImage(process.platform, defaultCheckOnlyProcess()));
+        if (!(await check())) return;                                    // no image on the clipboard — silent, canon's own contract
+        storeRef.current.add({
+          key: CLIPBOARD_HINT_KEY, text: imageInClipboardText(bindings("chat:imagePaste")),
+          priority: "immediate", timeoutMs: CLIPBOARD_HINT_TIMEOUT_MS,
+        });
+      })();
+    }, CLIPBOARD_HINT_DEBOUNCE_MS);
+  };
+  // The PRIMARY trigger: `KeymapProvider`'s focus edges, subscribed exactly like `onResize` (`chatMain.tsx`'s
+  // `createFocusChain`). Re-subscribes only if the function identity changes — stable in production, where
+  // it is the SAME chain for the life of the process.
+  useEffect(() => {
+    if (!onFocusChange) return;
+    return onFocusChange((focused) => {
+      const r = clipboardHintModelRef.current!.onFocus(focused);
+      if (r === "arm") armClipboardHint();
+      else if (r === "cancel") cancelClipboardHint();
+    });
+  }, [onFocusChange]);
+  useEffect(() => cancelClipboardHint, []);                              // a remount must not leave a stray fire behind
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
@@ -832,6 +884,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const handleKey = (e: KeyEvent | TextEvent) => {
     if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
+    // I6's SECONDARY trigger (canon L199656-199657): a keypress arms the clipboard hint only from the
+    // "unknown" focus state — a terminal that never sent a single DECSET 1004 byte still gets the hint off
+    // the session's first keystroke, because typing is itself proof the user is in front of the terminal.
+    // Every OTHER key, on every scope this composer owns, reaches here too — placed above the search/scope
+    // branches below so a search-field keystroke counts exactly as much as an ordinary one.
+    if (clipboardHintModelRef.current!.onKeypress() === "arm") armClipboardHint();
     // CM58's search field owns the fallback outright while it is live (divergence 3): the query takes every
     // printable, backspace shortens it — and empties into the cancel — and nothing else reaches the editor.
     // The ref, not the render value, for the one-chunk reason `cancel` above states.

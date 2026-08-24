@@ -126,6 +126,28 @@ describe("DaemonServer over a real UDS", () => {
     await a.close();
   });
 
+  // F10 T-IMGREACH Task 12 (I4): the error split. This is FOR FUTURE PEERS ONLY — it cannot
+  // retroactively change what a pre-F10 daemon (whose whole error path predates the split) said; that
+  // peer's monolithic `bad request:` shape is exactly what test/fixtures/preF10DaemonServer.ts vendors,
+  // and daemon-content.test.ts's skew-mapping cells exercise it directly.
+  it("I4: an op literal the union has never heard of answers { ok:false, error:'unknown op' }", async () => {
+    const d = tmp(); const sock = join(d, "sock");
+    const server = new DaemonServer(new DaemonSupervisor({ query: fakeQuery }, { dir: join(d, "sessions") }), sock);
+    await server.listen();
+    expect((await daemonRequest(sock, { op: "nonexistent_op" }))[0]).toEqual({ ok: false, error: "unknown op" });
+    await daemonRequest(sock, { op: "shutdown" });
+    await server.closed;
+  });
+  it("I4: a RECOGNIZED literal with a bad payload answers { ok:false, error:'invalid op payload' }", async () => {
+    const d = tmp(); const sock = join(d, "sock");
+    const server = new DaemonServer(new DaemonSupervisor({ query: fakeQuery }, { dir: join(d, "sessions") }), sock);
+    await server.listen();
+    // "submit" is a real literal; `prompt` must be a string per its schema.
+    expect((await daemonRequest(sock, { op: "submit", id: "x", prompt: 42 }))[0]).toEqual({ ok: false, error: "invalid op payload" });
+    await daemonRequest(sock, { op: "shutdown" });
+    await server.closed;
+  });
+
   it("rename/tag/delete ops delegate to the persisted-store wrappers", async () => {
     const d = tmp(); const sock = join(d, "sock");
     const calls: any[] = [];

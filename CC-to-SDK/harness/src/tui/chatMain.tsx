@@ -250,6 +250,19 @@ export function createResizeChain(readers: () => void): { fire: () => void; subs
   };
 }
 
+/** F10 T-IMGREACH Task 13 (I6) — the SAME shape as `createResizeChain` just above, one edge later in the
+ *  pipeline: `KeymapProvider`'s dispatch is the one raw-stdin reader (same reason `resizeChain` cannot be a
+ *  second listener), so its `onFocusChange` dep is wired to `publish`, and `ChatComposer` — the hint's own
+ *  poster, three components down — subscribes through `ChatApp`'s pass-through `onFocusChange` prop. No
+ *  `readers()` term here: unlike a resize, nothing at this level needs to react to a focus edge itself. */
+export function createFocusChain(): { publish: (focused: boolean) => void; subscribe: (cb: (focused: boolean) => void) => () => void } {
+  const subscribers = new Set<(focused: boolean) => void>();
+  return {
+    publish: (focused) => { for (const cb of [...subscribers]) cb(focused); },
+    subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
+  };
+}
+
 /** FSW T8: `altMode` is the alternate screen — every screen rule the proxy applies keys off it (the `ESC[3J`
  *  strip and the park are main-screen only; the 2026 wrap and D21's erase are alt-screen only).
  *    FSW T15 MADE IT A READER, and the reason is exactly the invariant the first version of this comment
@@ -838,6 +851,9 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   });
   const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
+  // I6 — see `createFocusChain`'s own doc: KeymapProvider's dispatch is the one raw-stdin reader, so its
+  // `onFocusChange` dep publishes here and `ChatComposer` subscribes three components down.
+  const focusChain = createFocusChain();
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
   // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape is not
@@ -947,12 +963,13 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // it, which is the whole point of moving the boundary.
   try {
     const app = render(
-      <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
+      <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver, onFocusChange: focusChain.publish }}
         onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
         <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
           initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
           clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
           hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
+          onFocusChange={focusChain.subscribe}
           initialTodosOpen={prefs.showExpandedTodos ?? true}
           renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
           {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} progressBar={progressBar} deps={{ notifier }} />

@@ -1169,6 +1169,52 @@ describe("KeymapProvider — onUnknownSequence (terminal replies)", () => {
   });
 });
 
+// I6 — the ambient clipboard hint's other half of the plumbing: DECSET 1004 focus reports, promoted out of
+// `ignored("focus")` to their own callback instead of being dropped (parse.ts:132 already recognizes CSI
+// final `I`/`O`; what was missing was a route for them).
+describe("KeymapProvider — onFocusChange (terminal focus reporting)", () => {
+  it("a focus-in report (\\x1b[I) calls onFocusChange(true)", async () => {
+    const onFocusChange = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" />, { onFocusChange });
+    await tick();
+    h.stdin.write("\x1b[I");
+    expect(onFocusChange.mock.calls).toEqual([[true]]);
+    h.unmount();
+  });
+
+  it("a focus-out report (\\x1b[O) calls onFocusChange(false)", async () => {
+    const onFocusChange = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" />, { onFocusChange });
+    await tick();
+    h.stdin.write("\x1b[O");
+    expect(onFocusChange.mock.calls).toEqual([[false]]);
+    h.unmount();
+  });
+
+  // Neither the binding table, the composer's fallback, nor the terminal-reply forward may see a focus
+  // report — it is consumed at the ignored-branch and nowhere else.
+  it("reaches neither the binding table, the fallback, nor onUnknownSequence", async () => {
+    const onFocusChange = vi.fn(), onUnknownSequence = vi.fn(), fallback = vi.fn(), cancel = vi.fn();
+    const h = renderWithKeymap(<Probe scope="Chat" fallback={fallback} actions={{ "chat:cancel": cancel }} />,
+      { onFocusChange, onUnknownSequence });
+    await tick();
+    h.stdin.write("\x1b[I");
+    h.stdin.write("\x1b[O");
+    expect(onFocusChange.mock.calls).toEqual([[true], [false]]);
+    expect(onUnknownSequence).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
+  it("does nothing at all when no onFocusChange dep is supplied", async () => {
+    const h = renderWithKeymap(<Probe scope="Chat" />);
+    await tick();
+    expect(() => h.stdin.write("\x1b[I")).not.toThrow();
+    h.unmount();
+  });
+});
+
 describe("KeymapProvider — stdin ownership", () => {
   it("attaches exactly one data listener and detaches it on unmount", async () => {
     const h = renderWithKeymap(<Probe scope="Chat" />);

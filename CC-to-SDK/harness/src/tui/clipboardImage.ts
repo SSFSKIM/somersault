@@ -19,12 +19,23 @@
 // `readClipboardImage`/`reencodeDarwin` from the paste handler and the authoritative turn-input
 // builder, respectively; the header-decoding readers and shared budgets now live in
 // `../media/imageDims.js` (F10 T-MAINT item 3) and this module is one of their consumers.
+//
+// F10 T-IMGREACH Task 6 (I5c): darwin's ladder above is a `sips`-specific WORKAROUND for ccx having no
+// `sharp` dependency — it is not what canon does, and it is not what Linux/Windows get. Canon itself
+// has no `sips` step at all: it resizes platform-independently through `sharp` (r3 §2), so the prior
+// Linux BMP refusal and the prior non-darwin oversized-image refusal were both a MISSING FEATURE in
+// ccx, not a degradation shared with canon. `../media/imageCodec.js`'s `reencodeImage` (Task 4/5) is
+// that platform-independent path: Linux's BMP rescue and BOTH non-darwin platforms' oversized-image
+// handling now go through it instead of dead-ending. Deliberately NOT built here (follow-ups, not
+// regressions): an opportunistic `magick`/`ffmpeg` rung for either platform, and unifying darwin's
+// `sips` ladder onto the same codec so there is only one re-encode path in this file.
 import { mkdir, chmod, writeFile, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { tmpdir as osTmpdir } from "node:os";
 import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, jpegDimensions, pngDimensions } from "../media/imageDims.js";
+import { reencodeImage } from "../media/imageCodec.js";
 
 // ---------------------------------------------------------------------------------------------
 // Public result + DI types.
@@ -175,11 +186,16 @@ async function readLinuxImage(deps: ClipboardDeps): Promise<ClipboardImageResult
     if (save.code !== 0) return { kind: "failed", reason: `clipboard image save failed (exit ${save.code})` };
     let bytes = await readFile(filePath);
     // BMP rescue: canon reads back the saved bytes and re-encodes through sharp when they're BMP
-    // (`s[0]===66 && s[1]===77`, "BM"). ccx has no sharp; the darwin ladder's `sips` step below is
-    // exercised via `reencodeDarwin` by the caller when a non-PNG/JPEG mediaType shows up, so this
-    // path is honest about what it produced rather than silently mislabeling BMP bytes as PNG.
+    // (`s[0]===66 && s[1]===77`, "BM"). ccx's own decoder/encoder (Task 4/5) plays that role now: it
+    // decodes the BMP's pixels and re-encodes them as PNG, downscaling to `MAX_DIMENSION`/
+    // `POST_PROCESS_BYTE_BUDGET` in the same call — no separate oversized-BMP case to handle.
     const isBmp = bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d;
-    if (isBmp) return { kind: "failed", reason: "clipboard image is BMP — no re-encoder available on this platform" };
+    if (isBmp) {
+      const re = reencodeImage({ data: bytes, mediaType: "image/bmp" },
+        { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET });
+      if (!re.ok) return { kind: "failed", reason: re.reason };
+      return { kind: "image", data: re.value.data, mediaType: "image/png", dimensions: re.value.dimensions };
+    }
     const dimensions = pngDimensions(bytes);
     if (!dimensions) return { kind: "failed", reason: "clipboard image data was not a readable PNG" };
     return { kind: "image", data: bytes, mediaType: "image/png", dimensions };
@@ -296,20 +312,28 @@ export type ClipboardPasteOutcome =
   | { kind: "text"; text: string }
   | { kind: "none" };
 
-/** `readClipboardImage` → (oversized? re-encode : pass through) → base64. The two size gates are canon's own
- *  (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`); a raw read within both never touches `sips` at all — the
- *  common case (a normal screenshot) costs one subprocess round trip, not three. Darwin gets the re-encode
- *  ladder; every other platform degrades an oversized image straight to `image-failed`, matching canon's own
- *  failure shape for "no re-encoder available" (spec I2, "Other platforms"). */
+/** `readClipboardImage` → (oversized? re-encode : pass through) → base64. Darwin keeps its existing
+ *  `sips`-driven ladder UNCHANGED, gated the same way as before (only overLimit reaches for it) — the
+ *  common darwin case (a normal screenshot) still costs one subprocess round trip, not three, and the
+ *  codec is never consulted on that platform. Every OTHER platform now routes every image through
+ *  `reencodeImage` (Task 4/5) unconditionally, not only when oversized: that single call handles the
+ *  ordinary in-budget case (near-no-op downscale, one encode), the oversized case (the ladder's halving
+ *  retries), AND a hostile payload (the codec's own coded failure, e.g. `inflate-overrun`) — there is
+ *  no longer a fast path that would hand a not-yet-decoded image straight back unexamined. */
 export async function pasteClipboardImage(deps: ClipboardDeps = defaultClipboardDeps()): Promise<ClipboardPasteOutcome> {
   const r = await readClipboardImage(deps);
   if (r.kind === "none") return { kind: "none" };
   if (r.kind === "text") return { kind: "text", text: r.text };
   if (r.kind === "failed") return { kind: "image-failed", reason: r.reason };
-  const overLimit = r.dimensions.width > MAX_DIMENSION || r.dimensions.height > MAX_DIMENSION || r.data.length > POST_PROCESS_BYTE_BUDGET;
-  if (!overLimit) return { kind: "image", content: r.data.toString("base64"), mediaType: r.mediaType, dimensions: r.dimensions };
-  if (deps.platform !== "darwin") return { kind: "image-failed", reason: "image exceeds size limits and no re-encoder is available on this platform" };
-  const re = await reencodeDarwin({ data: r.data, mediaType: r.mediaType }, deps);
-  if (!re) return { kind: "image-failed", reason: "image could not be reduced to fit the request size limit" };
-  return { kind: "image", content: re.data.toString("base64"), mediaType: re.mediaType, dimensions: re.dimensions };
+  if (deps.platform === "darwin") {
+    const overLimit = r.dimensions.width > MAX_DIMENSION || r.dimensions.height > MAX_DIMENSION || r.data.length > POST_PROCESS_BYTE_BUDGET;
+    if (!overLimit) return { kind: "image", content: r.data.toString("base64"), mediaType: r.mediaType, dimensions: r.dimensions };
+    const re = await reencodeDarwin({ data: r.data, mediaType: r.mediaType }, deps);
+    if (!re) return { kind: "image-failed", reason: "image could not be reduced to fit the request size limit" };
+    return { kind: "image", content: re.data.toString("base64"), mediaType: re.mediaType, dimensions: re.dimensions };
+  }
+  const re = reencodeImage({ data: r.data, mediaType: r.mediaType },
+    { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET });
+  if (!re.ok) return { kind: "image-failed", reason: re.reason };
+  return { kind: "image", content: re.value.data.toString("base64"), mediaType: "image/png", dimensions: re.value.dimensions };
 }

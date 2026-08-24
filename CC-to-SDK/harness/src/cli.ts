@@ -5,6 +5,7 @@ import { createHarness } from "./harness.js";
 import { DaemonSupervisor } from "./daemon/supervisor.js";
 import { DaemonServer } from "./daemon/server.js";
 import { daemonRequest } from "./daemon/client.js";
+import { connectDaemon, daemonSubmitTurn } from "./daemon/connect.js";
 import { daemonSocketPath } from "./daemon/paths.js";
 import { KairosAssistant } from "./kairos/index.js";
 import { runMonitor } from "./monitor/app.js";
@@ -47,10 +48,14 @@ async function daemonCli(args: string[]): Promise<boolean> {
     return true;
   }
   if (args[0] === "submit") {
-    await daemonRequest(sock, { op: "submit", id: args[1], prompt: args.slice(2).join(" ") }, (o: any) => {
-      if (o.type === "chunk") { for (const b of o.message?.message?.content ?? []) if (b.type === "text") process.stdout.write(b.text); }
-      else if (o.type === "done") process.stdout.write("\n");
+    // Routed through `daemonSubmitTurn` — the ONE dispatch site (daemon/connect.js) that turns a
+    // `UserTurnInput` into the right op — rather than calling `submit`/`submitContent` directly, so a
+    // future widening of this passthrough (e.g. an image arg) cannot re-derive the routing rule here
+    // and get it wrong.
+    await daemonSubmitTurn(connectDaemon(sock), args[1], args.slice(2).join(" "), (m: any) => {
+      for (const b of m?.message?.content ?? []) if (b.type === "text") process.stdout.write(b.text);
     });
+    process.stdout.write("\n");
     return true;
   }
   if (args[0] === "top") {

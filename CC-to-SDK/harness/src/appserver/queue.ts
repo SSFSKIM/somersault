@@ -17,33 +17,50 @@
 // than a race (turn/start's enqueue arm refuses a `closing` thread, turns.ts).
 import { mintTurnId, type ThreadRecord } from "./registry.js";
 import type { AppServer } from "./server.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 
-export interface QueuedTurn { id: string; input: string }
+export interface QueuedTurn { id: string; input: UserTurnInput }
 
-/** The queue's ADMISSION CAPS (fix wave 1). The queue is this server's own memory, held for as long as the
- *  running turn takes — so a client that keeps a thread busy could otherwise stack unlimited turns of
- *  unlimited size in it. Two caps, because the two failures are different: many small entries exhaust the
- *  count, one client's transcript-sized prompt exhausts the bytes. */
+/** The queue's ADMISSION CAPS (fix wave 1; widened to a third cap by F10 T-IMGREACH Task 8). The queue is
+ *  this server's own memory, held for as long as the running turn takes — so a client that keeps a thread
+ *  busy could otherwise stack unlimited turns of unlimited size in it. Three caps, because three failures
+ *  are different: many small entries exhaust the count, one giant entry exhausts memory on its own, and
+ *  many merely-large entries exhaust the running total even when each one individually is fine. */
 export const MAX_QUEUED_TURNS = 64;
-export const MAX_QUEUED_BYTES = 1_048_576; // 1 MiB of queued input, summed across entries
+/** Per-entry ceiling: one max-sized image plus text fits comfortably; two max-sized images in one entry
+ *  do not — deliberate. A queue is for turns waiting their turn, not for stacking image payloads. */
+export const MAX_QUEUED_ENTRY_BYTES = 1_048_576; // 1 MiB
+export const MAX_QUEUED_BYTES = 4 * 1_048_576; // 4 MiB total retained, summed across entries
+
+/** ONE accounting function, used at enqueue for both the per-entry and the running-total check —
+ *  serialized JSON bytes of the turn input as it sits in the queue. Deliberately uniform across both
+ *  input forms: the pre-F10 string path measured bare UTF-8 bytes of the string itself, so a bare
+ *  string's charge now includes the JSON quoting/escaping that wraps it, same as an array's blocks
+ *  always did implicitly. */
+export function queuedInputBytes(input: UserTurnInput): number {
+  return Buffer.byteLength(JSON.stringify(input), "utf8");
+}
 
 /** What an enqueue attempt answers. A refusal names WHICH cap it hit, so `turn/start` can say so on the
- *  wire — a client that cannot tell "too many" from "too big" cannot retry usefully. */
-export type EnqueueResult = { ok: true; id: string; position: number } | { ok: false; reason: "entries" | "bytes" };
+ *  wire — a client that cannot tell "too many" from "too big" (or "this one entry is too big" from "the
+ *  queue as a whole is too full") cannot retry usefully. */
+export type EnqueueResult = { ok: true; id: string; position: number } | { ok: false; reason: "entries" | "entry" | "bytes" };
 
 /** Mints the entry's id off the thread's own turn counter — the same counter and format `turn/start` and
  *  compact use, so a drained turn needs no second id and the sequence never skips.
  *
- *  Both caps are checked BEFORE the mint, and that order is the invariant this module opens with: every
- *  minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal would be
- *  a gap in the sequence that no client could ever account for. */
-export function enqueueTurn(record: ThreadRecord, input: string): EnqueueResult {
+ *  All three caps are checked BEFORE the mint, and that order is the invariant this module opens with:
+ *  every minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal
+ *  would be a gap in the sequence that no client could ever account for. */
+export function enqueueTurn(record: ThreadRecord, input: UserTurnInput): EnqueueResult {
   if (record.queue.length >= MAX_QUEUED_TURNS) return { ok: false, reason: "entries" };
+  const entryBytes = queuedInputBytes(input);
+  if (entryBytes > MAX_QUEUED_ENTRY_BYTES) return { ok: false, reason: "entry" };
   // The candidate counts against what is already queued, in BYTES (a UTF-16 length under-counts the
   // memory an emoji-heavy prompt actually holds). Accepted asymmetry: a NON-queued `turn/start` is not
   // size-capped — this cap protects THIS server's buffer, not the engine's input path.
-  const queued = record.queue.reduce((n, q) => n + Buffer.byteLength(q.input, "utf8"), 0);
-  if (queued + Buffer.byteLength(input, "utf8") > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
+  const queued = record.queue.reduce((n, q) => n + queuedInputBytes(q.input), 0);
+  if (queued + entryBytes > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
   const id = mintTurnId(record);
   record.queue.push({ id, input });
   return { ok: true, id, position: record.queue.length };

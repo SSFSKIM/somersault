@@ -13,7 +13,9 @@ import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, turnSteer, turnStartContent, turnSteerContent, requestInterrupt } from "./turns.js";
+import { ImageStageRegistry, IMAGE_STAGE_SWEEP_INTERVAL_MS } from "./imageStage.js";
+import { imageStageParams } from "./schema/images.js";
 import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
@@ -92,6 +94,11 @@ export interface AppServerDeps {
   managedSettingsPath?: string | null;
   ccxDir?: string;
   getSessionInfo?: (id: string) => Promise<unknown | undefined>;
+  // F10 T-IMGREACH Task 10 (I3d): the staged-image registry every connection's `image/stage` chunks and
+  // every `turn/startContent` reservation share, defaulted to a fresh `ImageStageRegistry()` per server —
+  // injectable so a test can wrap its `validate` with a spy (the "no second decode" contract must be
+  // provable end to end, not just at the registry's own unit level) without reaching into a private field.
+  imageStages?: ImageStageRegistry;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -378,6 +385,15 @@ export type Handler = (srv: AppServer, ctx: ConnCtx, id: RequestId, params: Reco
 
 export class AppServer {
   readonly registry = new Registry();
+  // F10 T-IMGREACH Task 10 (I3d): one registry per server, shared by every connection's `image/stage`
+  // chunks and every `turn/startContent` reservation. DI-defaulted (AppServerDeps.imageStages) so a test
+  // can inject a spy validator, mirroring `sessionFactory`'s own default-else-inject shape.
+  readonly imageStages: ImageStageRegistry;
+  // The idle+absolute expiry sweep (imageStage.ts's `sweep()`), UNREF'D: a staged image nobody ever
+  // completes or a connection that vanishes without a clean close must not keep this process alive on
+  // its own — the same reason `spawn.ts`'s detached child is unref'd. Public (not private) so a test can
+  // assert `hasRef() === false` directly rather than reaching into a private field.
+  readonly imageStageSweepTimer: NodeJS.Timeout;
   private conns = new Map<number, ConnCtx>();
   private decisions = new Map<string, ThreadDecisions>();
   private connSeq = 0;
@@ -554,7 +570,23 @@ export class AppServer {
       if (parsed.data.abortTurn) await requestInterrupt(record);
       ctx.peer.reply(id, { ok: true });
     },
+    // F10 T-IMGREACH Task 10 (I3d): the staged-image chunk upload. SERVER-scoped — no `threadId` — a
+    // stage lives on the CONNECTION (`ctx.connId`), not on any thread, so neither dispatch gate above can
+    // fire on it and this is where the whole handler lives (imageStage.ts stays registry-only by design:
+    // "no schema, no handler, no wire" is its own header's scope line). The parsed params are passed to
+    // `registry.chunk()` DIRECTLY — no re-mapping — which is the payoff of `imageStageParams` and
+    // `ImageStageChunk` being pinned to one shape (schema/images.ts's own assertion). `r.code` is already
+    // a JSON-RPC error code (imageStage.ts's `STAGE_REFUSAL_CODE`), so it rides straight onto the wire.
+    "image/stage": (srv, ctx, id, params) => {
+      const parsed = imageStageParams.safeParse(params);
+      if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+      const r = srv.imageStages.chunk(ctx.connId, parsed.data);
+      if (!r.ok) { ctx.peer.replyError(id, r.code, r.message); return; }
+      ctx.peer.reply(id, { complete: r.complete });
+    },
     "turn/start": turnStart,
+    "turn/startContent": turnStartContent,
+    "turn/steerContent": turnSteerContent,
     "turn/interrupt": turnInterrupt,
     "thread/subscribe": threadSubscribe,
     "thread/unsubscribe": threadUnsubscribe,
@@ -706,6 +738,9 @@ export class AppServer {
   constructor(opts: { token?: string } = {}, public readonly deps: AppServerDeps = {}) {
     this.authRequired = opts.token !== undefined;
     this.token = opts.token ?? "";
+    this.imageStages = deps.imageStages ?? new ImageStageRegistry();
+    this.imageStageSweepTimer = setInterval(() => this.imageStages.sweep(), IMAGE_STAGE_SWEEP_INTERVAL_MS);
+    this.imageStageSweepTimer.unref(); // never keeps the process alive on its own (see the field's own note)
   }
 
   /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
@@ -921,6 +956,7 @@ export class AppServer {
    *  does — ordered, never concurrent (a direct call raced the queued close and drove dispose() twice). */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    clearInterval(this.imageStageSweepTimer); // unref'd already, but a shut-down server owes it no more ticks
     await Promise.all(this.registry.list().map((r) => {
       // The same latch+flush pair thread/close raises, per record, BEFORE anything is awaited (M2b Wave 4):
       // the server-wide `shuttingDown` flag above refuses new THREADS, but a turn/start on a thread that
@@ -1016,8 +1052,11 @@ export class AppServer {
     this.conns.set(connId, ctx);
     const feed = (chunk: string) => peer.feed(chunk, (frame) => this.onFrame(ctx, frame));
     // A closing connection must not leave a dead Peer in any thread's subscriber set (spec: a browser
-    // tab closing sweeps every record, not just whichever thread it last touched).
-    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); sink.end(); };
+    // tab closing sweeps every record, not just whichever thread it last touched). F10 T-IMGREACH Task 10
+    // (I3d): nor may it leave that connection's staged images behind — `dropConnection` releases their
+    // bytes and purges any reservation opened on this connection (fix 81a2fd8ac8), so a socket dying
+    // mid-stage cannot hold memory the client will never come back to claim.
+    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); this.imageStages.dropConnection(connId); sink.end(); };
     return { peer, feed, close };
   }
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createHarness, type HarnessDeps } from "../harness.js";
 import type { HarnessConfig } from "../config/types.js";
 import { turnFailureOf } from "../session/turnResult.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 
 /** A structured run that produced no parseable structured_output: a result frame that reported failure
  *  (incl. the SDK's own `error_max_structured_output_retries`), or a result with the field absent.
@@ -19,7 +20,7 @@ export class StructuredRunError extends Error {
  *  Runs through createHarness, so the full HarnessConfig seam (model/permissions/sandbox/…) applies;
  *  any caller-set `outputFormat` is replaced by the schema's. */
 export async function runStructured<S extends z.ZodType>(
-  schema: S, prompt: string, config: HarnessConfig = {}, deps: HarnessDeps = {},
+  schema: S, prompt: UserTurnInput, config: HarnessConfig = {}, deps: HarnessDeps = {},
 ): Promise<z.infer<S>> {
   // target draft-7: the CLI validates the schema with ajv, which does NOT register the 2020-12
   // meta-schema zod emits by default ("--json-schema is not a valid JSON Schema" — caught live).
