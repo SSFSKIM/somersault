@@ -31,6 +31,7 @@
 //   `minLength/maxLength: inconsistent range`       min > max, either kind
 //   `required:b not in properties`           a dangling required entry, naming the entry
 //   `required:b duplicated`                  a required entry repeated, naming the entry
+//   `enum:x duplicated`                      an enum member repeated, naming the member (bounded)
 // Field keywords are named BARE, not path-qualified (`pattern`, not `properties.a.pattern`) — the
 // exception is a property whose whole schema is not an object, where the property IS the offender.
 //
@@ -165,6 +166,18 @@ function baseSchema(raw: Record<string, unknown>, type: string, depth: number): 
     const members = raw.enum;
     if (!Array.isArray(members) || members.length === 0 || !members.every((m) => matchesType(m, type))) {
       return refuse("enum: unsupported shape");
+    }
+    // draft-07 pins `enum` to UNIQUE items, exactly as it pins `required` — and with the same
+    // consequence, because the declared schema is ADVERTISED VERBATIM: ajv refuses the whole DOCUMENT at
+    // compile time ("must NOT have duplicate items") rather than one keyword, so one repeated member takes
+    // the namespace's entire `tools/list` down with it. Conversion is untroubled (a repeated literal makes
+    // an identical union), which is why the refusal has to be written down here, at declaration, where the
+    // client can still fix it. Membership is SameValueZero over the raw values, so `1` and `"1"` stay two
+    // distinct members — a stringifying comparison would refuse a schema draft-07 allows.
+    const seenMembers = new Set<unknown>();
+    for (const member of members) {
+      if (seenMembers.has(member)) return refuse(`enum:${describeValue(member)} duplicated`);
+      seenMembers.add(member);
     }
     const literals = members.map((m) => z.literal(m as string | number | boolean));
     return { ok: true, schema: literals.length === 1 ? literals[0]! : z.union(literals) };

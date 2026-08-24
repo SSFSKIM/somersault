@@ -417,6 +417,24 @@ describe("validateDeclarations — function names", () => {
     expect(refusal([ns("ops", fn("ToolSearch"))])).toBe('tool "ToolSearch" is the name of a native tool');
   });
 
+  it("refuses a bare function that asks to be deferred, in Codex's own words", () => {
+    // Deferral is a NAMESPACE affordance: the model is shown the namespace and loads its tools on demand,
+    // so a tool with no namespace has nothing to be loaded from. Canonical Codex refuses this exact pair
+    // (`thread_processor.rs`), and this fork answers with the same message so a client that cross-tests
+    // against Codex reads one answer. `dyn` is our carrier for bare functions, not a declared namespace —
+    // admitting the pair by leaning on it would invent behavior the canonical server does not have.
+    const deferred = (name: string): DynamicToolFunction => ({ ...fn(name), deferLoading: true });
+    expect(refusal([deferred("lookup")])).toBe("deferred dynamic tool must include a namespace: lookup");
+    // Tagged with a namespace, the same tool is fine — and so is a bare one that never asked to defer,
+    // whether it omits the flag or writes it false.
+    accepted([ns("ops", deferred("lookup"))]);
+    accepted([fn("lookup")]);
+    accepted([{ ...fn("lookup"), deferLoading: false }]);
+    // The name checks still run FIRST: a bare deferred tool that is ALSO named after a native tool hears
+    // about the name, which is the problem it must fix before the flag matters.
+    expect(refusal([deferred("Read")])).toBe('tool "Read" is the name of a native tool');
+  });
+
   it("refuses a function named after an alias target as well as the alias", () => {
     expect(refusal([fn("ListPeers")])).toBe('tool "ListPeers" is the name of a native tool');
     expect(refusal([fn("ListAgents")])).toBe('tool "ListAgents" is the name of a native tool');

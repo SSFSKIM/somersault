@@ -1363,7 +1363,19 @@ describe("M7 the declaration on the wire — the shape gate", () => {
   it("a deferLoading that is not a boolean is a shape refusal; the flag itself rides through", async () => {
     const { start } = await bootWire();
     expect((await start({ dynamicTools: [fn("lookup", { deferLoading: "yes" })] })).error.message).toBe("Invalid params");
-    expect((await start({ dynamicTools: [fn("lookup", { deferLoading: true })] })).error).toBeUndefined();
+    // Carried on a NAMESPACED tool, because that is the only place a true `deferLoading` is legal — the
+    // shape layer takes the flag either way, and the semantic layer below is what judges the pairing.
+    expect((await start({ dynamicTools: [nsOf("ops", [fn("lookup", { deferLoading: true })])] })).error).toBeUndefined();
+  });
+
+  it("a BARE deferred tool is refused by the semantics, in Codex's own words", async () => {
+    // The shape layer accepts the flag anywhere; deferral only means something under a namespace the
+    // model can be shown, so canonical Codex refuses the bare pairing and this server repeats its message
+    // verbatim. The wire row is here because the -32602 message is the client's whole repair instruction.
+    const { start } = await bootWire();
+    const reply = await start({ dynamicTools: [fn("lookup", { deferLoading: true })] });
+    expect(reply.error.code).toBe(-32602);
+    expect(reply.error.message).toBe("deferred dynamic tool must include a namespace: lookup");
   });
 });
 

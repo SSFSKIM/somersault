@@ -134,6 +134,29 @@ describe("jsonSchemaToZod — root keyword refusals", () => {
   it("refuses a non-object root type", () => {
     expect(refusal({ type: "array", items: { type: "string" } })).toBe("type:array");
   });
+
+  it("refuses a repeated enum member, naming the member", () => {
+    // The same draft-07 uniqueness rule as `required`, with the same blast radius: the schema is
+    // advertised VERBATIM, and ajv refuses the whole DOCUMENT at compile time over one duplicate, so
+    // every well-formed sibling in the namespace vanishes from tools/list. The conversion itself is
+    // indifferent — a repeated literal builds an identical union — so the refusal is written down.
+    const withEnum = (members: unknown[], type = "string") => ({
+      type: "object",
+      properties: { a: { type, enum: members } },
+    });
+    expect(refusal(withEnum(["x", "x"]))).toBe("enum:x duplicated");
+    expect(refusal(withEnum([1, 2, 1], "integer"))).toBe("enum:1 duplicated");
+    // A valid enum is untouched, one member or several.
+    expect(converted(withEnum(["x", "y"])).schema.safeParse({ a: "y" }).success).toBe(true);
+    expect(converted(withEnum(["x"])).schema.safeParse({ a: "x" }).success).toBe(true);
+    // The echoed member is BOUNDED, like every other value this file quotes back.
+    expect(refusal(withEnum(["y".repeat(60), "y".repeat(60)]))).toBe(`enum:${"y".repeat(40)}… duplicated`);
+    // `1` and `"1"` are DISTINCT members — the comparison is SameValueZero over the raw values, never a
+    // stringification. Neither reaches the duplicate check anyway: an enum whose members do not all match
+    // the declared type is refused earlier, and by SHAPE. That ordering is the assertion.
+    expect(refusal(withEnum([1, "1"]))).toBe("enum: unsupported shape");
+    expect(refusal(withEnum([1, "1"], "integer"))).toBe("enum: unsupported shape");
+  });
 });
 
 describe("jsonSchemaToZod — the field subset", () => {

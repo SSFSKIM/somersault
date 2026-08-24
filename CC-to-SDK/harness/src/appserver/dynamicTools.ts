@@ -251,12 +251,27 @@ const DELIMITER_NOTE = 'may not contain "__" (the MCP tool-name delimiter)';
 /** One declared function, checked in the order a client can most usefully read: what it is called, then
  *  what it costs, then whether it converts. The caps come BEFORE `jsonSchemaToZod` on purpose — the
  *  converter carries its own `items` recursion limit and would otherwise answer a deep declaration with
- *  `items: too deeply nested`, an internal detail, instead of the declaration cap the client can act on. */
-function checkFunction(tool: DynamicToolFunction, namespace: string, seen: Set<string>): ValidationResult {
+ *  `items: too deeply nested`, an internal detail, instead of the declaration cap the client can act on.
+ *
+ *  `namespace` is `null` for a BARE function — the absence itself is checked, so this signature carries
+ *  what "declared without a namespace" means rather than the `dyn` slot such a function later lands in. */
+function checkFunction(tool: DynamicToolFunction, namespace: string | null, seen: Set<string>): ValidationResult {
   if (tool.name.includes("__")) return refuse(`tool "${tool.name}" ${DELIMITER_NOTE}`);
   if (NATIVE_TOOL_NAME_SET.has(tool.name)) return refuse(`tool "${tool.name}" is the name of a native tool`);
-  if (seen.has(tool.name)) return refuse(`duplicate tool "${tool.name}" in namespace "${namespace}"`);
+  if (seen.has(tool.name)) return refuse(`duplicate tool "${tool.name}" in namespace "${namespace ?? RESERVED_NAMESPACE}"`);
   seen.add(tool.name);
+
+  // BARE PLUS DEFERRED IS NOT A DECLARATION CODEX MAKES, so it is not one this server admits. Canonical
+  // Codex refuses the pair outright (`thread_processor.rs`: "deferred dynamic tool must include a
+  // namespace"), in this position — after the name is judged, before the schema is. Deferral is a
+  // NAMESPACE-level affordance there: the model is shown the namespace and loads its tools on demand, and
+  // a tool with no namespace has nothing to be loaded FROM. `dyn` is this fork's own carrier for bare
+  // functions, not a namespace the client declared, so admitting the pair by leaning on it would invent
+  // behavior the canonical server does not have. Same message, so a client that cross-tests against Codex
+  // reads one answer.
+  if (tool.deferLoading === true && namespace === null) {
+    return refuse(`deferred dynamic tool must include a namespace: ${tool.name}`);
+  }
 
   const measured = measureSchema(tool.inputSchema);
   if (measured === null) return refuse(`tool "${tool.name}": inputSchema is not serializable`);
@@ -337,7 +352,7 @@ export function validateDeclarations(specs: DynamicToolSpec[], occupiedServerNam
   const bareSeen = new Set<string>();
   for (const spec of specs) {
     if (spec.type === "function") {
-      const result = checkFunction(spec, RESERVED_NAMESPACE, bareSeen);
+      const result = checkFunction(spec, null, bareSeen);
       if (!result.ok) return result;
       continue;
     }
