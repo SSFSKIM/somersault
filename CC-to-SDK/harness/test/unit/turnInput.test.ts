@@ -622,6 +622,21 @@ describe("I2: normalizeValidatedBlocks and validateImageBlock — the staged pat
     expect(normalizeValidatedBlocks([{ type: "text", text: "x" }, bogus])).toEqual([{ type: "text", text: "x" }, bogus]);
   });
 
+  // F10 fix-wave review finding P2 — the staged normalizer enforced MAX_CONTENT_BLOCKS/MAX_TOTAL_TEXT
+  // (`applyOutputCaps`) but never MAX_IMAGES_PER_PROMPT: a stage reservation naming one completed stage
+  // 21 times (`ImageStageRegistry.reserve` takes a bare array, no de-dup) sailed every one of those 21
+  // blocks through `normalizeValidatedBlocks` untouched, despite the declared 20-image cap. Mirrors the
+  // `normalizeTurnInput` boundary matrix above off the SAME constant.
+  it.each(triple(MAX_IMAGES_PER_PROMPT))("MAX_IMAGES_PER_PROMPT binds here too: $label", ({ at, passes }) => {
+    const blocks = [{ type: "text", text: "x" }, ...Array.from({ length: at }, () => img())] as UserContentBlock[];
+    const out = normalizeValidatedBlocks(blocks);
+    expect(out.filter((b) => b.type === "image")).toHaveLength(passes ? at : MAX_IMAGES_PER_PROMPT);
+    if (!passes) {
+      const text = out.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+      expect(text).toContain(`too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})`);
+    }
+  });
+
   it("validateImageBlock returns the CANONICAL block and its decoded byte count", () => {
     const noisy = PNG_1X1.replace(/(.{20})/g, "$1\n");
     const r = validateImageBlock({ type: "image", source: { type: "base64", media_type: "image/png", data: noisy } });

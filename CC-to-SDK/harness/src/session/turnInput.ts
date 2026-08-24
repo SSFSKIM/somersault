@@ -218,13 +218,35 @@ function applyOutputCaps(blocks: UserContentBlock[]): UserContentBlock[] {
   return out;
 }
 
-/** The second half of `normalizeTurnInput`: the I1 stranding pass plus `applyOutputCaps`, over blocks
- *  whose images have ALREADY been validated and canonicalized by `validateImageBlock`. Exported for
- *  exactly one reason (plan-review r2 F-STAGE): re-running the full normalizer over staged blocks would
- *  decode every image a SECOND time, which is the cost the validate-once contract exists to avoid. Text
- *  handling is identical either way, so the two paths cannot drift on anything but the decode. */
+/** F10 fix-wave review finding P2: `normalizeTurnInput`'s array branch enforces `MAX_IMAGES_PER_PROMPT`
+ *  by ordinal as it walks the input, BEFORE ever calling `validateImageBlock` — but the staged path
+ *  (`normalizeValidatedBlocks` below) skips straight to `applyOutputCaps`, which caps block COUNT and
+ *  TEXT length but has no notion of "this block is an image" at all. A stage reservation can carry the
+ *  SAME completed stage id repeated arbitrarily many times (`ImageStageRegistry.reserve` takes a bare
+ *  array with no de-dup), and even with distinct ids nothing upstream of this function ever counted
+ *  images — so this is the one place the staged path can still enforce the cap without a second decode:
+ *  ordinal-only, exactly like the inline check `normalizeTurnInput` already runs. */
+function applyImageCountCap(blocks: UserContentBlock[]): UserContentBlock[] {
+  let imageOrdinal = 0;
+  return blocks.map((block): UserContentBlock => {
+    if (block.type !== "image") return block;
+    if (++imageOrdinal > MAX_IMAGES_PER_PROMPT) {
+      return { type: "text", text: `[Image could not be processed: too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})]` };
+    }
+    return block;
+  });
+}
+
+/** The second half of `normalizeTurnInput`: the image-count cap, the I1 stranding pass, and
+ *  `applyOutputCaps`, over blocks whose images have ALREADY been validated and canonicalized by
+ *  `validateImageBlock`. Exported for exactly one reason (plan-review r2 F-STAGE): re-running the full
+ *  normalizer over staged blocks would decode every image a SECOND time, which is the cost the
+ *  validate-once contract exists to avoid. Text handling is identical either way, so the two paths
+ *  cannot drift on anything but the decode. The image-count cap runs FIRST, before the stranding label:
+ *  an over-cap image becomes a non-empty text block, so a turn that strands only because of the excess
+ *  images is correctly no longer "stranded" by the time `applyStrandingLabel` looks. */
 export function normalizeValidatedBlocks(blocks: UserContentBlock[]): UserContentBlock[] {
-  return applyOutputCaps(applyStrandingLabel(blocks));
+  return applyOutputCaps(applyStrandingLabel(applyImageCountCap(blocks)));
 }
 
 /** AUTHORITATIVE. The one seam every `UserTurnInput` passes through at the Session builder
