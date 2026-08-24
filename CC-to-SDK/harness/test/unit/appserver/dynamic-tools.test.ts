@@ -78,6 +78,12 @@ function deferred<T = void>() {
 const statuses = (lines: string[]): Array<Record<string, unknown>> => notes(lines, "thread/status/changed").map((n) => n.params.status);
 const lastStatus = (lines: string[]): Record<string, unknown> | undefined => { const all = statuses(lines); return all[all.length - 1]; };
 
+/** The order in which the named methods reached one peer, everything else filtered out. Content assertions
+ *  cannot see a SWAPPED pair — a `tool/callRequested` emitted after its status frame still pins both — and
+ *  the two are a promise to a client that renders off the wire: the call it is being asked to answer must
+ *  arrive before the status that says it is waiting on one. */
+const orderOf = (lines: string[], methods: string[]): string[] => parsed(lines).map((f) => f.method).filter((m: string) => methods.includes(m));
+
 /** The park barrier set, read directly. It has no wire projection by design (it gates a park, it does not
  *  announce one), and the one failure a liveness bug produces is a residue only `closeRecord` sweeps. */
 const barriers = (srv: AppServer): Set<string> => (srv as unknown as { parkBarriers: Set<string> }).parkBarriers;
@@ -111,8 +117,8 @@ function attach(srv: AppServer, name: string, opts: { watch?: boolean } = {}) {
 /** Boots a server, one thread, one connection ("A") and one turn in flight. `subscribe:false` leaves A
  *  initialized but unsubscribed — the zero-subscriber park rows need that. Sinks are cleared at the end,
  *  so a row's own assertions start on an empty transcript. */
-async function bootTurn(opts: { subscribe?: boolean; session?: () => any } = {}) {
-  const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory: opts.session ?? (() => fakeSession()) });
+async function bootTurn(opts: { subscribe?: boolean; session?: () => any; deps?: Record<string, unknown> } = {}) {
+  const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory: opts.session ?? (() => fakeSession()), ...opts.deps });
   const a = attach(srv, "A");
   send(a.conn, { id: 2, method: "thread/start", params: {} });
   await tick();
@@ -490,6 +496,7 @@ describe("M7 lifecycle seams — every teardown answers the model", () => {
     await tick();
     submitted.resolve({});            // the turn completes; the call stays parked
     await tick();
+    a.lines.length = 0;               // everything below is the clear's own traffic
 
     send(a.conn, { id: 61, method: "thread/clear", params: { threadId } });
     await tick();
@@ -497,6 +504,38 @@ describe("M7 lifecycle seams — every teardown answers the model", () => {
     expect(noteOf(await parked)).toBe("Tool call cancelled: engine swapped");
     await tick();
     expect(replyTo(a.lines, 61).result).toMatchObject({ ok: true });
+    // AND THE WIRE ENDS ON THE TRUTH. Settling the ghost broadcast a status computed under `swapInFlight`
+    // — "active", for a thread whose turn is already over — and the latch then drops in a `finally`
+    // without a word. The retraction is the second frame; without it a client that renders status off the
+    // wire shows this thread busy forever (r7 finding 4, on the swap family this time).
+    expect(statuses(a.lines)).toEqual([{ state: "active" }, { state: "idle" }]);
+  });
+
+  it("thread/rewind takes that retraction from the same latch, not from a line of its own", async () => {
+    // The sibling of the row above, and the reason the correction is ONE release rather than a copy per
+    // method: rewind reaches `swapEngine` through a different factory but the identical `latchSwap`, so a
+    // fix written into `thread/clear` alone would leave this method reporting "active" forever. Scope is
+    // `conversation` — the file-restore half is a different seam and would only need faking.
+    const submitted = deferred<any>();
+    const engineGate = deferred();
+    const { srv, a, threadId } = await bootTurn({
+      session: () => ({ ...fakeSession(), submit: () => submitted.promise, dispose: () => engineGate.promise }),
+      deps: { resumeAtFactory: () => fakeSession() },
+    });
+    const parked = srv.parkToolCall(threadId, 0, { tool: "lookup", arguments: {} });
+    void parked.then(() => engineGate.resolve());
+    await tick();
+    submitted.resolve({});
+    await tick();
+    a.lines.length = 0;
+
+    send(a.conn, { id: 69, method: "thread/rewind", params: { threadId, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await tick();
+    expect(await settledYet(parked)).toBe(true);
+    expect(noteOf(await parked)).toBe("Tool call cancelled: engine swapped");
+    await tick();
+    expect(replyTo(a.lines, 69).result).toMatchObject({ ok: true });
+    expect(statuses(a.lines)).toEqual([{ state: "active" }, { state: "idle" }]);
   });
 
   it("turn/interrupt settles the parked calls before it awaits interrupt(), and the reply still lands", async () => {
@@ -668,6 +707,9 @@ describe("M7 thread status — a parked tool call is visible thread state", () =
     const parked = srv.parkToolCall(threadId, 0, { tool: "lookup", arguments: {} });
     await tick();
     expect(statuses(a.lines)).toEqual([{ state: "active", waitingOn: "toolCall" }]);
+    // …and the request comes FIRST. A client told "waiting on a tool call" before it has been told which
+    // call would have a waiter it cannot name; the two emissions are one announcement in a fixed order.
+    expect(orderOf(a.lines, ["tool/callRequested", "thread/status/changed"])).toEqual(["tool/callRequested", "thread/status/changed"]);
     // A watcher opted into thread EXISTENCE; per-turn activity is not existence, and every other
     // `thread/status/changed` on this server is subscriber-scoped.
     expect(notes(watcher.lines, "thread/status/changed")).toEqual([]);
@@ -718,6 +760,9 @@ describe("M7 thread status — a parked tool call is visible thread state", () =
     // Replay derives from BOTH registries: a join that replayed the call and then called the thread merely
     // active would contradict itself in two consecutive frames.
     expect(lastStatus(a.lines)).toEqual({ state: "active", waitingOn: "toolCall" });
+    // The replay's order is the live park's order, not an accident of the replay step: the call, then the
+    // status that says the thread is waiting on it.
+    expect(orderOf(a.lines, ["tool/callRequested", "thread/status/changed"])).toEqual(["tool/callRequested", "thread/status/changed"]);
   });
 
   it("thread/reopen settles a ghost park with NO decision in play, and its final status is idle", async () => {

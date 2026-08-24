@@ -993,7 +993,7 @@ export class AppServer {
     return new DynamicCalls((ev) => this.broadcastToolCall(threadId, ev));
   }
 
-  /** One thread's dynamic-call registry — `toolCalls.ts`'s `tool/callResult` reads it to settle a park,
+  /** One thread's dynamic-call registry — `toolCallResult.ts`'s `tool/callResult` reads it to settle a park,
    *  and Task 5's status derivation to see whether one is waiting. Narrow like `threadDecisions`: a caller
    *  reaches the thread it names and nothing else. */
   threadDynamicCalls(threadId: string): DynamicCalls | undefined { return this.dynamicCalls.get(threadId); }

@@ -41,7 +41,7 @@
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
-import { DECISION_PENDING, forwardSwapOp, replySwapThrow, swapBaseConfig, swapEngine } from "./rewind.js";
+import { DECISION_PENDING, forwardSwapOp, latchSwap, replySwapThrow, swapBaseConfig, swapEngine } from "./rewind.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
@@ -292,8 +292,10 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
   // turn/start would otherwise pass its own busy gate and drive an engine call against a thread being
   // swapped out from under it. Every gate reads it through threadBusyReason -> "swapping". INPROCESS
   // ONLY — see the fleet paragraph above: there is no local swap for the latch to fence off, and a busy
-  // state no other client of that host observes is exactly what §1d's compact deviation refuses to invent.
-  if (record.origin !== "fleet") record.swapInFlight = true;
+  // state no other client of that host observes is exactly what §1d's compact deviation refuses to invent;
+  // that origin test lives inside `latchSwap` now, which is also where the swap's ghost-park status
+  // retraction lives — captured here, before the chain, and released with the latch below.
+  const releaseSwap = latchSwap(srv, record);
   record.chain = record.chain.then(async () => {
     if (record.origin === "fleet") {
       try {
@@ -333,7 +335,7 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
     } catch (e) {
       replyEngineThrow(record, ctx, id, e, ERR.INTERNAL); // chain-deferred like every mutation here: the engine can die between arrival and this body
     } finally {
-      record.swapInFlight = false; // a throw from the factory or the swap must not wedge the thread at "swapping"
+      releaseSwap(); // unwedges "swapping" on a throw, and retracts the "active" a settled ghost park left on the wire
     }
   });
 };

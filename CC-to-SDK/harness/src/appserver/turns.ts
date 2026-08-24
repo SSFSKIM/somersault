@@ -157,9 +157,13 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
  *  themselves. Settling releases the engine, and a released engine promptly raises one more call — inside
  *  `interrupt()` itself, which is the shape this was written against: that late call must meet a barrier
  *  that is already down, or it parks into a registry the interrupt has just swept and `interrupt()` waits
- *  on it forever. Nothing can interleave between these two lines today (a `resolve` hands control to a
- *  microtask, never to a synchronous re-entry), so the latch is written first as the order that stays
- *  correct if that ever stops being true — not as a difference any test can currently observe.
+ *  on it forever. Neither of the two ways `reset()` hands control back to foreign code can reach a
+ *  `parkToolCall` ahead of the latch today: `live.resolve(result)` can only schedule a microtask, and the
+ *  `settled` emit that follows it (dynamicCalls.ts) runs SYNCHRONOUSLY out through this server's broadcast
+ *  into every subscriber's sink — the likelier vector of the two, and the one an in-process client could
+ *  actually re-enter on, yet it still returns before the reset's own loop continues. Latch-first covers
+ *  both, which is why it is written as the order that stays correct if either ever stops holding — not as
+ *  a difference any test can currently observe.
  *  The barrier then holds past the NEXT turn's arrival and lifts only at its dispatch (`submitRunner`),
  *  which is what makes "the interrupted turn's work is behind the new submit" provable rather than likely.
  *
@@ -167,7 +171,11 @@ function statusChanged(srv: AppServer, record: ThreadRecord): void {
  *  blocked inside the tool handler on one of these very promises — awaiting the interrupt first is the C1
  *  circular wait, exactly as awaiting `dispose()` first is in `closeRecord`. */
 export function interruptParkedCalls(srv: AppServer, record: ThreadRecord): void {
-  srv.latchParkBarrier(record.id);
+  // The barrier is INPROCESS-only: a fleet turn dispatches through `fleetTurnStart`, never `submitRunner`,
+  // so on that origin nothing would ever clear it — a latch that lives until `closeRecord` sweeps it,
+  // guarding parks the host's engine cannot raise here anyway. The reset stays origin-blind: it is already
+  // a no-op on a registry that origin can never fill.
+  if (record.origin !== "fleet") srv.latchParkBarrier(record.id);
   srv.threadDynamicCalls(record.id)?.reset("turn interrupted");
 }
 

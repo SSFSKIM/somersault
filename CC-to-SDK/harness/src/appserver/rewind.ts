@@ -236,6 +236,42 @@ export async function swapEngine(
   await repushThreadState(srv, record);
 }
 
+/** THE SWAP LATCH, AND THE STATUS RETRACTION IT OWES — one implementation for the two methods that run a
+ *  LOCAL swap behind `record.chain` (`thread/rewind` below, `thread/clear` in settingsOps.ts). Shared
+ *  rather than stated twice because stating it twice is stating it wrong once: this is r7 finding 4's
+ *  defect, and it reappears on whichever sibling forgets.
+ *
+ *  `swapEngine`'s `reset("engine swapped")` above settles whatever the thread still had parked, and every
+ *  settle rides a `thread/status/changed` out (server.ts's `broadcastToolCall`) computed while
+ *  `swapInFlight` is latched — i.e. `{state:"active"}` for a thread that is about to be idle. The latch
+ *  then drops in a `finally` without a word, so a client that renders status off the wire rather than
+ *  re-reading `thread/get` would sit on "active" until some later turn edge moved it.
+ *
+ *  CAPTURE AND RELEASE ARE ONE OBJECT, deliberately: the predicate can only be sampled BEFORE the chain
+ *  (by the time it matters, the parks are gone) and the correction emitted only AFTER the latch drops, and
+ *  pairing them is what stops the next swap-family caller from latching without arranging the retraction.
+ *  `thread/reopen` states its own instead of taking this one — it settles at ARRIVAL with a truer reason,
+ *  reads both registries, and releases early on success so its announcements describe the recovered thread.
+ *
+ *  The DYNAMIC registry alone, where reopen reads both: both callers here refuse outright on a pending
+ *  decision (the C1 circular wait), so nothing can be in the decisions one by this line. Conditional, for
+ *  reopen's reason — a swap with nothing parked broadcast no status at all, and an unconditional emit would
+ *  invent a status edge the ordinary swap does not have. Recomputed rather than asserted idle: the latch is
+ *  the only term that moved, and the honest answer comes from the same `threadStatus`/`threadWaiter` pair
+ *  every other emit site uses.
+ *
+ *  FLEET latches nothing and so retracts nothing (see the file header and settingsOps.ts's clear): there is
+ *  no local swap for the latch to fence off, and no local registry that origin's engine can park into. */
+export function latchSwap(srv: AppServer, record: ThreadRecord): () => void {
+  if (record.origin === "fleet") return () => {};
+  record.swapInFlight = true;
+  const settledGhostParks = srv.pendingToolCalls(record.id).length > 0;
+  return () => {
+    record.swapInFlight = false;
+    if (settledGhostParks) srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.threadWaiter(record.id)) });
+  };
+}
+
 /** Re-send everything the thread accumulated on the OUTGOING engine to the replacement — the appserver's
  *  equivalent of `host/host.ts`'s `replayFlagState`, widened to the settings mirror. Called from inside
  *  `swapEngine`, which is the single seam both `thread/rewind` and Task 3b's `thread/clear` go through, so
@@ -482,7 +518,9 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
   // below sits behind record.chain, so a same-tick turn/start (two requests dispatched before any
   // microtask runs) would otherwise pass its own busy gate and drive an engine call against a thread that
   // is being swapped out from under it. Every gate reads it through threadBusyReason -> "swapping".
-  record.swapInFlight = true;
+  // Through `latchSwap`, which also captures — here, before the chain — whether this swap is about to
+  // settle a ghost park under that latch, and hands back the release that corrects the wire if it did.
+  const releaseSwap = latchSwap(srv, record);
   record.chain = record.chain.then(async () => {
     try {
       // FILE RESTORE, on the live engine, first (probe 68d: rewindFiles needs the open transport). The dry
@@ -524,8 +562,9 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
       ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));
     } finally {
       // Guaranteed: a throw from the dry run, the real restore or the swap itself must not leave the
-      // thread wedged reading "swapping" forever.
-      record.swapInFlight = false;
+      // thread wedged reading "swapping" forever — nor, when the swap settled a ghost park on its way
+      // past, leave the wire's last word on this thread reading "active" (`latchSwap`).
+      releaseSwap();
     }
   });
 };
