@@ -91,7 +91,8 @@ describe("DynamicCalls — park, answer, discriminate", () => {
 
     expect(calls.respond(callId, 1, OK)).toEqual({ ok: true });
     await expect(settled).resolves.toEqual(OK);
-    expect(events[1]).toEqual({ kind: "settled", callId });
+    // A client's answer carries no reason — the answer was the client's own (Task 4's widened event).
+    expect(events[1]).toEqual({ kind: "settled", callId, outcome: "answered" });
     expect(calls.pending()).toEqual([]);
   });
 
@@ -187,7 +188,9 @@ describe("DynamicCalls — every exit answers the model", () => {
     const result = await settled;
     expect(result.isError).toBe(true);
     expect(noteOf(result)).toBe("Tool call cancelled: aborted");
-    expect(events[1]).toEqual({ kind: "settled", callId });
+    // A cancellation names its reason — the same string the model was handed, so a consumer of the event
+    // and a consumer of the result learn the same fact (Task 4's widened event).
+    expect(events[1]).toEqual({ kind: "settled", callId, outcome: "cancelled", reason: "aborted" });
     expect(calls.pending()).toEqual([]);
     expect(calls.respond(callId, 1, OK)).toEqual({ ok: false, code: "alreadySettled" });
   });
@@ -201,7 +204,10 @@ describe("DynamicCalls — every exit answers the model", () => {
     expect(noteOf(await first)).toBe("Tool call cancelled: thread reopened");
     expect(noteOf(await second)).toBe("Tool call cancelled: thread reopened");
     expect((await first).isError).toBe(true);
-    expect(events.filter((e) => e.kind === "settled")).toHaveLength(2);
+    expect(events.filter((e) => e.kind === "settled")).toEqual([
+      { kind: "settled", callId: expect.stringMatching(CALL_ID), outcome: "cancelled", reason: "thread reopened" },
+      { kind: "settled", callId: expect.stringMatching(CALL_ID), outcome: "cancelled", reason: "thread reopened" },
+    ]);
     expect(calls.pending()).toEqual([]);
 
     // The whole distinction from teardown: the replacement engine's very next call parks for real.
@@ -209,6 +215,23 @@ describe("DynamicCalls — every exit answers the model", () => {
     expect(calls.pending()).toHaveLength(1);
     expect(calls.respond(mintedId(events), 1, OK)).toEqual({ ok: true });
     await expect(after).resolves.toEqual(OK);
+  });
+
+  it("a throwing emit cannot strand the rest of reset's loop", async () => {
+    // The owner's broadcast guards each notify individually, so this cannot happen through the shipped
+    // wiring — but a registry whose D-M4-9 guarantee (every exit answers the model) rests on somebody
+    // else's guard has a hang one refactor away, and an unanswered call after `teardown` can never be
+    // rescued by anything.
+    const events: DynamicCallEvent[] = [];
+    const calls = new DynamicCalls((ev) => { events.push(ev); if (ev.kind === "settled") throw new Error("subscriber blew up"); });
+    const first = calls.park(CALL);
+    const second = calls.park({ ...CALL, tool: "other" });
+
+    calls.reset("engine swapped");
+    expect(await settledYet(second)).toBe(true);
+    expect(noteOf(await first)).toBe("Tool call cancelled: engine swapped");
+    expect(noteOf(await second)).toBe("Tool call cancelled: engine swapped");
+    expect(calls.pending()).toEqual([]);
   });
 
   it("teardown settles, latches, and answers a later park immediately with the same reason", async () => {

@@ -10,6 +10,7 @@ import type { Item } from "./items/types.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { activeTurnId, threadStatus } from "./registry.js";
 import { toWireDecision } from "./broker.js";
+import { toWireToolCall } from "./dynamicCalls.js";
 import type { Handler } from "./server.js";
 import { threadIdParams } from "./schema/core.js";
 import { threadReadParams } from "./schema/threads.js";
@@ -130,6 +131,12 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   // shape (toolUseId) — see broker.ts's toWireDecision.
   const pending = srv.pendingDecisions(record.id);
   for (const entry of pending) ctx.peer.notify("decision/requested", { threadId: record.id, turnId: activeTurnId(record), decision: toWireDecision(entry) });
+  // M7: the parked TOOL CALLS, after the decisions and before the status, because that is the order a
+  // client must act in — a permission prompt gates the very tool whose call may be waiting behind it. The
+  // same projection the live broadcast uses (server.ts's broadcastToolCall), so replay and live cannot
+  // drift; `turnId` comes off the ENTRY rather than from `activeTurnId` — the call names the turn it was
+  // parked under, which outlives a subscribe landing between turns.
+  for (const call of srv.pendingToolCalls(record.id)) ctx.peer.notify("tool/callRequested", toWireToolCall(call));
   ctx.peer.notify("thread/status/changed", { threadId: record.id, status: threadStatus(record, pending.length > 0) });
 };
 

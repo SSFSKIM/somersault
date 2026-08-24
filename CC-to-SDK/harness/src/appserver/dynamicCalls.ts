@@ -32,6 +32,13 @@
 //
 // EVERY EXIT ANSWERS THE MODEL (D-M4-9). A cancelled settle resolves an `isError` result whose note names
 // the reason, because that note is the whole of what the model learns about the cancellation.
+//
+// ONE TURN AT A TIME, WHICH IS WHY `reset` NEEDS NO TURN FILTER. Every entry carries the `turnId` it was
+// parked under, but no method here reads it: `reset` cancels the thread's parked calls wholesale. That is
+// correct rather than merely convenient — an inProcess thread admits ONE turn at a time (the `busy` gate
+// in turns.ts refuses or queues a second), so everything parked at any instant belongs to the same turn,
+// and "cancel this turn's calls" and "cancel this thread's calls" name the same set. A later feature that
+// ran two turns concurrently would need a turn-scoped method, not a wider `reset`.
 import { randomUUID } from "node:crypto";
 
 /** The wire's result content items (camelCase, mirroring `turn/start`'s input items) — converted to MCP
@@ -60,7 +67,25 @@ export type PendingToolCall = {
  *  that BUILDS them (`toCallResult`) is the one place their shape is decided. */
 export type CallToolResultLike = { content: Array<Record<string, unknown>>; isError?: boolean };
 
-export type DynamicCallEvent = { kind: "requested"; entry: PendingToolCall } | { kind: "settled"; callId: string };
+/** What the registry tells its owner. The `settled` arm carries WHY, mirroring the decisions registry's
+ *  own `{by, outcome}`: a subscriber that only saw the call disappear could not tell "another client
+ *  answered it" from "the turn was interrupted" — and the server's status broadcast, which is the first
+ *  consumer, has to say which. `reason` is present exactly when the outcome is `cancelled` (it is the note
+ *  the model was handed); an answered call needs none — the answer itself was the client's. */
+export type DynamicCallEvent =
+  | { kind: "requested"; entry: PendingToolCall }
+  | { kind: "settled"; callId: string; outcome: "answered" | "cancelled"; reason?: string };
+
+/** The wire shape of a parked call — `tool/callRequested`'s payload, live and replayed alike (one
+ *  projection so the two can never drift, as `toWireDecision` is for decisions). `epoch` is the ONE field
+ *  dropped: the engine generation is the server's bookkeeping, and a client that echoed it back could only
+ *  ever contradict the record. */
+export type WireToolCall = { threadId: string; callId: string; turnId: string; namespace?: string; tool: string; arguments: Record<string, unknown> };
+
+export function toWireToolCall(entry: PendingToolCall): WireToolCall {
+  const { threadId, callId, turnId, namespace, tool, arguments: args } = entry;
+  return { threadId, callId, turnId, ...(namespace !== undefined ? { namespace } : {}), tool, arguments: args };
+}
 
 /** How many settled callIds stay discriminable. */
 const TOMBSTONE_LIMIT = 128;
@@ -100,7 +125,7 @@ export class DynamicCalls {
     const callId = `dyncall:${randomUUID()}`;
     const full: PendingToolCall = { ...entry, callId };
     const settled = new Promise<CallToolResultLike>((resolve) => {
-      const onAbort = () => this.settle(callId, cancelledCallResult(ABORT_REASON));
+      const onAbort = () => this.settle(callId, cancelledCallResult(ABORT_REASON), "cancelled", ABORT_REASON);
       signal?.addEventListener("abort", onAbort, { once: true });
       this.live.set(callId, { entry: full, resolve, cancel: () => signal?.removeEventListener("abort", onAbort) });
     });
@@ -118,7 +143,7 @@ export class DynamicCalls {
     const live = this.live.get(callId);
     if (!live) return { ok: false, code: this.ringSet.has(callId) ? "alreadySettled" : "unknown" };
     if (live.entry.epoch !== epochNow) return { ok: false, code: "alreadySettled" };
-    this.settle(callId, result);
+    this.settle(callId, result, "answered");
     return { ok: true };
   }
 
@@ -133,7 +158,7 @@ export class DynamicCalls {
   reset(reason: string): void {
     // A fresh result per call, not one shared object: these travel to different awaiters, and a shared
     // `content` array would make one consumer's handling of its result visible in everyone else's.
-    for (const callId of [...this.live.keys()]) this.settle(callId, cancelledCallResult(reason));
+    for (const callId of [...this.live.keys()]) this.settle(callId, cancelledCallResult(reason), "cancelled", reason);
   }
 
   /** Thread close / shutdown: `reset` plus the latch, after which a park answers cancelled IMMEDIATELY
@@ -146,7 +171,7 @@ export class DynamicCalls {
 
   /** The one settlement path — every exit above funnels through it, so the tombstone, the resolve and the
    *  announcement can never come apart. */
-  private settle(callId: string, result: CallToolResultLike): void {
+  private settle(callId: string, result: CallToolResultLike, outcome: "answered" | "cancelled", reason?: string): void {
     const live = this.live.get(callId);
     if (!live) return;
     live.cancel();
@@ -155,6 +180,13 @@ export class DynamicCalls {
     this.ringSet.add(callId);
     if (this.ring.length > TOMBSTONE_LIMIT) this.ringSet.delete(this.ring.shift()!);
     live.resolve(result);
-    this.emit({ kind: "settled", callId });
+    // GUARDED, where `park`'s equivalent is merely ordered last. `reset` settles in a loop, so a throwing
+    // emit here would strand every call it has not reached yet — and after `teardown` the latch means
+    // nothing can ever rescue them, which is the model waiting forever (D-M4-9). The owner's broadcast
+    // guards each `peer.notify` individually today, so this cannot fire; a registry whose D-M4-9 guarantee
+    // depends on that is one refactor away from breaking it silently.
+    try {
+      this.emit({ kind: "settled", callId, outcome, ...(reason !== undefined ? { reason } : {}) });
+    } catch { /* the promise is already resolved and the entry already gone — see above */ }
   }
 }
