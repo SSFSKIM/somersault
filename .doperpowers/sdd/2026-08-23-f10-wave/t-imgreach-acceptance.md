@@ -4,11 +4,17 @@ Branch `f10-imgreach`, head `a4b774f22c` at the time this ledger was written. No
 task — it runs the cells spec v4 acceptance 8–12 requires and records the evidence. Full report:
 `.doperpowers/sdd/2026-08-23-f10-t-imgreach/task-14-report.md`.
 
-**Headline finding (read this before the cell log): Cell 12's live pty half fails.** The I6 ambient
-clipboard hint (Task 13) is built and its own unit/component suite is green, but a live tmux-pty run of
-the real `ccx` binary never produces the hint. Root cause and reproduction are under "Cell 12" below. This
-is a genuine, live-verified defect against a spec acceptance criterion, not a tooling or environment
-blocker — see the report for the recommended next step.
+**Headline finding, as originally recorded (read this before the cell log): Cell 12's live pty half
+fails.** The I6 ambient clipboard hint (Task 13) is built and its own unit/component suite is green, but a
+live tmux-pty run of the real `ccx` binary never produces the hint. Root cause and reproduction are under
+"Cell 12" below. This is a genuine, live-verified defect against a spec acceptance criterion, not a tooling
+or environment blocker.
+
+**Update — fix wave closed this finding.** `ChatApp.tsx` now threads `readClipboardImage`/
+`checkClipboardImage` to `<ChatComposer>`; a mounted regression (`clipboardHintChatAppWiring.test.tsx`)
+proves the wiring through production code paths (red-before/green-after measured), and the same
+tmux + fake-`osascript` pty recipe now shows the hint firing live. See "Fix wave update (Task 14 Cell 12
+finding, closed)" under Cell 12 below for full evidence.
 
 ---
 
@@ -312,13 +318,46 @@ image" throughout):
 
 No "Image in clipboard" line appears anywhere in the captured pane, before or after either trigger.
 
-**Verdict: the fake-timer half of Cell 12 PASSES (26/26). The hermetic-pty half FAILS — this is a real,
-live-reproduced defect, not a blocked/skipped cell and not a faked capture.** The capture mechanism itself
-worked exactly as designed (real `ccx` process, real tty, real focus-in bytes, real fake-binary dispatch
-proven reachable by the same technique Cell 11's clipboard-codec suite already uses); what it proved is
-that the feature it was built to observe cannot fire in the real running app. See the report for the
-recommended next step (a one-line wiring fix — threading two props ChatApp already has access to but never
-forwards — is out of scope for this verification-only task).
+**Verdict (as originally verified, before the fix wave): the fake-timer half of Cell 12 PASSES (26/26). The
+hermetic-pty half FAILS — this is a real, live-reproduced defect, not a blocked/skipped cell and not a
+faked capture.** The capture mechanism itself worked exactly as designed (real `ccx` process, real tty,
+real focus-in bytes, real fake-binary dispatch proven reachable by the same technique Cell 11's
+clipboard-codec suite already uses); what it proved is that the feature it was built to observe cannot
+fire in the real running app. See the report for the recommended next step (a one-line wiring fix —
+threading two props ChatApp already has access to but never forwards — is out of scope for this
+verification-only task).
+
+### Fix wave update (Task 14 Cell 12 finding, closed) — Cell 12 hermetic-pty half now PASSES
+
+**The finding above is fixed and re-verified live.** `src/tui/ChatApp.tsx` now passes
+`readClipboardImage`/`checkClipboardImage` to its one `<ChatComposer>` JSX call site, using the exact same
+production defaults (`pasteClipboardImage(defaultClipboardDeps())`,
+`hasClipboardImage(process.platform, defaultCheckOnlyProcess())`) `ChatComposer`'s own ctrl+v fallback
+already used — so the hint's arm-gate (`ChatComposer.tsx:776`, `if (!readClipboardImageRef.current)
+return;`) is satisfied by production wiring, not only by a test-injected mock.
+
+**Regression coverage (MOUNTED, production wiring — no props injected onto `<ChatComposer>` directly):**
+new test `test/tui/clipboardHintChatAppWiring.test.tsx` renders `<ChatApp>` alone under the real
+`KeymapProvider` + `chatMain.createFocusChain()` route (the same topology `chatMain.tsx` builds for the
+real `ccx` binary), fakes only the platform-level child process (`node:child_process`'s `execFile`, the
+one real subprocess boundary `hasClipboardImage` crosses), sends a real `\x1b[I` focus-in byte sequence
+through `stdin`, and asserts the hint text appears. **Red-before/green-after, measured**: with ChatApp's
+two new props reverted (`git stash` on `src/tui/ChatApp.tsx` alone), this test fails —
+`expected '─────...' to contain 'Image in clipboard · ctrl+v to paste'`; restored, it passes. Full
+ChatApp-adjacent suite, `npm run typecheck`, and `npm run test:tui` all green afterward (see
+task-13-report.md's fix-wave section for verbatim output).
+
+**Hermetic-pty re-run against the fixed build — PASS.** Same tmux + fake-`osascript` recipe as the original
+FAILURE capture above (private socket `-L f10img14fix`, session `capfix1`, killed by name when done; fresh
+temp cwd + `CCX_FLEET_ROOT`; real `CLAUDE_CODE_OAUTH_TOKEN`; `dist/cli/bin.js` rebuilt clean post-fix): a
+real focus-in (`\x1b[I`) now produces `Image in clipboard · ctrl+v to paste`, dim and right-aligned in the
+footer, within the capture taken 2s after the focus report — and it is gone again by the ~9s capture, past
+`CLIPBOARD_HINT_TIMEOUT_MS` (8000ms). Full capture appended to `t-imgreach-pty-hint.txt` (the original
+FAILURE capture is kept above it, as history, not erased).
+
+**Verdict: Cell 12 is now a full PASS, both halves** — 26/26 fake-timer tests, the new mounted
+production-wiring regression, and the hermetic-pty capture all agree the ambient hint is reachable in the
+real running product.
 
 ---
 

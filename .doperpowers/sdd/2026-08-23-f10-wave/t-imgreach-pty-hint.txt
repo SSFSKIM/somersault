@@ -38,3 +38,52 @@ Shift+Tab to change mode.
   ⏵⏵ auto mode on (shift+tab to cycle)
 
 === end capture — no "Image in clipboard" hint present anywhere above ===
+
+===========================================================================================================
+T-IMGREACH Task 14 fix wave — re-run against the FIXED build (Cell 12 hermetic-pty, PASS)
+===========================================================================================================
+
+Same recipe as the FAILURE capture above, re-run against a build with the wiring fix applied
+(ChatApp.tsx now passes readClipboardImage/checkClipboardImage to <ChatComposer>, the same production
+defaults ChatComposer's own ctrl+v fallback already used). Private tmux socket (-L f10img14fix, session
+capfix1, killed by name when done — no shared/PTC session touched), a fake `osascript` (exit 0
+unconditionally) prepended to PATH inside a launch script's env, a fresh temp cwd + CCX_FLEET_ROOT, the
+real CLAUDE_CODE_OAUTH_TOKEN in the launched process's env (a genuine, live-authenticated `ccx` process via
+`dist/cli/bin.js`, built clean with `npm run build` after the fix). Sequence: launch -> wait for the
+composer to render -> send raw focus-in bytes (\x1b[I, tmux send-keys -H 1b 5b 49) -> wait 2s -> capture.
+
+=== pane capture, 2s after focus-in ===
+
+╭─── ccx v0.1.0 ──────────────────────────────────╮
+│ ✻ Welcome to Claude Code                        │
+╰─────────────────────────────────────────────────╯
+
+  cwd    /private/var/folders/c1/l4z5k02n2779byvnymzxsvth0000gn/T/tmp.3BjO0mySBj
+  model  claude-opus-5 · Claude subscription   ·   mode  auto
+
+  Tips for getting started
+  Run /init to create a CLAUDE.md file with instructions for Claude
+
+Auto mode lets Claude handle permission prompts automatically — Claude checks each tool call for risky actions and prompt injection before executing. Actions Claude identifies as safe are executed, while actions Claude
+identifies as risky are blocked and Claude may try a different approach. Ideal for long-running tasks. Claude can make mistakes that allow harmful commands to run, it's recommended to only use in isolated environments.
+Shift+Tab to change mode.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  new@Mac-mini:/private/var/folders/c1/l4z5k02n2779byvnymzxsvth0000gn/T/tmp.3BjO0mySBj [claude-opus-5] ctx:3% $0.00 · 0s
+  ⏵⏵ auto mode on (shift+tab to cycle)                                                                                                                                                 Image in clipboard · ctrl+v to paste
+
+=== end capture — "Image in clipboard · ctrl+v to paste" IS present, dim and right-aligned in the footer ===
+
+=== capture ~9s after focus-in (past CLIPBOARD_HINT_TIMEOUT_MS = 8000ms) ===
+
+  new@Mac-mini:/private/var/folders/c1/l4z5k02n2779byvnymzxsvth0000gn/T/tmp.3BjO0mySBj [claude-opus-5] ctx:3% $0.00 · 0s
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+=== end capture — the hint is gone by 8s, matching the model's own timeout contract ===
+
+Verdict: PASS. The wiring fix (ChatApp.tsx passing readClipboardImage/checkClipboardImage to
+<ChatComposer>) makes the ambient hint fire in the real running product, through the same
+tmux + fake-osascript pty harness that reproduced the original defect. No stray processes or tmux
+sessions/servers were left behind (`-L f10img14fix`'s session was killed by name after the capture).

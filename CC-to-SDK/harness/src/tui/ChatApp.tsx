@@ -65,6 +65,13 @@ import { userEchoLines } from "./render.js";
 import { indentRenderLine } from "./agentProgress.js";
 import { PaletteHost, PaletteSlot } from "./paletteSlot.js";
 import { ChatComposer, composerOwns, type ComposerCaret, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
+// F10 T-IMGREACH Task 14 fix wave (Cell 12): the two clipboard seams, wired to the SAME production
+// defaults `ChatComposer`'s own ctrl+v fallback already uses (`readClipboardImageRef.current ?? (() =>
+// pasteClipboardImage(defaultClipboardDeps()))`, `ChatComposer.tsx:1069`). Passing them explicitly here
+// is what the ambient hint's arm-gate needs: it bails outright when `readClipboardImage` is absent
+// (`ChatComposer.tsx:776`), a gate the ctrl+v fallback never has to satisfy.
+import { defaultClipboardDeps, pasteClipboardImage } from "./clipboardImage.js";
+import { defaultCheckOnlyProcess, hasClipboardImage } from "./clipboardCheck.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
@@ -1763,6 +1770,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // I6 — the ambient clipboard hint's primary trigger, threaded straight through; see
                       // `onFocusChange`'s own doc above for why this component reacts to nothing itself.
                       onFocusChange={onFocusChange}
+                      // Task 14 Cell 12 fix: the hint's own arm-gate is `!!readClipboardImage`
+                      // (ChatComposer.tsx:776) — left unwired, it always bails, so the hint could never
+                      // fire in the real product despite its own test suite injecting these directly and
+                      // going green. Same production functions the ctrl+v fallback already falls back to.
+                      readClipboardImage={() => pasteClipboardImage(defaultClipboardDeps())}
+                      checkClipboardImage={() => hasClipboardImage(process.platform, defaultCheckOnlyProcess())}
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.
