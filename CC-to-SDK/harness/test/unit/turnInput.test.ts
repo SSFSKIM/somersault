@@ -80,6 +80,19 @@ function imageBlock(buf: Buffer, mediaType = "image/png"): UserContentBlock {
 function textBlock(text: string): UserContentBlock { return { type: "text", text }; }
 function asText(b: UserContentBlock): string { if (b.type !== "text") throw new Error("expected a degraded text block"); return b.text; }
 
+/** GIF87a/GIF89a: 6-byte tag, then logical screen width/height as two LE uint16s at bytes 6-10.
+ *  Mirrors `imageDims.test.ts`'s own builder — `gifDimensions` never reads past byte 10. */
+const gifHeader = (w: number, h: number, tag = "GIF89a") => {
+  const b = Buffer.alloc(13); b.write(tag, 0, "ascii"); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b;
+};
+/** WebP lossless (VP8L): RIFF/WEBP/"VP8L" chunk headers, then the 0x2f signature byte, then width-1/
+ *  height-1 packed as 14 bits each into a little-endian 28-bit field. Mirrors `imageDims.test.ts`. */
+const webpVp8l = (w: number, h: number) => {
+  const b = Buffer.alloc(25); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(17, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8L", 12, "ascii"); b.writeUInt32LE(5, 16); b[20] = 0x2f;
+  b.writeUInt32LE((w - 1) & 0x3fff | (((h - 1) & 0x3fff) << 14), 21); return b;
+};
+
 // =====================================================================================================
 describe("assembleUserContent", () => {
   it("puts the text block first and appends images in caller order (canon L371395-371427)", () => {
@@ -138,10 +151,26 @@ describe("normalizeTurnInput — the header-decode 'library-bypass' cell", () =>
     expect(out[0].type).toBe("text");
     expect(asText(out[0])).toContain("dimensions 3000x3000 exceed the 2000x2000px limit");
   });
-  it("degrades data with no recognizable PNG/JPEG header at all", () => {
+  it("degrades data with no recognizable PNG/JPEG/GIF/WebP header at all", () => {
     const out = normalizeTurnInput([imageBlock(Buffer.from("not an image, just some bytes"))]) as UserContentBlock[];
     expect(out[0].type).toBe("text");
     expect(asText(out[0])).toBe("[Image could not be processed: unreadable image data]");
+  });
+});
+
+describe("normalizeTurnInput — bl4 T-GIFWEBP: GIF/WebP join the validator chain", () => {
+  it("a GIF survives normalization untouched — no longer replaced with the failure text", () => {
+    const block = imageBlock(gifHeader(4, 4), "image/gif");
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
+  });
+  it("a VP8L WebP survives normalization untouched — no longer replaced with the failure text", () => {
+    const block = imageBlock(webpVp8l(4, 4), "image/webp");
+    expect((normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1]).toEqual(block);
+  });
+  it("an oversized GIF still degrades — with the DIMENSION reason, not 'unreadable'", () => {
+    const out = normalizeTurnInput([imageBlock(gifHeader(2400, 10), "image/gif")]) as UserContentBlock[];
+    expect(out[0].type).toBe("text");
+    expect(asText(out[0])).toBe("[Image could not be processed: dimensions 2400x10 exceed the 2000x2000px limit]");
   });
 });
 

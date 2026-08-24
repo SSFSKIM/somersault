@@ -24,6 +24,19 @@ const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8B
 const PNG_RED = Buffer.concat([Buffer.from(PNG_1X1, "base64"), Buffer.from("RED-TAIL")]).toString("base64");
 const PNG_BLUE = Buffer.concat([Buffer.from(PNG_1X1, "base64"), Buffer.from("BLUE-TAIL")]).toString("base64");
 
+/** GIF87a/GIF89a: 6-byte tag, then logical screen width/height as two LE uint16s at bytes 6-10.
+ *  Mirrors `imageDims.test.ts`'s own builder. */
+const gifHeader = (w: number, h: number, tag = "GIF89a") => {
+  const b = Buffer.alloc(13); b.write(tag, 0, "ascii"); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b;
+};
+/** WebP lossless (VP8L): RIFF/WEBP/"VP8L" chunk headers, then the 0x2f signature byte, then width-1/
+ *  height-1 packed as 14 bits each into a little-endian 28-bit field. Mirrors `imageDims.test.ts`. */
+const webpVp8l = (w: number, h: number) => {
+  const b = Buffer.alloc(25); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(17, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8L", 12, "ascii"); b.writeUInt32LE(5, 16); b[20] = 0x2f;
+  b.writeUInt32LE((w - 1) & 0x3fff | (((h - 1) & 0x3fff) << 14), 21); return b;
+};
+
 function harness() {
   let t = 0;
   const decodes: UserContentBlock[] = [];
@@ -120,9 +133,31 @@ describe("I3a: chunk assembly and completion", () => {
 
   it("a mediaType outside IMAGE_MEDIA_TYPES is refused", () => {
     const { reg } = harness();
-    const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "image/gif" }));
+    const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "image/tiff" }));
     expect(r).toMatchObject({ ok: false });
-    expect(IMAGE_MEDIA_TYPES).not.toContain("image/gif");
+    expect(IMAGE_MEDIA_TYPES).not.toContain("image/tiff");
+  });
+
+  it("bl4 T-GIFWEBP: image/gif completes and reserves — GIF is now IN the allowlist", () => {
+    const { reg } = harness();
+    const gif = gifHeader(4, 4).toString("base64");
+    const r = reg.chunk(1, chunkOf(gif, { mediaType: "image/gif" }));
+    expect(r).toEqual({ ok: true, complete: true });
+    const res = reg.reserve(1, ["s1"]);
+    expect(res.ok).toBe(true);
+    expect((res as any).reservation.blocks[0].source.media_type).toBe("image/gif");
+    expect(IMAGE_MEDIA_TYPES).toContain("image/gif");
+  });
+
+  it("bl4 T-GIFWEBP: image/webp (VP8L) completes and reserves — WebP is now IN the allowlist", () => {
+    const { reg } = harness();
+    const webp = webpVp8l(4, 4).toString("base64");
+    const r = reg.chunk(1, chunkOf(webp, { mediaType: "image/webp" }));
+    expect(r).toEqual({ ok: true, complete: true });
+    const res = reg.reserve(1, ["s1"]);
+    expect(res.ok).toBe(true);
+    expect((res as any).reservation.blocks[0].source.media_type).toBe("image/webp");
+    expect(IMAGE_MEDIA_TYPES).toContain("image/webp");
   });
 
   it("a mediaType on a later chunk is ignored — the first chunk's is authoritative", () => {

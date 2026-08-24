@@ -9,7 +9,7 @@ import type { PendingDecision } from "../permissions/pending.js";
 import type { DecisionOutcome } from "../permissions/types.js";
 import type { CompactOutcome } from "../compaction/index.js";
 import type { UserTurnInput } from "../session/turnInput.js";
-import { MAX_IMAGES_PER_PROMPT, jpegDimensions, pngDimensions } from "../media/imageDims.js";
+import { MAX_IMAGES_PER_PROMPT, jpegDimensions, pngDimensions, gifDimensions, webpDimensions } from "../media/imageDims.js";
 
 /** F9 T-IMAGE Task 5 (I3b), spec v3.1: "version skew is LOUD" — the exact message a caller (`useChat.ts`)
  *  matches on to render this as a capability NOTICE rather than a turn-failure error line. Shared as one
@@ -155,7 +155,7 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
           // Header-decode, not caller-trust — same posture `session/turnInput.ts`'s builder takes: the
           // wire's `UserContentBlock` carries no dimensions field, so this is the only place a REMOTE
           // submit can report one at all.
-          const dims = pngDimensions(buf) ?? jpegDimensions(buf);
+          const dims = pngDimensions(buf) ?? jpegDimensions(buf) ?? gifDimensions(buf) ?? webpDimensions(buf);
           if (!dims) {
             // Final-review finding 3: degrade CLIENT-SIDE, before ever staging. `ops.ts`'s `stageImage`
             // schema requires POSITIVE dimensions — sending a 0x0 sentinel for an unreadable image used

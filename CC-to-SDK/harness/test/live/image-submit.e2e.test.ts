@@ -23,9 +23,10 @@
 // Subscription OAuth token — NEVER print/echo/log it; CCX_ALLOW_API_KEY stays unset so the API key (which
 // shadows the token and bills metered credits) is not picked up.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { SessionHost } from "../../src/host/host.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
@@ -213,4 +214,54 @@ live("F9 T-IMAGE Task 6 — live discrimination through the real REPL submit cha
       rmSync(fleetRoot, { recursive: true, force: true });
     }
   }, 300_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// bl4 T-GIFWEBP Task 3: keyed live proof that the widened staged-image pipeline (Tasks 1-2 on this
+// branch — the allowlist plus both validator chains) carries a REAL GIF and a REAL lossless WebP
+// through this same REPL submit chain, and that the live model actually decodes pixels from each —
+// not just that `validateImageBlock`'s byte-format check passes. Fixtures are the real, committed
+// toolchain output in `test/fixtures/images/` (see `make.mjs`'s header comment for the exact
+// generating commands), never synthesized here. Colours are DISTINCT PER FORMAT (spec G6: a shared
+// oracle colour lets a model guess right on either turn without reading either image) — GIF is solid
+// purple, WebP (lossless, VP8L) is solid orange — so each turn naming ITS OWN format's colour is only
+// explained by actually decoding that format's bytes.
+const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
+const readFixtureB64 = (name: string): string => readFileSync(join(FIXTURES_DIR, name)).toString("base64");
+const COLOR_PROMPT = "One word: what color is this image?";
+
+live("bl4 T-GIFWEBP Task 3 — real GIF/WebP fixtures through the live REPL submit chain", () => {
+  it("the real GIF fixture names purple/violet and the real lossless WebP fixture names orange, each on its own turn", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bl4gifwebp-live-"));
+    const fleetRoot = mkdtempSync(join(tmpdir(), "bl4gifwebp-fleet-"));
+    const env = { ...process.env, CCX_FLEET_ROOT: fleetRoot } as NodeJS.ProcessEnv;
+    const host = new SessionHost(
+      { short: "b14ee1f2", name: "bl4-gifwebp-live", cwd, kind: "interactive", detached: false,
+        config: { cwd, model: "claude-sonnet-4-6", permissionMode: "bypassPermissions", settingSources: [], maxTurns: 8 } as never,
+        env },
+    );
+    await host.start();
+    const socketPath = hostSocketPath(process.pid, env);
+    const adapter = remoteChatSession(socketPath);
+    try {
+      // TURN 1 — the real committed GIF (GIF87a, solid purple, 64x64).
+      const gifBlock: UserContentBlock = { type: "image", source: { type: "base64", media_type: "image/gif", data: readFixtureB64("live-purple-64x64.gif") } };
+      const framesGif: Frame[] = [];
+      const contentGif: UserTurnInput = [gifBlock, { type: "text", text: COLOR_PROMPT }];
+      await adapter.submit(contentGif, (m) => { framesGif.push(m as Frame); });
+      expect(assistantText(framesGif)).toMatch(/purple|violet/i);
+
+      // TURN 2 — the real committed lossless WebP (RIFF/WEBP/VP8L, solid orange, 64x64), same session.
+      const webpBlock: UserContentBlock = { type: "image", source: { type: "base64", media_type: "image/webp", data: readFixtureB64("live-orange-64x64.webp") } };
+      const framesWebp: Frame[] = [];
+      const contentWebp: UserTurnInput = [webpBlock, { type: "text", text: COLOR_PROMPT }];
+      await adapter.submit(contentWebp, (m) => { framesWebp.push(m as Frame); });
+      expect(assistantText(framesWebp)).toMatch(/orange/i);
+    } finally {
+      adapter.detach();
+      await host.stop().catch(() => {});
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(fleetRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

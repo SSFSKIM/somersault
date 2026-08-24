@@ -15,13 +15,14 @@ import { randomUUID } from "node:crypto";
 /** base64 bytes of ONE chunk's `data`. Kept well under `peer.ts`'s 256 KiB frame cap so a chunk plus
  *  its JSON-RPC envelope never risks tripping that ceiling on its own. */
 export const IMAGE_STAGE_CHUNK_MAX = 128 * 1024;
-/** PNG and JPEG ONLY — the formats the shared validator can actually read (re-review r3). `validateImageBlock`
- *  resolves dimensions with `pngDimensions(decoded) ?? jpegDimensions(decoded)`; anything else returns
- *  `unreadable image data`, so allowlisting GIF/WebP here would accept a stage at the handler and then fail it
- *  at completion with a confusing reason. Narrowing is also honest PARITY inside ccx: the F9 host stage path
- *  (`src/host/ops.ts:63` takes `mediaType: z.string().min(1)` with no allowlist at all) already strands a GIF
- *  the same way, because its bytes reach the same normalizer. See Spec-drift note 8 for the follow-up. */
-export const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg"] as const;
+/** Exactly the formats the shared validator can actually read (`validateImageBlock` resolves dimensions
+ *  with `pngDimensions(decoded) ?? jpegDimensions(decoded) ?? gifDimensions(decoded) ?? webpDimensions(decoded)`,
+ *  `../media/imageDims.ts`) AND the Claude API accepts (bl4 T-GIFWEBP widened this from PNG/JPEG-only once
+ *  Task 1 added the GIF/WebP readers). Listing a type here that the validator cannot read would accept a
+ *  stage at the handler and then fail it at completion with a confusing reason — this allowlist and that
+ *  reader chain must stay the same set. Still OUT, because `imageDims.ts` has no reader for either:
+ *  `image/tiff`, `image/bmp`. */
+export const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 export const MAX_STAGES_PER_CONNECTION = 4;
 export const MAX_STAGED_BYTES_GLOBAL = 32 * 1024 * 1024;    // across ALL connections (round-2 F7:
 export const MAX_STAGES_GLOBAL = 64;                        // per-connection caps alone are unbounded

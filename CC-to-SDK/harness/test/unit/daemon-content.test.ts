@@ -35,6 +35,11 @@ const img = (data = PNG_1X1): UserContentBlock => ({ type: "image", source: { ty
 // (test/fixtures/images/make.mjs) rather than re-synthesized here.
 const MAX_IMAGE_B64 = readFileSync(join(HERE, "..", "fixtures", "images", "exactly-512000.png")).toString("base64");
 const maxImageBlock = (): UserContentBlock => ({ type: "image", source: { type: "base64", media_type: "image/png", data: MAX_IMAGE_B64 } });
+// bl4 T-GIFWEBP Task 3: the real, committed GIF fixture (see `test/fixtures/images/make.mjs`) — not a
+// re-synthesized minimal GIF — proving the daemon's `submit_content` transport carries a non-PNG/JPEG
+// media type through to the supervisor unmodified, end to end over a real socket.
+const GIF_B64 = readFileSync(join(HERE, "..", "fixtures", "images", "live-purple-64x64.gif")).toString("base64");
+const gifImageBlock = (): UserContentBlock => ({ type: "image", source: { type: "base64", media_type: "image/gif", data: GIF_B64 } });
 
 async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -345,6 +350,15 @@ describe("I4: the server's frame cap and partial-line deadline", () => {
     const { supervisor, path, id } = await realDaemon();
     await connectDaemon(path).submitContent(id, [maxImageBlock(), maxImageBlock()], () => {});
     expect((supervisor.submitted[0] as UserContentBlock[]).filter((b) => b.type === "image")).toHaveLength(2);
+  });
+
+  it("bl4 T-GIFWEBP: a real committed GIF fixture reaches the supervisor over the daemon transport unmodified", async () => {
+    const { supervisor, path, id } = await realDaemon();
+    await connectDaemon(path).submitContent(id, [gifImageBlock()], () => {});
+    expect(supervisor.submitted[0]).toEqual([
+      { type: "text", text: "[Image #1]" },
+      { type: "image", source: { type: "base64", media_type: "image/gif", data: GIF_B64 } },
+    ]);
   });
 
   it("I4: a maximum JSON-ESCAPED-text prompt succeeds", async () => {

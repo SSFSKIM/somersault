@@ -9,14 +9,14 @@
 // at all, so there is nothing to lie about except the bytes themselves, and the bytes are what gets
 // read.
 //
-// Reused, not reinvented: `pngDimensions`/`jpegDimensions` (the header-only readers) and the two
-// shared budget constants (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come from `../media/imageDims.js`
-// — a neutral leaf with no imports of its own (F10 T-MAINT item 3 ends the `session/` → `tui/`
-// inversion this paragraph used to argue for: Task 2's paste-time ladder and this builder enforce the
-// identical per-image ceiling from ONE source of truth, and neither now reaches into the other's
-// layer to get it). This builder still re-decodes each block's OWN bytes rather than trusting
+// Reused, not reinvented: the four header-only readers (`pngDimensions`/`jpegDimensions`/`gifDimensions`/
+// `webpDimensions`) and the two shared budget constants (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come
+// from `../media/imageDims.js` — a neutral leaf with no imports of its own (F10 T-MAINT item 3 ends the
+// `session/` → `tui/` inversion this paragraph used to argue for: Task 2's paste-time ladder and this
+// builder enforce the identical per-image ceiling from ONE source of truth, and neither now reaches into
+// the other's layer to get it). This builder still re-decodes each block's OWN bytes rather than trusting
 // anything a caller claims about them.
-import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
+import { pngDimensions, jpegDimensions, gifDimensions, webpDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
 
 /** The wire shape canon itself sends (spot-verified at `cli.pretty.js` L371395-371427 and re-proven
  *  live by probe 113): a base64 image block, `media_type` a bare string here (not the Anthropic SDK's
@@ -98,13 +98,13 @@ function checkImageBlock(block: UserContentBlock & { type: "image" }): { ok: tru
   // string's length is always ≥ its decoded byte count, so bounding the STRING costs nothing to check
   // and bounds the allocation `Buffer.from` is about to make.
   if (data.length > MAX_BASE64_INPUT_BYTES) return { ok: false, reason: `base64 input exceeds the ${MAX_BASE64_INPUT_BYTES}-byte limit` };
-  // Header-decode, not caller-trust: read the ACTUAL bytes' own PNG IHDR / JPEG SOF, ignoring both
-  // `media_type` and any dimensions a caller might have supplied elsewhere. This is what defeats the
-  // "library-bypass" case — a small, cheaply-constructed buffer whose header claims oversized pixel
-  // dimensions still gets caught here, because the check reads the header field itself rather than
-  // inferring size from byte count.
+  // Header-decode, not caller-trust: read the ACTUAL bytes' own PNG IHDR / JPEG SOF / GIF logical-screen
+  // descriptor / WebP VP8-VP8L-VP8X payload, ignoring both `media_type` and any dimensions a caller might
+  // have supplied elsewhere. This is what defeats the "library-bypass" case — a small, cheaply-constructed
+  // buffer whose header claims oversized pixel dimensions still gets caught here, because the check reads
+  // the header field itself rather than inferring size from byte count.
   const decoded = Buffer.from(data, "base64");
-  const dims = pngDimensions(decoded) ?? jpegDimensions(decoded);
+  const dims = pngDimensions(decoded) ?? jpegDimensions(decoded) ?? gifDimensions(decoded) ?? webpDimensions(decoded);
   if (!dims) return { ok: false, reason: "unreadable image data" };
   if (dims.width > MAX_DIMENSION || dims.height > MAX_DIMENSION) {
     return { ok: false, reason: `dimensions ${dims.width}x${dims.height} exceed the ${MAX_DIMENSION}x${MAX_DIMENSION}px limit` };
