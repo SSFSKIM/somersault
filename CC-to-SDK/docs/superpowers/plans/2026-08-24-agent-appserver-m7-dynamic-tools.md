@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use doperpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Plan rev 6** — five adversarial review rounds folded in (Revision Notes). **Review base for every M7 review is `781683b4cf`.**
+**Plan rev 10** — nine adversarial review rounds folded in (Revision Notes). **Review base for every M7 review is `781683b4cf`.**
 
 **Goal:** A client declares tools at `thread/start`/`thread/resume` and IS the tool runtime — the model's call parks and travels to thread subscribers as `tool/callRequested`, the client's `tool/callResult` settles it — with zero wire-grammar change (the park trio).
 
