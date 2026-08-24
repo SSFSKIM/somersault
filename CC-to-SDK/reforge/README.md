@@ -165,9 +165,61 @@ Also fixed: the `file-tools` scenario let the model pick its own path and it
 wrote **outside the sandbox**; every replay re-created the stray file. The
 prompt now pins the absolute sandbox path and the check asserts containment.
 
-## Next (M2c+)
+## M2c — coverage widened to what ccx actually consumes (2026-08-24): 17/17
 
-M2c — extend the corpus toward the surfaces ccx actually consumes (subagents,
-MCP, compaction, slash commands, session-store CRUD). Then scale strangler
-replacement: one module at a time, each gated by `strangle/gate.ts` (which now
-runs the full M2b surface, not just the corpus).
+Scenario selection was **derived from the product**, not guessed: an inventory
+of every SDK surface `harness/src` consumes at runtime (options set, frames
+branched on, control-handle methods called, tool names hard-coded). Eight
+scenarios added in `m2c/scenarios.ts`, appended to the M1 corpus:
+
+| scenario | claim |
+|---|---|
+| subagent | the `Agent` tool dispatches a child turn, its result folds back, and frames carry `parent_tool_use_id` |
+| partial-tool-args | `input_json_delta` fragments reassemble into valid tool arguments |
+| mcp-tool | an in-process SDK MCP server tool is callable and round-trips |
+| parallel-tools | a batch of tool calls is issued without waiting, all results return |
+| slash-compact | `/compact` is dispatched engine-side and reaches a `compact_boundary` with `pre_tokens` |
+| runtime-setters | `setPermissionMode` mid-session; the session survives |
+| todo-tool | task-list tool structured input round-trips |
+| search-tools | Glob and Grep operate inside the sandbox |
+
+**The runner now triages failures instead of trusting them.** A diff between
+the oracle and the engine under test means "the engines differ" *only if the
+oracle is deterministic on that scenario*. Measured counter-example:
+parallel tool execution returns `tool_result` blocks in **completion** order,
+so the oracle disagrees with itself. On any diff the runner replays the oracle
+a second time and marks the paths where it self-disagrees as nondeterministic;
+only the remaining diffs fail the run. Without this, racy scenarios produce a
+flaky gate — which is worse than no gate, because it teaches you to ignore red.
+
+Four scenario-level facts this round measured (each one a spec line engine-ts
+must satisfy, and each one initially wrong in the scenario as written):
+
+- The subagent dispatch tool is **`Agent`**, not `Task`. (ccx's TUI matches
+  only `Agent`; the appserver accepts both — an engine emitting only `Task`
+  loses every TUI subagent row.)
+- **The SDK splits a multi-block assistant message into one message per block**,
+  so "was this a parallel batch?" cannot be answered by looking for a message
+  with >1 `tool_use`. The observable signature is consecutive `tool_use`
+  messages with no `tool_result` between them.
+- The engine reaches for **`TaskCreate`**, not `TodoWrite`, and `allowedTools`
+  does not narrow the catalog under `bypassPermissions`.
+- `/compact` on a short conversation **fails** with "Not enough messages to
+  compact" — real compaction needs history, so the scenario builds six turns
+  first.
+
+Normalization additions, each forced by a measured diff: run-scoped **id
+mapping** (engine-minted `agentId`/`task_id`/`session_id` become `<id0>`,
+`<id1>`… in first-seen order — mapped rather than blanked so an engine that
+uses two ids where the oracle used one still diffs), `_time` keys, `output_file`,
+and in-prose `*_ms: N` clock values.
+
+## Next (M3+)
+
+Remaining known coverage gaps, in the order the inventory ranks them: the
+caller-minted `uuid` / `origin.kind` round-trip and `result.user_message_uuid`
+correlation (Tier 1 — every turn hangs if wrong), `interrupt()`, the
+`canUseTool` option-bag fields (`suggestions`, `decisionReason`, `blockedPath`),
+`system` task sidechannel frames (`task_started` / `task_notification` /
+`background_tasks_changed`), and `api_retry` frame fields. Then scale strangler
+replacement: one module at a time, each gated by `strangle/gate.ts`.

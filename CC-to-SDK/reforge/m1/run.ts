@@ -10,11 +10,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { diffTranscripts, normalizeValue, type DiffFinding } from "../src/differ.js";
+import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
 import { scrubRequestBody, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
-import { SCENARIOS } from "./scenarios.js";
+import { M2C_SCENARIOS } from "../m2c/scenarios.js";
+import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
+
+const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS];
 
 const args = process.argv.slice(2);
 const only = args.includes("--scenario") ? args[args.indexOf("--scenario") + 1] : undefined;
@@ -97,17 +100,51 @@ function loadObservedRequests(file: string): unknown[] {
     }));
 }
 
-function report(label: string, findings: DiffFinding[]): boolean {
+function report(label: string, findings: DiffFinding[], flakyPaths?: Set<string>): boolean {
   if (findings.length === 0) {
     console.log(`    ${label}: identical`);
     return true;
   }
-  console.log(`    ${label}: ${findings.length} difference(s)`);
-  for (const f of findings.slice(0, 10)) {
+  const genuine = flakyPaths ? findings.filter((f) => !flakyPaths.has(f.path)) : findings;
+  const flaky = findings.length - genuine.length;
+  const note = flaky > 0 ? ` (${flaky} attributed to oracle nondeterminism)` : "";
+  if (genuine.length === 0) {
+    console.log(`    ${label}: identical modulo ${flaky} nondeterministic path(s)`);
+    return true;
+  }
+  console.log(`    ${label}: ${genuine.length} difference(s)${note}`);
+  for (const f of genuine.slice(0, 10)) {
     console.log(`      ${f.path}: ${JSON.stringify(f.a)?.slice(0, 100)}  !=  ${JSON.stringify(f.b)?.slice(0, 100)}`);
   }
   return false;
 }
+
+/**
+ * Failure triage. A diff between A and B means "the engines differ" ONLY if the
+ * oracle is deterministic on this scenario. Measured counter-example: parallel
+ * tool execution returns tool_result blocks in COMPLETION order, so two runs of
+ * the same engine disagree. Without this, such scenarios produce a flaky gate
+ * and — worse — teach you to ignore red.
+ *
+ * So on any diff, replay the ORACLE a second time and collect the paths where it
+ * disagrees with itself. Those paths are nondeterministic and not attributable
+ * to the engine under test.
+ */
+async function oracleFlakyPaths(s: Scenario, cassette: string): Promise<Set<string>> {
+  const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2");
+  const paths = new Set<string>();
+  for (const f of diffTranscripts(aBaseline!.messages, a2.messages)) paths.add(f.path);
+  for (const f of diffTranscripts(aBaseline!.events, a2.events)) paths.add(f.path);
+  const n1 = makeRunNormalizer(aBaseline!.messages);
+  const n2 = makeRunNormalizer(a2.messages);
+  for (const f of diffTranscripts(
+    loadObservedRequests(aBaseline!.observedFile).map(n1),
+    loadObservedRequests(a2.observedFile).map(n2),
+  ))
+    paths.add(f.path);
+  return paths;
+}
+let aBaseline: RunResult | null = null;
 
 const verdicts: { tag: string; pass: boolean }[] = [];
 
@@ -134,9 +171,29 @@ for (const s of SCENARIOS) {
   saveTranscript(`m1-${s.tag}-A`, { engine: "engine-real", messages: a.messages, durationMs: 0 });
   saveTranscript(`m1-${s.tag}-B`, { engine: engineB, messages: b.messages, durationMs: 0 });
 
-  const tOk = report("transcripts", diffTranscripts(a.messages, b.messages));
-  const eOk = report("events", diffTranscripts(a.events, b.events));
-  const rOk = report("requests", diffTranscripts(loadObservedRequests(a.observedFile), loadObservedRequests(b.observedFile)));
+  const tFind = diffTranscripts(a.messages, b.messages);
+  const eFind = diffTranscripts(a.events, b.events);
+  // Requests carry engine-minted ids only inside free text, so their id map has
+  // to come from that side's transcript, where the ids appear as keys.
+  const normA = makeRunNormalizer(a.messages);
+  const normB = makeRunNormalizer(b.messages);
+  const rFind = diffTranscripts(
+    loadObservedRequests(a.observedFile).map(normA),
+    loadObservedRequests(b.observedFile).map(normB),
+  );
+
+  // Only pay for triage when something actually differs.
+  let flaky: Set<string> | undefined;
+  if (tFind.length + eFind.length + rFind.length > 0) {
+    aBaseline = a;
+    console.log("    (diff seen — replaying the oracle again to separate nondeterminism)");
+    flaky = await oracleFlakyPaths(s, cassette);
+    if (flaky.size > 0) console.log(`    oracle is nondeterministic on ${flaky.size} path(s)`);
+  }
+
+  const tOk = report("transcripts", tFind, flaky);
+  const eOk = report("events", eFind, flaky);
+  const rOk = report("requests", rFind, flaky);
   // substance check — guards the hollow-pass class (identical-but-empty behavior)
   const failure = s.check?.(a.messages, a.events) ?? null;
   if (failure) console.log(`    substance: FAIL — ${failure}`);

@@ -12,7 +12,7 @@ const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
 
 const SUITES: [string, string[]][] = [
-  ["corpus (9 scenarios)", ["m1/run.ts", "--engineB", engineB]],
+  ["corpus (17 scenarios)", ["m1/run.ts", "--engineB", engineB]],
   ["faults (5 injections)", ["m2/faults.ts", "--engineB", engineB]],
   ["partials (stream shape)", ["m2/partials.ts", "--engineB", engineB]],
   ["cross-resume (store)", ["m2/cross-resume.ts", "--engineB", engineB]],
