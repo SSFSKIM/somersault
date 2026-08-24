@@ -214,12 +214,44 @@ mapping** (engine-minted `agentId`/`task_id`/`session_id` become `<id0>`,
 uses two ids where the oracle used one still diffs), `_time` keys, `output_file`,
 and in-prose `*_ms: N` clock values.
 
-## Next (M3+)
+## M3-A — Tier-1 surfaces (2026-08-24)
 
-Remaining known coverage gaps, in the order the inventory ranks them: the
-caller-minted `uuid` / `origin.kind` round-trip and `result.user_message_uuid`
-correlation (Tier 1 — every turn hangs if wrong), `interrupt()`, the
-`canUseTool` option-bag fields (`suggestions`, `decisionReason`, `blockedPath`),
-`system` task sidechannel frames (`task_started` / `task_notification` /
-`background_tasks_changed`), and `api_retry` frame fields. Then scale strangler
+The five surfaces the ccx inventory ranked highest, in `m3/scenarios.ts`:
+
+| scenario | claim | state |
+|---|---|---|
+| uuid-correlation | caller-minted `uuid` echoes on `result.user_message_uuid`; origin survives only for `human` | PASS |
+| interrupt | `interrupt()` cuts a running tool short and the turn reaches a definite end | PASS |
+| permission-bag | `canUseTool` gets a populated bag (`toolUseID`, `signal`); `updatedInput` actually changes what runs | PASS |
+| background-task | a backgrounded `Agent` emits `task_started` + `background_tasks_changed` | recording blocked (rate limit) |
+| fork-session | `forkSession` mints a new id and keeps the parent's context | recording blocked (rate limit) |
+
+**The origin contract is narrower than the types suggest** — and the probe
+(`m3/probe-origin.ts`) settled *who* enforces it. Driving the engine on the raw
+stream-json path, with no `sdk.mjs` in between: of the declared kinds
+`human | channel | peer`, **only `human` survives** onto the result frame;
+`peer`, `channel`, and unknown kinds all come back as `origin: null`
+(unattributed, which fails closed at strict `isHuman()` gates). So the stripping
+is the **engine's**, not the wrapper's — engine-ts must reproduce it, because an
+engine that echoed the caller's kind verbatim would let unattributed input walk
+through those gates. Two consequences: ccx's own `auto-continuation` stamping
+arrives unattributed, and peer/channel attribution is not deliverable over this
+path at all.
+
+**New harness guard: infrastructure failures are never frozen into cassettes.**
+A recording that captured a rate limit or gateway error is not a cassette —
+replaying it grades every engine against the same failure, so the scenario
+silently measures nothing. The runner now discards such a take and reports it,
+instead of freezing the bad recording.
+
+Two scenario-authoring corrections this round, both the same shape as earlier
+rounds: interrupting the instant a `tool_use` block appears races the engine's
+dispatch and produced a bare `exit(1)` (interrupt once the tool is actually
+running); and "did the interrupted command complete?" must be judged on tool
+**results**, not a whole-transcript substring search — the `tool_use` block
+necessarily contains the command string it was told to run.
+
+## Next
+
+Finish recording the two rate-limited scenarios, then scale strangler
 replacement: one module at a time, each gated by `strangle/gate.ts`.

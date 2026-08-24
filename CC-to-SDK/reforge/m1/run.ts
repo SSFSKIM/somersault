@@ -15,9 +15,10 @@ import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harnes
 import { scrubRequestBody, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
+import { M3_SCENARIOS } from "../m3/scenarios.js";
 import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
 
-const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS];
+const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS];
 
 const args = process.argv.slice(2);
 const only = args.includes("--scenario") ? args[args.indexOf("--scenario") + 1] : undefined;
@@ -161,6 +162,21 @@ for (const s of SCENARIOS) {
     const entries = existsSync(cassette) ? readFileSync(cassette, "utf8").split("\n").filter(Boolean).length : 0;
     console.log(`  recorded ${entries} API exchange(s)`);
     assertNoOperatorLeak(cassette);
+    // A recording that captured an infrastructure failure (rate limit, gateway
+    // error) is not a cassette — replaying it grades every engine against the
+    // same failure and the scenario silently measures nothing. Discard it so the
+    // next run re-records, rather than freezing the bad take.
+    const infraFail = rec.messages.some((m) => {
+      const t = (m as { type?: string }).type;
+      const msg = String((m as { message?: unknown }).message ?? "");
+      return t === "reforge-exception" && /rate limit|temporarily limiting|overloaded|502|503|504/i.test(msg);
+    });
+    if (infraFail) {
+      rmSync(cassette, { force: true });
+      console.log("    DISCARDED: recording captured an infrastructure failure (not engine behavior) — rerun to re-record");
+      verdicts.push({ tag: s.tag, pass: false });
+      continue;
+    }
   } else {
     console.log("  cassette exists — reusing");
   }
