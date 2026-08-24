@@ -22,11 +22,12 @@ function phase(label: string, buildArgs: string[], expectPass: boolean): boolean
   const booted = boot.stdout.includes("2.1.241");
   console.log(`  boot: ${booted ? "ok (2.1.241)" : "FAILED — bundle produced no version output"}`);
   if (!booted) return false;
-  const corpus = run("npx", ["tsx", "m1/run.ts", "--engineB", "engine-strangled"]);
+  // Full M2b surface: corpus + faults + partials + cross-resume + raw protocol.
+  const corpus = run("npx", ["tsx", "m2/all.ts", "--engineB", "engine-strangled"]);
   const passed = corpus.status === 0;
-  const verdicts = corpus.stdout.split("\n").filter((l) => /^\s+(PASS|FAIL)\s/.test(l));
+  const verdicts = corpus.stdout.split("\n").filter((l) => /^\s+(PASS|FAIL)\s{2}/.test(l)).slice(-5);
   for (const v of verdicts) console.log(`  ${v.trim()}`);
-  console.log(`  corpus: ${passed ? "ALL PASS" : "FAILURES"} — expected ${expectPass ? "green" : "red"}`);
+  console.log(`  suites: ${passed ? "ALL PASS" : "FAILURES"} — expected ${expectPass ? "green" : "red"}`);
   return passed === expectPass;
 }
 

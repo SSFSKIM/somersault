@@ -22,6 +22,14 @@ export interface CassetteEntry {
   status: number;
   contentType: string;
   responseBody: string;
+  /**
+   * Serve this entry without consuming it. Required for fault entries: an
+   * engine RETRIES a failed call, and a consume-once entry would leave the
+   * retry unmatched — so the engine would see the proxy's own fallback 500
+   * instead of the injected fault. (Measured: every injected fault, including
+   * 529 and 429, surfaced as the fallback until this existed.)
+   */
+  repeat?: boolean;
 }
 
 const REDACT_HEADERS = new Set(["authorization", "x-api-key", "cookie", "host", "content-length", "accept-encoding"]);
@@ -138,7 +146,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
       res.end(JSON.stringify({ error: "reforge-replay: no cassette entry", method, path }));
       return;
     }
-    consumed.add(entry.seq);
+    if (!entry.repeat) consumed.add(entry.seq);
     res.writeHead(entry.status, { "content-type": entry.contentType });
     if (entry.contentType.includes("text/event-stream")) {
       for (const block of entry.responseBody.split("\n\n")) {

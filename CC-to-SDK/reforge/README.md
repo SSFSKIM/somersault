@@ -120,35 +120,54 @@ Two traps this spike measured, both silent-failure class:
   the CJS wrapper opening. Any build that touches the head needs a boot check,
   because this failure is invisible without one.
 
-## Known harness defects (audited 2026-08-24, not yet fixed)
+## M2b — harness repair (2026-08-24): five audited defects closed
 
-Tracked honestly — today's green is bounded by these:
+The audit that produced these ("is that really all?") is the reason today's
+green means more than yesterday's. One aggregate entry point runs the whole
+acceptance surface:
 
-- **H1 `~/.claude` is shared with the real installation.** Corpus runs have
-  already written 63 session files there. Isolation via `CLAUDE_CONFIG_DIR`
-  needs a probe first: a fresh config dir may change engine behavior
-  (onboarding/first-run state).
-- **H2 no error/retry coverage.** Retry, backoff, and stream-interruption paths
-  are a large share of engine code and are never exercised by happy-path
-  recordings. The replay proxy makes **synthetic fault-injection cassettes**
-  (mid-stream 500, overloaded, truncated SSE) essentially free — unused so far.
-- **H3 partial streaming unverified.** ccx consumes `includePartialMessages`
-  stream events; the corpus diffs only final messages, so a reimplementation
-  could batch partials differently and still pass.
-- **H4 filesystem side effects are not diffed.** The session-store format is a
-  contract engine-ts must honor. `resume` only tests same-engine resume;
-  **cross-engine resume** (real writes, strangled/ts resumes) is the real test.
-- **H5 driven only through sdk.mjs.** Protocol surface the wrapper hides (e.g.
-  the hooks that never fire headlessly) needs a raw stream-json driver.
+```sh
+npx tsx m2/all.ts [--engineB <name>]   # corpus + faults + partials + cross-resume + raw
+```
 
-Also fixed this round: the `file-tools` scenario originally let the model pick
-its own path and it wrote **outside the sandbox** (a garbled repo path) — every
-replay faithfully re-created the stray file. The prompt now pins the absolute
-sandbox path and the substance check asserts containment.
+| id | defect | fix | verdict |
+|---|---|---|---|
+| H1 | shared real `~/.claude` | `CLAUDE_CONFIG_DIR` → `reforge/config` in `baseOptions`, plus a record-time leak check | closed |
+| H2 | zero error/retry coverage | `src/faults.ts` derives fault cassettes; `m2/faults.ts` grades 5 injections | 5/5 |
+| H3 | partial streaming unverified | `m2/partials.ts` diffs the stream-event *type sequence* and reassembled text | PASS |
+| H4 | filesystem/store contract undiffed | `m2/cross-resume.ts` — store shape + **cross-engine** resume both ways | 4/4 |
+| H5 | driven only through sdk.mjs | `m2/raw-protocol.ts` speaks stream-json over stdio directly | PASS |
 
-## Next (M2b+)
+**H1 was worse than "untidy".** The isolation probe (`m2/probe-isolation.ts`)
+measured that `settingSources: []` does **not** contain the config dir: the
+operator's memory index, personal slash commands, and identity were being
+injected into every recorded system prompt — so cassettes carried personal data
+*and* would change whenever that state changed. Isolation is total (real-store
+writes: +0) and all nine cassettes were re-recorded clean. Cassettes are
+gitignored and were never committed (verified). The leak check now runs at
+record time so this cannot silently return.
 
-M2b — repair the harness defects above (H1 first, probe-led). M2c — extend the
-corpus toward the surfaces ccx actually consumes (subagents, MCP, compaction,
-slash commands, session-store CRUD). Then scale strangler replacement: one
-module at a time, each gated by `strangle/gate.ts`.
+**H2 caught a second hollow pass — in the harness itself.** The first fault run
+reported 5/5 PASS, but every injected fault (529, 429, truncated) surfaced as
+`API Error: 500 {"error":"reforge-replay: no cassette entry"}` — the engines
+agreed on *the proxy's own fallback*, because a retry consumed the cassette.
+Fixed with repeatable cassette entries (`repeat: true`), plus a substance gate
+that fails any fault run where the engine saw the fallback. Retries are bounded
+via `CLAUDE_CODE_MAX_RETRIES`, which also makes the retry count itself diffable
+instead of a timing artifact.
+
+Normalization additions this round (each justified, each found by a suite):
+`*_ms`/`*_at` clock patterns, and **value-level** `127.0.0.1:<port>` — the
+engine echoes the harness-assigned proxy port into user-facing error text,
+where key-based scrubbing cannot reach it.
+
+Also fixed: the `file-tools` scenario let the model pick its own path and it
+wrote **outside the sandbox**; every replay re-created the stray file. The
+prompt now pins the absolute sandbox path and the check asserts containment.
+
+## Next (M2c+)
+
+M2c — extend the corpus toward the surfaces ccx actually consumes (subagents,
+MCP, compaction, slash commands, session-store CRUD). Then scale strangler
+replacement: one module at a time, each gated by `strangle/gate.ts` (which now
+runs the full M2b surface, not just the corpus).

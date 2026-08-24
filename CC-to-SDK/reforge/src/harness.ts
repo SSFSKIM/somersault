@@ -4,7 +4,17 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { SANDBOX } from "./runTurn.js";
+import { REFORGE_ROOT, SANDBOX } from "./runTurn.js";
+
+/**
+ * H1 — reforge-owned config dir. `settingSources: []` does NOT contain this:
+ * the probe measured the shared real ~/.claude still injecting the user's
+ * memory index, personal slash commands, and identity into every system prompt
+ * (and 63 session files written into the user's real store). Isolation is
+ * total (real-store writes: +0) and makes recordings reproducible; the dir is
+ * persistent rather than per-run so first-run/onboarding state stays stable.
+ */
+export const CONFIG_DIR = join(REFORGE_ROOT, "config");
 
 export interface ScenarioContext {
   /** absolute path of the engine wrapper under test */
@@ -49,12 +59,14 @@ export const hasThinking = (msgs: unknown[]): boolean =>
 
 /** Deterministic defaults every scenario builds on. Options.env REPLACES the subprocess env. */
 export function baseOptions(ctx: ScenarioContext): Options {
+  mkdirSync(CONFIG_DIR, { recursive: true });
   return {
     pathToClaudeCodeExecutable: ctx.engine,
     cwd: SANDBOX,
     settingSources: [],
     env: {
       ...(process.env as Record<string, string>),
+      CLAUDE_CONFIG_DIR: CONFIG_DIR,
       DISABLE_TELEMETRY: "1",
       DISABLE_ERROR_REPORTING: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",

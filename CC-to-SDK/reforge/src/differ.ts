@@ -39,7 +39,20 @@ const isScrubbedKey = (k: string) => SCRUB_KEYS.has(k) || SCRUB_KEY_PATTERNS.som
 // Whole message types that are pure environment telemetry, not engine behavior.
 const DROP_MESSAGE_TYPES = new Set(["rate_limit_event"]);
 
+/**
+ * Value-level scrubs. The replay proxy binds an EPHEMERAL port per run, and the
+ * engine echoes its base URL into user-facing error text ("check your inference
+ * gateway (127.0.0.1:64277)"). That port is assigned by the harness, so it is
+ * incidental — but it is embedded in a string, where key-based scrubbing cannot
+ * reach it. Found by the H2 fault suite: two engines produced byte-identical
+ * error messages that differed only in the port each was handed.
+ */
+const VALUE_SCRUBS: [RegExp, string][] = [[/127\.0\.0\.1:\d+/g, "127.0.0.1:<port>"]];
+
+const scrubString = (s: string) => VALUE_SCRUBS.reduce((acc, [re, to]) => acc.replace(re, to), s);
+
 export function normalizeValue(v: unknown, keyPath: string[] = []): unknown {
+  if (typeof v === "string") return scrubString(v);
   if (Array.isArray(v)) return v.map((x) => normalizeValue(x, keyPath));
   if (v !== null && typeof v === "object") {
     const out: Record<string, unknown> = {};

@@ -8,6 +8,7 @@
 //
 // Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
@@ -59,6 +60,30 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   return { messages, events, observedFile };
 }
 
+/**
+ * H1 regression gate. Cassettes are recordings of real prompts; if the engine's
+ * config dir leaks, they capture the operator's identity, memory index, and
+ * personal commands — a privacy problem and a determinism problem (the
+ * recording would change whenever that state changes). Checked at record time.
+ */
+function assertNoOperatorLeak(cassette: string): void {
+  const text = readFileSync(cassette, "utf8");
+  // The sandbox path legitimately sits under $HOME, so bare-home is not a
+  // marker; the operator's real config dir and identity are.
+  const markers: [string, string][] = [
+    [join(homedir(), ".claude"), "operator config dir"],
+    ["Memory index", "operator memory index"],
+    ["@gmail.com", "operator email"],
+  ];
+  const hits = markers.filter(([m]) => text.includes(m)).map(([, label]) => label);
+  if (hits.length > 0) {
+    console.log(`    LEAK: cassette contains ${hits.join(", ")} — config isolation is not holding`);
+    process.exitCode = 1;
+  } else {
+    console.log("    leak check: clean");
+  }
+}
+
 function loadObservedRequests(file: string): unknown[] {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
@@ -98,6 +123,7 @@ for (const s of SCENARIOS) {
     saveTranscript(`m1-${s.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
     const entries = existsSync(cassette) ? readFileSync(cassette, "utf8").split("\n").filter(Boolean).length : 0;
     console.log(`  recorded ${entries} API exchange(s)`);
+    assertNoOperatorLeak(cassette);
   } else {
     console.log("  cassette exists — reusing");
   }
