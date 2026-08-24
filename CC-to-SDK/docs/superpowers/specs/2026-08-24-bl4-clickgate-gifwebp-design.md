@@ -200,6 +200,27 @@ and `:1985` flip; coverage.md entry), memory, report. Never push.
 
 ## Surprises & Discoveries
 
+- (implementation) Task 5 was verify-only: fullscreen markers were ALREADY bare — `useChat.ts` threads
+  `expandHint: fullscreen ? "" : …`, added earlier for chips, and both marker producers read it. The
+  verify-first structure prevented a no-op implementation task.
+- (implementation) A real ownerKey bug surfaced in Task 3: the produced key didn't match the
+  `reid`-rewritten published key, so clicks resolved to nothing — fixed by computing the same formula
+  (`toolOwnerKey(id, resultSequence)`) pre-`reid`, making divergence structurally impossible.
+- (implementation) Bash tool calls are the WRONG C9 producer: fullscreen sweeps them into the "Ran N
+  shell commands" fold cluster, so their errors never render as a standalone clipped row. The working
+  producer is an Edit call with a non-matching multi-line search string (`is_error: true`, never folded).
+- (verification) SGR mouse bytes sent from inline Bash-tool commands reliably fail to land in a tmux
+  pty while the byte-identical recipe from a saved script file works every time — memory
+  `pty-sgr-click-needs-script-file.md`.
+- (review) The whole-round review's biggest catch was a SEAM defect no per-task review saw: hover
+  resolved clickability per-OWNER while click resolved per-ROW, so a clickable result's header
+  brightened but its click was dead. Two units each individually correct, wrong together.
+- (process) A concurrent session's workstream (`CC-to-SDK/reforge/`) entered the whole-round diff and
+  drew 5 findings incl. 3 P1 — relayed to the owner, deliberately not fixed by this round (active
+  tree, minutes-old commits).
+- (open UX, owner) Same-pixel rapid double-click on an expanded single result reads as word-select
+  (multi-click window) rather than collapse — canon-consistent per review ruling; needs an owner call
+  only if it bothers real use.
 - Canon ≥2.1.237 made ERROR results clickable (>10-line predicate `syh`) — the leaked tree explicitly
   returns false on `is_error`; a transcription from the old tree would have shipped the opposite of canon.
 - Canon's clickable set is five kinds, not the two the F10 deferral named; two have no ccx analog.
@@ -210,11 +231,37 @@ and `:1985` flip; coverage.md entry), memory, report. Never push.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Both tickets shipped and merged to local `main` (2026-08-24), external campaign converged.**
+T-GIFWEBP `26a1d8ddab` (3 tasks) then T-CLICKGATE `05d9eeddad` (6 tasks), each task through the full
+fresh-implementer → reviewer-with-mutations → fix-wave-re-reviewed-by-original-reviewer cycle.
+
+- **Acceptance:** G1–G6 all met (G6 keyed live: GIF "violet" / WebP "orange"); C1–C9 all met, C9 in the
+  real binary over a pty (16-line `is_error` Edit result clicked open and closed byte-identical;
+  evidence committed `14b0944b29`). Merged-tree gates after each merge: typecheck clean, unit
+  3676/3676, tui 4687/11 skipped.
+- **Review yield:** pre-execution adversarial spec/plan review: 9 findings, 6 accepted (D11/D12) —
+  two of which (projection-independent predicate, typed-producer minting) would otherwise have shipped
+  as latent defects; per-task reviews: 2 Important (undisclosed skipped mandated cell; missing
+  boundary cell) + minors, every fix re-reviewed by the original reviewer with re-run mutations;
+  whole-round Codex review: 2 harness P2 (the hover-vs-click owner/row seam; TaskStop hardcoded
+  non-clickable), both fixed red/green (`a0a7eacdf6`, `4ae21d751e`) — fix-range re-review tally in the
+  round ledger.
+- **Worked:** verify-first tasks (Task 5 resolved with zero code); the pre-execution external review of
+  PLANS (cheapest point to catch contract defects — both in-flight implementers were amended live);
+  reviewer-run mutation checks as a hard requirement (three separate reviewers caught real gaps with
+  them); real-encoder bytes beside synthetic builders.
+- **Parked/deferred (owner):** URL-opening on link cells (substrate ready: `HitRow.linkRanges`);
+  `goal_status`/advisor clickable kinds (no producers); the `!command` echo path minting `clickable`
+  (line-species row); GIF/WebP downscale rescue (needs a decoder); sniff-vs-declared cross-check
+  (pre-existing, API-enforced); the double-click UX question; hover-suppression e2e cell for expanded
+  items; `writeRows` create-preview has no verbose escape in canon — left unclickable.
+- **Cost:** 2 tickets / 9 tasks + 1 verify-only; ~14 subagent dispatches; 3 external Codex reviews.
 
 ## Revision Notes
 
 - v1 (2026-08-24): authored from the three research passes; owner scope from the F10 close-out.
+- v3 (2026-08-24): Surprises extended with implementation/verification/review findings; Outcomes &
+  Retrospective written at close-out.
 - v2 (2026-08-24): folded the Codex adversarial plan review (9 findings: 6 accepted → D11/D12 + C2/C9/G6
   rewrites and plan revisions; 3 rejected/parked with reasons in D11). Review verdict was
   "needs-attention"; the GIF/WebP byte layouts themselves were confirmed correct against the format specs.

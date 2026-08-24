@@ -476,6 +476,29 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl4 round close-out — the two F10 owner-deferred follow-ups (2026-08-24)** — spec
+>   `docs/superpowers/specs/2026-08-24-bl4-clickgate-gifwebp-design.md`, ledger
+>   `.doperpowers/sdd/2026-08-24-bl4-round/`. **T-GIFWEBP** (merge `26a1d8ddab`, 3 tasks): the staged-image
+>   pipeline accepts GIF and WebP end to end — `gifDimensions`/`webpDimensions` (VP8, VP8L, VP8X all
+>   handled; real-encoder bytes verified per variant) in the zero-import substrate, `IMAGE_MEDIA_TYPES`
+>   widened to four with the docstring rewritten, BOTH validator chains updated (`checkImageBlock` + the
+>   `chatAdapter` duplicate), committed real fixtures with generator self-asserts (byte-identical regen),
+>   a daemon `submit_content` accept cell, and keyed live proof per format (GIF solid purple → "violet",
+>   WebP solid orange → "orange" — distinct oracles so a guess can't pass). Recorded, not built (spec
+>   D8/D9): no sniff-vs-declared media-type cross-check (predates the round; the API is the enforcing
+>   boundary), no GIF/WebP downscale rescue (would need a decoder — oversized now degrades with the
+>   PRECISE reason instead of "unreadable"). **T-CLICKGATE** (merge `05d9eeddad`, 6 tasks): canon's
+>   clickable error/truncated result rows + the hover `clickable` gate, C9 proven in the real binary over
+>   a pty (`t-clickgate-pty-c9.txt` in the ledger dir) — detail in `docs/parity/tui-ux.md`'s bl4 blocks.
+>   **External campaign**: spec+plans adversarially reviewed BEFORE execution (9 findings: 6 folded into
+>   spec v2 — projection-independent predicate, typed-producer inventory, scalar click targets, row-model
+>   padding, distinct live oracles, C2 no-op contract; 3 rejected with reasons in D11); whole-round review
+>   after merge found 2 harness P2 (header clicks resolved per-row while hover resolved per-owner;
+>   clipped `TaskStop` hardcoded `clickable: false`) — fixed red/green (`a0a7eacdf6`, `4ae21d751e`) —
+>   plus 5 findings in `CC-to-SDK/reforge/` (a concurrent session's workstream, relayed to the owner,
+>   deliberately untouched by this round). Scoped fix-range re-review: see the round ledger for the
+>   converged tally. Canon for the round: installed 2.1.237 bundle; the leaked tree's clickable subsystem
+>   is confirmed pre-canon (its `is_error` branch returns the opposite).
 > - **F10 wave close-out — selection maturity, hover architecture, image reach, maintenance
 >   (2026-08-24)** — four tracks, 31 tasks, spec `docs/superpowers/specs/2026-08-23-f10-wave-design.md`,
 >   ledger `.doperpowers/sdd/2026-08-23-f10-wave/`. Merged in the spec's binding order, each `--no-ff`

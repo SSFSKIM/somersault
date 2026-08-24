@@ -1,0 +1,21 @@
+# bl4 round ledger — 2026-08-24
+Spec: CC-to-SDK/docs/superpowers/specs/2026-08-24-bl4-clickgate-gifwebp-design.md
+Plans: 2026-08-24-bl4-t-gifwebp.md (4 tasks), 2026-08-24-bl4-t-clickgate.md (6 tasks)
+Pre-round main: 5562e74f80 (F10 close-out). Repo found mid pull-rebase (flattening, detached, conflicted); aborted, main restored intact.
+Order: T-GIFWEBP merges first, T-CLICKGATE second; whole-round codex review to zero after both.
+BASE b5fef2d5ff
+T-GIFWEBP Task 1: complete (b5fef2d5ff..dd81352147, review clean; real-bytes check all 4 variants)
+T-GIFWEBP Task 2: complete (dd81352147..21a87779f9, review clean; 3 mutations bit; clipboardImage enumeration verified in-scope-correct)
+T-GIFWEBP MERGED 26a1d8ddab; gates on merged tree next
+T-GIFWEBP merge gates on 26a1d8ddab: typecheck clean, unit 3676/3676, tui 4651 passed/11 skipped. Ticket complete.
+T-CLICKGATE Task 1: complete (b5fef2d5ff..f93933d4ff incl. fix wave b93d3db2e7 + review fixes; original reviewer approved; parked: species.ts !command echo path — line-species, not tool_result, candidate follow-up)
+T-CLICKGATE Task 2: complete (f93933d4ff..c5685315d4, review clean; 3 mutations bit; hover gate flipped, F10 hover-everything delta closed)
+T-CLICKGATE Task 3: implemented c5685315d4..c54c7bb5c1; review found 1 Important (mandated viewport-boundary cell missing, undisclosed) -> fix wave dispatched. Reviewer rulings: double-click-on-expanded word-select edge = canon-consistent, owner UX question (report at close-out); ownerKey reid-mismatch bug root-caused+fixed at the right layer. Parked minors: hover-suppression e2e cell for expanded items.
+T-CLICKGATE Task 3: complete (c5685315d4..0f78a4c7b7 incl. boundary-cell fix; original reviewer approved, spec met)
+T-CLICKGATE Task 4: complete (0f78a4c7b7..dee9bd7d67, review clean; hostile-OSC-8 traced unreachable; link no-op generic in clickTargetAt, D12 gap recorded)
+T-CLICKGATE Task 5: verify-only, no commit — fullscreen markers already bare (useChat.ts expandHint:fullscreen?"":... predates ticket, added for chips, covers both marker producers). D6 already satisfied.
+T-CLICKGATE MERGED 05d9eeddad; merged-tree gates: typecheck clean, unit 3676/3676, tui 4687/11 skipped. Whole-round codex review from 5562e74f80 launched.
+Whole-round codex review round 1 (base 5562e74f80): 7 findings. THREE P1 + two P2 are in CC-to-SDK/reforge/ — NOT this round's work; reforge is an active concurrent session (commits 22:06 today); findings relayed to owner, deliberately not fixed here. Round's own: 2 P2 in harness (item-click resolver checks per-row clickable while hover checks owner set -> header click dead; taskStopRows hardcodes clickable:false while clipping). ONE fix subagent dispatched.
+Fix wave 1: a0a7eacdf6 + 4ae21d751e (both red/green; writeRows audited no-escape, left as canon). Scoped re-review of fix range launched.
+Fix-range re-review (base 05d9eeddad): ZERO actionable defects. Campaign converged 2 -> 0 on round code (reforge findings relayed, not this round's).
+ROUND CLOSED. Not pushed.
