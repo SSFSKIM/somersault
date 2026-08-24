@@ -19,3 +19,4 @@ Whole-round codex review round 1 (base 5562e74f80): 7 findings. THREE P1 + two P
 Fix wave 1: a0a7eacdf6 + 4ae21d751e (both red/green; writeRows audited no-escape, left as canon). Scoped re-review of fix range launched.
 Fix-range re-review (base 05d9eeddad): ZERO actionable defects. Campaign converged 2 -> 0 on round code (reforge findings relayed, not this round's).
 ROUND CLOSED. Not pushed.
+PUSHED (owner request): merged origin/main (app-server M7, 68 commits; conflict in chatAdapter resolved in favor of M7's stagedSubmit.ts extraction with bl4's four-reader chain carried into it), gates green on merged tree (unit 3962/3962, tui 4689/11 skipped), pushed as 39c29a8f67. Reforge findings (3 P1 + 2 P2) relayed to session cc-to-sdk-79.
