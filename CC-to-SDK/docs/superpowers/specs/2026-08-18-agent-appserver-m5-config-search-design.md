@@ -497,34 +497,37 @@ understated its own scope is the more useful thing to remember.
   it is now PUBLISHED — in `listCursorParam`'s `describe`, where a client actually reads it — pointing at
   `thread/search`'s `sortKey: created_at` as the exhaustive-walk escape this method has no version of.
 
-**Added to the parking lot by that round:**
+**Added to the parking lot by that round:** both items were taken — and closed — in the round below.
 
-- **The four-process marker-store race test is intermittently red, and it is NOT this round's doing.**
-  `archive.test.ts`'s "four processes creating the marker store at once" fails by leaving one racer's
-  marker absent. Measured on the M6 machine: **3 failures in roughly 9 standalone runs**, plus one in a
-  full `test:unit` run — and the missing racer VARIES (`sess-0` twice, `sess-3` once), so it is a real race
-  and not a fixed ordering bug. The test's own docblock records 300 of 300 succeeding when the repair
-  landed in M5, so either the environment moved under it or the repair is narrower than measured.
-  **Attribution is firm:** `src/appserver/archive.ts` and `src/fleet/` are byte-identical to the M6 base
-  commit, and the only two hunks in `archive.test.ts` this round are at lines 1127 and 1194, far from the
-  race test at ~1425. Code under test and test are both unchanged, so the behaviour is the base's.
-  **What is still unknown is the errno.** Each racer writes `OK` or `<code> <message>` to a report file,
-  but the directory assertion fires before the test surfaces them and the temp dirs are cleaned up on the
-  way out. A temporary diagnostic that printed the reports did not reproduce in 3 runs — plausibly the
-  logging perturbing the timing, which is itself worth knowing. First step for whoever takes this: capture
-  the report contents on failure (the assertion order is the only thing in the way), since the child sets
-  `umask(0o200)` deliberately and the whole question is which syscall loses to a half-made directory.
-  Do NOT "fix" this by relaxing the assertion: a guard that has gone quiet is worse than one that is red.
-  Trigger: it is already triggering — `npm run test:unit` cannot be used as a clean gate until it is
-  settled, which is the real cost and the reason it is filed at the top of this list.
+### Closed in the backlog round of 2026-08-23 (owner-approved order, branch `backlog-archive-race`)
 
-- **`extraArgs` is a third identity vocabulary nobody strips.** Neither `review.ts` nor the swap family
-  touches it, and in the installed SDK its entries are appended to argv AFTER the typed identity flags
-  (`--resume`, `--fork-session`, `--session-id`, …). `thread/start`'s `config` is an unrestricted
-  `z.record`, so a client can set it. **Impact is plausible, not proven** — the CLI's own last-flag-wins
-  behavior was not verified — and it is recorded at that strength deliberately. Trigger: any client that
-  sets `extraArgs`; fix shape: a third strip beside the two in `sessionIdentity.ts`, once the parser
-  precedence is measured rather than assumed.
+- **The four-process marker-store race — closed, third generation, and the item's named first step was
+  the whole diagnosis.** Reordering the assertions so the racer reports surface first (the one change
+  the item said was in the way) named the errno on the first captured failure: `EACCES mkdir …/d0/d1` —
+  the first create under the BOUNDARY level, the deepest directory that already existed at the loser's
+  survey, a peer's `mkdir` still one syscall short of its chmod. H2's chmod-before-descend covers only
+  the levels a call itself found missing, so the boundary was chmod'ed by nobody but its creator, and
+  H2's 300-of-300 measurement simply never hit the window. Two repairs were built; the FIRST was refuted
+  by measurement and is recorded in `archive.ts` so nobody rebuilds it: giving each level an atomic
+  birth via stage-chmod-rename (`writeTargetDoc`'s file pattern, applied to directories) fails WORSE on
+  macOS/APFS — `rename` over an existing EMPTY directory, which POSIX requires to succeed and which two
+  same-instant winners inevitably do to each other, makes concurrent `mkdir`/`open` calls resolving
+  through the replaced directory fail `EINVAL` (observed on both process-race rows). What shipped is
+  `withBirthGrace`: an `EACCES` met where a peer's chmod is one syscall away is retried on a ≤127ms
+  doubling ladder and then re-raised as-is — nothing is chmod'ed that the call did not create, so an
+  operator's deliberate restriction still refuses with the identical errno, and the assertion was never
+  relaxed. Re-measured: 50 of 50 standalone runs green (was ~1 red in 6), the appserver suite 1155/1155
+  — and `npm run test:unit` is a usable gate again, which was the item's stated cost.
+- **`extraArgs` identity strip — closed; the "plausible, not proven" impact is now proven at both
+  layers.** Probe 114 (`probes/114-extraargs-identity-precedence.ts`): (A) at runtime the SDK pushes
+  every typed identity flag and THEN appends `extraArgs` entries (stub-executable argv dump: typed
+  `--resume=` at index 7, extraArgs' at 10–11); (B) the real native CLI adopts the LAST occurrence of a
+  repeated flag — measured with `--session-id A --session-id B` in BOTH orders, the result envelope and
+  the transcript filename agreeing on the second id each time, so the conclusion is order-driven rather
+  than value-driven. The fix is the item's named shape: a third list in `sessionIdentity.ts`
+  (`SESSION_IDENTITY_ARGS`, the CLI's hyphenated flag spellings — a rename on the CLI side should fail
+  loudly there) and `stripIdentityHatch` now strips BOTH hatches, which covers `review/start` and the
+  whole swap family through the one seam they already shared.
 
 ## Decision Log
 
@@ -1871,6 +1874,12 @@ understated its own scope is the more useful thing to remember.
 
 ## Surprises & Discoveries
 
+- **macOS `rename` over an existing empty directory is atomic for the name, not for the walkers
+  (2026-08-23).** POSIX requires the replace to succeed, and it does — but concurrent `mkdir`/`open`
+  calls resolving through the replaced directory fail `EINVAL` on APFS: not `ENOENT`, not success,
+  an errno nothing was written to expect. Measured twice on the archive race rows while trying a
+  stage-and-rename birth for store levels. Anything that atomically swaps a LIVE directory rather
+  than a file must own this; the repair that shipped avoids replacing directories at all.
 - **The external review overturned five rev-1 mechanisms before a line was written** — origins
   granularity (upstream deep-merges; single-winner attribution was untruthful), the version check
   (TOCTOU), the write jail (self-authorizing, and its cited `fs/read` precedent did not exist —

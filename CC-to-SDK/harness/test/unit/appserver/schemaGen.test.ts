@@ -18,7 +18,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
 import { SEARCH_CAPS } from "../../../src/appserver/searchScan.js";
+import { MAX_TOOL_DESCRIPTION_CHARS } from "../../../src/appserver/dynamicTools.js";
 import { threadSearchParams, threadSearchOccurrencesParams } from "../../../src/appserver/schema/search.js";
+import { threadStartParams, threadResumeParams } from "../../../src/appserver/schema/threads.js";
 
 const harness = fileURLToPath(new URL("../../../", import.meta.url));
 const script = "scripts/emit-appserver-schema.mjs";
@@ -43,6 +45,15 @@ const registeredSubschemaCount = Object.keys(methodSchemas).length + Object.valu
  *  the emitter dropped or invented; deriving it only stops the list from needing a hand-edit per landing. */
 const registeredResults = (tier: (typeof TIERS)[number]) =>
   Object.entries(methodSchemas).filter(([, e]) => !!e.result && (e.experimental ? "experimental" : "stable") === tier).map(([name]) => name).sort();
+/** A FRESH generation, run once for this file. Rows that name a specific entry read THIS rather than the
+ *  vendored bytes, for the reason the `config/read` case below spells out: the vendored file is an artifact
+ *  of the last `emit-schema` run, so an assertion against it stays green while the registry entry that
+ *  produced it is deleted (measured — a sabotage pass that unregistered `tool/callResult` left a
+ *  vendored-reading row passing). The byte-comparison rows pin fresh and vendored equal, so nothing is
+ *  lost by generating. */
+let freshRun: Record<string, VendoredDoc> | undefined;
+const fresh = (tier: (typeof TIERS)[number]): VendoredDoc =>
+  (freshRun ??= JSON.parse(execFileSync("node", [script, "--stdout"], { cwd: harness, encoding: "utf8" })) as Record<string, VendoredDoc>)[tier]!;
 
 describe("emit-appserver-schema", () => {
   it("vendored schema artifacts match a fresh generation", () => {
@@ -99,6 +110,42 @@ describe("emit-appserver-schema", () => {
     }
   });
 
+  /** ROUND 3. The M7 description bound is the mirror image of the `searchTerm` defect above: the keyword
+   *  was published correctly and ENFORCED in a different unit. draft-07 counts `maxLength` in Unicode code
+   *  points, zod's `.max()` counts UTF-16 units, so a client that trusted the artifact and sent 2,000 emoji
+   *  was refused "Invalid params" by the server that published the bound it obeyed. The enforcement is now
+   *  a `.refine` over `[...v].length` with `.meta({maxLength})` republishing the keyword — which means the
+   *  keyword is no longer a side effect of the check, and only a row that reads BOTH sides can notice if
+   *  one of them is dropped. Every place the union carries a description is checked, on both spines. */
+  it("publishes the dynamic-tool description bound it enforces, and enforces it in the published unit", () => {
+    const astral = "\u{1F600}".repeat(MAX_TOOL_DESCRIPTION_CHARS);
+    const tool = (description: string) => ({ type: "function", name: "lookup", description, inputSchema: { type: "object" } });
+    const space = (description: string) => ({ type: "namespace", name: "ops", description, tools: [tool("d")] });
+    // THE SOURCE SIDE: astral at the cap parses, one code point over does not — on the function half, the
+    // namespace half, and a namespace's child.
+    for (const [name, schema, extra] of [["thread/start", threadStartParams, {}], ["thread/resume", threadResumeParams, { sessionId: "s" }]] as const) {
+      const parses = (spec: unknown) => schema.safeParse({ ...extra, dynamicTools: [spec] }).success;
+      for (const [label, spec] of [["function", tool(astral)], ["namespace", space(astral)], ["child", { ...space("d"), tools: [tool(astral)] }]] as const) {
+        expect(`${name} ${label} at the cap in code points: ${parses(spec)}`).toBe(`${name} ${label} at the cap in code points: true`);
+      }
+      expect(`${name} one code point over: ${parses(tool(`${astral}\u{1F600}`))}`).toBe(`${name} one code point over: false`);
+    }
+    // THE PUBLISHED SIDE: the keyword survived the switch from `.max()` to metadata, in all three places.
+    for (const method of ["thread/start", "thread/resume"]) {
+      const params = fresh("stable").methods[method] as { properties: { dynamicTools: { items: { oneOf: Array<Record<string, any>> } } } };
+      const [fnSchema, nsSchema] = params.properties.dynamicTools.items.oneOf;
+      for (const [label, described] of [["function", fnSchema!], ["namespace", nsSchema!], ["child", nsSchema!.properties.tools.items]] as const) {
+        expect(`${method} ${label} maxLength=${described.properties.description.maxLength}`).toBe(`${method} ${label} maxLength=${MAX_TOOL_DESCRIPTION_CHARS}`);
+      }
+      // …and a conforming validator agrees about the astral case, which is the whole point: the published
+      // schema must ACCEPT the 2,000-emoji description the server now accepts, and refuse the one over.
+      const validate = new Ajv({ strict: true, allErrors: true }).compile(params as object);
+      const of = (description: string) => ({ ...(method === "thread/resume" ? { sessionId: "s" } : {}), dynamicTools: [tool(description)] });
+      expect(`${method} published schema accepts the cap: ${validate(of(astral))}`).toBe(`${method} published schema accepts the cap: true`);
+      expect(`${method} published schema accepts one over: ${validate(of(`${astral}\u{1F600}`))}`).toBe(`${method} published schema accepts one over: false`);
+    }
+  });
+
   it("every methodSchemas entry lands in exactly one artifact", () => {
     const stable = Object.keys(vendored("stable").methods);
     const experimental = Object.keys(vendored("experimental").methods);
@@ -141,6 +188,40 @@ describe("emit-appserver-schema", () => {
     const ajv = new Ajv({ strict: true });
     expect(() => ajv.compile(result)).not.toThrow();
     expect(() => ajv.compile(stable.methods["config/read"] as object)).not.toThrow();
+  });
+
+  it("publishes M7's settlement method with BOTH halves, and initialize's downgrade marker", () => {
+    // The two registrations Task 8 made, read off the published document rather than off the registry:
+    // `tool/callResult` is the method a client's tool runtime calls, and its ack is what a generated
+    // client validates the reply against. `initialize`'s result is the F9 defence — an OLD server strips
+    // an unknown `dynamicTools` param silently and starts the thread toolless, so a client that intends
+    // to declare must be able to read `dynamicTools: true` off the handshake FIRST. Neither is usable
+    // from the artifact unless the artifact carries it, which is what this row checks.
+    const stable = fresh("stable");
+    expect(stable.methods).toHaveProperty(["tool/callResult"]);
+    expect(stable.results).toHaveProperty(["tool/callResult"]);
+    expect(stable.results).toHaveProperty(["initialize"]);
+    const ack = stable.results["tool/callResult"] as { type: string; properties: Record<string, unknown>; additionalProperties: boolean };
+    expect(ack.type).toBe("object");
+    expect(ack.additionalProperties).toBe(false); // a closed `{}`: the settlement's whole reply
+    const init = stable.results["initialize"] as { required: string[]; properties: { dynamicTools: { const?: unknown; enum?: unknown[] } } };
+    expect(init.required.sort()).toEqual(["dynamicTools", "platformOs", "userAgent", "version"]);
+    // The marker is pinned to `true`, not to `boolean`: a server that cannot host dynamic tools omits the
+    // field, and publishing `boolean` would tell a client to write a `false` branch that never runs.
+    expect(init.properties.dynamicTools.const ?? init.properties.dynamicTools.enum).toEqual(true);
+  });
+
+  it("the thread-status shape stays internal — no artifact carries waitingOn", () => {
+    // A deliberate product decision from M7 Task 5: `waitingOn` is a live status field the server
+    // broadcasts, not a published contract, and the status enum is free to grow a kind without a wire
+    // change. Nothing registers a status schema, so nothing may publish one — asserted over the RAW text
+    // because the field could otherwise arrive nested inside any method's or result's shape. Both the
+    // published bytes and a fresh generation: the first is what clients hold, the second is what the
+    // registry would publish the moment anyone regenerates.
+    for (const tier of TIERS) {
+      expect(vendoredText(tier), tier).not.toContain("waitingOn");
+      expect(JSON.stringify(fresh(tier)), `${tier} fresh`).not.toContain("waitingOn");
+    }
   });
 
   it("every artifact is draft-7, and no subschema — params or result — redeclares the dialect", () => {

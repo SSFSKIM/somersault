@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer } from "node:net";
 import type { Socket } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startFakeHost } from "../../helpers/fakeHost.js";
@@ -10,6 +11,8 @@ import { encodeEvent, decodeFrame } from "../../../src/host/wire.js";
 import type { HostEvent } from "../../../src/host/wire.js";
 import { connectFleetEngine, FleetBusyError } from "../../../src/appserver/fleetEngine.js";
 import type { FleetEngineSession } from "../../../src/appserver/fleetEngine.js";
+import { IMAGE_VERSION_SKEW_NOTICE } from "../../../src/client/stagedSubmit.js";
+import type { UserContentBlock } from "../../../src/session/turnInput.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 
 // M3 Task 6. The SECOND EngineSession implementation, driven the only way it can be driven honestly: over
@@ -18,12 +21,15 @@ import { ERR } from "../../../src/appserver/rpc.js";
 // hard split between host-SYNTHESIZED frames (typed events) and SDK frames (the router).
 
 let fh: FakeHostControls | undefined;
+let sh: StagingHost | undefined;
 let eng: FleetEngineSession | undefined;
 afterEach(async () => {
   await eng?.dispose().catch(() => {});   // a case that already killed the host owes no unfollow
   eng = undefined;
   await fh?.close();
   fh = undefined;
+  await sh?.close();
+  sh = undefined;
 });
 
 /** Every typed event stream in one place, plus `order` — the interleave across kinds, which is what the
@@ -73,6 +79,85 @@ async function startRawHost(): Promise<{ socketPath: string; emit(ev: HostEvent)
     // way to put a multibyte char astride a socket-chunk boundary (F1); `emit` always writes a whole frame.
     writeRaw: (buf) => { peer?.write(buf); },
     close: () => new Promise<void>((r) => { peer?.destroy(); srv.close(() => r()); }),
+  };
+}
+
+type PromptReply = "ok" | "busy" | "die";
+interface StagingHost {
+  socketPath: string;
+  /** Every op name dispatched, in order — `follow` included, so a row can pin that staging happened
+   *  BEFORE the prompt rather than merely that both arrived. */
+  ops: string[];
+  /** Every path this host minted, in order, whether or not the client ever wrote to it. */
+  staged: string[];
+  /** Every `prompt` frame exactly as it came off the wire, `id` and all: the only honest place to assert
+   *  that a string prompt carries NO `images` key at all. */
+  prompts: Array<Record<string, unknown>>;
+  promptReply(mode: PromptReply): void;
+  /** Answer the one `stageImage` reply `holdStage` withheld. */
+  release(): void;
+  close(): Promise<void>;
+}
+
+/** A raw host that mints a REAL file per staged image (spec rev 3, "fleet threads"). `fakeHost.ts` answers
+ *  `stageImage` with ONE fixed stub path — enough for the dispatch wiring it was written for, but it can
+ *  show neither a per-image claim, nor the cleanup of a SPECIFIC file, nor a refusal that lands mid-loop
+ *  after an earlier image already staged. So this speaks the wire by hand (the shape `startRawHost` above
+ *  uses), answering every other op `{ok:true}` so `follow`/`unfollow` still complete. */
+async function startStagingHost(opts: { stageErrorAt?: { at: number; error: string }; holdStage?: true; dieAfterStage?: true; prompt?: PromptReply } = {}): Promise<StagingHost> {
+  const dir = mkdtempSync(join(tmpdir(), "fleet-stage-"));
+  const socketPath = join(dir, "h.sock");
+  const ops: string[] = [];
+  const staged: string[] = [];
+  const prompts: Array<Record<string, unknown>> = [];
+  let mode: PromptReply = opts.prompt ?? "ok";
+  let held: { id: number; path: string } | undefined;
+  let peer: Socket | undefined;
+  const reply = (id: number, body: Record<string, unknown>): void => { peer?.write(JSON.stringify({ ...body, id }) + "\n"); };
+  const srv = createServer((sock) => {
+    peer = sock;
+    sock.on("error", () => {});
+    sock.on("data", (c) => {
+      for (const line of c.toString("utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const f = decodeFrame(line) as (Record<string, unknown> & { id?: number; op?: string }) | undefined;
+        if (!f || typeof f.id !== "number" || typeof f.op !== "string") continue;
+        ops.push(f.op);
+        if (f.op === "stageImage") {
+          const n = ops.filter((o) => o === "stageImage").length;
+          if (opts.stageErrorAt?.at === n) { reply(f.id, { ok: false, error: opts.stageErrorAt.error }); continue; }
+          const path = join(dir, `img-${n}.png`);
+          staged.push(path);
+          // Withheld, not slow: the reply is written only by `release()`, which pins the first submit
+          // inside its very first await for as long as the reservation row needs it there.
+          if (opts.holdStage && n === 1) { held = { id: f.id, path }; continue; }
+          reply(f.id, { ok: true, path });
+          // …and then the host dies, AFTER answering. `end()` flushes the reply before the FIN, so the
+          // client really does receive the path (and writes the file) and only then sees the socket go —
+          // the "staging finished into a closed engine" window, without a race to win.
+          if (opts.dieAfterStage) sock.end();
+          continue;
+        }
+        if (f.op === "prompt") {
+          prompts.push(f);
+          if (mode === "die") { sock.destroy(); continue; }
+          if (mode === "busy") { reply(f.id, { ok: false, error: "busy" }); continue; }
+          reply(f.id, { ok: true, accepted: true, seq: 1 });
+          // The end rides right behind its own reply — the seq ledger's own case (header property 1) — so
+          // a row about staging never has to drive the turn lifecycle by hand.
+          peer?.write(encodeEvent({ kind: "turn", phase: "end", seq: 1, result: "done" }));
+          continue;
+        }
+        reply(f.id, { ok: true });
+      }
+    });
+  });
+  await new Promise<void>((r) => srv.listen(socketPath, () => r()));
+  return {
+    socketPath, ops, staged, prompts,
+    promptReply: (m) => { mode = m; },
+    release: () => { if (held) { reply(held.id, { ok: true, path: held.path }); held = undefined; } },
+    close: () => new Promise<void>((r) => { peer?.destroy(); srv.close(() => { rmSync(dir, { recursive: true, force: true }); r(); }); }),
   };
 }
 
@@ -502,5 +587,141 @@ describe("FleetEngineSession", () => {
     await expect(s.sendOp({ op: "rewind_anchors" })).resolves.toMatchObject({ ok: true, anchors: [{ uuid: "u-1" }] });
     await s.sendOp({ op: "add_dir", path: "/w" });
     expect(fh.opCalls.find((o) => o.op === "add_dir")?.args).toEqual(["/w"]);
+  });
+
+  // Task 2 (spec rev 3, "fleet threads"): `submit` takes the whole `UserTurnInput` union, and an array
+  // reaches the host the only way the host wire can carry an image — staged to disk through the SHARED
+  // helper (`client/stagedSubmit.ts`), then claimed by path on the `prompt` op. What these rows pin is
+  // OWNERSHIP: staged bytes belong to this client until the host accepts the prompt, so every path that
+  // is not an accepted prompt has to take its files back with it.
+  describe("submit with an image block array", () => {
+    // Header-only PNG (the fixture `client-chat-adapter.test.ts` uses): `pngDimensions` never reads past
+    // byte 24, so this is the cheapest buffer that sniffs as a real image.
+    const fakePng = (width: number, height: number, totalBytes = 64): Buffer => {
+      const buf = Buffer.alloc(Math.max(totalBytes, 24));
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buf, 0);
+      buf.write("IHDR", 12, "ascii");
+      buf.writeUInt32BE(width, 16);
+      buf.writeUInt32BE(height, 20);
+      return buf;
+    };
+    const imageBlock = (buf: Buffer): UserContentBlock => ({ type: "image", source: { type: "base64", media_type: "image/png", data: buf.toString("base64") } });
+    const sha = (buf: Buffer): string => createHash("sha256").update(buf).digest("hex");
+    /** The frame minus its correlation id — everything the op itself put on the wire, and nothing else. */
+    const frameOf = (f: Record<string, unknown>): Record<string, unknown> => { const { id: _id, ...rest } = f; return rest; };
+    const liveRaw = async (socketPath: string): Promise<FleetEngineSession> => { const s = await connectFleetEngine(socketPath); eng = s; s.activate(); return s; };
+
+    it("stages each image, then claims it by path on the prompt op beside the folded text", async () => {
+      sh = await startStagingHost();
+      const s = await liveRaw(sh.socketPath);
+      const png = fakePng(4, 4);
+      const p = s.submit([{ type: "text", text: "A" }, imageBlock(png), { type: "text", text: "B" }], () => {}, { uuid: "u-1" });
+      await expect(p).resolves.toEqual({ result: "done" });
+      expect(sh.ops).toEqual(["follow", "stageImage", "prompt"]);         // staged BEFORE the prompt, never beside it
+      expect(frameOf(sh.prompts[0])).toEqual({ op: "prompt", text: "AB", images: [{ stagedId: sh.staged[0], sha256: sha(png) }], uuid: "u-1" });
+      expect(readFileSync(sh.staged[0]).equals(png)).toBe(true);          // the decoded bytes, not the base64
+      // An ACCEPTED prompt transfers ownership to the host: `cleanup` is dropped uncalled, so the file the
+      // host is about to read is still on disk.
+      expect(existsSync(sh.staged[0])).toBe(true);
+    });
+
+    it("refuses an 'unknown op' stage reply as version skew — no prompt, and the images already staged go with it", async () => {
+      sh = await startStagingHost({ stageErrorAt: { at: 2, error: "unknown op" } });
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit([imageBlock(fakePng(4, 4)), imageBlock(fakePng(8, 8))], () => {})).rejects.toThrow(IMAGE_VERSION_SKEW_NOTICE);
+      expect(sh.ops).not.toContain("prompt");                             // an old host is told nothing it cannot parse
+      expect(sh.staged).toHaveLength(1);                                  // the second call was refused before it minted
+      expect(existsSync(sh.staged[0])).toBe(false);                       // …and the FIRST image's file went with the refusal
+    });
+
+    it("cleans the staged files on a busy refusal, and releases the reservation with them", async () => {
+      sh = await startStagingHost({ prompt: "busy" });
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toBeInstanceOf(FleetBusyError);
+      expect(sh.staged).toHaveLength(1);                                  // it really did stage before the refusal
+      expect(existsSync(sh.staged[0])).toBe(false);                       // ownership never transferred — the host refused
+      // A refusal is not a wedged engine: the reservation cleared with the failure, so the next submit goes.
+      sh.promptReply("ok");
+      await expect(s.submit("go", () => {})).resolves.toEqual({ result: "done" });
+    });
+
+    it("LEAVES the staged files when the connection dies across the prompt op — an indeterminate ack is not a refusal", async () => {
+      // THE THIRD OWNERSHIP CASE (whole-branch review P2). A rejection from the prompt op says only that
+      // no reply came back — not that no prompt arrived. The host's `runTask` survives a client
+      // disconnect and reads the claimed files lazily as the turn runs, so unlinking on this path makes
+      // every later image of a turn the host DID accept degrade as missing. The files stay; if the prompt
+      // truly never landed, the host's own orphan sweep takes them.
+      sh = await startStagingHost({ prompt: "die" });
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toThrow(/closed/);
+      expect(sh.staged).toHaveLength(1);                                  // it really did stage before the death
+      expect(existsSync(sh.staged[0])).toBe(true);                        // …and the bytes are still there for it
+      eng = undefined;                                                    // the socket is gone; no unfollow to send
+    });
+
+    it("CLEANS the staged files when the engine was already closed before the prompt op — a never-sent prompt is still ours", async () => {
+      // THE FOURTH OWNERSHIP CASE (final review round 2), and the one the row above must not swallow. A
+      // rejection is indeterminate only when the op was WRITTEN; `sendOp` checks the death latch BEFORE it
+      // writes anything, so a prompt invoked on an already-closed engine never reached the wire at all —
+      // acceptance is impossible, and the dead host's orphan sweeper died with the host, so leaving these
+      // files means up to a full 5 MiB sitting on disk until someone restarts it. The window is real
+      // rather than contrived: the staging replies all arrive, the host dies while this client is still
+      // writing the bytes it was handed, and `stageBlocks` returns into an engine that closed underneath it.
+      sh = await startStagingHost({ dieAfterStage: true });
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit([imageBlock(fakePng(4, 4))], () => {})).rejects.toThrow(/closed/);
+      expect(sh.staged).toHaveLength(1);                                  // the path was minted and the bytes written
+      expect(s.isEnded()).toBe(true);                                     // …the death latch was up before the prompt op
+      expect(sh.ops).not.toContain("prompt");                             // …so nothing was written for the host to see
+      expect(existsSync(sh.staged[0])).toBe(false);                       // ownership never transferred — and nothing survives to sweep
+      eng = undefined;                                                    // the socket is gone; no unfollow to send
+    });
+
+    it("takes the one-in-flight reservation SYNCHRONOUSLY — a second array submit never stages a byte", async () => {
+      sh = await startStagingHost({ holdStage: true });
+      const s = await liveRaw(sh.socketPath);
+      const png = fakePng(4, 4);
+      const first = s.submit([imageBlock(png)], () => {});
+      // Same tick, so the first submit is still inside its very first await. The pre-Task-2 guard read
+      // `turnSink || waiter` — both set only AFTER staging — so two array submits both passed it, both
+      // staged, and the second clobbered the first's sink.
+      const second = s.submit([imageBlock(png)], () => {});
+      await expect(second).rejects.toThrow(/already in flight/);
+      await waitFor(() => expect(sh!.ops.filter((o) => o === "stageImage")).toHaveLength(1));   // the FIRST one's
+      await new Promise((r) => setTimeout(r, 20));                                              // and no second follows it
+      expect(sh.ops.filter((o) => o === "stageImage")).toHaveLength(1);
+      sh.release();
+      await expect(first).resolves.toEqual({ result: "done" });
+    });
+
+    it("an interrupt landing DURING the staging round trip stops the turn: no prompt reaches the host, and the staged bytes go back", async () => {
+      // THE STAGING WINDOW (Task 2 review). Staging is one or more host round trips, and an interrupt
+      // that lands inside it reaches the HOST FIRST — where it cancels nothing, or cancels a FOREIGN
+      // turn — and our prompt then starts a turn the client already stopped, while turns.ts reports it
+      // interrupted. `opts.aborted` is the caller's own latch, read on the far side of that window.
+      sh = await startStagingHost({ holdStage: true });
+      const s = await liveRaw(sh.socketPath);
+      let stop: string | undefined;
+      const p = s.submit([imageBlock(fakePng(4, 4))], () => {}, { aborted: () => stop });
+      await waitFor(() => expect(sh!.staged).toHaveLength(1));      // the stage op is out and its reply is held
+      stop = "Turn interrupted before it started";                  // …the interrupt lands right here
+      sh.release();
+      // Rejected with the code the turns spine answers -33001 with, so an interrupted-before-it-started
+      // fleet turn reads identically whichever side of the staging window the latch went up on.
+      await expect(p).rejects.toBeInstanceOf(FleetBusyError);
+      await expect(p).rejects.toThrow("Turn interrupted before it started");
+      expect(sh.ops).not.toContain("prompt");
+      expect(existsSync(sh.staged[0])).toBe(false);                 // ownership never transferred — nothing to sweep
+      // and the reservation cleared with it: the engine is not wedged by a turn that never started.
+      await expect(s.submit("go", () => {})).resolves.toEqual({ result: "done" });
+    });
+
+    it("leaves a plain-string submit byte-identical on the wire — no `images` key at all", async () => {
+      sh = await startStagingHost();
+      const s = await liveRaw(sh.socketPath);
+      await expect(s.submit("go", () => {})).resolves.toEqual({ result: "done" });
+      expect(sh.ops).toEqual(["follow", "prompt"]);
+      expect(frameOf(sh.prompts[0])).toEqual({ op: "prompt", text: "go" });
+    });
   });
 });

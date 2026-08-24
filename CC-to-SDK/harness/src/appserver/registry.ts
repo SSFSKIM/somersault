@@ -5,9 +5,10 @@ import type { Peer } from "./peer.js";
 import type { ItemEvent } from "./items/types.js";
 import type { QueuedTurn } from "./queue.js";
 import type { PlanGrantMode } from "../permissions/types.js";
-import type { TurnFailure } from "../session/turnResult.js";
 import type { UserTurnInput } from "../session/turnInput.js";
+import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
+import type { DynamicToolSpec } from "./dynamicTools.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
  *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
@@ -31,14 +32,18 @@ export interface EngineSession {
    *  `error` is Wave T Task 14's additive failure tag: a turn that reached a terminal result frame and
    *  reported failure RESOLVES carrying it (only a transport exception rejects), so turns.ts's success
    *  path has to read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn.
-   *  Both are optional — a DI fake returning a bare `{result}` still satisfies this. */
+   *  Both are optional — a DI fake returning a bare `{result}` still satisfies this.
+   *  `submit` stays STRING-ONLY — it is the public embedder contract, and widening a REQUIRED method
+   *  breaks every custom engine (F10 review F5, round-2 F8). The block form of a turn — the ONLY way an
+   *  image reaches one — travels on `submitContent` below, which an engine declares or does not have. */
   submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
-  /** OPTIONAL capability (F10 T-IMGREACH Task 8/I3b): carries content blocks. `submit(prompt: string)`
-   *  stays UNCHANGED — it is the public embedder contract, and widening a REQUIRED method breaks every
-   *  custom engine (review F5, round-2 F8). An engine without this cannot run an array turn, and every
-   *  path that might produce one must say so before it takes anything (turns.ts's `submitRunner`).
-   *  Declared here only — the in-process implementation, `steerContent` and the fleet refusals land in
-   *  Task 9. */
+  /** OPTIONAL capability (F10 T-IMGREACH Task 8/I3b): carries content blocks. An engine without this
+   *  cannot run an array turn, and every path that might produce one must say so before it takes anything
+   *  (turns.ts's `submitRunner`). Both routes that produce blocks reach it: the staged-image methods
+   *  (`turn/startContent`) and `turn/start`'s items array, whose resolver (turnItems.ts) always yields
+   *  blocks. Each engine carries them its own way — the in-process one hands them to the SDK message
+   *  builder, the fleet one stages their bytes onto the host's disk and claims them by path (fleetEngine.ts,
+   *  which widens its own `submit` for that and is reached through the fleet spine, not this member). */
   submitContent?(input: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
   /** OPTIONAL capability, its OWN one (F10 T-IMGREACH Task 9/I3c) — never routed through `submitContent`
    *  (that starts a NEW turn) and never through `steer` (that engine's own string-only embedder would
@@ -130,6 +135,17 @@ export interface EngineSession {
   isEnded?(): boolean;
   readonly sessionId?: string;
 }
+
+/** ONE pending fleet turn's own stop latch — a per-turn object precisely because the record-wide
+ *  `interruptRequested` cannot serve here. A fleet thread's turn edges are the HOST's, and every host
+ *  turn-start clears that flag (fleet.ts) — including a FOREIGN turn a different client of the same host
+ *  starts. A turn/interrupt aimed at a pending own turn (one whose item resolution or image staging is
+ *  still running, so it has not reached the host at all) would then be erased by a stranger's turn
+ *  starting and ending in that window, and the prompt the client already stopped would go out anyway.
+ *  So the interrupt is latched HERE instead: `turns.ts`'s fleet arm installs one at request arrival,
+ *  `requestInterrupt` raises it, and only that turn's own settlement takes it down. `closing` stays on
+ *  the record — it is monotonic, so no event can clear it. */
+export type PendingFleetStop = { interrupted: boolean };
 
 export interface ThreadRecord {
   id: string;
@@ -249,7 +265,11 @@ export interface ThreadRecord {
                                  // failed before it accepted a seq. inProcess threads latch `busy` itself, so
                                  // this stays undefined for them.
   fleetStartAck?: Promise<void>; // FLEET ONLY (external review F2): set by fleetTurnStart (turns.ts) while an
-                                 // OWN turn's turn/start REPLY is still pending — its inProgress reply + user
+                                 // OWN turn's turn/start REPLY is still pending — armed at the engine's
+                                 // dispatch edge (fleetEngine's `onPromptDispatch`, the tick the prompt op is
+                                 // written), so an items turn's staging round trips sit OUTSIDE it: a foreign
+                                 // turn running while we stage must not be deferred behind us (round 4).
+                                 // Its inProgress reply + user
                                  // item are published on the microtask after the host's prompt reply resolves
                                  // (onAccepted), while the event layer (fleet.ts) broadcasts turn/started and
                                  // turn/completed synchronously off the host's turn frames. A trivially-fast
@@ -258,6 +278,9 @@ export interface ThreadRecord {
                                  // completed edge onto this promise; onAccepted resolves and clears it the
                                  // moment the reply is out. Absent for foreign turns (no reply is owed) and
                                  // once the reply has been published — so a normal completion stays synchronous.
+  fleetPendingStop?: PendingFleetStop; // FLEET ONLY: the PENDING (accepted here, not yet dispatched to the
+                                 // host) own turn's OWN interrupt latch — see PendingFleetStop.
+
   short?: string;               // FLEET ONLY (M3 §1b): the roster row's 8-hex id — the handle `ccx` itself
                                  // addresses a session by, so a client can name the same session both here
                                  // and at the CLI. Filled at attach (Task 7); never set on inProcess.
@@ -277,6 +300,14 @@ export interface ThreadRecord {
    *  including one it did not raise itself. Absent on every other thread, the reviewed target included: it
    *  points one way, from review to subject. */
   reviewOf?: string;
+  /** M7: the tool declarations this thread was ADMITTED with, verbatim — absent on every thread that
+   *  declared none. WIRE-SILENT: no view projects it, and nothing outside the engine-build path reads it.
+   *
+   *  It lives on the record because the DECLARATION outlives any one engine while the servers built from it
+   *  do not: every replacement engine (rewind, clear, reopen) rebuilds fresh MCP servers from this list, and
+   *  `record.config` deliberately never carries them. Fixed at admission — there is no method that changes
+   *  it, which is also why `mcpServer/set` is refused on a thread that has one (mcp.ts). */
+  dynamicTools?: DynamicToolSpec[];
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
                                  // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
                                  // needs "am I still talking to the current engine" reads this, not a
@@ -340,12 +371,20 @@ export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swappin
   return (r.busy || r.fleetTurnPending) ? "turn" : null;
 }
 
+/** WHAT an active thread is blocked on, when it is blocked on a client at all (M7). Two kinds, because a
+ *  client acts on them differently: a `decision` is a permission prompt the ENGINE raised, a `toolCall` is
+ *  a client-declared tool the model invoked and whose result only a client can supply (`tool/callResult`).
+ *  A thread that parked a dynamic call and reported nothing but `active` told a UI the same story a thread
+ *  merely thinking tells, and the one waiting on the user would sit there forever. */
+export type ThreadWaiter = "decision" | "toolCall";
+
 /** The ONE thread-status shape emitted on the wire (spec D-M2-8): every `threadView`/`thread/status/changed`
  *  site builds its `status` field through this, never by hand. `waitingOn` is the caller's job to compute
- *  (it needs the decisions map, which this function does not have) — see `srv.pendingDecisions`. */
-export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idle" | "active"; waitingOn?: "decision" } {
+ *  (it needs the two park registries, which this function does not have) — see `srv.threadWaiter`, which is
+ *  where the precedence between the two kinds is decided and explained. */
+export function threadStatus(r: ThreadRecord, waitingOn?: ThreadWaiter): { state: "idle" | "active"; waitingOn?: ThreadWaiter } {
   if (!threadBusyReason(r)) return { state: "idle" };
-  return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
+  return waitingOn ? { state: "active", waitingOn } : { state: "active" };
 }
 
 /** WHERE THIS THREAD RUNS — the one answer, shared by `threadView.cwd` (server.ts) and by the directory

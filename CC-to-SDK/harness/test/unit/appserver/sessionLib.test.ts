@@ -27,12 +27,23 @@ const init = (c: { feed(ch: string): void }, id: number, opts: { name?: string; 
   send(c, { id, method: "initialize", params: { clientInfo: { name: opts.name ?? "t" }, ...(opts.watchThreads ? { watchThreads: true } : {}) } });
 const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1", ...overrides });
 
+/** One throwaway archive-marker root for this whole file. `thread/list` reads that directory on every
+ *  request and resolves it as `deps.ccxDir ?? fleetRoot()` (appserver/archive.ts), so a boot that omits
+ *  the dep is protected only by the process-global `CCX_FLEET_ROOT` backstop — which any vitest
+ *  invocation that misses this project's config (a `--root` above the harness, an explicit `--config`)
+ *  drops silently, pointing the read at the operator's real `~/.claude/ccx/archived`. A stale marker
+ *  there named for a fixture sessionId then filters the live thread out of its own reply. The M6 rows
+ *  below still pass their own per-test root. */
+const fileCcxDir = mkdtempSync(join(tmpdir(), "m7ccx-sessionLib-"));
+afterAll(() => { rmSync(fileCcxDir, { recursive: true, force: true }); });
+
 /** Every case here calls thread/list at least indirectly; the store side MUST be DI'd (never left to the
  *  real src/sessions/index.js default) — this repo's own real `~/.claude/projects` has thousands of real
  *  sessions on it, so an un-DI'd listSessions call is both slow and non-deterministic in exactly this
- *  environment. `deps.listSessions` defaults to an empty store here; individual tests override it. */
+ *  environment. `deps.listSessions` defaults to an empty store here; individual tests override it, and
+ *  `deps.ccxDir` defaults to this file's own marker root for the same reason (see above). */
 function boot(deps: Partial<AppServerDeps> = {}) {
-  const fullDeps: AppServerDeps = { sessionFactory: () => fakeSession(), listSessions: async () => [], ...deps };
+  const fullDeps: AppServerDeps = { ccxDir: fileCcxDir, sessionFactory: () => fakeSession(), listSessions: async () => [], ...deps };
   const srv = new AppServer({}, fullDeps);
   const s = mkSink();
   const c = srv.connect(s.sink);

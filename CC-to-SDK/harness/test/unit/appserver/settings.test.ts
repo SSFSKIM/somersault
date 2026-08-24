@@ -10,7 +10,10 @@
 // no timer), which is enough async-ness to prove the handlers correctly `await` rather than assume
 // synchronicity, and fully drains within ONE `tick()`; the one dedicated "delay" test below uses a REAL
 // setTimeout to prove record.chain serializes two setters end-to-end, not just across a microtask queue.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { THINK_LEVELS, thinkBudget } from "../../../src/tui/thinkLevels.js";
@@ -53,6 +56,10 @@ function fakeSession(calls: Calls, modes: Partial<Record<keyof Calls, Mode>> = {
   };
 }
 
+/** One throwaway archive-marker root for this whole file (see the ccxDir note in the boot helper). */
+const fileCcxDir = mkdtempSync(join(tmpdir(), "m7ccx-settings-"));
+afterAll(() => { rmSync(fileCcxDir, { recursive: true, force: true }); });
+
 /** Boots a server, initializes TWO connections (A the actor, B a second subscriber — spec acceptance 5's
  *  unit-level shadow: "second client sees the first client's change"), starts one thread with an optional
  *  seed config, and subscribes both. Returns { srv, a, b, connA, connB, threadId }; both sinks are
@@ -60,7 +67,12 @@ function fakeSession(calls: Calls, modes: Partial<Record<keyof Calls, Mode>> = {
 async function bootTwoSubscribers(sessionFactory: () => any, config?: Record<string, unknown>) {
   // listSessions IS DI'd (Task 12): several callers below assert on a thread/list mirror row, and the real
   // store wrapper would otherwise hit this machine's actual ~/.claude/projects (thousands of real sessions).
-  const srv = new AppServer({}, { sessionFactory, listSessions: async () => [] });
+  // ccxDir IS DI'd for the same reason: that same handler reads the archive-marker directory, resolved as
+  // `deps.ccxDir ?? fleetRoot()` (appserver/archive.ts), so omitting it leans on the process-global
+  // CCX_FLEET_ROOT backstop — which any vitest invocation that misses this project's config drops
+  // silently, pointing the read at the operator's real ~/.claude/ccx/archived. A stale marker there named
+  // for this file's fixture sessionId ("sess-1") then filters the live thread out of its own mirror.
+  const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory, listSessions: async () => [] });
   const a = mkSink(); const connA = srv.connect(a.sink);
   const b = mkSink(); const connB = srv.connect(b.sink);
   init(connA, 1, "A"); init(connB, 1, "B");

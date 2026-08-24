@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { emptyFlagPerms, threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
@@ -12,7 +15,15 @@ const fakeSession = (overrides: Record<string, unknown> = {}) => ({ submit: asyn
 // listSessions IS DI'd (Task 12): thread/list now merges in the store, and this machine's real
 // ~/.claude/projects has thousands of real sessions on it — every boot() caller that asserts an exact
 // thread/list count needs a hermetic, empty store, not the real one.
-const boot = (token?: string) => { const s = mkSink(); const srv = new AppServer({ token }, { sessionFactory: () => fakeSession(), listSessions: async () => [] }); const c = srv.connect(s.sink); return { ...s, srv, c }; };
+// ccxDir IS DI'd for the same reason: `thread/list` reads the archive-marker directory on every request
+// and resolves it as `deps.ccxDir ?? fleetRoot()` (appserver/archive.ts), so a boot that omits the dep is
+// protected only by the process-global CCX_FLEET_ROOT backstop — which any vitest invocation that misses
+// this project's config (a `--root` above the harness, an explicit `--config`) drops silently, pointing
+// the read at the operator's real ~/.claude/ccx/archived. A stale marker there named for this file's
+// fixture sessionId ("sess-1") then filters the live thread out of its own reply.
+const fileCcxDir = mkdtempSync(join(tmpdir(), "m7ccx-server-"));
+afterAll(() => { rmSync(fileCcxDir, { recursive: true, force: true }); });
+const boot = (token?: string) => { const s = mkSink(); const srv = new AppServer({ token }, { ccxDir: fileCcxDir, sessionFactory: () => fakeSession(), listSessions: async () => [] }); const c = srv.connect(s.sink); return { ...s, srv, c }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = () => new Promise((r) => setTimeout(r, 0));

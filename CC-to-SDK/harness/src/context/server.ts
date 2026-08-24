@@ -1,7 +1,12 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 
+/** The MCP server name this tool is published under. Named once, because the name is also a SLOT: it is
+ *  merged into `options.mcpServers` with a plain spread, so anything else claiming it would replace this
+ *  server outright — which is why `INJECTED_SERVER_NAMES` (session/session.ts) derives from this constant
+ *  rather than repeating the string. */
+export const CONTEXT_SERVER = "cc-context";
 /** The model-facing tool id the harness must allowlist for the agent to call it. */
-export const CONTEXT_TOOL = "mcp__cc-context__GetContextUsage";
+export const CONTEXT_TOOL = `mcp__${CONTEXT_SERVER}__GetContextUsage`;
 
 /** The subset of the SDK getContextUsage() payload this tool needs (it returns ~17 fields). */
 export interface RawContextUsage { totalTokens?: number; maxTokens?: number; autoCompactThreshold?: number; isAutoCompactEnabled?: boolean }
@@ -39,7 +44,7 @@ export function buildContextTools(holder: QueryHolder) {
 
 /** Wrap a QueryHolder as an in-process SDK MCP server exposing the GetContextUsage tool. */
 export function createContextMcpServer(holder: QueryHolder) {
-  return createSdkMcpServer({ name: "cc-context", version: "0.1.0", tools: buildContextTools(holder) });
+  return createSdkMcpServer({ name: CONTEXT_SERVER, version: "0.1.0", tools: buildContextTools(holder) });
 }
 
 /** Return a COPY of `options` with the cc-context server + its allowed tool merged in (deduped).
@@ -49,7 +54,7 @@ export function withContextTool(options: Record<string, unknown>, holder: QueryH
   const allowed = (options.allowedTools as string[] | undefined) ?? [];
   return {
     ...options,
-    mcpServers: { ...existing, "cc-context": createContextMcpServer(holder) },
+    mcpServers: { ...existing, [CONTEXT_SERVER]: createContextMcpServer(holder) },
     allowedTools: [...new Set([...allowed, CONTEXT_TOOL])],
   };
 }

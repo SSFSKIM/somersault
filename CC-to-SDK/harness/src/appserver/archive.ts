@@ -69,13 +69,30 @@ export const inArchivedPartition = (archived: Set<string>, sessionId: string | u
  *  A CONCURRENT `EEXIST` IS NOT "someone else's, leave it" — it is "not yet usable, and only my own chmod
  *  is ordered before my own write" (fix wave H / H2). Skipping the chmod there was the same defect one
  *  branch over: under `umask 0200` the winner creates a level 0500 and repairs it a syscall later, and in
- *  that gap a loser that treats `EEXIST` as complete walks straight into it — `EACCES` creating the next
- *  level inside it, or writing the marker into it. Measured on four real processes over 25 trials per
- *  shape: 75 of 100 calls failed on a 40-deep chain, 16 of 100 on the two-level `<ccx>/archived` shape
- *  production actually has, and 1 of 100 with only `archived` missing — the winner's mkdir-to-chmod gap
- *  alone. So every level this call had to create is chmod'ed by THIS call before it descends, whoever won
- *  the race to create it; the mode asked for is the same one every creator of this tree asks for, so a
- *  peer's level is never given a mode its own creator did not want.
+ *  that gap a loser that treats `EEXIST` as complete walks straight into it. So every level this call had
+ *  to create is chmod'ed by THIS call before it descends, whoever won the race to create it; the mode
+ *  asked for is the same one every creator of this tree asks for, so a peer's level is never given a mode
+ *  its own creator did not want.
+ *
+ *  THE BOUNDARY LEVEL — the deepest one that already existed at the survey — is the walk's one blind
+ *  spot, and it stayed open through G and H2: a peer's `mkdir` from a syscall ago is still at its masked
+ *  0500, this call's survey files it under "existing, not mine to touch", and the first create INSIDE it
+ *  lands in the peer's mkdir-to-chmod gap (measured 2026-08-23 on the four-process row: `EACCES mkdir
+ *  …/d0/d1`, ~1 trial in 36). Chmod'ing the boundary is not an answer — it existed before this call
+ *  looked, so its mode may be an OPERATOR's deliberate restriction, and overriding that would turn an
+ *  honest refusal into a silent unlock. What closes it is `withBirthGrace` below: the gap is transient by
+ *  construction (the peer's chmod is the very next syscall), so an `EACCES` here is retried briefly and
+ *  only ever re-raised — nothing is chmod'ed that this call did not create, so a real restriction still
+ *  refuses with the same errno, ~127ms later on an error path where that costs nothing.
+ *
+ *  TRIED AND REJECTED, so nobody improves their way back into it: giving each level an atomic birth at
+ *  its final mode by staging (mkdir sibling, chmod private, `rename` into place — `writeTargetDoc`'s file
+ *  pattern, applied to directories). It removes the gap on paper; on macOS/APFS it fails WORSE in
+ *  practice, measured on this same suite: `rename` over an existing EMPTY directory — which POSIX
+ *  requires to succeed, and which two same-instant winners inevitably do to each other — makes concurrent
+ *  `mkdir`/`open` calls resolving through the replaced directory fail `EINVAL` (observed on both the
+ *  four-process row and the six-child idempotence row). An atomic swap of the NAME is not atomic for the
+ *  processes already inside, and there is no portable no-replace rename to reach for.
  *
  *  The `EEXIST` is re-asserted with a recursive `mkdir` first, which no-ops on a directory and re-raises
  *  on a FILE — so a path that is a file rather than a directory keeps raising the errno it always did
@@ -91,13 +108,30 @@ async function mkdirOwnerOnly(dir: string): Promise<void> {
   }
   if (missing.length === 0) { await mkdir(dir, { recursive: true }); return; }
   for (const p of missing) {
-    try { await mkdir(p, { mode: 0o700 }); }
+    try { await withBirthGrace(() => mkdir(p, { mode: 0o700 })); }
     catch (e) {
       if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
       await mkdir(p, { recursive: true }); // no-op on a directory; re-raises EEXIST on a file
     }
     await chmod(p, 0o700);
   }
+}
+
+/** A store level's mkdir-to-chmod gap, seen from the outside, is an `EACCES` that will be gone by the
+ *  next syscall — retried on a short doubling ladder and then re-raised as-is. The ladder is the whole
+ *  contract: total wait ≤127ms bounds what a genuinely restricted store adds to its refusal, and the
+ *  final bare attempt is what keeps the errno and message byte-identical to the unretried call's. Only
+ *  `EACCES` is graced — every other errno, `EEXIST` above all (idempotence's fast path), leaves on the
+ *  first throw. */
+async function withBirthGrace<T>(op: () => Promise<T>): Promise<T> {
+  for (const wait of [1, 2, 4, 8, 16, 32, 64]) {
+    try { return await op(); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== "EACCES") throw e;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  return op();
 }
 
 export async function createArchiveMarker(sessionId: string, deps: ArchiveDeps): Promise<void> {
@@ -121,7 +155,9 @@ export async function createArchiveMarker(sessionId: string, deps: ArchiveDeps):
   // power loss just after a successful return can lose the archive. Torn writes are impossible regardless
   // (O_CREAT|O_EXCL plus a zero-byte write leaves either no dirent or the intended marker; `unlink` is
   // atomic), and nothing else in this repo fsyncs either — `writeTargetDoc` does not. Considered, accepted.
-  try { await writeFile(join(dirOf(deps), sessionId), "", { flag: "wx" }); }
+  // `withBirthGrace`: when the store EXISTED at this call's survey, the marker write is the first
+  // syscall to enter it — and can land in its creator's mkdir-to-chmod gap exactly as the walk can.
+  try { await withBirthGrace(() => writeFile(join(dirOf(deps), sessionId), "", { flag: "wx" })); }
   catch (e) { if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e; }
 }
 export async function removeArchiveMarker(sessionId: string, deps: ArchiveDeps): Promise<void> {

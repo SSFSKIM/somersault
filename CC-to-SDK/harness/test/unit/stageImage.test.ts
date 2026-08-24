@@ -5,7 +5,7 @@
 // test/integration/host-image-transport.test.ts; this file is the schema + module layer underneath it.
 import { describe, expect, it, vi } from "vitest";
 import { connect } from "node:net";
-import { mkdtempSync, existsSync, statSync, writeFileSync, utimesSync, readdirSync } from "node:fs";
+import { mkdtempSync, existsSync, statSync, writeFileSync, utimesSync, readdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -275,6 +275,42 @@ describe("ImageStaging — mint / validate / release / sweep, in isolation", () 
     staging.sweepOrphans();
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
+  });
+
+  it("sweepOrphans(): prunes a stale map entry whose FILE the client already unlinked — the leak the directory loop cannot see", async () => {
+    // Round-3 finding: on an aborted fleet image turn the CLIENT deletes the staged files itself, over
+    // the shared filesystem (client/stagedSubmit.ts's `cleanup`). The directory loop prunes a map entry
+    // only when it MEETS that entry's file, so an entry whose file is already gone was never reaped at
+    // all and repeated aborted turns grew the host's map without bound.
+    // Backdated rather than swept with `maxAgeMs` 0: the cutoff comparison is strict, so a mint and a
+    // zero-age sweep inside the same millisecond would be a coin flip.
+    const dir = join(tmpDir(), "img");
+    const staging = new ImageStaging(dir);
+    const { path } = staging.stage(validDescriptor);
+    const staged = (staging as unknown as { staged: Map<string, { mintedAt: number }> }).staged;   // no public view of the map
+    staged.get(path)!.mintedAt = Date.now() - ORPHAN_MAX_AGE_MS - 60_000;
+    unlinkSync(path);                        // the client's own cleanup, on the shared disk
+    staging.sweepOrphans();
+    expect(staged.has(path)).toBe(false);
+    // The public consequence, with the bytes put BACK on disk so "missing" can only mean the entry:
+    const bytes = Buffer.from("bytes that arrived after the entry was pruned");
+    writeFileSync(path, bytes);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(await staging.readAndValidate(path, sha256, 1_000_000)).toEqual({ ok: false, reason: expect.stringContaining("missing") });
+  });
+
+  it("sweepOrphans(): a FRESH mint whose bytes have not landed yet survives the sweep — the mint→client-write window", async () => {
+    // The age gate is what makes the map loop safe: a just-minted entry legitimately has no file yet
+    // (the client is still writing), and it must still be claimable once those bytes land.
+    const dir = join(tmpDir(), "img");
+    const staging = new ImageStaging(dir);
+    const { path } = staging.stage(validDescriptor);
+    unlinkSync(path);                        // no file for the directory loop to meet, and none expected yet
+    staging.sweepOrphans();                  // default age — this entry is milliseconds old
+    const bytes = Buffer.from("late but valid");
+    writeFileSync(path, bytes);              // …the client's write lands AFTER the sweep
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(await staging.readAndValidate(path, sha256, 1_000_000)).toEqual({ ok: true, data: bytes.toString("base64"), mediaType: "image/png" });
   });
 
   it("sweepOrphans(): a directory that does not exist yet is a safe no-op", () => {
