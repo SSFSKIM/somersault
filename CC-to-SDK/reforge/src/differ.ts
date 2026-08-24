@@ -55,6 +55,15 @@ const VALUE_SCRUBS: [RegExp, string][] = [
   // Clock values rendered INTO prose, where key scrubbing cannot reach them:
   // the subagent tool result carries "<usage>…duration_ms: 26</usage>".
   [/\b(\w*_ms): \d+/g, "$1: <ms>"],
+  // The billing header's cc_version carries a per-PROCESS suffix
+  // ("2.1.241.b71" vs "2.1.241.12d"); the version is behavior, the suffix is not.
+  [/(cc_version=\d+\.\d+\.\d+)\.[0-9a-z]+/g, "$1.<proc>"],
+  // Plan-mode file names end in two RANDOM words
+  // (".../plans/reply-with-exactly-still-here-toasty-fiddle.md" vs
+  // "…-spicy-candy.md"). The prompt-derived prefix is behavior — the engine
+  // names the file after the request — so keep it and scrub only the suffix.
+  // Drawn from a large space, so triage-by-sampling can never certify it.
+  [/(\/plans\/[a-z0-9-]+?)-[a-z]+-[a-z]+\.md/g, "$1-<rand>.md"],
 ];
 
 /**
@@ -203,12 +212,51 @@ function canonicalizeToolResultRuns(messages: unknown[]): unknown[] {
   return out;
 }
 
+/**
+ * Concurrency lanes.
+ *
+ * A backgrounded subagent runs WHILE the parent turn finishes, so three streams
+ * of frames progress at once and their interleaving is a race: measured on the
+ * identical-code pair, both engines emitted exactly the same 15 frames in the
+ * same per-lane order, differing only in where the subagent's frames and the
+ * async task notifications landed relative to the parent's result.
+ *
+ * Order *within* a lane is a contract (task_started → task_updated →
+ * task_notification; a turn's own frames). Interleaving *between* lanes is not.
+ * So stable-partition into lanes and concatenate in a fixed lane order. Nothing
+ * is dropped — a missing or reordered frame inside any lane still diffs.
+ *
+ * Note `task_started` is emitted synchronously at dispatch and lands identically
+ * on both engines; it is laned with the async notifications anyway, which is
+ * harmless because both sides lane it the same way.
+ */
+const ASYNC_TASK_SUBTYPES = new Set(["background_tasks_changed", "task_started", "task_updated", "task_notification", "task_progress"]);
+
+function laneOf(m: unknown): string {
+  const f = m as { type?: string; subtype?: string; parent_tool_use_id?: string | null };
+  if (typeof f?.parent_tool_use_id === "string" && f.parent_tool_use_id) return `2:subagent:${f.parent_tool_use_id}`;
+  if (f?.type === "system" && f.subtype && ASYNC_TASK_SUBTYPES.has(f.subtype)) return "1:async-task";
+  return "0:root";
+}
+
+function canonicalizeLanes(messages: unknown[]): unknown[] {
+  const lanes = new Map<string, unknown[]>();
+  for (const m of messages) {
+    const k = laneOf(m);
+    const bucket = lanes.get(k);
+    if (bucket) bucket.push(m);
+    else lanes.set(k, [m]);
+  }
+  if (lanes.size <= 1) return messages;
+  return [...lanes.keys()].sort().flatMap((k) => lanes.get(k)!);
+}
+
 export function normalizeTranscript(messages: unknown[]): unknown[] {
   const ids = new Map<string, string>();
   collectRunIds(messages, ids);
   const scrub = makeScrubString(ids);
   const filtered = messages.filter((m) => !DROP_MESSAGE_TYPES.has((m as { type?: string })?.type ?? ""));
-  return canonicalizeToolResultRuns(filtered).map((m) => normalizeWith(m, scrub));
+  return canonicalizeLanes(canonicalizeToolResultRuns(filtered)).map((m) => normalizeWith(m, scrub));
 }
 
 export interface DiffFinding {

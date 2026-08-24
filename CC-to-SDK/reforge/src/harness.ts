@@ -30,6 +30,14 @@ export interface Scenario {
    * hollow-pass class: two engines agreeing on nothing still diff as identical).
    */
   check?(messages: unknown[], events: unknown[]): string | null;
+  /**
+   * Opt out of whole-transcript diffing, grading on `check` alone. ONLY for
+   * scenarios whose output is genuinely nondeterministic in a way that cannot be
+   * canonicalized without discarding a real contract — the reason is required so
+   * the exemption is auditable rather than a silent way to make red go green,
+   * and such a scenario grades strictly less than the others.
+   */
+  substanceOnly?: string;
 }
 
 // --- small assertion helpers for scenario checks ----------------------------

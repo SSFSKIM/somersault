@@ -233,15 +233,30 @@ export const M3_SCENARIOS: Scenario[] = [
     // Tier 2 #10: the background-task sidechannel. ccx's task panel and ctrl-B
     // depend on task_started / task_notification bookends and the
     // background_tasks_changed level signal (REPLACE semantics).
+    // MEASURED: this scenario is irreducibly racy on the diff surfaces. A
+    // backgrounded agent completes concurrently with the parent turn, and its
+    // completion is spliced into the parent's CONVERSATION ARRAY either before
+    // or after the parent's own reply. Lane canonicalization fixes the frame and
+    // request interleaving (and does, here), but conversation order inside a
+    // request body is a real contract and must not be sorted away — and
+    // `subagent_stats.completed` legitimately reads 0 or 1 depending on the same
+    // timing. Ending the turn early does not help either: the two engines then
+    // stop at different frame counts.
+    //
+    // So it grades on its substance assertion alone: the dispatch-time
+    // sidechannel frames (`task_started` with a tool_use_id, and
+    // `background_tasks_changed` carrying a tasks array), which ARE deterministic.
+    substanceOnly:
+      "backgrounded work completes concurrently with the parent turn; the splice point in the parent's conversation is a race that cannot be canonicalized without discarding real conversation ordering",
     tag: "background-task",
-    title: "backgrounded Agent emits task_started and background_tasks_changed",
+    title: "backgrounded Agent emits task_started and background_tasks_changed at dispatch",
     run: (ctx) =>
       drive(
         "Use the Agent tool with run_in_background set to true to dispatch one subagent (subagent_type 'general-purpose') whose entire task is: reply with the single word REFORGE_BG_OK. Do not wait for it; immediately reply with exactly DISPATCHED.",
         {
           ...baseOptions(ctx),
           allowedTools: ["Agent"],
-          maxTurns: 3,
+          maxTurns: 2,
           permissionMode: "bypassPermissions",
         },
       ),

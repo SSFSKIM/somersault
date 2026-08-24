@@ -297,26 +297,45 @@ value-comparison triage stays as a second line of defense for nondeterminism
 that cannot be canonicalized, with `m3/variance-guard.test.ts` proving it never
 excuses an unobserved value.
 
-## Recording is currently blocked (2026-08-24)
+## Concurrency: lanes, and the one scenario that cannot be canonicalized
 
-19 of 22 scenarios replay green offline. Three cannot be graded because their
-cassettes cannot be recorded: `background-task` and `fork-session` were never
-recorded, and `plain` lost its cassette to a `--rerecord` during the outage
-(the bug that motivated staged recordings, now fixed).
+The three cassettes blocked by an account-level rate limit were recorded once it
+cleared, and two of them exposed a second class of nondeterminism — **concurrent
+lanes**. A backgrounded subagent runs *while* the parent turn finishes, so
+several streams of frames progress at once and their interleaving races.
+Measured on the identical-code pair: both engines emitted exactly the same 15
+frames in the same per-lane order, differing only in where the subagent's frames
+and the async task notifications landed relative to the parent's result.
 
-Diagnosis, so nobody re-debugs it: **a sustained account-level 429**, not a
-harness fault and not a transient blip. A direct `curl` to
-`api.anthropic.com/v1/messages` returns `429 rate_limit_error` with no
-rate-limit or `retry-after` headers, only `x-should-retry: true`; twelve polls
-across ~9 minutes were all 429; a refreshed token in the same organization
-behaves identically. Note the engine renders this as "Server is temporarily
-limiting requests (not your usage limit)" — that text is the engine's reading of
-a bare 429 and should not be trusted as a diagnosis.
+`normalizeTranscript` therefore stable-partitions frames into lanes — root,
+subagent (`parent_tool_use_id`), async task notifications — and concatenates
+them in a fixed lane order; the request side partitions the same way on the
+engine's own `cc_is_subagent` billing marker. **Order within a lane stays a
+contract** (a missing or reordered frame inside any lane still diffs); only the
+interleaving between concurrently-progressing lanes is discarded. The
+per-process `cc_version` suffix is scrubbed for the same reason the proxy port
+is.
 
-Everything replay-only is unaffected: replays never touch the network.
+Two more engine-minted random values surfaced the same way and are scrubbed by
+value, since sampling can never certify a draw from a large space: the
+per-process `cc_version` suffix, and the two random words plan mode appends to
+its plan filename (the prompt-derived prefix is kept — naming the file after the
+request *is* behavior).
+
+That fixes the frame and request ordering — but not `background-task`, and the
+honest answer there is a **documented exemption rather than more
+normalization**. When the background agent completes, its result is spliced into
+the parent's *conversation array* either before or after the parent's own reply,
+and conversation order inside a request body is a real contract that must not be
+sorted away; `subagent_stats.completed` likewise reads 0 or 1 depending on the
+same timing, and ending the turn early just makes the two engines stop at
+different frame counts. So `Scenario.substanceOnly` opts that scenario out of
+diff grading **with a required written reason**, the runner prints the exemption
+and the ungraded difference counts every run, and the scenario grades strictly
+less than the others. The alternative — stretching normalization until it went
+green — would have bought a passing gate by deleting a real contract.
 
 ## Next
 
-Record the three outstanding cassettes once the limit clears (`npx tsx m1/run.ts`
-picks up exactly the missing ones), then scale strangler replacement: one module
-at a time, each gated by `strangle/gate.ts`.
+Scale strangler replacement: one module at a time, each gated by
+`strangle/gate.ts`.

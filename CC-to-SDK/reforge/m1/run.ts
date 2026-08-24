@@ -103,7 +103,7 @@ function cassetteIsClean(cassette: string): boolean {
 
 function loadObservedRequests(file: string): unknown[] {
   if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
+  const reqs = readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l))
@@ -112,6 +112,14 @@ function loadObservedRequests(file: string): unknown[] {
       path: r.path,
       body: normalizeValue(JSON.parse(scrubRequestBody(r.requestBody) || "null")),
     }));
+  // Same lane rule the transcript normalizer applies: a backgrounded subagent's
+  // API calls race the parent's, so their interleaving is not a contract while
+  // each lane's own order is. The engine marks subagent traffic in its billing
+  // header. Stable-partition, then concatenate.
+  const isSubagent = (r: unknown) => JSON.stringify(r).includes("cc_is_subagent=true");
+  const parent = reqs.filter((r) => !isSubagent(r));
+  const sub = reqs.filter(isSubagent);
+  return sub.length > 0 ? [...parent, ...sub] : reqs;
 }
 
 /**
@@ -269,9 +277,20 @@ for (const s of SCENARIOS) {
     if (variance.total > 0) console.log(`    oracle is nondeterministic on ${variance.total} path(s)`);
   }
 
-  const tOk = report("transcripts", tFind, variance?.transcripts);
-  const eOk = report("events", eFind, variance?.events);
-  const rOk = report("requests", rFind, variance?.requests);
+  let tOk: boolean;
+  let eOk: boolean;
+  let rOk: boolean;
+  if (s.substanceOnly) {
+    console.log(`    diff surfaces SKIPPED (substance-only): ${s.substanceOnly}`);
+    console.log(
+      `    [transcripts ${tFind.length}, events ${eFind.length}, requests ${rFind.length} difference(s) — not graded]`,
+    );
+    tOk = eOk = rOk = true;
+  } else {
+    tOk = report("transcripts", tFind, variance?.transcripts);
+    eOk = report("events", eFind, variance?.events);
+    rOk = report("requests", rFind, variance?.requests);
+  }
   // substance check — guards the hollow-pass class (identical-but-empty behavior)
   const failure = s.check?.(a.messages, a.events) ?? null;
   if (failure) console.log(`    substance: FAIL — ${failure}`);
