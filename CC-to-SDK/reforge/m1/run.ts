@@ -7,7 +7,7 @@
 // engine-ts exists, every diff is a reimplementation defect.
 //
 // Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
@@ -155,13 +155,18 @@ for (const s of SCENARIOS) {
   const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
 
   if (!existsSync(cassette) || rerecord) {
-    rmSync(cassette, { force: true });
+    // Record to a temp path and only promote on success: a re-record that hits
+    // an outage must not destroy the good cassette it was refreshing. (Measured:
+    // `--rerecord` during an API outage deleted a working `plain` cassette and
+    // left the scenario ungradable until the outage cleared.)
+    const staged = `${cassette}.recording`;
+    rmSync(staged, { force: true });
     console.log("  recording live via engine-real ...");
-    const rec = await runOnce(s, "engine-real", "record", cassette, "record");
+    const rec = await runOnce(s, "engine-real", "record", staged, "record");
     saveTranscript(`m1-${s.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
-    const entries = existsSync(cassette) ? readFileSync(cassette, "utf8").split("\n").filter(Boolean).length : 0;
+    const entries = existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean).length : 0;
     console.log(`  recorded ${entries} API exchange(s)`);
-    assertNoOperatorLeak(cassette);
+    if (existsSync(staged)) assertNoOperatorLeak(staged);
     // A recording that captured an infrastructure failure (rate limit, gateway
     // error) is not a cassette — replaying it grades every engine against the
     // same failure and the scenario silently measures nothing. Discard it so the
@@ -172,11 +177,15 @@ for (const s of SCENARIOS) {
       return t === "reforge-exception" && /rate limit|temporarily limiting|overloaded|502|503|504/i.test(msg);
     });
     if (infraFail) {
-      rmSync(cassette, { force: true });
-      console.log("    DISCARDED: recording captured an infrastructure failure (not engine behavior) — rerun to re-record");
+      rmSync(staged, { force: true });
+      const kept = existsSync(cassette);
+      console.log(
+        `    DISCARDED: recording captured an infrastructure failure (not engine behavior)${kept ? " — previous cassette kept" : " — rerun to re-record"}`,
+      );
       verdicts.push({ tag: s.tag, pass: false });
       continue;
     }
+    renameSync(staged, cassette);
   } else {
     console.log("  cassette exists — reusing");
   }
