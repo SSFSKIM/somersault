@@ -18,6 +18,8 @@ import { SCENARIOS } from "./scenarios.js";
 const args = process.argv.slice(2);
 const only = args.includes("--scenario") ? args[args.indexOf("--scenario") + 1] : undefined;
 const rerecord = args.includes("--rerecord");
+// engine under test (side B). A is always engine-real, the oracle.
+const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
 
 if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
   console.error("ABORT: no auth in env — source CC-to-SDK/.env first.");
@@ -100,11 +102,11 @@ for (const s of SCENARIOS) {
     console.log("  cassette exists — reusing");
   }
 
-  console.log("  replaying offline: A=engine-real, B=engine-extracted ...");
+  console.log(`  replaying offline: A=engine-real, B=${engineB} ...`);
   const a = await runOnce(s, "engine-real", "replay", cassette, "A");
-  const b = await runOnce(s, "engine-extracted", "replay", cassette, "B");
+  const b = await runOnce(s, engineB, "replay", cassette, "B");
   saveTranscript(`m1-${s.tag}-A`, { engine: "engine-real", messages: a.messages, durationMs: 0 });
-  saveTranscript(`m1-${s.tag}-B`, { engine: "engine-extracted", messages: b.messages, durationMs: 0 });
+  saveTranscript(`m1-${s.tag}-B`, { engine: engineB, messages: b.messages, durationMs: 0 });
 
   const tOk = report("transcripts", diffTranscripts(a.messages, b.messages));
   const eOk = report("events", diffTranscripts(a.events, b.events));

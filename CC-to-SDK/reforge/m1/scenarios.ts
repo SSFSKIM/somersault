@@ -15,6 +15,7 @@ import {
   userMessage,
   type Scenario,
 } from "../src/harness.js";
+import { SANDBOX } from "../src/runTurn.js";
 
 export const SCENARIOS: Scenario[] = [
   {
@@ -49,11 +50,15 @@ export const SCENARIOS: Scenario[] = [
   },
 
   {
+    // The first recording of this scenario let the model choose the path and it
+    // invented an absolute path OUTSIDE the sandbox (a garbled variant of the
+    // repo path) — replays faithfully re-created that stray file on every run.
+    // Pin the exact sandbox path in the prompt and ASSERT containment.
     tag: "file-tools",
     title: "Write then Read in the sandbox",
     run: (ctx) =>
       drive(
-        "Using the Write tool, create a file named alpha.txt in the current directory containing exactly the line REFORGE_FILE_BODY. Then use the Read tool to read alpha.txt back, and finally reply with the line you read.",
+        `Using the Write tool, create a file at exactly this absolute path: ${SANDBOX}/alpha.txt — containing exactly the line REFORGE_FILE_BODY. Then use the Read tool to read that same path back, and finally reply with the line you read.`,
         {
           ...baseOptions(ctx),
           allowedTools: ["Write", "Read"],
@@ -61,14 +66,19 @@ export const SCENARIOS: Scenario[] = [
           permissionMode: "bypassPermissions",
         },
       ),
-    check: (msgs) =>
-      !usedTool(msgs, "Write")
-        ? "Write tool never used"
-        : !usedTool(msgs, "Read")
-          ? "Read tool never used"
-          : resultText(msgs).includes("REFORGE_FILE_BODY")
-            ? null
-            : "result lacks file body",
+    check: (msgs) => {
+      if (!usedTool(msgs, "Write")) return "Write tool never used";
+      if (!usedTool(msgs, "Read")) return "Read tool never used";
+      for (const m of msgs) {
+        const c = (m as { message?: { content?: unknown } }).message?.content;
+        if (!Array.isArray(c)) continue;
+        for (const b of c as { type?: string; input?: { file_path?: string } }[]) {
+          if (b?.type === "tool_use" && b.input?.file_path && !b.input.file_path.startsWith(SANDBOX))
+            return `tool touched a path outside the sandbox: ${b.input.file_path}`;
+        }
+      }
+      return resultText(msgs).includes("REFORGE_FILE_BODY") ? null : "result lacks file body";
+    },
   },
 
   {

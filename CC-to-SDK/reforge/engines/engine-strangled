@@ -1,0 +1,5 @@
+#!/bin/sh
+# Engine C — the strangled build: the extracted 2.1.241 payload with one method
+# excised and delegated to a reforge-owned module (see strangle/). Built by
+# `npx tsx strangle/build.ts [--sabotage]`; graded by the same cassette corpus.
+exec /Users/new/.bun/bin/bun "$(dirname "$0")/../build/cli-strangled.js" "$@"
