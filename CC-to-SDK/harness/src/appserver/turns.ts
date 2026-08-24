@@ -658,7 +658,18 @@ export const turnSteerContent: Handler = (srv, ctx, id, params) => {
   );
   if (!prepared) return;
   const { record, blocks, token } = prepared;
-  requireSteerContent(record.session)(blocks); // step 9 — already proven present by gate 5 above
+  // step 9 — `.call(record.session, ...)`, never a detached invocation (review finding): the real
+  // in-process `Session.steerContent` reads `this.steer`, so calling the resolved function without its
+  // receiver throws for that engine — and since neither commit nor abort ran after such a throw, the
+  // stage reservation leaked (never swept, never reservable again). Mirrors `submitRunner`'s own
+  // `requireSubmitContent(record.session).call(record.session, ...)` above. A throw here still propagates
+  // synchronously (this function is not `async`), so the `catch` below reliably aborts before it escapes.
+  try {
+    requireSteerContent(record.session).call(record.session, blocks);
+  } catch (e) {
+    srv.imageStages.abort(token);
+    throw e;
+  }
   record.updatedAt = nowSec(); // the content half of `turnSteer`'s own bump
   srv.imageStages.commit(token); // step 10
   // {ok:true} means "the injection was pushed onto the live input stream", exactly `turnSteer`'s own

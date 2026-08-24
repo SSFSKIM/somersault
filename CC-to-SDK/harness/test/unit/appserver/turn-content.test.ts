@@ -28,6 +28,7 @@ import { ImageStageRegistry, IMAGE_STAGE_CHUNK_MAX } from "../../../src/appserve
 import { imageStageParams } from "../../../src/appserver/schema/images.js";
 import { turnStartContentParams, turnSteerContentParams } from "../../../src/appserver/schema/turns.js";
 import { validateImageBlock, MAX_AGGREGATE_BYTES, type UserContentBlock, type UserTurnInput } from "../../../src/session/turnInput.js";
+import { MAX_IMAGES_PER_PROMPT } from "../../../src/media/imageDims.js";
 import { emptyFlagPerms, type EngineSession, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
@@ -185,6 +186,21 @@ describe("I3d: the positive end-to-end JSON-RPC cell", () => {
     await client.call("turn/startContent", { threadId, text: "two", stagedImageIds: ["j", "p"] });
     await waitFor(() => engine.contents.length === 1);
     expect(engine.contents[0].slice(1).map((b: any) => b.source.media_type)).toEqual(["image/jpeg", "image/png"]);
+  });
+
+  // F10 fix-wave review finding P2: `ImageStageRegistry.reserve` takes a bare `stagedImageIds` array with
+  // no de-dup, so naming ONE completed stage repeatedly is a legal reservation — the exact vector the
+  // finding names ("one completed stage 21x"). The fix lives in the staged normalizer
+  // (`normalizeValidatedBlocks`), not the registry, so this proves the wire-level attack is closed by it.
+  it(`naming one completed stage ${MAX_IMAGES_PER_PROMPT + 1}x sends only ${MAX_IMAGES_PER_PROMPT} images — the staged normalizer's own cap, not the registry's`, async () => {
+    const { client, engine, threadId } = await realPeerPair();
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    const ids = Array.from({ length: MAX_IMAGES_PER_PROMPT + 1 }, () => "s1");
+    await client.call("turn/startContent", { threadId, text: "many", stagedImageIds: ids });
+    await waitFor(() => engine.contents.length === 1);
+    const sent = engine.contents[0];
+    expect(sent.filter((b: any) => b.type === "image")).toHaveLength(MAX_IMAGES_PER_PROMPT);
+    expect(sent.some((b: any) => b.type === "text" && b.text.includes(`too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})`))).toBe(true);
   });
 
   it("a media type outside the allowlist is refused at the first chunk, and nothing is staged", async () => {
@@ -450,6 +466,44 @@ describe("I3e: old-server skew — turn/steerContent is negotiated, never assume
     expect(engine.submit).toHaveBeenCalledTimes(1); // only the original turn/start — the deleted method never ran
     expect(engine.submitContent).not.toHaveBeenCalled();
     expect(engine.steerContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("I3e (fix-wave review finding P1): steerContent must be invoked with the session as receiver", () => {
+  /** A receiver-sensitive fake — `steerContent` is a REAL prototype method that reads `this.steers`,
+   *  exactly the shape the real `Session.steerContent` has (`this.steer(input)`, src/session/session.ts).
+   *  Every other fake in this file hands `steerContent` in as a plain function property, which is
+   *  receiver-INsensitive and so cannot catch a caller that drops the receiver — this class closes that
+   *  gap (review finding: turns.ts's `requireSteerContent(record.session)(blocks)` calls the returned
+   *  function DETACHED from `record.session`, so a real `this`-dependent implementation throws). */
+  class ReceiverSensitiveEngine implements EngineSession {
+    steers: UserContentBlock[][] = [];
+    private releaseSubmit!: () => void;
+    private parked = new Promise<{ result: unknown }>((r) => { this.releaseSubmit = () => r({ result: {} }); });
+    submit = vi.fn(() => this.parked);
+    submitContent = vi.fn(async () => ({ result: "ok" }));
+    interrupt = async () => { this.releaseSubmit(); return {}; };
+    dispose = async () => {};
+    onFrame = () => () => {};
+    steerContent(i: UserTurnInput) {
+      this.steers.push(i as UserContentBlock[]); // throws if invoked without `this` bound to the instance
+    }
+  }
+
+  it("a steer against a receiver-sensitive engine succeeds and never leaks the stage reservation", async () => {
+    const engine = new ReceiverSensitiveEngine();
+    const { client, threadId, srv } = await realPeerPair({ session: engine as unknown as EngineSession });
+    await client.call("turn/start", { threadId, input: "first" }); // busy WITH a turn — gate 4 passes
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "image/png");
+    await client.call("turn/steerContent", { threadId, text: "look", stagedImageIds: ["s1"] });
+    expect(engine.steers).toHaveLength(1);
+    const b64 = fixture("rgb8-64x48.png").toString("base64");
+    expect(engine.steers[0]).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
+    ]);
+    // the reservation must be settled (committed) either way — never left dangling
+    expect(srv.imageStages.stats()).toMatchObject({ reservedCount: 0 });
   });
 });
 
