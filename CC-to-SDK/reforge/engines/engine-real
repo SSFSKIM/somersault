@@ -1,0 +1,5 @@
+#!/bin/sh
+# Engine A — the pinned real Claude Code binary (bun-compiled Mach-O), 2.1.241.
+# No extension on this file: sdk.mjs treats non-.js paths as a native binary and
+# spawns them directly, so the shebang runs and we exec the pinned binary.
+exec /Users/new/.local/share/claude/versions/2.1.241 "$@"
