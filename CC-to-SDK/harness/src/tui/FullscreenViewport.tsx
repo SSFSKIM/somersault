@@ -87,7 +87,7 @@ import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
-import { clickableOwnersOf, linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
+import { clickableOwnersOf, columnToChar, linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
 import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, moveSelectionFocus, multiClick, selectedSpans, startSelection, type Cell, type ExtendDir, type RowSpan, type SelectionState } from "./mouse/selection.js";
@@ -428,7 +428,16 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
     const at = painted[row - top];
     if (at === undefined || col < 1 || col > at.width) return undefined;
     if (at.anchor !== undefined) return "fold:" + at.anchor;
-    return at.clickable ? "item:" + at.ownerKey : undefined;
+    if (!at.clickable) return undefined;
+    // T-CLICKGATE Task 4 — a click landing inside a `linkRanges` span is a no-op, not a toggle: canon defers
+    // URL-opening entirely (this task does not add it), and expanding the result underneath would silently
+    // steal a gesture aimed at the link. `columnToChar` already answers `undefined` for a gutter column and
+    // for a column past the row's own text (the blank tail), so a click there simply finds no span here and
+    // falls through to the ordinary answer below — this check only ever NARROWS the clickable answer, never
+    // widens it past the width bound already enforced above.
+    const hitChar = at.linkRanges?.length ? columnToChar(at, col) : undefined;
+    if (hitChar !== undefined && at.linkRanges!.some((r) => hitChar.charStart < r.end && hitChar.charEnd > r.start)) return undefined;
+    return "item:" + at.ownerKey;
   }, []);
   // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
   // click's own comparison, nothing else painting differently for it meanwhile) a hovered row IS the paint —

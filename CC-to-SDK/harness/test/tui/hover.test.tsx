@@ -191,6 +191,44 @@ describe("T-CLICKGATE Task 2 (a): motion over a CLICKABLE row (a >10-line error 
   });
 });
 
+// T-CLICKGATE Task 4 — the blank tail past a clickable row's own text is not part of it: the `col <= at.width`
+// bound Task 2 already applied to `hoverAt` (line 450 of `FullscreenViewport.tsx`) already answers "nothing
+// hovered" there, so this pins that bound rather than changing it. `BLANK_COL` sits well past the error
+// block's five-column gutter plus "err line N"'s own ten characters, and well inside the 80-column terminal.
+const BLANK_COL = 60;
+describe("T-CLICKGATE Task 4: motion over a clickable row's BLANK TAIL does not un-dim it", () => {
+  it("leaves the overflow marker dim on a motion report past the first error line's own painted width", async () => {
+    const DOC = [prose("hello there", "a"), call("mystery-1", "Mystery", {}), result("mystery-1", errorLines(12), true), prose("all done", "b")];
+    const r = await mount(DOC);
+    const markerRow = rowOfIncluding(r.lastFrame(), "+2 lines");
+    const before = rawLineIncluding(r.lastFrame(), "+2 lines");
+    expect(before).toContain("\x1b[2m");                      // premise, same as Task 2 (a)'s own case
+
+    const firstErrRow = rowOfIncluding(r.lastFrame(), "err line 1");
+    r.stdin.write(motion(BLANK_COL, firstErrRow));
+    await settle();
+    expect(rawLineIncluding(r.lastFrame(), "+2 lines")).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 4: motion over an EXPANDED member's blank tail keeps hover-suppression stable", () => {
+  it("leaves the expanded '(No output)' row byte-identical for a motion report past its own painted width", async () => {
+    const DOC = [prose("hello there", "a"), ...CLUSTER_BASH, prose("all done", "b")];
+    const r = await mount(DOC);
+    await tap(r, COL, rowOfIncluding(r.lastFrame(), COLLAPSED));   // open the cluster
+    const memberRow = rowOfIncluding(r.lastFrame(), NO_OUTPUT);
+    const before = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    expect(before).toContain("\x1b[2m");                          // premise, same as T3's own Critical case
+
+    r.stdin.write(motion(BLANK_COL, memberRow));
+    await settle();
+    const after = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    expect(after).toBe(before);
+    r.unmount();
+  });
+});
+
 describe("T-CLICKGATE Task 2 (b): motion over a NON-clickable dim row does NOT un-dim it", () => {
   // The F10-era hover machine un-dimmed EVERY painted row under the pointer, no matter what it was — this
   // cell used to pin exactly that ("un-dims the fold rule's title span on hover"). This long-prompt fold

@@ -19,6 +19,7 @@
 // case — the wheel discard, which cannot be shown on a document the wheel cannot move.
 import React from "react";
 import { describe, it, expect } from "vitest";
+import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
@@ -27,6 +28,12 @@ import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js"
 import { SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import { themeTokens } from "../../src/tui/theme.js";
+import { Box, Text } from "ink";
+import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
+import { FullscreenViewport, type ViewportHitmap } from "../../src/tui/FullscreenViewport.js";
+import { Transcript } from "../../src/tui/Transcript.js";
+import type { RenderItem } from "../../src/tui/toolRenderer.js";
+import type { RenderLine } from "../../src/tui/render.js";
 
 const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 /** OSC-8 hyperlinks wrap a path tool's argument, so an expanded `Read(a.ts)` row is not contiguous text. */
@@ -535,6 +542,111 @@ describe("T-CLICKGATE Task 3 (d): a tap on a NON-clickable result (a ≤10-line 
     r.stdin.write("X");
     await waitFor(() => clean(r.lastFrame()).includes("abcX"));
     expect(clean(r.lastFrame())).toContain("abcX");             // caret was still at the end, not mid-transcript
+    r.unmount();
+  });
+});
+
+// ══ T-CLICKGATE Task 4 — edge rules: link-cell clicks are no-ops; blank-tail rules pinned ══════════════════
+// STEP 0's FINDING (full trace in task-4-report.md). `linkRangesOf` (`mouse/hitmap.ts`) walks a line's
+// `segments` and scans ONLY the ones marked `preStyled` for OSC-8 tokens; an ORDINARY segment's own bytes are
+// never inspected, only counted toward the running plain-text offset. Two producers embed an OSC-8 link
+// today: `groupRowLine`'s PR-clause run (`toolFold.ts`'s `href` clause, composed as ONE `preStyled` segment —
+// `linkRangesOf` DOES see this one) and a path tool's header argument (`toolRenderer.tsx`'s `headerArgument` /
+// `osc8FileLink`, wrapped in an ORDINARY segment — `linkRangesOf` MISSES this one; this file's own `unlink()`
+// helper above exists because of exactly that miss, per its own comment at line 32-33). NEITHER producer's row
+// is ever `item.clickable === true` in the shipped renderer (`clickable` is minted only on a tool-RESULT
+// gutter-block body — `toolRenderer.tsx`'s own doc — never a header or a fold-cluster row), so today's
+// click-to-expand can never actually land on a linked cell either way. The no-op rule below is therefore a
+// defensive, forward-looking invariant: both cases stamp `clickable: true` onto a hand-built row directly (the
+// same "cover the `RenderItem` union's case even with no live producer" idiom `fold-hitmap.test.tsx`'s own
+// `WIDE_DOC` uses for its untagged gutter-bearing line arm) rather than reproducing a scenario the renderer
+// cannot currently produce.
+//   Extending `linkRangesOf` to also scan ordinary segments (the brief's own alternative) is disproportionate
+// to this task's edge-rule scope — it would need grapheme-aware column mapping AND a change to a producer
+// contract (`render.ts`'s own doc: an ordinary segment's `text` is supposed to be plain already) that three
+// OTHER tasks' tests already depend on staying exactly as it is. So the no-op is implemented generically
+// against whatever `HitRow.linkRanges` the EXISTING scan captures, and the second case below pins the gap
+// precisely (spec D12) rather than papering over it.
+const HREF = "https://example.com/a";
+const LINK_LABEL = "a.ts";
+const osc8Open = (href: string) => "\x1b]8;;" + href + "\x07";
+const OSC8_CLOSE = "\x1b]8;;\x07";
+// "pre a.ts post" — the link occupies columns 5-8 (1-based): `columnToChar`'s own coordinate space.
+const LINK_PLAIN = "pre " + LINK_LABEL + " post";
+const LINK_COL = 6;           // inside "a.ts" (col 5 'a', 6 '.', 7 't', 8 's')
+const OUTSIDE_LINK_COL = 2;   // inside "pre", same row — the control cell
+const linkedRow: RenderItem = { kind: "line", id: "link-row", ownerKey: "link-row", clickable: true,
+  line: { text: LINK_PLAIN, segments: [
+    { text: "pre " },
+    { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE, preStyled: true },
+    { text: " post" },
+  ] } as RenderLine };
+// The recorded gap: the SAME shape a path tool's header wears — the OSC-8 bytes sit in an ORDINARY segment,
+// so `linkRangesOf` never records them. `clickable: true` here is synthetic (a real header row never carries
+// the bit) so the case can say precisely what the gap covers, and nothing more.
+const HEADER_PLAIN = "Read(a.ts)";
+const HEADER_LINK_COL = 7;    // inside "a.ts" — "Read(" is 5 columns, "a.ts" is columns 6-9
+const headerRow: RenderItem = { kind: "line", id: "header-row", ownerKey: "header-row", clickable: true,
+  line: { text: HEADER_PLAIN, segments: [
+    { text: "Read(" },
+    { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE },  // NOT preStyled — the gap
+    { text: ")" },
+  ] } as RenderLine };
+
+const linkDock = (n: number) => <Box flexDirection="column">{Array.from({ length: n }, (_, i) => <Text key={i}>{`D${i}`}</Text>)}</Box>;
+const linkScene = (items: readonly RenderItem[], hitmap: React.Ref<ViewportHitmap>) => (
+  <FullscreenFrame mode="fullscreen" rows={12} dock={linkDock(3)} regionChildren={<>
+    <Transcript staticItems={[]} pendingItems={[]} streaming={[]} />
+    <FullscreenViewport finalizedItems={items} pendingItems={[]} streaming={[]} columns={80} hitmapRef={hitmap} />
+  </>} />
+);
+const settleViewport = async () => { for (let i = 0; i < 4; i++) await tick(); };
+
+describe("T-CLICKGATE Task 4 (a): a click inside a captured `linkRanges` span is a no-op", () => {
+  it("resolves undefined on the link cell, and the ordinary item target beside it", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    render(linkScene([linkedRow], hitmap));
+    await settleViewport();
+    expect(hitmap.current!.clickTargetAt(LINK_COL, 1)).toBeUndefined();
+    expect(hitmap.current!.clickTargetAt(OUTSIDE_LINK_COL, 1)).toBe("item:link-row");
+  });
+});
+
+describe("T-CLICKGATE Task 4 (a, recorded gap — spec D12): an ordinary-segment OSC-8 link is not covered", () => {
+  it("still resolves the item target on the header's own link cell, because linkRangesOf never captured it", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    render(linkScene([headerRow], hitmap));
+    await settleViewport();
+    expect(hitmap.current!.clickTargetAt(HEADER_LINK_COL, 1)).toBe("item:header-row");
+  });
+});
+
+// BLANK-TAIL: the existing `col <= at.width` bound in `clickTargetAt` already answers `undefined` past a
+// row's own painted text, which already makes a blank-tail release fall through to `caretAt` (a no-op off the
+// transcript) rather than a toggle — these two cases PIN that behaviour rather than changing it. `BLANK_COL`
+// sits well past the block's five-column gutter plus "err line N"'s own ten characters, and well inside the
+// 80-column terminal — an unambiguous blank cell that is still on screen.
+const BLANK_COL = 60;
+
+describe("T-CLICKGATE Task 4 (blank-tail, unexpanded): a click past the row's own text never toggles", () => {
+  it("leaves a clickable error result collapsed when the release lands in the blank tail", async () => {
+    const r = await mount(LONG_ERROR_DOC);
+    const before = r.lastFrame();
+    const bodyRow = rowOf(r.lastFrame(), "err line 2");
+    await tap(r, BLANK_COL, bodyRow);
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 4 (blank-tail, expanded): a click past the row's own text never collapses it", () => {
+  it("leaves an expanded error result's block open when the release lands in the blank tail", async () => {
+    const r = await mount(LONG_ERROR_DOC);
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 2"));   // open it
+    const expanded = r.lastFrame();
+    expect(clean(expanded)).toContain("err line 11");
+    await tap(r, BLANK_COL, rowOf(r.lastFrame(), "err line 11"));
+    expect(r.lastFrame()).toBe(expanded);
     r.unmount();
   });
 });
