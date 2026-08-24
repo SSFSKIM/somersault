@@ -21,13 +21,30 @@
 // `test/unit/imageCodec-decode.test.ts`'s golden BMP cell guards the shape (124-byte header,
 // BI_BITFIELDS, negative height) so a re-capture that silently produced a plain BI_RGB bottom-up BMP
 // fails loudly instead of quietly weakening the suite.
+//
+// `live-purple-64x64.gif`, `live-orange-64x64.webp` (VP8L, lossless), `live-orange-64x64-lossy.webp`
+// (VP8, lossy) — bl4 T-GIFWEBP Task 3 — join `clipboard-v5.bmp` as fixtures this script does NOT
+// produce: a from-scratch GIF/WebP encoder isn't worth building when the real toolchain already
+// writes correct, real-world files, and the live cells (`test/live/image-submit.e2e.test.ts`) need
+// bytes an actual model can decode, not a hand-rolled minimal container. Colours are distinct PER
+// FORMAT (spec G6: a shared oracle colour lets a model guess right without reading either image) and
+// named after that colour. Generated ONCE on macOS (Darwin 25.5.0) on 2026-08-24 with PIL 12.3.0
+// (`python3 -c "import PIL; print(PIL.__version__)"`) and cwebp 1.6.0 (`cwebp -version`):
+//   python3 -c "from PIL import Image; Image.new('RGB',(64,64),(128,0,255)).save('test/fixtures/images/live-purple-64x64.gif')"
+//   python3 -c "from PIL import Image; Image.new('RGB',(64,64),(255,140,0)).save('/tmp/bl4-orange.png')"
+//   cwebp -lossless /tmp/bl4-orange.png -o test/fixtures/images/live-orange-64x64.webp
+//   cwebp -q 80 /tmp/bl4-orange.png -o test/fixtures/images/live-orange-64x64-lossy.webp
+// then committed alongside this generator's output. The self-asserts below (pattern of the JPEG/
+// exactly-512000 checks at the bottom of `main()`) read the THREE COMMITTED FILES back through the
+// real `gifDimensions`/`webpDimensions` readers, so a re-capture that silently changed dimensions or
+// collapsed both webps onto the same codec arm fails loudly here rather than inside a later suite.
 
 import { deflateSync } from "node:zlib";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { jpegDimensions } from "../../../src/media/imageDims.ts";
+import { jpegDimensions, gifDimensions, webpDimensions } from "../../../src/media/imageDims.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const out = (name) => join(HERE, name);
@@ -417,6 +434,26 @@ async function main() {
   // Generation-time self-checks: a malformed fixture must fail HERE, not inside a later task's suite.
   if (jpegDimensions(buildTinyJpeg(8, 8)) === null) throw new Error("tiny.jpg: jpegDimensions could not resolve its own generated fixture");
   if (exact.buf.length !== 512_000) throw new Error("exactly-512000.png: size assertion failed");
+
+  // live-purple-64x64.gif / live-orange-64x64.webp / live-orange-64x64-lossy.webp — see the header
+  // comment: these three are NOT written by this script (real toolchain output, committed once), so
+  // this checks the COMMITTED FILES on disk rather than a just-written buffer. `node
+  // test/fixtures/images/make.mjs` must leave them byte-identical every run.
+  const gifBuf = readFileSync(out("live-purple-64x64.gif"));
+  const gifDims = gifDimensions(gifBuf);
+  if (!gifDims || gifDims.width !== 64 || gifDims.height !== 64) throw new Error(`live-purple-64x64.gif: gifDimensions returned ${JSON.stringify(gifDims)}, wanted 64x64`);
+
+  const webpLosslessBuf = readFileSync(out("live-orange-64x64.webp"));
+  const webpLossyBuf = readFileSync(out("live-orange-64x64-lossy.webp"));
+  const webpLosslessDims = webpDimensions(webpLosslessBuf);
+  const webpLossyDims = webpDimensions(webpLossyBuf);
+  if (!webpLosslessDims || webpLosslessDims.width !== 64 || webpLosslessDims.height !== 64) throw new Error(`live-orange-64x64.webp: webpDimensions returned ${JSON.stringify(webpLosslessDims)}, wanted 64x64`);
+  if (!webpLossyDims || webpLossyDims.width !== 64 || webpLossyDims.height !== 64) throw new Error(`live-orange-64x64-lossy.webp: webpDimensions returned ${JSON.stringify(webpLossyDims)}, wanted 64x64`);
+  const losslessFourcc = webpLosslessBuf.toString("ascii", 12, 16);
+  const lossyFourcc = webpLossyBuf.toString("ascii", 12, 16);
+  if (losslessFourcc !== "VP8L") throw new Error(`live-orange-64x64.webp: expected VP8L fourcc, got ${JSON.stringify(losslessFourcc)}`);
+  if (lossyFourcc !== "VP8 ") throw new Error(`live-orange-64x64-lossy.webp: expected "VP8 " fourcc, got ${JSON.stringify(lossyFourcc)}`);
+  if (losslessFourcc === lossyFourcc) throw new Error("live-orange-64x64*.webp: the two webps must hit DIFFERENT codec arms, but their fourccs match");
 
   console.log("wrote all synthetic fixtures to", HERE);
   console.log("NOTE: clipboard-v5.bmp is not written by this script — see the header comment.");
