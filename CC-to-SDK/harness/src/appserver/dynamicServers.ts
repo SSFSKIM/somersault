@@ -155,12 +155,24 @@ function buildServer(
       const why = first?.message ?? "invalid arguments";
       throw new McpError(ErrorCode.InvalidParams, `invalid arguments for "${req.params.name}": ${where}${why}`);
     }
-    return await park({
-      ...(namespace !== undefined ? { namespace } : {}),
-      tool: req.params.name,
-      arguments: args,
-      signal: extra.signal,
-    });
+    // THE PARK SEAM ANSWERS THE MODEL, NEVER THE TRANSPORT. Everything above this line refuses on
+    // purpose and says so as an MCP error the model can read; a park that REJECTS says nothing it can —
+    // an escaping rejection leaves the handler as a raw `MCP error -32603` with a stack, which the model
+    // cannot distinguish from a dead server and cannot act on. The seam's own contract is that it never
+    // rejects (`parkToolCall` resolves every refusal), so reaching this catch means that contract broke;
+    // the model is still owed an `isError` result naming why, and the turn still has to be able to
+    // continue. Guarded HERE, at the one place a park's answer becomes the model's, so the guarantee
+    // holds for every park this file is ever handed — the server binding below included.
+    try {
+      return await park({
+        ...(namespace !== undefined ? { namespace } : {}),
+        tool: req.params.name,
+        arguments: args,
+        signal: extra.signal,
+      });
+    } catch (e) {
+      return { content: [{ type: "text", text: `Tool call failed: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+    }
   });
 
   return wrapper;
@@ -227,8 +239,10 @@ export type ParkHost = {
  *  config back untouched, key and all — nothing about a non-declaring thread changes.
  *
  *  THE BINDING NEVER THROWS AND NEVER REJECTS. `parkToolCall` answers every refusal with a RESOLVED
- *  cancellation; a rejecting park reaches the model as a raw `MCP error -32603` instead of an `isError`
- *  result it can read and act on.
+ *  cancellation; a rejecting park would reach the model as a raw `MCP error -32603` instead of an
+ *  `isError` result it can read and act on. Belt AND braces: the call handler in `buildServer` catches a
+ *  broken seam and answers `isError` anyway, so the guarantee is the model's regardless of which side of
+ *  this binding breaks it.
  *
  *  `generation` is captured by VALUE here, which is the whole point of taking a context rather than a
  *  record: `swapEngine` bumps the epoch BEFORE it disposes the outgoing engine, so a late callback from
@@ -237,15 +251,23 @@ export type ParkHost = {
  *
  *  The env write is the other half of the naming scheme: a truthy `CLAUDE_AGENT_SDK_MCP_NO_PREFIX` strips
  *  the `mcp__<server>__` prefix off every tool name and collapses every declared namespace into one flat
- *  space. Falsified rather than deleted, because the SDK spreads `process.env` underneath (resolveOptions)
- *  and the operator's own shell is one of the places a truthy value comes from. */
+ *  space. Falsified rather than deleted, because the operator's own shell is one of the places a truthy
+ *  value comes from — deleting the key would let it back in.
+ *
+ *  ON `process.env` AS THE BASE when the caller declared no env of its own: an SDK `env` REPLACES the
+ *  subprocess environment rather than augmenting it, so a bare one-key object is PATH and the credentials
+ *  gone. `resolveOptions` does spread `process.env` underneath everything it forwards, which makes the
+ *  one-key shape survivable today — but "safe because somebody downstream repairs it" is a property of
+ *  the other file, not of this write. Stated in code here, the same way the sibling write at
+ *  `resolveOptions.ts` states it, so this config is well-formed wherever it is read. */
 export function withDynamicServers(host: ParkHost, ctx: DynamicBuildCtx, cfg: Record<string, unknown>): Record<string, unknown> {
   if (ctx.specs.length === 0) return cfg;
   const park: DynamicToolPark = (call) => host.parkToolCall(ctx.threadId, ctx.generation, call, call.signal);
+  const base = typeof cfg.env === "object" && cfg.env !== null ? cfg.env as Record<string, unknown> : process.env;
   return {
     ...cfg,
     dynamicToolServers: buildDynamicServers(ctx.specs, park),
-    env: { ...(cfg.env as Record<string, string | undefined> | undefined), [MCP_NO_PREFIX_ENV]: "" },
+    env: { ...base, [MCP_NO_PREFIX_ENV]: "" },
   };
 }
 

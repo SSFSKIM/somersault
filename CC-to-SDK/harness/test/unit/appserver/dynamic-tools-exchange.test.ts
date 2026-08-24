@@ -41,8 +41,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
   buildDynamicServers,
+  withDynamicServers,
   type DynamicToolCall,
   type DynamicToolPark,
+  type ParkHost,
 } from "../../../src/appserver/dynamicServers.js";
 import {
   DynamicCalls,
@@ -627,6 +629,45 @@ describe("buildDynamicServers — tools/call", () => {
     parked[0]!.settle(toCallResult([{ type: "inputText", text: "the tool failed" }], false));
 
     await expect(call).resolves.toMatchObject({ isError: true, content: [{ type: "text", text: "the tool failed" }] });
+  });
+});
+
+// THE NO-REJECT CONTRACT, stated on its own. `parkToolCall` answers every refusal with a RESOLVED
+// cancellation — that is the seam's promise, and the promise is what keeps a refusal READABLE: a park
+// that rejects instead reaches the model as a raw `MCP error -32603` carrying a stack (measured in T6),
+// which it can neither read nor act on, and which ends the turn rather than redirecting it. The park is
+// the one thing in this file the builder does not own, so the guarantee is guarded here rather than
+// assumed — the model is owed an answer whichever side breaks.
+describe("buildDynamicServers — a park that breaks the no-reject contract", () => {
+  it("a REJECTING park answers the model an isError result naming the reason, never a transport error", async () => {
+    const park: DynamicToolPark = () => Promise.reject(new Error("park exploded"));
+    const client = await connect(entryOf(buildDynamicServers([BARE], park), RESERVED_NAMESPACE));
+
+    const result = await client.callTool({ name: "ping" }, undefined, REFUSED) as CallToolResultLike;
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0]!.text)).toContain("park exploded");
+  });
+
+  it("a park that throws SYNCHRONOUSLY answers the same way", async () => {
+    const park: DynamicToolPark = () => { throw new Error("park threw"); };
+    const client = await connect(entryOf(buildDynamicServers([BARE], park), RESERVED_NAMESPACE));
+
+    const result = await client.callTool({ name: "ping" }, undefined, REFUSED) as CallToolResultLike;
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0]!.text)).toContain("park threw");
+  });
+
+  it("the SERVER's own binding inherits it — a rejecting parkToolCall reaches the model as isError", async () => {
+    // Through `withDynamicServers`, so the row covers the binding the app server actually installs
+    // (`(call) => host.parkToolCall(threadId, generation, call, call.signal)`) and not just a park a row
+    // handed the builder directly.
+    const host: ParkHost = { parkToolCall: () => Promise.reject(new Error("host exploded")) };
+    const cfg = withDynamicServers(host, { threadId: "th_1", generation: 0, specs: [BARE] }, {});
+    const client = await connect(entryOf(cfg.dynamicToolServers as Record<string, unknown>, RESERVED_NAMESPACE));
+
+    const result = await client.callTool({ name: "ping" }, undefined, REFUSED) as CallToolResultLike;
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0]!.text)).toContain("host exploded");
   });
 });
 

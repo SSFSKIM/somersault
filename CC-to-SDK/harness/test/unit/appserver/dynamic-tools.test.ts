@@ -31,6 +31,7 @@ import { toolCallResult } from "../../../src/appserver/toolCallResult.js";
 import { toolCallResultParams, toolCallResultResult } from "../../../src/appserver/schema/dynamicTools.js";
 import { methodSchemas } from "../../../src/appserver/schema/index.js";
 import type { CallToolResultLike } from "../../../src/appserver/dynamicCalls.js";
+import { MCP_NO_PREFIX_ENV } from "../../../src/config/types.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const CALL_ID = /^dyncall:[0-9a-f-]{36}$/;
@@ -943,6 +944,21 @@ describe("M7 the transient overlay — what one engine build receives", () => {
     expect(configs[1].env).toEqual({ CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1" });
   });
 
+  it("writes the kill onto process.env when the client declared no env — a one-key env would REPLACE the subprocess environment", () => {
+    // An SDK `env` replaces the child's environment rather than augmenting it, so `{NO_PREFIX: ""}` alone
+    // is PATH and the credentials gone. `resolveOptions` does spread `process.env` underneath what it
+    // forwards, which makes the bare shape survivable — but that is the other file's property, and this
+    // config is read as a config. The base is written here, the same way the sibling write states it.
+    const { srv, configs } = capturing();
+    srv.createThread({ config: { cwd: "/w" }, unattended: "park", dynamicTools: declaration() });
+
+    const env = configs[0].env as Record<string, string | undefined>;
+    expect(env[MCP_NO_PREFIX_ENV]).toBe("");
+    expect(env.PATH).toBe(process.env.PATH);
+    // …and nothing about the base is lost: every key the process had is still there.
+    expect(Object.keys(env).length).toBeGreaterThanOrEqual(Object.keys(process.env).length);
+  });
+
   it("the resume spine builds the overlay too, beside the resume it folds in", async () => {
     const { srv, configs } = capturing();
     const a = attach(srv, "A");
@@ -963,7 +979,30 @@ describe("M7 the transient overlay — what one engine build receives", () => {
     const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory: () => { throw new Error("cannot spawn"); } });
     expect(() => srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() })).toThrow("cannot spawn");
     expect(srv.registry.list()).toEqual([]);
-    expect((srv as unknown as { dynamicCalls: Map<string, unknown> }).dynamicCalls.size).toBe(0);
+    const inner = srv as unknown as { dynamicCalls: Map<string, unknown>; decisions: Map<string, unknown> };
+    expect(inner.dynamicCalls.size).toBe(0);
+    expect(inner.decisions.size).toBe(0);
+  });
+
+  it("a declaring RESUME whose factory throws leaves no record and no registries behind either", async () => {
+    // The resume spine's twin of the row above, and the twin is the point: the ordering is one line apart
+    // on each spine, and until now only `createThread` stated it. What an orphaned `decisions` entry costs
+    // is unbounded: `registry.list()` never names its thread, so nothing can enumerate it, nothing can
+    // settle it, and `shutdown()` walks the registry rather than the map — one permanent leak per resume
+    // whose engine could not spawn (a store id the CLI refuses, an invalid model, a cwd that is not there).
+    const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory: () => { throw new Error("cannot spawn"); } });
+    const a = attach(srv, "A");
+    await tick();
+
+    await expect(srv.startThread(a.ctx(), 9, { resume: "sess-x", config: {}, unattended: "park", dynamicTools: declaration() })).rejects.toThrow("cannot spawn");
+
+    expect(srv.registry.list()).toEqual([]);
+    const inner = srv as unknown as { dynamicCalls: Map<string, unknown>; decisions: Map<string, unknown> };
+    expect(inner.dynamicCalls.size).toBe(0);
+    expect(inner.decisions.size).toBe(0);
+    // …and the resume reservation is not held by a thread that never opened: the refcount `admitResume`
+    // takes is released in a `finally`, so a spine that throws through it leaves the session deletable.
+    expect(srv.resumingSessions.size).toBe(0);
   });
 
   it("refuses a client that writes the overlay itself, through the config or through the hatch, on both spines", async () => {
