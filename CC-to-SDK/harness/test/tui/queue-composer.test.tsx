@@ -22,7 +22,10 @@ import { savePrefs, loadPrefs } from "../../src/tui/prefs.js";
 import { QUEUED_UP_HINT } from "../../src/tui/placeholder.js";
 import type { CommandEntry } from "../../src/tui/commandComplete.js";
 
-const q = (value: string, over: Partial<QueueEntry> = {}): QueueEntry => ({ value, mode: "prompt", priority: "now", origin: "user", ...over });
+// F10 T-HOVER (r3): `QueueEntry` gained a required `id` — a monotonic per-call default is enough for this
+// file's fixtures, since none of them test cross-entry identity (that lives in hover-owner.test.tsx's queue cells).
+let qSeq = 0;
+const q = (value: string, over: Partial<QueueEntry> = {}): QueueEntry => ({ id: `q${qSeq++}`, value, mode: "prompt", priority: "now", origin: "user", ...over });
 const text = (s: EditorState) => s.lines.join("\n");
 // F9 T-IMAGE (I2) widened `PastedEntry` to a 3-arm union; this file's own maps are text-only, so this
 // narrows the read side rather than casting blindly at each call site (see paste-chips.test.ts's twin).

@@ -529,10 +529,12 @@ describe("turn/start input items (spec 2026-08-23)", () => {
       release: () => { for (const r of pending.splice(0)) r(); },
       factory: () => ({
         submit: async (prompt: UserTurnInput) => { submits.push(prompt); await new Promise<void>((r) => pending.push(r)); return { result: {} }; },
+        submitContent(prompt: UserTurnInput) { return this.submit(prompt); },
         interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
       }),
       instantFactory: () => ({
         submit: async (prompt: UserTurnInput) => { submits.push(prompt); return { result: {} }; },
+        submitContent(prompt: UserTurnInput) { return this.submit(prompt); },
         interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
       }),
     };
@@ -634,7 +636,7 @@ describe("turn/start input items (spec 2026-08-23)", () => {
     expect(parsed(s.lines).find((f) => f.id === 4)?.result?.queued).toBe(true);
     // RAW: admission and queueing are synchronous, so no resolution may have happened yet (an await on
     // this side of admission is the M6 stranding — every check before it goes stale).
-    expect(srv.registry.get(threadId)!.queue.map((q) => q.input)).toEqual([items]);
+    expect(srv.registry.get(threadId)!.queue.map((q) => q.input)).toEqual([{ items }]);
     expect(rec.submits).toEqual(["first"]);
 
     rec.release();
@@ -649,18 +651,21 @@ describe("turn/start input items (spec 2026-08-23)", () => {
   });
 
   it("(f) the queue's byte cap counts an items array by its RAW JSON — exactly at the remaining cap enqueues, one byte more is refused", async () => {
-    // Four fillers rather than one: the peer's inbound frame cap (256 KiB) is smaller than the queue's
-    // byte cap (1 MiB), so the boundary is only reachable across several frames.
+    // Sixteen fillers rather than one: the peer's inbound frame cap (256 KiB) is smaller than the queue's
+    // byte cap (4 MiB), so the boundary is only reachable across many frames. Each filler is charged its
+    // SERIALIZED bytes — `queuedInputBytes` is one function for every entry form, quotes included.
     const FILL = 250_000;
+    const FILLERS = 16;
+    const fillerBytes = Buffer.byteLength(JSON.stringify("f".repeat(FILL)), "utf8");
     const overhead = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
-    const remaining = MAX_QUEUED_BYTES - 4 * FILL;
+    const remaining = MAX_QUEUED_BYTES - FILLERS * fillerBytes;
     const exact = [{ type: "text", text: "a".repeat(remaining - overhead) }];
     expect(Buffer.byteLength(JSON.stringify(exact), "utf8")).toBe(remaining);
 
     const fill = async (c: { feed(ch: string): void }, threadId: string) => {
       send(c, { id: 3, method: "turn/start", params: { threadId, input: "running" } });
       await tick();
-      for (let i = 0; i < 4; i++) send(c, { id: 10 + i, method: "turn/start", params: { threadId, input: "f".repeat(FILL), queue: true } });
+      for (let i = 0; i < FILLERS; i++) send(c, { id: 100 + i, method: "turn/start", params: { threadId, input: "f".repeat(FILL), queue: true } });
       await tick();
     };
 

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Engine B — the same 2.1.241 payload extracted from the binary's $bunfs section,
+# run as plain JS under bun (the compile-target runtime; under node it exits
+# silently). Byte-identical application code to engine-real, different packaging:
+# the perfect self-test pair for the differ, and the substrate the strangler
+# reimplementation will progressively replace.
+exec /Users/new/.bun/bin/bun /Users/new/claude-code-bundle/2.1.241/modules/cli "$@"

@@ -1,13 +1,21 @@
-// tui/test/selectionStaleness.test.tsx — final-review finding 7: `SelectionState` (mouse/selection.ts)
-// addresses rows by NUMERIC INDEX into `FullscreenViewport`'s own `hit.current.rows`, and that array is
-// rebuilt from scratch on every publish. A streamed repaint that shifts what sits at a given index (a new
-// item published above a live selection, a fold toggling, a scroll re-wrapping the window) used to leave
-// the selection highlighting — and `selectedText()`/copy reading — whatever now occupies that index,
-// never what the reader actually dragged over. The fix snapshots each selected row's `itemKey` at
-// selection time and clears the whole selection the moment a later publish shows a different key at the
-// same row. This file proves exactly that, through the REAL `FullscreenFrame` + `FullscreenViewport` pair
-// and the REAL `ViewportHitmap` gesture methods — `fold-hitmap.test.tsx`'s own harness, reused rather than
-// reinvented, because the geometry (frame → region → painted row) is exactly what that file already pins.
+// tui/test/selectionStaleness.test.tsx — F10 T-SELECT S4c. Originally final-review finding 7's own proof
+// that `SelectionState` (mouse/selection.ts) addresses rows by NUMERIC INDEX into `FullscreenViewport`'s
+// `hit.current.rows`, and that a streamed repaint shifting what sits at a given index (a new item published
+// above a live selection, a fold toggling, a scroll re-wrapping the window) mis-highlighted and mis-copied
+// whatever now occupied that index — fixed then by snapshotting each selected row's `itemKey` and clearing
+// the WHOLE selection the moment a later publish showed a different key at the same row: "never wrong,
+// sometimes just gone."
+//   F10 S4 replaces the snapshot-and-clear with CHARACTER-IDENTITY addresses (`mouse/address.ts`) and a
+// during-render REMAP (`FullscreenViewport.tsx`'s `selectionAddrRef`/`recordSelectionAddresses`): an insert
+// above, a re-wrap, or a fold toggle no longer clear the selection at all, they relocate it onto the SAME
+// characters at their new screen position. The one case that still clears is the one the address genuinely
+// cannot survive — the selected item leaving the DOCUMENT entirely, not merely moving within it (see
+// `test/tui/selectionRemap.test.tsx` for the full remap acceptance: insert-above, re-wrap, fold-toggle,
+// scroll-out-and-back, backward/reversed drags, and the streamed-delta-during-sweep pty-adjacent cell).
+// This file keeps only the two cases that are this track's OWN regression guards: the false-positive check
+// (an unrelated repaint must never touch a live selection) and the new true-clear case (removal). Both run
+// through the REAL `FullscreenFrame` + `FullscreenViewport` pair and the REAL `ViewportHitmap` gesture
+// methods — `fold-hitmap.test.tsx`'s own harness, reused rather than reinvented.
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { render } from "ink-testing-library";
@@ -37,6 +45,9 @@ const DOC: readonly RenderItem[] = [plain("P0"), plain("P1"), plain("P2"), plain
 // The same document with a new item PUBLISHED ABOVE everything else — every row from P0 down shifts by one,
 // so whatever screen row used to show P2 now shows P1.
 const SHIFTED: readonly RenderItem[] = [plain("NEW"), ...DOC];
+// P2 removed OUTRIGHT — not shifted, GONE from the document. The one case the address cannot survive: there
+// is no character identity left to remap onto.
+const REMOVED: readonly RenderItem[] = [plain("P0"), plain("P1"), plain("P3"), plain("P4")];
 
 const dock = (n: number) => <Box flexDirection="column">{Array.from({ length: n }, (_, i) => <Text key={i}>{`D${i}`}</Text>)}</Box>;
 
@@ -48,8 +59,8 @@ const scene = (items: readonly RenderItem[], hitmap: React.Ref<ViewportHitmap>) 
 );
 const settle = async () => { for (let i = 0; i < 4; i++) await tick(); };
 
-describe("F9 final-review finding 7: a live selection is cleared, not mis-painted, when its rows shift", () => {
-  it("a selection on P2 clears once a published item above it shifts P2 out from under it", async () => {
+describe("F10 S4c: a live selection is REMAPPED onto its content, and cleared only when that content is gone", () => {
+  it("a selection on P2 SURVIVES a published item above it shifting P2's screen row — this is the remap's own positive case", async () => {
     const hitmap = React.createRef<ViewportHitmap>();
     const { lastFrame, rerender } = render(scene(DOC, hitmap));
     await settle();
@@ -61,21 +72,23 @@ describe("F9 final-review finding 7: a live selection is cleared, not mis-painte
     hitmap.current!.dragSelectionTo(2, rowP2);
     await settle();
     expect(hitmap.current!.hasSelection()).toBe(true);
-    expect(hitmap.current!.selectedText().length).toBeGreaterThan(0);
+    const before = hitmap.current!.selectedText();
+    expect(before.length).toBeGreaterThan(0);
 
     // Publish a document with a new item inserted ABOVE everything — the row that used to paint "P2" now
-    // paints "P1" instead. Nothing about the gesture itself changes; only the document shifted under it.
+    // paints "P1" instead. The characters the reader dragged over did not move IN THE DOCUMENT, only on
+    // screen, so the address-based remap relocates the selection rather than clearing it.
     rerender(scene(SHIFTED, hitmap));
     await settle();
     expect(strip(rowsOf(lastFrame())[rowP2 - 1])).toBe("P1");   // premise: the row's CONTENT did move
 
-    // The stale selection must be gone entirely — not remapped onto "P1", not still claiming "P2"'s old
-    // position, not silently highlighting whatever is there now.
-    expect(hitmap.current!.hasSelection()).toBe(false);
-    expect(hitmap.current!.selectedText()).toBe("");
+    expect(hitmap.current!.hasSelection()).toBe(true);
+    expect(hitmap.current!.selectedText()).toBe(before);        // same characters, wherever they now paint
+    const rowP2After = rowOf(lastFrame(), "P2");
+    expect(rowP2After).toBe(rowP2 + 1);                         // P2 itself moved down by exactly one row
   });
 
-  it("an UNCHANGED document leaves the selection exactly as it was (no false-positive clear)", async () => {
+  it("a selection on P2 clears once P2 is REMOVED from the document entirely — the one case the address cannot survive", async () => {
     const hitmap = React.createRef<ViewportHitmap>();
     const { lastFrame, rerender } = render(scene(DOC, hitmap));
     await settle();
@@ -84,11 +97,67 @@ describe("F9 final-review finding 7: a live selection is cleared, not mis-painte
     hitmap.current!.dragSelectionTo(2, rowP2);
     await settle();
     expect(hitmap.current!.hasSelection()).toBe(true);
+    expect(hitmap.current!.selectedText().length).toBeGreaterThan(0);
+
+    // Publish a document with P2 gone outright — no item in the new document carries P2's itemKey, so there
+    // is no character identity to remap onto.
+    rerender(scene(REMOVED, hitmap));
+    await settle();
+    expect(rowsOf(lastFrame()).some((line) => strip(line) === "P2")).toBe(false);   // premise: P2 is gone
+
+    expect(hitmap.current!.hasSelection()).toBe(false);
+    expect(hitmap.current!.selectedText()).toBe("");
+  });
+
+  it("an UNCHANGED document leaves the selection exactly as it was (no false-positive clear or drift)", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame, rerender } = render(scene(DOC, hitmap));
+    await settle();
+    const rowP2 = rowOf(lastFrame(), "P2");
+    hitmap.current!.startSelectionAt(1, rowP2);
+    hitmap.current!.dragSelectionTo(2, rowP2);
+    await settle();
+    expect(hitmap.current!.hasSelection()).toBe(true);
+    const before = hitmap.current!.selectedText();
 
     // Re-publish the IDENTICAL document (a repaint with nothing moved, e.g. an unrelated hover tick).
     rerender(scene([...DOC], hitmap));
     await settle();
     expect(hitmap.current!.hasSelection()).toBe(true);
+    expect(hitmap.current!.selectedText()).toBe(before);
+  });
+});
+
+describe("F10 fix-wave review finding P2: a composer-row press must not restore a stale selection", () => {
+  it("with a live transcript selection, a press below the region (a composer/dock row) clears the selection instead of leaving it for the mouse-up to swallow", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(scene(DOC, hitmap));
+    await settle();
+    const rowP2 = rowOf(lastFrame(), "P2");
+
+    // A real sweep on P2's own row, exactly like this file's other cells — `hasSelection()` must be true
+    // before the composer press, or the cell proves nothing.
+    hitmap.current!.startSelectionAt(1, rowP2);
+    hitmap.current!.dragSelectionTo(3, rowP2);
+    await settle();
+    expect(hitmap.current!.hasSelection()).toBe(true);
     expect(hitmap.current!.selectedText().length).toBeGreaterThan(0);
+
+    // A press on a DOCK row ("D1", published by this file's own `dock()` helper) — outside the region
+    // `hit.current.rows` covers, exactly the composer-click scenario the finding describes. `cellAt` computes
+    // a defined-but-out-of-range `Cell` for it (it only checks the frame has a top at all), so
+    // `startSelection` mutates `SelectionState` to that bogus cell and `recordSelectionAddresses` cannot
+    // resolve an address for it.
+    const rowD1 = rowOf(lastFrame(), "D1");
+    hitmap.current!.startSelectionAt(1, rowD1);
+    await settle(); // the render-time remap runs here — this is where a stale address would restore P2's sweep
+
+    // Fixed behavior: the unresolvable press clears the stale address AND leaves `SelectionState` as the
+    // fresh (no-drag) press set it — `hasSelection()` reads `false` (no `focus`, no `anchorSpan`), so a
+    // release right here would fall through to the composer's own caret/click handling instead of being
+    // swallowed as "a completed sweep." Before the fix, the stale `selectionAddrRef` survives the failed
+    // resolve, the next render's remap restores the OLD P2 sweep, and this assertion sees `true`.
+    expect(hitmap.current!.hasSelection()).toBe(false);
+    expect(hitmap.current!.selectedText()).toBe("");
   });
 });

@@ -1,9 +1,9 @@
 import { HostServer } from "./server.js";
 import type { ControlOp, HostStatus } from "./ops.js";
 import { fleetRoot, hostSocketPath, hostImageStagingDir } from "../fleet/paths.js";
-import { ImageStaging, MAX_IMAGES_PER_PROMPT } from "./imageStaging.js";
+import { ImageStaging } from "./imageStaging.js";
 import { assembleUserContent, type UserTurnInput } from "../session/turnInput.js";
-import { POST_PROCESS_BYTE_BUDGET } from "../tui/clipboardImage.js";
+import { MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET } from "../media/imageDims.js";
 import { TERMINAL, finalizeRoster, readRoster, writeRoster } from "../fleet/roster.js";
 import { removeArchiveMarker } from "../appserver/archive.js";
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";

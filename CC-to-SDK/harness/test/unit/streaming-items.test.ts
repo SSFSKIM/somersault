@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { streamingItems } from "../../src/tui/streamingItems.js";
 import { renderItemHeight } from "../../src/tui/pager.js";
+import { streamOwnerKey } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
 
@@ -54,5 +55,15 @@ describe("streamingItems", () => {
     expect(second).toEqual(first);
     // …and a wrapped line's rows are distinct ids, never a collision that would drop rows.
     expect(new Set(streamingItems([{ text: "x".repeat(25) }], 10).map((i) => i.id)).size).toBe(3);
+  });
+
+  // F10 T-HOVER H1: every item of one call carries the ownerKey it was given, and the default applies when
+  // none was — the sibling of this file's own id-scheme pins above.
+  it("stamps every row with the given ownerKey, and falls back to streamOwnerKey(\"live\") when none is given", () => {
+    const rows = streamingItems([{ text: "one" }, { text: "x".repeat(25) }], 10, streamOwnerKey("msg_01"));
+    expect(rows.length).toBeGreaterThan(2);
+    expect(new Set(rows.map((r) => r.ownerKey)).size).toBe(1);
+    expect(rows[0]!.ownerKey).toBe("stream:msg_01");
+    expect(streamingItems([{ text: "one" }], 80)[0]!.ownerKey).toBe(streamOwnerKey("live"));
   });
 });

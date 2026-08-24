@@ -35,15 +35,31 @@ type TurnKind = "normal" | "compact";
 /** THE authoritative builder seam (F9 T-IMAGE Task 4/I3a, spec v3.1 "Authoritative validation lives
  *  at the Session message-builder boundary"): every turn — human, auto-continuation, steer, compact —
  *  passes through here, so this is the one place normalization can never be bypassed regardless of
- *  which public method a caller used. An array is run through `normalizeTurnInput` (which enforces
- *  every image cap by re-decoding each block's own bytes, never trusting the caller); a string is
- *  sent as-is, since `normalizeTurnInput` has nothing to check on plain text. The SDK's own
- *  `MessageParam.content` narrows `media_type` to its literal union where `UserContentBlock` keeps it
- *  a bare string (library ergonomics — no caller needs the Anthropic SDK's types just to build a
+ *  which public method a caller used. Both forms run through `normalizeTurnInput` UNCONDITIONALLY
+ *  (F10 T-IMGREACH Task 3/I2, re-review r3): an array gets every image cap enforced by re-decoding
+ *  each block's own bytes, never trusting the caller; a string gets MAX_TOTAL_TEXT enforced and comes
+ *  back a string — `normalizeTurnInput` preserves the wire form, it only bounds the length. The SDK's
+ *  own `MessageParam.content` narrows `media_type` to its literal union where `UserContentBlock` keeps
+ *  it a bare string (library ergonomics — no caller needs the Anthropic SDK's types just to build a
  *  turn), so the assembled content is cast at the wire boundary, not loosened upstream of it. */
 function userTurn(input: UserTurnInput, uuid: UserMessageUUID, origin: SubmittedOrigin): SDKUserMessage {
-  const content = Array.isArray(input) ? normalizeTurnInput(input) : input;
+  // UNCONDITIONAL (re-review r3). This line used to read
+  //   Array.isArray(input) ? normalizeTurnInput(input) : input
+  // which meant MAX_TOTAL_TEXT bound array turns only, and every bare-string surface — submit, steer,
+  // and stream through them — was uncapped. `normalizeTurnInput` returns a STRING for a string input,
+  // so the wire form is untouched; only the length is now bounded.
+  const content = normalizeTurnInput(input);
   return { type: "user", message: { role: "user", content: content as SDKUserMessage["message"]["content"] }, parent_tool_use_id: null, origin: { kind: origin }, uuid };
+}
+
+/** ONE normalized user message for the streaming-input form. `harness.run`/`stream`'s array arm builds
+ *  its turn HERE rather than assembling an SDKUserMessage of its own, so a library array turn is
+ *  normalized by the same builder — and therefore under the same caps — as every Session turn. The
+ *  SDK's `query()` takes `string | AsyncIterable<SDKUserMessage>` and nothing else (sdk.d.ts), so a
+ *  library array turn has to adopt the streaming-input form regardless — this is the seam that keeps
+ *  it honest: one `SDKUserMessage`, built by the SAME builder every Session turn goes through. */
+export function oneShotUserTurn(input: UserTurnInput): SDKUserMessage {
+  return userTurn(input, randomUUID() as UserMessageUUID, "human");
 }
 
 /** What one turn settles to. `error` (Wave T Task 14) is ADDITIVE — a turn that reached a terminal result
@@ -160,6 +176,16 @@ export class Session implements ControllableSession {
     return this.enqueueTurn(prompt, onMessage, "human", "normal", opts?.uuid);
   }
 
+  /** `EngineSession.submitContent` (F10 T-IMGREACH Task 9/I3c), the OPTIONAL capability's in-process
+   *  implementation — one line over `submit`, because `submit` already accepts `UserTurnInput` (Task
+   *  4/I3a) and `userTurn` normalizes unconditionally. This method exists ONLY so the capability is
+   *  EXPRESSIBLE on `EngineSession`: an engine that cannot carry content blocks simply has no such method
+   *  to declare, while this one satisfies it trivially. Do not "simplify" this away into a bare alias
+   *  export or delete it as dead code — the interface distinction, not a second code path, is the point. */
+  submitContent(input: UserTurnInput, onMessage: (m: unknown) => void = () => {}, opts?: { uuid?: string }): Promise<TurnOutcome> {
+    return this.submit(input, onMessage, opts);
+  }
+
   /** Mid-turn STEER (probe 103b, ALIVE): push a user message into the live prompt stream so the model
    *  abandons what it is doing and follows the injection, WITHOUT registering a result waiter.
    *
@@ -178,10 +204,26 @@ export class Session implements ControllableSession {
    *  present-but-unknown uuid as "no waiter" (uuid-bearing results are turn-owned, deliberately), so an
    *  engine that correlated a steered turn's result to the STEER's uuid rather than the prompt's would
    *  leave the turn unsettled. Fixing that on a guess would mean weakening turn-ownership for every
-   *  result, so it stays a live-acceptance question rather than a speculative widening here. */
-  steer(text: string): void {
+   *  result, so it stays a live-acceptance question rather than a speculative widening here.
+   *
+   *  UNPINNED from `string` to `UserTurnInput` (F10 T-IMGREACH Task 9/I3c, spec I3): `userTurn` already
+   *  normalizes unconditionally regardless of which public method built the message, so widening this
+   *  signature needed no change to the body — only the type. `EngineSession.steer?` (registry.ts) stays
+   *  `string`-only on purpose (turn/steer's wire schema never widened, and never will — content steering
+   *  is `steerContent`'s own capability, below), and a wider Session parameter still satisfies that
+   *  narrower interface member (contravariant, safe). */
+  steer(input: UserTurnInput): void {
     this.assertRunning();
-    this.input.push(userTurn(text, randomUUID() as UserMessageUUID, "human"));
+    this.input.push(userTurn(input, randomUUID() as UserMessageUUID, "human"));
+  }
+
+  /** `EngineSession.steerContent` (Task 9/I3c), the OPTIONAL capability's in-process implementation — one
+   *  line over `steer`, for the identical reason `submitContent` is one line over `submit`: the interface
+   *  distinction is the point, not a second code path. Its OWN capability, never a `submitContent` call
+   *  (that would start a NEW turn mid-turn) and never routed through the STRING-only `steer` member other
+   *  engines may declare on `EngineSession` — this is what a content-carrying steer actually reaches. */
+  steerContent(input: UserTurnInput): void {
+    this.steer(input);
   }
 
   /** Fixed route for host-generated follow-up turns; callers cannot choose another provenance class. */
@@ -195,7 +237,7 @@ export class Session implements ControllableSession {
    *  when it resolves error-tagged. The tag is the SAME failure a rejection used to be (Task 14 changed how
    *  it settles, not whether it failed), so this public generator must not report it as a result: the
    *  terminal shape is what a `stream()` consumer branches on. Sugar over submit. */
-  async *stream(prompt: string): AsyncGenerator<unknown> {
+  async *stream(prompt: UserTurnInput): AsyncGenerator<unknown> {
     const out = new AsyncQueue<unknown>();
     const done = this.submit(prompt, (m) => out.push(m)).then(
       (r) => out.push(r.error ? { type: "error", error: r.error.message } : { type: "result", result: r.result }),

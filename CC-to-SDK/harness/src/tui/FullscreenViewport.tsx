@@ -80,17 +80,19 @@
 // that takes the seam is rendered INSTEAD of the dock, never over it (spec, and `FullscreenFrame`'s header).
 // A published row map is therefore always current, and the question "is something drawn over this cell" has
 // no meaning here. Which surface owns the input while a dialog is up is ChatApp's gate, one layer up.
-import React, { useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
 import { applyAnchor, type AnchorState } from "./scrollAnchor.js";
 import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type RenderItemSlice } from "./pager.js";
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
-import { linkRangesOf, type HitRow } from "./mouse/hitmap.js";
+import { linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
+import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
-import { createSelectionState, dragTo, hasSelection as computeHasSelection, multiClick, selectedSpans, startSelection, type Cell, type RowSpan, type SelectionState } from "./mouse/selection.js";
-import { charRangeOf, extractText } from "./mouse/extract.js";
+import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, moveSelectionFocus, multiClick, selectedSpans, startSelection, type Cell, type ExtendDir, type RowSpan, type SelectionState } from "./mouse/selection.js";
+import { charRangeOf } from "./mouse/extract.js";
+import { documentSelectionText } from "./mouse/documentText.js";
 import type { LineSelection } from "./Line.js";
 import { stripSgr } from "./sgrFoldRow.js";
 import { useRegionRows, useRegionTop } from "./FullscreenFrame.js";
@@ -161,6 +163,11 @@ export interface ViewportHitmap {
    *  Ctrl+C key-lifetime arm. `""` for no selection — never `undefined`, so a caller can hand it straight to
    *  `copyText` without a branch. */
   selectedText(): string;
+  /** F10 S5 — canon's `moveSelectionFocus`/`E0p` (`mouse/selection.ts`), wired through the wrapper that
+   *  also re-records the durable addresses (Task 6) so the very next repaint does not remap them back to
+   *  the pre-extend position. Returns `false` when no selection is live (the caller then leaves the key to
+   *  the composer). */
+  moveSelectionFocus(dir: ExtendDir): boolean;
 }
 
 export interface FullscreenViewportProps {
@@ -177,6 +184,10 @@ export interface FullscreenViewportProps {
    *  the only thing that decides what fits. Pre-built by ChatApp (it owns `userEchoLines`' width and the
    *  queued rule's inset); empty in classic and in every test that does not care. */
   queuedItems?: readonly RenderItem[];
+  /** F10 T-HOVER — the streaming tier's hover unit for THIS `streaming` snapshot (`LiveTurn.messageKey()`,
+   *  read once per snapshot by `useChat`). Defaulted so every existing mount is unaffected; `ChatApp` passes
+   *  the live value on the one mount whose output is hovered. */
+  streamOwnerKey?: string;
   /** The region's width — every tier is wrapped to it before the window is cut (T17), so a slice row is a
    *  painted row. The region is full-bleed, so this is the terminal's. */
   columns: number;
@@ -237,10 +248,16 @@ export interface FullscreenViewportProps {
  *  defensively `stripSgr`'d again even though every producer already hands `RenderLine.text` plain
  *  (`toolRenderer.tsx` strips a `preStyled` run at publish) — cheap, idempotent, and the honest reading of
  *  "plain text via the existing stripSgr" rather than a second contract nothing enforces. */
-const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, columns: number): HitRow => {
+// F10 S4 — `fallback` is the `{start, end}` this row's source range takes when `l.source` is absent: the
+// identity arm of `wrapLine`/`wrapOne` mints no `source` at all for a row it never wrapped, so the caller
+// (which knows the row's position — a single `HitRow` does not) supplies the whole-item range instead.
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, ownerKey: string, columns: number, fallback: { start: number; end: number }): HitRow => {
   const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
   const linkRanges = linkRangesOf(l);
-  return { itemKey, anchor, kind: "line", gutterWidth, text: stripSgr(l.text), softWrap: l.continuation === true ? "continuation" : "hard",
+  const text = stripSgr(l.text);
+  const source = l.source ?? { ...fallback, pad: 0 };
+  return { itemKey, ownerKey, anchor, kind: "line", gutterWidth, text, softWrap: l.continuation === true ? "continuation" : "hard",
+    charStart: source.start, charEnd: source.end, textStart: source.pad,
     width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
 };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
@@ -256,11 +273,26 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
   const out: HitRow[] = [];
   for (const { item, start, end } of slices) {
     const itemKey = sourceId(item.id);
-    if (item.kind === "line") { out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, columns)); continue; }
-    for (let row = start; row < end; row++) {
+    // The spec's `ownerKey ?? sourceId(id)`, resolved once here rather than by every consumer a second time —
+    // `item.ownerKey` is absent only for a non-transcript caller (this array is always a transcript tier), so
+    // in practice this is always the producer's own key, never the fallback.
+    const ownerKey = item.ownerKey ?? itemKey;
+    if (item.kind === "line") {
+      out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns, { start: 0, end: stripSgr(item.line.text).length }));
+      continue;
+    }
+    // F10 S4 — the cumulative fallback base walks the block's ORIGINAL body order from row 0 regardless of
+    // where the slice starts: a body row cut away by the window still contributes its length plus one `\n`
+    // separator to every surviving row's base, which is what keeps a partially-visible block's rows naming
+    // their TRUE source positions unchanged by the slice. This IS the block's only source of truth when
+    // nothing wrapped it (`wrapOne`'s identity return carries no `source` at all).
+    let base = 0;
+    for (let row = 0; row < end; row++) {
       const body = item.body[row]!;
-      out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, columns), kind: "gutter-block",
-        gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+      if (row >= start)
+        out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, ownerKey, columns, { start: base, end: base + body.text.length }), kind: "gutter-block",
+          gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+      base += item.body[row]!.text.length + 1;
     }
   }
   return out;
@@ -282,8 +314,20 @@ const NO_HIT_ROWS: readonly HitRow[] = [];
 /** A stable empty lookup for "no selection this frame" — F9 T-MOUSE Task 6, the same "derive what is
  *  consumed" discipline `NO_HIT_ROWS` states: a `new Map()` per idle render would be free but pointless. */
 const EMPTY_SPAN_MAP: ReadonlyMap<number, RowSpan> = new Map();
+/** F10 T-HOVER — the jump pill's hover key. Not an item id: the pill is not in the document, and by
+ *  construction (`body = height - 1`, the pill painted after the slices) it has no `HitRow` either. */
+export const PILL_HOVER_KEY = "#jump-pill";
 
-export function FullscreenViewport({ finalizedItems, pendingItems, streaming, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
+// F10 S6 — canon's constants, verbatim (L551562): two rows a tick, a tick every 50 ms, 200 ticks maximum.
+// The cap is the second belt — the first is that every path out of a drag clears the timer — because a
+// timer that outlives the gesture re-scrolls the transcript under an idle reader. Exported so the driver
+// test can index its own boundary assertions off these names rather than a hand-typed 200/2/50, which is
+// the drift a cap without an accounting point always suffers.
+export const AUTOSCROLL_ROWS = 2;        // canon `Yjh`
+export const AUTOSCROLL_MS = 50;         // canon `Jjh`
+export const AUTOSCROLL_MAX_TICKS = 200; // canon `iNw`
+
+export function FullscreenViewport({ finalizedItems, pendingItems, streaming, streamOwnerKey, queuedItems = EMPTY_ITEMS, columns, rows, historySearchOpen = false, onDumpTranscript, onWheelTick, scrollRef, hitmapRef }: FullscreenViewportProps) {
   const granted = useRegionRows();
   const regionTop = useRegionTop();
   const height = Math.max(0, rows ?? granted);
@@ -295,10 +339,26 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // a settled frame allocates nothing here either.
   const finalRows = useMemo(() => wrapItemsToWidth(finalizedItems, columns), [finalizedItems, columns]);
   const pendingRows = useMemo(() => wrapItemsToWidth(pendingItems, columns), [pendingItems, columns]);
-  const streamRows = useMemo(() => streamingItems(streaming, columns), [streaming, columns]);
+  const streamRows = useMemo(() => (streamOwnerKey === undefined ? streamingItems(streaming, columns) : streamingItems(streaming, columns, streamOwnerKey)), [streaming, columns, streamOwnerKey]);
   const queuedRows = useMemo(() => wrapItemsToWidth(queuedItems, columns), [queuedItems, columns]);
   const items = useMemo(() => [...finalRows, ...pendingRows, ...streamRows, ...queuedRows], [finalRows, pendingRows, streamRows, queuedRows]);
   const total = useMemo(() => items.reduce((sum, item) => sum + renderItemHeight(item), 0), [items]);
+  // F10 S4c — which source item is where in the DOCUMENT: the fact that tells "scrolled out of the window"
+  // (keep the address, paint at the edge, mark virtual) apart from "gone from the document" (clear). Memoised
+  // on the projection, so a publish costs a map lookup rather than a walk. Mirrored into a ref for the same
+  // reason `hit` is one: the imperative reads (`selectedText`, Task 8's timer) run outside React and must see
+  // the latest frame's map, not whichever render's closure the handle happens to hold.
+  const ordinals = useMemo(() => {
+    const m = new Map<string, number>();
+    items.forEach((item, i) => { const k = sourceId(item.id); if (!m.has(k)) m.set(k, i); });
+    return m;
+  }, [items]);
+  const ordinalsRef = useRef(ordinals); ordinalsRef.current = ordinals;
+  // F10 S6 — the WHOLE document's own projection, for `selectedText`'s document walk (below): a copy costs
+  // one document wrap per COPY (release, Ctrl+C), never per frame, so this is written every render but read
+  // only on demand. Mirrored into a ref for the same reason `ordinalsRef`/`hit` are: `selectedText` is an
+  // imperative read from outside React and must see the LATEST render's document, not a stale closure's.
+  const docRef = useRef({ items, columns, total }); docRef.current = { items, columns, total };
 
   const [anchor, setAnchor] = useState<AnchorState>(START);
   // A WIDTH CHANGE RE-NUMBERS THE ROWS, so the retained offset is translated by the document position it
@@ -330,7 +390,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   //   `top <= 0` IS THE RENDERER GATE (see the header): no frame, or the classic one, publishes no origin,
   // and then no cell on the screen belongs to anything. A row above or below the window indexes past the
   // array — the dock band, the park row, the blank tail and the jump pill's stolen row all land there.
-  const hit = useRef<{ top: number; rows: readonly HitRow[] }>({ top: 0, rows: [] });
+  const hit = useRef<{ top: number; rows: readonly HitRow[]; pillRow: number }>({ top: 0, rows: [], pillRow: 0 });
   const anchorAt = useCallback((col: number, row: number): string | undefined => {
     const { top, rows: painted } = hit.current;
     if (top <= 0) return undefined;
@@ -342,12 +402,16 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
   // update IS the "targeted invalidation" the brief asks for: it re-renders this ONE component (a normal frame
   // paint this file already does on every content event), not the document, not `useChat`, not ChatApp's tree.
+  //   F10 T-HOVER: the key compared is the ROW's OWNER now (`item.ownerKey ?? sourceId(item.id)`, resolved
+  // once in `hitRowsOf`), not its `itemKey` — canon's hover unit is one whole SDK message, coarser than the
+  // per-line/per-call `itemKey` a later track addresses character offsets on.
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const hoverAt = useCallback((col: number, row: number): void => {
-    const { top, rows: painted } = hit.current;
+    const { top, rows: painted, pillRow } = hit.current;
     if (top <= 0) { setHoveredKey(null); return; }
+    if (pillRow > 0 && row === pillRow) { setHoveredKey(PILL_HOVER_KEY); return; }
     const at = painted[row - top];
-    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.itemKey : null);
+    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.ownerKey : null);
   }, []);
   const clearHover = useCallback(() => setHoveredKey(null), []);
 
@@ -362,16 +426,32 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // the same problem `hoveredKey`'s `useState` solves for hover; selection needs its own trigger because the
   // VALUE React would otherwise track is sitting outside React entirely.
   const selectionStateRef = useRef<SelectionState>(createSelectionState());
-  // Final-review finding 7: `SelectionState` addresses rows by NUMERIC INDEX into `hit.current.rows`, and
-  // that array is rebuilt from scratch on every publish — a streamed repaint (a new item published above
-  // the selection, a fold toggling, a scroll re-wrapping the window) can leave the same index pointing at
-  // DIFFERENT content than the reader actually dragged over, mis-highlighting and mis-copying. This ref is
-  // the itemKey each row carried at the moment the selection was last set (start/drag/multi-click) — the
-  // one thing a numeric row index cannot tell apart from "the same row, unmoved". Compared against the
-  // FRESH keys below on every publish; a mismatch clears the selection rather than paint (or copy) against
-  // content that is no longer what was selected. Remapping the selection onto its content's new position
-  // is the real fix and a real follow-up — this is the honest v1: never wrong, sometimes just gone.
-  const selectionKeysRef = useRef<readonly string[] | null>(null);
+  // F10 S4c — REMAP, NOT CLEAR. F9 addressed a selection by NUMERIC INDEX into `hit.current.rows` and
+  // cleared it whenever the itemKey at that index changed on a later publish (final-review finding 7: "never
+  // wrong, sometimes just gone"). Canon does the opposite trade: it translates the screen coordinates by the
+  // renderer's own scroll delta and never clears (`C0p`/`k0p`), which survives a scroll but MISPOINTS the
+  // instant content changes without one — an insert above a non-sticky viewport, a fold toggling, a re-wrap.
+  // ccx has what canon does not: the whole document in memory with durable per-item ids, so an endpoint can
+  // name CHARACTER IDENTITY (an item and a source-text offset, `mouse/address.ts`'s `SelectionEndpoint`)
+  // instead of screen geometry — a re-wrap, an insert above, or a fold toggle all become non-events by
+  // construction, and only an item actually LEAVING the document is still a clear. This ref holds the
+  // addresses recorded at the moment the selection was last set or extended (mouse gesture here; Task 7 adds
+  // keyboard extends) — `null` when there is no live selection at all.
+  //   THE REMAP RUNS DURING RENDER, immediately below where `hit.current.rows` is (re)built each publish, for
+  // the same reason the hover-staleness check beside it does: an effect would paint one wrong frame at the
+  // old (or cleared) position before correcting itself on the next tick, which is visible as a highlight
+  // flash or a mis-copy race. `remapSelection` (`mouse/address.ts`) is idempotent against an unchanged
+  // window — the same rows and the same addresses always relocate to the same cells — so re-running it every
+  // render, gesture or not, costs a lookup and never drifts the paint from the record.
+  const selectionAddrRef = useRef<SelectionAddresses | null>(null);
+  // `"offscreen"`'s own half of the contract (`mouse/address.ts`'s `remapSelection` doc): both ends off the
+  // SAME edge retains the address but must paint and copy NOTHING — `remapSelection` deliberately leaves
+  // `SelectionState` untouched in that case (there is nothing sane to write: the item is not in the window
+  // at all), so this ref is what stops the STALE cell coordinates left over from the last "ok" resolution
+  // from being read as if they still named something on the current screen. Set during the remap below (a
+  // ref, not a render-local, because `selectedText` is an imperative read from outside React and needs the
+  // LATEST render's verdict, matching every other ref this file threads through a stable callback).
+  const selectionOffscreenRef = useRef(false);
   const [, setPaintTick] = useState(0);
   const repaint = useCallback(() => setPaintTick((n) => n + 1), []);
   // `hit.current.top` is read at CALL TIME, not at the time this closure was created — `hit` is a stable ref
@@ -381,23 +461,121 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const { top } = hit.current;
     return top <= 0 ? undefined : { row: row - top + 1, col };
   };
-  // The snapshot is the WHOLE current row list, not just the gesture's own span: a drag can extend past
-  // rows it has not touched yet, and every row it might come to cover needs its key on record.
-  const snapshotSelectionKeys = () => { selectionKeysRef.current = hit.current.rows.map((r) => r.itemKey); };
+  /** Gesture-time write (S4). One `sourceEndpointAt` per live cell: the grapheme's absolute source start
+   *  AND its real exclusive end, so the read side can choose per document order which of the two a given
+   *  endpoint contributes. Recorded for `anchor`, `focus` and `anchorSpan.lo` — every one of those is a RAW,
+   *  INCLUSIVE column (a real click, or `wordSpan`/`lineSpan`'s own leading edge), so the grapheme AT `col`
+   *  really is the one the gesture named. */
+  const endpointAt = (cell: Cell | null): SelectionEndpoint | null => {
+    if (!cell) return null;
+    const row = hit.current.rows[cell.row - 1];
+    if (!row) return null;
+    const { charOffset, charEnd } = sourceEndpointAt(row, cell.col);
+    return { itemKey: row.itemKey, charOffset, charEnd };
+  };
+  /** `anchorSpan.hi` ALONE needs the other reading. `wordSpan`/`lineSpan` (`mouse/selection.ts`) hand back an
+   *  EXCLUSIVE column — one PAST the last included grapheme, e.g. the space right after a selected word —
+   *  matching `selectedSpans`' pivoted branch, which consumes it directly with no re-snap. `sourceEndpointAt`
+   *  is built for a RAW click and answers "what grapheme is AT this column": fed that excluded space, it
+   *  hands back the SPACE's own bounds, and recording its `charEnd` (one past the space) rather than its
+   *  `charOffset` (the space's own start — exactly the boundary `wordSpan` meant) bakes the extra grapheme
+   *  into the address permanently. Caught by `selectionPaint.test.tsx`'s T6(f)/(j): a double-click's word
+   *  span, once it rode through one repaint of this remap, painted `"select "` — the trailing space too. */
+  const endpointAtExclusive = (cell: Cell | null): SelectionEndpoint | null => {
+    if (!cell) return null;
+    const row = hit.current.rows[cell.row - 1];
+    if (!row) return null;
+    const { charOffset } = sourceEndpointAt(row, cell.col);
+    return { itemKey: row.itemKey, charOffset, charEnd: charOffset };
+  };
+  // EVERY mutation of `SelectionState` calls this, not just the mouse ones — Task 7's keyboard extends
+  // included. An address left over from the last mouse event is a stale address, and the very next repaint
+  // remaps from it and undoes the move. `anchor` failing to resolve — `cellAt` only bounds-checks the
+  // frame's `top`, not the row against `hit.current.rows.length` (review finding P2), so a press below the
+  // painted transcript (a composer/dock row) reaches here with an out-of-range `Cell` — must therefore
+  // CLEAR the record rather than leave it: leaving the previous address on record is exactly what let the
+  // next render's remap (below) restore the OLD selection over the fresh, unresolvable press, which
+  // `hasSelection()` then reads as "still sweeping" and a real caller (ChatApp's mouse-up) swallows the
+  // composer click that should have gone through.
+  const recordSelectionAddresses = (): void => {
+    const s = selectionStateRef.current;
+    const anchor = endpointAt(s.anchor);
+    if (!anchor) { selectionAddrRef.current = null; return; }
+    const focus = endpointAt(s.focus);
+    const spanLo = s.anchorSpan ? endpointAt(s.anchorSpan.lo) : null;
+    const spanHi = s.anchorSpan ? endpointAtExclusive(s.anchorSpan.hi) : null;
+    const span = spanLo && spanHi ? { lo: spanLo, hi: spanHi, kind: s.anchorSpan!.kind } : null;
+    selectionAddrRef.current = { anchor, focus, span };
+  };
+  /** F10 S6 — the auto-scroll tick's OWN, narrower address update: only `focus` moved. The general
+   *  `recordSelectionAddresses` above re-derives EVERY endpoint from its numeric `SelectionState` cell — the
+   *  right thing for a real mouse event, where the anchor's cell still names whatever row the gesture
+   *  actually started on. Mid-auto-scroll that is no longer true: the render-time remap (below) has already
+   *  rewritten `state.anchor` to a VIRTUAL, clamped cell (row 1 or the window's last row) the moment the
+   *  anchor's own item scrolls off the window, and `endpointAt` has no notion of "virtual" — it would read
+   *  whatever REAL row now happens to sit at that clamped position and silently rebind the anchor's address
+   *  to it, dragging the recorded start of the sweep forward with the window instead of leaving it exactly
+   *  where the press landed (measured: without this, a hold long enough to scroll the anchor's own row off
+   *  screen loses everything before the CURRENT window from the copy, the opposite of what auto-scroll
+   *  capture exists for). `anchor`/`span` are carried over UNCHANGED from the address already on record. */
+  const recordAutoScrollFocus = (): void => {
+    const prev = selectionAddrRef.current;
+    if (!prev) return;
+    const focus = endpointAt(selectionStateRef.current.focus);
+    if (focus) selectionAddrRef.current = { ...prev, focus };
+  };
+  // ── F10 S6 — AUTO-SCROLL ON DRAG (canon's `Epo`/`sNw`, L551475-551561) ──────────────────────────────
+  // Canon's constants, verbatim (L551562): two rows a tick, a tick every 50 ms, 200 ticks maximum. The cap
+  // is the second belt — the first is that every path out of a drag clears the timer — because a timer that
+  // outlives the gesture re-scrolls the transcript under an idle reader.
+  const autoScrollRef = useRef<{ timer: ReturnType<typeof setInterval>; dir: -1 | 1; ticks: number; col: number } | null>(null);
+  const stopAutoScroll = useCallback(() => {
+    const live = autoScrollRef.current;
+    if (live) { clearInterval(live.timer); autoScrollRef.current = null; }
+  }, []);
+  useEffect(() => stopAutoScroll, [stopAutoScroll]);
+  const startAutoScroll = useCallback((dir: -1 | 1, col: number) => {
+    const live = autoScrollRef.current;
+    if (live?.dir === dir) { live.col = col; return; }          // canon's latch: same direction keeps going
+    stopAutoScroll();
+    const entry = { dir, ticks: 0, col, timer: setInterval(() => {
+      const before = anchorRef.current.offset;
+      for (let i = 0; i < AUTOSCROLL_ROWS; i++) scroll(PAGER_ACTIONS[dir < 0 ? "scroll:lineUp" : "scroll:lineDown"]!);
+      entry.ticks += 1;
+      // Re-apply the drag at the CLAMPED edge so the focus keeps tracking the pointer that is no longer
+      // over a row. The row count is this frame's; it does not change under a scroll.
+      const edgeRow = dir < 0 ? 1 : Math.max(1, hit.current.rows.length);
+      dragTo(selectionStateRef.current, { row: edgeRow, col: entry.col });
+      recordAutoScrollFocus();
+      repaint();
+      if (entry.ticks >= AUTOSCROLL_MAX_TICKS || anchorRef.current.offset === before) stopAutoScroll();
+    }, AUTOSCROLL_MS) };
+    autoScrollRef.current = entry;
+  }, [scroll, repaint, stopAutoScroll]);
   const startSelectionAt = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
     startSelection(selectionStateRef.current, cell);
-    snapshotSelectionKeys();
+    recordSelectionAddresses();
     repaint();
   }, [repaint]);
   const dragSelectionTo = useCallback((col: number, row: number) => {
     const cell = cellAt(col, row);
     if (!cell) return;
-    dragTo(selectionStateRef.current, cell);
-    snapshotSelectionKeys();
+    // F10 S2 — canon's own dispatch (L203468-203475): a drag while a multi-click span is live extends by
+    // WORDS (or whole rows), pivoting on that span; anything else is the plain two-endpoint drag.
+    if (selectionStateRef.current.anchorSpan) dragToSpanned(selectionStateRef.current, cell, hit.current.rows);
+    else dragTo(selectionStateRef.current, cell);
+    recordSelectionAddresses();
     repaint();
-  }, [repaint]);
+    // F10 S6 — canon's `sNw` (L551551-551561): a direction only while the ANCHOR is inside the window and
+    // the focus is outside it. `cellAt` happily answers for a row past either end — that out-of-window
+    // signal has reached this function since F9 and nothing acted on it.
+    const anchor = selectionStateRef.current.anchor;
+    const inside = anchor !== null && anchor.row >= 1 && anchor.row <= hit.current.rows.length;
+    const dir = cell.row < 1 ? -1 : cell.row > hit.current.rows.length ? 1 : 0;
+    if (inside && dir !== 0) startAutoScroll(dir, cell.col); else stopAutoScroll();
+  }, [repaint, startAutoScroll, stopAutoScroll]);
   const multiClickSelectionAt = useCallback((col: number, row: number, count: 2 | 3) => {
     const { top, rows: painted } = hit.current;
     if (top <= 0) return;
@@ -405,30 +583,88 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     const hitRow = painted[rowIndex];
     if (!hitRow) return;
     multiClick(selectionStateRef.current, { row: rowIndex + 1, col }, count, hitRow);
-    snapshotSelectionKeys();
+    recordSelectionAddresses();
     repaint();
   }, [repaint]);
-  const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; }, []);
+  const endSelectionDrag = useCallback(() => { selectionStateRef.current.isDragging = false; stopAutoScroll(); }, [stopAutoScroll]);
   const hasSelectionHandle = useCallback(() => computeHasSelection(selectionStateRef.current), []);
   const discardSelection = useCallback(() => {
     const s = selectionStateRef.current;
     s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
-    selectionKeysRef.current = null;
+    selectionAddrRef.current = null;
+    stopAutoScroll();
     repaint();
-  }, [repaint]);
-  // F9 T-MOUSE Task 7 — the auto-copy latch's own read: the SAME geometry the paint path derives
-  // (`selectedSpans` against `hit.current.rows`, T6's own invariant that the map painted IS the map
-  // extracted) run through `extract.ts`'s `extractText` — the identical function `/copy`-adjacent code in
-  // this track already uses, so a selection copies exactly the text it visibly highlights, never a second,
-  // independently-derived string. Called on demand (release, Ctrl+C) rather than cached: a selection's rows
-  // and the DOCUMENT under them can both move between two mouse events, and this always reads the CURRENT
-  // frame's own map, matching every other imperative read on this ref.
-  const selectedText = useCallback(() => extractText(selectedSpans(selectionStateRef.current, hit.current.rows), hit.current.rows), []);
+  }, [repaint, stopAutoScroll]);
+  // F10 S6 — the copy latch's read now walks the DOCUMENT, not the painted window: an auto-scrolled sweep
+  // (above) can carry the focus past rows this frame no longer paints, and S4's durable addresses are
+  // exactly what makes their content still reachable. `selectionOffscreenRef`'s window-clamped "paint
+  // nothing" verdict is deliberately NOT consulted here — it answers "is this on screen", which is no
+  // longer the question copy asks. Called on demand (release, Ctrl+C) rather than cached: one document wrap
+  // per copy, never per frame, matching `docRef`'s own header. */
+  const selectedText = useCallback(() => {
+    const addrs = selectionAddrRef.current;
+    if (!addrs) return "";
+    const { items: docItems, columns: docCols, total: docTotal } = docRef.current;
+    const { slices } = pageItemSlices(docItems, 0, docTotal);
+    return documentSelectionText(hitRowsOf(slices, docCols), addrs, (k) => ordinalsRef.current.get(k));
+  }, []);
+  /** F10 S5 — the wrapper every extend chord goes through. Three things, in this order, and the middle one
+   *  is the one the first draft of this plan omitted: move the focus, RE-RECORD the durable addresses, then
+   *  repaint. `recordSelectionAddresses` (Task 6) is not a mouse-path detail — it is how `SelectionState`
+   *  and the address ref stay the same selection. Skip it and the remap that runs during the very next
+   *  render restores the pre-extend endpoints from the stale mouse-era address, so the chord looks
+   *  ineffective, or works until the first rewrap/scroll and then snaps back.
+   *    Returns the mover's own `false` unchanged, so a caller that wants to fall through still can.
+   *
+   *  F10 S6 (Task 7 step 7.9, shipped once S4 AND S6 both landed) — canon's `S()` wrapper
+   *  (L551745-551761): an up/down extend that would leave the WINDOW (not the document) scrolls by ONE row
+   *  first and keeps the focus at that same clamped row, letting S4's remap — which `scroll()` below
+   *  already triggers, being a synchronous render (S6's own auto-scroll driver relies on the identical
+   *  fact) — carry the endpoint onto whatever now paints there. `from` mirrors `moveSelectionFocus`'s own
+   *  "where a span downgrades to" (`E0p`): a live span's `hi` end, otherwise the plain focus-or-anchor. */
+  const moveFocus = useCallback((dir: ExtendDir): boolean => {
+    const s = selectionStateRef.current;
+    const rows = hit.current.rows;
+    const from = s.anchorSpan ? s.anchorSpan.hi : (s.focus ?? s.anchor);
+    const atWindowEdge = from !== null && rows.length > 0 &&
+      ((dir === "up" && from.row <= 1) || (dir === "down" && from.row >= rows.length));
+    if (atWindowEdge) {
+      const before = anchorRef.current.offset;
+      scroll(PAGER_ACTIONS[dir === "up" ? "scroll:lineUp" : "scroll:lineDown"]!);
+      if (anchorRef.current.offset !== before) {
+        // The window shifted by exactly one row. The downgrade `moveSelectionFocus` itself performs
+        // (`E0p`) is transcribed here so this arm leaves the SAME two-endpoint shape an ordinary
+        // (non-edge) extend would, then the focus is re-applied at the SAME clamped row/col `from` already
+        // named (S4's remap, already run by `scroll()` above, is what makes that row now the newly
+        // revealed content rather than whatever `from` used to point at).
+        const prevAddr = selectionAddrRef.current;
+        if (s.anchorSpan) { const span = s.anchorSpan; s.anchor = span.lo; s.anchorSpan = null; }
+        s.focus = { row: from.row, col: from.col };
+        // `recordAutoScrollFocus`'s own reasoning applies here verbatim: only FOCUS is freshly re-derived
+        // from the (now post-scroll) row content — the anchor's address is carried over UNCHANGED, reusing
+        // the span's own STORED `lo` address directly when downgrading rather than re-deriving it from a
+        // numeric cell the remap may already have clamped to a virtual position (`endpointAt` has no
+        // notion of "virtual" and would misread whatever real row now sits there).
+        const focusAddr = endpointAt(s.focus);
+        if (prevAddr && focusAddr)
+          selectionAddrRef.current = { anchor: prevAddr.span ? prevAddr.span.lo : prevAddr.anchor, focus: focusAddr, span: null };
+        repaint();
+        return true;
+      }
+      // Already at the document's own edge — nothing to scroll into. Fall through to `moveSelectionFocus`,
+      // which returns `false` for the identical "nowhere to go" reason.
+    }
+    if (!moveSelectionFocus(s, dir, rows)) return false;
+    recordSelectionAddresses();
+    repaint();
+    return true;
+  }, [repaint, scroll]);
 
   useImperativeHandle(hitmapRef, () => ({
     anchorAt, hoverAt, clearHover,
     startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
-  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText]);
+    moveSelectionFocus: moveFocus,
+  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no
@@ -454,6 +690,11 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // type. That is the trade the escape hatch is worth, and ctrl+end takes it back in one keystroke.
   const atEnd = settled.offset >= total - height;
   const showPill = !settled.sticky && !atEnd && !historySearchOpen;
+  // F10 S5 — computed DURING render, off the same ref the paint already derives its own answer from
+  // (`paintSpans` below): "will this render show a highlight" and "should the six extend chords be live"
+  // are the same question. Every selection mutation calls `repaint()`, so this render (and therefore this
+  // memo) is re-run whenever the answer changes.
+  const selectionLive = computeHasSelection(selectionStateRef.current);
   useKeyScope("Scroll", { active: !historySearchOpen });
   useKeyActions(useMemo(() => ({
     "scroll:halfPageUp": () => scroll(PAGER_ACTIONS["scroll:halfPageUp"]!),
@@ -467,7 +708,19 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
     "scroll:top": () => scroll(PAGER_ACTIONS["scroll:top"]!),
     "scroll:bottom": () => stickBottom(),
     ...(showPill && onDumpTranscript ? { "scroll:dumpTranscript": () => onDumpTranscript() } : {}),
-  }), [scroll, stickBottom, showPill, onDumpTranscript, onWheelTick]));
+    // F10 S5 — registered only while a selection is live, which IS the fall-through: `KeymapProvider`
+    // (:177-180) hands a matched action with no handler to the composer, exactly as `scroll:dumpTranscript`
+    // relies on while the jump pill is down. Canon reaches the same place from the other side — its
+    // handlers return false with no selection (L551746).
+    ...(selectionLive ? {
+      "selection:extendLeft": () => { moveFocus("left"); },
+      "selection:extendRight": () => { moveFocus("right"); },
+      "selection:extendUp": () => { moveFocus("up"); },
+      "selection:extendDown": () => { moveFocus("down"); },
+      "selection:extendLineStart": () => { moveFocus("lineStart"); },
+      "selection:extendLineEnd": () => { moveFocus("lineEnd"); },
+    } : {}),
+  }), [scroll, stickBottom, showPill, onDumpTranscript, onWheelTick, selectionLive, moveFocus]));
 
   // ── THE JUMP PILL, AND THE ROW IT COSTS ─────────────────────────────────────────────────────────────────
   // `qqH` (455869-455878): shown only when the viewport is neither sticky nor at the end. The second half is
@@ -504,29 +757,42 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // ONE PASS, TWO PRODUCTS: the rows below and the map of them. Derived from `slices` rather than re-sliced,
   // so the map is the paint by construction — including the row the pill takes, which `body` has already
   // removed from the window and which therefore has no entry to be clicked.
-  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS };
+  //   PILL ROW, DETERMINISTIC RATHER THAN MEASURED (F10 T-HOVER): `showPill` is only true while the window is
+  // FULL (not sticky and not at the end, so there is content below), `body` is `height - 1` in exactly that
+  // case, and the pill paints directly after the slices — so its row is `regionTop + body` whenever it is up.
+  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS, pillRow: showPill && regionTop > 0 ? regionTop + body : 0 };
   // F9 T-MOUSE Task 3 — a repaint that no longer paints the hovered cluster (it scrolled off, its fold state
-  // flipped, the document swapped under a session resume) must not leave a stale `itemKey` haunting a cell
-  // that now belongs to something else, or nothing. Checked against THIS render's own rows, never a stale
-  // copy, and applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would
-  // paint one frame with a hover nothing on screen answers to before correcting itself.
-  if (hoveredKey !== null && !hit.current.rows.some((row) => row.itemKey === hoveredKey)) setHoveredKey(null);
+  // flipped, the document swapped under a session resume) must not leave a stale key haunting a cell that now
+  // belongs to something else, or nothing. Checked against THIS render's own rows, never a stale copy, and
+  // applied DURING render for the same reason `settled`/`anchor` above are (:274) — an effect would paint one
+  // frame with a hover nothing on screen answers to before correcting itself.
+  //   F10 T-HOVER: compared against OWNERS now, and the pill's own key is never cleared by "not a painted
+  // row" (it never is one) — only by the pill itself going away.
+  if (hoveredKey !== null && hoveredKey !== PILL_HOVER_KEY && !hit.current.rows.some((row) => row.ownerKey === hoveredKey)) setHoveredKey(null);
+  if (hoveredKey === PILL_HOVER_KEY && hit.current.pillRow === 0) setHoveredKey(null);
 
-  // Final-review finding 7 — SELECTION STALENESS. Same "applied during render" discipline as the hover
-  // check just above, for the same reason: an effect would paint one frame with a highlight (or a copy)
-  // against content the reader never dragged over before correcting itself. `selectedSpans` gives the
-  // rows THIS selection currently claims (against the array just published, so its row-count clamping is
-  // already fresh); each of those rows' itemKey is compared against what that same index carried at
-  // selection time. Any mismatch means the document moved under the sweep — clear it.
-  if (selectionKeysRef.current) {
-    const spans = selectedSpans(selectionStateRef.current, hit.current.rows);
-    const snapshot = selectionKeysRef.current;
-    const shifted = spans.some((span) => hit.current.rows[span.row - 1]?.itemKey !== snapshot[span.row - 1]);
-    if (shifted) {
-      const s = selectionStateRef.current;
-      s.anchor = null; s.focus = null; s.isDragging = false; s.anchorSpan = null;
-      selectionKeysRef.current = null;
-    }
+  // F10 S4c — REMAP, NOT CLEAR (see `selectionAddrRef`'s own header). Ordered by document position first
+  // (never by the anchor/focus role), the lower endpoint contributing its grapheme's start and the upper its
+  // grapheme's end, so a backward drag and a forward one over the same characters produce the identical
+  // half-open range. Applied DURING render for the reason the hover check above is: an effect would paint
+  // one wrong frame.
+  if (selectionAddrRef.current) {
+    const addrs = selectionAddrRef.current;
+    const first = ordinals.get(hit.current.rows[0]?.itemKey ?? "") ?? 0;
+    const last = ordinals.get(hit.current.rows[hit.current.rows.length - 1]?.itemKey ?? "") ?? first;
+    const remapped = remapSelection(selectionStateRef.current, addrs, hit.current.rows,
+      (k) => ordinals.get(k), { first, last });
+    // `"gone"` — the itemKey left the DOCUMENT entirely (a fold collapse, a session swap): `remapSelection`
+    // already nulled `state.anchor`/`focus`/`anchorSpan`, matching exactly what F9's clear did; only the
+    // address record itself is this component's own to drop.
+    if (remapped === "gone") selectionAddrRef.current = null;
+    // `"offscreen"` — both ends off the SAME edge (canon's `ELt`, L198855-198860): retain, paint nothing,
+    // copy nothing. `remapSelection` leaves `state` untouched here, so the flag below is what keeps
+    // `paintSpans`/`selectedText` from reading those stale cell coordinates as if they still named a row in
+    // THIS render's window.
+    selectionOffscreenRef.current = remapped === "offscreen";
+  } else {
+    selectionOffscreenRef.current = false;
   }
 
   // F9 T-MOUSE Task 6 — SELECTION PAINT. `selectedSpans` reads exactly the rows array just published above —
@@ -534,7 +800,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
   // a span can never describe a row this frame did not paint, even mid-drag while the window is scrolling.
   // Off `hitmapRef` (classic, or any test that does not care) `hit.current.rows` is `NO_HIT_ROWS` and
   // `selectedSpans` answers `[]` against it, same as an idle selection would.
-  const paintSpans: readonly RowSpan[] = selectedSpans(selectionStateRef.current, hit.current.rows);
+  const paintSpans: readonly RowSpan[] = selectionOffscreenRef.current ? [] : selectedSpans(selectionStateRef.current, hit.current.rows);
   const spanByRow = paintSpans.length ? new Map(paintSpans.map((s) => [s.row - 1, s] as const)) : EMPTY_SPAN_MAP;
   // One entry per SLICE, parallel to `slices` below — the per-ROW selection (if any) for the physical rows
   // that one slice paints, in the SAME order `hitRowsOf` flattened them: a `"line"` slice contributes one
@@ -568,14 +834,20 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, qu
       // L562783), not `hovered` alone — an already-expanded cluster member (`toolRenderer.tsx`'s
       // `expandedMemberItems`, which tags every item it produces `expanded: true`) must do nothing on hover,
       // dim included, whether or not THIS particular member happens to carry dim/banded content.
-      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && sourceId(s.item.id) === hoveredKey && s.item.expanded !== true}>
+      //   F10 T-HOVER: compared against the slice's OWN owner (`item.ownerKey ?? sourceId(item.id)`) rather
+      // than `sourceId(item.id)` alone — the hover unit is the whole message/call `ownerKey` names, not this
+      // one item, so every slice sharing that owner lights up together.
+      <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && (s.item.ownerKey ?? sourceId(s.item.id)) === hoveredKey && s.item.expanded !== true}>
         <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} />
       </HoverContext.Provider>
     ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
         onDumpTranscript`, read twice, so the affordance and the key cannot drift apart. `editorDisplayName`
-        answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`. */}
-    {showPill ? <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns}
-      {...(onDumpTranscript ? { dumpEditor: editorDisplayName() ?? "editor" } : {})} /> : null}
+        answers null with neither `$VISUAL` nor `$EDITOR` set, where canon prints its bare `open in editor`.
+        F10 T-HOVER: the pill owns its own hover band now (`JumpPill.tsx`) — this Provider is its only wiring. */}
+    {showPill ? <HoverContext.Provider value={hoveredKey === PILL_HOVER_KEY}>
+      <JumpPill newRows={Math.max(0, total - stickyTotal.current)} columns={columns}
+        {...(onDumpTranscript ? { dumpEditor: editorDisplayName() ?? "editor" } : {})} />
+    </HoverContext.Provider> : null}
   </>;
 }

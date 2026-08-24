@@ -5,8 +5,7 @@
 import { createHash } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
 import type { UserContentBlock } from "../session/turnInput.js";
-import { pngDimensions, jpegDimensions } from "../tui/clipboardImage.js";
-import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
+import { MAX_IMAGES_PER_PROMPT, jpegDimensions, pngDimensions } from "../media/imageDims.js";
 
 /** F9 T-IMAGE Task 5 (I3b), spec v3.1: "version skew is LOUD" — the exact message a caller (`useChat.ts`)
  *  matches on to render this as a capability NOTICE rather than a turn-failure error line. Shared as one

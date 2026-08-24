@@ -443,7 +443,66 @@
 >   REACHABLE, already reflected in the T-IMAGE row above. TUI/UX parity: see `tui-ux.md`'s F9
 >   close-out (§1 ~87.5%, §2 ~71.4%, §1a's own K-table ledger ~76%, overall ~78.1% → ~79.2%).
 
-> - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
+> - **F10 T-IMGREACH — image reach hardened: no stranded sessions, staged app-server images, daemon
+>   skew, codec ladder** (2026-08-24, Task 14 track verification; ledger
+>   `.doperpowers/sdd/2026-08-23-f10-wave/t-imgreach-acceptance.md`) — image-only turns now normalize
+>   through ONE builder boundary (`Session.userTurn`) on every submit path — the real REPL topology,
+>   a direct `Session.submit`, and `harness.run` — so a session born from an image-only array is never
+>   invisible to `listSessions()`: a synthetic `[Image #N]` label is inserted at index 0 whenever no
+>   text block survives, live-verified on all three paths plus the library colour-naming cell (keyed
+>   live, `test/live/image-reach.e2e.test.ts`). **App-server** gains staged image upload (`image/stage`
+>   ≤128 KiB chunks, PNG/JPEG only, 60 s idle / 10 min absolute / 32 MiB / 64-stage caps) +
+>   `turn/startContent` + `turn/steerContent` (both `experimental:true`), with old-server skew,
+>   fleet-origin, and no-`submitContent`-capability refusals all explicit and zero-turn. **Daemon**
+>   gains a block-array-only `submit_content` op, a pre-F10-peer skew mapping (client-side), a 24 MiB
+>   canonical-derived frame cap, and an inclusive 10 s partial-line deadline. **Codec**: a bounded
+>   downscale-and-retry ladder (structural `maxOutputLength`/`pixel-budget`/`MAX_SOURCE_BYTES` bounds
+>   carry every hostile fixture — bomb/huge-header/truncated/forged-BMP — even with the 2 s wall guard
+>   stubbed to never expire; the guard is a cooperative belt, not the mechanism). All 22 named caps this
+>   track introduced or widened have a measured cap−1/cap/cap+1 row (roll-up in the ledger). Gates on
+>   the assembled tree: typecheck clean · build clean · unit 3635/3635 · tui 4201/4201 (9 live-gated
+>   skipped keyless) · both keyed live suites green.
+>   **CONCERN, not swept under the row**: the I6 ambient clipboard-paste hint (Task 13) is built and
+>   its own unit/component suite is green, but a live tmux-pty run of the real `ccx` binary (focus-in,
+>   then a keypress, fake `osascript` reporting a clipboard image present) never produced the hint.
+>   Root cause: `src/tui/ChatApp.tsx` never passes `readClipboardImage`/`checkClipboardImage` to
+>   `<ChatComposer>` (grep-confirmed: neither prop is assigned anywhere under `src/`), so the hint's own
+>   gate (`if (!readClipboardImageRef.current) return;`, `ChatComposer.tsx`) always short-circuits —
+>   Ctrl-V paste itself still works because it falls back to a real default internally, but the ambient
+>   hint's gate checks the raw prop, not that fallback. **I6 was DEAD in the running app at Task 14 time
+>   despite passing test coverage** — and RESOLVED in the same track before merge (`dfcf961680`): the
+>   two-prop wiring landed in `ChatApp.tsx`, a mounted regression (`clipboardHintChatAppWiring.test.tsx`)
+>   now drives the PRODUCTION wiring path rather than injecting the seam, and the same tmux +
+>   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
+>   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
+
+> - **F10 wave close-out — selection maturity, hover architecture, image reach, maintenance
+>   (2026-08-24)** — four tracks, 31 tasks, spec `docs/superpowers/specs/2026-08-23-f10-wave-design.md`,
+>   ledger `.doperpowers/sdd/2026-08-23-f10-wave/`. Merged in the spec's binding order, each `--no-ff`
+>   with the full gates AND every already-merged track's pty matrix re-run on the assembled tree:
+>   T-MAINT (`407ef8df93`, the `src/media/imageDims.ts` substrate every later track consumes, the
+>   `accountInfo` live bridge, comment/parity corrections) → T-SELECT (`fbc4240e5e`) → T-HOVER
+>   (`7b79a55220`, the `HitRow` union: required `charStart`/`charEnd`/`textStart` + required `ownerKey`
+>   across six constructor sites) → T-IMGREACH (`b1b075a617`, the entry above). **Final whole-wave
+>   external review** (Codex `gpt-5.6-sol`, base `675fd97fe6`): 7 findings, all in wave code — 1 P1 (the
+>   `turn/steerContent` handler invoked the engine capability as a detached function, so the real
+>   `Session` threw on `this.steer` and its stage reservations leaked; every per-task review had passed
+>   it because the object-literal engine fakes are receiver-insensitive) and 6 P2 (stale fullscreen
+>   selection address on a composer press; clipboard-hint throttle armed by an empty check; the
+>   auto-mode notice racing the effect cleanup; the staged normalizer missing `MAX_IMAGES_PER_PROMPT`
+>   against duplicate stage ids; PNG passthrough returned before the structural chunk walk; the retry
+>   ladder halving past `RETRY_FLOOR_DIMENSION`). All 7 verified-first (each reproduced red) and fixed
+>   in one wave (`6864ca05ed`..`48b4b655a9`); a scoped re-review of that range found 3 P2 (the new image
+>   cap's aggregate still counting discarded references; a throttle race across the awaited clipboard
+>   probe; passthrough returning before the post-walk deadline checkpoint), fixed in a second wave
+>   (`1c75ace617`..`a4f384c85a`); a third scoped round returned zero — **7 → 3 → 0, converged.**
+>   **Gates on the final `main` (`a4f384c85a`):**
+>   typecheck clean · build clean · unit 3667 · tui 4651 (11 live-gated skipped keyless) · select-pty
+>   6/6 · hover-cells 2/2 · keyed live cells 8/9 green on the assembled tree · pty hint cell green.
+>   **No domain score moves beyond what the T-IMGREACH entry above records** — T-SELECT, T-HOVER and
+>   T-MAINT are terminal bytes, Ink layout and the composer/hitmap surface; TUI/UX parity: see
+>   `tui-ux.md`'s F10 close-out (§2 71.4% → 72.9%, §1a's K-table ledger ~76% → ~80%, overall ~79.2% →
+>   ~79.4%).
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
 >   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
 >   rejected account-side; user re-minted) the **full live suite is GREEN — 40/40** across all 22 files.

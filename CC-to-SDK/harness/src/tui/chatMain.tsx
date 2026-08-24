@@ -16,6 +16,7 @@ import { TMUX_CC_NOTICE, makeTmuxProbe, selectRenderer, type RendererChoice, typ
 import { readSettingsFile } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
+import type { AccountBridge } from "./accountBridge.js";
 import { turnDurationEnabled } from "./durationRow.js";
 import { promptSuggestionEnabled } from "./suggester.js";
 import { refreshExampleFiles } from "./placeholder.js";
@@ -43,7 +44,10 @@ export interface ChatClientOpts {
   // main.ts already runs for the welcome banner's billing label — a second consumer of one fact, not a
   // second round-trip. Absent on `ccx attach` and on a resume/continue launch (main.ts's `runChatClient`
   // callers), which is the notice's unknown arm. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same bag.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch };
+  // `accountBridge` (F10 T-MAINT item 1): the LATE channel for that same fact — the LIVE, unraced
+  // `accountInfo()` promise, so a cold handshake that missed the banner's budget can still reach the
+  // auto-mode notice before its own later deadline.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -242,6 +246,19 @@ export function createResizeChain(readers: () => void): { fire: () => void; subs
   const subscribers = new Set<() => void>();
   return {
     fire: () => { readers(); for (const cb of [...subscribers]) cb(); },
+    subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
+  };
+}
+
+/** F10 T-IMGREACH Task 13 (I6) — the SAME shape as `createResizeChain` just above, one edge later in the
+ *  pipeline: `KeymapProvider`'s dispatch is the one raw-stdin reader (same reason `resizeChain` cannot be a
+ *  second listener), so its `onFocusChange` dep is wired to `publish`, and `ChatComposer` — the hint's own
+ *  poster, three components down — subscribes through `ChatApp`'s pass-through `onFocusChange` prop. No
+ *  `readers()` term here: unlike a resize, nothing at this level needs to react to a focus edge itself. */
+export function createFocusChain(): { publish: (focused: boolean) => void; subscribe: (cb: (focused: boolean) => void) => () => void } {
+  const subscribers = new Set<(focused: boolean) => void>();
+  return {
+    publish: (focused) => { for (const cb of [...subscribers]) cb(focused); },
     subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
   };
 }
@@ -834,6 +851,9 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   });
   const onTerminalResize = resizeChain.fire;
   process.stdout.on("resize", onTerminalResize);
+  // I6 — see `createFocusChain`'s own doc: KeymapProvider's dispatch is the one raw-stdin reader, so its
+  // `onFocusChange` dep publishes here and `ChatComposer` subscribes three components down.
+  const focusChain = createFocusChain();
   // W-C T8 (EP-C4a): the OSC 0 title writer. Created HERE, beside the resize listener, for the same two
   // reasons: it is a process-level concern with a teardown obligation (the `finally` below clears the title
   // before the shell gets the terminal back), and its writes must bypass Ink entirely — a title escape is not
@@ -943,12 +963,13 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   // it, which is the whole point of moving the boundary.
   try {
     const app = render(
-      <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver }}
+      <UserKeymap file={keybindingsFile} deps={{ onUnknownSequence: reports.deliver, onFocusChange: focusChain.publish }}
         onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
         <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
           initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
           clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
           hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
+          onFocusChange={focusChain.subscribe}
           initialTodosOpen={prefs.showExpandedTodos ?? true}
           renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
           {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} progressBar={progressBar} deps={{ notifier }} />

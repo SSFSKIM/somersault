@@ -33,12 +33,25 @@ export interface EngineSession {
    *  reported failure RESOLVES carrying it (only a transport exception rejects), so turns.ts's success
    *  path has to read it to keep broadcasting `turn/completed{status:"failed"}` for a failed turn.
    *  Both are optional — a DI fake returning a bare `{result}` still satisfies this.
-   *  `prompt` is the whole `UserTurnInput` union (spec 2026-08-23 "Item → engine delivery"): the array form
-   *  is the ONLY way an image reaches a turn, and each engine carries it its own way — the in-process one
-   *  hands the blocks to the SDK message builder, the fleet one stages their bytes onto the host's disk and
-   *  claims them by path. Declared HERE rather than on the fleet engine alone because `turns.ts` submits
-   *  through this shared contract and must not care which origin it is driving. */
-  submit(prompt: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+   *  `submit` stays STRING-ONLY — it is the public embedder contract, and widening a REQUIRED method
+   *  breaks every custom engine (F10 review F5, round-2 F8). The block form of a turn — the ONLY way an
+   *  image reaches one — travels on `submitContent` below, which an engine declares or does not have. */
+  submit(prompt: string, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** OPTIONAL capability (F10 T-IMGREACH Task 8/I3b): carries content blocks. An engine without this
+   *  cannot run an array turn, and every path that might produce one must say so before it takes anything
+   *  (turns.ts's `submitRunner`). Both routes that produce blocks reach it: the staged-image methods
+   *  (`turn/startContent`) and `turn/start`'s items array, whose resolver (turnItems.ts) always yields
+   *  blocks. Each engine carries them its own way — the in-process one hands them to the SDK message
+   *  builder, the fleet one stages their bytes onto the host's disk and claims them by path (fleetEngine.ts,
+   *  which widens its own `submit` for that and is reached through the fleet spine, not this member). */
+  submitContent?(input: UserTurnInput, onMessage: (m: unknown) => void, opts?: { uuid?: string }): Promise<{ result: unknown; error?: TurnFailure }>;
+  /** OPTIONAL capability, its OWN one (F10 T-IMGREACH Task 9/I3c) — never routed through `submitContent`
+   *  (that starts a NEW turn) and never through `steer` (that engine's own string-only embedder would
+   *  receive an array it never asked to handle). Absent → "engine does not support content steering",
+   *  raised by `requireSteerContent` (turns.ts) BEFORE any staged image data is taken, exactly like
+   *  `submitContent`'s own gate above. The in-process implementation and the fleet-origin refusal land
+   *  here too — declared alongside `submitContent` because the two capabilities are proven together. */
+  steerContent?(input: UserTurnInput): void;
   interrupt(): Promise<unknown>;
   dispose(): Promise<void>;
   /** `replay` is additive and OPTIONAL — only an engine that can hand back buffered history ever passes it

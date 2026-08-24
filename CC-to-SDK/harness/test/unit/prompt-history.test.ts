@@ -219,6 +219,28 @@ describe("pastedContents — the nu_ split", () => {
   // to `type:"text"` before this line is even reached (see its own header). See I2's other new coverage —
   // image/image-failed entries are dropped entirely, never even the empty-object shape this test pinned.
 
+  // F10 T-MAINT item 4 (F9 ledger Minor, r4 §5): the READ side of what the retired test above covered.
+  // Its removal was right about the WRITE side — `appendHistory` filters to `type:"text"` and cannot
+  // produce `mediaType`/`filename` any more — but that says nothing about a history.jsonl written by a
+  // pre-F9 ccx, or copied from canon's own file, which is exactly what `readHistory`/`hydrateEntry`
+  // still have to tolerate. Planted RAW for that reason: the write API can no longer express this shape,
+  // so going through it would test nothing. Today both paths ignore unknown per-paste keys outright
+  // (readHistory type-checks only `project`/`display`; hydrateEntry reads a fixed five fields) — this
+  // pins that, so a future allowlist or strict schema cannot break old files silently.
+  it("reads a LEGACY on-disk line carrying upstream's optional mediaType/filename, and hydrates it", () => {
+    rawLines(JSON.stringify({
+      display: "[Pasted text #1 +0 lines]", timestamp: 1, project: PROJ, sessionId: "legacy",
+      pastedContents: { 1: { id: 1, type: "text", content: "x", lineCount: 0, mediaType: "text/plain", filename: "n.txt" } },
+    }));
+    const [entry] = readHistory({ scope: "everywhere" }, env);
+    expect(entry.display).toBe("[Pasted text #1 +0 lines]");
+    const hydrated = hydrateEntry(entry, env);
+    // The extra pair is dropped, not surfaced and not preserved — and NOT rewritten to the lost-paste
+    // label, which is what a reader that choked on the record would produce instead.
+    expect(hydrated.pastedContents[1]).toEqual({ id: 1, type: "text", content: "x", lineCount: 0 });
+    expect(hydrated.display).toBe("[Pasted text #1 +0 lines]");
+  });
+
   it("an entry with no pastes persists an empty map, never undefined", () => {
     appendHistory({ display: "plain", project: PROJ }, env);
     expect(JSON.parse(readFileSync(historyPath(env), "utf8").trim()).pastedContents).toEqual({});

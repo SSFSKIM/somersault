@@ -55,6 +55,15 @@ export interface DaemonOptions {
 // NDJSON op protocol (one request per client connection).
 const spawnOp = z.object({ op: z.literal("spawn"), model: z.string().optional(), restart: z.enum(["no", "on-failure"]).optional(), resume: z.string().optional(), permissionMode: z.string().optional() });
 const submitOp = z.object({ op: z.literal("submit"), id: z.string(), prompt: z.string() });
+const userContentBlock = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({ type: z.literal("image"), source: z.object({ type: z.literal("base64"), media_type: z.string().min(1), data: z.string() }) }),
+]);
+/** A NEW OP LITERAL, not a widened `prompt` field (F10 T-IMGREACH Task 12/I4): a discriminated union
+ *  cannot ignore a discriminant it does not have, whereas an additive field on `submit` would be
+ *  silently stripped by an old daemon's schema (Zod strips unknown keys) and run a text-only turn with
+ *  nobody told. */
+const submitContentOp = z.object({ op: z.literal("submit_content"), id: z.string(), input: z.array(userContentBlock).min(1) });
 const listOp = z.object({ op: z.literal("list") });
 const stopOp = z.object({ op: z.literal("stop"), id: z.string() });
 const shutdownOp = z.object({ op: z.literal("shutdown") });
@@ -94,5 +103,33 @@ const mcpToggleOp = z.object({ op: z.literal("mcp_toggle"), id: z.string(), name
 const mcpReconnectOp = z.object({ op: z.literal("mcp_reconnect"), id: z.string(), name: z.string() });
 const mcpModeOverrideOp = z.object({ op: z.literal("mcp_mode_override"), id: z.string(), name: z.string(), mode: z.string().nullable() });
 
-export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp, mcpStatusOp, mcpSetServersOp, mcpToggleOp, mcpReconnectOp, mcpModeOverrideOp]);
+export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, submitContentOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp, mcpStatusOp, mcpSetServersOp, mcpToggleOp, mcpReconnectOp, mcpModeOverrideOp]);
 export type DaemonOp = z.infer<typeof daemonOp>;
+
+/** Inbound frame cap, DERIVED FROM THE CANONICAL CONTENT MAXIMUM (round-2 F9 + round-3 F3):
+ *    20 images × ~683 KB canonical base64 ≈ 13.7 MiB      (the base64 alphabet needs no JSON escapes)
+ *  + MAX_TOTAL_TEXT (1,048,576 UTF-16 units) × 6 bytes/unit worst-case JSON-escaped ≈ 6 MiB
+ *  + envelope overhead                                     → ~20 MiB, +20% margin → 24 MiB.
+ *  v3's 16 MiB was wrong twice: it used 2 bytes per UTF-16 unit where the wire is UTF-8 JSON (escapes cost
+ *  up to 6), and it admitted non-canonical whitespace-padded base64 that could stretch an admitted frame
+ *  toward 100 MiB. Both halves are closed here AND upstream: the client runs `normalizeTurnInput` before
+ *  transport (it is in-process with the library) and the normalizer canonicalizes every passing image's
+ *  data to `decoded.toString("base64")`, so padding and whitespace never reach this socket.
+ *
+ *  WHERE THIS CAP ACTUALLY BINDS (re-review r3): on the SERVER, against a RAW writer — anything that is not
+ *  this client, including a hostile one, and that is what the raw-frame cells exercise. It does NOT bind a
+ *  normalized client payload: `MAX_AGGREGATE_BYTES` caps the image half at 5 MiB decoded (~6.8 MiB base64,
+ *  because only ten 512,000-byte images fit) and `MAX_TOTAL_TEXT` caps the text half at ~6 MiB escaped, so
+ *  ~13 MiB is the normalized ceiling. The 24 MiB figure is deliberately kept above the derivation's own
+ *  20 MiB worst case; the client-side preflight over it is defence-in-depth, tested at an injected limit. */
+export const DAEMON_MAX_FRAME_BYTES = 24 * 1024 * 1024;
+/** A partial line held STRICTLY LONGER than this without a newline drops the connection with a logged reason
+ *  (round-2 F11: one byte held forever still exhausts connections, so a byte cap alone is not a bound).
+ *
+ *  THE BOUNDARY IS INCLUSIVE, and it is stated here because the implementation has to spell it (re-review
+ *  r3): `triple()` marks the cap row as PASSING for every limit in this track, so a line held for exactly
+ *  DAEMON_PARTIAL_LINE_MS must SURVIVE. `setTimeout(fn, DAEMON_PARTIAL_LINE_MS)` fires the moment the clock
+ *  reaches that value and would kill it, so the timer is armed at `DAEMON_PARTIAL_LINE_MS + 1` — the one
+ *  extra millisecond is what makes "older than" literally true. Do not "simplify" the `+ 1` away: it is the
+ *  difference between the documented rule and the opposite one. */
+export const DAEMON_PARTIAL_LINE_MS = 10_000;

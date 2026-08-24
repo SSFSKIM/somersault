@@ -26,12 +26,6 @@ export const ORPHAN_MAX_AGE_MS = 15 * 60 * 1000;
  *  fewer number for a future reader to reconcile against this one. */
 export const SWEEP_INTERVAL_MS = ORPHAN_MAX_AGE_MS;
 
-/** ccx's own defensive ceiling on how many images ONE prompt may stage — a DoS guard, no canon twin
- *  (canon has no transport step to guard against). Comfortably above any real paste: the per-turn
- *  aggregate byte budget (`session/turnInput.ts`'s MAX_AGGREGATE_BYTES) already makes more than a
- *  handful impractical before this cap would ever bind. */
-export const MAX_IMAGES_PER_PROMPT = 20;
-
 export interface StagedDescriptor {
   mediaType: string;
   dimensions: { width: number; height: number };

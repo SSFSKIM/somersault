@@ -17,6 +17,96 @@
         "input"
       ],
       "additionalProperties": false
+    },
+    "image/stage": {
+      "type": "object",
+      "properties": {
+        "stageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "last": {
+          "type": "boolean"
+        },
+        "bytesTotal": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stageId",
+        "seq",
+        "last",
+        "bytesTotal",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "turn/startContent": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "stagedImageIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "queue": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "threadId",
+        "stagedImageIds"
+      ],
+      "additionalProperties": false
+    },
+    "turn/steerContent": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "stagedImageIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "threadId",
+        "stagedImageIds"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {}

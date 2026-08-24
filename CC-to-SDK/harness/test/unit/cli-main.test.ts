@@ -406,6 +406,31 @@ describe("main — run: foreground (Task 7)", () => {
     expect(hostCalls[0].config.model).toBe("opus");                    // → resolveOptions, same as --model
     expect(clientCalls[0].hookOpts.initialModel).toBe("claude-opus-5"); // …and the REPL's display seed resolves it
   });
+  // F10 T-MAINT item 2 (F9 ledger Minor, r4 §2): an ordinary `ccx` launch used to read prefs.json off
+  // disk TWICE — `needsBypassConsent` (main.ts:338) for the launch-mode resolution, then
+  // `runForegroundImpl` (main.ts:428) for the same model, plus a third time inside
+  // `unconsentedBypassLaunch` on a bypass launch. Inefficiency only, never a correctness bug — but a
+  // read count is exactly the kind of thing that only stays fixed if something counts it.
+  it("reads prefs exactly ONCE per launch, however many gates ask for it", async () => {
+    let reads = 0;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => { reads++; return { model: "opus" }; },
+      makeHost: () => ({ start: async () => {}, stop: async () => {} }) as any,
+      runChatClient: async () => {},
+    })));
+    expect(reads).toBe(1);
+  });
+  // The other half of the guarantee: memoising must not turn a launch that needs NO prefs into one that
+  // reads them anyway. `-p` answers out of its invocation alone.
+  it("a headless -p launch reads prefs zero times", async () => {
+    let reads = 0;
+    await captureLog(() => main(["-p", "task"], deps({
+      loadPrefs: () => { reads++; return {}; },
+      runOnce: async () => "answer",
+    })));
+    expect(reads).toBe(0);
+  });
   it("--model WINS over the saved default — a flag typed for this run outranks a stored preference", async () => {
     const hostCalls: any[] = [];
     const clientCalls: any[] = [];
@@ -791,6 +816,37 @@ describe("main — run: foreground (Task 7)", () => {
       isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
     })));
     expect(bannerText(clientCalls[0])).toContain("· Claude subscription");
+  });
+
+  // F10 T-MAINT item 1 — THE LOST ANSWER, RECOVERED. The banner's budget is the same 1500 ms and it still
+  // loses here; what changed is that losing it no longer destroys the fact. The SAME promise, unraced,
+  // reaches the REPL through `hookOpts.accountBridge`, so the auto-mode notice can still learn the user is
+  // on a subscription after the banner has given up on saying so.
+  it("a SLOW accountInfo loses the banner race but still reaches the REPL through the account bridge", async () => {
+    const clientCalls: any[] = [];
+    const clock = fakeClock();
+    let settle!: (f: unknown) => void;
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: () => new Promise((r) => { settle = r; }) } as any;
+    const run = captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+      delay: clock.delay,
+    })));
+    await clock.advance();                                                   // the 1500 ms budget elapses first
+    await run;
+    expect(bannerText(clientCalls[0])).toContain("model  claude-opus-5   ·   mode");   // no billing segment
+    expect(clientCalls[0].hookOpts.initialTokenSource).toBeUndefined();      // …and the old channel is empty
+    settle({ apiProvider: "firstParty", tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" });     // the handshake finally lands
+    await expect(clientCalls[0].hookOpts.accountBridge.read())
+      .resolves.toEqual({ apiProvider: "firstParty", tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" });
+  });
+
+  it("a rejecting accountInfo leaves the bridge answering undefined, and never as an unhandled rejection", async () => {
+    const clientCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {}, accountInfo: async () => { throw new Error("no credentials"); } } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true, makeHost: () => fakeHost, runChatClient: async (o) => { clientCalls.push(o); },
+    })));
+    await expect(clientCalls[0].hookOpts.accountBridge.read()).resolves.toBeUndefined();
   });
 
   it("refuses --resume together with a prompt (foreground only), touching neither makeHost nor runChatClient", async () => {

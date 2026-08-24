@@ -8,6 +8,8 @@ import { SwarmRuntime } from "./swarm/runtime.js";
 import { createSwarmMcpServer } from "./swarm/server.js";
 import { applyCoordinatorPersona, NATIVE_TASK_TOOLS } from "./swarm/coordinator.js";
 import { withContextTool, type QueryHolder, type RawContextUsage } from "./context/server.js";
+import { normalizeTurnInput, type UserTurnInput } from "./session/turnInput.js";
+import { oneShotUserTurn } from "./session/session.js";
 
 export interface HarnessDeps { query?: typeof sdkQuery; }
 
@@ -15,8 +17,8 @@ export interface RunResult { result: unknown; messages: unknown[]; sessionId?: s
 
 export interface Harness {
   options: Record<string, unknown>;
-  run(prompt: string): Promise<RunResult>;
-  stream(prompt: string): AsyncGenerator<unknown>;
+  run(prompt: UserTurnInput): Promise<RunResult>;
+  stream(prompt: UserTurnInput): AsyncGenerator<unknown>;
   rewind(userMessageId: string, opts?: { dryRun?: boolean }): Promise<unknown>;
   supportedCommands(): Promise<unknown>;
   supportedModels(): Promise<unknown>;
@@ -75,18 +77,26 @@ export function createHarness(config: HarnessConfig = {}, deps: HarnessDeps = {}
   // use (per-query control handles) is a Phase-2 concern.
   let active: any = null;
 
-  function start(prompt: string) {
-    active = query({ prompt, options: options as any });
+  /** The array case switches `query()` into STREAMING-INPUT mode — that is a real behavioural difference,
+   *  not a type detail (probe 100's `oneTurn` uses the same shape and settles cleanly). A string prompt
+   *  keeps the string form, but it does NOT keep its length unchecked: this arm never reaches Session's
+   *  builder (`query()` is handed the string directly), so it calls the same normalizer itself. That is
+   *  what makes MAX_TOTAL_TEXT bind `run`, `stream` and — through `harness.run` — `runStructured`. */
+  function start(prompt: UserTurnInput) {
+    const p = typeof prompt === "string"
+      ? (normalizeTurnInput(prompt) as string)
+      : (async function* () { yield oneShotUserTurn(prompt); })();
+    active = query({ prompt: p as any, options: options as any });
     if (ctxHolder) ctxHolder.query = active as { getContextUsage(): Promise<RawContextUsage> };
     return active;
   }
 
-  async function* stream(prompt: string) {
+  async function* stream(prompt: UserTurnInput) {
     const q = start(prompt);
     for await (const m of q) yield m;
   }
 
-  async function run(prompt: string): Promise<RunResult> {
+  async function run(prompt: UserTurnInput): Promise<RunResult> {
     const messages: unknown[] = [];
     let result: unknown; let sessionId: string | undefined;
     for await (const m of stream(prompt)) {

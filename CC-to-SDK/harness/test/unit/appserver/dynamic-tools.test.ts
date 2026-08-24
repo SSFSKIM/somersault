@@ -60,7 +60,11 @@ async function settledYet(p: Promise<unknown>): Promise<boolean> {
  *  promise nothing resolves, so the record stays busy and `activeTurnId` keeps answering for the whole
  *  row — exactly the state a real engine is in while it waits on a tool result. */
 const fakeSession = () => ({
-  submit: () => new Promise<{ result: unknown }>(() => {}),
+  submit: (_prompt?: unknown) => new Promise<{ result: unknown }>(() => {}),
+  // The block form of a turn — what `turn/start`'s items array resolves to — travels on the OPTIONAL
+  // `submitContent` capability (registry.ts), never on the string-only `submit`. Routed back through
+  // whatever `submit` the row installed, so one row still has one engine body.
+  submitContent(prompt: unknown) { return this.submit(prompt); },
   interrupt: async () => ({}),
   dispose: async () => {},
   onFrame: () => () => {},

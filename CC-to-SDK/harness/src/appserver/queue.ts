@@ -18,43 +18,73 @@
 import { mintTurnId, type ThreadRecord } from "./registry.js";
 import type { AppServer } from "./server.js";
 import type { InputItem } from "./turnItems.js";
+import type { UserTurnInput } from "../session/turnInput.js";
 
-/** `input` is stored RAW — the items array exactly as it came off the wire, never the resolved blocks
- *  (spec 2026-08-23 rev 3, "Admission and the queue"). Resolution is async and reads the filesystem; it
- *  belongs in the turn's own execution slot, on the far side of admission, so that a queued items turn is
- *  byte-for-byte the turn it would have been had the client sent it when the thread was idle — and so
- *  that no admission decision ends up sitting behind an await (the M6 stranding). */
-export interface QueuedTurn { id: string; input: string | InputItem[] }
+/** What a queue entry can carry, and why it is a union rather than a plain `UserTurnInput`. Two wire
+ *  methods enqueue, and they hand the queue different things:
+ *    - `turn/start` with an items array stores it RAW — the items exactly as they came off the wire,
+ *      never the resolved blocks (spec 2026-08-23 rev 3, "Admission and the queue"). Resolution is async
+ *      and reads the filesystem; it belongs in the turn's own execution slot, on the far side of
+ *      admission, so that a queued items turn is byte-for-byte the turn it would have been had the client
+ *      sent it when the thread was idle — and so that no admission decision sits behind an await (the M6
+ *      stranding).
+ *    - `turn/startContent` stores ALREADY-VALIDATED blocks: their images were decoded once at stage
+ *      completion, and re-resolving them would defeat that cache (F10 T-IMGREACH Task 10).
+ *  The items arm is TAGGED because the two array forms cannot be told apart by shape — an all-text
+ *  `InputItem[]` and an all-text `UserContentBlock[]` are the same JSON — and sending validated blocks
+ *  back through the resolver, or raw items straight to `submitContent`, would be a silent mis-route. */
+export type QueuedInput = UserTurnInput | { items: InputItem[] };
+export interface QueuedTurn { id: string; input: QueuedInput }
 
-/** What one entry costs the queue: its UTF-8 bytes for a string, its raw JSON's for an items array. Raw
- *  items are bounded by the 256 KiB frame they arrived in, so this is exact and small — and it is the
- *  same number for a turn whether it is measured here or at the moment it was received. */
-const inputBytes = (input: string | InputItem[]): number => Buffer.byteLength(typeof input === "string" ? input : JSON.stringify(input), "utf8");
+/** `turn/start`'s two input forms as the queue (and `submitRunner`) carry them: a string is itself, an
+ *  items array is tagged. The ONE place that tag is applied, so its two callers cannot drift. */
+export const asQueuedInput = (input: string | InputItem[]): QueuedInput => (typeof input === "string" ? input : { items: input });
 
-/** The queue's ADMISSION CAPS (fix wave 1). The queue is this server's own memory, held for as long as the
- *  running turn takes — so a client that keeps a thread busy could otherwise stack unlimited turns of
- *  unlimited size in it. Two caps, because the two failures are different: many small entries exhaust the
- *  count, one client's transcript-sized prompt exhausts the bytes. */
+/** True for the tagged items arm — the one form that still owes a resolution before an engine sees it. */
+export const isQueuedItems = (input: QueuedInput): input is { items: InputItem[] } => typeof input === "object" && !Array.isArray(input);
+
+/** The queue's ADMISSION CAPS (fix wave 1; widened to a third cap by F10 T-IMGREACH Task 8). The queue is
+ *  this server's own memory, held for as long as the running turn takes — so a client that keeps a thread
+ *  busy could otherwise stack unlimited turns of unlimited size in it. Three caps, because three failures
+ *  are different: many small entries exhaust the count, one giant entry exhausts memory on its own, and
+ *  many merely-large entries exhaust the running total even when each one individually is fine. */
 export const MAX_QUEUED_TURNS = 64;
-export const MAX_QUEUED_BYTES = 1_048_576; // 1 MiB of queued input, summed across entries
+/** Per-entry ceiling: one max-sized image plus text fits comfortably; two max-sized images in one entry
+ *  do not — deliberate. A queue is for turns waiting their turn, not for stacking image payloads. */
+export const MAX_QUEUED_ENTRY_BYTES = 1_048_576; // 1 MiB
+export const MAX_QUEUED_BYTES = 4 * 1_048_576; // 4 MiB total retained, summed across entries
+
+/** ONE accounting function, used at enqueue for both the per-entry and the running-total check —
+ *  serialized JSON bytes of the turn input as it sits in the queue. Deliberately uniform across both
+ *  input forms: the pre-F10 string path measured bare UTF-8 bytes of the string itself, so a bare
+ *  string's charge now includes the JSON quoting/escaping that wraps it, same as an array's blocks
+ *  always did implicitly. */
+export function queuedInputBytes(input: QueuedInput): number {
+  // The items arm is measured by the RAW array it wraps, never by the wrapper: the number a client can
+  // predict is the JSON it actually sent, and the tag is this server's own bookkeeping.
+  return Buffer.byteLength(JSON.stringify(isQueuedItems(input) ? input.items : input), "utf8");
+}
 
 /** What an enqueue attempt answers. A refusal names WHICH cap it hit, so `turn/start` can say so on the
- *  wire — a client that cannot tell "too many" from "too big" cannot retry usefully. */
-export type EnqueueResult = { ok: true; id: string; position: number } | { ok: false; reason: "entries" | "bytes" };
+ *  wire — a client that cannot tell "too many" from "too big" (or "this one entry is too big" from "the
+ *  queue as a whole is too full") cannot retry usefully. */
+export type EnqueueResult = { ok: true; id: string; position: number } | { ok: false; reason: "entries" | "entry" | "bytes" };
 
 /** Mints the entry's id off the thread's own turn counter — the same counter and format `turn/start` and
  *  compact use, so a drained turn needs no second id and the sequence never skips.
  *
- *  Both caps are checked BEFORE the mint, and that order is the invariant this module opens with: every
- *  minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal would be
- *  a gap in the sequence that no client could ever account for. */
-export function enqueueTurn(record: ThreadRecord, input: string | InputItem[]): EnqueueResult {
+ *  All three caps are checked BEFORE the mint, and that order is the invariant this module opens with:
+ *  every minted id gets a terminal event, and a refused enqueue has none — so an id burned on a refusal
+ *  would be a gap in the sequence that no client could ever account for. */
+export function enqueueTurn(record: ThreadRecord, input: QueuedInput): EnqueueResult {
   if (record.queue.length >= MAX_QUEUED_TURNS) return { ok: false, reason: "entries" };
+  const entryBytes = queuedInputBytes(input);
+  if (entryBytes > MAX_QUEUED_ENTRY_BYTES) return { ok: false, reason: "entry" };
   // The candidate counts against what is already queued, in BYTES (a UTF-16 length under-counts the
   // memory an emoji-heavy prompt actually holds). Accepted asymmetry: a NON-queued `turn/start` is not
   // size-capped — this cap protects THIS server's buffer, not the engine's input path.
-  const queued = record.queue.reduce((n, q) => n + inputBytes(q.input), 0);
-  if (queued + inputBytes(input) > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
+  const queued = record.queue.reduce((n, q) => n + queuedInputBytes(q.input), 0);
+  if (queued + entryBytes > MAX_QUEUED_BYTES) return { ok: false, reason: "bytes" };
   const id = mintTurnId(record);
   record.queue.push({ id, input });
   return { ok: true, id, position: record.queue.length };

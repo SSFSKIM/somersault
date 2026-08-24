@@ -34,6 +34,7 @@ export type { CompactOutcome } from "./compaction/index.js";
 export { openSession, resumeSession, rewindSession, Session } from "./session/index.js";
 export type { OpenSessionConfig, SessionDepsInput, SessionDeps, SessionOpts } from "./session/index.js";
 export type { BackgroundTaskInfo } from "./session/session.js";
+export { oneShotUserTurn } from "./session/session.js";
 export { flattenForDisplay, assembleUserContent, normalizeTurnInput } from "./session/turnInput.js";
 export type { UserContentBlock, UserTurnInput } from "./session/turnInput.js";
 export { createWarmPool } from "./warm/pool.js";

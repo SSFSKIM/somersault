@@ -15,7 +15,7 @@
 //   4. Selection is a COLOUR (`suggestion`), not `inverse`; everything unselected is `dimColor`.
 //
 // The geometry is exported as four pure functions so the sums can be pinned without a render.
-import React from "react";
+import React, { useImperativeHandle, useMemo } from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { resolveThemeColor, themeTokens } from "./theme.js";
@@ -397,6 +397,59 @@ function GeneralRow({ item, columns, nameCol, selected, allowWrap }: { item: Sug
   );
 }
 
+/** F10 T-HOVER Task 2 (CM33) — the popup's own hit region, same shape family as `ViewportHitmap`
+ *  (F9 T-MOUSE). `PALETTE_PADDING_X` is the popup's own horizontal padding: `SuggestPopup`'s Box is
+ *  `paddingX={2}` and the hoisted slot (`paletteSlot.tsx`) adds nothing of its own — canon's
+ *  `paddingX:2` already lives inside the popup. */
+const PALETTE_PADDING_X = 2;
+
+/** ONE suggestion row as a hit target. `colStart`/`colEnd` are 1-based INCLUSIVE terminal columns (an
+ *  SGR report's own coordinates); `lines` is the row's painted height, 1 or 2, straight off `rowLines`
+ *  (canon `OSw`). Rows are in WINDOW order, so the index of a hit is `P` and the absolute suggestion
+ *  index is `windowStart + P` (canon's `onSelect(I)`, L536295). */
+export interface PopupHitRow { id: string; colStart: number; colEnd: number; lines: number }
+/** `top` is the region's FIRST terminal row — `useDockTop()`, because the hoisted palette is the dock's
+ *  first child (ChatApp.tsx). `0` = not addressable, the same contract `RegionTopContext` and
+ *  `DockTopContext` state (FullscreenFrame.tsx). */
+export interface PopupHitRegion { top: number; rows: readonly PopupHitRow[] }
+
+/** Builds the region for the WINDOW slice already on screen (`items.slice(start, end)` and its matching
+ *  line counts). `top <= 0` (not addressable) or a pane too narrow for the padding both publish no rows —
+ *  never an inverted `colEnd < colStart` range. */
+export function popupHitRegion(
+  windowItems: readonly SuggestItem[], windowLineCounts: readonly number[], top: number, columns: number,
+): PopupHitRegion {
+  const colStart = PALETTE_PADDING_X + 1, colEnd = columns - PALETTE_PADDING_X;
+  if (top <= 0 || colEnd < colStart) return { top: 0, rows: [] };
+  return { top, rows: windowItems.map((it, i) => ({ id: it.id, colStart, colEnd, lines: windowLineCounts[i] ?? 1 })) };
+}
+/** The WINDOW-relative index of the row a cell lands on, derived FORWARD from `region.top` — each row
+ *  consuming its own `lines`. `undefined` for any cell outside the region (including the row ABOVE
+ *  `top`, which belongs to the transcript, never the popup — see the module doc's origin note). */
+export function popupRowAt(region: PopupHitRegion, col: number, row: number): number | undefined {
+  if (region.top <= 0) return undefined;
+  let y = region.top;
+  for (let i = 0; i < region.rows.length; i++) {
+    const r = region.rows[i]!;
+    if (row >= y && row < y + r.lines) return col >= r.colStart && col <= r.colEnd ? i : undefined;
+    y += r.lines;
+  }
+  return undefined;
+}
+/** The frozen empty region — a module-level constant so a non-interactive or not-addressable popup does
+ *  not mint a new `{ top: 0, rows: [] }` object on every render. */
+const EMPTY_REGION: PopupHitRegion = Object.freeze({ top: 0, rows: [] });
+
+/** What `ChatApp`'s mouse sink holds — the popup's analogue of `ViewportHitmap`. */
+export interface PopupHitHandle {
+  region(): PopupHitRegion;
+  /** Motion. Outside the region → clears (canon's container `onMouseLeave`, L536291). */
+  hoverAt(col: number, row: number): void;
+  clearHover(): void;
+  /** Press. `true` when a row took it — the caller must then NOT run the transcript tap machine. */
+  pressAt(col: number, row: number): boolean;
+}
+
 /** A run of blank rows. `<Text> </Text>` and not `<Text/>`, because Ink collapses a genuinely empty Text and
  *  the whole point of the padding is to occupy a line. Upstream writes the same literal (`h, { children: " " }`,
  *  L432436 for the empty-message pad, L432452 for the list pad). */
@@ -416,12 +469,56 @@ const blanks = (n: number, key: string) => Array.from({ length: Math.max(0, n) }
  * layout nothing whatever it pads to; ours is in flow (paletteSlot.tsx's header), so a popup padded to
  * `popupHeight(rows)` charges the transcript twelve rows at a 24-row terminal to show one match.
  */
-export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, emptyMessage, overlay = false, noPad = false }: {
+export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, emptyMessage, overlay = false, noPad = false,
+  hitRef, hitTop = 0, hoveredId = null, onHoverChange, onSelect }: {
   items: readonly SuggestItem[]; selected: number; columns: number; rows: number;
   maxColumnWidth?: number; emptyMessage?: string | null; overlay?: boolean; noPad?: boolean;
+  /** F10 T-HOVER Task 2 (CM33) — all five optional; absent = today's behaviour exactly. */
+  hitRef?: React.MutableRefObject<PopupHitHandle | null>;
+  /** `useDockTop()`'s value; `0` or absent = not addressable. */
+  hitTop?: number;
+  hoveredId?: string | null;
+  onHoverChange?: (id: string | null) => void;
+  /** Canon's `onSelect` — its PRESENCE is the interactivity gate (L536294). Absolute index. */
+  onSelect?: (absoluteIndex: number) => void;
 }) {
   const d = overlay ? OVERLAY_ROWS : popupHeight(rows);
   const justify = overlay ? undefined : "flex-end";
+  const nameCol = nameColumn(items, maxColumnWidth);
+  // `f = d >= 2` (L432438): a one-line-tall popup cannot afford a wrapped row, so `a0H` is skipped entirely
+  // and every row counts as one — which also turns the row renderer's `allowWrap` off.
+  const allowWrap = d >= 2;
+  const lineCounts = items.map((i) => (allowWrap ? rowLines(i, columns, nameCol) : 1));
+  const { start, end, rendered } = scrollWindow(lineCounts, selected, d);
+  // INTERACTIVE IS `onSelect`'s PRESENCE, canon's own gate (L536294): a consumer that cannot accept a row
+  // gets no handlers and no region, which is exactly what the classic inline arm and every component test
+  // that predates this task are.
+  const interactive = onSelect !== undefined;
+  const windowItems = items.slice(start, end);
+  const windowLineCounts = lineCounts.slice(start, end);
+  const region = useMemo(
+    () => (interactive ? popupHitRegion(windowItems, windowLineCounts, hitTop, columns) : EMPTY_REGION),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [interactive, items, start, end, hitTop, columns],
+  );
+  useImperativeHandle(hitRef ?? null, () => ({
+    region: () => region,
+    hoverAt: (col: number, row: number) => {
+      if (!interactive) return;
+      const at = popupRowAt(region, col, row);
+      onHoverChange?.(at === undefined ? null : region.rows[at]!.id);
+    },
+    clearHover: () => { if (interactive) onHoverChange?.(null); },
+    pressAt: (col: number, row: number): boolean => {
+      if (!interactive) return false;
+      const at = popupRowAt(region, col, row);
+      if (at === undefined) return false;
+      onSelect!(start + at);
+      return true;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [region, start, interactive, onHoverChange, onSelect]);
+
   if (items.length === 0) {
     if (!emptyMessage) return null;
     return (
@@ -431,19 +528,17 @@ export function SuggestPopup({ items, selected, columns, rows, maxColumnWidth, e
       </Box>
     );
   }
-  const nameCol = nameColumn(items, maxColumnWidth);
-  // `f = d >= 2` (L432438): a one-line-tall popup cannot afford a wrapped row, so `a0H` is skipped entirely
-  // and every row counts as one — which also turns the row renderer's `allowWrap` off.
-  const allowWrap = d >= 2;
-  const lineCounts = items.map((i) => (allowWrap ? rowLines(i, columns, nameCol) : 1));
-  const { start, end, rendered } = scrollWindow(lineCounts, selected, d);
   const sel = Math.max(0, Math.min(selected, items.length - 1));
+  // `A ?? k` (L536292): the hovered id wins the HIGHLIGHT — and only if it is still in the list (`A` at
+  // L536290). `k` is the keyboard pick, which hover never moves.
+  const hoverActive = interactive && hoveredId !== null && items.some((r) => r.id === hoveredId) ? hoveredId : undefined;
+  const activeId = hoverActive ?? items[sel]?.id;
   return (
     <Box flexDirection="column" justifyContent={justify} paddingX={2}>
-      {items.slice(start, end).map((item, i) => (
+      {windowItems.map((item, i) => (
         isFileish(item.id)
-          ? <FileRow key={item.id} item={item} columns={columns} selected={start + i === sel} />
-          : <GeneralRow key={item.id} item={item} columns={columns} nameCol={nameCol} selected={start + i === sel} allowWrap={allowWrap} />
+          ? <FileRow key={item.id} item={item} columns={columns} selected={item.id === activeId} />
+          : <GeneralRow key={item.id} item={item} columns={columns} nameCol={nameCol} selected={item.id === activeId} allowWrap={allowWrap} />
       ))}
       {blanks(noPad ? 0 : d - rendered, "pad")}
     </Box>

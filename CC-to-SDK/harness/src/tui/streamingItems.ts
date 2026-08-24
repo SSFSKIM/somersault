@@ -20,10 +20,15 @@
 // unchanged: a line that fits keeps its object, its `segments` and its styling; one that does not becomes
 // one item per physical row with the gutter on the first and the continuation rows indented under the text.
 import type { RenderLine } from "./render.js";
-import type { RenderItem } from "./toolRenderer.js";
+import { streamOwnerKey, type RenderItem } from "./toolRenderer.js";
 import { wrapItemsToWidth } from "./wrapItems.js";
 
-/** Pre-wrap the live region to `width`, one item per physical row. */
-export function streamingItems(lines: readonly RenderLine[], width: number): readonly RenderItem[] {
-  return wrapItemsToWidth(lines.map((line, index) => ({ kind: "line" as const, id: `stream:${index}`, line })), width);
+/** Pre-wrap the live region to `width`, one item per physical row. `ownerKey` defaults to `streamOwnerKey`'s
+ *  own fallback so `ChatApp`'s row-arithmetic call (measured, never hovered) and every pre-F10-T-HOVER test
+ *  need no change — the VIEWPORT (the only caller whose output is hovered) passes the real key.
+ *    ONE OWNER FOR THE WHOLE ARRAY, because the array IS one API message: `message_start` clears `current`
+ *  (`liveTurn.ts`) and a completed assistant message clears it too (`ingest`), so the region physically
+ *  cannot hold two messages at once. */
+export function streamingItems(lines: readonly RenderLine[], width: number, ownerKey: string = streamOwnerKey("live")): readonly RenderItem[] {
+  return wrapItemsToWidth(lines.map((line, index) => ({ kind: "line" as const, id: `stream:${index}`, ownerKey, line })), width);
 }

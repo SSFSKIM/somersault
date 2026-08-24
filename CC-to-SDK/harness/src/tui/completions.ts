@@ -160,6 +160,20 @@ export function moveCommand(s: EditorState, delta: number): EditorState {
   const c = s.command!;
   return { ...s, command: { ...c, index: moveSuggestion(c.index, delta, c.items.length) } };
 }
+/** F10 T-HOVER Task 2 (CM33) — point the live popup's keyboard index at `index`, clamped to the lane's
+ *  own list so an absolute index from a stale frame lands on a real row rather than off the end. This is
+ *  the click path's FIRST half; the second is the composer's existing Enter arm, so a click accepts
+ *  through EXACTLY the code Enter does. Whichever of the two lanes is open; a no-op with neither, and a
+ *  no-op when the index is already there (nothing downstream should re-render for a click that changed
+ *  nothing). */
+export function setSuggestionIndex(s: EditorState, index: number): EditorState {
+  const clamp = (n: number, len: number) => Math.max(0, Math.min(n, len - 1));
+  if (s.command) { const i = clamp(index, s.command.items.length);
+    return i === s.command.index ? s : { ...s, command: { ...s.command, index: i } }; }
+  if (s.mention) { const i = clamp(index, s.mention.items.length);
+    return i === s.mention.index ? s : { ...s, mention: { ...s.mention, index: i } }; }
+  return s;
+}
 
 // ─── the lists the composer feeds in ─────────────────────────────────────────────────────────────────────
 export function setMentionFiles(s: EditorState, files: string[]): EditorState {

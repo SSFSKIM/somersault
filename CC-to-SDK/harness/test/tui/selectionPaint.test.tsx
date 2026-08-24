@@ -305,6 +305,67 @@ function composerOrigin(frame: string | undefined, needle: string): { row: numbe
   return { row: idx + 1, textCol: rows[idx]!.indexOf(needle) + 1 };
 }
 
+describe("T6 (j) / F10 S2: a drag after a double click extends by whole words", () => {
+  // Assistant prose's own 3-column "⏺ " gutter (T6 (a)'s convention) puts "alpha beta gamma"'s text at
+  // col 4: alpha cols 4-8, a space at col 9, beta cols 10-13, a space at col 14, gamma cols 15-19.
+  const DOC = [prose("alpha beta gamma", "a")];
+
+  it("double-press on `alpha`, drag into `gamma`: all three words paint, and the toast counts the whole text", async () => {
+    const r = await mount(DOC);
+    const row = rowOfIncluding(r.lastFrame(), "alpha beta gamma");
+    await tap(r, 6, row);                               // first click — inside "alpha" — a plain click first
+    r.stdin.write(press(6, row));                        // second press, same cell, well within 500ms
+    await settle();
+    r.stdin.write(drag(17, row));                        // inside "gamma"
+    await settle();
+    const painted = rawLineIncluding(r.lastFrame(), "alpha beta gamma");
+    expect(painted).toContain(`${SEL_BG}alpha beta gamma${RESET_BG}`);
+    r.stdin.write(release(17, row));
+    await waitFor(() => clean(r.lastFrame()).includes("copied 16 chars to clipboard")); // "alpha beta gamma".length === 16
+    r.unmount();
+  });
+
+  it("double-press on `beta` (mid-span pivot), drag into `gamma`: the pivot's own lo through gamma's hi", async () => {
+    const r = await mount(DOC);
+    const row = rowOfIncluding(r.lastFrame(), "alpha beta gamma");
+    await tap(r, 11, row);                               // first click — inside "beta"
+    r.stdin.write(press(11, row));                        // second press — double-click
+    await settle();
+    r.stdin.write(drag(17, row));                         // inside "gamma"
+    await settle();
+    const painted = rawLineIncluding(r.lastFrame(), "alpha beta gamma");
+    // Pivoting on `beta` (not `alpha`) means the selection runs from beta's OWN low end through gamma's high
+    // end — "beta gamma", not all three words (the pure test's own first cell asserts this same shape as
+    // `colStart:7, colEnd:17`); "alpha " stays unselected.
+    expect(painted).toContain(`${SEL_BG}beta gamma${RESET_BG}`);
+    expect(painted).not.toContain(`${SEL_BG}alpha`);
+    r.stdin.write(release(17, row));
+    await settle();
+    r.unmount();
+  });
+
+  it("the triple-click twin: triple-click one row, drag down one row, and both rows fully paint", async () => {
+    const twoRows = [prose("first line here", "x"), prose("second line here", "y")];
+    const r = await mount(twoRows);
+    const row1 = rowOfIncluding(r.lastFrame(), "first line here");
+    const row2 = rowOfIncluding(r.lastFrame(), "second line here");
+    await tap(r, 6, row1);
+    r.stdin.write(press(6, row1));
+    await tick();
+    r.stdin.write(release(6, row1));
+    await tick();
+    r.stdin.write(press(6, row1));                        // third press — triple click
+    await settle();
+    r.stdin.write(drag(6, row2));                         // drag down into the second message's own row
+    await settle();
+    expect(rawLineIncluding(r.lastFrame(), "first line here")).toContain(`${SEL_BG}first line here${RESET_BG}`);
+    expect(rawLineIncluding(r.lastFrame(), "second line here")).toContain(`${SEL_BG}second line here${RESET_BG}`);
+    r.stdin.write(release(6, row2));
+    await settle();
+    r.unmount();
+  });
+});
+
 describe("T6 (i): review Important — a swallowed sweep does not move the composer caret it lands back on", () => {
   it("press, drag away, re-press the composer cell, release there: typing still appends at the end", async () => {
     const r = await mount([]);

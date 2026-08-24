@@ -154,6 +154,18 @@ export function noImageInClipboardText(keys: readonly string[], ssh: boolean, pl
   const chord = formatBindingLower(preferredKey(keys), platform);
   return chord === "" ? "No image found in clipboard." : `No image found in clipboard. Use ${chord} to paste images.`;
 }
+/** F10 T-IMGREACH Task 13 (I6), canon `cli.pretty.js` L493296 verbatim: `` `Image in clipboard \xB7 ${m2("chat:imagePaste",
+ *  "Chat", "ctrl+v")} to paste` `` — `\xB7` is a middle dot (U+00B7), and `m2(action, context, fallback)` is
+ *  canon's live-binding lookup with a literal fallback (L175562-175571), which is why an UNBOUND
+ *  `chat:imagePaste` still completes the sentence with `ctrl+v` rather than `formatBindingLower`'s own `""`
+ *  (contrast `noImageInClipboardText` just above, which has no such fallback because that action is
+ *  rebindable from day one with nothing upstream to fall back to). A rebound chord renders here exactly as
+ *  it would in the footer or the shortcuts grid — this is the same `formatBindingLower` grammar, not a
+ *  second one. */
+export function imageInClipboardText(keys: readonly string[], platform: NodeJS.Platform = process.platform): string {
+  const chord = formatBindingLower(preferredKey(keys), platform);
+  return `Image in clipboard · ${chord === "" ? "ctrl+v" : chord} to paste`;
+}
 /** `$e`'s `parens` prop is the ONLY difference between its two output forms (L183875 vs L183883), so the bare
  *  clause is the parens form minus its wrapper. One site needs it: `Vha`'s backgrounded-agent row (429646)
  *  nests the chord hint inside a LARGER parenthesised list (`(↓ to manage · ctrl+o to expand)`), where a

@@ -5,17 +5,19 @@
 // Task 9: a real on-disk transcript also carries CLI bookkeeping rows (slash-command echoes, local
 // command output, caveats, compaction summaries) that must never surface as ordinary user messages —
 // `rowKind` (src/sessions/rows.ts, the same classifier tui/replay.ts uses) filters those out first.
+//
+// Task 11 (I3e): the flattener is `flattenForDisplay` (session/turnInput.ts), the SAME function
+// `turns.ts`'s `submitRunner` calls for the LIVE user item — a persisted content array is exactly the
+// `UserContentBlock[]` `session.ts`'s `userTurn` built it from (`normalizeTurnInput`'s own output), so
+// calling the identical function on the identical shape is what makes a replayed image turn's text
+// byte-identical to its live twin, `[Image #N]` label included, rather than two flatteners that merely
+// happen to agree today.
 import type { Item } from "./types.js";
 import { TurnMapper, userItem } from "./mapper.js";
 import { rowKind } from "../../sessions/rows.js";
+import { flattenForDisplay, type UserTurnInput } from "../../session/turnInput.js";
 
 const PHANTOM_ROW_KINDS = new Set(["command_echo", "command_output", "caveat", "compact_summary"]);
-
-function promptText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return String((content as any[]).find((b) => b?.type === "text")?.text ?? "");
-  return "";
-}
 
 export function itemsFromTranscript(messages: unknown[]): Item[] {
   const mapper = new TurnMapper();
@@ -31,7 +33,7 @@ export function itemsFromTranscript(messages: unknown[]): Item[] {
     if (f?.type === "user" && !f.parent_tool_use_id) {
       const content = f.message?.content;
       const hasToolResult = Array.isArray(content) && content.some((b: any) => b?.type === "tool_result");
-      if (!hasToolResult) { items.push(userItem(promptText(content), String(f.uuid ?? ""))); continue; }
+      if (!hasToolResult) { items.push(userItem(flattenForDisplay(content as UserTurnInput), String(f.uuid ?? ""))); continue; }
     }
     for (const ev of mapper.ingest(frame)) if (ev.kind === "completed") items.push(ev.item);
   }

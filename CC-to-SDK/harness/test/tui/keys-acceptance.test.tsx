@@ -24,6 +24,8 @@ import { UserKeymap } from "../../src/tui/keys/UserKeymap.js";
 import { useKeyActions, useKeyScope } from "../../src/tui/keys/KeymapProvider.js";
 import { loadUserBindings, userBindingsPath, type UserBindingsResult } from "../../src/tui/keys/userBindings.js";
 import { parseKeySpec } from "../../src/tui/keys/normalize.js";
+import { DEFAULT_BINDINGS } from "../../src/tui/keys/bindings.js";
+import { compileBindings, resolveKey } from "../../src/tui/keys/resolver.js";
 import { SHORTCUT_ROWS, UNBOUND, defaultLookup, formatBinding, formatBindingLower, shortcutGrid, shortcutRows, withModSep } from "../../src/tui/keys/hints.js";
 import { newlineHint } from "../../src/tui/composerFrame.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
@@ -431,6 +433,19 @@ describe("F2 acceptance 6 — every key P86 found undeliverable is recorded as u
   it("records meta+o and meta+w as dropped with a rationale", () => {
     expect(doc).toContain("`meta+o`");
     expect(doc).toContain("`meta+w`");
+  });
+});
+
+// F10 S3 — `selection:copy` is a `Scroll`-only binding: the same chord must resolve to nothing in Chat,
+// Transcript or Global, so a fullscreen copy gesture can never fire from the composer or the pager.
+describe("F10 S3 — selection:copy resolves only in Scroll (canon L174817)", () => {
+  it("matches in Scroll but not in Chat, Transcript, or Global", () => {
+    const table = compileBindings(DEFAULT_BINDINGS);
+    const copy: KeyEvent = { kind: "key", name: "c", ctrl: true, shift: true, alt: false, super: false, raw: "" };
+    expect(resolveKey(copy, ["Scroll"], table, [])).toMatchObject({ type: "match", action: "selection:copy" });
+    for (const context of ["Chat", "Transcript", "Global"] as const) {
+      expect(resolveKey(copy, [context], table, [])).not.toMatchObject({ action: "selection:copy" });
+    }
   });
 });
 

@@ -4,12 +4,15 @@ import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } 
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { readdir } from "node:fs/promises";
-import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, insertImageChip, setMentionFiles, setCommandCatalog, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, caretFromLocalPosition, type ComposerSubmission, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
+import { applyKey, bufferText, clearForInterrupt, commandArgumentHint, commandEmptyMessage, completionActive, ghostText, initialEditorState, insertImageChip, setMentionFiles, setCommandCatalog, setSuggestionIndex, inputMode, rebuildChips, replaceBufferFromOutside, clearToHistory, endKillAndYank, historyLabel, historyPosition, suggestPopupShown, caretFromLocalPosition, type ComposerSubmission, type EditorState, type HistNavEntry, type PastedMap } from "./editor.js";
 // F9 T-MOUSE Task 4 — the composer's published origin, the SAME "computed constant" idiom
 // `FullscreenViewport` reads `useRegionTop` through (FullscreenFrame.tsx's own header comment on
 // `DockTopContext`). Absent (0) outside a bounded fullscreen frame, exactly like `useRegionTop`.
-import { useDockTop } from "./FullscreenFrame.js";
-import { catalogColumnWidth, SuggestPopup, type SuggestItem } from "./suggestPopup.js";
+import { useDockTop, useDockBottom } from "./FullscreenFrame.js";
+// F10 S1 — the bottom-up origin itself, and the painted-buffer-height term it needs that `wrapRows` alone
+// cannot give it (composerRows.ts's own header: the inverted EOL cursor cell and a wrapping ghost run).
+import { bufferPhysicalRows, composerOriginRow } from "./composerRows.js";
+import { catalogColumnWidth, SuggestPopup, type PopupHitHandle, type SuggestItem } from "./suggestPopup.js";
 import { applyQueueDrain } from "./queue.js";
 import { cachedExampleFiles, examplePool, pickPlaceholder, QUEUED_UP_HINT } from "./placeholder.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
@@ -21,13 +24,15 @@ import { commandKind, type CommandEntry } from "./commandComplete.js";
 import { editExternal as realEditExternal } from "./externalEditor.js";
 // F9 T-IMAGE (I2): the Ctrl-V handler's one dependency — see `readClipboardImage`'s own prop doc above.
 import { defaultClipboardDeps, pasteClipboardImage, type ClipboardPasteOutcome } from "./clipboardImage.js";
+import { defaultCheckOnlyProcess, hasClipboardImage } from "./clipboardCheck.js";
+import { CLIPBOARD_HINT_DEBOUNCE_MS, CLIPBOARD_HINT_KEY, CLIPBOARD_HINT_TIMEOUT_MS, createClipboardHintModel, type ClipboardHintModel } from "./clipboardHint.js";
 import { ComposerFrame, ComposerEditorInFlight, PlaceholderCursor, PromptGlyph, borderTokenFor, POINTER, NBSP } from "./composerFrame.js";
 import { InlineSearchRow, useInlineHistorySearch } from "./InlineHistorySearch.js";
 import { NotificationSlot } from "./NotificationSlot.js";
 import { usePaletteHoist } from "./paletteSlot.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import { useBindingLookup, useKeyActions, useKeyFallback, useKeyScope, usePasting, useSuspendInput, type SuspendInput } from "./keys/KeymapProvider.js";
-import { expandHintText, formatBindings, noImageInClipboardText } from "./keys/hints.js";
+import { expandHintText, formatBindings, imageInClipboardText, noImageInClipboardText } from "./keys/hints.js";
 import { createDoublePress, DOUBLE_PRESS_WINDOW_MS, type DoublePress, type DoublePressDeps } from "./keys/doublePress.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import type { KeyEvent, TextEvent } from "./keys/types.js";
@@ -306,7 +311,7 @@ export interface ComposerFooterState {
 /** What the footer shows with no composer mounted (a dialog owns the screen): none of the four states. */
 export const IDLE_COMPOSER_FOOTER_STATE: ComposerFooterState = { searching: false, pasting: false, pasteExpandHint: false, bashMode: false };
 
-export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, dockCrowded = false }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
+export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMode, onInterrupt, onHelp, onDraftStart, onInputActivity, waitingForPermission, inputOwnerRef, editorStateRef, consumedPrefillTokenRef, searchHintFiredRef, prefill, onPrefillApplied, editExternal, readClipboardImage, onFocusChange, checkClipboardImage, suspendInput, onKillAgents, yankHintMs = 5000, pasteHintMs = PASTE_HINT_MS, searchHintMs = HISTORY_HINT_MS, mentionWalkMs = MENTION_WALK_DEBOUNCE_MS, mentionReaddir, sessionId, project, historyEnv, busy, escClearMs = 800, exitArmMs = 800, columns, rows, label, queuePop, queueHasEditable, submitCount = 0, hasMessages = false, suggestionEnabled = true, queueHintCountedRef, placeholderMemoRef, notifications, onFooterState, onSuggestOpen, clearDraftToken, consumedClearTokenRef, onOpenAgents, doublePressDeps, suggestion, onSuggestionSlot, onSuggestionAccept, fullscreen = false, originRef, footerRows = 0, popupHitRef }: { onSubmit: (sub: ComposerSubmission | string) => void; cwd: string; commandCatalog: CommandEntry[]; onExit?: () => void; onCycleMode?: () => void; onInterrupt?: () => void; onHelp?: () => void; onDraftStart?: () => void;
   /** `LRn = ds()` (bundle L494585) — THIS TREE IS PAINTING INTO THE ALTERNATE SCREEN. Two of canon's surface
    *  deltas land on this component, and both are SUBTRACTIONS from what it paints rather than new content:
    *  D10 hoists the suggestion popup out of here into the band above the dock (`usePaletteHoist` below), and
@@ -316,14 +321,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   /** F9 T-MOUSE Task 4 — see `ComposerCaret`. `ChatApp` holds the ref; a bare mount with nothing above it
    *  simply has no reader, exactly like `hitmapRef` in `FullscreenViewport`. */
   originRef?: React.Ref<ComposerCaret>;
-  /** F9 T-MOUSE Task 4 fix (task review Critical) — true whenever `ChatApp` is painting a `TaskPanel` or the
-   *  live-turn spinner/retry/compaction row above this component inside `dock` (the exact booleans that gate
-   *  those elements there: `todosOpen`, `state.busy`, `state.compacting`, each already implying `!paneOwned`
-   *  since this component only mounts when nothing pane-owning is up). The hoisted suggestion palette is NOT
-   *  included here — this component already knows its own `hoisted` locally and folds it in directly. Used
-   *  only to suppress `caretAt`'s addressability (see `originExact` below); defaults false so a bare mount
-   *  with no `ChatApp` above it keeps whatever `useDockTop()` alone would answer. */
-  dockCrowded?: boolean;
+  /** F10 S1 — the footer's own painted height, from `ChatApp`'s single `footerStatusInput()` derivation
+   *  (`footerRows(footerStatusInput())`, the SAME call `dockDialogRows` makes, so the two cannot disagree).
+   *  `0` means "not supplied" and the origin is not addressable — the same "computed constant, 0 = not
+   *  addressable" contract `useDockTop`/`useDockBottom` already use. Replaces `dockCrowded`: the bottom-up
+   *  origin (`composerOriginRow` below) needs no term for any occupant ABOVE the composer at all, so there is
+   *  nothing left for a "crowded" flag to gate. */
+  footerRows?: number;
+  /** F10 T-HOVER Task 2 (CM33) — `ChatApp`'s mouse sink holds this; a bare mount with nothing above it
+   *  simply has no reader, exactly like `originRef`/`hitmapRef`. */
+  popupHitRef?: React.MutableRefObject<PopupHitHandle | null>;
   /** Upstream's `onInputChange` → `Z1t(value.trim().length > 0)` (bundle L547796-802): the composer reports
    *  whether its buffer is non-empty EVERY time the text changes, and the app turns that into the typing
    *  activity flag that suppresses a parked dialog. Reported from `commitState`, the one writer, and only on a
@@ -353,6 +360,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
    *  `editExternal` uses just above, and for the same reason: a unit test drives Ctrl-V's four outcomes
    *  (image / image-failed / text / none) without ever shelling out to `osascript`/`sips`. */
   readClipboardImage?: () => Promise<ClipboardPasteOutcome>;
+  /** F10 T-IMGREACH Task 13 (I6) — the SUBSCRIBE half of `KeymapProvider`'s `onFocusChange` dep, threaded
+   *  down through `ChatApp` exactly as `onResize` is (`chatMain.tsx`'s `createFocusChain`). This is the
+   *  component's own primary trigger; the secondary one (the session's first keypress) needs no prop at
+   *  all, because every keypress already reaches `handleKey` below. */
+  onFocusChange?: (cb: (focused: boolean) => void) => () => void;
+  /** I6's check-only seam, mirroring `readClipboardImage` just above: a full override of "is there an
+   *  image on the clipboard right now", not the lower `CheckOnlyProcess`/`clipboardCheckCommand` pieces
+   *  `clipboardCheck.ts` itself is tested against. Defaults to the real platform-dispatched check. A test
+   *  seam: never spawns a process when supplied a fake. */
+  checkClipboardImage?: () => Promise<boolean>;
   /** Overrides the KeymapProvider's own terminal handoff (`useSuspendInput`) — the ordering pin injects a fake
    *  one. Absent AND with no provider above, the editor simply runs without a handoff. */
   suspendInput?: SuspendInput; onKillAgents?: () => void; yankHintMs?: number; busy?: boolean; escClearMs?: number; exitArmMs?: number;
@@ -508,6 +525,11 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // CM24's hint (`Rpk`/`Yg`/`lh` in the bundle). Its own state + timer, the yank hint's shape exactly.
   const [pasteHint, setPasteHint] = useState(false);
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // F10 T-HOVER Task 2 (CM33) — canon's `hoveredSuggestionId` (L602029-602033). Composer-local because the
+  // element that reads it is built here (`hoisted` below) — and the setter BAILS when unchanged, canon's
+  // own `Pe.hoveredSuggestionId === Ft ? Pe : {…}`, so a pointer sweeping within one row is free.
+  const [hoveredSuggestionId, setHoveredSuggestionId] = useState<string | null>(null);
+  const onSuggestionHover = useCallback((id: string | null) => setHoveredSuggestionId((p) => (p === id ? p : id)), []);
   // CM56. `searchHintFired` is upstream's `m.current` — fired ONCE, and deliberately not reset by the walk's
   // own reset (`G` at L489628 clears every other ref in the hook and leaves `m` alone).
   //
@@ -744,6 +766,53 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   useKeyScope("HistorySearch", { active: owns && search.searching });
   const bindings = useBindingLookup();                 // the footer ladder below reads its chords from here
   const pasting = usePasting();                        // CM25: a bracketed paste still arriving (provider-owned)
+  // F10 T-IMGREACH Task 13 (I6) — the NINTH of Footer.tsx's `priority:"immediate"` posters (see its own
+  // census), and the whole of the impure half `clipboardHint.ts`'s pure model needs: one debounce timer and
+  // the check-only subprocess. `readClipboardImageRef`'s existing
+  // availability gate (`!!readClipboardImage`, canon's own `y6i(r, !!e.onImagePaste)`) doubles as this
+  // hint's gate — a composer with no paste path at all has nothing this hint could offer ctrl+v FOR, so the
+  // check-only seam is never even invoked. `checkClipboardImageRef` mirrors that same shape.
+  const clipboardHintModelRef = useRef<ClipboardHintModel>(); if (!clipboardHintModelRef.current) clipboardHintModelRef.current = createClipboardHintModel();
+  const checkClipboardImageRef = useRef(checkClipboardImage); checkClipboardImageRef.current = checkClipboardImage;
+  const clipboardHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClipboardHint = () => {
+    if (clipboardHintTimerRef.current) { clearTimeout(clipboardHintTimerRef.current); clipboardHintTimerRef.current = null; }
+  };
+  const armClipboardHint = () => {
+    cancelClipboardHint();                                              // a fresh arm restarts the window (rare: two edges before the first fires)
+    clipboardHintTimerRef.current = setTimeout(() => {
+      clipboardHintTimerRef.current = null;
+      void (async () => {
+        if (!readClipboardImageRef.current) return;                      // no paste path — nothing this hint could offer
+        if (clipboardHintModelRef.current!.throttled(Date.now())) return;   // throttled — skip the probe entirely, clock untouched
+        const check = checkClipboardImageRef.current ?? (() => hasClipboardImage(process.platform, defaultCheckOnlyProcess()));
+        if (!(await check())) return;                 // no image on the clipboard — silent, and NEVER arms the throttle (review finding P2)
+        // Re-peek AFTER the async probe (round-2 review finding P2): a blur/refocus while THIS check was
+        // still in flight can start a second arm that also passes the pre-await `throttled()` peek above —
+        // both probes are then racing to post. Whichever check resolves first falls through to `noteFire`
+        // and the post below with no `await` in between, so the OTHER one's re-peek here is guaranteed to
+        // see the fire it just recorded and bail, rather than posting a second hint.
+        if (clipboardHintModelRef.current!.throttled(Date.now())) return;
+        clipboardHintModelRef.current!.noteFire(Date.now());              // a genuine fire — record it now, right before posting
+        storeRef.current.add({
+          key: CLIPBOARD_HINT_KEY, text: imageInClipboardText(bindings("chat:imagePaste")),
+          priority: "immediate", timeoutMs: CLIPBOARD_HINT_TIMEOUT_MS,
+        });
+      })();
+    }, CLIPBOARD_HINT_DEBOUNCE_MS);
+  };
+  // The PRIMARY trigger: `KeymapProvider`'s focus edges, subscribed exactly like `onResize` (`chatMain.tsx`'s
+  // `createFocusChain`). Re-subscribes only if the function identity changes — stable in production, where
+  // it is the SAME chain for the life of the process.
+  useEffect(() => {
+    if (!onFocusChange) return;
+    return onFocusChange((focused) => {
+      const r = clipboardHintModelRef.current!.onFocus(focused);
+      if (r === "arm") armClipboardHint();
+      else if (r === "cancel") cancelClipboardHint();
+    });
+  }, [onFocusChange]);
+  useEffect(() => cancelClipboardHint, []);                              // a remount must not leave a stray fire behind
   // Read stateRef.current (NOT the closure `state`): the provider dispatches from a listener attached in a
   // passive effect that flushes after commit, so a closure read lags one render and would submit stale text.
   // The ref updates every render.
@@ -822,6 +891,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const handleKey = (e: KeyEvent | TextEvent) => {
     if (inputOwnerRef && !composerOwns(inputOwnerRef.current)) return;
+    // I6's SECONDARY trigger (canon L199656-199657): a keypress arms the clipboard hint only from the
+    // "unknown" focus state — a terminal that never sent a single DECSET 1004 byte still gets the hint off
+    // the session's first keystroke, because typing is itself proof the user is in front of the terminal.
+    // Every OTHER key, on every scope this composer owns, reaches here too — placed above the search/scope
+    // branches below so a search-field keystroke counts exactly as much as an ordinary one.
+    if (clipboardHintModelRef.current!.onKeypress() === "arm") armClipboardHint();
     // CM58's search field owns the fallback outright while it is live (divergence 3): the query takes every
     // printable, backspace shortens it — and empties into the cancel — and nothing else reaches the editor.
     // The ref, not the render value, for the one-chunk reason `cancel` above states.
@@ -886,6 +961,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     // `rows` is passed positionally after `now`, so `now` is given explicitly here — same value the default
     // would have produced. A paste-tagged event is the only consumer (editor.ts's `KeyFlags.paste` arm).
     const r = applyKey(s, input, key, Date.now(), rowsRef.current?.());
+    // F10 T-HOVER Task 2 (CM33) — canon clears the hover on popup navigation (L602029/L602031) —
+    // unconditional on the RECOGNIZED ACTION, which is exactly what `suggestionNav` reports: the
+    // keyboard taking the highlight back is the whole point, whether or not the index could move.
+    if (r.suggestionNav) setHoveredSuggestionId(null);
     if (key.ctrl && input === "u" && r.killed && r.killed.text.length >= 3) {
       // WAVE C TASK 2: `kill-paste-hint` (annex §C1.6, L395652) — `immediate`, 5000 ms. The queue owns the
       // deadline now, so this site holds no timer of its own; `yankHintMs` became its `timeoutMs`.
@@ -937,6 +1016,16 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
     commitState(r.state);
   };
   submitBufferRef.current = () => handleKey(ENTER);
+  // F10 T-HOVER Task 2 (CM33) — canon's `onSelect(I)` (L536295) with `I = windowStart + P`. Two steps
+  // rather than one because ccx's accept reads the lane's own `index`, where canon's consumer takes the
+  // index as an argument: point the index at the clicked row, then run the Enter arm. `commitState`
+  // first, so `handleKey` reads the moved index off `stateRef.current` (it is set synchronously there).
+  const acceptSuggestionAt = useCallback((absoluteIndex: number) => {
+    if (!completionActive(stateRef.current)) return;
+    commitState(setSuggestionIndex(stateRef.current, absoluteIndex));
+    handleKey(ENTER);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // The gate that matters most (F6 t5): the fallback is where every printable character, digit and unbound key
   // lands, and an inline dialog reads its numbered rows and legacy letters through ITS fallback. Inactive here
   // means "not registered", so the dialog's is the innermost live one — `handleKey`'s own owner guard stays as
@@ -1217,6 +1306,30 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   const suggest = suggestProps(state, historyEnvRef.current);
   const popupShown = popupDrawn(state);
   const ghost = ghostText(state);
+  // `leftInset`: the columns `PromptGlyph` reserves as its own flex sibling (a fixed `❯\xa0`/`!\xa0`, 2 cols —
+  // measured rather than hardcoded, since `promptGlyph`'s two arms are the same width by construction but
+  // nothing enforces it staying that way). `ComposerFrame` has no left/right border and no padding (its own
+  // header: two bare horizontal rules, nothing else), so `cols` IS the row's full width and `innerWidth` is
+  // exactly what `renderBuffer`'s per-line `<Text>` has left to paint into. Hoisted above the footer-state
+  // effect (F10 S1) so `paintedRows` below can be computed early enough to sit in that effect's own deps.
+  const leftInset = stringWidth(POINTER + NBSP);
+  const innerWidth = Math.max(1, cols - leftInset);
+  // F10 S1 — THE COMPOSER'S OWN PAINTED HEIGHT, computed once and read by two things: the origin arithmetic
+  // below, and (via the footer-state effect's deps, a few lines down) the ONE thing that keeps `useDockTop()`
+  // / `useDockBottom()` from going stale on PURE composer-local growth. Neither `FullscreenFrame`'s
+  // measurement effect nor its overflow watchdog re-runs when only a descendant's local `setState` changes
+  // (see the effect's own header, and `:29-36`) — React does not re-render an ancestor because a deep child
+  // did. Nothing in `ChatApp`'s own state changes when a draft grows from one row to three with no other
+  // occupant, so nothing tells `FullscreenFrame` the dock's true height moved — measured: `dockTop` stayed
+  // stamped at the ONE-row figure through a three-row draft, refusing a click nowhere near any real overflow.
+  // `onFooterState` is the existing, narrow channel composer-local facts already cross into `ChatApp` state
+  // (searching/pasting/bashMode/exitArm); widening its trigger to fire on a PAINTED-HEIGHT change too closes
+  // the gap at its root — one extra `setState` up in `ChatApp`, which is what actually re-renders
+  // `FullscreenFrame` and lets its effect re-measure — rather than approximating a fresher `dockTop` down
+  // here with arithmetic that cannot see what ChatApp's OTHER dock occupants (a task panel, the live-turn
+  // spinner) are using of the same cap.
+  const paintedRows = bufferPhysicalRows({ lines: state.lines, cursor: state.cursor,
+    ghost: ghost?.visible ? ghost.suffix : null, placeholder: isEmptyNow ? (placeholder ?? "") : null, innerWidth });
   const argHint = commandArgumentHint(bufferText(state), commandCatalog);
   // WAVE C TASK 2 — THE HINT STACK IS GONE, AND WITH IT `showFooter`. Ten of the eleven rows this component
   // used to paint below its frame are now the ONE footer row `ChatApp` mounts (`Footer.tsx`) plus the ONE
@@ -1286,8 +1399,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   };
   const onFooterStateRef = useRef(onFooterState); onFooterStateRef.current = onFooterState;
   useEffect(() => { onFooterStateRef.current?.(footerState); },
+    // `paintedRows` (F10 S1): NOT a fact this effect's own callback reports (`footerState` is unchanged) —
+    // riding along on the existing composer-local → ChatApp channel purely so a `setState` up there
+    // re-renders `ChatApp`, and therefore `FullscreenFrame`, whenever the composer's OWN painted height
+    // moves. See `paintedRows`'s own header for why that re-render is load-bearing rather than incidental.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns]);
+    [footerState.searching, footerState.pasting, footerState.pasteExpandHint, footerState.bashMode, footerState.exitArm?.key, footerState.exitArm?.verb, owns, paintedRows]);
   useEffect(() => () => { onFooterStateRef.current?.(IDLE_COMPOSER_FOOTER_STATE); }, []);
   // …and the popup goes with it. A dialog unmounting this component while a list was up would otherwise leave
   // the app holding rows back for a region that is no longer on screen — for the rest of the session.
@@ -1304,45 +1421,58 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
   // `popupHeight(rows)`, and no blank padding under the last match. Here they are not a nicety — the slot is IN
   // FLOW, so canon's padding would charge the transcript twelve rows at a 24-row pane to show one command. The
   // inline arm below passes neither and is unchanged.
+  // F10 T-HOVER Task 2 (CM33) — read HERE, ahead of `hoisted`, because the popup's own hit region needs it
+  // as `hitTop`. The inversion this sets up (research §4.2): the palette being HOISTED is what makes the
+  // COMPOSER's origin inexact below (`originExact`'s `!hoisted` term) — and it is SIMULTANEOUSLY the
+  // palette's own EXACT origin, because the palette is the dock's first child (ChatApp.tsx). So the
+  // popup's addressability condition is `fullscreen && dockTop > 0`, with no occupant term at all —
+  // unlike `originExact`, nothing can paint ABOVE the palette inside `dock` (it is that band's first
+  // child by construction), so `dockCrowded` has nothing to say about it.
+  const dockTop = useDockTop();
   const hoisted = fullscreen && popupShown && suggest
-    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad />
+    ? <SuggestPopup {...suggest} columns={cols} rows={termRows} overlay noPad
+        hitRef={popupHitRef} hitTop={dockTop} hoveredId={hoveredSuggestionId}
+        onHoverChange={onSuggestionHover} onSelect={acceptSuggestionAt} />
     : null;
   usePaletteHoist(hoisted);
-  // ── F9 T-MOUSE TASK 4 — CLICK-TO-CARET'S ORIGIN ───────────────────────────────────────────────────────────
-  // `leftInset`: the columns `PromptGlyph` reserves as its own flex sibling (a fixed `❯\xa0`/`!\xa0`, 2 cols —
-  // measured rather than hardcoded, since `promptGlyph`'s two arms are the same width by construction but
-  // nothing enforces it staying that way). `ComposerFrame` has no left/right border and no padding (its own
-  // header: two bare horizontal rules, nothing else), so `cols` IS the row's full width and `innerWidth` is
-  // exactly what `renderBuffer`'s per-line `<Text>` has left to paint into.
-  const leftInset = stringWidth(POINTER + NBSP);
-  const innerWidth = Math.max(1, cols - leftInset);
-  // `bufferTopRow`: `useDockTop()` (the dock's own first row, published the same computed-constant way
-  // `RegionTopContext` is) plus the rows THIS component paints above line 0 of the buffer — the
-  // `waitingForPermission` box (`marginTop:1` + one text row, upstream L496241, present exactly while the
-  // composer is still clickable per `composerOwns("typing")`) and `ComposerFrame`'s own top rule. The
-  // notification overlay row is NOT counted: it renders only in classic (`fullscreen ||`, above), so it is
-  // always absent on this path. `0` — not addressable — off `fullscreen` or wherever `useDockTop` itself
-  // answers `0` (classic, or no `FullscreenFrame` above at all, e.g. a bare component test).
-  //   FAIL SAFE UNDER A DOCK CO-OCCUPANT (task review Critical, fix round). `useDockTop()` answers the
-  // DOCK BAND's first row, not the composer's — whenever a `TaskPanel`, the live-turn spinner/retry/
-  // compaction row, or a hoisted suggestion palette paints above the composer inside `dock` (ChatApp.tsx),
-  // the composer's TRUE screen row is that published row plus however many rows the earlier occupant took,
-  // which this arithmetic cannot see (`ChatApp` builds `dock`; each occupant's own painted height is that
-  // occupant's business, not threaded through). Measured: `FullscreenFrame`'s region does self-correct by
-  // shrinking to absorb SOME of a taller dock, but only up to its own floor — once the dock outgrows what
-  // the region still has to give back (a live turn plus a multi-line draft is enough), `dockTop` goes stale
-  // and a click resolves against a DIFFERENT, still-valid logical line rather than failing safe.
-  //   `dockCrowded` is that "another occupant is above me" fact, threaded from `ChatApp` (the palette is the
-  // one exception — `hoisted` below already answers it locally, so it isn't duplicated as a prop). ORIGIN
-  // GOES NOT-ADDRESSABLE (0) rather than attempting the arithmetic anyway — the same "computed constant,
-  // degrade to 0" contract `RegionTopContext`'s own header states, which the pre-fix code claimed to follow
-  // and did not hold to in this one case. THE COST, recorded: canon repositions the caret correctly during a
-  // busy turn or an open task panel (occupant-height accounting, R1 §2.6's general case); ccx v1 defers that
-  // and a click during those states is simply refused rather than silently wrong — the follow-up is threading
-  // each occupant's own painted row count into this arithmetic instead of a single crowded/not flag.
-  const dockTop = useDockTop();
-  const originExact = fullscreen && dockTop > 0 && !dockCrowded && !hoisted;
-  const bufferTopRow = originExact ? dockTop + (waitingForPermission ? 2 : 0) + 1 : 0;
+  // F10 S1 — CLICK-TO-CARET'S ORIGIN, COMPUTED FROM BELOW ────────────────────────────────────────────────
+  // F9 published it from `useDockTop()` — the DOCK BAND's first row — plus the composer's own chrome, and
+  // therefore had to refuse whenever anything else painted above the composer inside `dock` (`dockCrowded`).
+  // Canon refuses nothing: `CCp` (L200134-200163) hit-tests a layout tree and recomputes each handler's own
+  // local row, and the composer handler's only early return is the reverse-search flag (L606604) — a busy
+  // turn repositions the caret normally, spinner and task panel painted above it. ccx has no layout tree,
+  // but it does not need one: the dock is BOTTOM-ANCHORED (FullscreenFrame.tsx:315-317), so every term
+  // between the frame's last row and the buffer's last row is either the frame's own (`useDockBottom`), the
+  // app's own (`footerRows`, the SAME call `dockDialogRows` makes so the two cannot disagree) or this
+  // component's own. No occupant ABOVE the composer appears in the arithmetic at all, which is the property
+  // the F9 comments wanted and could not get from a term-by-term sum — `dockDialogRows` is the proof, still
+  // charging a 2-row `CompactionRow` one row today.
+  //   BOTH `useDockTop()` AND THE WATCHDOG BEHIND `useDockBottom()` ARE MEASURED VALUES — `FullscreenFrame`
+  // only refreshes either one from its OWN re-render, which a purely composer-local `setState` never causes
+  // (React does not re-render an ancestor because a descendant's local state changed; see the frame's own
+  // header and `:29-36`). Left alone, that means EITHER term can go stale the moment the draft grows with no
+  // other occupant and no ChatApp-level state change alongside it — measured, on this exact formula, before
+  // `paintedRows` (above) was wired into `onFooterState`'s deps: a three-line idle draft, or a draft that
+  // pushed an already-tight task panel over its cap, both resolved against a frozen, one-row-composer
+  // geometry. `paintedRows` riding that existing composer→ChatApp channel is what closes the gap: every
+  // change to this component's own painted height now reaches `ChatApp` as a `setState`, which is what
+  // actually re-renders `FullscreenFrame` and lets its measurement effect (and the watchdog beside it)
+  // catch up — so by the time `bufferTopRow` below reads `dockTop`/`dockBottom`, both are current for
+  // whatever the LAST render committed, not stale from before this render's own growth.
+  //   THE REFUSAL IS STILL DUAL. `bufferTop`/`composerTop` below is arithmetic this component can always
+  // get right on its own (dockBottom, footerRows, its own `paintedRows`); `dockTop` is the sanity floor for
+  // a composer whose own top would sit above the region's own, and the watchdog is co-occupants (a task
+  // panel, the live-turn spinner) outgrowing the whole band — both real terms, now current rather than
+  // approximated. `hoisted` stays: the palette is composer-local growth into a band this component does not
+  // own, so it is folded in directly rather than threaded through either measured term.
+  // (`dockTop` itself is read above, ahead of `hoisted` — F10 T-HOVER Task 2 — since the popup's own hit
+  // region needs it too; nothing else in this block moved.)
+  const dockBottom = useDockBottom();
+  const bufferTopRow = fullscreen ? composerOriginRow({
+    dockTop, dockBottom, footerRows, inlineSearchOpen: search.searching,
+    waitingForPermission: !!waitingForPermission, paletteHoisted: hoisted !== null,
+    bufferPhysicalRows: paintedRows,
+  }) : 0;
   const caretAt = useCallback((col: number, row: number): boolean => {
     if (bufferTopRow <= 0) return false;
     const found = caretFromLocalPosition(stateRef.current.lines, innerWidth, row - bufferTopRow, col - leftInset);

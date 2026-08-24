@@ -17,9 +17,10 @@ import { fakeRemote, type FakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap } from "./keysTestUtil.js";
-import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "../../src/tui/autoModeNotice.js";
+import { AUTO_MODE_DESCRIPTION, AUTO_MODE_NOTICE_DELAY_MS, ACCOUNT_NOTICE_DEADLINE_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "../../src/tui/autoModeNotice.js";
 import { loadPrefs, savePrefs, type CcxPrefs } from "../../src/tui/prefs.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
+import { createAccountBridge, type AccountBridge } from "../../src/tui/accountBridge.js";
 
 // Every prefs read/write in this file is redirected to a throwaway fleet root — the real ~/.claude must
 // never be touched, and the notice's whole point is that it WRITES a flag.
@@ -33,8 +34,8 @@ async function tick() { await act(async () => { await new Promise((r) => setTime
 /** Mirrors the hook's projected transcript into `sink` on every render, so assertions see raw item text.
  *  `savePrefs` is optional and only the two guard tests below pass it — undefined leaves the hook on the real
  *  one (`deps.savePrefs ?? realSavePrefs`), which the temp-root env already redirects. */
-function Host({ fake, env, sink, savePrefs, initialMode, initialTokenSource }: { fake: FakeRemote; env: NodeJS.ProcessEnv; sink: { text: string }; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; initialMode?: string; initialTokenSource?: string }) {
-  const c = useChat(() => fake, { initialMode, initialTokenSource }, { env, savePrefs });
+function Host({ fake, env, sink, savePrefs, initialMode, initialTokenSource, accountBridge }: { fake: FakeRemote; env: NodeJS.ProcessEnv; sink: { text: string }; savePrefs?: (patch: Partial<CcxPrefs>, env?: NodeJS.ProcessEnv) => void; initialMode?: string; initialTokenSource?: string; accountBridge?: AccountBridge }) {
+  const c = useChat(() => fake, { initialMode, initialTokenSource, accountBridge }, { env, savePrefs });
   // FSW T3: read the WHOLE finalized projection, not just its committed head. `staticItems` is now only
   // the part that has left the live window and been written into <Static>; `finalizedItems` is the transcript
   // these content assertions are actually about.
@@ -242,6 +243,134 @@ describe("useChat — auto-mode entry notice", () => {
       expect(sink.text).toContain(AUTO_MODE_DESCRIPTION);
       await push("default"); await push("auto");
       expect(sink.text.split(AUTO_MODE_DESCRIPTION)).toHaveLength(2);          // the ref is the ONLY guard left, and it holds
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  // F10 T-MAINT item 1 — THE COLD-START RACE, and the second deadline that bounds it. Every cell below
+  // drives the mode to auto AFTER installing fake timers, which is what puts BOTH of the notice's timers
+  // (the 800 ms delay and the remaining-budget deadline armed inside its callback) on the fake clock —
+  // see this file's own note on the mount-armed-timer hazard. `initialTokenSource` is deliberately left
+  // UNSET in all of them: it is exactly the value a cold launch loses, and the bridge is what replaces it.
+  const REMAINING = ACCOUNT_NOTICE_DEADLINE_MS - AUTO_MODE_NOTICE_DELAY_MS;   // 2200 — the total is 3000
+  const deferredBridge = () => {
+    let settle!: (f: { tokenSource: string } | undefined) => void, fail!: (e: unknown) => void;
+    const bridge = createAccountBridge();
+    bridge.offer(new Promise((res, rej) => { settle = res as typeof settle; fail = rej; }));
+    return { bridge, settle, fail };
+  };
+  const toAuto = async (fake: FakeRemote) => {
+    await act(async () => { fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "auto" } }); });
+  };
+
+  it("account facts landing at 2999 ms from arming win: the OAuth variant, with no cost sentence", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, settle } = deferredBridge();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS + REMAINING - 1); });   // 2999
+      expect(sink.text).not.toContain("Auto mode lets Claude handle permission prompts automatically");   // still waiting
+      await act(async () => { settle({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }); await vi.advanceTimersByTimeAsync(0); });
+      expect(sink.text).toContain(autoModeNoticeText({ oauth: true }));
+      expect(sink.text).not.toContain("Sessions are slightly more expensive.");
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  it("account facts landing at 3001 ms are too late: the deadline already fell back to the unknown arm", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, settle } = deferredBridge();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS + REMAINING + 1); });   // 3001
+      await act(async () => { settle({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }); await vi.advanceTimersByTimeAsync(0); });
+      expect(sink.text).toContain("Sessions are slightly more expensive.");
+      expect(sink.text.split(AUTO_MODE_DESCRIPTION)).toHaveLength(2);        // one notice, not two
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  it("a handshake that never completes falls back AT the deadline, not before it and not never", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const bridge = createAccountBridge();
+    bridge.offer(new Promise(() => {}));                                     // the mute-engine shape
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS + REMAINING - 1); });
+      expect(sink.text).not.toContain("Auto mode lets Claude handle permission prompts automatically");
+      await act(async () => { await vi.advanceTimersByTimeAsync(2); });
+      expect(sink.text).toContain(AUTO_MODE_DESCRIPTION);                    // the cost-sentence variant
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  it("a REJECTING handshake falls back immediately — no reason to sit out the remaining 2200 ms", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, fail } = deferredBridge();
+    fail(new Error("no credentials"));
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS); });
+      expect(sink.text).toContain(AUTO_MODE_DESCRIPTION);                    // already there, deadline untouched
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  it("unmounting between the delay and the answer cancels: nothing is appended, nothing is left parked", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, settle } = deferredBridge();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS); });   // the callback is now awaiting
+      const before = sink.text;
+      unmount();
+      await act(async () => { settle({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }); await vi.advanceTimersByTimeAsync(REMAINING * 2); });
+      expect(sink.text).toBe(before);
+      expect(sink.text).not.toContain("Auto mode lets Claude handle permission prompts automatically");
+      expect(vi.getTimerCount()).toBe(0);                                    // the cleanup cleared the deadline too
+    } finally { vi.useRealTimers(); }
+  });
+
+  // F10 fix-wave review finding P2: the SAME race as "unmounting between the delay and the answer" above,
+  // but the session stays MOUNTED and only leaves auto mode — a real, reachable path (Shift+Tab, or a
+  // host `state` frame) that `disposed.current` alone cannot catch, since the component never unmounts.
+  // Before the fix, `settleRace?.(undefined)` on cleanup unblocked the awaiting callback with `facts =
+  // undefined`, and the callback's only other guard (`disposed.current`) was still false — so it fell
+  // through and appended the auto-mode notice into a thread that is, by the time it lands, back in
+  // "default" mode, and burned the once-per-process ref doing it.
+  it("leaving auto mode before accountInfo() resolves must not append the notice or burn the once-only guard", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, settle } = deferredBridge();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS); });   // callback now awaiting bridge.read()
+      // A real mode change AWAY from auto, still mounted — reruns the `[mode]`-keyed effect and its cleanup.
+      await act(async () => { fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "default" } }); });
+      const before = sink.text;
+      await act(async () => { settle({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }); await vi.advanceTimersByTimeAsync(REMAINING * 2); });
+      expect(sink.text).toBe(before);
+      expect(sink.text).not.toContain(AUTO_MODE_DESCRIPTION);
+      expect(sink.text).not.toContain(autoModeNoticeText({ oauth: true }));
+      expect(loadPrefs(env).hasSeenAutoModeEntryWarning).toBeUndefined();      // the stale attempt never persisted the flag either
+      // Re-entering auto afterward still shows the notice once — the once-only guard was NOT consumed by
+      // the stale, cancelled attempt. The bridge's live promise is already settled (with the earlier oauth
+      // facts) by this point, so the second, genuine fire renders the oauth variant.
+      await act(async () => { fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "auto" } }); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS + REMAINING + 10); });
+      expect(sink.text).toContain(autoModeNoticeText({ oauth: true }));
     } finally { vi.useRealTimers(); unmount(); }
   });
 });

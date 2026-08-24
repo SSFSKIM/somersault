@@ -15,10 +15,12 @@
 import { describe, it, expect } from "vitest";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
-import { enqueueTurn, MAX_QUEUED_BYTES, MAX_QUEUED_TURNS } from "../../../src/appserver/queue.js";
+import { enqueueTurn, queuedInputBytes, MAX_QUEUED_BYTES, MAX_QUEUED_ENTRY_BYTES, MAX_QUEUED_TURNS } from "../../../src/appserver/queue.js";
 import type { AppServerDeps } from "../../../src/appserver/server.js";
 import type { ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
+import type { UserTurnInput } from "../../../src/session/turnInput.js";
+import { triple } from "../boundaryTriple.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -583,25 +585,21 @@ describe("turn queue (spec Wave 4)", () => {
     expect(replyTo(s, 1000).result.turn.id).toBe(`turn_${threadId}_${MAX_QUEUED_TURNS + 2}`);
   });
 
-  it("the byte cap counts the candidate against what is already queued: four 250 KiB entries fit, the fifth is refused, and a small one still gets in", async () => {
-    const big = "x".repeat(250 * 1024); // under peer.ts's 256 KiB frame cap, so each one really reaches the handler
-    const engine = mkEngine();
-    const { srv, s, c, threadId } = await boot(engine);
-    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
-    await tick();
-    for (let i = 0; i < 4; i++) send(c, { id: 10 + i, method: "turn/start", params: { threadId, input: big, queue: true } });
-    await tick();
-    expect(srv.registry.get(threadId)!.queue).toHaveLength(4);
+  // I3b: MAX_QUEUED_BYTES went 1 MiB -> 4 MiB (queue.ts) and the entry size that exercises the TOTAL cap
+  // without tripping the new per-entry cap (MAX_QUEUED_ENTRY_BYTES, still 1 MiB) had to grow past
+  // peer.ts's 256 KiB per-frame wire limit — so, like the "single over-cap entry" cell right below it,
+  // this now drives `enqueueTurn` directly rather than through the wire (the old 250 KiB entries fit a
+  // frame AND the old 1 MiB total; no size clears both bars against a 4 MiB total).
+  it("the byte cap counts the candidate against what is already queued: four ~1,000,000-byte entries fit within the 4 MiB total, a fifth same-size one is refused, and a small one still gets in", () => {
+    const record = { id: "thr_x", turnSeq: 0, queue: [] } as unknown as ThreadRecord;
+    const big = "x".repeat(1_000_000 - 2); // JSON-serialized bytes: exactly 1,000,000 (the quotes add 2)
+    for (let i = 0; i < 4; i++) expect(enqueueTurn(record, big).ok).toBe(true);
+    expect(record.queue).toHaveLength(4);
 
-    send(c, { id: 20, method: "turn/start", params: { threadId, input: big, queue: true } });
-    send(c, { id: 21, method: "turn/start", params: { threadId, input: "small", queue: true } });
-    await tick();
-
-    expect(replyTo(s, 20).error.code).toBe(ERR.BUSY);
-    expect(replyTo(s, 20).error.message).toBe("turn queue is full (max 1 MiB queued input)");
+    expect(enqueueTurn(record, big)).toEqual({ ok: false, reason: "bytes" });
     // The cap bounds the BUFFER, not the entry: what still fits is still admitted.
-    expect(replyTo(s, 21).result.queued).toBe(true);
-    expect(srv.registry.get(threadId)!.queue).toHaveLength(5);
+    expect(enqueueTurn(record, "small")).toMatchObject({ ok: true });
+    expect(record.queue).toHaveLength(5);
   });
 
   // Driven against the function rather than the wire, deliberately: peer.ts refuses any frame over 256 KiB
@@ -610,13 +608,34 @@ describe("turn queue (spec Wave 4)", () => {
   it("a single over-cap entry is refused on an EMPTY queue, counts BYTES not characters, and mints no id", () => {
     const record = { id: "thr_x", turnSeq: 0, queue: [] } as unknown as ThreadRecord;
 
-    // 300k emoji: 1.2 MB of UTF-8 over the wire, but only 600k UTF-16 units — a length-based cap admits it.
-    expect(enqueueTurn(record, "😀".repeat(300_000))).toEqual({ ok: false, reason: "bytes" });
+    // I3b: this fixture (1.2 MB of UTF-8, 600k UTF-16 units) now trips the NEW per-entry cap
+    // (MAX_QUEUED_ENTRY_BYTES, 1 MiB) rather than the total-bytes cap it used to be the only cap named
+    // "bytes" — the total cap is now 4 MiB and would not refuse a single entry this size. The
+    // length-based-cap-would-have-admitted-it point the comment made still holds; it just surfaces
+    // through "entry" now.
+    expect(enqueueTurn(record, "😀".repeat(300_000))).toEqual({ ok: false, reason: "entry" });
     expect(record.queue).toEqual([]);
     expect(record.turnSeq).toBe(0);      // the id sequence must not skip: a refused enqueue owes no terminal event
 
     expect(enqueueTurn(record, "small")).toEqual({ ok: true, id: "turn_thr_x_1", position: 1 });
-    expect(MAX_QUEUED_BYTES).toBe(1024 * 1024);
+    expect(MAX_QUEUED_BYTES).toBe(4 * 1024 * 1024);
+  });
+
+  // The wire-reachable half of the total-bytes refusal (QUEUE_FULL's "bytes" message, turns.ts): entries
+  // sized to clear peer.ts's 256 KiB frame cap individually, twenty-one of them to clear the new 4 MiB
+  // total — proving the actual RPC reply text, not just the `enqueueTurn` reason, still says "4 MiB".
+  it("the wire's BYTES refusal quotes the 4 MiB total cap (QUEUE_FULL message table)", async () => {
+    const entry = "x".repeat(200_000 - 2); // ~200,000 JSON-serialized bytes, well under the 256 KiB frame cap
+    const engine = mkEngine();
+    const { s, c, threadId } = await boot(engine);
+    send(c, { id: 3, method: "turn/start", params: { threadId, input: "one" } });
+    await tick();
+    for (let i = 0; i < 20; i++) send(c, { id: 10 + i, method: "turn/start", params: { threadId, input: entry, queue: true } });
+    await tick();
+    send(c, { id: 99, method: "turn/start", params: { threadId, input: entry, queue: true } });
+    await tick();
+    expect(replyTo(s, 99).error.code).toBe(ERR.BUSY);
+    expect(replyTo(s, 99).error.message).toBe("turn queue is full (max 4 MiB queued input)");
   });
 
   it("a SWAPPING thread refuses turn/start{queue:true} too — a swap never calls settleTurn, so an enqueue there would strand", async () => {
@@ -630,5 +649,90 @@ describe("turn queue (spec Wave 4)", () => {
     await settle();
     expect(replyTo(s, 4).error.code).toBe(ERR.BUSY);
     expect(replyTo(s, 4).error.message).toMatch(/swapping/);
+  });
+
+  // --- I3b: UserTurnInput ACCOUNTING + the three caps (F10 T-IMGREACH Task 8) -----------------------
+  // `QueuedTurn.input` widens from a bare string to `UserTurnInput` (turnInput.ts, Task 2) and
+  // `queuedInputBytes` becomes ONE function — serialized JSON bytes of whatever form the entry takes —
+  // used by `enqueueTurn` for both the per-entry and the running-total check. A minimal raw record, same
+  // shape the pre-existing "single over-cap entry" cell above already uses, since these cells drive
+  // `enqueueTurn` directly rather than through the wire.
+  describe("I3b: UserTurnInput accounting and the three admission caps", () => {
+    function threadRecord(): ThreadRecord {
+      return { id: "thr_x", turnSeq: 0, queue: [] } as unknown as ThreadRecord;
+    }
+    const textBlock = (text: string) => ({ type: "text" as const, text });
+    const imageBlockOfSize = (dataLen: number) => ({
+      type: "image" as const,
+      source: { type: "base64" as const, media_type: "image/png", data: "A".repeat(dataLen) },
+    });
+    // Sized so ONE fits comfortably alongside a small text block under the 1 MiB entry cap, but TWO
+    // exceed it — the deliberate "no image queue-stacking" asymmetry MAX_QUEUED_ENTRY_BYTES exists for.
+    const maxImageBlock = () => imageBlockOfSize(600_000);
+    // A string whose JSON-serialized byte length is EXACTLY `n` — a bare ASCII run needs no escaping,
+    // so the only overhead over the raw length is the pair of wrapping quotes.
+    const stringWhoseSerializedBytesAre = (n: number): string => "x".repeat(Math.max(0, n - 2));
+    const expectedFirstTurnId = (rec: ThreadRecord): string => `turn_${rec.id}_${rec.turnSeq + 1}`;
+    // Fills `rec`'s queue to EXACTLY `target` total accounted bytes, chunked at the entry cap so no
+    // individual push trips MAX_QUEUED_ENTRY_BYTES on its own; the target cap (MAX_QUEUED_BYTES) is what
+    // the LAST push is left to hit. Returns false the moment any push is refused — the target could not
+    // be reached — true once `target` bytes sit in the queue.
+    function fillQueueToBytes(rec: ThreadRecord, target: number): boolean {
+      const chunks: number[] = [];
+      let remaining = target;
+      while (remaining > 0) {
+        let c = Math.min(remaining, MAX_QUEUED_ENTRY_BYTES);
+        if (remaining - c === 1) c -= 1; // a bare 1-byte remainder is unrepresentable (min JSON string is 2 bytes: `""`)
+        chunks.push(c);
+        remaining -= c;
+      }
+      for (const c of chunks) {
+        if (!enqueueTurn(rec, stringWhoseSerializedBytesAre(c)).ok) return false;
+      }
+      return true;
+    }
+
+    it("queuedInputBytes is serialized JSON bytes, for BOTH forms", () => {
+      const inputs: UserTurnInput[] = ["hi", [textBlock("hi")], [textBlock("hi"), imageBlockOfSize(4)]];
+      for (const input of inputs) expect(queuedInputBytes(input)).toBe(Buffer.byteLength(JSON.stringify(input), "utf8"));
+    });
+
+    it("a string's charge now includes JSON quoting — the documented, deliberate shift", () => {
+      expect(queuedInputBytes("hi")).toBe(4); // `"hi"`, not 2
+    });
+
+    it("one max image + text FITS one entry; two max images do NOT (the deliberate asymmetry)", () => {
+      expect(enqueueTurn(threadRecord(), [textBlock("look"), maxImageBlock()])).toMatchObject({ ok: true });
+      expect(enqueueTurn(threadRecord(), [maxImageBlock(), maxImageBlock()])).toEqual({ ok: false, reason: "entry" });
+    });
+
+    it("refusal happens BEFORE any turn ID is minted", () => {
+      const rec = threadRecord();
+      const before = rec.turnSeq;
+      expect(enqueueTurn(rec, [maxImageBlock(), maxImageBlock()])).toEqual({ ok: false, reason: "entry" });
+      expect(rec.turnSeq).toBe(before);
+      const expectedId = expectedFirstTurnId(rec); // computed BEFORE the mint below
+      expect(enqueueTurn(rec, "ok")).toMatchObject({ ok: true, id: expectedId }); // the refusal burned nothing
+    });
+
+    it.each(triple(MAX_QUEUED_TURNS))("boundary: queued ENTRIES $label", ({ at, passes }) => {
+      const rec = threadRecord();
+      const results = Array.from({ length: at }, () => enqueueTurn(rec, "x"));
+      expect(results.every((r) => r.ok)).toBe(passes);
+      if (!passes) expect(results.at(-1)).toEqual({ ok: false, reason: "entries" });
+    });
+
+    it.each(triple(MAX_QUEUED_ENTRY_BYTES))("boundary: ONE entry's serialized bytes $label", ({ at, passes }) => {
+      const rec = threadRecord();
+      const r = enqueueTurn(rec, stringWhoseSerializedBytesAre(at));
+      expect(r.ok).toBe(passes);
+      if (!passes) expect(r).toEqual({ ok: false, reason: "entry" });
+    });
+
+    it.each(triple(MAX_QUEUED_BYTES))("boundary: TOTAL retained bytes $label", ({ at, passes }) => {
+      const rec = threadRecord();
+      expect(fillQueueToBytes(rec, at)).toBe(passes);
+      if (!passes) expect(enqueueTurn(rec, "x")).toEqual({ ok: false, reason: "bytes" });
+    });
   });
 });

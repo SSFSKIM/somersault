@@ -26,8 +26,7 @@ import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { assembleUserContent, type UserTurnInput } from "../session/turnInput.js";
-import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "../tui/clipboardImage.js";
-import { MAX_IMAGES_PER_PROMPT } from "../host/imageStaging.js";
+import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
 
 /** Schema-level bound on the items array (Task 4's `turnStartParams` enforces it; published here so the
  *  wire's cap and the resolver's caps read from one file). A violation is a shape error → -32602, not a

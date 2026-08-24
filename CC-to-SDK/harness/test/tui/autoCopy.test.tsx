@@ -255,3 +255,40 @@ describe("selection lifetime keys — any other key clears (and still runs its o
     r.unmount();
   });
 });
+
+// F10 T-SELECT Task 7 fix — cross-task regression (Task 3 shipped `ctrl+shift+c`/`cmd+c` → `selection:copy`;
+// Task 7 found by code trace that `useSelectionLifetime` runs pre-table and discards the live selection for
+// BOTH chords before the table's `selection:copy` handler's own `hasSelection()` check ever sees it, because
+// neither chord's raw name+modifiers were on the hook's exempt list — only plain, unshifted ctrl+c was. This
+// proves both chords dead (bytes pinned in keys-parse.test.ts:120: `\x1b[99;6u` = ctrl+shift+c,
+// `\x1b[99;9u` = cmd+c/super), and that the fix restores canon's copy-WITHOUT-clear semantics (the selection
+// must still be live after the copy, unlike plain ctrl+c which clears).
+describe("F10 T-SELECT Task 7 fix — the two bindable copy chords actually copy (cross-task regression)", () => {
+  it("ctrl+shift+c copies the swept text and the selection survives (no clear)", async () => {
+    const r = await mount(DOC);
+    const row = rowOfIncluding(r.lastFrame(), "click select");
+    await sweep(r, 10, 15, row);
+    copyTextMock.mockClear();          // isolate the chord's own copy from the release's own auto-copy
+    r.stdin.write("\x1b[99;6u");       // ctrl+shift+c: CSI-u modifier param 6 -> shift(1) + ctrl(4)
+    await settle();
+    expect(copyTextMock).toHaveBeenCalledTimes(1);
+    expect(copyTextMock.mock.calls[0]![0]).toBe("select");
+    // canon's copy-without-clear semantics: performAutoCopy never calls discardSelection, so the selection
+    // must still be live afterward — same proof technique as the allow-list block above.
+    expect(await ctrlCConsumedBySelection(r)).toBe(true);
+    r.unmount();
+  });
+
+  it("cmd+c (super) copies the swept text and the selection survives (no clear)", async () => {
+    const r = await mount(DOC);
+    const row = rowOfIncluding(r.lastFrame(), "click select");
+    await sweep(r, 10, 15, row);
+    copyTextMock.mockClear();
+    r.stdin.write("\x1b[99;9u");       // cmd+c: CSI-u modifier param 9 -> bit 8 (super)
+    await settle();
+    expect(copyTextMock).toHaveBeenCalledTimes(1);
+    expect(copyTextMock.mock.calls[0]![0]).toBe("select");
+    expect(await ctrlCConsumedBySelection(r)).toBe(true);
+    r.unmount();
+  });
+});

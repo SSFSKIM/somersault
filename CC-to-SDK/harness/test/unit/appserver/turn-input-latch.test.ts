@@ -101,6 +101,7 @@ describe("post-resolution latch re-check — inProcess", () => {
   beforeEach(() => { submits.length = 0; });
   const factory = () => ({
     submit: async (prompt: UserTurnInput) => { submits.push(prompt); return { result: {} }; },
+    submitContent(prompt: UserTurnInput) { return this.submit(prompt); },
     interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
   });
 
@@ -153,8 +154,13 @@ describe("post-resolution latch re-check — inProcess", () => {
   // held rather than merely slow, because a real resolution that happens to finish first is a false green.
   it("holds the chain across the item resolution: a thread/model/set sent BEHIND an items turn reaches the engine behind its prompt", async () => {
     const calls: string[] = [];
+    // ONE body behind both members: an items turn resolves to BLOCKS, which travel on `submitContent`
+    // (registry.ts's optional capability), and this row is about ORDER at the engine, not about which
+    // member carried the prompt.
+    const submitFake = async (prompt: UserTurnInput) => { calls.push("submit"); submits.push(prompt); return { result: {} }; };
     const { s, c, threadId } = await bootThread(() => ({
-      submit: async (prompt: UserTurnInput) => { calls.push("submit"); submits.push(prompt); return { result: {} }; },
+      submit: submitFake,
+      submitContent: submitFake,
       setModel: async () => { calls.push("setModel"); },
       interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-4",
     }));
@@ -182,8 +188,10 @@ describe("post-resolution latch re-check — inProcess", () => {
   it("a turn stopped by a close that is STILL disposing reports cancelled — the runner's own terminal, not a completion", async () => {
     let releaseDispose!: () => void;
     const disposed = new Promise<void>((r) => { releaseDispose = r; });
+    const submitFake = async (prompt: UserTurnInput) => { submits.push(prompt); return { result: {} }; };
     const { srv, s, c, threadId } = await bootThread(() => ({
-      submit: async (prompt: UserTurnInput) => { submits.push(prompt); return { result: {} }; },
+      submit: submitFake,
+      submitContent: submitFake,
       interrupt: async () => ({}), dispose: () => disposed, onFrame: () => () => {}, sessionId: "sess-2",
     }));
     gate.hold();

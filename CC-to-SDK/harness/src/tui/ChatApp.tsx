@@ -54,7 +54,7 @@ import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
 import { editExternal, openInEditor } from "./externalEditor.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
-import { popupHeight } from "./suggestPopup.js";
+import { popupHeight, type PopupHitHandle } from "./suggestPopup.js";
 import { streamingItems } from "./streamingItems.js";
 import { paintedHeight } from "./wrapItems.js";
 import { renderItemHeight } from "./pager.js";
@@ -65,11 +65,18 @@ import { userEchoLines } from "./render.js";
 import { indentRenderLine } from "./agentProgress.js";
 import { PaletteHost, PaletteSlot } from "./paletteSlot.js";
 import { ChatComposer, composerOwns, type ComposerCaret, type InputOwner, type PlaceholderMemo } from "./ChatComposer.js";
+// F10 T-IMGREACH Task 14 fix wave (Cell 12): the two clipboard seams, wired to the SAME production
+// defaults `ChatComposer`'s own ctrl+v fallback already uses (`readClipboardImageRef.current ?? (() =>
+// pasteClipboardImage(defaultClipboardDeps()))`, `ChatComposer.tsx:1069`). Passing them explicitly here
+// is what the ambient hint's arm-gate needs: it bails outright when `readClipboardImage` is absent
+// (`ChatComposer.tsx:776`), a gate the ctrl+v fallback never has to satisfy.
+import { defaultClipboardDeps, pasteClipboardImage } from "./clipboardImage.js";
+import { defaultCheckOnlyProcess, hasClipboardImage } from "./clipboardCheck.js";
 import { initialEditorState, type EditorState } from "./editor.js";
 import { pushHistory } from "./editorHistory.js";
 import { composerMode } from "./promptMode.js";
 import type { HistEntry } from "./historySearch.js";
-import { isEditableQueueEntry } from "./queue.js";
+import { isEditableQueueEntry, type QueueEntry } from "./queue.js";
 import { PermissionDialog } from "./PermissionDialog.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { PlanDialog } from "./PlanDialog.js";
@@ -102,8 +109,9 @@ import { savePrefs as realSavePrefs } from "./prefs.js";
 import { resolveTerminalTitle, type TerminalTitle } from "./terminalTitle.js";
 import type { ProgressBar } from "./progressBar.js";
 import { suggestionText } from "./suggester.js";
-import type { RenderItem } from "./toolRenderer.js";
+import { queuedOwnerKey, type RenderItem } from "./toolRenderer.js";
 import type { RenderLine } from "./render.js";
+import type { AccountBridge } from "./accountBridge.js";
 
 /** The rewind hold — the one surface in the tree with no keys of its own. A confirmed rewind is a multi-second
  *  file restore + engine swap, and anything that acted during it (Ctrl-R opening history search, Ctrl-O the
@@ -117,6 +125,18 @@ import type { RenderLine } from "./render.js";
 const QUEUE_PAD = 2;
 /** The same two columns as a string — D14 folds them into the line rather than into a Box (see `queuedItems`). */
 const QUEUE_INSET = " ".repeat(QUEUE_PAD);
+/** The queued-prompt tier of the fullscreen document (F10 T-HOVER, extracted so the producer matrix
+ *  (`test/tui/hover-owner.test.tsx`) runs the production code rather than a copy of it). One hover unit
+ *  PER QUEUED ENTRY: a queued prompt is one user message however many rows `userEchoLines` wrapped it
+ *  into. KEYED ON `q.id`, NOT ON `i` (r3 — Spec-drift 9): the queue's head drain pops slot 0 and shifts
+ *  the rest down one slot (`useChat.ts`'s `drainNext`, `q.slice(1)`), so an index key is a key the
+ *  survivors INHERIT — and the stale-hover clear only asks whether the hovered key is still painted
+ *  (`FullscreenViewport.tsx`), which after a drain it is, on a different prompt. Same reason the item id
+ *  is minted from `q.id` too. */
+export function queuedTranscriptItems(entries: readonly QueueEntry[], width: number, inset: string): readonly RenderItem[] {
+  return entries.flatMap((q) => userEchoLines(q.value, { width })
+    .map((l, j) => ({ kind: "line" as const, id: `queued:${q.id}:${j}`, ownerKey: queuedOwnerKey(q.id), line: indentRenderLine(l, inset) })));
+}
 /** WAVE C TASK 2 — the Esc-Esc rewind arm's queue entry. Both halves are ccx's, because the gesture is ccx's
  *  (upstream's second Esc clears the draft; the composer owns that arm and upstream's own
  *  `escape-again-to-clear` key with it). `ESC_ARM_MS` is the arm window itself, so the entry and the arm it
@@ -205,7 +225,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -220,7 +240,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `initialTokenSource` (T2, F9 T-AUTO §A2): see chatMain.tsx's `ChatClientOpts.hookOpts` for provenance —
   // this component's own contribution to the chain is only to spread `hookOpts` into `useChat` below
   // unmodified, which it already does. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same spread.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice };
+  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice; accountBridge?: AccountBridge };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
@@ -257,6 +277,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  subscribing effect lists it as its only dependency, so a fresh closure per frame would unsubscribe and
    *  re-subscribe the terminal listener on every render. */
   onResize?: (cb: () => void) => () => void;
+  /** F10 T-IMGREACH Task 13 (I6) — terminal focus edges, threaded straight through from `KeymapProvider`'s
+   *  `onFocusChange` dep (`chatMain.tsx`'s `createFocusChain().subscribe`) to `ChatComposer`, the hint's own
+   *  poster. This component holds no state of its own for it: unlike `onResize`, nothing here reacts to a
+   *  focus edge except the composer, so there is nothing to lift. */
+  onFocusChange?: (cb: (focused: boolean) => void) => () => void;
   /** WAVE C TASK 4 — the `deps` seam of every `createDoublePress` arm in this tree (the app's two, and the
    *  composer's three, which this component threads down). Injected for the reason plan constraint 15 gives:
    *  the arms are the one piece of this UI whose whole contract is a DURATION, and a test that waited out a
@@ -837,6 +862,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // KB8 (alt+t): the Settings Thinking-mode row's flow — setThink is /think's own mechanism
     // (session.setMaxThinkingTokens) with the off/default pair the row toggles between.
     "chat:thinkingToggle": () => { void setThinkRef.current(rootStateRef.current.thinkLevel === "off" ? "default" : "off"); },
+    // F10 S3 — the bindable half of the selection's copy/clear pair. The pre-table ctrl+c hook below
+    // (`useSelectionLifetime`) is unchanged and canon keeps both too (L551764-551772 beside L174817).
+    // Registered unconditionally: `handlerFor` resolves by ACTION across the whole stack, so the `Scroll`
+    // context's chords reach these, and with no selection live both are a no-op rather than a fall-through
+    // (neither chord means anything else here).
+    "selection:copy": () => { if (hitmapRef.current?.hasSelection() ?? false) performAutoCopy(); },
+    "selection:clear": () => { hitmapRef.current?.discardSelection(); copyLatchRef.current = false; },
   });
 
   // ── TOOL-STREAM T10 — THE TAP: PRESS + RELEASE ON ONE CELL, TURNED INTO ONE FOLD TOGGLE ──────────────────
@@ -898,6 +930,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // F9 T-MOUSE Task 4 — the composer's own click seam, on the same ref-channel family as `hitmapRef` and for
   // the same reason (ComposerCaret's own doc: geometry current only for the render that produced it).
   const composerRef = useRef<ComposerCaret>(null);
+  // F10 T-HOVER Task 2 (CM33) — the hoisted popup's own hit region, same ref-channel family again.
+  const popupHitRef = useRef<PopupHitHandle | null>(null);
   const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
   // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
   // timestamp AND resolved anchor, so the NEXT press can tell "is this a continuation of the same click
@@ -952,7 +986,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (!state.copyOnSelect) return;
     performAutoCopy();
   };
-  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
+  const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); popupHitRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
   useMouseSink((e: MouseInputEvent) => {
     // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
     // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
@@ -964,7 +998,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // dispatch gate that already drops motion in every other mode (KeymapProvider.tsx), and kept here anyway
     // for the reason that gate's own `fullscreen` term is kept: "hover does nothing off `full`" should be true
     // by construction at the consumer, not only by a coincidence one layer up a later refactor could remove.
-    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") hitmapRef.current?.hoverAt(e.col, e.row); }
+    // F10 T-HOVER Task 2 (CM33) — both regions, same gate, same event. They are disjoint bands (the popup
+    // is in the dock, the transcript in the region), so each answers `undefined`/no-op for the other's
+    // cells by construction; calling both is how "container-leave clears" is implemented without a second
+    // mouse-sink registration (the registry resolves only the innermost one — `registry.ts:98-100`).
+    if (e.action === "motion") { if (fullscreen && mouseMode() === "full") { popupHitRef.current?.hoverAt(e.col, e.row); hitmapRef.current?.hoverAt(e.col, e.row); } }
     const at = tapAnchorRef.current;
     tapAnchorRef.current = null;                    // every path below either re-arms or leaves it discarded
     if (!clickable) return;
@@ -984,6 +1022,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
     if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
     if (e.action === "press") {
+      // F10 T-HOVER Task 2 (CM33). The popup owns the dock band it painted; a press it claims is not a
+      // transcript press, and `lastPressRef` is dropped so the release that follows cannot pair with
+      // anything (`tapAnchorRef.current` is already nulled above this branch by the sink's own preamble).
+      // Same single `useMouseSink` as everything else here — the registry resolves only the innermost sink
+      // (`registry.ts:98-100`), so a second registration would simply never fire.
+      if (popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
       const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
       tapAnchorRef.current = { col: e.col, row: e.row, anchor };
       // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
@@ -1056,6 +1100,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       if (SELECTION_CLEAR_EXEMPT_BARE.has(e.name)) return false;
       if ((e.name === "home" || e.name === "end") && e.ctrl) return false;
       if (SELECTION_EXTEND_KEYS.has(e.name) && (e.shift || e.alt || e.super)) return false;
+      // F10 T-SELECT Task 7 fix — canon L551764-551772: the pre-table plain-ctrl+c intercept above (line
+      // 1057, gated on `!e.shift`) coexists with the two BINDABLE copy chords (`ctrl+shift+c`, `cmd+c` →
+      // `selection:copy`, Task 3/S3, bindings.ts:192) rather than shadowing them. Without this exemption
+      // both chords fall through to the discard below before the table's own `hasSelection()`-gated
+      // handler ever runs, so neither chord could ever copy anything — the exact cross-task defect this
+      // fix closes.
+      if (e.name === "c" && ((e.ctrl && e.shift) || e.super)) return false;
     }
     hitmapRef.current?.discardSelection();
     copyLatchRef.current = false;
@@ -1392,10 +1443,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   //   ONE ITEM PER ROW, which is what `renderItemHeight` needs to be trusted: `userEchoLines` has already
   // wrapped to `queueWidth`, so every line it returns is exactly one physical row.
   const queuedItems: readonly RenderItem[] = useMemo(
-    () => (fullscreen
-      ? state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth })
-          .map((l, j) => ({ kind: "line" as const, id: `queued:${i}:${j}`, line: indentRenderLine(l, QUEUE_INSET) })))
-      : EMPTY_ITEMS),
+    () => (fullscreen ? queuedTranscriptItems(state.queue, queueWidth, QUEUE_INSET) : EMPTY_ITEMS),
     [fullscreen, state.queue, queueWidth]);
   // ── THE REGION'S TWO OCCUPANTS ARE DIFFERENT COMPONENTS, AND ONLY ONE OF THEM MAY COME AND GO ────────────
   // (T15 fix round I2, as the T17 fix round below amends it — read both, in this order.)
@@ -1466,7 +1514,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
         // no rows and costs the only sign the turn is still running — open `/model` mid-answer and the stream
         // disappeared until it closed. Canon keeps its spinner in `scrollable`, above the absolute overlay,
         // where the overlay never occludes it (grounding §L2.6). The classic arm above keeps the trade.
-        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} hitmapRef={hitmapRef} onWheelTick={discardTap} />)
+        : <FullscreenViewport finalizedItems={state.finalizedItems} pendingItems={state.pendingItems} streaming={state.streaming} streamOwnerKey={state.streamOwnerKey} queuedItems={queuedItems} columns={size.columns} historySearchOpen={state.historyOpen || footerState.searching} onDumpTranscript={dumpTranscriptNow} hitmapRef={hitmapRef} onWheelTick={discardTap} />)
       : null}
   </>;
   // ── FSW TASK 13 — WHICH OF CANON'S TWO OVERLAY MECHANISMS A SURFACE GETS ──────────────────────────────
@@ -1549,21 +1597,6 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
-  // F9 T-MOUSE TASK 4 FIX (task review Critical) — the exact conditions that gate `TaskPanel` and the
-  // live-turn slot in `dock` below (`todosOpen && !paneOwned`, `(state.busy || state.compacting) && !paneOwned`),
-  // reused rather than re-derived, so a future dock member added to one automatically reads correctly here —
-  // matching `dockDialogRows` above, which already sums these same two occupants' row counts for the same
-  // reason. `state.tasks.length > 0` alongside `todosOpen`: `TaskPanel` itself renders NULL on an empty task
-  // list (its own header: "no empty state"), so `todosOpen` alone — true by DEFAULT (`initialTodosOpen`) —
-  // would flag a session with zero tasks as crowded when the panel paints nothing at all (caught by the
-  // pre-existing idle-composer tests, which mount with an empty task list and would otherwise go
-  // not-addressable for no on-screen reason). `!paneOwned` is always true wherever this reaches
-  // `ChatComposer` (the composer itself only mounts when `paneOwned` is false — see the final arm of
-  // `overlayChain`), kept anyway so this stays a direct transcription of `dock`'s own JSX conditions rather
-  // than a fact this file would have to re-verify by hand if that invariant ever changed. Threaded into
-  // `ChatComposer` as `dockCrowded`, which suppresses the composer's published click-to-caret origin — see
-  // `ChatComposer.tsx`'s `originExact`.
-  const dockCrowded = !paneOwned && ((todosOpen && state.tasks.length > 0) || state.busy || Boolean(state.compacting));
   /** THE OVERLAY CHAIN — every surface that replaces the composer, in precedence order. Extracted from the
    *  dock in FSW T13 so ONE list of elements can be handed to either slot (see `seamActive` above): on the
    *  main screen and for a parked decision it renders where it always did, directly above the footer; in
@@ -1754,6 +1787,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // footer-state channel. Both are how the one-row footer and the one-row overlay stay
                       // in sync with a component that unmounts behind every dialog.
                       notifications={notifications} onFooterState={setFooterState} onSuggestOpen={setSuggestOpen}
+                      // I6 — the ambient clipboard hint's primary trigger, threaded straight through; see
+                      // `onFocusChange`'s own doc above for why this component reacts to nothing itself.
+                      onFocusChange={onFocusChange}
+                      // Task 14 Cell 12 fix: the hint's own arm-gate is `!!readClipboardImage`
+                      // (ChatComposer.tsx:776) — left unwired, it always bails, so the hint could never
+                      // fire in the real product despite its own test suite injecting these directly and
+                      // going green. Same production functions the ctrl+v fallback already falls back to.
+                      readClipboardImage={() => pasteClipboardImage(defaultClipboardDeps())}
+                      checkClipboardImage={() => hasClipboardImage(process.platform, defaultCheckOnlyProcess())}
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.
@@ -1769,7 +1811,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // FSW T14 — D10 (hoist the palette out of here) and D11 (drop the notification block).
                       // Both are subtractions from what the composer paints; the destinations are the dock's
                       // `PaletteSlot` and the footer's right region, and both are above this element.
-                      fullscreen={fullscreen} originRef={composerRef} dockCrowded={dockCrowded} />
+                      fullscreen={fullscreen} originRef={composerRef} footerRows={footerRows(footerStatusInput())} popupHitRef={popupHitRef} />
   );
   const dock = (
     <>
@@ -1808,7 +1850,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       {/* FSW T14 / D14: fullscreen renders these at the viewport's tail instead (`queuedItems` above). */}
       {state.queue.length > 0 && !paneOwned && !fullscreen ? (
         <Box flexDirection="column" paddingX={QUEUE_PAD}>
-          {state.queue.flatMap((q, i) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${i}:${j}`} l={l} />))}
+          {state.queue.flatMap((q) => userEchoLines(q.value, { width: queueWidth }).map((l, j) => <Line key={`${q.id}:${j}`} l={l} />))}
         </Box>
       ) : null}
       {/* The inline slot: below everything the transcript owns, directly above the composer. It is rendered

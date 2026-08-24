@@ -143,6 +143,7 @@ describe("public API", () => {
       "mergeHooks",
       "normalizeTurnInput",
       "observe",
+      "oneShotUserTurn",
       "openSession",
       "postgresSessionStoreDDL",
       "remoteChatSession",

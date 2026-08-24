@@ -109,6 +109,20 @@ describe("CSI-u (kitty/iTerm2)", () => {
     expect(one("\x1b[66;5u")).toMatchObject({ name: "b", ctrl: true, shift: true }));
 });
 
+// F10 S3 — verify; else record (the spec's own discipline). `Scroll` binds `cmd+c`/`ctrl+shift+c` to
+// `selection:copy`, and both premises rest on the parser actually delivering the modifier CSI-u claims:
+// bit 8 → `super` (decodeMods, parse.ts:20-25). Codepoint 99 is `c`.
+describe("F10 S3 — the two selection:copy chords decode as claimed", () => {
+  it("CSI-u with the xterm bit-8 modifier decodes cmd+c as super", () => {
+    // modifier param 9 → bits 8 → super.
+    expect(one("\x1b[99;9u")).toMatchObject({ kind: "key", name: "c", super: true, ctrl: false, alt: false, shift: false });
+  });
+  it("CSI-u decodes ctrl+shift+c", () => {
+    // modifier param 6 → bits 5 → shift(1) + ctrl(4).
+    expect(one("\x1b[99;6u")).toMatchObject({ kind: "key", name: "c", ctrl: true, shift: true });
+  });
+});
+
 // FSW BACKLOG 5 — THE TWO MOUSE REPORTS THAT ARE KEYS. Canon's `RUu` (bundle L169140) masks the SGR button
 // byte with 67 and turns 64/65 into named key events `wheelup`/`wheeldown`; everything else stays a mouse
 // report. Ours does the same, minus canon's col/row (L181210 hit-tests the node under the pointer; we have one

@@ -11,7 +11,7 @@ import { hostSocketPath } from "../../src/fleet/paths.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
 import { stageBlocks, IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/stagedSubmit.js";
 import type { StagedSubmitOps } from "../../src/client/stagedSubmit.js";
-import { MAX_IMAGES_PER_PROMPT } from "../../src/host/imageStaging.js";
+import { MAX_IMAGES_PER_PROMPT } from "../../src/media/imageDims.js";
 import { hasBgTasks, hasRewind } from "../../src/session/chatSession.js";
 import type { HostEvent } from "../../src/host/wire.js";
 import type { PendingEntry } from "../../src/permissions/pending.js";

@@ -25,9 +25,17 @@ import type { RenderLine } from "../render.js";
  *  streams in above it, which would silently repoint every later row's identity at the wrong source item on
  *  the very next frame. `wrapItems.ts`'s `sourceId` is how a caller recovers it from a (possibly wrap-
  *  fragmented) `RenderItem.id` — every fragment of one wrapped item resolves to the SAME `sourceId`, which is
- *  what makes "all wrap fragments of one item share one key" true by construction rather than by convention. */
+ *  what makes "all wrap fragments of one item share one key" true by construction rather than by convention.
+ *
+ *  `ownerKey` (F10 T-HOVER, H1) is the HOVER unit — `item.ownerKey ?? sourceId(item.id)`, always a real
+ *  string so no consumer needs the `??` a second time. `itemKey` KEEPS ITS MEANING: it is still the source
+ *  ITEM's durable id, and a later track's character-offset addressing keys its own state on it — a coarser
+ *  value there would collide two items' offset spaces. `ownerKey` is coarser ON PURPOSE (canon's hover unit
+ *  is one whole SDK message, not one line/call), which is exactly why the two fields cannot be collapsed
+ *  into one. */
 export interface HitRow {
   itemKey: string;
+  ownerKey: string;
   anchor?: string;
   width: number;
   text: string;
@@ -35,7 +43,28 @@ export interface HitRow {
   softWrap: "hard" | "continuation";
   kind: "line" | "gutter-block";
   linkRanges?: readonly { start: number; end: number; href: string }[];
+  /** F10 S4 — the half-open SOURCE-character range this painted row covers within its item's CANONICAL
+   *  text: the pre-wrap, pre-cosmetic-indent text, with a `\n` separator between the hard rows of a
+   *  multi-row (gutter-block) item. Minted by `wrapItems` where it wraps (it knows the split points before
+   *  it adds padding) and carried through slices unchanged, so a partially-visible item's rows still name
+   *  true source positions. NEVER derived by summing painted `text` lengths.
+   *    REQUIRED, not optional (spec v4.1 Wave assembly): an optional field would let a constructor that
+   *  forgot it typecheck and then address the wrong characters at runtime, which is the whole failure this
+   *  substrate exists to prevent. Every constructor is inventoried in step 4.7. */
+  charStart: number;
+  charEnd: number;
+  /** The painted-character index at which this row's source range begins — 0 for a hard row, the cosmetic
+   *  continuation indent's length for a wrapped row that carries one. The offset `sourceEndpointAt`
+   *  corrects by; without it a continuation row's pad is indistinguishable from real leading spaces. */
+  textStart: number;
 }
+
+/** F10 S4 — a painted COLUMN resolved to the SOURCE range it names. `where` separates the three outcomes
+ *  `columnToChar` returns one `undefined` for, because an endpoint has to treat them differently: a gutter
+ *  column addresses the row's opening edge, a column past the last painted cell addresses its closing edge,
+ *  and a hit addresses one grapheme. Built on the REAL `charEnd` `columnToChar` returns — probing `col + 1`
+ *  cannot see past a double-width cluster's leading cell. */
+export interface SourceEndpoint { charOffset: number; charEnd: number; where: "gutter" | "text" | "eol" }
 
 /** A terminal column resolved to the grapheme cluster it lands on, snapped exactly as `snapToGraphemes` snaps
  *  a highlight range: `charStart`/`charEnd` are the half-open `[start, end)` character bounds of that ONE
@@ -104,6 +133,32 @@ export function charToColumn(row: HitRow, charIndex: number): number {
     cursor += width;
   }
   return cursor;
+}
+
+/** A painted COLUMN → the SOURCE range it names. The row's own `textStart` is what makes this correct on a
+ *  continuation row: `HitRow.text` there begins with `wrapLine`'s cosmetic indent, which is not source text
+ *  and must not consume offsets.
+ *    IT USES `columnToChar`'s OWN `charEnd`. The obvious alternative — take the start here and probe
+ *  `col + 1` for the end — is wrong on every double-width grapheme: the trailing cell of a CJK or emoji
+ *  cluster resolves back to the SAME cluster (`columnToChar`'s deliberate backstep), so the probe reports no
+ *  progress and any "then it must run to the row's end" fallback selects the whole remainder of the row.
+ *  `where` exists for the same reason: `columnToChar` answers `undefined` for a gutter column AND for a
+ *  column past the text, and an endpoint has to place those at opposite edges of the row. */
+export function sourceEndpointAt(row: HitRow, col: number): SourceEndpoint {
+  const toSource = (painted: number): number =>
+    Math.min(row.charEnd, Math.max(row.charStart, row.charStart + Math.max(0, painted - row.textStart)));
+  const hit = columnToChar(row, col);
+  if (hit) {
+    const start = toSource(hit.charStart);
+    return { charOffset: start, charEnd: Math.max(start, toSource(hit.charEnd)), where: "text" };
+  }
+  if (col <= row.gutterWidth) return { charOffset: row.charStart, charEnd: row.charStart, where: "gutter" };
+  return { charOffset: row.charEnd, charEnd: row.charEnd, where: "eol" };
+}
+/** …and back. `charToColumn` answers the column immediately after the last painted cell for an index at or
+ *  past the row's text, which is exactly the end-of-row caret an upper endpoint at `charEnd` wants. */
+export function columnOfSourceChar(row: HitRow, v: number): number {
+  return charToColumn(row, row.textStart + Math.max(0, Math.min(row.charEnd, v) - row.charStart));
 }
 
 /** T-PRLINK's `linkRanges` (`toolFold.ts`'s `FoldClause.linkRanges`), recovered at the ROW rather than parsed

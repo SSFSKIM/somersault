@@ -29,8 +29,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 const opens = open as unknown as Mock;
 import { resolveInputItems, MAX_INPUT_ITEMS, MAX_DATA_URL_CHARS, type InputItem } from "../../src/appserver/turnItems.js";
-import { pngDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET } from "../../src/tui/clipboardImage.js";
-import { MAX_IMAGES_PER_PROMPT } from "../../src/host/imageStaging.js";
+import { pngDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../../src/media/imageDims.js";
 import { flattenForDisplay, normalizeTurnInput, type UserContentBlock, type UserTurnInput } from "../../src/session/turnInput.js";
 
 // -------------------------------------------------------------------------------------------------

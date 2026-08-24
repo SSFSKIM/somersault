@@ -15,7 +15,7 @@ import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { remoteChatSession, IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/chatAdapter.js";
 import { hostSocketPath, hostImageStagingDir } from "../../src/fleet/paths.js";
-import { POST_PROCESS_BYTE_BUDGET } from "../../src/tui/clipboardImage.js";
+import { POST_PROCESS_BYTE_BUDGET } from "../../src/media/imageDims.js";
 import type { UserTurnInput, UserContentBlock } from "../../src/session/turnInput.js";
 
 const fleets: string[] = [];
@@ -384,6 +384,9 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
       session.finish({ result: "ok" });
       await submitPromise;
       const assembled = session.submittedContents[0] as UserContentBlock[];
+      // BOUNDARY NOTE (F10 I1): this is the HOST-assembled array, captured at the HostSession seam. The
+      // I1 label is minted one layer below, in Session's `userTurn` builder — see
+      // test/unit/session.test.ts's "the REPL wire shape" cell. An empty first text block here is correct.
       expect(assembled[0]).toEqual({ type: "text", text: "" });
       expect(assembled[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
     } finally { adapter.detach(); await stopQuietly(host); }

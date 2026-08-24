@@ -20,7 +20,9 @@ import type { RendererChoice } from "./renderer.js";
 import { loadPrefs, savePrefs as realSavePrefs } from "./prefs.js";
 import { isInterruptSentinelFrame, pickTurnVerb as realPickTurnVerb, turnDurationLine } from "./durationRow.js";
 import { createSuggester as realCreateSuggester, formatTranscriptTail, markSuggestionAccepted, suggestionRenderStep, suggestionSuppression, EMPTY_SUGGESTION, TAIL_MESSAGE_CHARS, type PromptSuggestion, type Suggester, type TailMessage } from "./suggester.js";
-import { AUTO_MODE_NOTICE_DELAY_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import { AUTO_MODE_NOTICE_DELAY_MS, ACCOUNT_NOTICE_DEADLINE_MS, autoModeNoticeText, shouldShowAutoModeNotice } from "./autoModeNotice.js";
+import type { AccountBridge } from "./accountBridge.js";
+import type { AccountFacts } from "./banner.js";
 import { hasAcceptedBypass } from "./bypassConsent.js";
 import { currentTheme, resolveThemeColor, setTheme, themeTokens, type ThemeId } from "./theme.js";
 import { buildRows, summarizeChanges, PERMISSION_MODE_OPTIONS, type SettingsRowCtx } from "./settingsRows.js";
@@ -31,7 +33,7 @@ import type { BackgroundTaskInfo } from "../session/session.js";
 import { userEchoLines, type RenderLine } from "./render.js";
 import { compactSummaryLines, systemNoticeLines, isTranscriptOnlyNotice, COMPACT_SUMMARY_SPECIES, SYSTEM_INFO_SPECIES, LOCAL_OUTPUT_GUTTER } from "./species.js";
 import { TranscriptDocument, type LocalTranscriptEvent, type TranscriptBootstrapEntry } from "./transcriptModel.js";
-import { projectCompact, projectDetail, projectPending, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, streamOwnerKey as mintStreamOwnerKey, type ProjectionContext, type RenderItem } from "./toolRenderer.js";
 import { mainWindowCap, selectLiveWindow, WINDOW_SLACK } from "./liveWindow.js";
 import { paintedHeight } from "./wrapItems.js";
 import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
@@ -119,7 +121,7 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  (everything whose id is not in `staticItems`) is what the render-time live window selects from — see
    *  `reconcile`. Consumers that want "the finalized transcript" want THIS; `staticItems` answers the
    *  narrower question "what has already been written to scrollback and can never be repainted". */
-  finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
+  finalizedItems: readonly RenderItem[]; pendingItems: readonly RenderItem[]; streaming: RenderLine[]; /** F10 T-HOVER: the streaming tier's hover unit for the CURRENT `streaming` snapshot. */ streamOwnerKey: string; pending: PendingDecision | null; mode: string; busy: boolean; /** W-C T8 — the engine's ai-title, read from disk once after the first turn (probe (d)). */ aiTitle?: string; /** W-C T8 — a successful `/rename`, which outranks `aiTitle`. */ renameTitle?: string; ctxPct?: number; model?: string; picker: { open: boolean; sessions: SessionInfo[]; hasWorktree: boolean }; tasks: TaskItem[]; bgTasks: BackgroundTaskInfo[]; bgRows: BgTaskRow[]; bgPanelOpen: boolean; thinkLevel: string; /** W-C T11 (EP-C6): the session's live effort level, and whether the live model has the axis at all (undefined = the catalog has not answered yet). */ effort?: EffortLevel; effortSupported?: boolean; /** What the picker's/dialog's `(default)` clause compares against — see `DEFAULT_EFFORT`. */ defaultEffort: EffortLevel; effortDialog: { open: boolean; level?: EffortLevel; levels?: readonly EffortLevel[]; supported?: boolean; modelName?: string }; turnStartedAt: number; modelPicker: { open: boolean; models: ModelInfo[]; current?: string; sessionModel?: string; activeModel?: string; outputTokens?: number; ackedAt?: number }; commandCatalog: CommandEntry[]; queue: QueueEntry[];
   /** The composer's placeholder ladder reads both (`placeholder.ts` rule 4 — upstream's `submitCount` /
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
@@ -195,6 +197,10 @@ export function useChat(
      *  `runForegroundImpl`, which builds the host config — so `ccx attach` passes none and both keys stay
      *  absent. See `hooks/promptLatch.ts` for why a hook is the only route. */
     promptLatch?: PromptLatch;
+    /** F10 T-MAINT item 1: the LATE channel for the same fact `initialTokenSource` carries early — the
+     *  LIVE, unraced `accountInfo()` promise, so a cold handshake that missed the banner's 1500 ms budget
+     *  can still reach the auto-mode notice before ITS OWN (later, normative) deadline. See accountBridge.ts. */
+    accountBridge?: AccountBridge;
     /** FSW TASK 5 (F9): the renderer decided ONCE at boot, with the reason word `/status` prints. RESOLVED BY
      *  THE CALLER (`chatMain.tsx`), like `initialOutputStyle` and `statusLine`, and for the stronger version
      *  of the same reason: the decision reads the real TTY, the real env and the prefs file, and re-deciding
@@ -403,6 +409,9 @@ export function useChat(
   });
   const [pendingItems, setPendingItems] = useState<readonly RenderItem[]>(() => livePending());
   const [streaming, setStreaming] = useState<RenderLine[]>([]);
+  // F10 T-HOVER: the streaming tier's hover unit — `LiveTurn.messageKey()` at the moment each snapshot was
+  // taken, so hover survives every delta of one message and changes exactly when the message does.
+  const [streamOwnerKey, setStreamOwnerKey] = useState(mintStreamOwnerKey("#0"));
   // Wave T Task 12: the live turn's retry state. The REF is what the hot path reads — the message arm runs
   // per stream_event delta (thousands per turn), and an unguarded `setRetryStatus(undefined)` there would
   // queue a setState per token; the ref lets the clear cost one comparison when there is nothing to clear.
@@ -674,6 +683,7 @@ export function useChat(
   // its prefix, the mode that text implies, the priority rung, and the paste map an entry was composed with.
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const queueRef = useRef<QueueEntry[]>([]); queueRef.current = queue;
+  const queueSeq = useRef(0);   // F10 T-HOVER (r3): mints each QueueEntry.id — monotonic, never reset
   const [submitCount, setSubmitCount] = useState(0);   // upstream's `submitCount` — the placeholder ladder's rule 4
   const drainGen = useRef(0);                          // bumped by interrupt → invalidates any scheduled drain (no post-interrupt dispatch)
   const [staticEpoch, setStaticEpoch] = useState(0);  // bumped at a terminal boundary → mounts a FRESH append-only <Static>
@@ -1438,7 +1448,7 @@ export function useChat(
         // deltas × history. The live region is the only thing a delta may touch.
         if (data?.type === "stream_event") {
           const partial = liveTurnRef.current;
-          if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setTurnMeter(partial.meter()); if (partial.model) setModel(partial.model); }
+          if (partial) { partial.ingest(data); setStreaming(partial.snapshot()); setStreamOwnerKey(mintStreamOwnerKey(partial.messageKey())); setTurnMeter(partial.meter()); if (partial.model) setModel(partial.model); }
           return;
         }
         // W-C T7: an interrupt sentinel disqualifies the turn that carried it from the duration row —
@@ -1564,7 +1574,7 @@ export function useChat(
           noteTail("assistant", t);
         }
         const l = liveTurnRef.current;
-        if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setTurnMeter(l.meter()); if (l.model) setModel(l.model); }
+        if (l) { l.ingest(ev.data); setStreaming(l.snapshot()); setStreamOwnerKey(mintStreamOwnerKey(l.messageKey())); setTurnMeter(l.meter()); if (l.model) setModel(l.model); }
         syncLiveOpen(data);   // AFTER the append: a result delivered in this very frame has already attached
         reconcile();
       }
@@ -1835,24 +1845,54 @@ export function useChat(
   const autoNoticeShown = useRef(false);
   useEffect(() => {
     if (mode !== "auto" || autoNoticeShown.current) return;
-    const id = setTimeout(() => {
-      if (disposed.current) return;
+    // F10 T-MAINT item 1 — THE COLD-START RACE. `opts.initialTokenSource` is a value main.ts may have
+    // LOST: its banner race is bounded at 1500 ms and a cold handshake measured ~1152 ms on average, so
+    // a slow boot left it undefined and this notice told a subscription user their sessions cost extra,
+    // for the whole session, with nothing to correct it. `opts.accountBridge` carries the SAME
+    // `accountInfo()` promise unraced; the callback awaits it under the wave's second, normative
+    // deadline. The 800 ms already spent in the delay counts against ACCOUNT_NOTICE_DEADLINE_MS, so the
+    // remaining budget is the difference and the two together are exactly 3000 ms from this arming.
+    // The banner's own budget is untouched — chrome still never costs first paint.
+    // `cancelled` (review finding P2) — `disposed.current` alone only catches UNMOUNT, but this effect's
+    // own cleanup fires on every mode CHANGE too (it is keyed on `[mode]`), and leaving auto while the
+    // account-facts promise below is still in flight is exactly that: the component stays mounted, so
+    // `disposed.current` stays false throughout. Without a per-invocation flag the cleanup's own
+    // `settleRace?.(undefined)` unblocks the `await` with a plain `undefined` and the callback sails past
+    // the `disposed.current` checks straight into `notice(...)`, telling a thread that is by then back in
+    // "default" mode that it is in auto — and burning the once-only ref doing it.
+    let cancelled = false;
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
+    let settleRace: ((f: AccountFacts | undefined) => void) | undefined;
+    const id = setTimeout(async () => {
+      if (disposed.current || cancelled) return;
+      if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) { autoNoticeShown.current = true; return; }
+      const facts = await new Promise<AccountFacts | undefined>((resolve) => {
+        settleRace = resolve;
+        const bridge = opts.accountBridge;
+        if (!bridge) { resolve(undefined); return; }        // `ccx attach`: no launch handshake to wait for
+        raceTimer = setTimeout(() => resolve(undefined), ACCOUNT_NOTICE_DEADLINE_MS - AUTO_MODE_NOTICE_DELAY_MS);
+        // The bridge never rejects (it swallows at `offer`), so a credential-less engine simply arrives
+        // as `undefined` — the same unknown arm a missed deadline lands on.
+        bridge.read().then((f) => { clearTimeout(raceTimer); resolve(f); });
+      });
+      // Unmounted, OR mode already moved on, while we waited: the cleanup already settled the race so
+      // nothing is parked, and this is what keeps the append out of a disposed tree or a stale mode.
+      if (disposed.current || cancelled) return;
+      // Only a genuine, uncancelled fire ever burns the once-per-process guard (review finding P2) — set
+      // HERE, after the cancellation check above, never at the top of the callback: a stale attempt that
+      // gets cancelled mid-flight must leave the session still eligible for the next real auto-mode entry.
       autoNoticeShown.current = true;
-      if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
-      // T2: oauth is true iff the launch's token source is LITERALLY the subscription one — false and
-      // unknown (attach, resume/continue) both fall through to the cost-sentence variant. See
-      // autoModeNotice.ts's header for the canon citation.
-      notice(autoModeNoticeText({ oauth: opts.initialTokenSource === "CLAUDE_CODE_OAUTH_TOKEN" }));
-      // Best-effort, mirrors theme's/output-style's own silent persistence (:1094). savePrefs does a mkdir + a
-      // file write, and THIS is a bare timer callback: no promise chain, no error boundary, and the tree
-      // installs no uncaughtException handler — so on a read-only home or a full disk an unguarded throw here
-      // would take down an interactive session over a cosmetic flag. That "a throw from a timer/fire-and-forget
-      // callback has nothing above it" shape is a recurring defect class in this codebase (an independent review
-      // caught the identical pattern in an earlier wave); every such write is wrapped. The per-process
-      // `autoNoticeShown` ref above is what still holds the notice to once when this write is the thing failing.
+      // T2's rule, unchanged: oauth is true iff the token source is LITERALLY the subscription one, and
+      // both false and UNKNOWN keep the cost sentence. The bridge is only ever a LATER, better answer
+      // than the launch value — when the banner won its race the two agree by construction.
+      const tokenSource = facts?.tokenSource ?? opts.initialTokenSource;
+      notice(autoModeNoticeText({ oauth: tokenSource === "CLAUDE_CODE_OAUTH_TOKEN" }));
+      // Best-effort, mirrors theme's/output-style's own silent persistence (:1094) — see the F9 comment
+      // this replaces: a bare timer callback has no error boundary above it, and on a read-only home an
+      // unguarded throw here would take down an interactive session over a cosmetic flag.
       try { savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv); } catch { /* best-effort */ }
     }, AUTO_MODE_NOTICE_DELAY_MS);
-    return () => clearTimeout(id);
+    return () => { cancelled = true; clearTimeout(id); clearTimeout(raceTimer); settleRace?.(undefined); };
   }, [mode]);   // eslint-disable-line react-hooks/exhaustive-deps
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn
@@ -3016,7 +3056,9 @@ export function useChat(
   // caller (there were none besides `submit`'s own enqueue arm) is unaffected, and a plain-string submit
   // still mints an entry with the field absent, exactly as before.
   function makeQueueEntry(prompt: string, pastedContents?: PastedMap): QueueEntry {
-    return { value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user", ...(pastedContents ? { pastedContents } : {}) };
+    // F10 T-HOVER (r3): monotonic and never reset — a counter that restarts can hand a live entry a dead
+    // entry's key. Per-hook, so two sessions in one process cannot collide either — nothing compares across them.
+    return { id: `q${queueSeq.current++}`, value: prompt, mode: composerMode(prompt) === "bash" ? "bash" : "prompt", priority: "now", origin: "user", ...(pastedContents ? { pastedContents } : {}) };
   }
   /** CM48's drain, the useChat half (`popAllEditable`, bundle L149093): hand EVERY editable entry back to the
    *  composer as one `\n`-joined block and clear them from the queue; a non-editable entry survives it. The
@@ -3208,5 +3250,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }
