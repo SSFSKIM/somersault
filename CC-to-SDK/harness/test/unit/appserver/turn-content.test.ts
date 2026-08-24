@@ -315,6 +315,35 @@ describe("I3d: the per-turn aggregate cap", () => {
     await expect(client.call("turn/startContent", { threadId, stagedImageIds: ["s1"] })).rejects.toThrow(/exceeds the/);
     expect(registry.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 });
   });
+
+  // F10 fix-wave round-2 review finding P2: this gate used to read `reservation.decodedBytes`, which sums
+  // EVERY requested id — including ones the staged normalizer's own MAX_IMAGES_PER_PROMPT cap (finding 5,
+  // round 1) just degraded to a text block. Naming one completed stage MAX_IMAGES_PER_PROMPT+1 = 21 times
+  // reserves 21 entries but the normalizer keeps only 20 of them as images; the aggregate must be judged
+  // on THOSE 20, not on all 21. `perImage` is chosen so 20 * perImage lands exactly on the boundary.
+  const perImage = MAX_AGGREGATE_BYTES / MAX_IMAGES_PER_PROMPT; // 262,144 — exact, no rounding
+  it(`a ${MAX_IMAGES_PER_PROMPT + 1}x-repeated stage whose ${MAX_IMAGES_PER_PROMPT} RETAINED images sit exactly at the cap is accepted, even though the naive sum over all ${MAX_IMAGES_PER_PROMPT + 1} requested references would exceed it`, async () => {
+    const validate = vi.fn((b: UserContentBlock & { type: "image" }) => ({ ok: true as const, block: b, decodedBytes: perImage }));
+    const registry = new ImageStageRegistry({ validate });
+    const { client, engine, threadId } = await realPeerPair({ deps: { imageStages: registry } });
+    await client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/png", data: "AAAA" });
+    const ids = Array.from({ length: MAX_IMAGES_PER_PROMPT + 1 }, () => "s1");
+    await client.call("turn/startContent", { threadId, stagedImageIds: ids });
+    await waitFor(() => (engine as { contents: UserContentBlock[][] }).contents.length === 1);
+    const sent = (engine as { contents: UserContentBlock[][] }).contents[0]!;
+    expect(sent.filter((b) => b.type === "image")).toHaveLength(MAX_IMAGES_PER_PROMPT); // the 21st was degraded, never counted against the aggregate
+    expect(registry.stats()).toMatchObject({ stageCount: 0, reservedCount: 0 }); // committed, not aborted
+  });
+
+  it(`one byte per retained image over the cap (${MAX_IMAGES_PER_PROMPT} x (perImage+1)) is still refused and aborted`, async () => {
+    const validate = vi.fn((b: UserContentBlock & { type: "image" }) => ({ ok: true as const, block: b, decodedBytes: perImage + 1 }));
+    const registry = new ImageStageRegistry({ validate });
+    const { client, threadId } = await realPeerPair({ deps: { imageStages: registry } });
+    await client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/png", data: "AAAA" });
+    const ids = Array.from({ length: MAX_IMAGES_PER_PROMPT + 1 }, () => "s1");
+    await expect(client.call("turn/startContent", { threadId, stagedImageIds: ids })).rejects.toThrow(/exceeds the/);
+    expect(registry.stats()).toMatchObject({ stageCount: 1, reservedCount: 0 }); // aborted, stage stays reservable
+  });
 });
 
 describe("I3d: no second decode", () => {

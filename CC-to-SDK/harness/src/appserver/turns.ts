@@ -548,7 +548,12 @@ interface PreparedContent { record: ThreadRecord; blocks: UserContentBlock[]; to
  *    7. assemble via `normalizeValidatedBlocks`, NEVER the full `normalizeTurnInput`: the staged blocks
  *       were already decoded once, at stage completion (the validate-once contract Task 7 exists to keep),
  *       and re-running the decode half of the normalizer would defeat the whole point of that cache
- *    8. per-turn aggregate, from the reservation's own cached `decodedBytes` (no second decode either)
+ *    8. per-turn aggregate, from the reservation's own cached PER-BLOCK bytes, summed ONLY over the
+ *       images step 7 actually KEPT (F10 fix-wave round-2 review finding P2: `reservation.decodedBytes`
+ *       sums every REQUESTED id, so a caller naming one stage more than `MAX_IMAGES_PER_PROMPT` times was
+ *       refused on bytes belonging to images the truncated turn never sends — a 21-reference reservation
+ *       whose 20 surviving images sit exactly at the aggregate cap was rejected on the 21st's bytes
+ *       alone). No second decode either — `perBlockBytes` rides the same per-stage cache `decodedBytes` did.
  *  Gates 9 (queue admission/begin vs. push onto the live prompt stream) and 10 (commit) are NOT shared:
  *  they are the one place the two methods are not the same operation at all, so they stay in each
  *  handler below. */
@@ -572,7 +577,13 @@ function prepareStagedContent(
   const { reservation } = reserved;
   const textBlock: UserContentBlock[] = text === undefined ? [] : [{ type: "text", text }];
   const blocks = normalizeValidatedBlocks([...textBlock, ...reservation.blocks]);
-  if (reservation.decodedBytes > MAX_AGGREGATE_BYTES) {
+  // Bytes for only the images `normalizeValidatedBlocks` actually KEPT (F10 fix-wave round-2 review
+  // finding P2) — a plain reference-identity lookup, not `reservation.decodedBytes` (which sums every
+  // REQUESTED id, including ones the image-count cap just degraded to a text block above).
+  const bytesByBlock = new Map<UserContentBlock, number>();
+  reservation.blocks.forEach((b, i) => bytesByBlock.set(b, reservation.perBlockBytes[i]!));
+  const retainedBytes = blocks.reduce((n, b) => n + (bytesByBlock.get(b) ?? 0), 0);
+  if (retainedBytes > MAX_AGGREGATE_BYTES) {
     srv.imageStages.abort(reservation.token);
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, `turn's total image size exceeds the ${MAX_AGGREGATE_BYTES}-byte limit`);
     return undefined;

@@ -72,7 +72,13 @@ export interface StageReservation {
   readonly token: string;
   /** The cached, already-canonical blocks, in the order the ids were given. */
   readonly blocks: readonly UserContentBlock[];
-  readonly decodedBytes: number;   // summed, from the cache
+  readonly decodedBytes: number;   // summed over EVERY requested id — a caller that truncates `blocks`
+                                    // (e.g. the staged normalizer's MAX_IMAGES_PER_PROMPT cap) must NOT
+                                    // use this field to gate the truncated result (F10 fix-wave round-2
+                                    // review finding P2): it still counts bytes the turn never sends.
+  /** Per-block decoded bytes, PARALLEL to `blocks` (same index), so a caller that drops some blocks
+   *  (the image-count cap) can sum only the ones it actually kept. */
+  readonly perBlockBytes: readonly number[];
   readonly charge: number;         // summed serialized-queue bytes, from the cache
 }
 
@@ -237,9 +243,10 @@ export class ImageStageRegistry {
     for (const e of entries) e.reservedToken = token;
     this.reservations.set(token, { connId, keys: stageIds.map((id) => this.key(connId, id)) });
     const blocks = entries.map((e) => e.completed!.block);
-    const decodedBytes = entries.reduce((n, e) => n + e.completed!.decodedBytes, 0);
+    const perBlockBytes = entries.map((e) => e.completed!.decodedBytes);
+    const decodedBytes = perBlockBytes.reduce((n, b) => n + b, 0);
     const charge = entries.reduce((n, e) => n + e.completed!.charge, 0);
-    return { ok: true, reservation: { token, blocks, decodedBytes, charge } };
+    return { ok: true, reservation: { token, blocks, perBlockBytes, decodedBytes, charge } };
   }
 
   /** Settles a reservation by consuming it: the stages are deleted and their bytes released. Called only
