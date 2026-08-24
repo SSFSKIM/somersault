@@ -11,8 +11,16 @@
 // client declared. Controller measurement (plan rev 4): a built zod object — v3 and v4 alike — loses
 // descriptions, `minimum`/`maximum`/`minLength`/`maxLength` AND `.int()` on the way into `tools/list`, and
 // a raw shape keeps only descriptions. Codex parity is the declared JSON Schema arriving at the model
-// UNCHANGED, so `ListTools` returns the declaration object itself and zod is confined to the one job it
-// can do losslessly: saying yes or no to the model's arguments at `CallTool`.
+// UNCHANGED, so `ListTools` returns the declaration verbatim and zod is confined to the one job it can do
+// losslessly: saying yes or no to the model's arguments at `CallTool`.
+//
+// BOTH HALVES ARE SNAPSHOTTED AT BUILD, and that pairing is the point. The validator has always been
+// built once; if the ADVERTISEMENT were a live read of the caller's spec objects, a later in-place edit
+// (a normalization pass, a defaulting step, a future tool update) would move what the model is TOLD
+// without moving what `CallTool` ENFORCES — advertised-versus-enforced divergence, which is the exact
+// loss the verbatim design exists to prevent. So the row is snapshotted beside its validator: the
+// declared schema is DEEP-COPIED and the whole advertised object DEEP-FROZEN, and `ListTools` maps over
+// the frozen adverts without ever touching a caller-owned object.
 //
 // THE ORDER OF CONSTRUCTION IS LOAD-BEARING. `Server.setRequestHandler` asks
 // `assertRequestHandlerCapability` first, which throws "Server does not support tools" for `tools/list`
@@ -63,14 +71,26 @@ export type DynamicToolPark = (call: DynamicToolCall) => Promise<CallToolResultL
  *  `cc-tasks`, …). Nothing reads it; it is a required field of MCP's `Implementation`. */
 const SERVER_VERSION = "0.1.0";
 
-/** The per-tool row of a server's dispatch table: what to advertise, and what to validate against. */
-type ToolEntry = { spec: DynamicToolFunction; validate: z.ZodType };
+/** The per-tool row of a server's dispatch table: the frozen advertisement, and what to validate against.
+ *  Both are computed at build from the SAME reading of the spec, so they cannot drift apart. */
+type ToolEntry = { advert: AdvertisedTool; validate: z.ZodType };
 
 /** MCP's `Tool.inputSchema` insists on a literal `type: "object"`; a declaration is a
  *  `Record<string, unknown>` that the conversion subset merely permits to say so. Verbatim means the cast
  *  rather than a rewrite — a declaration that omits the key is advertised exactly as written, and a strict
  *  client refuses it. That obligation belongs to the declaration shape, not to this file. */
 type AdvertisedSchema = ListToolsResult["tools"][number]["inputSchema"];
+type AdvertisedTool = ListToolsResult["tools"][number];
+
+/** Freeze a value and everything reachable from it. `isFrozen` is the recursion guard as well as the
+ *  early-out, so a self-referential schema terminates. Applied to a fresh deep copy only — never to
+ *  anything the caller still holds. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const inner of Object.values(value)) deepFreeze(inner);
+  return value;
+}
 
 function buildServer(
   name: string,
@@ -90,7 +110,26 @@ function buildServer(
     if (!converted.ok) {
       throw new Error(`dynamic tool "${spec.name}": inputSchema did not convert (${converted.keyword})`);
     }
-    table.set(spec.name, { spec, validate: converted.schema });
+    // Same reasoning: `checkFunction`'s per-namespace seen-set already refused a repeated name, so a
+    // second declaration of one here means admission was bypassed. `Map.set` would silently keep the LAST
+    // — one tool of the pair advertised, the other unreachable — so the collapse is refused out loud.
+    if (table.has(spec.name)) {
+      throw new Error(`dynamic tool "${spec.name}": declared twice in server "${name}"`);
+    }
+    table.set(spec.name, {
+      // The advertisement the client will see, fixed NOW. The schema is deep-copied so no later edit to
+      // the caller's declaration can reach it, and the whole row is frozen so nothing downstream — a
+      // client sharing our leaf objects across an in-process transport included — can rewrite it either.
+      advert: deepFreeze({
+        name: spec.name,
+        description: spec.description,
+        inputSchema: structuredClone(spec.inputSchema) as AdvertisedSchema,
+        // Codex's polarity, not the SDK's: an omitted or `false` `deferLoading` means DIRECT exposure, and
+        // only an explicit `true` hides the tool behind ToolSearch.
+        _meta: { "anthropic/alwaysLoad": spec.deferLoading !== true },
+      }),
+      validate: converted.schema,
+    });
   }
 
   const wrapper = new McpServer(
@@ -99,14 +138,7 @@ function buildServer(
   );
 
   wrapper.server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: [...table.values()].map(({ spec }) => ({
-      name: spec.name,
-      description: spec.description,
-      inputSchema: spec.inputSchema as AdvertisedSchema,
-      // Codex's polarity, not the SDK's: an omitted or `false` `deferLoading` means DIRECT exposure, and
-      // only an explicit `true` hides the tool behind ToolSearch.
-      _meta: { "anthropic/alwaysLoad": spec.deferLoading !== true },
-    })),
+    tools: [...table.values()].map(({ advert }) => advert),
   }));
 
   wrapper.server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
@@ -148,6 +180,13 @@ export function buildDynamicServers(specs: DynamicToolSpec[], park: DynamicToolP
   const bare = specs.filter((spec): spec is DynamicToolFunction => spec.type === "function");
   for (const spec of specs) {
     if (spec.type !== "namespace") continue;
+    // `dyn` belongs to the bare-function block, which is written LAST and would overwrite this key —
+    // the namespace's tools would disappear from the model's view with nothing raised anywhere.
+    // `validateDeclarations` refuses the reserved name, so a namespace wearing it here is a bypassed
+    // admission, not a client error: refuse it loudly rather than lose tools quietly.
+    if (spec.name === RESERVED_NAMESPACE) {
+      throw new Error(`dynamic namespace "${RESERVED_NAMESPACE}": the name is reserved for bare tool declarations`);
+    }
     servers[spec.name] = {
       type: "sdk",
       name: spec.name,

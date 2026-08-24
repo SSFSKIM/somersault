@@ -32,7 +32,8 @@
 //   A `__proto__` own key NEVER reaches this layer — the MCP SDK's own `CallToolRequestSchema.parse`
 //   rebuilds `params.arguments` as a null-prototype object and drops the key upstream of us.
 //   A declaration that omits `type:"object"` is advertised verbatim and the strict client then refuses
-//   the WHOLE list (`ToolSchema.inputSchema` pins `type: "object"`) — a declaration-shape obligation.
+//   the WHOLE list (`ToolSchema.inputSchema` pins `type: "object"`), taking its well-formed siblings with
+//   it while the server keeps serving all of them — a declaration-shape obligation (Task 7).
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -49,7 +50,12 @@ import {
   type CallToolResultLike,
   type DynamicCallEvent,
 } from "../../../src/appserver/dynamicCalls.js";
-import { RESERVED_NAMESPACE, toCallResult, type DynamicToolSpec } from "../../../src/appserver/dynamicTools.js";
+import {
+  RESERVED_NAMESPACE,
+  toCallResult,
+  type DynamicToolFunction,
+  type DynamicToolSpec,
+} from "../../../src/appserver/dynamicTools.js";
 
 /** The entry shape the builder produces, as `McpSdkServerConfigWithInstance` spells it. */
 type SdkEntry = { type: "sdk"; name: string; instance: McpServer };
@@ -178,6 +184,37 @@ describe("buildDynamicServers — the entries", () => {
     expect(() => buildDynamicServers([bad], park)).toThrow(/broken/);
     expect(() => buildDynamicServers([bad], park)).toThrow(/oneOf/);
   });
+
+  // The same invariant reasoning as the row above, applied to the two ways a build could LOSE tools
+  // instead of refusing. Both are refused at admission today, so either one reaching the builder means a
+  // declaration went live without passing it — and silent tool loss is the worst possible answer to that.
+  it("throws when a namespace claims the reserved `dyn` name — the bare-function block would otherwise overwrite it", () => {
+    const { park } = recordingPark();
+    const shadow: DynamicToolSpec = {
+      type: "namespace",
+      name: RESERVED_NAMESPACE,
+      description: "d",
+      tools: [{ type: "function", name: "hidden", description: "d", inputSchema: { type: "object", properties: {} } }],
+    };
+    // With a bare function present the clobber is real; without one it is merely latent. Both refuse.
+    expect(() => buildDynamicServers([shadow, BARE], park)).toThrow(/"dyn"/);
+    expect(() => buildDynamicServers([shadow], park)).toThrow(/reserved/);
+  });
+
+  it("throws on two tools sharing one name in a namespace — the table would otherwise keep only the last", () => {
+    const { park } = recordingPark();
+    const twice: DynamicToolSpec = {
+      type: "namespace",
+      name: "ops",
+      description: "d",
+      tools: [
+        { type: "function", name: "same", description: "first", inputSchema: { type: "object", properties: {} } },
+        { type: "function", name: "same", description: "second", inputSchema: { type: "object", properties: {} } },
+      ],
+    };
+    expect(() => buildDynamicServers([twice], park)).toThrow(/"same"/);
+    expect(() => buildDynamicServers([twice], park)).toThrow(/twice/);
+  });
 });
 
 describe("buildDynamicServers — initialize", () => {
@@ -267,6 +304,53 @@ describe("buildDynamicServers — tools/list", () => {
     expect(alwaysLoad).toEqual({ omitted: true, explicitFalse: true, explicitTrue: false });
   });
 
+  // THE ADVERTISEMENT AND THE VALIDATOR ARE ONE SNAPSHOT. The validator was always built once, at
+  // construction; if the advertisement stayed a live read of the caller's spec objects, any later in-place
+  // edit would move what the model is TOLD without moving what CallTool ENFORCES. That divergence is
+  // exactly what verbatim advertisement exists to prevent, so this row mutates every field the
+  // advertisement is made of — including a nested one inside the schema — and demands both halves hold.
+  it("snapshots the advertisement at build — mutating the caller's spec afterwards changes neither the list nor what CallTool enforces", async () => {
+    const { park, parked } = recordingPark();
+    const declared = { type: "object", properties: { q: { type: "string", minLength: 2 } }, required: ["q"] };
+    const spec: DynamicToolFunction = {
+      type: "function",
+      name: "live",
+      description: "as declared",
+      inputSchema: declared as unknown as Record<string, unknown>,
+    };
+    const servers = buildDynamicServers([spec], park);
+
+    spec.description = "MUTATED";
+    spec.deferLoading = true;
+    declared.properties.q.minLength = 40;
+    (declared.properties as Record<string, unknown>).injected = { type: "string" };
+
+    const client = await connect(entryOf(servers, RESERVED_NAMESPACE));
+    const listed = (await client.listTools()).tools[0]!;
+    expect(listed.description).toBe("as declared");
+    expect(listed._meta?.["anthropic/alwaysLoad"]).toBe(true);
+    expect(listed.inputSchema).toEqual({ type: "object", properties: { q: { type: "string", minLength: 2 } }, required: ["q"] });
+
+    // The enforced schema is the same snapshot: `"hi"` satisfies the DECLARED minLength of 2 and would be
+    // refused by the mutated 40, so a call that parks proves advert and validator still agree.
+    const call = client.callTool({ name: "live", arguments: { q: "hi" } });
+    await vi.waitFor(() => expect(parked).toHaveLength(1));
+    expect(parked[0]!.call.arguments).toEqual({ q: "hi" });
+    parked[0]!.settle(TEXT("ok"));
+    await expect(call).resolves.toBeDefined();
+
+    // And the advert is DEEP-FROZEN, which closes the other direction: the client's parsed result shares
+    // our leaf property objects over this transport (zod rebuilds only the levels its schema declares), so
+    // an unfrozen advert could be rewritten from the far end of the connection.
+    const leaf = (listed.inputSchema.properties as Record<string, Record<string, unknown>>).q!;
+    expect(Object.isFrozen(leaf)).toBe(true);
+    expect(() => {
+      leaf.type = "number";
+    }).toThrow(TypeError);
+    const relisted = (await client.listTools()).tools[0]!;
+    expect((relisted.inputSchema.properties as Record<string, unknown>).q).toEqual({ type: "string", minLength: 2 });
+  });
+
   it("lists a namespace's tools on its own server and bare functions on `dyn`", async () => {
     const { park } = recordingPark();
     const servers = buildDynamicServers([OPS, BARE], park);
@@ -278,21 +362,37 @@ describe("buildDynamicServers — tools/list", () => {
     expect((await dyn.listTools()).tools.map((t) => t.name)).toEqual(["ping"]);
   });
 
-  // A MEASURED BOUND, not an endorsement. `type:"object"` is optional in the conversion subset but
-  // REQUIRED by MCP's own `ToolSchema`, and verbatim means verbatim — so the omission is refused by the
-  // strict client, and it takes the whole list with it. The obligation therefore belongs to the
-  // declaration shape (Task 8), which is where this row points.
-  it("BOUND: a declaration omitting `type:\"object\"` is advertised verbatim and the strict client refuses the list", async () => {
-    const { park } = recordingPark();
-    const typeless: DynamicToolSpec = {
-      type: "function",
-      name: "typeless",
-      description: "d",
-      inputSchema: { properties: { a: { type: "string" } } },
+  // A MEASURED BOUND, not an endorsement, and the blast radius is the whole point. `type:"object"` is
+  // optional in the conversion subset but REQUIRED by MCP's own `ToolSchema`, and verbatim means verbatim
+  // — so ONE malformed declaration makes the strict client refuse the ENTIRE result, and its well-formed
+  // siblings vanish from the model's view while the server goes on serving them happily. Silent from the
+  // server's side, total from the model's. That is why the refusal belongs at declaration validation
+  // (Task 7), where the answer can be a -32602 naming the offending tool; this row pins what today's
+  // behavior actually costs.
+  it("BOUND: one declaration omitting `type:\"object\"` takes the WHOLE list with it — the siblings vanish from the client's view while tools/call still serves them", async () => {
+    const { park, parked } = recordingPark();
+    const mixed: DynamicToolSpec = {
+      type: "namespace",
+      name: "mixed",
+      description: "two well-formed declarations and one that omits the root type",
+      tools: [
+        { type: "function", name: "good", description: "d", inputSchema: { type: "object", properties: {} } },
+        { type: "function", name: "typeless", description: "d", inputSchema: { properties: { a: { type: "string" } } } },
+        { type: "function", name: "alsoGood", description: "d", inputSchema: { type: "object", properties: {} } },
+      ],
     };
-    const client = await connect(entryOf(buildDynamicServers([typeless], park), RESERVED_NAMESPACE));
+    const client = await connect(entryOf(buildDynamicServers([mixed], park), "mixed"));
 
-    await expect(client.listTools()).rejects.toThrow();
+    await expect(client.listTools()).rejects.toThrow(/inputSchema/);
+
+    // All three are nonetheless live: the model can never learn they exist, but every one of them answers.
+    for (const name of ["good", "alsoGood", "typeless"]) {
+      const call = client.callTool({ name, arguments: {} });
+      await vi.waitFor(() => expect(parked).toHaveLength(1));
+      expect(parked[0]!.call.tool).toBe(name);
+      parked.pop()!.settle(TEXT(`served ${name}`));
+      await expect(call).resolves.toMatchObject({ content: [{ type: "text", text: `served ${name}` }] });
+    }
   });
 });
 
