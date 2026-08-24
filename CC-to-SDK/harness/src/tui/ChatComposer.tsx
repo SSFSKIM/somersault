@@ -787,6 +787,12 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
         if (clipboardHintModelRef.current!.throttled(Date.now())) return;   // throttled — skip the probe entirely, clock untouched
         const check = checkClipboardImageRef.current ?? (() => hasClipboardImage(process.platform, defaultCheckOnlyProcess()));
         if (!(await check())) return;                 // no image on the clipboard — silent, and NEVER arms the throttle (review finding P2)
+        // Re-peek AFTER the async probe (round-2 review finding P2): a blur/refocus while THIS check was
+        // still in flight can start a second arm that also passes the pre-await `throttled()` peek above —
+        // both probes are then racing to post. Whichever check resolves first falls through to `noteFire`
+        // and the post below with no `await` in between, so the OTHER one's re-peek here is guaranteed to
+        // see the fire it just recorded and bail, rather than posting a second hint.
+        if (clipboardHintModelRef.current!.throttled(Date.now())) return;
         clipboardHintModelRef.current!.noteFire(Date.now());              // a genuine fire — record it now, right before posting
         storeRef.current.add({
           key: CLIPBOARD_HINT_KEY, text: imageInClipboardText(bindings("chat:imagePaste")),

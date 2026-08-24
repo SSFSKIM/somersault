@@ -236,6 +236,43 @@ describe("ChatComposer — the ambient clipboard hint wiring (I6)", () => {
     } finally { vi.useRealTimers(); unmount(); }
   });
 
+  it("F10 fix-wave round-2 review finding P2: two focus-ins while the first check is still in flight post the hint only once", async () => {
+    // Reproduces the finding: the throttle's pre-await `throttled()` peek only protects against a SECOND
+    // attempt that starts after the first has already recorded its fire. A blur/refocus while the first
+    // check's promise is still pending starts a second arm that ALSO clears that same peek (neither has
+    // called `noteFire` yet) — before the fix, both in-flight checks resolving positive each posted their
+    // own hint. `check` here never resolves on its own; the test holds both promises open simultaneously
+    // and controls exactly when each settles, which a fixed-value mock (`async () => true`) cannot do.
+    const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    const focus = makeFocusChannel();
+    const resolvers: Array<(v: boolean) => void> = [];
+    const check = vi.fn(() => new Promise<boolean>((resolve) => { resolvers.push(resolve); }));
+    const store = createNotificationStore();
+    const addSpy = vi.spyOn(store, "add");
+    const { unmount } = render(
+      <ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd="/" commandCatalog={[]}
+        readClipboardImage={async () => ({ kind: "none" })} checkClipboardImage={check}
+        onFocusChange={focus.onFocusChange} columns={() => 120} notifications={store} />,
+    );
+    await settle();
+    vi.useFakeTimers();
+    const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    try {
+      act(() => { focus.fire(true); });
+      await advance(CLIPBOARD_HINT_DEBOUNCE_MS);            // first probe starts; its check() is pending
+      expect(check).toHaveBeenCalledTimes(1);
+
+      act(() => { focus.fire(false); focus.fire(true); });  // blur/refocus WHILE the first check is still in flight
+      await advance(CLIPBOARD_HINT_DEBOUNCE_MS);            // second probe starts; ALSO pending — both cleared the pre-await peek
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(resolvers).toHaveLength(2);
+
+      // Both checks now confirm an image is present, in either order — settle them together.
+      await act(async () => { resolvers[0]!(true); resolvers[1]!(true); await vi.advanceTimersByTimeAsync(0); });
+      expect(addSpy).toHaveBeenCalledTimes(1);              // exactly one hint posted, not two
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
   it("first-keypress secondary trigger: with state still 'unknown' and no 1004 bytes ever seen, one keypress arms and the hint posts at 1000ms", async () => {
     const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
     const check = vi.fn(async () => true);
