@@ -54,9 +54,37 @@ fleet loops against cassettes; only new workload recordings spend tokens.
 | M0.5 | normalization spec + structural differ | ✅ self-corrected once (latency-telemetry hole found by M0.6, closed by `*_ms` pattern scrub) |
 | M0.6 | identical-code pair (real vs extracted) is normalized-identical on transcripts **and** emitted requests, across a plain turn and a 3-exchange Bash-tool turn | ✅ PASS |
 
-## Next (M1+)
+## M1 — cassette corpus (2026-08-24): 9/9 PASS
 
-Broaden the workload corpus (permissions, hooks, session resume, multi-turn,
-errors) recorded as cassettes, then begin strangler reimplementation: replace
-one module of the extracted payload at a time, gating every replacement on the
-full cassette suite staying green against `engine-real`.
+`m1/scenarios.ts` + `m1/run.ts`: each scenario is one behavioral claim, graded
+on three surfaces (SDK transcripts, harness-side events, requests emitted) plus
+a **substance check** — an assertion that the scenario actually exercised the
+behavior it claims. The substance check exists because the first
+permission-broker scenario passed hollowly: default mode auto-approves
+read-only Bash commands *without consulting canUseTool*, so both engines
+agreed on an empty event log. Two engines agreeing on nothing still diff as
+identical; only an assertion catches that.
+
+```sh
+npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
+```
+
+| scenario | claim |
+|---|---|
+| plain | single no-tool turn |
+| bash-tool | one Bash execution round-trip |
+| file-tools | Write then Read in the sandbox |
+| permission-broker | default-mode canUseTool consult; a Write is denied (read-only Bash is auto-approved WITHOUT consult — mutating tools force the broker) |
+| hooks | PreToolUse + PostToolUse fire around Bash |
+| multi-turn | two user messages over one streaming-input session (pushable input waits for each result) |
+| resume | second query resumes the first query's session; codeword survives |
+| api-error | nonexistent model → SDK-level throw (captured as reforge-exception) |
+| thinking | adaptive thinking streams a thinking block (task must be hard — sonnet-5 adaptive SKIPS thinking on trivial prompts; 17×23 recorded zero blocks) |
+
+## Next (M2+)
+
+Extend the corpus toward the surfaces ccx actually consumes (subagents,
+MCP, compaction, slash commands, session-store CRUD), then begin strangler
+reimplementation: replace one module of the extracted payload at a time,
+gating every replacement on the full cassette suite staying green against
+`engine-real`.
