@@ -42,6 +42,11 @@ function fakePng(width: number, height: number, totalBytes = 64): Buffer {
 function imageBlock(buf: Buffer, mediaType = "image/png"): UserContentBlock {
   return { type: "image", source: { type: "base64", media_type: mediaType, data: buf.toString("base64") } };
 }
+/** GIF87a/GIF89a: 6-byte tag, then logical screen width/height as two LE uint16s at bytes 6-10.
+ *  Mirrors `imageDims.test.ts`'s own builder. */
+function gifHeader(w: number, h: number, tag = "GIF89a"): Buffer {
+  const b = Buffer.alloc(13); b.write(tag, 0, "ascii"); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b;
+}
 
 /** A session we drive by hand: EACH `submit()` call captures its content and rebinds `emit`/`finish` to
  *  THAT turn, so sequential turns (busy → drain, or a follow-up submit after release) are supported —
@@ -409,6 +414,26 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
       // Nothing survived to stage at all — the wire `prompt` carries pure text (no images claim), so the
       // host never enters `assembleStagedContent` and the turn's content is the plain string it always was.
       expect(session.submittedContents[0]).toBe("hi[Image could not be processed: unreadable image data]");
+    } finally { adapter.detach(); await stopQuietly(host); stageSpy.mockRestore(); }
+  });
+
+  it("bl4 T-GIFWEBP: GIF/WebP no longer degrade client-side — they stage and reach the host normally", async () => {
+    const session = drivable();
+    const { host, path } = await startHost(session);
+    const adapter = remoteChatSession(path);
+    const stageSpy = vi.spyOn(RemoteChatSession.prototype, "stageImageOp");
+    try {
+      const gif = gifHeader(4, 4);
+      const content: UserTurnInput = [{ type: "text", text: "hi" }, imageBlock(gif, "image/gif")];
+      const submitPromise = adapter.submit(content, () => {});
+      await waitFor(() => session.submittedContents.length === 1);
+      session.emit({ type: "assistant", n: 1 });
+      session.finish({ result: "ok" });
+      await submitPromise;
+      expect(stageSpy).toHaveBeenCalledTimes(1);
+      const assembled = session.submittedContents[0] as UserContentBlock[];
+      expect(assembled[0]).toEqual({ type: "text", text: "hi" });
+      expect(assembled[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/gif", data: gif.toString("base64") } });
     } finally { adapter.detach(); await stopQuietly(host); stageSpy.mockRestore(); }
   });
 

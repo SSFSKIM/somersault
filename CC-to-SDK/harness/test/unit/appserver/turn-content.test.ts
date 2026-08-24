@@ -37,6 +37,19 @@ const fixture = (name: string): Buffer => readFileSync(join(FIXTURES_DIR, name))
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const waitFor = (pred: () => boolean) => vi.waitFor(() => { if (!pred()) throw new Error("condition not yet true"); }, { timeout: 2000 });
 
+/** GIF87a/GIF89a: 6-byte tag, then logical screen width/height as two LE uint16s at bytes 6-10.
+ *  Mirrors `imageDims.test.ts`'s own builder. */
+const gifHeader = (w: number, h: number, tag = "GIF89a") => {
+  const b = Buffer.alloc(13); b.write(tag, 0, "ascii"); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b;
+};
+/** WebP lossless (VP8L): RIFF/WEBP/"VP8L" chunk headers, then the 0x2f signature byte, then width-1/
+ *  height-1 packed as 14 bits each into a little-endian 28-bit field. Mirrors `imageDims.test.ts`. */
+const webpVp8l = (w: number, h: number) => {
+  const b = Buffer.alloc(25); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(17, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8L", 12, "ascii"); b.writeUInt32LE(5, 16); b[20] = 0x2f;
+  b.writeUInt32LE((w - 1) & 0x3fff | (((h - 1) & 0x3fff) << 14), 21); return b;
+};
+
 /** A minimal request/response JSON-RPC test client over an in-process connection — the same shape the
  *  live suites' `RpcClient` uses, shrunk to what this file needs: notifications are not consumed (no
  *  test here asserts on one), and a rejection carries `code` so the skew/capability/fleet/queue cells can
@@ -205,11 +218,18 @@ describe("I3d: the positive end-to-end JSON-RPC cell", () => {
 
   it("a media type outside the allowlist is refused at the first chunk, and nothing is staged", async () => {
     const { client, registry } = await realPeerPair();
-    for (const mediaType of ["image/gif", "image/webp"]) {
-      await expect(client.call("image/stage", { stageId: mediaType, seq: 0, last: true, bytesTotal: 4, mediaType, data: "AAAA" }))
-        .rejects.toThrow(/needs a mediaType in/);
-    }
+    await expect(client.call("image/stage", { stageId: "image/tiff", seq: 0, last: true, bytesTotal: 4, mediaType: "image/tiff", data: "AAAA" }))
+      .rejects.toThrow(/needs a mediaType in/);
     expect(registry.stats()).toMatchObject({ stageCount: 0, stagedBytes: 0 });
+  });
+
+  it("bl4 T-GIFWEBP: image/gif and image/webp now stage and reach the engine over the wire", async () => {
+    const { client, engine, threadId } = await realPeerPair();
+    await stageWhole(client, "g", gifHeader(4, 4), "image/gif");
+    await stageWhole(client, "w", webpVp8l(4, 4), "image/webp");
+    await client.call("turn/startContent", { threadId, text: "gw", stagedImageIds: ["g", "w"] });
+    await waitFor(() => engine.contents.length === 1);
+    expect(engine.contents[0].slice(1).map((b: any) => b.source.media_type)).toEqual(["image/gif", "image/webp"]);
   });
 });
 
@@ -221,7 +241,7 @@ describe("I3d: first-chunk mediaType enforcement, over the wire", () => {
 
   it("outside IMAGE_MEDIA_TYPES is refused", async () => {
     const { client } = await realPeerPair();
-    await expect(client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/webp", data: "AAAA" })).rejects.toThrow(/needs a mediaType in/);
+    await expect(client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/tiff", data: "AAAA" })).rejects.toThrow(/needs a mediaType in/);
   });
 
   it("present on a later chunk is ignored — the first chunk's mediaType wins", async () => {
