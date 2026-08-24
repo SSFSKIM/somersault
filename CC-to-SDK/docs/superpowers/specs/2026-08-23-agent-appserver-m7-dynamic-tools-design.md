@@ -259,6 +259,10 @@ Keyed (quota-gated — after 2026-08-26 1pm):
 
 ## Surprises & Discoveries
 
+- **The protocol layer, not our handler, decides what `__proto__` survives (T6, measured).** The pinned MCP SDK parses every request before any handler runs, and its `CallToolRequest` arguments record rebuild DROPS a `__proto__` own key (a null-prototype object arrives with the key gone). The park-the-validated-original rule (never zod's parse output) stands as the contract — but its observable discriminator today is caller key ORDER, which the protocol parse preserves and zod v4's loose-object output re-orders (declared keys first). The exchange suite pins the rule via key order and carries a labelled bound row asserting the upstream strip, so an SDK bump that starts preserving the key surfaces there.
+- **A root `type: "object"` omission is namespace-lethal at advertisement (T6).** MCP's `ToolSchema` requires the literal; verbatim advertisement passes the omission through and a strict client rejects the entire `tools/list`, disabling every sibling tool. Decision: refuse at declaration time in `validateDeclarations` (-32602 naming the tool), enforced in Task 7; the T1 converter stays a permissive subset.
+- **An unsettled park holds the MCP caller for the transport's request timeout (T6, informational for T9).** The MCP SDK's default request timeout is 60 s; the agent SDK's `MCP_TOOL_TIMEOUT` is effectively unbounded in production, so the bound matters only to tests (the exchange rows pass explicit short timeouts).
+
 - **Rev 1 had the deferLoading polarity backwards** — the SDK's deferred-by-default and Codex's
   direct-by-default pull opposite ways, and only reading Codex's serde default settles which side a
   Codex-compatible client expects.
