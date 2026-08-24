@@ -871,7 +871,13 @@ to the occupied-name check: the occupied set is only what the request can see �
 map plus the injected names — while `settingSources` may bring in project- or user-level servers this server
 never enumerates. A declared namespace colliding with one of those is admitted, and which spread wins inside
 the SDK is unmeasured. Same class as the residual `INJECTED_SERVER_NAMES` closes for our own names, and a
-published bound rather than a refusal, since declaration time cannot enumerate them.
+published bound rather than a refusal, since declaration time cannot enumerate them. (e) **Single execution
+is the CLIENT's contract, not the server's.** `tool/callRequested` goes to EVERY subscriber and the first
+`tool/callResult` settles the call, so several subscribers that each run a non-idempotent tool all run it
+and the losers hear `-33002 ALREADY_SETTLED` once the side effect has already happened. The server cannot
+prevent that: it does not know which subscriber hosts the client's tool runtime, and a lease protocol would
+be a wire redesign. Executing clients must coordinate among themselves — the same property the decisions
+surface has, where a broadcast `decision/requested` is likewise settled by whoever answers first.
 
 **API stability, one line, deliberately conventional:** `initialize`'s newly registered result schema is
 `additionalProperties: false`, so once a client pins the generated artifact and validates strictly, any

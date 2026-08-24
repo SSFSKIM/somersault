@@ -18,12 +18,23 @@ import { MAX_TOOL_DESCRIPTION_CHARS } from "../dynamicTools.js";
 // conversion drops refinements, so the artifact a generated client validates against would not gain the
 // check either.
 const toolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
+/** CODE POINTS, NOT UTF-16 UNITS — `schemaToZod.ts`'s house rule, on the wire's own side of the same
+ *  fence. draft-07 counts `maxLength` in Unicode code points, so the published `maxLength: 2000` admits
+ *  2,000 emoji (4,000 UTF-16 units) while a zod `.max(2_000)` refuses them: the server would reject a
+ *  description its own artifact tells clients to send. The bound is therefore a `.refine` over
+ *  `[...v].length`, and `.meta()` republishes the keyword the refinement no longer emits — zod v4 merges
+ *  a schema's registry metadata into `z.toJSONSchema`'s output verbatim (measured), so the artifact keeps
+ *  the same `{"type":"string","maxLength":2000}` bytes while the runtime counts what draft-07 counts. */
+const toolDescription = z
+  .string()
+  .refine((value) => [...value].length <= MAX_TOOL_DESCRIPTION_CHARS, `must be at most ${MAX_TOOL_DESCRIPTION_CHARS} characters`)
+  .meta({ maxLength: MAX_TOOL_DESCRIPTION_CHARS });
 /** Children are TAGGED (`type: "function"`) inside a namespace too — Codex's own
  *  `DynamicToolNamespaceTool` spells them that way, so a canonical Codex declaration cross-parses here. */
 const dynamicToolFunction = z.object({
   type: z.literal("function"),
   name: toolName,
-  description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+  description: toolDescription,
   // RAW JSON Schema, carried verbatim: it is advertised to the model's MCP client exactly as declared
   // (dynamicServers.ts), and every constraint on what may be in it — bytes, depth, nodes, the convertible
   // keyword subset, the required object root — is semantics.
@@ -35,7 +46,9 @@ export const dynamicToolSpec = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("namespace"),
     name: toolName,
-    description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+    // The SAME bound object as a function's, so the namespace half can never drift into UTF-16 counting
+    // while the child half counts code points.
+    description: toolDescription,
     // `.min(1)`: an empty namespace takes a real MCP server slot and publishes nothing into it — a server
     // the model is told about and can never call. Refused as a shape because "this array is empty" needs
     // nothing but the request to decide.

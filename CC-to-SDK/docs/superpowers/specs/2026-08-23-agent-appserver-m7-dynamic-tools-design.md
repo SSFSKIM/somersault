@@ -40,6 +40,13 @@ realistically hit; beyond it, provenance does not exist on the MCP path. Media U
 `tool/callResult` are deliberately NOT schema-validated: a malformed data: URL must reach the
 conversion layer and settle the call `isError` rather than die `-32602` with the call still parked.
 
+**A second published bound (final review, round 3):** `tool/callRequested` is broadcast to every
+subscriber and the FIRST `tool/callResult` settles the call, so multiple subscribers that each execute a
+non-idempotent tool all execute it and the losers hear `-33002 ALREADY_SETTLED` after the fact. Single
+execution is therefore the client's contract, not the server's: the server cannot know which subscriber
+hosts the tool runtime, and a lease protocol would be a wire redesign for a property the decisions surface
+already publishes the same way (`decision/requested` is broadcast and first-answer-wins too).
+
 A typed param BESIDE `config`, so the config identity guard is untouched — and so the declarations are
 **never part of config at all**: they live in dedicated thread state (below), which is what keeps
 `review/start`'s config inheritance and the `extraOptions` merge structurally unable to carry or

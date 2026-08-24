@@ -118,6 +118,19 @@ describe("jsonSchemaToZod — root keyword refusals", () => {
     expect(refusal({ type: "object", required: ["b"] })).toBe("required:b not in properties");
   });
 
+  it("refuses a repeated required entry, naming the property", () => {
+    // draft-07 pins `required` to unique items, and the declared schema is advertised VERBATIM — ajv
+    // refuses the whole document at compile time ("data/required must NOT have duplicate items"), so a
+    // duplicate kills the namespace's entire tools/list rather than one keyword. The conversion itself is
+    // untroubled by it, which is exactly why the refusal has to be written down.
+    expect(refusal({ type: "object", properties: { a: { type: "string" } }, required: ["a", "a"] })).toBe(
+      "required:a duplicated",
+    );
+    // The dangling check still runs FIRST on a name that is both repeated and undeclared — a client that
+    // named a property it never declared hears about that, not about having named it twice.
+    expect(refusal({ type: "object", properties: {}, required: ["b", "b"] })).toBe("required:b not in properties");
+  });
+
   it("refuses a non-object root type", () => {
     expect(refusal({ type: "array", items: { type: "string" } })).toBe("type:array");
   });

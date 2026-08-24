@@ -1262,6 +1262,14 @@ describe("M7 the declaration on the wire — the semantic gate answers, naming t
       specs: [fn("choosy", { inputSchema: { type: "object", oneOf: [{ type: "object" }] } })],
       message: 'tool "choosy": unsupported inputSchema: oneOf',
     },
+    {
+      // draft-07 pins `required` to unique items, and the schema is advertised VERBATIM — a duplicate
+      // makes a standards-validating consumer refuse the whole tools/list document, so the thread would
+      // start and the namespace would be dead. Refused HERE, at declaration, naming the property.
+      label: "a schema whose required repeats a property",
+      specs: [fn("dup", { inputSchema: { type: "object", properties: { a: { type: "string" } }, required: ["a", "a"] } })],
+      message: 'tool "dup": unsupported inputSchema: required:a duplicated',
+    },
   ];
 
   for (const { label, specs, config, message } of cases) {
@@ -1330,6 +1338,22 @@ describe("M7 the declaration on the wire — the shape gate", () => {
       expect(srv.registry.list()).toEqual([]);
     });
   }
+
+  it("counts a description in CODE POINTS, the unit its published maxLength is counted in", async () => {
+    // THE ASTRAL ROW. draft-07 counts `maxLength` in Unicode code points, so a client validating against
+    // the published `maxLength: 2000` sends 2,000 emoji — 4,000 UTF-16 units — and a zod `.max()` would
+    // refuse what the artifact told it to send. Both halves of the union carry the same bound, so the
+    // namespace description is asserted beside the function one.
+    const astral = "\u{1F600}".repeat(MAX_TOOL_DESCRIPTION_CHARS);
+    expect(astral.length).toBe(MAX_TOOL_DESCRIPTION_CHARS * 2); // …and the fixture really is over in units.
+    const { start } = await bootWire();
+    expect((await start({ dynamicTools: [fn("lookup", { description: astral })] })).error).toBeUndefined();
+    expect((await start({ dynamicTools: [nsOf("ops"), { type: "namespace", name: "wide", description: astral, tools: [fn("a")] }] })).error).toBeUndefined();
+    // One code point over is still refused, on both halves — the cap moved units, not position.
+    const over = `${astral}\u{1F600}`;
+    expect((await start({ dynamicTools: [fn("lookup", { description: over })] })).error.message).toBe("Invalid params");
+    expect((await start({ dynamicTools: [{ type: "namespace", name: "wide", description: over, tools: [fn("a")] }] })).error.message).toBe("Invalid params");
+  });
 
   it("the 64-character boundary itself is legal — the shape refuses one over, not the cap", async () => {
     const { start } = await bootWire();

@@ -292,6 +292,18 @@ describe("validateDeclarations — the per-tool schema caps", () => {
     const message = refusal([fn("choosy", { oneOf: [{ type: "object" }] })]);
     expect(message).toBe('tool "choosy": unsupported inputSchema: oneOf');
   });
+
+  it("refuses a required array that repeats a property, naming the property", () => {
+    // The advertisement harm the converter's own rule catches: draft-07 pins `required` to unique items,
+    // the declared schema is advertised VERBATIM, and ajv refuses the DOCUMENT rather than the keyword
+    // (measured: "schema is invalid: data/required must NOT have duplicate items", strict and non-strict
+    // alike). So the thread would start, the namespace would advertise, and every tool in it would vanish
+    // from a standards-validating client's view. This refusal lands at declaration instead.
+    const schema = { type: "object", properties: { a: { type: "string" } }, required: ["a", "a"] };
+    expect(refusal([fn("dup", schema)])).toBe('tool "dup": unsupported inputSchema: required:a duplicated');
+    // The same names, declared once each, are an ordinary tool.
+    accepted([fn("fine", { type: "object", properties: { a: { type: "string" } }, required: ["a"] })]);
+  });
 });
 
 // THE ADVERTISEMENT CONSTRAINTS (T6 discoveries). Both are things the CONVERTER happily accepts and a real

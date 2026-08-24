@@ -30,6 +30,7 @@
 //   `minLength: not applicable to type:number`      a constraint declared against the wrong type
 //   `minLength/maxLength: inconsistent range`       min > max, either kind
 //   `required:b not in properties`           a dangling required entry, naming the entry
+//   `required:b duplicated`                  a required entry repeated, naming the entry
 // Field keywords are named BARE, not path-qualified (`pattern`, not `properties.a.pattern`) — the
 // exception is a property whose whole schema is not an object, where the property IS the offender.
 //
@@ -284,8 +285,19 @@ function convertRoot(schema: Record<string, unknown>): ConvertResult {
       return refuse("required: unsupported shape");
     }
     requiredNames = required as string[];
+    // draft-07's metaschema pins `required` to UNIQUE items. A repeat converts here without complaint —
+    // the zod shape it produces is identical — but the declared schema is ADVERTISED VERBATIM, and a
+    // standards-validating consumer refuses the document rather than the keyword: ajv throws
+    // "schema is invalid: data/required must NOT have duplicate items" at COMPILE time, in strict and
+    // non-strict mode alike (measured), so the whole `tools/list` response is rejected and every
+    // well-formed sibling in that namespace disappears while the server goes on serving them. Same class
+    // of harm as the missing root `type:"object"`, and refused in the same place: at declaration, where
+    // the client can still fix it, naming the property it repeated.
+    const seen = new Set<string>();
     for (const name of requiredNames) {
       if (!Object.prototype.hasOwnProperty.call(declared, name)) return refuse(`required:${name} not in properties`);
+      if (seen.has(name)) return refuse(`required:${name} duplicated`);
+      seen.add(name);
     }
   }
 
