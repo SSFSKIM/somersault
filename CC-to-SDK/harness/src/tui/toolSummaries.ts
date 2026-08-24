@@ -297,14 +297,22 @@ function skillRows(event: ToolEvent): readonly RenderLine[] | undefined {
 /** Upstream `pyH` (L421872): at most two physical lines, then a hard 160-character clip, then a trim — and the
  *  `…` is added by the CALLER only when that clip actually removed something. */
 const TASKSTOP_LINES = 2, TASKSTOP_WIDTH = 160;
-function taskStopRows(event: ToolEvent, options: ProjectionOptions): readonly RenderLine[] | undefined {
+/** `clickable` (bl4 fix-wave finding 2, P2): computed AS-IF COMPACT, exactly like `bashRows`' own predicate —
+ *  independent of `options.verbose` — because the clip that hides text here is the SAME real, live truncation
+ *  a clicked-open header must be able to reveal (`options.verbose ? command : compactClip` below shows the
+ *  whole command under `detail-all`, ctrl+o's own unbounded form), not a fixed-shape sentence with nothing
+ *  behind it. The doc comment on `summaryLines` below is corrected to match: TaskStop is NOT one of the
+ *  fixed-shape, never-clip producers it used to list.
+ */
+function taskStopRows(event: ToolEvent, options: ProjectionOptions): { lines: readonly RenderLine[]; clickable: boolean } | undefined {
   const command = str(callSidecar(event)?.command);
   if (command === undefined) return undefined;
-  // Upstream `X3p` (L421884) clips only when NOT verbose — the ctrl+o form shows the whole command (t5 review).
   const lines = command.split("\n");
-  const clipped = options.verbose ? command : (lines.length > TASKSTOP_LINES ? lines.slice(0, TASKSTOP_LINES).join("\n") : command).slice(0, TASKSTOP_WIDTH).trim();
+  const compactClip = (lines.length > TASKSTOP_LINES ? lines.slice(0, TASKSTOP_LINES).join("\n") : command).slice(0, TASKSTOP_WIDTH).trim();
+  // Upstream `X3p` (L421884) clips only when NOT verbose — the ctrl+o form shows the whole command (t5 review).
+  const clipped = options.verbose ? command : compactClip;
   const rows = clipped.split("\n");
-  return rows.map((text, i) => (i === rows.length - 1 ? row(plain(`${text}${clipped !== command ? "…" : ""} · stopped`)) : row(plain(text))));
+  return { lines: rows.map((text, i) => (i === rows.length - 1 ? row(plain(`${text}${clipped !== command ? "…" : ""} · stopped`)) : row(plain(text)))), clickable: compactClip !== command };
 }
 function worktreeRows(event: ToolEvent): readonly RenderLine[] | undefined {
   const s = callSidecar(event);
@@ -367,16 +375,19 @@ function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, opti
 /** `undefined` means "no typed row — use the existing body path". The caller has already handled `running`,
  *  `interrupted` and `rejected`; `error` and `suppressed` deliberately fall through to it too.
  *
- *  `clickable` (T-CLICKGATE Task 1 fix wave) is `false` for every builder here except `bashRows` — the
- *  inventory: `readRows`/`editRows`/`writeRows`/`planModeRows` never call a fold at all (`Read N lines` etc.
- *  is the whole row); `searchRows`/`webFetchRows`/`taskOutputRows`'s `local_agent`/`remote_agent` arms gate
- *  their raw-body dump behind the REAL `detail-all` projection, where `foldToolOutput` is unbounded and never
- *  hides a row — compact shows no body for these at all (a one-line hint instead), so neither projection ever
- *  produces a compact-hidden state; `webSearchRows`/`skillRows`/`taskStopRows`/`worktreeRows` are fixed-shape
- *  sentences with no fold in them anywhere. Only `bashRows` (and `taskOutputRows`'s `local_bash` arm, which
- *  reuses it) folds stdout/stderr under the projection ACTUALLY being rendered, so it is the one typed
- *  producer that can show a real, live truncation marker in compact today — and the one that needs the
- *  as-if-compact predicate threaded up to the mint site in `toolRenderer.resultBody`. */
+ *  `clickable` (T-CLICKGATE Task 1 fix wave, corrected by the bl4 fix-wave finding 2) is `false` for every
+ *  builder here except `bashRows` and `taskStopRows` — the inventory: `readRows`/`editRows`/`writeRows`/
+ *  `planModeRows` never call a fold at all (`Read N lines` etc. is the whole row); `searchRows`/`webFetchRows`/
+ *  `taskOutputRows`'s `local_agent`/`remote_agent` arms gate their raw-body dump behind the REAL `detail-all`
+ *  projection, where `foldToolOutput` is unbounded and never hides a row — compact shows no body for these at
+ *  all (a one-line hint instead), so neither projection ever produces a compact-hidden state;
+ *  `webSearchRows`/`skillRows`/`worktreeRows` are fixed-shape sentences with no fold in them anywhere.
+ *  `bashRows` (and `taskOutputRows`'s `local_bash` arm, which reuses it) folds stdout/stderr, and
+ *  `taskStopRows` clips its command to two lines/160 chars, BOTH under the projection ACTUALLY being
+ *  rendered — so both are typed producers that can show a real, live truncation marker in compact, and both
+ *  need the as-if-compact predicate threaded up to the mint site in `toolRenderer.resultBody`. (Finding 2:
+ *  `taskStopRows` used to be wrapped in `notClickable` below despite clipping exactly like `bashRows` does —
+ *  the old doc paragraph here listed it among the fixed-shape sentences in error.) */
 export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { lines: readonly RenderLine[]; clickable: boolean } | undefined {
   if (normalized.status !== "success") return undefined;
   const input = isRecord(event.input) ? event.input : {};
@@ -391,7 +402,7 @@ export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult,
     case "WebFetch": return notClickable(webFetchRows(event, options));
     case "WebSearch": return notClickable(webSearchRows(event));
     case "Skill": return notClickable(skillRows(event));
-    case "TaskStop": return notClickable(taskStopRows(event, options));
+    case "TaskStop": return taskStopRows(event, options);
     case "EnterPlanMode": return { lines: planModeRows(options), clickable: false };
     case "EnterWorktree": case "ExitWorktree": return notClickable(worktreeRows(event));
     case "TaskOutput": return taskOutputRows(event, normalized, options);

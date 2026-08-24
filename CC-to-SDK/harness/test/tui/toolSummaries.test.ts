@@ -275,6 +275,17 @@ describe("F3 typed result rows — the remaining census tools", () => {
     // t5 review: upstream `X3p` clips only when NOT verbose — the ctrl+o form carries the whole command.
     expect(one(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "a\nb\nc" }), "detail-all")).toBe("a\nb\nc · stopped");
   });
+  // bl4 fix-wave finding 2 (P2): a TaskStop whose command the compact clip actually shortens carries
+  // `clickable: true` on its typed row — projection-INDEPENDENT, mirroring `bashRows`' as-if-compact
+  // predicate — so click-to-expand can reveal the hidden text; a command the clip never touches carries none.
+  it("carries clickable on its typed row exactly when the compact clip would shorten the command", () => {
+    expect(clickable(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "a\nb\nc" }))).toBe(true);
+    expect(clickable(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "x".repeat(200) }))).toBe(true);
+    expect(clickable(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "npm test" }))).toBeFalsy();
+    // Projection-independent: the detail-all form renders the whole command, but the predicate still asks
+    // "would COMPACT clip this", so it stays true even while the currently-painted row shows every line.
+    expect(clickable(eventFor("TaskStop", { task_id: "t" }, "ok", { command: "a\nb\nc" }), "detail-all")).toBe(true);
+  });
   it("renders the plan-mode pair and the two worktree rows", () => {
     const plan = rows(eventFor("EnterPlanMode", {}, "ok"))!;
     expect(plan.map((l) => l.text)).toEqual(["⏺ Entered plan mode", "  Claude is now exploring and designing an implementation approach."]);
