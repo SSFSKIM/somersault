@@ -784,9 +784,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
       clipboardHintTimerRef.current = null;
       void (async () => {
         if (!readClipboardImageRef.current) return;                      // no paste path — nothing this hint could offer
-        if (!clipboardHintModelRef.current!.shouldFire(Date.now())) return;  // throttled — and the clock does NOT advance
+        if (clipboardHintModelRef.current!.throttled(Date.now())) return;   // throttled — skip the probe entirely, clock untouched
         const check = checkClipboardImageRef.current ?? (() => hasClipboardImage(process.platform, defaultCheckOnlyProcess()));
-        if (!(await check())) return;                                    // no image on the clipboard — silent, canon's own contract
+        if (!(await check())) return;                 // no image on the clipboard — silent, and NEVER arms the throttle (review finding P2)
+        clipboardHintModelRef.current!.noteFire(Date.now());              // a genuine fire — record it now, right before posting
         storeRef.current.add({
           key: CLIPBOARD_HINT_KEY, text: imageInClipboardText(bindings("chat:imagePaste")),
           priority: "immediate", timeoutMs: CLIPBOARD_HINT_TIMEOUT_MS,

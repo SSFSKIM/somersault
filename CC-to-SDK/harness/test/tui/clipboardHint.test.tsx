@@ -58,25 +58,26 @@ describe("createClipboardHintModel (I6, pure)", () => {
     expect(byFocusReport.onKeypress()).toBe("none");
   });
 
-  it("shouldFire: true with no prior fire, and fires with no debounce/throttle logic of its own — that is the caller's job", () => {
+  it("throttled: false with no prior fire, and carries no debounce logic of its own — that is the caller's job", () => {
     const m = createClipboardHintModel();
-    expect(m.shouldFire(0)).toBe(true);
+    expect(m.throttled(0)).toBe(false);
   });
 
-  it("the throttle window: within 30_000ms of a fire posts nothing; at 30_001ms it posts", () => {
+  it("the throttle window: within 30_000ms of a noted fire reads throttled; at 30_001ms it is clear", () => {
     const m = createClipboardHintModel();
-    expect(m.shouldFire(1000)).toBe(true);                                          // the first fire, at t=1000
-    expect(m.shouldFire(1000 + CLIPBOARD_HINT_THROTTLE_MS)).toBe(false);            // exactly 30_000ms later — still inside
-    expect(m.shouldFire(1000 + CLIPBOARD_HINT_THROTTLE_MS + 1)).toBe(true);         // 30_001ms later — clear
+    m.noteFire(1000);                                                               // the first fire, at t=1000
+    expect(m.throttled(1000 + CLIPBOARD_HINT_THROTTLE_MS)).toBe(true);              // exactly 30_000ms later — still inside
+    expect(m.throttled(1000 + CLIPBOARD_HINT_THROTTLE_MS + 1)).toBe(false);         // 30_001ms later — clear
   });
 
-  it("a suppressed attempt does not restart the throttle window", () => {
+  it("only `noteFire` moves the baseline — merely checking `throttled` never restarts the window (review finding P2)", () => {
     const m = createClipboardHintModel();
-    expect(m.shouldFire(0)).toBe(true);                   // fires at t=0 — the ONLY baseline the window is measured from
-    expect(m.shouldFire(10_000)).toBe(false);              // a suppressed attempt at t=10_000 — must NOT become the new baseline
-    // A buggy implementation that reset the timestamp on the suppressed attempt would answer `false` here
-    // (only 20_001ms since t=10_000); the correct answer measures from the ORIGINAL fire at t=0.
-    expect(m.shouldFire(CLIPBOARD_HINT_THROTTLE_MS + 1)).toBe(true);
+    m.noteFire(0);                                        // fires at t=0 — the ONLY baseline the window is measured from
+    expect(m.throttled(10_000)).toBe(true);               // a mere read at t=10_000 must NOT become the new baseline
+    // A buggy implementation that recorded a fire on every read (or on a suppressed downstream attempt)
+    // would answer `true` here (only 20_001ms since t=10_000); the correct answer measures from the
+    // ORIGINAL fire at t=0.
+    expect(m.throttled(CLIPBOARD_HINT_THROTTLE_MS + 1)).toBe(false);
   });
 });
 
@@ -149,7 +150,7 @@ describe("ChatComposer — the ambient clipboard hint wiring (I6)", () => {
       await advance(CLIPBOARD_HINT_DEBOUNCE_MS);                    // first fire
       expect(check).toHaveBeenCalledTimes(1);
       // A blur/refocus cycle well inside the 30s window: the debounce arms again, but the throttle eats the
-      // attempt before the check is ever invoked (`shouldFire` gates it — see `armClipboardHint`). The exact
+      // attempt before the check is ever invoked (`throttled` gates it — see `armClipboardHint`). The exact
       // 30_000/30_001ms boundary is pinned precisely at the pure-model level above; this composer-level cell
       // only has to prove the wiring end to end, with margin either side of it.
       await advance(4000);                                          // nothing pending — the clock alone moves
@@ -200,6 +201,38 @@ describe("ChatComposer — the ambient clipboard hint wiring (I6)", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(CLIPBOARD_HINT_DEBOUNCE_MS); });
       expect(check).toHaveBeenCalledTimes(1);
       expect(frame(lastFrame)).not.toContain("Image in clipboard");
+    } finally { vi.useRealTimers(); unmount(); }
+  });
+
+  it("F10 fix-wave review finding P2: a no-image check does not consume the throttle window — copying an image and refocusing within 30s still fires", async () => {
+    // Reproduces the finding exactly: focus-in with an EMPTY clipboard (check resolves false, nothing
+    // posts) must not itself start the 30s throttle clock. A blur/refocus soon after — well inside 30s,
+    // once the user has actually copied an image — must still be able to fire. Before the fix, `shouldFire`
+    // was consulted (and its clock advanced) BEFORE the check ran, so this second, genuinely-positive
+    // attempt was silently swallowed by the throttle the first, negative attempt should never have armed.
+    const editorStateRef = { current: initialEditorState() } as React.MutableRefObject<EditorState>;
+    const focus = makeFocusChannel();
+    const check = vi.fn(async () => false);
+    const { lastFrame, unmount } = render(
+      <ChatComposer editorStateRef={editorStateRef} onSubmit={() => {}} cwd="/" commandCatalog={[]}
+        readClipboardImage={async () => ({ kind: "none" })} checkClipboardImage={check}
+        onFocusChange={focus.onFocusChange} columns={() => 120} />,
+    );
+    await settle();
+    vi.useFakeTimers();
+    const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    try {
+      act(() => { focus.fire(true); });
+      await advance(CLIPBOARD_HINT_DEBOUNCE_MS);          // first attempt — check runs, finds NOTHING
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(frame(lastFrame)).not.toContain("Image in clipboard");
+
+      check.mockImplementation(async () => true);          // the user has now copied an image
+      await advance(5000);                                  // well inside a 30s throttle window
+      act(() => { focus.fire(false); focus.fire(true); });
+      await advance(CLIPBOARD_HINT_DEBOUNCE_MS);
+      expect(check).toHaveBeenCalledTimes(2);               // the negative attempt never armed a throttle
+      expect(frame(lastFrame)).toContain("Image in clipboard");
     } finally { vi.useRealTimers(); unmount(); }
   });
 

@@ -38,10 +38,16 @@ export interface ClipboardHintModel {
    *  work in terminals that never send 1004 at all. Once focus state is known (by either route), an
    *  ordinary keypress arms nothing — it is just input. */
   onKeypress(): "arm" | "none";
-  /** True when the debounce elapsed and the throttle window is clear. Records the fire time itself — the
-   *  timestamp updates ONLY when a hint actually fires (canon), never on a suppressed attempt, so a fire
-   *  throttled away does not push the next real opportunity further out. */
-  shouldFire(nowMs: number): boolean;
+  /** READ-ONLY: true while inside the 30s throttle window since the last ACTUAL fire — never mutates.
+   *  The caller consults this before spending its check-only subprocess call, so a genuinely throttled
+   *  attempt never even probes the clipboard (review finding's own "check not called" contract). */
+  throttled(nowMs: number): boolean;
+  /** Records an actual fire's timestamp — call this ONLY once the check-only probe has confirmed an image
+   *  IS present and the notification is genuinely about to post, never before (review finding P2): calling
+   *  it any earlier — e.g. right after `throttled` clears, before the clipboard is even checked — lets a
+   *  check that finds NO image silently arm the throttle anyway, suppressing the next real opportunity for
+   *  the full 30s even though nothing was ever shown. Only a genuine fire resets the clock (canon). */
+  noteFire(nowMs: number): void;
   state(): FocusState;
 }
 
@@ -63,13 +69,12 @@ export function createClipboardHintModel(): ClipboardHintModel {
       focus = "focused";
       return "arm";
     },
-    shouldFire(nowMs) {
+    throttled(nowMs) {
       // `<=`, not `<`: a second opportunity exactly THROTTLE_MS after the last fire is still inside the
       // window that fire opened, and only the millisecond past it is clear (canon's own boundary).
-      if (lastFireMs !== null && nowMs - lastFireMs <= CLIPBOARD_HINT_THROTTLE_MS) return false;
-      lastFireMs = nowMs;
-      return true;
+      return lastFireMs !== null && nowMs - lastFireMs <= CLIPBOARD_HINT_THROTTLE_MS;
     },
+    noteFire(nowMs) { lastFireMs = nowMs; },
     state() { return focus; },
   };
 }
