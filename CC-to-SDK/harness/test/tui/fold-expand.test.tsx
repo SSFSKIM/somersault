@@ -14,16 +14,17 @@
 // in `projectPending`; once its last member settles there is no further blink and no further append, so a
 // toggle that re-projected only the finalized document would leave a live cluster collapsed with nothing
 // left to correct it. Cell (e) is that guard and it asserts against `pendingItems` alone.
-import React from "react";
+import React, { useRef, useState } from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
-import { projectCompact, projectPending, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectPending, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { wrapItem } from "../../src/tui/wrapItems.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import type { RenderLine } from "../../src/tui/render.js";
+import type { RendererChoice } from "../../src/tui/renderer.js";
 
 // The same fixture grammar `toolRenderer.test.tsx` uses, kept local so this file can be read on its own.
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
@@ -301,5 +302,132 @@ describe("T8 (f): a run that reorders at settlement keeps its anchor (E1)", () =
     const rows = groupRows(projectPending(grown, FS, live));
     expect(rows[0]!.id).toBe("group:read-2,read-1,read-3:unclosed-row");
     expect(rows[0]!.foldAnchor).toBe("read-1");
+  });
+});
+
+// ══ T-CLICKGATE Task 3 — `expandedItems`, the SEPARATE namespace beside `expandedFolds` ═══════════════════
+// A single clickable RESULT (T-CLICKGATE Task 1/2), not a fold cluster: keyed by `toolOwnerKey`, threaded as
+// `ProjectionOptions.expandedItems`, and re-projected by the SAME `reconcile()` a fold toggle uses.
+describe("T-CLICKGATE Task 3 (g): the row model — detail-all, banded, ONE padding row, and still clickable", () => {
+  const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+  const doc = () => built(call("e-1", "Mystery", {}), result("e-1", errorLines(12), true));
+
+  it("collapses to the ten-row clip with a marker when NOT expanded (the premise)", () => {
+    const block = projectCompact(doc(), FS).find((i) => i.kind === "gutter-block")!;
+    expect(block.body).toHaveLength(11);                              // 10 clipped rows + the marker
+    expect(block.body.at(-1)!.text).toMatch(/…\s*\+2 lines?/);
+    expect(block.clickable).toBe(true);
+  });
+
+  it("shows every line with no marker, a background band on every row, and one blank padding row, once its OWNER key is in the set", () => {
+    const ownerKey = projectCompact(doc(), FS).find((i) => i.kind === "gutter-block")!.ownerKey!;
+    const items = projectCompact(doc(), { ...FS, expandedItems: new Set([ownerKey]) });
+    const block = items.find((i) => i.kind === "gutter-block")!;
+    expect(block.body.map((l) => l.text)).toEqual([
+      "Error: err line 1", "err line 2", "err line 3", "err line 4", "err line 5",
+      "err line 6", "err line 7", "err line 8", "err line 9", "err line 10",
+      "err line 11", "err line 12", "",                               // the ONE padding row
+    ]);
+    expect(block.body.every((l) => l.bg !== undefined)).toBe(true);    // banded — REAL rows, not a wrapper pad
+    expect(block.clickable).toBe(true);                                // Task 1's as-if-compact bit survives
+    expect(block.expanded).toBe(true);                                 // hover suppressed (shared `expanded` field)
+    const header = items.find((i) => i.kind === "line" && i.id.endsWith(":header"))!;
+    expect(header.expanded).toBe(true);                                // the WHOLE owner, header included
+  });
+
+  it("an unrelated owner in the set never touches THIS one (no cross-item bleed)", () => {
+    const items = projectCompact(doc(), { ...FS, expandedItems: new Set(["tool:some-other-call:9"]) });
+    const block = items.find((i) => i.kind === "gutter-block")!;
+    expect(block.body).toHaveLength(11);                              // still clipped
+  });
+});
+
+type ItemHook = ReturnType<typeof useChat>;
+function mountItems(session: () => ChatSession): { api: { c?: ItemHook } } {
+  const api: { c?: ItemHook } = {};
+  function H() { const c = useChat(session, { cwd: "/work" }, { now: () => 0, columns: () => 100, rows: () => 40, home: "/home/me", platform: "darwin", isFullscreen: () => true }); api.c = c; return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>; }
+  render(<H />);
+  return { api };
+}
+const errBody = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+const gutterBlockOf = (c: ItemHook) => [...c.state.finalizedItems, ...c.state.pendingItems].find((i) => i.kind === "gutter-block")!;
+
+describe("T-CLICKGATE Task 3 (h)/(i): toggleItemExpand round-trips, and the set dies at the conversation boundary", () => {
+  it("toggleItemExpand(ownerKey) re-projects the finalized result, and a second call restores it", async () => {
+    const fake = fakeRemote();
+    const { api } = mountItems(() => fake);
+    await tick();
+    fake.pushEvent({ kind: "message", data: call("e-1", "Mystery", {}) });
+    fake.pushEvent({ kind: "message", data: result("e-1", errBody(12), true) });
+    await waitFor(() => api.c!.state.finalizedItems.some((i) => i.kind === "gutter-block"));
+    expect(gutterBlockOf(api.c!).body).toHaveLength(11);
+
+    const ownerKey = gutterBlockOf(api.c!).ownerKey!;
+    api.c!.toggleItemExpand(ownerKey);
+    await waitFor(() => gutterBlockOf(api.c!).body.length > 11);
+    expect(gutterBlockOf(api.c!).body.map((l) => l.text)).toContain("err line 12");
+
+    api.c!.toggleItemExpand(ownerKey);
+    await waitFor(() => gutterBlockOf(api.c!).body.length === 11);
+    expect(gutterBlockOf(api.c!).body.map((l) => l.text)).not.toContain("err line 12");
+  });
+
+  it("clears the expansion set at replaceDocument, so the next conversation opens collapsed", async () => {
+    const fake = fakeRemote();
+    const { api } = mountItems(() => fake);
+    await tick();
+    const conversation = [call("e-1", "Mystery", {}), result("e-1", errBody(12), true)];
+    for (const m of conversation) fake.pushEvent({ kind: "message", data: m });
+    await waitFor(() => api.c!.state.finalizedItems.some((i) => i.kind === "gutter-block"));
+    const ownerKey = gutterBlockOf(api.c!).ownerKey!;
+    api.c!.toggleItemExpand(ownerKey);
+    await waitFor(() => gutterBlockOf(api.c!).body.length > 11);
+
+    api.c!.clear();                                     // → replaceDocument, the one relevant reset site
+    await waitFor(() => api.c!.state.finalizedItems.length === 0);
+    // The SAME tool-use id comes back (a rebuilt transcript reuses it, which is exactly why the set must not
+    // survive the boundary) — and the result opens collapsed, not carrying the stale expansion over.
+    for (const m of conversation) fake.pushEvent({ kind: "message", data: m });
+    await waitFor(() => api.c!.state.finalizedItems.some((i) => i.kind === "gutter-block"));
+    expect(gutterBlockOf(api.c!).body).toHaveLength(11);
+  });
+});
+
+// ── T-CLICKGATE Task 3 (j): THE OTHER RESET SITE — a renderer flip closes every expanded result too ───────
+// `refoldFor`'s own doc (`useChat.ts`): the affordance that opens an owner is the fullscreen renderer's
+// alone, so leaving the set standing across a flip would carry an invisible expansion into a screen with no
+// way to close it. Driven through the SAME renderer-switch seam `tui-switch.test.tsx`'s own `refoldFor`
+// cell uses, kept local per this suite's own no-cross-file-test-import convention.
+describe("T-CLICKGATE Task 3 (j): an item expanded under fullscreen does not survive the flip back to classic", () => {
+  it("closes the result the moment the renderer leaves fullscreen", async () => {
+    const CLASSIC: RendererChoice = { mode: "classic", reason: "default_off" };
+    const FULLSCREEN: RendererChoice = { mode: "fullscreen", reason: "settings_on" };
+    const fake = fakeRemote();
+    let api: ItemHook | undefined;
+    function Probe() {
+      const [mode, setMode] = useState<"classic" | "fullscreen">("fullscreen");
+      const live = useRef(mode); live.current = mode;
+      const chat = useChat(() => fake, {
+        cwd: "/work", rendererChoice: FULLSCREEN,
+        selectRenderer: (tui) => (tui === "fullscreen" ? FULLSCREEN : CLASSIC),
+        switchRenderer: (tui) => { const choice = tui === "fullscreen" ? FULLSCREEN : CLASSIC; setMode(choice.mode); return choice; },
+      }, { rows: () => 24, columns: () => 100, home: "/home/me", platform: "darwin", now: () => 0,
+        isFullscreen: () => live.current === "fullscreen", savePrefs: () => {}, env: {} });
+      api = chat;
+      return <Text>x</Text>;
+    }
+    render(<Probe />);
+    await tick();
+    fake.pushEvent({ kind: "message", data: call("e-1", "Mystery", {}) });
+    fake.pushEvent({ kind: "message", data: result("e-1", errBody(12), true) });
+    await waitFor(() => api!.state.finalizedItems.some((i) => i.kind === "gutter-block"));
+    const ownerKey = gutterBlockOf(api!).ownerKey!;
+
+    api!.toggleItemExpand(ownerKey);                     // opens the result under fullscreen
+    await waitFor(() => gutterBlockOf(api!).body.length > 11);
+
+    api!.submit("/tui default");                         // the leaving arm: refoldFor(false) runs first
+    await tick(120);
+    expect(gutterBlockOf(api!).body).toHaveLength(11);    // clipped again — the expansion did not survive
   });
 });

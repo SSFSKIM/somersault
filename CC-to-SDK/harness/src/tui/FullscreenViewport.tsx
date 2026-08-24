@@ -120,6 +120,16 @@ export interface ViewportHitmap {
    *  gives them (`keys/types.ts`) — or `undefined` where nothing clickable is. Task 10 turns a press and a
    *  release on the same answer into a tap. */
   anchorAt(col: number, row: number): string | undefined;
+  /** T-CLICKGATE Task 3 — the click seam's OWN resolver, widened beyond `anchorAt`'s fold-only answer: a
+   *  STABLE SCALAR, `"fold:" + anchor` or `"item:" + ownerKey`, never `undefined` except where neither
+   *  applies. A scalar rather than an object because the tap machine (`ChatApp`) compares the press's and the
+   *  release's answer with `===` — two separately-built objects at the same cell would never match, while two
+   *  primitive strings built from the same characters always do (JS string equality is by value). `anchorAt`
+   *  itself is UNCHANGED (`fold-hitmap.test.tsx` pins its bare-anchor return): this is a second, additive
+   *  answer for the same painted row, not a replacement. A fold anchor wins at a cell that somehow wore both
+   *  (today the two never coexist on one row — `RenderItem`'s own doc — so this is a stated priority, not an
+   *  observed case). */
+  clickTargetAt(col: number, row: number): string | undefined;
   /** F9 T-MOUSE Task 3 — resolve a motion report's cell to the row-cluster's `itemKey` (same bound `anchorAt`
    *  uses: past the window or past a row's own painted width answers "hover nothing") and set it HOVERED for
    *  the next repaint. Owned here rather than duplicated as ChatApp state: the row list this resolves against
@@ -408,6 +418,18 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
     const at = painted[row - top];
     return at !== undefined && col >= 1 && col <= at.width ? at.anchor : undefined;
   }, []);
+  // T-CLICKGATE Task 3 — the click seam's own resolver (interface doc above). Reads the SAME `hit.current`
+  // row `anchorAt` does, off the same column bound, so the two never disagree about WHICH cell has anything
+  // at all — only about what to call it. A fold anchor is checked first: the two kinds never coexist on one
+  // row today, so the order is a stated priority rather than an observed conflict.
+  const clickTargetAt = useCallback((col: number, row: number): string | undefined => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) return undefined;
+    const at = painted[row - top];
+    if (at === undefined || col < 1 || col > at.width) return undefined;
+    if (at.anchor !== undefined) return "fold:" + at.anchor;
+    return at.clickable ? "item:" + at.ownerKey : undefined;
+  }, []);
   // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
   // click's own comparison, nothing else painting differently for it meanwhile) a hovered row IS the paint —
   // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
@@ -675,10 +697,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   }, [repaint, scroll]);
 
   useImperativeHandle(hitmapRef, () => ({
-    anchorAt, hoverAt, clearHover,
+    anchorAt, clickTargetAt, hoverAt, clearHover,
     startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
     moveSelectionFocus: moveFocus,
-  }), [anchorAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
+  }), [anchorAt, clickTargetAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no

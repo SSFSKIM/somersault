@@ -26,6 +26,7 @@ import type { ChatSession } from "../../src/tui/useChat.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
 import { SEARCH_PROMPT } from "../../src/tui/historySearchInline.js";
 import type { HostEvent } from "../../src/host/wire.js";
+import { themeTokens } from "../../src/tui/theme.js";
 
 const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 /** OSC-8 hyperlinks wrap a path tool's argument, so an expanded `Read(a.ts)` row is not contiguous text. */
@@ -43,8 +44,8 @@ const rowOf = (frame: string | undefined, text: string): number => {
 const sdk = (message: Record<string, unknown>): TranscriptBootstrapEntry => ({ kind: "sdk", source: "disk", message });
 const call = (id: string, name: string, input: unknown) =>
   sdk({ type: "assistant", parent_tool_use_id: null, uuid: `u-${id}`, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } });
-const result = (id: string, content = "body") =>
-  sdk({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: false }] } });
+const result = (id: string, content = "body", isError = false) =>
+  sdk({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } });
 const prose = (text: string, id: string) =>
   sdk({ type: "assistant", parent_tool_use_id: null, uuid: `up-${id}`, message: { id: `mp-${id}`, content: [{ type: "text", text }] } });
 
@@ -440,6 +441,100 @@ describe("T10: the classic renderer is BYTE-IDENTICAL under a burst of mouse rep
     await settle();
     expect(r.lastFrame()).toBe(before);                         // raw bytes, escapes included
     expect(openMembers(r.lastFrame())).toBe(0);
+    r.unmount();
+  });
+});
+
+// ══ T-CLICKGATE Task 3 — the click that expands a single tool-RESULT owner (not a fold cluster) ═══════════
+// The same tap machine T10 built, widened by `clickTargetAt` (`FullscreenViewport.tsx`) beyond the fold-only
+// answer `anchorAt` still gives (that method, and its own `fold-hitmap.test.tsx` pins, are UNCHANGED). Both
+// fixtures below are a single "Mystery" call between nothing else — a lone call forms no fold RUN at all
+// (`groupItems` needs a contiguous SEQUENCE to have anything to say), so these rows carry no `foldAnchor` and
+// exercise the OTHER half of `clickTargetAt`'s priority. `errorLines`/`foldableLines` and the tool name
+// mirror `hover-owner.test.tsx`'s own T-CLICKGATE Task 1 fixtures — the same two kinds `clickable` is minted
+// on — so this file is not inventing a third notion of "clickable" to test against.
+const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+const foldableLines = (n: number) => Array.from({ length: n }, (_, i) => `out line ${i + 1}`).join("\n");
+const LONG_ERROR_DOC: readonly TranscriptBootstrapEntry[] = [call("err-1", "Mystery", {}), result("err-1", errorLines(12), true)];
+const SHORT_ERROR_DOC: readonly TranscriptBootstrapEntry[] = [call("err-2", "Mystery", {}), result("err-2", errorLines(3), true)];
+const FOLDED_RESULT_DOC: readonly TranscriptBootstrapEntry[] = [call("r-1", "Mystery", {}), result("r-1", foldableLines(6), false)];
+const MARKER_RE = /…\s*\+\d+ lines?/;
+// The click lands on a CONTINUATION row (never the first), whose gutter is blank padding rather than the
+// `⎿`/`Error:` glyphs the first row wears — so its trimmed, escape-stripped text equals the fixture's own
+// plain line and `rowOf`'s exact-equality lookup finds it. Column 8 sits inside "err line N"/"out line N"'s
+// own text (the block's five-column gutter ends at column 5), never on the gutter itself.
+const BODY_COL = 8;
+/** `Line.tsx`'s literal 24-bit background escape for a theme token — `hover.test.tsx`'s own `sgrBg`, kept
+ *  local per this suite's own no-cross-file-test-imports convention (`hover-owner.test.tsx`'s header). */
+const sgrBg = (rgbToken: string): string => {
+  const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(rgbToken)!;
+  return `\x1b[48;2;${m[1]};${m[2]};${m[3]}m`;
+};
+const HOVER_BAND = sgrBg(themeTokens().userMessageBackgroundHover);
+
+describe("T-CLICKGATE Task 3 (a)/(b): a tap on a clickable ERROR result expands it in place, and a second tap collapses it byte-identically", () => {
+  it("reveals the clipped lines and the expanded band, then restores the ORIGINAL frame to the byte", async () => {
+    const r = await mount(LONG_ERROR_DOC);
+    const before = r.lastFrame();
+    expect(clean(before)).toMatch(MARKER_RE);
+    expect(clean(before)).not.toContain("err line 11");
+
+    // (a) — the marker is gone, both clipped lines are visible, and the expanded band is REAL painted rows
+    // (a raw-byte search finds the background escape), never a wrapper-level padding Ink cannot be asked
+    // whether it painted.
+    const bodyRow = rowOf(r.lastFrame(), "err line 2");
+    await tap(r, BODY_COL, bodyRow);
+    const expanded = clean(r.lastFrame());
+    expect(expanded).toContain("err line 11");
+    expect(expanded).toContain("err line 12");
+    expect(expanded).not.toMatch(MARKER_RE);
+    expect(r.lastFrame()).toContain(HOVER_BAND);
+
+    // (b) — a SECOND tap, on a row that only exists NOW that the block is open ("err line 11", one of the
+    // two lines the clip used to hide — the same "click a row unique to the open state" idiom (a)/(b)'s own
+    // fold-cluster ancestor uses via `memberRow()`, rather than re-clicking "err line 2"'s own cell: within
+    // the SAME multi-click window (spec's own `lastPressRef`, T9), a second press at the IDENTICAL cell and
+    // the IDENTICAL target is canon's own double-click, not a second toggle — a real difference from a fold
+    // cluster's collapse row, which always vanishes into different member rows the moment it opens; a single
+    // result's own rows above the clip point never move at all). Collapses the SAME block it opened, and the
+    // result is BYTE-IDENTICAL to the pre-click frame — C6's collapse-restores pin, reapplied to the new
+    // affordance.
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 11"));
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 3 (c): a tap on a clickable ORDINARY (non-error) result expands it too", () => {
+  it("reveals every line the compact fold hid and drops the fold marker", async () => {
+    const r = await mount(FOLDED_RESULT_DOC);
+    expect(clean(r.lastFrame())).not.toContain("out line 6");
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "out line 2"));
+    const expanded = clean(r.lastFrame());
+    expect(expanded).toContain("out line 4");
+    expect(expanded).toContain("out line 5");
+    expect(expanded).toContain("out line 6");
+    expect(expanded).not.toMatch(MARKER_RE);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 3 (d): a tap on a NON-clickable result (a ≤10-line error never clips) is a no-op", () => {
+  // Binding constraint: a non-clickable transcript click must not move the composer caret either — `caretAt`
+  // already refuses any cell outside the composer's own rows, and this proves the fallthrough still reaches
+  // it (rather than being accidentally swallowed by the widened target check) while leaving that refusal's
+  // behaviour byte-for-byte what it already was, reusing `clickCaret.test.tsx`'s own "does nothing" shape.
+  it("neither expands the result nor moves the composer caret", async () => {
+    const r = await mount(SHORT_ERROR_DOC);
+    r.stdin.write("abc");
+    await waitFor(() => clean(r.lastFrame()).includes("abc"));
+    await settle();
+    const before = r.lastFrame();
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 2"));
+    expect(r.lastFrame()).toBe(before);                         // no expansion, no marker to lose either
+    r.stdin.write("X");
+    await waitFor(() => clean(r.lastFrame()).includes("abcX"));
+    expect(clean(r.lastFrame())).toContain("abcX");             // caret was still at the end, not mid-transcript
     r.unmount();
   });
 });
