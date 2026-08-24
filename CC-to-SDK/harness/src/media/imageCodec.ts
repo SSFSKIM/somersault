@@ -1,7 +1,9 @@
 // harness/src/media/imageCodec.ts — F10 T-IMGREACH Task 4 (I5a): the bounded PNG/BMP DECODER.
-// A LEAF: `node:zlib` only. No `node:fs`, no `node:child_process`, no import from `src/tui/` —
-// callers (Task 5's encoder, Task 6's clipboard wiring) depend on this file; it depends on nothing
-// of theirs, which is what lets it be reviewed, tested, and reverted on its own (plan-review r2 F19).
+// A LEAF: `node:zlib` plus its own sibling `imageDims.js` (shared budget constants), nothing else —
+// no `node:fs`, no `node:child_process`, no import from `src/tui/` (the leaf-hygiene test below pins
+// exactly those three exclusions) — callers (Task 5's encoder, Task 6's clipboard wiring) depend on
+// this file; it depends on nothing of theirs, which is what lets it be reviewed, tested, and reverted
+// on its own (plan-review r2 F19).
 //
 // THE PROCESSING-BOUND CONTRACT (spec v4.1 §I5, amended at plan review): the binding CPU/allocation
 // bound is STRUCTURAL, not the clock. Every `inflateSync` call passes `maxOutputLength` set to the
@@ -136,6 +138,13 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
   let header: PngHeader | null = null;
   let bytesPerPixel = 0;
   const idatParts: Buffer[] = [];
+  // F10 fix-wave review finding P2: the passthrough verdict (below) used to RETURN the instant IHDR
+  // named a palette/16-bit/interlaced image — before the chunk walk had looked at anything past IHDR,
+  // so a 33-byte IHDR-only file with no IDAT and no IEND passed as a valid image on colour type alone.
+  // Recording the verdict here and deferring the return until AFTER the loop makes the passthrough arm
+  // walk the SAME full structural chunk sequence (bounds-checked per chunk, exactly like the pixel
+  // path) before it is trusted.
+  let passthrough: { width: number; height: number } | null = null;
 
   // ── PNG chunk walk: every length is validated against the buffer BEFORE the slice it authorizes.
   //    This one loop finds IHDR, accumulates every IDAT, and ignores everything else (PLTE on a
@@ -164,18 +173,26 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
       //    depth, Adam7 interlace — required, not optional (r3) — plus, defensively, any colour type
       //    this module never implements pixel expansion for. NO BUDGET IS APPLIED HERE (re-review r3):
       //    whether a passthrough FITS a caller's budget is Task 5's `reencodeImage` question, not this
-      //    decoder's — a decoder that took a budget parameter could not compile standalone.
+      //    decoder's — a decoder that took a budget parameter could not compile standalone. RECORDED,
+      //    not returned (review finding P2) — the walk below still has to finish.
       if (colourType === 3 || bitDepth === 16 || interlace !== 0 || (colourType !== 2 && colourType !== 6)) {
-        return { ok: true, value: { kind: "passthrough", width, height, data: buf, mediaType: "image/png" } };
+        passthrough = { width, height };
+      } else {
+        header = { width, height, bitDepth, colourType, interlace };
+        bytesPerPixel = colourType === 6 ? 4 : 3;
       }
-      header = { width, height, bitDepth, colourType, interlace };
-      bytesPerPixel = colourType === 6 ? 4 : 3;
     } else if (type === "IDAT") {
       idatParts.push(data);
     }
     off += 12 + len; // 4 len + 4 type + len data + 4 CRC
   }
 
+  if (passthrough) {
+    // Same structural bar the pixel path clears below: a "PNG" with no IDAT at all never carried image
+    // data regardless of colour type, so it is malformed, not a passthrough this caller can trust.
+    if (idatParts.length === 0) return { ok: false, code: "malformed", reason: "no IDAT chunk found" };
+    return { ok: true, value: { kind: "passthrough", width: passthrough.width, height: passthrough.height, data: buf, mediaType: "image/png" } };
+  }
   if (!header) return { ok: false, code: "malformed", reason: "no IHDR chunk found" };
   if (idatParts.length === 0) return { ok: false, code: "malformed", reason: "no IDAT chunk found" };
   // ── the COOPERATIVE belt, checked between pipeline stages. NOT an interrupt — see the
@@ -504,7 +521,14 @@ function encodeLadder(
   let encoded = encodePng(current, deadline);
   if (!encoded.ok) return encoded;
   while (encoded.value.length > byteBudget) {
-    const target = Math.floor(Math.max(current.width, current.height) / 2);
+    const long = Math.max(current.width, current.height);
+    const halved = Math.floor(long / 2);
+    // Clamp the target UP to the floor ONLY when this halving step would otherwise CROSS it in one
+    // jump — starting ABOVE the floor and landing strictly below it (review finding P2: 400 -> 200
+    // skips 256 entirely, so the floor itself is never a tried rung). A rung that is already at or
+    // below the floor before this halving keeps halving further exactly as it always did — that
+    // regime is not the bug this closes, and the post-check below still terminates it correctly.
+    const target = long > RETRY_FLOOR_DIMENSION && halved < RETRY_FLOOR_DIMENSION ? RETRY_FLOOR_DIMENSION : halved;
     current = downscale(px, target);
     onRung?.(current.width);
     encoded = encodePng(current, deadline);

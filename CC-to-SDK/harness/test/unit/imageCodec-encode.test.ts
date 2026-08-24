@@ -107,6 +107,19 @@ describe("I5b(b) byte-only recompression and the adaptive-filter sabotage guard"
     expect(r).toMatchObject({ ok: false, code: "encode-floor" });
     expect((r as any).reason).toContain(String(RETRY_FLOOR_DIMENSION));
   });
+
+  // F10 fix-wave review finding P2: a plain halving of the CURRENT long side can jump straight past
+  // `RETRY_FLOOR_DIMENSION` without ever trying it — 400 -> floor(400/2) = 200, which skips 256
+  // entirely. The cell above never caught this because it never inspects which widths the ladder
+  // actually tried, only that it eventually gives up; this one reads the `onRung` seam.
+  it("the ladder always tries the floor itself before giving up — a halving step never jumps past it", () => {
+    const seen: number[] = [];
+    const r = reencodeImage({ data: syntheticPng(400, 400), mediaType: "image/png" },
+                            { maxDimension: 400, byteBudget: 1, onRung: (w: number) => seen.push(w) });
+    expect(r).toMatchObject({ ok: false, code: "encode-floor" });
+    expect(seen).toContain(RETRY_FLOOR_DIMENSION);           // the floor itself was one of the tried rungs
+    expect(Math.min(...seen)).toBe(RETRY_FLOOR_DIMENSION);   // and nothing tried ever went BELOW it
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

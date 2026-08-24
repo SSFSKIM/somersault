@@ -133,6 +133,18 @@ describe("I5a hostile input — the deadline is stubbed to NEVER expire, so only
     expect(decodeBmp(fixture("short-v5-masks.bmp"), NEVER_EXPIRES)).toMatchObject({ ok: false, code: "malformed" });
   });
 
+  // F10 fix-wave review finding P2: the palette/16-bit/interlaced PASSTHROUGH arm returned right after
+  // parsing IHDR, before the chunk walk continued — so a 33-byte IHDR-only file (sig + one IHDR chunk,
+  // no IDAT, no IEND, nothing else) passed as a valid image purely because its declared colour type
+  // routes to passthrough. The pixel-decode arm never had this hole (the boundary-matrix cell above
+  // already proves an IHDR-only, colorType:2 file fails `malformed` — "no IDAT chunk found"); this cell
+  // proves the passthrough arm now gets the identical treatment.
+  it("an IHDR-only palette PNG (colorType 3, no IDAT, no IEND) fails `malformed`, not a bare passthrough", () => {
+    const hostile = Buffer.concat([PNG_SIGNATURE, pngChunk("IHDR", ihdrData({ width: 64, height: 48, colorType: 3 }))]);
+    expect(hostile).toHaveLength(33); // sig(8) + len(4) + type(4) + IHDR data(13) + crc(4) = 33
+    expect(decodePng(hostile, NEVER_EXPIRES)).toMatchObject({ ok: false, code: "malformed" });
+  });
+
   it("SABOTAGE GUARD: dropping maxOutputLength must turn the bomb cell red", () => {
     const src = readFileSync(new URL("../../src/media/imageCodec.ts", import.meta.url), "utf8");
     const calls = src.match(/inflateSync\(/g) ?? [];
