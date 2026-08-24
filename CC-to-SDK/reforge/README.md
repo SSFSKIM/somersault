@@ -335,7 +335,62 @@ and the ungraded difference counts every run, and the scenario grades strictly
 less than the others. The alternative — stretching normalization until it went
 green — would have bought a passing gate by deleting a real contract.
 
+## M3-B — the splice manifest (2026-08-25)
+
+`strangle/build.ts` went from one hardcoded splice to a **manifest**: each entry
+names the reforge-owned module, a true-substring-unique anchor, the delegation
+key on `globalThis.__reforge`, an optional `deriveArgs` that recovers closure
+identifiers **from the matched body**, and the corpus scenarios that cover it.
+
+| splice | anchor disambiguates | closure captured | covered by |
+|---|---|---|---|
+| `write-tool-result` | the Edit tool has a sibling "has been updated successfully" template; the `.${` tail picks Write's | freshness suffix (minified `hui`) | `file-tools` |
+| `task-create-result` | `" created successfully: "` is unique | none | `todo-tool` |
+| `glob-result` | `'content:"No files found"};return'` — the bare phrase appears twice, once in a paginated sibling | truncation-notice fn (minified `yzv`) | `search-tools` |
+
+Adding a splice is now: write the module + its sabotage twin, add a manifest
+row, name its covering scenarios. Nothing else changes.
+
+### The gate sabotages one splice at a time
+
+**An all-at-once sabotage is not a liveness proof.** If every splice were
+sabotaged together, the corpus would go red as long as *any single one* was
+live — a dead splice could ride along forever behind a live neighbour. So the
+gate builds once per splice with only that one sabotaged, and requires **its own
+covering scenarios** to go red. The faithful build then has to pass the full
+acceptance surface (`m2/all.ts`), not just the corpus.
+
+`deriveArgs` throws rather than returning `[]` when it cannot find what it
+expects, for the same reason: a silent empty derivation would build a
+delegation that quietly references nothing it needs.
+
+### Cassettes rot at midnight — and the rot was silent
+
+The first manifest gate run failed `cross-resume`, and the cause was neither the
+new splices nor the engines: **the engine stamps the current date into its
+system prompt**, so a cassette recorded on 2026-08-24 stopped hash-matching on
+2026-08-25 and the replay proxy fell back to positional matching — silently.
+Positional order is usually right, so every other suite kept passing.
+`cross-resume` was the only one that depended on exactness, because it opened a
+**fresh proxy per query**: the fallback restarted from the top of the cassette
+and served the first turn's response to the resume turn, which then answered
+"OK" instead of the codeword.
+
+Three fixes, one per layer:
+
+- the date is scrubbed before hashing, so cassettes stop rotting daily;
+- the replay proxy **counts positional fallbacks** and every runner prints
+  `served POSITIONALLY (body hash missed — cassette may be stale)`, turning a
+  silent degradation into a visible one;
+- `cross-resume` now drives write-and-resume through **one** proxy, mirroring how
+  the cassette was recorded — replay topology must match recording topology.
+
+It also now tests the interchange properly: each pair has a different writer and
+resumer, so "engine-real writes → strangled resumes" and the reverse are both
+real cross-engine reads rather than same-engine round-trips.
+
 ## Next
 
-Scale strangler replacement: one module at a time, each gated by
-`strangle/gate.ts`.
+Continue widening the manifest, ordered by what the corpus already covers —
+each new splice needs a covering scenario before it can be gated, so coverage
+leads reimplementation rather than trailing it.

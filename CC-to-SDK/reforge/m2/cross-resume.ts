@@ -42,78 +42,85 @@ function storeShape(file: string): unknown {
   }));
 }
 
-async function withProxy<T>(fn: (ctx: ScenarioContext) => Promise<T>, tag: string): Promise<T> {
+/**
+ * The cassette was recorded by the `resume` scenario across BOTH of its queries
+ * through ONE proxy, so replay must use one proxy too. A fresh proxy per query
+ * restarts the consumed set, and the resume turn is then served the FIRST turn's
+ * response by positional fallback — which is exactly how this suite failed once
+ * the cassette stopped hash-matching. Replay topology must mirror recording
+ * topology.
+ */
+async function withSharedProxy<T>(tag: string, fn: (mk: () => ScenarioContext) => Promise<T>): Promise<T> {
   const proxy = await startReplayProxy(cassette, join(REFORGE_ROOT, "cassettes", `m2-xresume-observed-${tag}.jsonl`));
-  const ctx: ScenarioContext = {
-    engine: "",
-    baseUrl: `http://127.0.0.1:${proxy.port}`,
-    collect: () => {},
-  };
+  const mk = (): ScenarioContext => ({ engine: "", baseUrl: `http://127.0.0.1:${proxy.port}`, collect: () => {} });
   try {
-    return await fn(ctx);
+    return await fn(mk);
   } finally {
+    const fb = proxy.fallbackServed();
+    if (fb > 0) console.log(`  WARN ${tag}: ${fb} request(s) served POSITIONALLY (body hash missed — cassette may be stale)`);
     await proxy.close();
   }
 }
 
-async function writeSession(engine: string, tag: string): Promise<{ sessionId: string; files: string[]; messages: unknown[] }> {
+/**
+ * One proxy, both queries — write a session then resume it, exactly as the
+ * cassette was recorded. `writer` creates the session; `resumer` resumes it.
+ */
+async function writeThenResume(
+  writer: string,
+  resumer: string,
+  tag: string,
+): Promise<{ sessionId: string; files: string[]; wrote: unknown[]; resumed: unknown[] }> {
   rmSync(projectsDir, { recursive: true, force: true });
   resetSandbox();
-  return withProxy(async (ctx) => {
-    ctx.engine = enginePath(engine);
-    const messages = await drive("Remember the codeword REFORGE_RESUME_BRAVO. Reply with exactly OK.", {
-      ...baseOptions(ctx),
+  return withSharedProxy(tag, async (mk) => {
+    const w = mk();
+    w.engine = enginePath(writer);
+    const wrote = await drive("Remember the codeword REFORGE_RESUME_BRAVO. Reply with exactly OK.", {
+      ...baseOptions(w),
       allowedTools: [],
       maxTurns: 1,
       permissionMode: "bypassPermissions",
     });
-    const init = messages.find((m) => (m as { type?: string }).type === "system") as { session_id?: string };
-    return { sessionId: init?.session_id ?? "", files: sessionFiles(), messages };
-  }, tag);
-}
+    const init = wrote.find((m) => (m as { type?: string }).type === "system") as { session_id?: string };
+    const sessionId = init?.session_id ?? "";
+    const files = sessionFiles();
 
-async function resumeSession(engine: string, sessionId: string, tag: string): Promise<unknown[]> {
-  return withProxy(async (ctx) => {
-    ctx.engine = enginePath(engine);
-    return drive("Reply with exactly the codeword from earlier in this conversation.", {
-      ...baseOptions(ctx),
+    const r = mk();
+    r.engine = enginePath(resumer);
+    const resumed = await drive("Reply with exactly the codeword from earlier in this conversation.", {
+      ...baseOptions(r),
       allowedTools: [],
       maxTurns: 1,
       permissionMode: "bypassPermissions",
       resume: sessionId,
     });
-  }, tag);
+    return { sessionId, files, wrote, resumed };
+  });
 }
 
 console.log("=== H4: cross-engine resume + session-store equivalence ===");
 
-// --- 1. store shape written by each engine, same workload --------------------
-console.log("\nwriting a session with engine-real ...");
-const wroteA = await writeSession("engine-real", "writeA");
-const shapeA = wroteA.files.map(storeShape);
-console.log(`  session ${wroteA.sessionId.slice(0, 8)}… | files: ${wroteA.files.length} | records: ${(shapeA[0] as unknown[])?.length ?? 0}`);
+// --- 1. store shape written by each engine, same workload; the cross-resume in
+// each pair is the real interchange test (writer != resumer) -----------------
+console.log(`\nengine-real writes, ${engineB} resumes ...`);
+const pairA = await writeThenResume("engine-real", engineB, "realWrites");
+const shapeA = pairA.files.map(storeShape);
+const crossBText = String(resultsOf(pairA.resumed)[0]?.result ?? "");
+console.log(`  session ${pairA.sessionId.slice(0, 8)}… | records: ${(shapeA[0] as unknown[])?.length ?? 0} | resumed -> ${crossBText.slice(0, 40) || "(no result)"}`);
 
-console.log(`writing a session with ${engineB} ...`);
-const wroteB = await writeSession(engineB, "writeB");
-const shapeB = wroteB.files.map(storeShape);
-console.log(`  session ${wroteB.sessionId.slice(0, 8)}… | files: ${wroteB.files.length} | records: ${(shapeB[0] as unknown[])?.length ?? 0}`);
+console.log(`\n${engineB} writes, engine-real resumes ...`);
+const pairB = await writeThenResume(engineB, "engine-real", "engineBWrites");
+const shapeB = pairB.files.map(storeShape);
+const crossAText = String(resultsOf(pairB.resumed)[0]?.result ?? "");
+console.log(`  session ${pairB.sessionId.slice(0, 8)}… | records: ${(shapeB[0] as unknown[])?.length ?? 0} | resumed -> ${crossAText.slice(0, 40) || "(no result)"}`);
 
 const shapeDiff = diffTranscripts(normalizeValue(shapeA) as unknown[], normalizeValue(shapeB) as unknown[]);
 console.log(`\nstore shape: ${shapeDiff.length === 0 ? "identical" : `${shapeDiff.length} difference(s)`}`);
 for (const f of shapeDiff.slice(0, 8)) console.log(`  ${f.path}: ${JSON.stringify(f.a)?.slice(0, 80)} != ${JSON.stringify(f.b)?.slice(0, 80)}`);
 
-// --- 2. cross-engine resume --------------------------------------------------
-// engineB's session is on disk right now; have engine-real resume it, and vice versa.
-console.log(`\ncross-resume: engine-real resumes the session written by ${engineB} ...`);
-const crossA = await resumeSession("engine-real", wroteB.sessionId, "crossA");
-const crossAText = String(resultsOf(crossA)[0]?.result ?? "");
-console.log(`  -> ${crossAText.slice(0, 60) || "(no result)"}`);
-
-console.log("\nre-writing with engine-real, then cross-resuming with " + engineB + " ...");
-const wroteA2 = await writeSession("engine-real", "writeA2");
-const crossB = await resumeSession(engineB, wroteA2.sessionId, "crossB");
-const crossBText = String(resultsOf(crossB)[0]?.result ?? "");
-console.log(`  -> ${crossBText.slice(0, 60) || "(no result)"}`);
+const crossA = pairB.resumed;
+const crossB = pairA.resumed;
 
 // --- verdicts ----------------------------------------------------------------
 const CODEWORD = "REFORGE_RESUME_BRAVO";

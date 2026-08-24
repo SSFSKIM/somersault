@@ -37,12 +37,17 @@ const REDACT_HEADERS = new Set(["authorization", "x-api-key", "cookie", "host", 
 // Scrub volatile fields from a request body before hashing so record-time and
 // replay-time requests with identical behavior hash identically.
 export function scrubRequestBody(body: string): string {
+  // The engine stamps the current date into its system prompt, so an unscrubbed
+  // cassette ROTS AT MIDNIGHT: the live body stops hash-matching the recording.
+  // Measured — a cassette recorded 2026-08-24 stopped matching on 2026-08-25 and
+  // every replay silently degraded to positional matching.
+  const dated = body.replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
   try {
-    const o = JSON.parse(body);
+    const o = JSON.parse(dated);
     if (o?.metadata) o.metadata = "<scrubbed>";
     return JSON.stringify(o);
   } catch {
-    return body;
+    return dated;
   }
 }
 
@@ -65,6 +70,13 @@ export interface ProxyHandle {
   unserved(): CassetteEntry[];
   /** replay only: requests that matched nothing (engine B asked for something new) */
   unmatched(): { method: string; path: string; requestBody: string }[];
+  /**
+   * replay only: requests served by the POSITIONAL fallback because the exact
+   * body hash missed. A silent degradation — positional order is usually right,
+   * so a rotted cassette keeps "passing" until some suite depends on exactness.
+   * Callers must surface this.
+   */
+  fallbackServed(): number;
 }
 
 export async function startRecordProxy(cassettePath: string, upstream = "https://api.anthropic.com"): Promise<ProxyHandle> {
@@ -120,6 +132,7 @@ export async function startRecordProxy(cassettePath: string, upstream = "https:/
     close: () => new Promise((r) => server.close(() => r())),
     unserved: () => [],
     unmatched: () => [],
+    fallbackServed: () => 0,
   };
 }
 
@@ -130,6 +143,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     .map((l) => JSON.parse(l));
   const consumed = new Set<number>();
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
+  let fallbackServed = 0;
 
   const server = http.createServer(async (req, res) => {
     const requestBody = (await readBody(req)).toString("utf8");
@@ -139,7 +153,10 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
 
     const hash = bodyHash(method, path, requestBody);
     let entry = entries.find((e) => !consumed.has(e.seq) && bodyHash(e.method, e.path, e.requestBody) === hash);
-    entry ??= entries.find((e) => !consumed.has(e.seq) && e.method === method && e.path === path); // FIFO fallback
+    if (!entry) {
+      entry = entries.find((e) => !consumed.has(e.seq) && e.method === method && e.path === path); // positional fallback
+      if (entry && requestBody.length > 0) fallbackServed++; // bodyless probes (HEAD) are not a signal
+    }
     if (!entry) {
       unmatched.push({ method, path, requestBody });
       res.writeHead(500, { "content-type": "application/json" });
@@ -164,5 +181,6 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     close: () => new Promise((r) => server.close(() => r())),
     unserved: () => entries.filter((e) => !consumed.has(e.seq)),
     unmatched: () => unmatched,
+    fallbackServed: () => fallbackServed,
   };
 }

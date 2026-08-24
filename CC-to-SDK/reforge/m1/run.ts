@@ -67,9 +67,13 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   }
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
+  const fallback = mode === "replay" ? proxy.fallbackServed() : 0;
   await proxy.close();
   if (unmatched.length > 0) console.log(`    WARN ${side}: ${unmatched.length} request(s) matched no cassette entry`);
   if (unserved.length > 0) console.log(`    WARN ${side}: ${unserved.length} cassette entr(ies) never served`);
+  // Silent degradation: positional matching is usually right, so a rotted
+  // cassette keeps "passing" until a suite depends on exactness.
+  if (fallback > 0) console.log(`    WARN ${side}: ${fallback} request(s) served POSITIONALLY (body hash missed — cassette may be stale)`);
   return { messages, events, observedFile };
 }
 
