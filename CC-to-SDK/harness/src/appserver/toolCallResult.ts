@@ -6,9 +6,10 @@
 // `dynamicTools.ts` the declaration semantics, so a `toolCalls.ts` sitting beside those two read as a third
 // subject instead of as the one handler behind `tool/callResult`.
 //
-// NOT IN THE DISPATCH TABLE YET, deliberately. Until a thread can DECLARE tools there is no way to obtain
-// a `callId`, so publishing the method would advertise a stable surface nothing can reach. Task 8 adds the
-// dispatch entry and the schema registration together, in the one wire-visible commit.
+// DISPATCHED SINCE TASK 8, and it waited for a reason: until a thread could DECLARE tools there was no way
+// to obtain a `callId`, so publishing the method would have advertised a stable surface nothing could
+// reach. The dispatch entry (`server.ts`) and the schema registration landed together with the declaration
+// params, in the one wire-visible commit.
 //
 // ORDER IS THE CONTRACT, and it is the reason this is a handful of lines with a long comment:
 //

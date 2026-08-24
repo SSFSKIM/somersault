@@ -43,6 +43,15 @@ const registeredSubschemaCount = Object.keys(methodSchemas).length + Object.valu
  *  the emitter dropped or invented; deriving it only stops the list from needing a hand-edit per landing. */
 const registeredResults = (tier: (typeof TIERS)[number]) =>
   Object.entries(methodSchemas).filter(([, e]) => !!e.result && (e.experimental ? "experimental" : "stable") === tier).map(([name]) => name).sort();
+/** A FRESH generation, run once for this file. Rows that name a specific entry read THIS rather than the
+ *  vendored bytes, for the reason the `config/read` case below spells out: the vendored file is an artifact
+ *  of the last `emit-schema` run, so an assertion against it stays green while the registry entry that
+ *  produced it is deleted (measured — a sabotage pass that unregistered `tool/callResult` left a
+ *  vendored-reading row passing). The byte-comparison rows pin fresh and vendored equal, so nothing is
+ *  lost by generating. */
+let freshRun: Record<string, VendoredDoc> | undefined;
+const fresh = (tier: (typeof TIERS)[number]): VendoredDoc =>
+  (freshRun ??= JSON.parse(execFileSync("node", [script, "--stdout"], { cwd: harness, encoding: "utf8" })) as Record<string, VendoredDoc>)[tier]!;
 
 describe("emit-appserver-schema", () => {
   it("vendored schema artifacts match a fresh generation", () => {
@@ -138,6 +147,40 @@ describe("emit-appserver-schema", () => {
     const ajv = new Ajv({ strict: true });
     expect(() => ajv.compile(result)).not.toThrow();
     expect(() => ajv.compile(stable.methods["config/read"] as object)).not.toThrow();
+  });
+
+  it("publishes M7's settlement method with BOTH halves, and initialize's downgrade marker", () => {
+    // The two registrations Task 8 made, read off the published document rather than off the registry:
+    // `tool/callResult` is the method a client's tool runtime calls, and its ack is what a generated
+    // client validates the reply against. `initialize`'s result is the F9 defence — an OLD server strips
+    // an unknown `dynamicTools` param silently and starts the thread toolless, so a client that intends
+    // to declare must be able to read `dynamicTools: true` off the handshake FIRST. Neither is usable
+    // from the artifact unless the artifact carries it, which is what this row checks.
+    const stable = fresh("stable");
+    expect(stable.methods).toHaveProperty(["tool/callResult"]);
+    expect(stable.results).toHaveProperty(["tool/callResult"]);
+    expect(stable.results).toHaveProperty(["initialize"]);
+    const ack = stable.results["tool/callResult"] as { type: string; properties: Record<string, unknown>; additionalProperties: boolean };
+    expect(ack.type).toBe("object");
+    expect(ack.additionalProperties).toBe(false); // a closed `{}`: the settlement's whole reply
+    const init = stable.results["initialize"] as { required: string[]; properties: { dynamicTools: { const?: unknown; enum?: unknown[] } } };
+    expect(init.required.sort()).toEqual(["dynamicTools", "platformOs", "userAgent", "version"]);
+    // The marker is pinned to `true`, not to `boolean`: a server that cannot host dynamic tools omits the
+    // field, and publishing `boolean` would tell a client to write a `false` branch that never runs.
+    expect(init.properties.dynamicTools.const ?? init.properties.dynamicTools.enum).toEqual(true);
+  });
+
+  it("the thread-status shape stays internal — no artifact carries waitingOn", () => {
+    // A deliberate product decision from M7 Task 5: `waitingOn` is a live status field the server
+    // broadcasts, not a published contract, and the status enum is free to grow a kind without a wire
+    // change. Nothing registers a status schema, so nothing may publish one — asserted over the RAW text
+    // because the field could otherwise arrive nested inside any method's or result's shape. Both the
+    // published bytes and a fresh generation: the first is what clients hold, the second is what the
+    // registry would publish the moment anyone regenerates.
+    for (const tier of TIERS) {
+      expect(vendoredText(tier), tier).not.toContain("waitingOn");
+      expect(JSON.stringify(fresh(tier)), `${tier} fresh`).not.toContain("waitingOn");
+    }
   });
 
   it("every artifact is draft-7, and no subschema — params or result — redeclares the dialect", () => {

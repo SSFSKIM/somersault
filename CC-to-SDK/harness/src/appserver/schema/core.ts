@@ -17,6 +17,27 @@ export const initializeParams = z.object({
   watchThreads: z.boolean().optional(),
   optOutNotificationMethods: z.array(z.string()).optional(),
 });
+/** The handshake's REPLY, published as a whole (M7) — the first server-scoped result this protocol
+ *  declares, and the only one whose absence a client cannot recover from.
+ *
+ *  WHY IT EXISTS AT ALL IS THE `dynamicTools` MARKER (the F9 lesson). A thread declares its tools through
+ *  an OPTIONAL param, and an older server does not refuse an optional param it has never heard of — its
+ *  `z.object` STRIPS the key and starts the thread with no tools, no error, and no signal. Nothing the
+ *  declaring side can send makes that visible. So the capability is answered BEFORE anything is declared,
+ *  in the one reply every client already reads, and a client that means to declare must treat the marker's
+ *  absence as "this server cannot host my tools".
+ *
+ *  `z.literal(true)` for the same reason `okResult` uses it: a server that cannot host dynamic tools does
+ *  not send `false`, it sends nothing at all, and publishing `boolean` would tell a client to write a
+ *  branch that never runs. The other three fields are the reply this method has sent since M1 — the shape
+ *  is published COMPLETE, because a result schema describing only the new field would tell a generated
+ *  client that `userAgent`, `version` and `platformOs` are unknown extras. */
+export const initializeResult = z.object({
+  userAgent: z.string(),
+  version: z.string(),
+  platformOs: z.string(),
+  dynamicTools: z.literal(true),
+});
 export const serverStatusParams = z.object({});
 // `decision/list`'s cursor, and now only its. A decimal offset indexes a POSITION in the array being
 // paged, so anything that changes what the array holds between two pages shifts every later position and

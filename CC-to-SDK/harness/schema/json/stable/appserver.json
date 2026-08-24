@@ -56,6 +56,109 @@
             "park",
             "deny"
           ]
+        },
+        "dynamicTools": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "function"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "inputSchema": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "deferLoading": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name",
+                  "description",
+                  "inputSchema"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "namespace"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "tools": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "function"
+                        },
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                        },
+                        "description": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "inputSchema": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "deferLoading": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "description",
+                        "inputSchema"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "name",
+                  "description",
+                  "tools"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false
@@ -81,6 +184,109 @@
             "park",
             "deny"
           ]
+        },
+        "dynamicTools": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "function"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "inputSchema": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "deferLoading": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "name",
+                  "description",
+                  "inputSchema"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "namespace"
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "tools": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "function"
+                        },
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                        },
+                        "description": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "inputSchema": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "deferLoading": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "name",
+                        "description",
+                        "inputSchema"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "name",
+                  "description",
+                  "tools"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
         }
       },
       "required": [
@@ -1696,9 +1902,116 @@
         "threadId"
       ],
       "additionalProperties": false
+    },
+    "tool/callResult": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentItems": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inputText"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inputImage"
+                  },
+                  "imageUrl": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "imageUrl"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "inputAudio"
+                  },
+                  "audioUrl": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "audioUrl"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "The result caps do NOT refuse this method: over 16 items, or over 131072 UTF-8 bytes of emitted content, still returns {} and settles the call with an isError result naming the cap — as does a media URL that is not a base64 `data:` URL of the right MIME family (image/* for inputImage, audio/* for inputAudio). The caps also do NOT multiply: whatever they allow, the whole request must still fit the 256 KiB inbound frame cap AFTER JSON escaping, which inflates control characters roughly sixfold. A frame over that cap is refused as a parse error (-32700) with a NULL id before this method is reached — the call is then still parked and still answerable, so the recovery is to retry the same callId with a smaller result."
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "threadId",
+        "callId",
+        "contentItems",
+        "success"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
+    "initialize": {
+      "type": "object",
+      "properties": {
+        "userAgent": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "platformOs": {
+          "type": "string"
+        },
+        "dynamicTools": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "userAgent",
+        "version",
+        "platformOs",
+        "dynamicTools"
+      ],
+      "additionalProperties": false
+    },
     "thread/capabilities/read": {
       "type": "object",
       "properties": {
@@ -2145,6 +2458,11 @@
       "required": [
         "ok"
       ],
+      "additionalProperties": false
+    },
+    "tool/callResult": {
+      "type": "object",
+      "properties": {},
       "additionalProperties": false
     }
   }

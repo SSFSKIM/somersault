@@ -11,7 +11,9 @@ import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import { DynamicCalls, cancelledCallResult, toWireToolCall, type CallToolResultLike, type DynamicCallEvent, type PendingToolCall } from "./dynamicCalls.js";
 import { withDynamicServers } from "./dynamicServers.js";
-import type { DynamicToolSpec } from "./dynamicTools.js";
+import { validateDeclarations, type DynamicToolSpec } from "./dynamicTools.js";
+import { INJECTED_SERVER_NAMES } from "../session/session.js";
+import { toolCallResult } from "./toolCallResult.js";
 import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
@@ -172,6 +174,49 @@ function refuseServerOwnedOverlay(config: Record<string, unknown> | undefined): 
   const hatch = config?.extraOptions;
   const inHatch = typeof hatch === "object" && hatch !== null && "dynamicToolServers" in hatch;
   if ((config && "dynamicToolServers" in config) || inHatch) throw new RpcRefusal(ERR.INVALID_PARAMS, SERVER_OWNED_OVERLAY);
+}
+
+/** The MCP server names this config's engine would ALREADY have, so a declared namespace cannot take a
+ *  slot that is spoken for. Two sources, and neither is optional:
+ *
+ *  THE CLIENT'S OWN MAP, selected by `resolveOptions`' REPLACEMENT semantics rather than by a union. The
+ *  hatch is spread over the typed options (`{...options, ...extraOptions}`), so an OWN `mcpServers` key in
+ *  `extraOptions` — including one whose value is `null` or `{}` — is the map the engine ends up with, and
+ *  the typed one is gone. A `??` fallback would resurrect the typed map under an own `null` and refuse a
+ *  namespace that is genuinely free; a union would refuse one that only the discarded map held.
+ *
+ *  THE HARNESS'S INJECTED SERVERS (`cc-context`, `cc-compact`), which no client can see in its own config
+ *  and which are merged in AFTER `resolveOptions` by a plain spread — so a namespace colliding with one of
+ *  them would be admitted here and then silently lose every tool it published. Read off the session
+ *  layer's own constant so the two cannot drift.
+ *
+ *  Names are returned AS DECLARED; `validateDeclarations` canonicalizes both sides itself. */
+function occupiedServerNames(config: Record<string, unknown> | undefined): string[] {
+  const hatch = config?.extraOptions;
+  const selected = typeof hatch === "object" && hatch !== null && "mcpServers" in hatch
+    ? (hatch as Record<string, unknown>).mcpServers
+    : config?.mcpServers;
+  // Record-LIKE, because the value is a client passthrough: an array or a string would otherwise be
+  // enumerated into fabricated names ("0", "1", …) that occupy slots nothing holds.
+  const configured = typeof selected === "object" && selected !== null && !Array.isArray(selected)
+    ? Object.keys(selected as Record<string, unknown>)
+    : [];
+  return [...INJECTED_SERVER_NAMES, ...configured];
+}
+
+/** THE ADMISSION GATE BOTH SPINES STATE ONCE — everything that can refuse a thread before it exists, in
+ *  the order a client can act on. The overlay refusal runs for EVERY thread (a client writing the
+ *  server's own key is wrong whether or not it declares tools); the declaration gate runs only when there
+ *  is a declaration to judge. Called before either spine mints an id, so a refusal leaves nothing behind.
+ *
+ *  Throws `RpcRefusal`, which dispatch's catch answers with the code and the message intact — a
+ *  declaration refusal that reached the client as -32603 "internal error" would name nothing it could
+ *  fix, and the whole point of these messages is that they name the offender. */
+function admitDeclarations(config: Record<string, unknown> | undefined, specs: DynamicToolSpec[]): void {
+  refuseServerOwnedOverlay(config);
+  if (specs.length === 0) return;
+  const verdict = validateDeclarations(specs, occupiedServerNames(config));
+  if (!verdict.ok) throw new RpcRefusal(ERR.INVALID_PARAMS, verdict.message);
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -469,7 +514,7 @@ export class AppServer {
       const resumeTarget = typeof cfg?.resume === "string" ? cfg.resume : undefined;
       const resuming = resumeTarget !== undefined && !forksSession(cfg) ? resumeTarget : undefined;
       const register = (): void => {
-        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended });
+        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools });
         // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
         // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
         // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
@@ -496,7 +541,7 @@ export class AppServer {
       // D-M5-21 shelf read), which is the property the reservation's placement depends on.
       const sessionId = parsed.data.sessionId;
       await admitResume(srv, ctx, id, { sessionId, admits: !forksSession(parsed.data.config) },
-        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended }));
+        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools }));
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -728,6 +773,15 @@ export class AppServer {
     // two SERVER PROCESSES, which no in-process chain could ever see — to lose each other's update in.
     "thread/archive": threadArchive,
     "thread/unarchive": threadUnarchive,
+    // M7 (§the call): the settlement half of the dynamic-tool exchange, and the milestone's ONE new
+    // method. It NAMES A THREAD and is deliberately NOT `ENGINE_GONE_EXEMPT`: every exempt method answers
+    // off disk or off the record, while a settlement exists to unblock a live model turn — once the engine
+    // is gone there is nobody left holding the promise, and -33005 says so. It is not ORIGIN-gated either,
+    // and that is the honest answer rather than a gap: a fleet thread parks nothing here (its host owns
+    // its own tool calls), so its registry is empty and the handler's "no such pending tool call" is
+    // already true. Everything else the handler owes — thread, subscription authority, then the call's
+    // identity — is `toolCallResult.ts`'s own fixed order.
+    "tool/callResult": toolCallResult,
   };
 
   private readonly token: string;
@@ -753,8 +807,8 @@ export class AppServer {
    *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
    *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
   createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): ThreadRecord {
-    refuseServerOwnedOverlay(opts.config);
     const specs = opts.dynamicTools ?? [];
+    admitDeclarations(opts.config, specs); // both spines, before either mints anything (see the helper)
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
@@ -796,11 +850,11 @@ export class AppServer {
    *  rest. */
   async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
-    refuseServerOwnedOverlay(opts.config); // stated by BOTH spines, before either mints anything (see the helper)
+    const specs = opts.dynamicTools ?? [];
+    admitDeclarations(opts.config, specs); // stated by BOTH spines, before either mints anything (see the helper)
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
-    const specs = opts.dynamicTools ?? [];
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
@@ -1211,7 +1265,11 @@ export class AppServer {
     ctx.clientName = parsed.data.clientInfo.name;
     ctx.watchThreads = parsed.data.watchThreads ?? false;
     for (const m of parsed.data.optOutNotificationMethods ?? []) ctx.optOut.add(m);
-    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform });
+    // `dynamicTools: true` is a CAPABILITY MARKER, not a setting (M7, schema/core.ts's initializeResult):
+    // a client cannot otherwise tell this server from one too old to know the param — an older `z.object`
+    // strips the declaration silently and starts the thread toolless. Answered here, in the reply every
+    // client already reads, before anything can be declared.
+    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true });
     ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
 

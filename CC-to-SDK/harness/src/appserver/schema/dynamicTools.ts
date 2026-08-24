@@ -1,11 +1,10 @@
 // appserver/schema/dynamicTools.ts — M7: the wire shape of `tool/callResult`, the method a client's tool
 // runtime settles a parked dynamic tool call with.
 //
-// DEFINED HERE, REGISTERED NOWHERE YET. `schema/index.ts` does not import this file: registering
-// `tool/callResult` before the DECLARATION half exists would publish a stable method no client can
-// legitimately reach — there is no way to obtain a `callId` until a thread can declare tools. Task 8
-// registers `{ params: toolCallResultParams, result: toolCallResultResult }` beside the declaration
-// exposure and regenerates the published artifact in that same change.
+// REGISTERED (Task 8), and it waited on purpose: publishing `tool/callResult` before the DECLARATION half
+// existed would have been a stable method no client could legitimately reach — there is no way to obtain a
+// `callId` until a thread can declare tools. `schema/index.ts` registers both halves of this file beside
+// `thread/start`'s `dynamicTools`, in the one change that also regenerated the published artifact.
 //
 // WHAT THIS SCHEMA DELIBERATELY DOES NOT CHECK is the interesting part. A settlement is an ANSWER, and an
 // answer must always land: every refusal here is a -32602 raised BEFORE the handler, which leaves the call

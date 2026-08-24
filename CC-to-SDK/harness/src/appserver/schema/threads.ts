@@ -1,14 +1,64 @@
 // appserver/schema/threads.ts — thread lifecycle params (M1 set; Waves 1-2 extend this file).
 import { z } from "zod/v4";
 import { archivedParam, epochCursorParam, listCursorParam, threadIdParams } from "./core.js";
+import { MAX_TOOL_DESCRIPTION_CHARS } from "../dynamicTools.js";
+
+// M7 — THE DYNAMIC TOOL DECLARATION. A client that declares tools IS their runtime, so this shape is one
+// half of the admission gate and `validateDeclarations` (dynamicTools.ts) is the other. The split is by
+// KIND, not by convenience: everything here is decidable from the request alone (a name's characters, a
+// description's length, whether a field is present at all) and is answered with the dispatcher's bare
+// "Invalid params"; everything that needs to know what ELSE exists — the caps, the native catalog, the
+// server slots already taken — is semantics, and is answered with a -32602 NAMING the offender.
+//
+// THE `__` DELIMITER IS DELIBERATELY NOT IN THIS REGEX, and that is the one place the split above is a
+// judgment rather than a rule. `mcp__<server>__<tool>` makes the substring ambiguous in either half, so it
+// must be refused — but a client that sends `prod__run` needs to be TOLD which of its names is wrong and
+// why, and a shape refusal can only say "Invalid params". The semantic gate refuses it by name, and a
+// `.refine` here would take that message away while publishing nothing in exchange: zod's JSON Schema
+// conversion drops refinements, so the artifact a generated client validates against would not gain the
+// check either.
+const toolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
+/** Children are TAGGED (`type: "function"`) inside a namespace too — Codex's own
+ *  `DynamicToolNamespaceTool` spells them that way, so a canonical Codex declaration cross-parses here. */
+const dynamicToolFunction = z.object({
+  type: z.literal("function"),
+  name: toolName,
+  description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+  // RAW JSON Schema, carried verbatim: it is advertised to the model's MCP client exactly as declared
+  // (dynamicServers.ts), and every constraint on what may be in it — bytes, depth, nodes, the convertible
+  // keyword subset, the required object root — is semantics.
+  inputSchema: z.record(z.string(), z.unknown()),
+  deferLoading: z.boolean().optional(),
+});
+export const dynamicToolSpec = z.discriminatedUnion("type", [
+  dynamicToolFunction,
+  z.object({
+    type: z.literal("namespace"),
+    name: toolName,
+    description: z.string().max(MAX_TOOL_DESCRIPTION_CHARS),
+    // `.min(1)`: an empty namespace takes a real MCP server slot and publishes nothing into it — a server
+    // the model is told about and can never call. Refused as a shape because "this array is empty" needs
+    // nothing but the request to decide.
+    tools: z.array(dynamicToolFunction).min(1),
+  }),
+]);
+/** Declared BESIDE `config`, never inside it: the config identity guard, `review/start`'s config
+ *  inheritance and the `extraOptions` merge then remain structurally unable to carry or clobber a
+ *  declaration. Optional, and its absence is what every thread before M7 did. */
+const dynamicToolsParam = { dynamicTools: z.array(dynamicToolSpec).optional() };
+
 export const threadStartParams = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   unattended: z.enum(["park", "deny"]).default("park"),
+  ...dynamicToolsParam,
 });
 export const threadResumeParams = z.object({
   sessionId: z.string().min(1),
   config: z.record(z.string(), z.unknown()).optional(),
   unattended: z.enum(["park", "deny"]).default("park"),
+  // BOTH admission spines take it. A resumed conversation is the one that most needs a tool runtime back:
+  // the transcript already contains calls to tools only the client can serve.
+  ...dynamicToolsParam,
 });
 // Task 13: epoch-qualified cursor (epochCursorParam, not the plain decimal offset it was split from) —
 // see schema/core.ts's comment on why thread/read alone needs this shape.

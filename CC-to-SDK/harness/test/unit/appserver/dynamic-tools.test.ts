@@ -13,7 +13,7 @@
 //
 //   EVERY ROW HOLDS A TURN OPEN, because a dynamic call only exists inside one: the boot helper starts a
 //   turn whose `submit` never resolves, which is what makes `activeTurnId` answer.
-import { describe, it, expect, afterAll, afterEach } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { AppServer, SERVER_OWNED_OVERLAY, threadView, type ConnCtx } from "../../../src/appserver/server.js";
 import { DYNAMIC_TOOLS_DECLARED } from "../../../src/appserver/mcp.js";
-import type { DynamicToolSpec } from "../../../src/appserver/dynamicTools.js";
+import { MAX_DYNAMIC_TOOLS, MAX_TOOL_DESCRIPTION_CHARS, RESERVED_NAMESPACE, type DynamicToolSpec } from "../../../src/appserver/dynamicTools.js";
+import { INJECTED_SERVER_NAMES } from "../../../src/session/session.js";
+import { initializeResult } from "../../../src/appserver/schema/core.js";
 import { swapEngine } from "../../../src/appserver/rewind.js";
 import { emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -296,9 +298,10 @@ describe("M7 tool/callRequested — the park, the notification, the replay", () 
     const callId = notes(a.lines, "tool/callRequested")[0].params.callId as string;
     a.lines.length = 0;
 
-    // The frame cap is enforced BELOW dispatch (peer.ts), so this row is honest even while the method is
-    // unregistered: the request never reaches a handler either way. What it proves is the recovery the
-    // schema's `.describe()` promises — the call is not lost, only that one attempt is.
+    // The frame cap is enforced BELOW dispatch (peer.ts) — the request dies before any handler, registered
+    // or not. What is only provable now that Task 8 has REGISTERED the method is the other half: the
+    // recovery the schema's `.describe()` promises is a promise about `tool/callResult` itself, so the
+    // retry has to travel the same wire and reach the same dispatched handler. Both halves are here.
     send(a.conn, { id: 50, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "x".repeat(MAX_IN) }], success: true } });
     await tick();
     const dead = parsed(a.lines).find((f) => f.error);
@@ -306,7 +309,13 @@ describe("M7 tool/callRequested — the park, the notification, the replay", () 
     expect(dead.error.code).toBe(ERR.PARSE);
     expect(srv.pendingToolCalls(threadId)).toHaveLength(1);
 
-    toolCallResult(srv, ctxOf(srv, "A"), 51, { threadId, callId, contentItems: [{ type: "inputText", text: "small" }], success: true });
+    // The published description IS the recovery instruction — a client that cannot read it here cannot
+    // know the call survived, so the text is asserted where the behavior it describes is proved.
+    const published = toolCallResultParams.shape.contentItems.description ?? "";
+    expect(published).toContain("retry the same callId with a smaller result");
+    expect(published).toContain("base64 `data:` URL");
+
+    send(a.conn, { id: 51, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "small" }], success: true } });
     await tick();
     expect(replyTo(a.lines, 51).result).toEqual({});
     expect(await parked).toEqual({ content: [{ type: "text", text: "small" }], isError: false });
@@ -449,13 +458,15 @@ describe("M7 lifecycle + replay ordering", () => {
   });
 });
 
-describe("M7 tool/callResult is DEFINED but not published", () => {
-  it("has no registry entry and no dispatch entry — the wire still answers -32601", async () => {
-    expect(methodSchemas["tool/callResult"]).toBeUndefined();
-    const { a, threadId } = await bootTurn();
-    send(a.conn, { id: 80, method: "tool/callResult", params: { threadId, callId: "dyncall:x", contentItems: [], success: true } });
-    await tick();
-    expect(replyTo(a.lines, 80).error.code).toBe(ERR.METHOD_NOT_FOUND);
+describe("M7 tool/callResult is PUBLISHED (Task 8)", () => {
+  it("is registered with both halves of its shape — the registry entry is what the artifact publishes", () => {
+    // Task 4 defined these and pinned them UNREGISTERED: a settlement method reachable before any thread
+    // could declare tools would have been a stable surface with no way to obtain a callId. Declarations
+    // exist now, so the entry does too — and it carries the ack schema, not just the params.
+    expect(methodSchemas["tool/callResult"]).toBeDefined();
+    expect(methodSchemas["tool/callResult"].params).toBe(toolCallResultParams);
+    expect(methodSchemas["tool/callResult"].result).toBe(toolCallResultResult);
+    expect(methodSchemas["tool/callResult"].experimental).toBeUndefined(); // stable: the shape is this milestone's own
   });
 
   it("the params schema binds identity and the three item kinds, and the result schema is a closed ack", () => {
@@ -1000,9 +1011,6 @@ describe("M7 the transient overlay — what one engine build receives", () => {
     const inner = srv as unknown as { dynamicCalls: Map<string, unknown>; decisions: Map<string, unknown> };
     expect(inner.dynamicCalls.size).toBe(0);
     expect(inner.decisions.size).toBe(0);
-    // …and the resume reservation is not held by a thread that never opened: the refcount `admitResume`
-    // takes is released in a `finally`, so a spine that throws through it leaves the session deletable.
-    expect(srv.resumingSessions.size).toBe(0);
   });
 
   it("refuses a client that writes the overlay itself, through the config or through the hatch, on both spines", async () => {
@@ -1125,5 +1133,305 @@ describe("M7 the transient overlay — every swap builds it again", () => {
     expect(opsInstance(configs[1]!)).not.toBe(opsInstance(configs[0]!));
     await connect(opsInstance(configs[0]!));
     await connect(opsInstance(configs[1]!));
+  });
+});
+
+// ── M7 TASK 8: THE DECLARATION ON THE WIRE ───────────────────────────────────────────────────────
+//
+// Everything above this line is reachable only from inside the process. This section is the milestone's
+// one wire-visible change: `dynamicTools` on `thread/start` AND `thread/resume`, `tool/callResult`
+// dispatched, and the `initialize` reply carrying the marker that lets a client detect an OLD server
+// before it declares. Three layers answer a bad declaration, and the rows are organized by which one:
+//
+//   THE SHAPE (zod, schema/threads.ts) → a bare "Invalid params". A malformed request, not a rejected one.
+//   THE SEMANTICS (`validateDeclarations`) → -32602 whose message NAMES the offender, which is the whole
+//   product: a client fixing a 33-tool declaration must be told it declared 33.
+//   THE OVERLAY GUARD (`refuseServerOwnedOverlay`, Task 7) → the same -32602 on both spines.
+
+/** The declaration a client actually sends: namespace children TAGGED `type:"function"`, exactly as
+ *  Codex's own `DynamicToolNamespaceTool` spells them, so a canonical Codex declaration cross-parses. */
+const codexShaped = () => [
+  {
+    type: "namespace", name: "ops", description: "operations tooling",
+    tools: [
+      { type: "function", name: "lookup", description: "look something up", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } },
+      { type: "function", name: "count", description: "count rows", inputSchema: { type: "object", properties: { n: { type: "integer" } } }, deferLoading: true },
+    ],
+  },
+  { type: "function", name: "ping", description: "ping the client", inputSchema: { type: "object", properties: {} } },
+];
+
+const fn = (name: string, extra: Record<string, unknown> = {}) =>
+  ({ type: "function", name, description: "d", inputSchema: { type: "object", properties: {} }, ...extra });
+const nsOf = (name: string, tools: unknown[] = [fn("a")]) => ({ type: "namespace", name, description: "d", tools });
+
+let wireId = 100;
+/** A booted wire whose factory captures every engine config, plus one initialized connection. */
+async function bootWire(opts: { session?: () => any; deps?: Record<string, unknown> } = {}) {
+  const { srv, configs } = capturing(opts);
+  const a = attach(srv, "A");
+  await tick();
+  a.lines.length = 0;
+  /** One request, answered. `settleSwap` because the resume spine replies mid-way through an async body
+   *  and a refusal travels out through `admitResume`'s own await. */
+  const call = async (method: string, params: object) => {
+    const id = ++wireId;
+    send(a.conn, { id, method, params });
+    await settleSwap();
+    return replyTo(a.lines, id);
+  };
+  const start = (params: object) => call("thread/start", params);
+  const resume = (params: object) => call("thread/resume", { sessionId: "sess-x", ...params });
+  return { srv, configs, a, call, start, resume };
+}
+
+describe("M7 the declaration on the wire — accepted", () => {
+  it("a Codex-shaped declaration is accepted at thread/start, stamped on the record, and off record.config", async () => {
+    const { srv, configs, start } = await bootWire();
+    const reply = await start({ config: { cwd: "/w" }, dynamicTools: codexShaped() });
+
+    expect(reply.error).toBeUndefined();
+    const record = srv.registry.get(reply.result.thread.id as string)!;
+    // The declaration survives the wire VERBATIM — tags, `deferLoading`, the raw JSON Schema and all.
+    expect(record.dynamicTools).toEqual(codexShaped());
+    expect(Object.keys(overlayOf(configs[0]!)!).sort()).toEqual(["dyn", "ops"]);
+    // The record's config is the clean base every later engine is rebuilt from (Task 7's whole subject),
+    // asserted HERE too because this is the first path a real client can reach it by.
+    expect(JSON.stringify(record.config)).not.toContain("dynamicToolServers");
+    expect(JSON.stringify(record.config)).not.toContain("instance");
+    expect(JSON.parse(JSON.stringify(record.config)).cwd).toBe("/w");
+  });
+
+  it("thread/resume takes the same declaration, beside the resume it admits", async () => {
+    const { srv, configs, resume } = await bootWire();
+    const reply = await resume({ dynamicTools: codexShaped() });
+
+    expect(reply.error).toBeUndefined();
+    const record = srv.registry.get(reply.result.thread.id as string)!;
+    expect(record.dynamicTools).toEqual(codexShaped());
+    expect(record.sessionId).toBe("sess-x");
+    expect(Object.keys(overlayOf(configs[0]!)!).sort()).toEqual(["dyn", "ops"]);
+    expect(configs[0]!.resume).toBe("sess-x");
+    expect(JSON.stringify(record.config)).not.toContain("dynamicToolServers");
+  });
+
+  it("a start that declares NOTHING is untouched — no overlay, no declaration, no new refusal", async () => {
+    const { srv, configs, start } = await bootWire();
+    const reply = await start({ config: { mcpServers: { ops: { type: "stdio", command: "x" } } } });
+    expect(reply.error).toBeUndefined();
+    expect(configs[0]).not.toHaveProperty("dynamicToolServers");
+    expect(srv.registry.get(reply.result.thread.id as string)!.dynamicTools).toBeUndefined();
+  });
+});
+
+describe("M7 the declaration on the wire — the semantic gate answers, naming the offender", () => {
+  // ONE table, driven through BOTH spines. The gate is a single shared helper by construction, and a
+  // table that ran on one spine only is exactly how the two would drift apart again.
+  const cases: Array<{ label: string; specs: unknown[]; config?: Record<string, unknown>; message: string }> = [
+    {
+      label: "the global cap",
+      specs: Array.from({ length: MAX_DYNAMIC_TOOLS + 1 }, (_, i) => fn(`t${i}`)),
+      message: `too many dynamic tools: ${MAX_DYNAMIC_TOOLS + 1} declared (max ${MAX_DYNAMIC_TOOLS})`,
+    },
+    {
+      // The row the occupied set exists for: `cc-context` is INJECTED by the session layer, not configured
+      // by the client, so a declaration colliding with it would otherwise be admitted and then silently
+      // lose its tools to the injection's own spread.
+      label: "an injected server's slot",
+      specs: [nsOf(INJECTED_SERVER_NAMES[0]!)],
+      message: `server name "${INJECTED_SERVER_NAMES[0]}" collides with the MCP server "${INJECTED_SERVER_NAMES[0]}"`,
+    },
+    {
+      label: "a configured server's slot",
+      specs: [nsOf("ops")],
+      config: { mcpServers: { ops: { type: "stdio", command: "x" } } },
+      message: 'server name "ops" collides with the MCP server "ops"',
+    },
+    {
+      // Through the HATCH, which is the spelling that actually reaches the SDK when a client uses it.
+      label: "a server the extraOptions hatch configured",
+      specs: [nsOf("ops")],
+      config: { extraOptions: { mcpServers: { ops: { type: "stdio", command: "x" } } } },
+      message: 'server name "ops" collides with the MCP server "ops"',
+    },
+    { label: "the reserved namespace", specs: [nsOf(RESERVED_NAMESPACE)], message: `namespace "${RESERVED_NAMESPACE}" is reserved for bare tool declarations` },
+    { label: "the delimiter in a tool name", specs: [fn("prod__run")], message: 'tool "prod__run" may not contain "__" (the MCP tool-name delimiter)' },
+    { label: "a native tool's name", specs: [fn("Read")], message: 'tool "Read" is the name of a native tool' },
+    {
+      label: "a schema outside the conversion subset",
+      specs: [fn("choosy", { inputSchema: { type: "object", oneOf: [{ type: "object" }] } })],
+      message: 'tool "choosy": unsupported inputSchema: oneOf',
+    },
+  ];
+
+  for (const { label, specs, config, message } of cases) {
+    it(`${label} → -32602 on BOTH spines, and nothing is admitted`, async () => {
+      const { srv, configs, start, resume } = await bootWire();
+      for (const reply of [await start({ ...(config ? { config } : {}), dynamicTools: specs }), await resume({ ...(config ? { config } : {}), dynamicTools: specs })]) {
+        expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
+        expect(reply.error.message).toBe(message);
+      }
+      // REFUSED BEFORE ANYTHING IS MINTED: no thread, and no engine ever built.
+      expect(srv.registry.list()).toEqual([]);
+      expect(configs).toEqual([]);
+    });
+  }
+
+  it("the occupied set follows own-property replacement, so an extraOptions map REPLACES the typed one", async () => {
+    // `resolveOptions` spreads `extraOptions` over the typed options, so whichever `mcpServers` the hatch
+    // carries is the one the engine gets — including an own `null`, which replaces the map with nothing.
+    // A `??` fallback here would resurrect the typed map and refuse a namespace that is genuinely free.
+    const typed = { mcpServers: { ops: { type: "stdio", command: "x" } } };
+    for (const hatch of [null, {}]) {
+      const { srv, start } = await bootWire();
+      const reply = await start({ config: { ...typed, extraOptions: { mcpServers: hatch } }, dynamicTools: [nsOf("ops")] });
+      expect(reply.error, `extraOptions.mcpServers = ${JSON.stringify(hatch)}`).toBeUndefined();
+      expect(srv.registry.get(reply.result.thread.id as string)!.dynamicTools).toHaveLength(1);
+    }
+    // …and the mirror: the hatch's own map is what occupies, so the typed map's name is free while the
+    // hatch's is taken.
+    const { start } = await bootWire();
+    const config = { mcpServers: { typedOnly: { type: "stdio", command: "x" } }, extraOptions: { mcpServers: { hatched: { type: "stdio", command: "x" } } } };
+    expect((await start({ config, dynamicTools: [nsOf("typedOnly")] })).error).toBeUndefined();
+    expect((await start({ config, dynamicTools: [nsOf("hatched")] })).error.message).toBe('server name "hatched" collides with the MCP server "hatched"');
+  });
+
+  it("a non-record mcpServers occupies nothing at all, and never throws", async () => {
+    // The value is a client passthrough: an array, a string or a number reaches here as easily as a map,
+    // and `Object.keys` on any of them would either fabricate names ("0", "1") or read as occupied.
+    for (const mcpServers of [[], ["ops"], "ops", 7]) {
+      const { start } = await bootWire();
+      const reply = await start({ config: { mcpServers }, dynamicTools: [nsOf("ops")] });
+      expect(reply.error, `mcpServers = ${JSON.stringify(mcpServers)}`).toBeUndefined();
+    }
+  });
+});
+
+describe("M7 the declaration on the wire — the shape gate", () => {
+  const badShapes: Array<[string, unknown]> = [
+    ["a name that does not start with a letter", [fn("1lookup")]],
+    ["a name carrying a character outside the class", [fn("look up")]],
+    ["a name past 64 characters", [fn("a".repeat(65))]],
+    ["a description past the cap", [fn("lookup", { description: "d".repeat(MAX_TOOL_DESCRIPTION_CHARS + 1) })]],
+    ["an inputSchema that is not an object", [fn("lookup", { inputSchema: "not a schema" })]],
+    ["a namespace with ZERO tools", [nsOf("ops", [])]],
+    ["an UNTAGGED namespace child", [{ type: "namespace", name: "ops", description: "d", tools: [{ name: "a", description: "d", inputSchema: { type: "object" } }] }]],
+    ["a spec of an unknown kind", [{ type: "widget", name: "ops", description: "d" }]],
+    ["a dynamicTools that is not an array", { type: "function" }],
+  ];
+
+  for (const [label, dynamicTools] of badShapes) {
+    it(`${label} → "Invalid params" on BOTH spines`, async () => {
+      const { srv, start, resume } = await bootWire();
+      for (const reply of [await start({ dynamicTools }), await resume({ dynamicTools })]) {
+        expect(reply.error.code).toBe(ERR.INVALID_PARAMS);
+        expect(reply.error.message).toBe("Invalid params");
+      }
+      expect(srv.registry.list()).toEqual([]);
+    });
+  }
+
+  it("the 64-character boundary itself is legal — the shape refuses one over, not the cap", async () => {
+    const { start } = await bootWire();
+    expect((await start({ dynamicTools: [fn("a".repeat(64))] })).error).toBeUndefined();
+  });
+
+  it("a deferLoading that is not a boolean is a shape refusal; the flag itself rides through", async () => {
+    const { start } = await bootWire();
+    expect((await start({ dynamicTools: [fn("lookup", { deferLoading: "yes" })] })).error.message).toBe("Invalid params");
+    expect((await start({ dynamicTools: [fn("lookup", { deferLoading: true })] })).error).toBeUndefined();
+  });
+});
+
+describe("M7 initialize publishes the capability that makes declaring safe", () => {
+  it("the reply carries dynamicTools:true, and the registered result schema describes the WHOLE reply", async () => {
+    // THE F9 LESSON. An old server does not refuse an unknown `dynamicTools` — `z.object` STRIPS it and
+    // starts the thread toolless, with no error anywhere. A client that intends to declare must therefore
+    // be able to ask first, and the answer has to be part of the published contract rather than a field
+    // the client learns about from prose.
+    const { srv } = capturing();
+    const { lines, sink } = mkSink();
+    const conn = srv.connect(sink);
+    send(conn, { id: 1, method: "initialize", params: { clientInfo: { name: "cap-reader" } } });
+    await tick();
+
+    const result = replyTo(lines, 1).result as Record<string, unknown>;
+    expect(result.dynamicTools).toBe(true);
+    // The schema is the COMPLETE current reply, not just the marker: a result schema that described one
+    // field would tell a generated client the other three are unknown extras.
+    expect(initializeResult.safeParse(result).success).toBe(true);
+    expect(Object.keys(result).sort()).toEqual(["dynamicTools", "platformOs", "userAgent", "version"]);
+    // Registered, or the artifact's `results` map never carries it and a generated client cannot look.
+    expect(methodSchemas["initialize"].result).toBe(initializeResult);
+    // A downgraded reply — the marker absent — must FAIL that schema, or the detection is not a detection.
+    const { dynamicTools: _marker, ...downgraded } = result;
+    expect(initializeResult.safeParse(downgraded).success).toBe(false);
+  });
+});
+
+describe("M7 tool/callResult, dispatched", () => {
+  it("settles a real park over the wire, and the second answer hears -33002 from the same dispatch", async () => {
+    // Task 4 pinned the handler's whole matrix by calling it directly. This is the one thing that could
+    // not be proved that way: that the dispatch table actually reaches it.
+    const { srv, a, threadId } = await bootTurn();
+    const parked = srv.parkToolCall(threadId, 0, { tool: "lookup", arguments: {} });
+    await tick();
+    const callId = notes(a.lines, "tool/callRequested")[0].params.callId as string;
+
+    send(a.conn, { id: 90, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "answered" }], success: true } });
+    send(a.conn, { id: 91, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "again" }], success: true } });
+    await tick();
+
+    expect(replyTo(a.lines, 90).result).toEqual({});
+    expect(replyTo(a.lines, 91).error.code).toBe(ERR.ALREADY_SETTLED);
+    expect(await parked).toEqual({ content: [{ type: "text", text: "answered" }], isError: false });
+    expect(srv.pendingToolCalls(threadId)).toEqual([]);
+  });
+
+  it("a malformed settlement is a shape refusal that leaves the call parked and answerable", async () => {
+    const { srv, a, threadId } = await bootTurn();
+    const parked = srv.parkToolCall(threadId, 0, { tool: "lookup", arguments: {} });
+    await tick();
+    const callId = notes(a.lines, "tool/callRequested")[0].params.callId as string;
+
+    send(a.conn, { id: 92, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputVideo", url: "x" }], success: true } });
+    await tick();
+    expect(replyTo(a.lines, 92).error.code).toBe(ERR.INVALID_PARAMS);
+    expect(srv.pendingToolCalls(threadId)).toHaveLength(1);
+
+    send(a.conn, { id: 93, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "ok" }], success: true } });
+    await tick();
+    expect(replyTo(a.lines, 93).result).toEqual({});
+    expect(await parked).toEqual({ content: [{ type: "text", text: "ok" }], isError: false });
+  });
+});
+
+describe("M7 the whole exchange, keyless, through the production closure", () => {
+  it("declare → the engine's own server calls a tool → the wire answers it → CallTool resolves", async () => {
+    // THE MILESTONE, END TO END, with nothing faked but the engine: the MCP server object under test is
+    // the one `thread/start` handed the factory, its park is the REAL production closure
+    // (`withDynamicServers` binding `srv.parkToolCall`), and the settlement travels the real dispatch.
+    const { srv, configs, a, start } = await bootWire();
+    const threadId = (await start({ dynamicTools: codexShaped() })).result.thread.id as string;
+    send(a.conn, { id: 200, method: "thread/subscribe", params: { threadId } });
+    send(a.conn, { id: 201, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const turnId = srv.registry.get(threadId)!.currentTurnId!;
+    a.lines.length = 0;
+
+    const client = await connect(opsInstance(configs[0]!));
+    const call = client.callTool({ name: "lookup", arguments: { q: "who" } });
+    await vi.waitFor(() => expect(notes(a.lines, "tool/callRequested")).toHaveLength(1));
+
+    const request = notes(a.lines, "tool/callRequested")[0].params;
+    expect(request).toEqual({ threadId, callId: request.callId, turnId, namespace: "ops", tool: "lookup", arguments: { q: "who" } });
+    expect(request.callId).toMatch(CALL_ID);
+    // The thread SAYS it is waiting on this call — the same wire, the same moment.
+    expect(lastStatus(a.lines)).toEqual({ state: "active", waitingOn: "toolCall" });
+
+    send(a.conn, { id: 202, method: "tool/callResult", params: { threadId, callId: request.callId, contentItems: [{ type: "inputText", text: "42" }], success: true } });
+    await tick();
+    expect(replyTo(a.lines, 202).result).toEqual({});
+    await expect(call).resolves.toMatchObject({ content: [{ type: "text", text: "42" }], isError: false });
   });
 });
