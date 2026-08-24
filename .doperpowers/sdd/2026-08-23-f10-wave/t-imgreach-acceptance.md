@@ -445,3 +445,102 @@ not part of this track's own acceptance cells.
 | 12 — ambient hint, hermetic-pty half | **FAIL — I6 unreachable in the real running app; root cause identified (see above)** |
 | Boundary roll-up (23 rows) | PASS |
 | Gates (typecheck/build/unit/tui) | PASS |
+
+---
+
+## Assembled acceptance (post merge slot 4, main @ b1b075a617)
+
+Re-run of the keyed live cells and the hermetic-pty half on the fully assembled tree (all four F10 tracks
+merged: T-MAINT, T-SELECT, T-HOVER, T-IMGREACH). The keyless pty matrices (`select-pty.sh` 6/6,
+`hover-cells.sh` h1+h2) and the full gate suites were already re-run post-merge by the coordinator and are
+not repeated here — only cells 8, 9, and 12's pty half are re-proven below, against `main`, not a worktree.
+
+### Cell 8 — no stranded sessions (keyed live)
+
+`set -a; . ../.env; set +a; npx vitest run test/live/image-reach.e2e.test.ts`, from `CC-to-SDK/harness` on
+`main`:
+
+```
+ RUN  v2.1.9 /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness
+
+(node:45405) [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] Warning: canUseTool will not be invoked: permissionMode 'bypassPermissions' auto-approves every tool call (except explicit deny rules) before the callback is consulted. To gate every tool call, use a PreToolUse hook instead.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ test/live/image-reach.e2e.test.ts (4 tests) 24607ms
+   ✓ F10 T-IMGREACH Task 14 — acceptance 8: no stranded sessions (three submit paths) > (a) the real REPL topology: an image-only submit through SessionHost + remoteChatSession lands in listSessions with a non-empty firstPrompt 6539ms
+   ✓ F10 T-IMGREACH Task 14 — acceptance 8: no stranded sessions (three submit paths) > (b) a direct Session.submit([image]) lands in listSessions with a non-empty firstPrompt 5658ms
+   ✓ F10 T-IMGREACH Task 14 — acceptance 8: no stranded sessions (three submit paths) > (c) harness.run([image]) lands in listSessions with a non-empty firstPrompt 8186ms
+   ✓ F10 T-IMGREACH Task 14 — acceptance 9: library images > harness.run([{type:'text',...}, redPng]) — the model names the colour 4221ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  10:39:03
+   Duration  25.30s (transform 294ms, setup 13ms, collect 507ms, tests 24.61s, environment 0ms, prepare 48ms)
+```
+
+**Verdict: PASS.** Same three submit paths, same non-empty-`firstPrompt` assertion, unchanged on the
+assembled tree.
+
+### Cell 9 — library images (keyed live)
+
+Same suite, same run as above — fourth test, `acceptance 9: library images > … the model names the colour`,
+4221ms, PASS. No separate command needed (see Cell 8 output).
+
+The F9 T-IMAGE regression (`test/live/image-submit.e2e.test.ts`) was also re-run to confirm no cross-track
+regression on the assembled tree:
+
+```
+ RUN  v2.1.9 /Users/new/Developer/GitHub/codex_somersault/CC-to-SDK/harness
+
+(node:45716) [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] Warning: canUseTool will not be invoked: permissionMode 'bypassPermissions' auto-approves every tool call (except explicit deny rules) before the callback is consulted. To gate every tool call, use a PreToolUse hook instead.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ test/live/image-submit.e2e.test.ts (1 test) 7573ms
+   ✓ F9 T-IMAGE Task 6 — live discrimination through the real REPL submit chain > control turn healthy, red/blue turns name distinct colours, every result is_error:false, and the persisted image blocks project as [Image #N] on both the transcript renderer and the resume-view model 7572ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  10:39:32
+   Duration  8.33s (transform 259ms, setup 10ms, collect 596ms, tests 7.57s, environment 0ms, prepare 33ms)
+```
+
+**Verdict: PASS** — no regression.
+
+### Cell 12 — hermetic-pty half, re-proven against merged main
+
+`npm run build` produced a clean `tsc -p tsconfig.build.json` with zero output (dist was already fresh
+relative to `src`, rebuilt anyway per the re-verification brief). Recipe reproduced exactly as documented
+above: private tmux socket `tmux -L f10asm`, session `cap1`; a throwaway directory holding a fake
+`osascript` (`exit 0` unconditionally) prepended to `PATH`; fresh temp `cwd` and `CCX_FLEET_ROOT`; the real
+`CLAUDE_CODE_OAUTH_TOKEN` sourced into the pane's env from `.env` via a launcher script (never printed);
+launched `node dist/cli/bin.js` (the `ccx` interactive-REPL entry point, per the correction already recorded
+above — not `dist/cli.js`).
+
+Composer confirmed rendered via an initial `capture-pane` before sending input. Sent the raw focus-in bytes
+(`tmux send-keys -H 1b 5b 49`, i.e. `\x1b[I`), then captured the pane at ~2s:
+
+```
+  new@Mac-mini:/private/var/folders/.../tmp.Ia8uRzxs1r [claude-opus-5] ctx:3% $0.00 · 0s
+  ⏵⏵ auto mode on (shift+tab to cycle)                                                                                                                                                 Image in clipboard · ctrl+v to paste
+```
+
+Captured again at ~9s after the focus-in (past `CLIPBOARD_HINT_TIMEOUT_MS`, 8000ms):
+
+```
+  new@Mac-mini:/private/var/folders/.../tmp.Ia8uRzxs1r [claude-opus-5] ctx:3% $0.00 · 0s
+  ⏵⏵ auto mode on (shift+tab to cycle)
+```
+
+The hint appeared within the debounce window and was gone by the ~9s capture, matching the fix wave's
+original re-proof exactly. Session `cap1` killed by name (`tmux -L f10asm kill-session -t cap1`) — no other
+session on the socket, none touched. Fake-binary directory and temp `cwd`/`CCX_FLEET_ROOT` removed after.
+
+**Verdict: PASS** — the ambient clipboard hint fires live on the fully assembled `main` tree, confirming the
+fix wave's wiring survived the three-way merge (slot 4's only conflict was in `ChatComposer.tsx`'s
+destructure line, resolved as a union of both branches' props).
+
+### Assembled acceptance summary
+
+| Cell | Verdict |
+|---|---|
+| 8 — no stranded sessions (keyed live, assembled main) | PASS |
+| 9 — library images, colour naming (keyed live, assembled main) | PASS |
+| 12 — ambient hint, hermetic-pty half (assembled main) | PASS |
