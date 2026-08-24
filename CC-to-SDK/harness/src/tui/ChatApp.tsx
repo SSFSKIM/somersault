@@ -410,7 +410,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -932,16 +932,21 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const composerRef = useRef<ComposerCaret>(null);
   // F10 T-HOVER Task 2 (CM33) — the hoisted popup's own hit region, same ref-channel family again.
   const popupHitRef = useRef<PopupHitHandle | null>(null);
-  const tapAnchorRef = useRef<{ col: number; row: number; anchor: string | undefined } | null>(null);
+  // T-CLICKGATE Task 3 — `anchor` widened to `target`, `clickTargetAt`'s own stable-scalar answer
+  // (`"fold:" + anchor` or `"item:" + ownerKey`) rather than the bare fold anchor `anchorAt` alone answered.
+  // Still a plain string, so `===` across press and release still works by VALUE (JS string equality),
+  // exactly as it did when the field held a bare anchor — the widening changes what the string can name, not
+  // how the comparison behaves.
+  const tapAnchorRef = useRef<{ col: number; row: number; target: string | undefined } | null>(null);
   // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
-  // timestamp AND resolved anchor, so the NEXT press can tell "is this a continuation of the same click
+  // timestamp AND resolved target, so the NEXT press can tell "is this a continuation of the same click
   // sequence" — 500 ms AND within 1 cell in BOTH axes (plan Global Constraints) AND, beyond canon (which
-  // never faces a buffer that moves under it), the SAME anchor — T10's own "the anchor is the cluster, not
-  // the cell" rule (`fold-click.test.tsx` (d′)), reapplied here: a stream that slides a DIFFERENT cluster
-  // under the identical coordinates within the window must not read as a double-click on it. A ref, not
-  // state: like `tapAnchorRef`, nothing on screen renders differently for it, only the NEXT press's own
-  // decision reads it.
-  const lastPressRef = useRef<{ col: number; row: number; time: number; count: number; anchor: string | undefined } | null>(null);
+  // never faces a buffer that moves under it), the SAME target — T10's own "the anchor is the cluster, not
+  // the cell" rule (`fold-click.test.tsx` (d′)), reapplied here: a stream that slides a DIFFERENT cluster (or
+  // clickable item) under the identical coordinates within the window must not read as a double-click on it.
+  // A ref, not state: like `tapAnchorRef`, nothing on screen renders differently for it, only the NEXT
+  // press's own decision reads it.
+  const lastPressRef = useRef<{ col: number; row: number; time: number; count: number; target: string | undefined } | null>(null);
   const clickable = fullscreen && composerOwns(inputOwnerRef.current) && !footerState.searching;
   // F9 T-MOUSE Task 3 — the wheel already discards a pending tap (T10's own reasoning: the document moved
   // under a held button); a hover has the SAME problem for the SAME reason — the cell under a stale
@@ -1028,18 +1033,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // Same single `useMouseSink` as everything else here — the registry resolves only the innermost sink
       // (`registry.ts:98-100`), so a second registration would simply never fire.
       if (popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
-      const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
-      tapAnchorRef.current = { col: e.col, row: e.row, anchor };
+      const target = hitmapRef.current?.clickTargetAt(e.col, e.row);
+      tapAnchorRef.current = { col: e.col, row: e.row, target };
       // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
-      // 1 cell in both axes, AND the same resolved anchor (see `lastPressRef`'s own doc) extends the run;
+      // 1 cell in both axes, AND the same resolved target (see `lastPressRef`'s own doc) extends the run;
       // anything else (too slow, too far, or a different cluster) restarts it at 1. `count >= 2` is canon's
       // own multi-click branch (a double OR triple click both fire on the SECOND/THIRD PRESS, never waiting
       // for a release) — `count === 2` selects the word, anything higher stays a line select (canon never
       // resets past triple; neither does this).
       const last = lastPressRef.current;
-      const withinWindow = last !== null && e.col - last.col >= -1 && e.col - last.col <= 1 && e.row - last.row >= -1 && e.row - last.row <= 1 && Date.now() - last.time <= 500 && anchor === last.anchor;
+      const withinWindow = last !== null && e.col - last.col >= -1 && e.col - last.col <= 1 && e.row - last.row >= -1 && e.row - last.row <= 1 && Date.now() - last.time <= 500 && target === last.target;
       const count = withinWindow ? last!.count + 1 : 1;
-      lastPressRef.current = { col: e.col, row: e.row, time: Date.now(), count, anchor };
+      lastPressRef.current = { col: e.col, row: e.row, time: Date.now(), count, target };
       // F9 T-MOUSE Task 7 — a fresh press is canon's own "isDragging=true" edge (`Eka`, R1 §2.4), which is
       // exactly what `Lts`'s subscriber treats as "wait for mouse-up": reset the latch BEFORE deciding what
       // kind of press this is, so a second selection after an already-copied one starts clean.
@@ -1069,17 +1074,27 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     checkAutoCopy(false);
     if (sweeping) return;                           // a completed sweep does not toggle a fold or move the caret
     if (!at || at.col !== e.col || at.row !== e.row) return;
-    const anchor = hitmapRef.current?.anchorAt(e.col, e.row);
-    if (anchor !== undefined && anchor === at.anchor) { toggleFold(anchor); return; }
-    // F9 T-MOUSE Task 4 — click-to-caret, on the SAME press/release pairing as the fold toggle above rather
+    // T-CLICKGATE Task 3 — `clickTargetAt` widens the fold-only check that used to live here to the two
+    // click-to-expand targets a row can now name; the prefix is parsed ONLY here, at dispatch, never carried
+    // as a discriminant anywhere upstream (`FullscreenViewport`'s own doc: the scalar is compared, not
+    // decoded, everywhere else it travels). A fold cluster and a clickable result never share one row today
+    // (see `RenderItem`'s own doc), so the two arms below are mutually exclusive in practice, not just by the
+    // `if`/`else if` shape.
+    const target = hitmapRef.current?.clickTargetAt(e.col, e.row);
+    if (target !== undefined && target === at.target) {
+      if (target.startsWith("fold:")) { toggleFold(target.slice(5)); return; }
+      if (target.startsWith("item:")) { toggleItemExpand(target.slice(5)); return; }
+    }
+    // F9 T-MOUSE Task 4 — click-to-caret, on the SAME press/release pairing as the toggles above rather
     // than a second registration (the registry resolves only the innermost sink — `registry.ts:98-100` — so a
-    // second `useMouseSink` here would simply never fire). Falls through from the fold check above, which
-    // already proves press and release named the SAME cell; a fold anchor at that cell wins (the `return`
-    // above), and this is reached only when there was none. `caretAt` is its own complete gate: it answers
-    // `false` for any cell outside the composer's published, addressable buffer rows (above the transcript,
-    // past the last painted line, or the origin unpublished — off `fullscreen`, no dock grant yet), so a
-    // press+release pair that never touched the composer is a safe no-op here, exactly like `anchorAt`'s own
-    // `undefined` is above.
+    // second `useMouseSink` here would simply never fire). Falls through from the checks above, which already
+    // prove press and release named the SAME cell; a fold anchor or a clickable item at that cell wins (the
+    // `return`s above), and this is reached only when there was neither — including a NON-clickable
+    // transcript row, which must stay the no-op it already was (spec D11's binding constraint): `caretAt` is
+    // its own complete gate, answering `false` for any cell outside the composer's published, addressable
+    // buffer rows (above the transcript, past the last painted line, or the origin unpublished — off
+    // `fullscreen`, no dock grant yet), so a press+release pair that never touched the composer is a safe
+    // no-op here, exactly like `clickTargetAt`'s own `undefined` is above.
     composerRef.current?.caretAt(e.col, e.row);
   });
   // F9 T-MOUSE Task 7 — SELECTION LIFETIME KEYS (canon's `Kjh`, R1 §2.5), pre-table (`useSelectionLifetime`'s

@@ -751,9 +751,10 @@ export function offsetFromPosition(text: string, prefixWidth: number, innerWidth
   // and `offsetFromPosition` reads nothing but `cell.charStart` back out of it. So the range is this
   // wrapped row's own text, whole, with no continuation pad — inert here, and honest. `ownerKey` is equally
   // inert here (no hover consumer ever sees this synthetic row) and set to the same honest empty string as
-  // `itemKey`.
+  // `itemKey`. `clickable` (T-CLICKGATE Task 2) is equally inert and honestly `false` — the composer is
+  // never hovered through this path.
   const hit: HitRow = { itemKey: "", ownerKey: "", anchor: undefined, width: stringWidth(row), text: row, gutterWidth: 0,
-    softWrap: "hard", kind: "line", charStart: 0, charEnd: row.length, textStart: 0 };
+    softWrap: "hard", kind: "line", charStart: 0, charEnd: row.length, textStart: 0, clickable: false };
   const cell = columnToChar(hit, column);
   const charStart = cell ? cell.charStart : (column <= hit.gutterWidth ? 0 : row.length);
   return Math.max(0, Math.min(text.length, before + charStart - Math.max(0, prefixWidth)));

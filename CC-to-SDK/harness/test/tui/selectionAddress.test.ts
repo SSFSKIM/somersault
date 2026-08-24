@@ -18,7 +18,7 @@ import { createSelectionState, type SelectionState } from "../../src/tui/mouse/s
  *  references `ownerKey` itself. */
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
   itemKey: "k", ownerKey: overrides.itemKey ?? "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
-  charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
+  charStart: 0, charEnd: overrides.text.length, textStart: 0, clickable: false, ...overrides,
 });
 
 describe("F10 S4 — side-specific containment (round-3 F2: one half-open rule loses the trailing grapheme)", () => {

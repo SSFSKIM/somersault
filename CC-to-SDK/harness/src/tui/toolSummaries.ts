@@ -24,7 +24,7 @@
 // are NOT part of this task's table).
 import type { RenderLine, Segment } from "./render.js";
 import type { ProjectionOptions } from "./toolRenderer.js";     // type-only: erased, so there is no import cycle
-import { foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { resolveExpandHint } from "./keys/hints.js";
 import { callSidecar, readVariant, textLines, type NormalizedToolResult } from "./toolResult.js";
 import { DIFF_BODY_INSET, diffHeader, renderDiff } from "./diffRender.js";
@@ -62,6 +62,18 @@ const bodyRows = (text: string, options: ProjectionOptions, color?: string): rea
   const lines = withoutTrailingBlanks(text.split("\n"));
   const folded = foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
   return color === undefined ? folded : folded.map((line) => (line.dim === true ? line : { ...line, color }));
+};
+/** T-CLICKGATE Task 1 fix wave: whether `text` would STILL show a truncation marker if it were folded under
+ *  the COMPACT projection — same "as-if-compact" contract `toolRenderer.resultBody` uses for its own generic
+ *  fold (canon's `isItemClickable` reads the raw content, not the projection actually being painted), so an
+ *  item re-projected to `detail-all` (nothing hidden there — that fold is unbounded) does not lose the bit
+ *  the moment it is expanded. Only `bashRows` below calls this: it is the one typed producer whose fold is
+ *  LIVE under every projection (Grep's raw match dump, the WebFetch body and TaskOutput's agent result are
+ *  gated behind the real `detail-all` — see the inventory note on `summaryLines` — so compact never shows a
+ *  partial body for those and there is nothing for this predicate to answer). */
+const wouldFoldUnderCompact = (text: string, columns: number): boolean => {
+  const lines = withoutTrailingBlanks(text.split("\n"));
+  return lines.length > 0 && foldWithTruncation(lines, columns, { projection: "compact", compactRows: 3, revealOneExtraWithoutMarker: true }).hidden > 0;
 };
 
 // ── Read (upstream `dbH`, L424415–424438) ──────────────────────────────────────────────────────────────
@@ -203,10 +215,16 @@ const SANDBOX_VIOLATIONS = /<sandbox_violations>[\s\S]*?<\/sandbox_violations>/g
  *  dim row, so a cwd reset never reads as part of the command's error output. */
 const CWD_RESET = /(?:^|\n)(Shell cwd was reset to .+)$/;
 /** The composite body, assembled in upstream's order: stdout, stderr, the cwd-reset trailer, the single
- *  empty-output line, the timeout suffix. `isImage` short-circuits everything — including the timeout. */
-function bashRows(input: Record<string, unknown>, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] | undefined {
+ *  empty-output line, the timeout suffix. `isImage` short-circuits everything — including the timeout.
+ *
+ *  `clickable` (T-CLICKGATE Task 1 fix wave): Bash is the one typed row whose fold is genuinely LIVE under
+ *  every projection — `bodyRows` above folds stdout/stderr at whatever `options.projection` actually is, so a
+ *  long compact-rendered command already shows a real `… +N lines` marker today. `wouldFoldUnderCompact`
+ *  answers the SAME question `resultBody`'s generic fold does for its own truncation bit: would a COMPACT
+ *  render hide rows, regardless of what is actually being painted right now. */
+function bashRows(input: Record<string, unknown>, normalized: NormalizedToolResult, options: ProjectionOptions): { lines: readonly RenderLine[]; clickable: boolean } | undefined {
   const s = normalized.structured;
-  if (s?.isImage === true) return [dim("[Image data detected and sent to Claude]")];
+  if (s?.isImage === true) return { lines: [dim("[Image data detected and sent to Claude]")], clickable: false };
   // Flat-only fallback: the result content IS the combined output, and none of the sidecar's discriminants
   // (background id, expected-silence, return-code interpretation) exist — so the only honest empty-output line
   // for a blank result is `(No output)`.
@@ -233,7 +251,9 @@ function bashRows(input: Record<string, unknown>, normalized: NormalizedToolResu
   // against a live capture, which is why nothing else depends on it.
   const timeout = input.timeout;
   if (typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0) rows.push(dim(`(timeout ${formatDuration(timeout, { hideTrailingZeros: true })})`));
-  return rows.length === 0 ? undefined : rows;
+  if (rows.length === 0) return undefined;
+  const clickable = wouldFoldUnderCompact(stdout, options.columns) || wouldFoldUnderCompact(stderr, options.columns);
+  return { lines: rows, clickable };
 }
 
 // ── The web tools (upstream `Z3p` L421900, `r4p` L421935) ──────────────────────────────────────────────
@@ -307,12 +327,18 @@ function planModeRows(options: ProjectionOptions): readonly RenderLine[] {
   return [row(glyph, plain(" Entered plan mode")), dim("  Claude is now exploring and designing an implementation approach.")];
 }
 /** Census 01#196–208 (`wKp`, L430721). The `local_bash` arm is literally routed back through the Bash renderer
- *  with a synthesized core shape, which is why it reuses `bashRows` here rather than re-implementing it. */
-function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] | undefined {
+ *  with a synthesized core shape, which is why it reuses `bashRows` here rather than re-implementing it — and
+ *  inherits its `clickable` for free. The `local_agent` and `remote_agent`/other arms below are NOT truncating
+ *  producers (T-CLICKGATE Task 1 fix-wave inventory): their `bodyRows` call only ever runs when the projection
+ *  ACTUALLY being painted is `detail-all` (`verbose`), and `foldToolOutput` never hides a row under
+ *  `detail-all` — it is the one unbounded projection — so there is no compact-hidden state for them to expose.
+ *  Compact shows a fixed one-line hint instead of a partial body; that is a binary include/exclude switch on
+ *  the real projection, not a fold with a marker, and is already communicated by the hint text itself. */
+function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { lines: readonly RenderLine[]; clickable: boolean } | undefined {
   const s = callSidecar(event);
   if (s === undefined) return undefined;
   const task = isRecord(s.task) ? s.task : undefined;
-  if (task === undefined) return [dim("No task output available")];
+  if (task === undefined) return { lines: [dim("No task output available")], clickable: false };
   const status = s.retrieval_status, description = str(task.description) ?? "", verbose = options.projection === "detail-all";
   if (task.task_type === "local_bash") {
     const synthesized = { ...normalized, structured: { stdout: str(task.output) ?? "", stderr: "", isImage: false, noOutputExpected: false, ...(str(task.error) === undefined ? {} : { returnCodeInterpretation: task.error }) } };
@@ -321,40 +347,53 @@ function taskOutputRows(event: ToolEvent, normalized: NormalizedToolResult, opti
   if (task.task_type === "local_agent") {
     if (status === "success") {
       const result = str(task.result);
-      if (!verbose) { const hint = resolveExpandHint(options.expandHint); return [dim(hint === "" ? "Read output" : `Read output ${hint}`)]; }
+      if (!verbose) { const hint = resolveExpandHint(options.expandHint); return { lines: [dim(hint === "" ? "Read output" : `Read output ${hint}`)], clickable: false }; }
       const lines = result === undefined ? 0 : result.split("\n").length;     // upstream `au(result,"\n") + 1`
       const head = row(plain(`${description} (${lines} lines)`));
-      return result === undefined ? [head] : [head, ...bodyRows(result, options)];
+      return { lines: result === undefined ? [head] : [head, ...bodyRows(result, options)], clickable: false };
     }
-    if (status === "timeout" || status === "not_ready" || task.status === "running") return [dim("Task is still running…")];
-    return [dim("Task not ready")];
+    if (status === "timeout" || status === "not_ready" || task.status === "running") return { lines: [dim("Task is still running…")], clickable: false };
+    return { lines: [dim("Task not ready")], clickable: false };
   }
   // `remote_agent` and every other task type share upstream's trailing branch, NBSP indent included.
   const head = row(plain(`  ${description} [${str(task.status) ?? ""}]`));
   const output = str(task.output);
-  if (output === undefined) return [head];
-  if (verbose) return [head, ...bodyRows(output, options)];
+  if (output === undefined) return { lines: [head], clickable: false };
+  if (verbose) return { lines: [head, ...bodyRows(output, options)], clickable: false };
   const hint = resolveExpandHint(options.expandHint);
-  return hint === "" ? [head] : [head, dim(`     ${hint}`)];
+  return { lines: hint === "" ? [head] : [head, dim(`     ${hint}`)], clickable: false };
 }
 
 /** `undefined` means "no typed row — use the existing body path". The caller has already handled `running`,
- *  `interrupted` and `rejected`; `error` and `suppressed` deliberately fall through to it too. */
-export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] | undefined {
+ *  `interrupted` and `rejected`; `error` and `suppressed` deliberately fall through to it too.
+ *
+ *  `clickable` (T-CLICKGATE Task 1 fix wave) is `false` for every builder here except `bashRows` — the
+ *  inventory: `readRows`/`editRows`/`writeRows`/`planModeRows` never call a fold at all (`Read N lines` etc.
+ *  is the whole row); `searchRows`/`webFetchRows`/`taskOutputRows`'s `local_agent`/`remote_agent` arms gate
+ *  their raw-body dump behind the REAL `detail-all` projection, where `foldToolOutput` is unbounded and never
+ *  hides a row — compact shows no body for these at all (a one-line hint instead), so neither projection ever
+ *  produces a compact-hidden state; `webSearchRows`/`skillRows`/`taskStopRows`/`worktreeRows` are fixed-shape
+ *  sentences with no fold in them anywhere. Only `bashRows` (and `taskOutputRows`'s `local_bash` arm, which
+ *  reuses it) folds stdout/stderr under the projection ACTUALLY being rendered, so it is the one typed
+ *  producer that can show a real, live truncation marker in compact today — and the one that needs the
+ *  as-if-compact predicate threaded up to the mint site in `toolRenderer.resultBody`. */
+export function summaryLines(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { lines: readonly RenderLine[]; clickable: boolean } | undefined {
   if (normalized.status !== "success") return undefined;
   const input = isRecord(event.input) ? event.input : {};
+  const notClickable = (lines: readonly RenderLine[] | undefined): { lines: readonly RenderLine[]; clickable: boolean } | undefined =>
+    lines === undefined ? undefined : { lines, clickable: false };
   switch (normalized.tool) {
-    case "Read": return readRows(normalized);
-    case "Edit": return editRows(event, options);
-    case "Write": return writeRows(event, normalized, options);
-    case "Grep": case "Glob": return searchRows(event, options);
+    case "Read": return { lines: readRows(normalized), clickable: false };
+    case "Edit": return notClickable(editRows(event, options));
+    case "Write": return notClickable(writeRows(event, normalized, options));
+    case "Grep": case "Glob": return notClickable(searchRows(event, options));
     case "Bash": return bashRows(input, normalized, options);
-    case "WebFetch": return webFetchRows(event, options);
-    case "WebSearch": return webSearchRows(event);
-    case "Skill": return skillRows(event);
-    case "TaskStop": return taskStopRows(event, options);
-    case "EnterPlanMode": return planModeRows(options);
-    case "EnterWorktree": case "ExitWorktree": return worktreeRows(event);
+    case "WebFetch": return notClickable(webFetchRows(event, options));
+    case "WebSearch": return notClickable(webSearchRows(event));
+    case "Skill": return notClickable(skillRows(event));
+    case "TaskStop": return notClickable(taskStopRows(event, options));
+    case "EnterPlanMode": return { lines: planModeRows(options), clickable: false };
+    case "EnterWorktree": case "ExitWorktree": return notClickable(worktreeRows(event));
     case "TaskOutput": return taskOutputRows(event, normalized, options);
     default: return undefined;                                               // unknown tools keep the generic row (P94 decision 9)
   }

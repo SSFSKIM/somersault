@@ -79,8 +79,8 @@ const HOVER_BAND = sgrBg(themeTokens().userMessageBackgroundHover);
 const sdk = (message: Record<string, unknown>): TranscriptBootstrapEntry => ({ kind: "sdk", source: "disk", message });
 const call = (id: string, name: string, input: unknown) =>
   sdk({ type: "assistant", parent_tool_use_id: null, uuid: `u-${id}`, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } });
-const result = (id: string, content = "body") =>
-  sdk({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: false }] } });
+const result = (id: string, content = "body", isError = false) =>
+  sdk({ type: "user", uuid: `ur-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } });
 const prose = (text: string, id: string) =>
   sdk({ type: "assistant", parent_tool_use_id: null, uuid: `up-${id}`, message: { id: `mp-${id}`, content: [{ type: "text", text }] } });
 // A single-line, 15 000-character prompt echo — trips `render.ts`'s 10 000-char fold (`FOLD_THRESHOLD`,
@@ -88,6 +88,13 @@ const prose = (text: string, id: string) =>
 // `bg: userMessageBackground` (`render.ts`'s `ruleRow`; the same fixture shape `f4-acceptance.test.tsx:441`
 // pins for the renderer alone) — a real, producible dim-and-banded row, not an invented one.
 const LONG_PROMPT = "word ".repeat(3000);
+// T-CLICKGATE Task 2 (a) — a `Mystery` tool (no fold-grouping species claims it, `toolFold.ts`'s own
+// `collapsible` rule; `hover-owner.test.tsx`'s own T-CLICKGATE fixture uses the same tool name for the same
+// reason) whose ERROR result is 12 physical lines — one past `ERROR_PHYSICAL_ROWS` (ten) — so `resultBody`
+// stamps its gutter-block `clickable: true` (Task 1) AND its rendered body genuinely carries a dim
+// "… +2 lines" overflow marker under the transcript's default `compact` projection: a real dim row on a
+// real clickable owner, not an invented one.
+const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
 const longUser = (id: string) => sdk({ type: "user", uuid: `ul-${id}`, message: { content: [{ type: "text", text: LONG_PROMPT }] } });
 const CLUSTER: readonly TranscriptBootstrapEntry[] = [
   call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
@@ -159,36 +166,88 @@ async function tap(r: { stdin: { write(s: string): void } }, col: number, row: n
   await settle();
 }
 
-describe("T3 (a): motion over a dim, banded row un-dims it and NEVER touches its background", () => {
-  it("un-dims the fold rule's title span on hover and NEVER touches its background, restoring the dim once the pointer leaves", async () => {
+describe("T-CLICKGATE Task 2 (a): motion over a CLICKABLE row (a >10-line error result) un-dims it", () => {
+  it("un-dims the error's overflow marker on hover of a DIFFERENT row of the SAME owner, restoring it once the pointer leaves", async () => {
+    const DOC = [prose("hello there", "a"), call("mystery-1", "Mystery", {}), result("mystery-1", errorLines(12), true), prose("all done", "b")];
+    const r = await mount(DOC);
+    const markerRow = rowOfIncluding(r.lastFrame(), "+2 lines");
+
+    // PREMISE: the marker row really is dim before any hover, so the test can fail for the right reason.
+    const before = rawLineIncluding(r.lastFrame(), "+2 lines");
+    expect(before).toContain("\x1b[2m");
+
+    // Hovered row is the error's FIRST line, not the marker itself — proving this is OWNER-level un-dim
+    // (H1), not "the row directly under the pointer happened to un-dim".
+    const firstErrRow = rowOfIncluding(r.lastFrame(), "err line 1");
+    r.stdin.write(motion(COL, firstErrRow));
+    await settle();
+    expect(rawLineIncluding(r.lastFrame(), "+2 lines")).not.toContain("\x1b[2m");
+
+    // Moving OFF the owner (a column past the hovered row's own painted width) restores the dim.
+    r.stdin.write(motion(300, firstErrRow));
+    await settle();
+    expect(rawLineIncluding(r.lastFrame(), "+2 lines")).toContain("\x1b[2m");
+    r.unmount();
+  });
+});
+
+// T-CLICKGATE Task 4 — the blank tail past a clickable row's own text is not part of it: the `col <= at.width`
+// bound Task 2 already applied to `hoverAt` (line 450 of `FullscreenViewport.tsx`) already answers "nothing
+// hovered" there, so this pins that bound rather than changing it. `BLANK_COL` sits well past the error
+// block's five-column gutter plus "err line N"'s own ten characters, and well inside the 80-column terminal.
+const BLANK_COL = 60;
+describe("T-CLICKGATE Task 4: motion over a clickable row's BLANK TAIL does not un-dim it", () => {
+  it("leaves the overflow marker dim on a motion report past the first error line's own painted width", async () => {
+    const DOC = [prose("hello there", "a"), call("mystery-1", "Mystery", {}), result("mystery-1", errorLines(12), true), prose("all done", "b")];
+    const r = await mount(DOC);
+    const markerRow = rowOfIncluding(r.lastFrame(), "+2 lines");
+    const before = rawLineIncluding(r.lastFrame(), "+2 lines");
+    expect(before).toContain("\x1b[2m");                      // premise, same as Task 2 (a)'s own case
+
+    const firstErrRow = rowOfIncluding(r.lastFrame(), "err line 1");
+    r.stdin.write(motion(BLANK_COL, firstErrRow));
+    await settle();
+    expect(rawLineIncluding(r.lastFrame(), "+2 lines")).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 4: motion over an EXPANDED member's blank tail keeps hover-suppression stable", () => {
+  it("leaves the expanded '(No output)' row byte-identical for a motion report past its own painted width", async () => {
+    const DOC = [prose("hello there", "a"), ...CLUSTER_BASH, prose("all done", "b")];
+    const r = await mount(DOC);
+    await tap(r, COL, rowOfIncluding(r.lastFrame(), COLLAPSED));   // open the cluster
+    const memberRow = rowOfIncluding(r.lastFrame(), NO_OUTPUT);
+    const before = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    expect(before).toContain("\x1b[2m");                          // premise, same as T3's own Critical case
+
+    r.stdin.write(motion(BLANK_COL, memberRow));
+    await settle();
+    const after = rawLineIncluding(r.lastFrame(), NO_OUTPUT);
+    expect(after).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("T-CLICKGATE Task 2 (b): motion over a NON-clickable dim row does NOT un-dim it", () => {
+  // The F10-era hover machine un-dimmed EVERY painted row under the pointer, no matter what it was — this
+  // cell used to pin exactly that ("un-dims the fold rule's title span on hover"). This long-prompt fold
+  // rule is a USER PROMPT's own overflow marker (`render.ts`'s `ruleRow`), never a `tool_result`, so
+  // `toolRenderer.tsx`'s `resultBody` never touches it and it is never stamped `clickable` — it is exactly
+  // the kind of row this ticket's gate now excludes, and the pin moves here to say so.
+  it("leaves the fold rule's dim, banded title span byte-identical across a motion report", async () => {
     const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
     const r = await mount(DOC);
     await scrollUntilVisible(r, "hidden)");
     const ruleRow = rowOfIncluding(r.lastFrame(), "hidden)");
 
-    // PREMISE: the row really is dim-and-banded before any hover, so the test can fail for the right reason.
     const before = rawLineIncluding(r.lastFrame(), "hidden)");
     expect(before).toContain("\x1b[2m");
     expect(before).toContain(BAND);
-    expect(before).not.toContain(HOVER_BAND);
 
     r.stdin.write(motion(COL, ruleRow));
     await settle();
-    const hovered = rawLineIncluding(r.lastFrame(), "hidden)");
-    expect(hovered).not.toContain("\x1b[2m");
-    expect(hovered).toContain(BAND);
-    expect(hovered).not.toContain(HOVER_BAND);
-
-    // Moving OFF the row restores the dim; the band never moved. A neighbouring row of the SAME message
-    // (H1: the fold rule and the rest of this one huge prompt share ONE ownerKey) would stay un-dimmed
-    // together — that grouping is proven separately below — so the genuine "moved away" probe here is a
-    // column past this row's own painted width, which `hoverAt` treats as hovering nothing.
-    r.stdin.write(motion(300, ruleRow));
-    await settle();
-    const restored = rawLineIncluding(r.lastFrame(), "hidden)");
-    expect(restored).toContain("\x1b[2m");
-    expect(restored).toContain(BAND);
-    expect(restored).not.toContain(HOVER_BAND);
+    expect(rawLineIncluding(r.lastFrame(), "hidden)")).toBe(before);
     r.unmount();
   });
 });
@@ -267,15 +326,17 @@ describe("T3 (b, review Critical): a Bash cluster member's DIM body row is unaff
 describe("T3 (review Important): a wheel tick clears an active hover", () => {
   // Mutation (a) in the review removed `clearHover()` from `discardTap` and NOTHING failed — the wiring
   // (`ChatApp.tsx`'s `discardTap`, wired to `FullscreenViewport`'s `onWheelTick`) was correct but unproven.
+  //   T-CLICKGATE Task 2: this cell's own fixture (the long-prompt fold rule) is no longer clickable and so
+  // no longer hovers at all (moved to Task 2 (b) above) — re-pointed at the >10-line error result Task 2
+  // (a) uses, the one fixture in this file that genuinely activates a hover for the wheel to clear.
   it("restores the dim on the currently-hovered row when the wheel turns; HOVER_BAND is absent throughout", async () => {
-    const DOC = [prose("hello there", "a"), longUser("long"), prose("all done", "b")];
+    const DOC = [prose("hello there", "a"), call("mystery-1", "Mystery", {}), result("mystery-1", errorLines(12), true), prose("all done", "b")];
     const r = await mount(DOC);
-    await scrollUntilVisible(r, "hidden)");
-    const ruleRow = rowOfIncluding(r.lastFrame(), "hidden)");
+    const markerRow = rowOfIncluding(r.lastFrame(), "+2 lines");
 
-    r.stdin.write(motion(COL, ruleRow));
+    r.stdin.write(motion(COL, markerRow));
     await settle();
-    const hovered = rawLineIncluding(r.lastFrame(), "hidden)");
+    const hovered = rawLineIncluding(r.lastFrame(), "+2 lines");
     // Premise: the hover really landed, so the assertion below can fail for the right reason.
     expect(hovered).not.toContain("\x1b[2m");
     expect(hovered).not.toContain(HOVER_BAND);
@@ -284,7 +345,7 @@ describe("T3 (review Important): a wheel tick clears an active hover", () => {
     // position) — only that a wheel event reached `onWheelTick` while a row was hovered.
     r.stdin.write(WHEEL_UP);
     await settle();
-    const afterWheel = rawLineIncluding(r.lastFrame(), "hidden)");
+    const afterWheel = rawLineIncluding(r.lastFrame(), "+2 lines");
     expect(afterWheel).toContain("\x1b[2m");
     expect(afterWheel).not.toContain(HOVER_BAND);
     r.unmount();
@@ -343,8 +404,13 @@ describe("H1: the hover band is re-homed on JumpPill (chrome, not transcript)", 
   });
 });
 
-describe("H1: message-level hover grouping over a multi-line local event", () => {
-  it("hovering ANY line of a multi-line message un-dims EVERY dim line of it and none of its neighbors", async () => {
+describe("H1: message-level hover grouping over a multi-line local event — gated on `clickable` now (T-CLICKGATE Task 2)", () => {
+  // Pre-T-CLICKGATE this cell proved the OPPOSITE ("un-dims EVERY dim line of it") — the F10-era hover
+  // machine grouped and brightened any owner, local status events included. No producer ever stamps a
+  // `local`/status row `clickable` (only `toolRenderer.tsx`'s tool-result gutter-blocks do, T-CLICKGATE
+  // Task 1), so this owner is never in `clickableOwners` and the grouping wiring, still fully exercised
+  // here (multiple dim rows sharing one owner), must now leave every one of them untouched.
+  it("hovering the middle line of a multi-line local event un-dims nothing — its owner is never clickable", async () => {
     const statusA: TranscriptBootstrapEntry = { kind: "local", identity: "status-a", event: { kind: "visual", lines: [
       { text: "Status" },
       { text: "  model: opus-a", dim: true },
@@ -364,9 +430,8 @@ describe("H1: message-level hover grouping over a multi-line local event", () =>
 
     r.stdin.write(motion(COL, midRow));
     await settle();
-    for (const needle of ["model: opus-a", "cwd: /work-a", "branch: main-a"])
-      expect(rawLineIncluding(r.lastFrame(), needle), `${needle} should have un-dimmed`).not.toContain("\x1b[2m");
-    expect(rawLineIncluding(r.lastFrame(), "neighbor: dim-b"), "the neighbor message must keep its dim").toContain("\x1b[2m");
+    for (const needle of ["model: opus-a", "cwd: /work-a", "branch: main-a", "neighbor: dim-b"])
+      expect(rawLineIncluding(r.lastFrame(), needle), `${needle} must stay dim — its owner is not clickable`).toContain("\x1b[2m");
     r.unmount();
   });
 });

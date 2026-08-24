@@ -22,7 +22,7 @@ import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
-import { foldHint, foldToolOutput, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
+import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
@@ -65,6 +65,11 @@ const HINT_MAX_LINES = 10;
  *  hover provider is `hovered && !expanded` (bundle L562783): an already-expanded member must not un-dim on
  *  hover, and `foldAnchor` alone cannot say which case a row is in, since both wear it. Like `foldAnchor` it
  *  must survive `wrapItems` — it does, for the same reason: every `wrapOne` arm spreads the source item.
+ *    T-CLICKGATE Task 3 reuses this SAME field for the other affordance the flag's name already covers: a
+ *  tool-result owner the reader clicked open (`toolEventItems`, keyed on `options.expandedItems`) tags BOTH
+ *  its header and its result `expanded: true`, so the one hover-suppression term above needs no widening of
+ *  its own to cover the new case — the field means "this item's own hover is settled by something other than
+ *  the pointer" regardless of which affordance opened it.
  *
  *  `ownerKey` (F10 T-HOVER, H1) is the HOVER unit — coarser than `id` on purpose. Canon's hover unit is one
  *  whole SDK message (`K6w` L562778-562784, one `hoveredKey` at L563004), not the per-line/per-call identity
@@ -73,13 +78,24 @@ const HINT_MAX_LINES = 10;
  *  markdown renderer, PlanDialog) that legitimately IS its own hover unit, never a rollout license for a
  *  transcript producer: `test/tui/hover-owner.test.tsx`'s producer matrix fails a transcript producer that
  *  omits it, not just a typecheck. Like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
+ *  the same reason: every `wrapOne` arm spreads the source item.
+ *
+ *  `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate, minted ONLY on the tool-result
+ *  gutter block `toolEventItems` builds from `resultBody`: true for an ERROR result whose body physically
+ *  exceeds `errorBody`'s ten-row clip, or a non-error result that WOULD fold under the COMPACT projection
+ *  (`resultBody`'s `wouldFoldUnderCompact`) — computed AS IF COMPACT regardless of the projection actually
+ *  being rendered, so an item re-projected to `detail-all` (unbounded, folds nothing) does not lose the bit.
+ *  Every other row — a fold-group's own collapsed row or its active hint block, plain assistant/thinking/user
+ *  text, and the `interrupted`/`rejected`/`running`/`suppressed` result surfaces — never carries it; absent
+ *  means "not clickable", the same way `foldAnchor`'s absence means "not a cluster". A later task projects
+ *  this bit into the mouse hitmap, so like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
  *  the same reason: every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean }
+  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean; clickable?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean };
+  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean; clickable?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -130,7 +146,15 @@ export type { ResultProjection };
  *  conversation boundary. Absent (the common case, and every caller that predates this task) is all-closed.
  *  It is deliberately NOT part of `knobKey`: like `fullscreen`, what it changes is the FOLD, which runs
  *  strictly downstream of the anchored-entry cache. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; }
+/** `expandedItems` (T-CLICKGATE Task 3) is WHICH TOOL-RESULT OWNERS THE READER HAS CLICKED OPEN, keyed by
+ *  `toolOwnerKey(event.id)` — a SEPARATE namespace from `expandedFolds` above (a fold cluster and a single
+ *  clickable result are different affordances with different keys: an anchor names a RUN, an owner names one
+ *  CALL). Display state, not document state, for the identical reason `expandedFolds` is: nothing on the wire
+ *  or on disk says a result was expanded, so it lives beside it in `useChat`, threaded here as a projection
+ *  INPUT, and is cleared at the same two boundaries (a renderer flip, a rebuilt transcript) for the same
+ *  reason — a rebuilt document reuses the same tool-use ids, and an expansion left standing would open an
+ *  unrelated call on sight. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
@@ -248,23 +272,39 @@ function errorBody(lines: readonly string[], options: ProjectionOptions, color: 
 const isPlanRejection = (event: ToolEvent, normalized: NormalizedToolResult): boolean =>
   event.name === "ExitPlanMode" && !normalized.flatText.trim().startsWith(INTERRUPT_CANCELLED);
 
-function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderLine[] {
-  if (normalized.status === "running") return [];
+/** `clickable` (T-CLICKGATE Task 1) is canon's click-to-expand predicate. FIX WAVE (external review): it must
+ *  be PROJECTION-INDEPENDENT — computed as if the result were folded under the COMPACT projection, regardless
+ *  of the projection actually being rendered. A row re-projected to `detail-all` (a later task's "expanded"
+ *  view) folds NOTHING there — `detail-all` is the one unbounded projection — so a bit derived from the real
+ *  fold would read `false` on exactly the row a later collapse-click needs to find clickable. So the error arm
+ *  checks the PHYSICAL line count directly (`errorBody`'s own ten-row clip, independent of projection), and
+ *  the ordinary arm asks `wouldFoldUnderCompact`, the same "as-if-compact" question `toolSummaries.bashRows`
+ *  answers for its own typed row — a fold FORCED to `compact`, never the caller's actual `options.projection`.
+ *  The RENDERED body below still uses the real projection; only the predicate is pinned.
+ *    Every earlier return in this function — `running` (no body yet), `interrupted`/`rejected` (what the user
+ *  did, not a result to expand) — is `false`. A typed row (`summaryLines`) carries whatever `clickable` its
+ *  own producer minted: `false` for every fixed-shape summary, but `bashRows`' own as-if-compact predicate for
+ *  a Bash result (see `toolSummaries.ts`'s inventory comment on `summaryLines`). */
+const wouldFoldUnderCompact = (lines: readonly string[], columns: number): boolean =>
+  foldWithTruncation(lines, columns, { projection: "compact", compactRows: 3, revealOneExtraWithoutMarker: true }).hidden > 0;
+function resultBody(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): { body: readonly RenderLine[]; clickable: boolean } {
+  if (normalized.status === "running") return { body: [], clickable: false };
   // None of these surfaces is a failure: they are what the USER did, so they never take the error colour, and the
   // rejection is a fixed one-row box (`height: 1`) no matter what text arrived with it. The two attributes are NOT
   // interchangeable — `zWo`'s generic prompt and the `rejected` row are upstream `dimColor`, but `EAr` paints the
   // plan-rejection heading with the `subtle` theme TOKEN (L421286, `color: "subtle"`), so that arm carries a colour.
   if (normalized.status === "interrupted")
-    return [isPlanRejection(event, normalized)
+    return { body: [isPlanRejection(event, normalized)
       ? { text: PLAN_REJECTED_TEXT, color: resolveThemeColor(themeTokens().subtle) }
-      : { text: INTERRUPTED_TEXT, dim: true }];
-  if (normalized.status === "rejected") return [{ text: REJECTED_TEXT, dim: true }];   // upstream ignores the tool's text entirely: the row is always this literal
+      : { text: INTERRUPTED_TEXT, dim: true }], clickable: false };
+  if (normalized.status === "rejected") return { body: [{ text: REJECTED_TEXT, dim: true }], clickable: false };   // upstream ignores the tool's text entirely: the row is always this literal
   const typed = summaryLines(event, normalized, options);
-  if (typed !== undefined) return typed;
+  if (typed !== undefined) return { body: typed.lines, clickable: typed.clickable };
   const lines = withoutTrailingBlanks(normalized.outputLines);
-  if (!lines.length) return [];
-  if (normalized.status === "error") return errorBody(lines, options, resolveThemeColor(themeTokens().error));
-  return foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
+  if (!lines.length) return { body: [], clickable: false };
+  if (normalized.status === "error") return { body: errorBody(lines, options, resolveThemeColor(themeTokens().error)), clickable: lines.length > ERROR_PHYSICAL_ROWS };
+  const folded = foldToolOutput(lines, options.columns, { projection: options.projection, compactRows: 3, revealOneExtraWithoutMarker: true, expandHint: options.expandHint });
+  return { body: folded, clickable: wouldFoldUnderCompact(lines, options.columns) };
 }
 
 // ── F3 Task 7: the Agent unit (LT16 / LT17) ────────────────────────────────────────────────────────────
@@ -460,9 +500,37 @@ function poppedOnErrorItems(event: ToolEvent, options: ProjectionOptions): reado
 function suppressedHeaderItems(event: ToolEvent, status: ToolStatus, options: ProjectionOptions): readonly RenderItem[] {
   return [{ kind: "line", id: `${event.id}:call`, ownerKey: toolOwnerKey(event.id), line: headerLine(event, status, options), wrap: "truncate-end" }];
 }
+/** T-CLICKGATE Task 3 — canon's expanded marker: `userMessageBackgroundHover` behind the whole body plus ONE
+ *  padding row after it. Minted as REAL `RenderLine`s here, in the body array `resultBody` already builds,
+ *  rather than as a wrapper-level `paddingBottom` — that keeps it a physical row `wrapItems`/`pageItemSlices`/
+ *  `hitRowsOf` all count exactly once, the same as any other body row, with nothing downstream needing a
+ *  special case. A SEGMENTED line paints through its own `Segment.bg` (`Line.tsx` never reads `RenderLine.bg`
+ *  once `segments` is set), so both fields are stamped; neither producer here sets either one already
+ *  (`grep bg:` across this file and `toolSummaries.ts` at the time of writing), so there is nothing to
+ *  preserve underneath the overwrite. */
+const expandedBg = (): string => resolveThemeColor(themeTokens().userMessageBackgroundHover);
+function withExpandedMarker(body: readonly RenderLine[]): readonly RenderLine[] {
+  const bg = expandedBg();
+  const banded = body.map((l) => (l.segments ? { ...l, segments: l.segments.map((s) => ({ ...s, bg })) } : { ...l, bg }));
+  return [...banded, { text: "", bg }];
+}
 function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, options: ProjectionOptions): readonly RenderItem[] {
   if (normalized.status === "suppressed") return [];
-  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, ownerKey: toolOwnerKey(event.id), line: headerLine(event, normalized.status, options), wrap: "truncate-end" }];
+  // T-CLICKGATE Task 3 — `reid` (below) OVERWRITES every item's `ownerKey` at the two call sites that finalize
+  // a top-level call (`projectAll`, `projectPending`, and the fold-member arm `expandedMemberItems`), always
+  // with `toolOwnerKey(event.id, event.result ? event.result.resultSequence : "pending")` — never the bare
+  // `toolOwnerKey(event.id)` this function used to compute. `expandedItemsRef` (`useChat.ts`) is keyed by
+  // WHATEVER OWNER the click actually landed on (the hitmap reads the post-`reid` field), so this has to
+  // compute the SAME final string ahead of `reid` to ask the right question — the bare form only ever matches
+  // a nested Agent child (`nestedItems`, never `reid`'d, and never clickable at all — Agent success/running
+  // both return before `resultBody` ever runs), so it happened to type-check while never once matching.
+  const ownerKey = toolOwnerKey(event.id, event.result ? event.result.resultSequence : "pending");
+  // Resolved ONCE, ahead of the header push, so both the header and the result wear `expanded: true` while
+  // this owner is open: the existing hover Provider term (`FullscreenViewport`'s `s.item.expanded !== true`,
+  // F9 T-MOUSE Task 3) already suppresses hover for any item carrying it, and reusing that one field is what
+  // makes suppression cover the WHOLE owner — header included — with no new term for the viewport to read.
+  const isExpandedOwner = options.expandedItems?.has(ownerKey) === true;
+  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, ownerKey, line: headerLine(event, normalized.status, options), wrap: "truncate-end", ...(isExpandedOwner ? { expanded: true } : {}) }];
   if (normalized.status === "running") {
     const hint = backgroundHintItem(event, options);
     if (hint !== undefined) items.push(hint);
@@ -475,8 +543,15 @@ function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, opti
     const agent = agentTerminalItems(event, options);
     if (agent !== undefined) return [...items, ...agent];
   }
-  const body = resultBody(event, normalized, options);
-  if (body.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey: toolOwnerKey(event.id), gutter: TOOL_RESULT_GUTTER, body });
+  // T-CLICKGATE Task 3 — a result whose OWNER the reader clicked open renders at `detail-all` (unbounded, no
+  // marker) regardless of the projection actually being painted elsewhere, and its rendered body wears the
+  // expanded band. `clickable` is NOT re-derived here: `resultBody`'s own predicate is already computed
+  // AS IF COMPACT (Task 1's fix wave), independent of the projection it is handed, so it reads the same
+  // `true` whether this call passes `options` or the forced detail-all override — the click that opened this
+  // very item is exactly what an unclickable result could never have received.
+  const { body, clickable } = resultBody(event, normalized, isExpandedOwner ? { ...options, projection: "detail-all", verbose: true } : options);
+  const finalBody = isExpandedOwner && body.length ? withExpandedMarker(body) : body;
+  if (finalBody.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey, gutter: TOOL_RESULT_GUTTER, body: finalBody, ...(clickable ? { clickable: true } : {}), ...(isExpandedOwner ? { expanded: true } : {}) });
   return items;
 }
 

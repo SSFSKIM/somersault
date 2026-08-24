@@ -308,7 +308,7 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current };
   };
   /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
    *  the run's earliest-issued call).
@@ -328,6 +328,18 @@ export function useChat(
   function toggleFold(anchor: string): void {
     if (disposed.current) return;
     if (!expandedFoldsRef.current.delete(anchor)) expandedFoldsRef.current.add(anchor);
+    reconcile();
+  }
+  /** T-CLICKGATE Task 3 — WHICH TOOL RESULTS THE READER HAS CLICKED OPEN, keyed by `toolOwnerKey(event.id)` —
+   *  a SEPARATE set from `expandedFoldsRef` (`ProjectionOptions.expandedItems`'s own doc: an anchor names a
+   *  RUN, an owner names one CALL, and the two affordances must not share a namespace). Same ref-not-state
+   *  shape and the same `reconcile()` re-projection as `toggleFold`, and for the identical reasons: a
+   *  still-growing pending region needs the SAME re-projection a settled Static row does, and nothing on
+   *  screen renders differently for the ref itself, only for what `reconcile()` produces from it. */
+  const expandedItemsRef = useRef<Set<string>>(new Set());
+  function toggleItemExpand(ownerKey: string): void {
+    if (disposed.current) return;
+    if (!expandedItemsRef.current.delete(ownerKey)) expandedItemsRef.current.add(ownerKey);
     reconcile();
   }
   // ── The ONE retained transcript document (F1 Task 4). Every visible row — live, replay, attach, resume,
@@ -1128,6 +1140,9 @@ export function useChat(
     // while a cluster was open persist into the classic replay whatever we do (recorded in the spec, Task
     // 13). Clearing here bounds that to what was already committed instead of letting it keep accruing.
     expandedFoldsRef.current.clear();
+    // T-CLICKGATE Task 3 — the same boundary and the same class: a clicked-open result is the fullscreen
+    // renderer's own affordance too, with nothing on a classic screen to close it.
+    expandedItemsRef.current.clear();
     mergeThoughtMs();
     const context = projectionContext(fullscreen);
     const finalized = projectCompact(documentRef.current!, context);
@@ -1277,6 +1292,9 @@ export function useChat(
     // reuses those ids for calls the reader never opened. Left standing, a `/clear` followed by a resume
     // would open an unrelated cluster on sight.
     expandedFoldsRef.current.clear();
+    // T-CLICKGATE Task 3 — the same boundary and the same class: an owner names a tool-use id too, and a
+    // rebuilt transcript reuses those ids for calls the reader never clicked open.
+    expandedItemsRef.current.clear();
     setCtxPct(undefined);               // W-S5, see above: measured against a conversation that is gone
     // THE SAME BOUNDARY AND THE SAME CLASS for /copy's ring: every entry in it was measured against a
     // conversation that is gone, so `/clear` followed by `/copy` was putting the wiped text on the system
@@ -3250,5 +3268,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

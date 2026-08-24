@@ -209,6 +209,94 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   });
 });
 
+// T-CLICKGATE Task 1 — `clickable` is minted exactly on canon's two kinds: an ERROR result whose body was
+// physically clipped, or a non-error result the fold actually hid rows from. Every other species — a short
+// result of either kind, a fold-group row, plain assistant text — carries no `clickable` field at all.
+describe("T-CLICKGATE Task 1: clickable is minted exactly on canon's kinds", () => {
+  const gutterBlockOf = (items: readonly RenderItem[]) => items.find((i) => i.kind === "gutter-block")!;
+  const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+  const foldableLines = (n: number) => Array.from({ length: n }, (_, i) => `out line ${i + 1}`).join("\n");
+
+  it("(a) an error result of 12 physical lines clips at ten, and the clipped block is clickable", () => {
+    const items = projectDetail(doc([call("e-1", "Mystery", {}), result("e-1", errorLines(12), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(b) an error result of 3 physical lines never clips, and carries no clickable field", () => {
+    const items = projectDetail(doc([call("e-2", "Mystery", {}), result("e-2", errorLines(3), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  // Review finding (P-IMPORTANT): pin the exact boundary — `resultBody`'s error arm reads `lines.length >
+  // ERROR_PHYSICAL_ROWS` (ten), not `>=`; a mutation to `>=` slipped past every other cell here because none
+  // of them sat exactly on the line. These two do.
+  it("(b2) an error result of exactly 10 physical lines is AT the clip boundary and is NOT clickable", () => {
+    const items = projectDetail(doc([call("e-4", "Mystery", {}), result("e-4", errorLines(10), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(b3) an error result of 11 physical lines is one PAST the clip boundary and IS clickable", () => {
+    const items = projectDetail(doc([call("e-5", "Mystery", {}), result("e-5", errorLines(11), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(c) an ordinary result long enough for the fold to hide rows is clickable", () => {
+    const items = projectDetail(doc([call("r-1", "Mystery", {}), result("r-1", foldableLines(6), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(d) a short ordinary result the fold never truncates carries no clickable field", () => {
+    const items = projectDetail(doc([call("r-2", "Mystery", {}), result("r-2", foldableLines(2), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(e) a fold-group's own collapsed row never carries clickable", () => {
+    const items = projectPending(doc([call("read-1", "Read", { file_path: "src/app.ts" })]), ctx());
+    const groupRow = items.find((i) => i.id === "group:read-1:pending-row")!;
+    expect(groupRow.clickable).toBeUndefined();
+  });
+
+  it("(f) plain assistant text never carries clickable", () => {
+    const items = projectDetail(doc([prose("just some prose", "t-prose")]), ctx());
+    for (const item of items) expect(item.clickable).toBeUndefined();
+  });
+
+  // (g)/(h) FIX WAVE (external review): the predicate is PROJECTION-INDEPENDENT — computed as if the result
+  // were folded under COMPACT, never from the projection actually being rendered. `detail-all` folds nothing
+  // at all (it is the one unbounded projection), so a bit derived from the live fold would read `false` on
+  // exactly the row a later collapse-click needs to find clickable. Same fixtures as (a)/(c), rendered at
+  // `detail-all` instead of the default `detail-collapsed`.
+  it("(g) an ordinary result that would fold under compact stays clickable even rendered at detail-all", () => {
+    const items = projectDetail(doc([call("r-3", "Mystery", {}), result("r-3", foldableLines(6), false)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(h) a >10-line error stays clickable even rendered at detail-all, where the clip never triggers", () => {
+    const items = projectDetail(doc([call("e-3", "Mystery", {}), result("e-3", errorLines(12), true)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  // (i)/(j)/(k) FIX WAVE: TYPED successful results fold too — Bash's stdout/stderr fold inside its own
+  // `toolSummaries.bashRows` composition (F3's typed-row layer), not through `resultBody`'s generic fold, so
+  // a long successful Bash result needs its OWN truncation bit threaded up to the same mint site. No sidecar
+  // on `result()` here: `bashRows` falls back to the flat result text as stdout when no structured sidecar is
+  // present, same as every other flat-only Bash call in the census.
+  it("(i) a long successful Bash-style result carries clickable on its typed row", () => {
+    const items = projectDetail(doc([call("b-1", "Bash", { command: "seq 6" }), result("b-1", foldableLines(6), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
+  it("(j) a short successful Bash-style result carries no clickable field", () => {
+    const items = projectDetail(doc([call("b-2", "Bash", { command: "echo hi" }), result("b-2", foldableLines(2), false)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(k) a long successful Bash-style result stays clickable even rendered at detail-all", () => {
+    const items = projectDetail(doc([call("b-3", "Bash", { command: "seq 6" }), result("b-3", foldableLines(6), false)]), { ...ctx(), projection: "detail-all" });
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+});
+
 // (i) NOTHING ESCAPES — one document exercising several species at once, across ALL FOUR TIERS.
 describe("H1: nothing reaches the renderer without an ownerKey", () => {
   it("every RenderItem of every tier carries an ownerKey", () => {
@@ -251,19 +339,26 @@ describe("H1: nothing reaches the renderer without an ownerKey", () => {
 // `FullscreenViewport`, publish through `hitmapRef`, and drive `hoverAt` directly (an imperative call, the
 // same shape a mouse sink makes) — proving the painted `HitRow`s the real component builds group by owner,
 // not by item id, for every tier at once.
-describe("H1: the real FullscreenViewport groups every tier by owner", () => {
-  it("the painted hitmap groups finalized, pending, streaming, and queued rows by message", async () => {
+//   T-CLICKGATE Task 2: grouping is now GATED on `clickable` (no owner brightens unless one of its rows is).
+// `finalizedItems`/`queuedItems` below are stamped `clickable: true` as a TEST DEVICE — hand-built literals
+// this file already constructs directly to test the viewport's WIRING, not a claim that ordinary transcript
+// prose is ever clickable in production (only `toolRenderer.tsx`'s tool-result gutter-blocks are, Task 1).
+// `pendingItems` and `streaming` are left un-stamped ON PURPOSE: neither producer (`toolFold.ts`'s pending
+// row, `streamingItems.ts`) ever mints `clickable`, so this is the faithful, not synthetic, half of the
+// fixture — and it is what proves the gate actually excludes something.
+describe("H1: the real FullscreenViewport groups every tier by owner, gated on clickable (T-CLICKGATE Task 2)", () => {
+  it("groups a clickable owner's rows together, leaves a non-clickable owner's rows untouched, and never cross-groups distinct owners", async () => {
     const finalizedItems: readonly RenderItem[] = [
-      { kind: "line", id: "sdk:msgA:block:0:0", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-alpha", dim: true } },
-      { kind: "line", id: "sdk:msgA:block:0:1", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-beta", dim: true } },
+      { kind: "line", id: "sdk:msgA:block:0:0", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-alpha", dim: true }, clickable: true },
+      { kind: "line", id: "sdk:msgA:block:0:1", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-beta", dim: true }, clickable: true },
     ];
     const pendingItems: readonly RenderItem[] = [
       { kind: "line", id: "tool:p1:pending:header", ownerKey: toolOwnerKey("p1", "pending"), line: { text: "pending-row", dim: true } },
     ];
     const streaming: readonly RenderLine[] = [{ text: "stream-one", dim: true }, { text: "stream-two", dim: true }, { text: "stream-three", dim: true }];
     const queuedItems: readonly RenderItem[] = [
-      { kind: "line", id: "queued:q0:0", ownerKey: queuedOwnerKey("q0"), line: { text: "queued-a", dim: true } },
-      { kind: "line", id: "queued:q1:0", ownerKey: queuedOwnerKey("q1"), line: { text: "queued-b", dim: true } },
+      { kind: "line", id: "queued:q0:0", ownerKey: queuedOwnerKey("q0"), line: { text: "queued-a", dim: true }, clickable: true },
+      { kind: "line", id: "queued:q1:0", ownerKey: queuedOwnerKey("q1"), line: { text: "queued-b", dim: true }, clickable: true },
     ];
     const ref: { current: ViewportHitmap | null } = { current: null };
     // Wrapped in the REAL `FullscreenFrame`, not mounted bare: `hoverAt` gates on `regionTop > 0`
@@ -288,20 +383,31 @@ describe("H1: the real FullscreenViewport groups every tier by owner", () => {
     for (const needle of ["final-alpha", "final-beta", "pending-row", "stream-one", "stream-two", "stream-three", "queued-a", "queued-b"])
       expect(dimAt(needle), `${needle} not dim before hover`).toBe(true);
 
-    ref.current!.hoverAt(1, rowOf("stream-two"));
+    // A CLICKABLE owner's two rows group together, and nothing else un-dims.
+    ref.current!.hoverAt(1, rowOf("final-alpha"));
     await tick(); await tick(); await tick();
-    expect(dimAt("stream-one")).toBe(false);
-    expect(dimAt("stream-two")).toBe(false);
-    expect(dimAt("stream-three")).toBe(false);
-    for (const needle of ["final-alpha", "final-beta", "pending-row", "queued-a", "queued-b"])
+    expect(dimAt("final-alpha")).toBe(false);
+    expect(dimAt("final-beta")).toBe(false);
+    for (const needle of ["pending-row", "stream-one", "stream-two", "stream-three", "queued-a", "queued-b"])
       expect(dimAt(needle), `${needle} un-dimmed by an unrelated hover`).toBe(true);
 
+    // Two CLICKABLE owners of the SAME kind (queued) never cross-group.
     ref.current!.hoverAt(1, rowOf("queued-a"));
     await tick(); await tick(); await tick();
     expect(dimAt("queued-a")).toBe(false);
     expect(dimAt("queued-b")).toBe(true);        // distinct owner PER queued entry — no cross-entry grouping
     for (const needle of ["final-alpha", "final-beta", "pending-row", "stream-one", "stream-two", "stream-three"])
       expect(dimAt(needle)).toBe(true);
+
+    // A NON-clickable owner (streaming, and the pending fold-group row) never brightens at all — the gate
+    // this task adds, not merely "grouping happens to be correct".
+    ref.current!.hoverAt(1, rowOf("stream-two"));
+    await tick(); await tick(); await tick();
+    for (const needle of ["stream-one", "stream-two", "stream-three"])
+      expect(dimAt(needle), `${needle} must stay dim — streaming is never clickable`).toBe(true);
+    ref.current!.hoverAt(1, rowOf("pending-row"));
+    await tick(); await tick(); await tick();
+    expect(dimAt("pending-row"), "a pending fold-group row is never clickable").toBe(true);
 
     r.unmount();
   });
