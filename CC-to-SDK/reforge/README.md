@@ -251,7 +251,26 @@ running); and "did the interrupted command complete?" must be judged on tool
 **results**, not a whole-transcript substring search — the `tool_use` block
 necessarily contains the command string it was told to run.
 
+## Recording is currently blocked (2026-08-24)
+
+19 of 22 scenarios replay green offline. Three cannot be graded because their
+cassettes cannot be recorded: `background-task` and `fork-session` were never
+recorded, and `plain` lost its cassette to a `--rerecord` during the outage
+(the bug that motivated staged recordings, now fixed).
+
+Diagnosis, so nobody re-debugs it: **a sustained account-level 429**, not a
+harness fault and not a transient blip. A direct `curl` to
+`api.anthropic.com/v1/messages` returns `429 rate_limit_error` with no
+rate-limit or `retry-after` headers, only `x-should-retry: true`; twelve polls
+across ~9 minutes were all 429; a refreshed token in the same organization
+behaves identically. Note the engine renders this as "Server is temporarily
+limiting requests (not your usage limit)" — that text is the engine's reading of
+a bare 429 and should not be trusted as a diagnosis.
+
+Everything replay-only is unaffected: replays never touch the network.
+
 ## Next
 
-Finish recording the two rate-limited scenarios, then scale strangler
-replacement: one module at a time, each gated by `strangle/gate.ts`.
+Record the three outstanding cassettes once the limit clears (`npx tsx m1/run.ts`
+picks up exactly the missing ones), then scale strangler replacement: one module
+at a time, each gated by `strangle/gate.ts`.
