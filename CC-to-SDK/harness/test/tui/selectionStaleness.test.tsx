@@ -127,3 +127,37 @@ describe("F10 S4c: a live selection is REMAPPED onto its content, and cleared on
     expect(hitmap.current!.selectedText()).toBe(before);
   });
 });
+
+describe("F10 fix-wave review finding P2: a composer-row press must not restore a stale selection", () => {
+  it("with a live transcript selection, a press below the region (a composer/dock row) clears the selection instead of leaving it for the mouse-up to swallow", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(scene(DOC, hitmap));
+    await settle();
+    const rowP2 = rowOf(lastFrame(), "P2");
+
+    // A real sweep on P2's own row, exactly like this file's other cells — `hasSelection()` must be true
+    // before the composer press, or the cell proves nothing.
+    hitmap.current!.startSelectionAt(1, rowP2);
+    hitmap.current!.dragSelectionTo(3, rowP2);
+    await settle();
+    expect(hitmap.current!.hasSelection()).toBe(true);
+    expect(hitmap.current!.selectedText().length).toBeGreaterThan(0);
+
+    // A press on a DOCK row ("D1", published by this file's own `dock()` helper) — outside the region
+    // `hit.current.rows` covers, exactly the composer-click scenario the finding describes. `cellAt` computes
+    // a defined-but-out-of-range `Cell` for it (it only checks the frame has a top at all), so
+    // `startSelection` mutates `SelectionState` to that bogus cell and `recordSelectionAddresses` cannot
+    // resolve an address for it.
+    const rowD1 = rowOf(lastFrame(), "D1");
+    hitmap.current!.startSelectionAt(1, rowD1);
+    await settle(); // the render-time remap runs here — this is where a stale address would restore P2's sweep
+
+    // Fixed behavior: the unresolvable press clears the stale address AND leaves `SelectionState` as the
+    // fresh (no-drag) press set it — `hasSelection()` reads `false` (no `focus`, no `anchorSpan`), so a
+    // release right here would fall through to the composer's own caret/click handling instead of being
+    // swallowed as "a completed sweep." Before the fix, the stale `selectionAddrRef` survives the failed
+    // resolve, the next render's remap restores the OLD P2 sweep, and this assertion sees `true`.
+    expect(hitmap.current!.hasSelection()).toBe(false);
+    expect(hitmap.current!.selectedText()).toBe("");
+  });
+});

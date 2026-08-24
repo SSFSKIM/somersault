@@ -490,13 +490,17 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   };
   // EVERY mutation of `SelectionState` calls this, not just the mouse ones — Task 7's keyboard extends
   // included. An address left over from the last mouse event is a stale address, and the very next repaint
-  // remaps from it and undoes the move. `anchor` failing to resolve (should not happen — every caller below
-  // sets it via `cellAt`, which only ever names a row `hit.current.rows` actually has) leaves the previous
-  // address on record rather than mint a half-built one.
+  // remaps from it and undoes the move. `anchor` failing to resolve — `cellAt` only bounds-checks the
+  // frame's `top`, not the row against `hit.current.rows.length` (review finding P2), so a press below the
+  // painted transcript (a composer/dock row) reaches here with an out-of-range `Cell` — must therefore
+  // CLEAR the record rather than leave it: leaving the previous address on record is exactly what let the
+  // next render's remap (below) restore the OLD selection over the fresh, unresolvable press, which
+  // `hasSelection()` then reads as "still sweeping" and a real caller (ChatApp's mouse-up) swallows the
+  // composer click that should have gone through.
   const recordSelectionAddresses = (): void => {
     const s = selectionStateRef.current;
     const anchor = endpointAt(s.anchor);
-    if (!anchor) return;
+    if (!anchor) { selectionAddrRef.current = null; return; }
     const focus = endpointAt(s.focus);
     const spanLo = s.anchorSpan ? endpointAt(s.anchorSpan.lo) : null;
     const spanHi = s.anchorSpan ? endpointAtExclusive(s.anchorSpan.hi) : null;
