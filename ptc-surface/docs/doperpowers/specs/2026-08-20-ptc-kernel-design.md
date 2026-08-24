@@ -863,11 +863,15 @@ above. None is an acceptance failure:
    `app-server/README.md` already prefers permission-profile selection over the `sandbox`
    shorthand, so the seam exists; it is future work, unbuilt and unmeasured.
 
-9. **A real marketplace install has never been run.** r11's root inversion makes the cached
-   plugin root self-contained, and the containment test pins the structure — but the claim
-   that a marketplace install now starts rests on that structural test plus the
-   `${CLAUDE_PLUGIN_ROOT}`-relative manifests; no live `claude plugin install` against a
-   marketplace has been performed (needs a logged-in CLI, same tier as the live suite).
+9. **CLOSED (2026-08-24).** A real marketplace install has now been run end to end: the
+   package was published as the standalone single-plugin marketplace
+   `github.com/SSFSKIM/ptc-tool` (subtree split, 131 commits, tree-identical to the
+   monorepo copy), registered (`claude plugin marketplace add SSFSKIM/ptc-tool`), installed
+   (`ptc@ptc-tool`, cache `~/.claude/plugins/cache/ptc-tool/ptc/0.1.0`), and a fresh
+   headless session ran `exec` through the installed plugin — venv provisioned from the
+   cache path, kernel spawned, `print(6*7)` → `[cell 2 · ok]` `42`. The CLI (`ptc doctor`)
+   and a raw MCP `initialize` handshake against the cached `bin/ptc-launch` also pass from
+   the cache path.
 
 10. **A host-side kill cannot reach codex's detached tool children.** codex detaches shell-tool
     processes into their own sessions (`codex-rs/core/src/spawn.rs`) and its parent-death
@@ -1270,6 +1274,17 @@ discovery gap for a wrapper-launched `claude`, deferred until a real wrapper cas
   recursion brake through `restart_kernel(key, config=Config.from_env())`, the exact
   construction r15 closed in env form. Fixer deviation, controller-adopted.
   Date/Author: 2026-08-23 / r16 fix wave.
+
+- Decision: PTC ships from a standalone public repo (`SSFSKIM/ptc-tool`) that is itself the
+  single-plugin marketplace, not from the codex_somersault monorepo. The repo was produced
+  by `git subtree split -P ptc-surface/ptc` (history preserved, tree verified identical),
+  then gained `.claude-plugin/marketplace.json`, an MIT LICENSE, and marketplace-first
+  install docs. Rationale: a marketplace install clones the whole repo, and the monorepo is
+  a multi-GB codex fork; every existing plugin of this account already follows the
+  one-repo-per-plugin pattern. The monorepo copy remains the dev workspace for now;
+  divergence is visible because the split branch (`ptc-tool-export`) makes the tree hashes
+  comparable.
+  Date/Author: 2026-08-24 / Claude (approved by owner)
 
 ## Surprises & Discoveries
 
@@ -1862,3 +1877,4 @@ round, supports stopping.
   into the plan and reflected here — atomic admission wording under the exec row, monotonic
   cell ids + archived settlement in the capture section, and the plan-review Decision Log
   entry above.
+- 2026-08-24: residual 9 closed — standalone repo `SSFSKIM/ptc-tool` published (subtree split, tree-identical), single-plugin marketplace.json added there, live `claude plugin marketplace add` + `install` + fresh-session `exec` all verified from the marketplace cache. Decision Log gains the standalone-repo entry; the monorepo copy stays the dev workspace.
