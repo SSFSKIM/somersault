@@ -546,6 +546,35 @@ describe("T-CLICKGATE Task 3 (d): a tap on a NON-clickable result (a ≤10-line 
   });
 });
 
+// bl4 fix-wave finding 1 (P2): the HEADER row of a clickable result shares its `ownerKey` with the
+// gutter-block body but never carries `RenderItem.clickable` itself (`toolRenderer.tsx`'s `toolEventItems`
+// mints it only on the body row). `hoverAt` already resolves through the owner-level `clickableOwners` set
+// and brightens this row — so a tap on the visibly-brightened header must resolve the same way, not fall
+// through `clickTargetAt`'s per-row `at.clickable` bit to a no-op.
+describe("T-CLICKGATE Task 3 (bl4 finding 1): a tap on the result's HEADER row resolves through the owner's clickable state", () => {
+  it("expands a >10-line error result when the tap lands on its header line, not only its body", async () => {
+    const r = await mount(LONG_ERROR_DOC);
+    const before = r.lastFrame();
+    const headerIdx = rowsOf(r.lastFrame()).findIndex((l) => strip(l).startsWith("⏺ Mystery"));
+    expect(headerIdx, `header row not painted in:\n${clean(r.lastFrame())}`).toBeGreaterThanOrEqual(0);
+    const headerRow = headerIdx + 1;
+    await tap(r, COL, headerRow);
+    const expanded = clean(r.lastFrame());
+    expect(expanded).toContain("err line 11");
+    expect(expanded).toContain("err line 12");
+    expect(expanded).not.toMatch(MARKER_RE);
+    expect(r.lastFrame()).toContain(HOVER_BAND);
+
+    // Collapses again from a BODY row unique to the open state — the same "click a row only the open block
+    // has" idiom (a)/(b)'s own ancestor test uses via `memberRow()`, rather than a second click on the
+    // IDENTICAL header cell (which canon's own multi-click window would read as a double-click selection,
+    // not a second independent tap — an artifact of clicking the same cell twice fast, not of this fix).
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 11"));
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
 // ══ T-CLICKGATE Task 4 — edge rules: link-cell clicks are no-ops; blank-tail rules pinned ══════════════════
 // STEP 0's FINDING (full trace in task-4-report.md). `linkRangesOf` (`mouse/hitmap.ts`) walks a line's
 // `segments` and scans ONLY the ones marked `preStyled` for OSC-8 tokens; an ORDINARY segment's own bytes are

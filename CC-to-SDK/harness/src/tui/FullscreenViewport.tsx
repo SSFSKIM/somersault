@@ -423,12 +423,17 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   // at all — only about what to call it. A fold anchor is checked first: the two kinds never coexist on one
   // row today, so the order is a stated priority rather than an observed conflict.
   const clickTargetAt = useCallback((col: number, row: number): string | undefined => {
-    const { top, rows: painted } = hit.current;
+    const { top, rows: painted, clickableOwners } = hit.current;
     if (top <= 0) return undefined;
     const at = painted[row - top];
     if (at === undefined || col < 1 || col > at.width) return undefined;
     if (at.anchor !== undefined) return "fold:" + at.anchor;
-    if (!at.clickable) return undefined;
+    // bl4 fix-wave finding 1 (P2): resolved through the OWNER-level set, exactly as `hoverAt` resolves its
+    // brightening below — a clickable result's HEADER row shares the owner's key but never carries
+    // `HitRow.clickable` itself (only the gutter-block body does), so the per-row bit alone silently refused
+    // the tap on a row hover had already brightened. `clickableOwnersOf` is `hit.current`'s own field, read
+    // off the SAME frame `at` came from, so this can never disagree with what is actually painted.
+    if (!clickableOwners.has(at.ownerKey)) return undefined;
     // T-CLICKGATE Task 4 — a click landing inside a `linkRanges` span is a no-op, not a toggle: canon defers
     // URL-opening entirely (this task does not add it), and expanding the result underneath would silently
     // steal a gesture aimed at the link. `columnToChar` already answers `undefined` for a gutter column and
