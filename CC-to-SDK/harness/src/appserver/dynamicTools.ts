@@ -367,7 +367,37 @@ export function validateDeclarations(specs: DynamicToolSpec[], occupiedServerNam
 /** One converted block plus what it costs the budget. */
 type BlockVerdict = { ok: true; block: Record<string, unknown>; bytes: number } | { ok: false; reason: string };
 
-const errorResult = (note: string): CallToolResultLike => ({ content: [{ type: "text", text: note }], isError: true });
+/** How much of a client-controlled string an error note may quote. Bounded for the same reason
+ *  `schemaToZod.ts`'s `describeValue` is — the value came off the wire, and an unbounded quote lets the
+ *  CLIENT choose how long the note is. Longer than that one's 40 because a MIME type carries parameters a
+ *  client needs to recognize, and the length is named so the truncation is visible rather than silent. */
+const MAX_REFLECTED_CHARS = 128;
+const reflect = (text: string): string =>
+  text.length <= MAX_REFLECTED_CHARS ? text : `${text.slice(0, MAX_REFLECTED_CHARS)}… (${text.length} chars)`;
+
+const NOTE_CLAMP_MARKER = "…[note truncated]";
+
+/** Cut at a UTF-8 character boundary at or before `maxBytes` — a `Buffer` slice alone would split a
+ *  multi-byte character, and decoding the fragment substitutes U+FFFD, which is THREE bytes and can push
+ *  the result back over the very bound this is enforcing. */
+function sliceUtf8(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;   // step back off the continuation bytes of a split character
+  return buf.subarray(0, end).toString("utf8");
+}
+
+/** THE STRUCTURAL BELT. Every interpolation site above bounds what it quotes, but a note is itself result
+ *  payload the model must read, and the byte cap is a bound on WHAT THE MODEL IS HANDED — not on one arm of
+ *  the conversion. So the cap is enforced here too, where no future call site can route around it. Clamps,
+ *  never throws: this function is on the path that exists so a bad answer still settles. */
+const errorResult = (note: string): CallToolResultLike => {
+  const text = Buffer.byteLength(note, "utf8") <= MAX_RESULT_PAYLOAD_BYTES
+    ? note
+    : sliceUtf8(note, MAX_RESULT_PAYLOAD_BYTES - Buffer.byteLength(NOTE_CLAMP_MARKER, "utf8")) + NOTE_CLAMP_MARKER;
+  return { content: [{ type: "text", text }], isError: true };
+};
 
 /** Wire item → MCP block. The media branches keep the DECLARED media type (`parseDataUrl`) rather than
  *  sniffing it the way the image-input resolver does: an MCP image/audio block carries a `mimeType`, and
@@ -384,7 +414,9 @@ function toBlock(item: ToolCallContentItem): BlockVerdict {
   const parsed = parseDataUrl(url);
   if (!parsed.ok) return { ok: false, reason: parsed.reason };
   if (!parsed.mimeType.toLowerCase().startsWith(family)) {
-    return { ok: false, reason: `declared MIME type "${parsed.mimeType}" is not ${family}*` };
+    // `reflect`, because a media URL is a plain string at the wire (schema/dynamicTools.ts refuses no shape
+    // there on purpose, so a settlement always lands): the declared type is whatever the client can frame.
+    return { ok: false, reason: `declared MIME type "${reflect(parsed.mimeType)}" is not ${family}*` };
   }
   return {
     ok: true,

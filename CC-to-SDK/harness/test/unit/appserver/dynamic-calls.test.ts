@@ -388,6 +388,40 @@ describe("toCallResult — malformed media settles, never throws", () => {
     expect(noteOf(result)).toContain("not a base64 data: URL");
   });
 
+  // THE ERROR NOTE IS ITSELF PAYLOAD, and the byte cap is a bound on what the MODEL is handed — not on one
+  // arm of the conversion. A media URL is a plain string at the wire (schema/dynamicTools.ts refuses no
+  // shape there on purpose), so a client can declare a MIME type of any length it can frame; reflecting it
+  // verbatim into the refusal note would carry a >cap result past the very check the cap exists to be.
+  it("bounds the reflected MIME type, so a huge declared type cannot inflate the note past the cap", () => {
+    const mimeType = `text/${"x".repeat(140_000)}`;
+    const result = toCallResult([{ type: "inputImage", imageUrl: `data:${mimeType};base64,AAAA` }], true);
+    expect(result.isError).toBe(true);
+    const note = noteOf(result);
+    // The note still names the violation and the offender, in its truncated form.
+    expect(note).toContain("content item 0");
+    expect(note).toContain("image/");
+    expect(note).toContain(`text/${"x".repeat(123)}`);          // "text/" + 123 = the 128 reflected chars
+    expect(note).toContain("…");
+    expect(note).toContain(String(mimeType.length));            // the length the truncation hid
+    expect(note).not.toContain("x".repeat(200));
+    // And the whole settlement — every block's text — stays inside the model-context bound.
+    const emitted = result.content.reduce((n, block) => n + Buffer.byteLength(String(block.text ?? ""), "utf8"), 0);
+    expect(emitted).toBeLessThanOrEqual(MAX_RESULT_PAYLOAD_BYTES);
+  });
+
+  // The structural belt behind that truncation: no error note may leave this module over the cap, whatever
+  // a future call site interpolates. Reached through the one arm whose text this module does not author —
+  // an unexpected throw's own message — because that is the call site no interpolation-site bound covers.
+  it("clamps any error note to the payload cap, marking the clamp", () => {
+    const exploding = { type: "inputText", get text(): string { throw new Error("E".repeat(200_000)); } };
+    const result = toCallResult([exploding as unknown as ToolCallContentItem], true);
+    expect(result.isError).toBe(true);
+    const note = noteOf(result);
+    expect(Buffer.byteLength(note, "utf8")).toBeLessThanOrEqual(MAX_RESULT_PAYLOAD_BYTES);
+    expect(note).toContain("could not be converted");
+    expect(note).toContain("[note truncated]");
+  });
+
   it("answers rather than throwing on an item the type system says cannot exist", () => {
     // D-M4-9: a throw here would surface as -32603 and leave the model's call parked forever, so the
     // totality is not allowed to rest on the caller's zod alone.
