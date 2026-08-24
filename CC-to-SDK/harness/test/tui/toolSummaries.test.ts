@@ -231,6 +231,15 @@ describe("F3 typed result rows — Bash", () => {
     // the removal only, so interior framing (leading indent) survives a violation-free stderr.
     expect(texts(bash({ ...core, stderr: "  indented warn" }))).toEqual(["  indented warn"]);
   });
+
+  // Review finding (P-MINOR): a Bash result long enough for the compact fold to hide rows carries
+  // `clickable: true` on its typed row (T-CLICKGATE Task 1 fix wave); a short one carries `false`. Flat
+  // fallback (no sidecar) so `bashRows` reads the whole content as stdout, same as every plain Bash census row.
+  it("carries clickable on its typed row exactly when the compact fold would hide rows", () => {
+    const long = Array.from({ length: 6 }, (_, i) => `line ${i + 1}`).join("\n");
+    expect(clickable(bash(undefined, long))).toBe(true);
+    expect(clickable(bash(undefined, "one\ntwo"))).toBe(false);
+  });
 });
 
 describe("F3 typed result rows — web tools", () => {

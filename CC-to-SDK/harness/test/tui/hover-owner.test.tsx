@@ -227,6 +227,19 @@ describe("T-CLICKGATE Task 1: clickable is minted exactly on canon's kinds", () 
     expect(gutterBlockOf(items).clickable).toBeUndefined();
   });
 
+  // Review finding (P-IMPORTANT): pin the exact boundary — `resultBody`'s error arm reads `lines.length >
+  // ERROR_PHYSICAL_ROWS` (ten), not `>=`; a mutation to `>=` slipped past every other cell here because none
+  // of them sat exactly on the line. These two do.
+  it("(b2) an error result of exactly 10 physical lines is AT the clip boundary and is NOT clickable", () => {
+    const items = projectDetail(doc([call("e-4", "Mystery", {}), result("e-4", errorLines(10), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBeUndefined();
+  });
+
+  it("(b3) an error result of 11 physical lines is one PAST the clip boundary and IS clickable", () => {
+    const items = projectDetail(doc([call("e-5", "Mystery", {}), result("e-5", errorLines(11), true)]), ctx());
+    expect(gutterBlockOf(items).clickable).toBe(true);
+  });
+
   it("(c) an ordinary result long enough for the fold to hide rows is clickable", () => {
     const items = projectDetail(doc([call("r-1", "Mystery", {}), result("r-1", foldableLines(6), false)]), ctx());
     expect(gutterBlockOf(items).clickable).toBe(true);
