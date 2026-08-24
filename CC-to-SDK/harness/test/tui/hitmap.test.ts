@@ -11,7 +11,7 @@ import stringWidth from "string-width";
 import { wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { hitRowsOf } from "../../src/tui/FullscreenViewport.js";
-import { columnToChar, charToColumn, sourceEndpointAt, columnOfSourceChar, type HitRow } from "../../src/tui/mouse/hitmap.js";
+import { columnToChar, charToColumn, sourceEndpointAt, columnOfSourceChar, clickableOwnersOf, type HitRow } from "../../src/tui/mouse/hitmap.js";
 import { GROUP_HINT_GUTTER, TOOL_RESULT_GUTTER, projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
@@ -183,9 +183,46 @@ describe("hitRowsOf publishes HitRow.ownerKey — message-level, not per-row", (
   });
 });
 
+// ── T-CLICKGATE Task 2: HitRow.clickable — the owner-level click-to-expand bit, through the real publish path
+describe("hitRowsOf publishes HitRow.clickable, projected off RenderItem.clickable", () => {
+  it("an item with no `clickable` bit publishes rows reading `clickable: false`, never `undefined`", () => {
+    const [row] = publish([plainLine("p1", "plain row")], 40);
+    expect(row!.clickable).toBe(false);
+  });
+
+  it("every wrap fragment of a clickable `line` item carries `clickable: true`", () => {
+    const item: RenderItem = { kind: "line", id: "c1", line: { text: "x".repeat(50) }, clickable: true };
+    const rows = publish([item], 20);
+    expect(rows.length).toBeGreaterThanOrEqual(3);            // premise: it really wrapped into several rows
+    expect(rows.every((r) => r.clickable === true)).toBe(true);
+  });
+
+  it("every surviving body row of a clickable `gutter-block` item carries `clickable: true`", () => {
+    const item: RenderItem = { kind: "gutter-block", id: "g1", gutter: TOOL_RESULT_GUTTER,
+      body: [{ text: "aaa" }, { text: "bbb" }], clickable: true };
+    const rows = publish([item], 40);
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => r.clickable === true)).toBe(true);
+  });
+});
+
+describe("clickableOwnersOf — the owner-level answer hoverAt gates on", () => {
+  it("an owner is clickable iff ANY of its rows is — the header row of a clickable result shares its body's owner", () => {
+    const header: RenderItem = { kind: "line", id: "e1:call", ownerKey: "owner-e1", line: { text: "call" } };
+    const body: RenderItem = { kind: "gutter-block", id: "e1:result", ownerKey: "owner-e1", gutter: TOOL_RESULT_GUTTER, body: [{ text: "err" }], clickable: true };
+    const rows = publish([header, body], 40);
+    expect(clickableOwnersOf(rows)).toEqual(new Set(["owner-e1"]));
+  });
+
+  it("no clickable row anywhere publishes an empty set", () => {
+    const rows = publish([plainLine("p1", "plain row")], 40);
+    expect(clickableOwnersOf(rows).size).toBe(0);
+  });
+});
+
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
   itemKey: "k", ownerKey: "o", width: stringWidth(overrides.text), gutterWidth: 0, softWrap: "hard", kind: "line",
-  charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
+  charStart: 0, charEnd: overrides.text.length, textStart: 0, clickable: false, ...overrides,
 });
 
 describe("columnToChar / charToColumn — grapheme-snapped column addressing", () => {

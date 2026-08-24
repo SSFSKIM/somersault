@@ -23,7 +23,7 @@ import { documentSelectionText } from "../../src/tui/mouse/documentText.js";
 // gutter-free, single-width rows throughout, so column N is always char index N-1).
 const mkRow = (overrides: Partial<HitRow> & Pick<HitRow, "text">): HitRow => ({
   itemKey: "k", ownerKey: overrides.itemKey ?? "k", width: overrides.text.length, gutterWidth: 0, softWrap: "hard", kind: "line",
-  charStart: 0, charEnd: overrides.text.length, textStart: 0, ...overrides,
+  charStart: 0, charEnd: overrides.text.length, textStart: 0, clickable: false, ...overrides,
 });
 
 // Five single-row items, each its own distinct 10-character alphabet — a document deep enough that a

@@ -339,19 +339,26 @@ describe("H1: nothing reaches the renderer without an ownerKey", () => {
 // `FullscreenViewport`, publish through `hitmapRef`, and drive `hoverAt` directly (an imperative call, the
 // same shape a mouse sink makes) — proving the painted `HitRow`s the real component builds group by owner,
 // not by item id, for every tier at once.
-describe("H1: the real FullscreenViewport groups every tier by owner", () => {
-  it("the painted hitmap groups finalized, pending, streaming, and queued rows by message", async () => {
+//   T-CLICKGATE Task 2: grouping is now GATED on `clickable` (no owner brightens unless one of its rows is).
+// `finalizedItems`/`queuedItems` below are stamped `clickable: true` as a TEST DEVICE — hand-built literals
+// this file already constructs directly to test the viewport's WIRING, not a claim that ordinary transcript
+// prose is ever clickable in production (only `toolRenderer.tsx`'s tool-result gutter-blocks are, Task 1).
+// `pendingItems` and `streaming` are left un-stamped ON PURPOSE: neither producer (`toolFold.ts`'s pending
+// row, `streamingItems.ts`) ever mints `clickable`, so this is the faithful, not synthetic, half of the
+// fixture — and it is what proves the gate actually excludes something.
+describe("H1: the real FullscreenViewport groups every tier by owner, gated on clickable (T-CLICKGATE Task 2)", () => {
+  it("groups a clickable owner's rows together, leaves a non-clickable owner's rows untouched, and never cross-groups distinct owners", async () => {
     const finalizedItems: readonly RenderItem[] = [
-      { kind: "line", id: "sdk:msgA:block:0:0", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-alpha", dim: true } },
-      { kind: "line", id: "sdk:msgA:block:0:1", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-beta", dim: true } },
+      { kind: "line", id: "sdk:msgA:block:0:0", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-alpha", dim: true }, clickable: true },
+      { kind: "line", id: "sdk:msgA:block:0:1", ownerKey: sdkOwnerKey("msgA"), line: { text: "final-beta", dim: true }, clickable: true },
     ];
     const pendingItems: readonly RenderItem[] = [
       { kind: "line", id: "tool:p1:pending:header", ownerKey: toolOwnerKey("p1", "pending"), line: { text: "pending-row", dim: true } },
     ];
     const streaming: readonly RenderLine[] = [{ text: "stream-one", dim: true }, { text: "stream-two", dim: true }, { text: "stream-three", dim: true }];
     const queuedItems: readonly RenderItem[] = [
-      { kind: "line", id: "queued:q0:0", ownerKey: queuedOwnerKey("q0"), line: { text: "queued-a", dim: true } },
-      { kind: "line", id: "queued:q1:0", ownerKey: queuedOwnerKey("q1"), line: { text: "queued-b", dim: true } },
+      { kind: "line", id: "queued:q0:0", ownerKey: queuedOwnerKey("q0"), line: { text: "queued-a", dim: true }, clickable: true },
+      { kind: "line", id: "queued:q1:0", ownerKey: queuedOwnerKey("q1"), line: { text: "queued-b", dim: true }, clickable: true },
     ];
     const ref: { current: ViewportHitmap | null } = { current: null };
     // Wrapped in the REAL `FullscreenFrame`, not mounted bare: `hoverAt` gates on `regionTop > 0`
@@ -376,20 +383,31 @@ describe("H1: the real FullscreenViewport groups every tier by owner", () => {
     for (const needle of ["final-alpha", "final-beta", "pending-row", "stream-one", "stream-two", "stream-three", "queued-a", "queued-b"])
       expect(dimAt(needle), `${needle} not dim before hover`).toBe(true);
 
-    ref.current!.hoverAt(1, rowOf("stream-two"));
+    // A CLICKABLE owner's two rows group together, and nothing else un-dims.
+    ref.current!.hoverAt(1, rowOf("final-alpha"));
     await tick(); await tick(); await tick();
-    expect(dimAt("stream-one")).toBe(false);
-    expect(dimAt("stream-two")).toBe(false);
-    expect(dimAt("stream-three")).toBe(false);
-    for (const needle of ["final-alpha", "final-beta", "pending-row", "queued-a", "queued-b"])
+    expect(dimAt("final-alpha")).toBe(false);
+    expect(dimAt("final-beta")).toBe(false);
+    for (const needle of ["pending-row", "stream-one", "stream-two", "stream-three", "queued-a", "queued-b"])
       expect(dimAt(needle), `${needle} un-dimmed by an unrelated hover`).toBe(true);
 
+    // Two CLICKABLE owners of the SAME kind (queued) never cross-group.
     ref.current!.hoverAt(1, rowOf("queued-a"));
     await tick(); await tick(); await tick();
     expect(dimAt("queued-a")).toBe(false);
     expect(dimAt("queued-b")).toBe(true);        // distinct owner PER queued entry — no cross-entry grouping
     for (const needle of ["final-alpha", "final-beta", "pending-row", "stream-one", "stream-two", "stream-three"])
       expect(dimAt(needle)).toBe(true);
+
+    // A NON-clickable owner (streaming, and the pending fold-group row) never brightens at all — the gate
+    // this task adds, not merely "grouping happens to be correct".
+    ref.current!.hoverAt(1, rowOf("stream-two"));
+    await tick(); await tick(); await tick();
+    for (const needle of ["stream-one", "stream-two", "stream-three"])
+      expect(dimAt(needle), `${needle} must stay dim — streaming is never clickable`).toBe(true);
+    ref.current!.hoverAt(1, rowOf("pending-row"));
+    await tick(); await tick(); await tick();
+    expect(dimAt("pending-row"), "a pending fold-group row is never clickable").toBe(true);
 
     r.unmount();
   });

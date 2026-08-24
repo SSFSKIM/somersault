@@ -57,6 +57,24 @@ export interface HitRow {
    *  continuation indent's length for a wrapped row that carries one. The offset `sourceEndpointAt`
    *  corrects by; without it a continuation row's pad is indistinguishable from real leading spaces. */
   textStart: number;
+  /** T-CLICKGATE Task 2 — the projection of `RenderItem.clickable` onto this painted row, `item.clickable
+   *  === true`. REQUIRED, not optional, for the same reason `charStart`/`charEnd` are (this field's own
+   *  doc above, and `ownerKey`'s own precedent): an optional field lets a constructor that forgot it
+   *  typecheck, and then `hoverAt` silently reads `undefined` as falsy — which happens to be the SAFE
+   *  reading here, masking exactly the omission this requiredness exists to catch. Row-level, never the
+   *  owner-level answer a hover consult actually wants — see `clickableOwnersOf` below for that. */
+  clickable: boolean;
+}
+
+/** T-CLICKGATE Task 2 — the OWNER-level answer `hoverAt` gates on: an owner is clickable iff ANY of its
+ *  painted rows is (spec D4) — a clickable result's header line has no `clickable` bit of its own (only its
+ *  `gutter-block` body does, `toolRenderer.tsx`'s `resultBody`) and must still brighten together with it.
+ *  Built ONCE per paint, beside `hitRowsOf`'s own call, rather than walked again inside `hoverAt` on every
+ *  mouse-move tick. */
+export function clickableOwnersOf(rows: readonly HitRow[]): ReadonlySet<string> {
+  const owners = new Set<string>();
+  for (const row of rows) if (row.clickable) owners.add(row.ownerKey);
+  return owners;
 }
 
 /** F10 S4 — a painted COLUMN resolved to the SOURCE range it names. `where` separates the three outcomes

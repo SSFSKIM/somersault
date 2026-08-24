@@ -87,7 +87,7 @@ import { PAGER_ACTIONS, pageItemSlices, renderItemHeight, type PagerAction, type
 import { RenderItemView, type RenderItem } from "./toolRenderer.js";
 import { streamingItems } from "./streamingItems.js";
 import { remapRowOffset, sourceId, wrapItemsToWidth } from "./wrapItems.js";
-import { linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
+import { clickableOwnersOf, linkRangesOf, sourceEndpointAt, type HitRow } from "./mouse/hitmap.js";
 import { remapSelection, type SelectionAddresses, type SelectionEndpoint } from "./mouse/address.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { createSelectionState, dragTo, dragToSpanned, hasSelection as computeHasSelection, moveSelectionFocus, multiClick, selectedSpans, startSelection, type Cell, type ExtendDir, type RowSpan, type SelectionState } from "./mouse/selection.js";
@@ -256,8 +256,10 @@ const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string
   const linkRanges = linkRangesOf(l);
   const text = stripSgr(l.text);
   const source = l.source ?? { ...fallback, pad: 0 };
+  // `clickable` is always overridden by each of the two call sites below (off the ITEM's own bit, which
+  // this line-level helper has no access to) — `false` here is a placeholder, never the final answer.
   return { itemKey, ownerKey, anchor, kind: "line", gutterWidth, text, softWrap: l.continuation === true ? "continuation" : "hard",
-    charStart: source.start, charEnd: source.end, textStart: source.pad,
+    charStart: source.start, charEnd: source.end, textStart: source.pad, clickable: false,
     width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
 };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
@@ -278,7 +280,10 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
     // in practice this is always the producer's own key, never the fallback.
     const ownerKey = item.ownerKey ?? itemKey;
     if (item.kind === "line") {
-      out.push(hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns, { start: 0, end: stripSgr(item.line.text).length }));
+      // T-CLICKGATE Task 2 — the row-level projection of `RenderItem.clickable` (`item.clickable === true`,
+      // never a bare `item.clickable`: `HitRow.clickable` is required, and an absent source bit must read
+      // `false`, not `undefined`).
+      out.push({ ...hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns, { start: 0, end: stripSgr(item.line.text).length }), clickable: item.clickable === true });
       continue;
     }
     // F10 S4 — the cumulative fallback base walks the block's ORIGINAL body order from row 0 regardless of
@@ -290,8 +295,10 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
     for (let row = 0; row < end; row++) {
       const body = item.body[row]!;
       if (row >= start)
+        // T-CLICKGATE Task 2 — same row-level projection as the `line` arm above, off the BLOCK's own bit
+        // (every body row of one result shares the one `clickable` its producer stamped on the item).
         out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, ownerKey, columns, { start: base, end: base + body.text.length }), kind: "gutter-block",
-          gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns) });
+          gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns), clickable: item.clickable === true });
       base += item.body[row]!.text.length + 1;
     }
   }
@@ -311,6 +318,9 @@ const EMPTY_ITEMS: readonly RenderItem[] = [];
  *  no reader. The walk is one `stringWidth` per painted row and costs nothing; the guard is here for the
  *  file's own memoisation discipline, which is "derive what is consumed". */
 const NO_HIT_ROWS: readonly HitRow[] = [];
+/** T-CLICKGATE Task 2 — `NO_HIT_ROWS`'s own sibling default: no painted rows means no clickable owners
+ *  either, and `clickableOwnersOf(NO_HIT_ROWS)` would just allocate a fresh empty `Set` to say so. */
+const NO_CLICKABLE_OWNERS: ReadonlySet<string> = new Set();
 /** A stable empty lookup for "no selection this frame" — F9 T-MOUSE Task 6, the same "derive what is
  *  consumed" discipline `NO_HIT_ROWS` states: a `new Map()` per idle render would be free but pointless. */
 const EMPTY_SPAN_MAP: ReadonlyMap<number, RowSpan> = new Map();
@@ -390,7 +400,8 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   //   `top <= 0` IS THE RENDERER GATE (see the header): no frame, or the classic one, publishes no origin,
   // and then no cell on the screen belongs to anything. A row above or below the window indexes past the
   // array — the dock band, the park row, the blank tail and the jump pill's stolen row all land there.
-  const hit = useRef<{ top: number; rows: readonly HitRow[]; pillRow: number }>({ top: 0, rows: [], pillRow: 0 });
+  const hit = useRef<{ top: number; rows: readonly HitRow[]; pillRow: number; clickableOwners: ReadonlySet<string> }>(
+    { top: 0, rows: [], pillRow: 0, clickableOwners: NO_CLICKABLE_OWNERS });
   const anchorAt = useCallback((col: number, row: number): string | undefined => {
     const { top, rows: painted } = hit.current;
     if (top <= 0) return undefined;
@@ -407,11 +418,14 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   // per-line/per-call `itemKey` a later track addresses character offsets on.
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const hoverAt = useCallback((col: number, row: number): void => {
-    const { top, rows: painted, pillRow } = hit.current;
+    const { top, rows: painted, pillRow, clickableOwners } = hit.current;
     if (top <= 0) { setHoveredKey(null); return; }
     if (pillRow > 0 && row === pillRow) { setHoveredKey(PILL_HOVER_KEY); return; }
     const at = painted[row - top];
-    setHoveredKey(at !== undefined && col >= 1 && col <= at.width ? at.ownerKey : null);
+    // T-CLICKGATE Task 2 — the F10-era gate brightened whatever was under the pointer, full stop; canon
+    // brightens only a row whose OWNER is click-to-expand. The owner-level set was resolved once, alongside
+    // `painted`, rather than re-derived here on every mouse-move tick.
+    setHoveredKey(at !== undefined && col >= 1 && col <= at.width && clickableOwners.has(at.ownerKey) ? at.ownerKey : null);
   }, []);
   const clearHover = useCallback(() => setHoveredKey(null), []);
 
@@ -760,7 +774,12 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   //   PILL ROW, DETERMINISTIC RATHER THAN MEASURED (F10 T-HOVER): `showPill` is only true while the window is
   // FULL (not sticky and not at the end, so there is content below), `body` is `height - 1` in exactly that
   // case, and the pill paints directly after the slices — so its row is `regionTop + body` whenever it is up.
-  hit.current = { top: regionTop, rows: hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS, pillRow: showPill && regionTop > 0 ? regionTop + body : 0 };
+  // T-CLICKGATE Task 2 — `clickableOwners` built ALONGSIDE `rows` here, once per paint (never inside
+  // `hoverAt`, which runs on every mouse-move tick): off the very array just published, so it can never
+  // describe a frame other than the one on screen, exactly as `rows` itself cannot.
+  const paintedRows = hitmapRef ? hitRowsOf(slices, columns) : NO_HIT_ROWS;
+  hit.current = { top: regionTop, rows: paintedRows, pillRow: showPill && regionTop > 0 ? regionTop + body : 0,
+    clickableOwners: hitmapRef ? clickableOwnersOf(paintedRows) : NO_CLICKABLE_OWNERS };
   // F9 T-MOUSE Task 3 — a repaint that no longer paints the hovered cluster (it scrolled off, its fold state
   // flipped, the document swapped under a session resume) must not leave a stale key haunting a cell that now
   // belongs to something else, or nothing. Checked against THIS render's own rows, never a stale copy, and
