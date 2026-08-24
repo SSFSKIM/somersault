@@ -251,6 +251,52 @@ running); and "did the interrupted command complete?" must be judged on tool
 **results**, not a whole-transcript substring search — the `tool_use` block
 necessarily contains the command string it was told to run.
 
+## External review round (2026-08-24): 5 findings, all confirmed and fixed
+
+An independent whole-round review (Codex gpt-5.6-sol, relayed by the bl4
+session) swept these commits and returned five findings. Every one reproduced;
+none were rejected. They cluster into one theme worth stating plainly: **a
+guard that only reports is not a guard**, and **a checker that does not cover
+the code is not a check**.
+
+| # | finding | fix |
+|---|---|---|
+| P1 | `runTurn` (the documented M0 entry point) never set `CLAUDE_CONFIG_DIR` — only `baseOptions` did, so M0 scripts still loaded the operator's real `~/.claude` and wrote real sessions | `CONFIG_DIR` moved into `src/runTurn.ts` (one definition, no circular import) and applied there; `harness.ts` re-exports it. Every engine-spawning path audited. |
+| P1 | the leak check only set `process.exitCode`; the staged cassette was promoted anyway and the final verdict assignment overwrote the exit code — a contaminated run could exit 0 | check now returns a verdict; on a hit the staged file is discarded, the scenario fails, and nothing is promoted |
+| P1 | nondeterminism triage dropped **every** A-vs-B difference at a variable path, so an engine emitting a third, invalid value there was reported identical; the same path set was reused across all three surfaces | both halves of the reviewer's suggestion, and the second turned out to be the real fix — see below |
+| P2 | `tsconfig.json` covered only `src/` and `m0/`, so `npx tsc --noEmit` passed green while never checking `m1 m2 m2c m3 strangle` — a real TS2339 sat hidden in `m3/probe-origin.ts` (tsx transpiles without checking) | include widened to every source directory; the hidden error fixed |
+| P2 | a misspelled `--scenario` selected nothing, and `[].every(...)` is vacuously true, so the runner printed ALL PASS having executed nothing (a valueless `--scenario` silently ran the entire corpus instead) | unknown tag, missing value, and flag-shaped value all abort with exit 2; an empty verdict set is refused rather than reported as a pass |
+
+Both P2s are the same failure as the P1s in miniature: a green signal that was
+never actually looking at anything.
+
+### The triage finding went deeper than the fix first written for it
+
+The review offered two remedies: compare the engine's value against the
+oracle's observed alternatives, **or** canonicalize the nondeterministic
+structure. The first was implemented — and immediately turned `parallel-tools`
+red, correctly: with three parallel calls the oracle can produce six orderings,
+two oracle runs sample at most two of them, so an engine producing a third
+*valid* ordering is indistinguishable from one producing garbage. **Sampling
+cannot certify a value it never saw.**
+
+So the ordering is canonicalized at its source instead, in three layers, each
+discarding only arrival order and never a result or its content:
+
+1. `tool_result` blocks inside one message are sorted by `tool_use_id` (the ids
+   come from the cassette, so they are stable across engines);
+2. the prompt-cache breakpoint, which attaches **positionally** to the last
+   block, is replaced by an explicit count — whether the engine sets a
+   breakpoint is real behavior (it drives cost), *which* racily-ordered block
+   carries it is not;
+3. in transcripts the SDK emits one message per result block, so consecutive
+   single-`tool_result` messages are sorted the same way.
+
+`parallel-tools` now matches on all three surfaces with no triage at all. The
+value-comparison triage stays as a second line of defense for nondeterminism
+that cannot be canonicalized, with `m3/variance-guard.test.ts` proving it never
+excuses an unobserved value.
+
 ## Recording is currently blocked (2026-08-24)
 
 19 of 22 scenarios replay green offline. Three cannot be graded because their

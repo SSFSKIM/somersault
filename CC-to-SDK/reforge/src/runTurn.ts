@@ -14,6 +14,15 @@ export const REFORGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SANDBOX = join(REFORGE_ROOT, "sandbox");
 export const enginePath = (name: string) => join(REFORGE_ROOT, "engines", name);
 
+/**
+ * Reforge-owned config dir. Lives here (not in harness.ts) so BOTH entry points
+ * share it without a circular import. `settingSources: []` does NOT contain the
+ * config dir — the real ~/.claude still injects the operator's memories,
+ * identity, and personal commands into recordings, and the engine writes real
+ * session files. Every path that spawns an engine must set it.
+ */
+export const CONFIG_DIR = join(REFORGE_ROOT, "config");
+
 export interface TurnOptions {
   engine: string; // engine name under engines/ (e.g. "engine-real") or absolute path
   prompt: string;
@@ -32,6 +41,7 @@ export interface TurnCapture {
 export async function runTurn(opts: TurnOptions): Promise<TurnCapture> {
   const engine = opts.engine.includes("/") ? opts.engine : enginePath(opts.engine);
   mkdirSync(SANDBOX, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true });
   const messages: unknown[] = [];
   const started = Date.now();
   const q = query({
@@ -48,6 +58,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnCapture> {
       // rebuild it: parent env + determinism knobs + caller extras.
       env: {
         ...(process.env as Record<string, string>),
+        CLAUDE_CONFIG_DIR: CONFIG_DIR,
         DISABLE_TELEMETRY: "1",
         DISABLE_ERROR_REPORTING: "1",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",

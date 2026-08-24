@@ -21,7 +21,16 @@ import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
 const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS];
 
 const args = process.argv.slice(2);
-const only = args.includes("--scenario") ? args[args.indexOf("--scenario") + 1] : undefined;
+// `--scenario` with no value used to leave `only` undefined, which silently ran
+// the ENTIRE corpus instead of the one scenario the caller asked for. Treat a
+// missing or flag-shaped value as an error, not as "no filter".
+const scenarioIdx = args.indexOf("--scenario");
+const scenarioArg = scenarioIdx >= 0 ? args[scenarioIdx + 1] : undefined;
+if (scenarioIdx >= 0 && (scenarioArg === undefined || scenarioArg.startsWith("--"))) {
+  console.error("ABORT: --scenario requires a value.");
+  process.exit(2);
+}
+const only = scenarioArg;
 const rerecord = args.includes("--rerecord");
 // engine under test (side B). A is always engine-real, the oracle.
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
@@ -70,7 +79,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
  * personal commands — a privacy problem and a determinism problem (the
  * recording would change whenever that state changes). Checked at record time.
  */
-function assertNoOperatorLeak(cassette: string): void {
+function cassetteIsClean(cassette: string): boolean {
   const text = readFileSync(cassette, "utf8");
   // The sandbox path legitimately sits under $HOME, so bare-home is not a
   // marker; the operator's real config dir and identity are.
@@ -81,11 +90,15 @@ function assertNoOperatorLeak(cassette: string): void {
   ];
   const hits = markers.filter(([m]) => text.includes(m)).map(([, label]) => label);
   if (hits.length > 0) {
+    // Must REJECT, not just flag: setting process.exitCode here was overwritten
+    // by the final verdict assignment, and the contaminated take was promoted
+    // and reused anyway — a leaking run could exit 0. Caller discards the
+    // staged file and fails the scenario.
     console.log(`    LEAK: cassette contains ${hits.join(", ")} — config isolation is not holding`);
-    process.exitCode = 1;
-  } else {
-    console.log("    leak check: clean");
+    return false;
   }
+  console.log("    leak check: clean");
+  return true;
 }
 
 function loadObservedRequests(file: string): unknown[] {
@@ -101,12 +114,40 @@ function loadObservedRequests(file: string): unknown[] {
     }));
 }
 
-function report(label: string, findings: DiffFinding[], flakyPaths?: Set<string>): boolean {
+/**
+ * Paths where the ORACLE disagreed with itself, mapped to the values it actually
+ * produced there. A per-surface map, never shared across surfaces: transcripts,
+ * events and requests all use `msg[i]…` path syntax, so one merged set would let
+ * a request-side path excuse a transcript-side difference.
+ */
+type OracleVariance = Map<string, unknown[]>;
+
+const varianceOf = (findings: DiffFinding[]): OracleVariance => {
+  const m: OracleVariance = new Map();
+  for (const f of findings) m.set(f.path, [f.a, f.b]);
+  return m;
+};
+
+/**
+ * Is this A-vs-B difference explained by the oracle's own nondeterminism?
+ * Only if B produced one of the values the ORACLE was observed to produce at
+ * that path. Excusing every value at a variable path would let an engine emit a
+ * third, invalid value (e.g. a tool_result the oracle never returns) and still
+ * be reported identical.
+ */
+const withinOracleVariance = (f: DiffFinding, v?: OracleVariance): boolean => {
+  const alts = v?.get(f.path);
+  if (!alts) return false;
+  const b = JSON.stringify(f.b);
+  return alts.some((alt) => JSON.stringify(alt) === b);
+};
+
+function report(label: string, findings: DiffFinding[], variance?: OracleVariance): boolean {
   if (findings.length === 0) {
     console.log(`    ${label}: identical`);
     return true;
   }
-  const genuine = flakyPaths ? findings.filter((f) => !flakyPaths.has(f.path)) : findings;
+  const genuine = findings.filter((f) => !withinOracleVariance(f, variance));
   const flaky = findings.length - genuine.length;
   const note = flaky > 0 ? ` (${flaky} attributed to oracle nondeterminism)` : "";
   if (genuine.length === 0) {
@@ -131,23 +172,31 @@ function report(label: string, findings: DiffFinding[], flakyPaths?: Set<string>
  * disagrees with itself. Those paths are nondeterministic and not attributable
  * to the engine under test.
  */
-async function oracleFlakyPaths(s: Scenario, cassette: string): Promise<Set<string>> {
+async function oracleVariance(
+  s: Scenario,
+  cassette: string,
+  a: RunResult,
+): Promise<{ transcripts: OracleVariance; events: OracleVariance; requests: OracleVariance; total: number }> {
   const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2");
-  const paths = new Set<string>();
-  for (const f of diffTranscripts(aBaseline!.messages, a2.messages)) paths.add(f.path);
-  for (const f of diffTranscripts(aBaseline!.events, a2.events)) paths.add(f.path);
-  const n1 = makeRunNormalizer(aBaseline!.messages);
+  const n1 = makeRunNormalizer(a.messages);
   const n2 = makeRunNormalizer(a2.messages);
-  for (const f of diffTranscripts(
-    loadObservedRequests(aBaseline!.observedFile).map(n1),
-    loadObservedRequests(a2.observedFile).map(n2),
-  ))
-    paths.add(f.path);
-  return paths;
+  const transcripts = varianceOf(diffTranscripts(a.messages, a2.messages));
+  const events = varianceOf(diffTranscripts(a.events, a2.events));
+  const requests = varianceOf(
+    diffTranscripts(loadObservedRequests(a.observedFile).map(n1), loadObservedRequests(a2.observedFile).map(n2)),
+  );
+  return { transcripts, events, requests, total: transcripts.size + events.size + requests.size };
 }
-let aBaseline: RunResult | null = null;
 
 const verdicts: { tag: string; pass: boolean }[] = [];
+
+// A misspelled or valueless --scenario used to select nothing, leaving verdicts
+// empty — and `[].every(...)` is vacuously true, so the runner printed ALL PASS
+// with exit 0 having executed nothing. Fail loudly instead.
+if (only !== undefined && !SCENARIOS.some((s) => s.tag === only)) {
+  console.error(`ABORT: unknown scenario '${only}'. Known tags:\n  ${SCENARIOS.map((s) => s.tag).join(", ")}`);
+  process.exit(2);
+}
 
 for (const s of SCENARIOS) {
   if (only && s.tag !== only) continue;
@@ -166,7 +215,12 @@ for (const s of SCENARIOS) {
     saveTranscript(`m1-${s.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
     const entries = existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean).length : 0;
     console.log(`  recorded ${entries} API exchange(s)`);
-    if (existsSync(staged)) assertNoOperatorLeak(staged);
+    if (existsSync(staged) && !cassetteIsClean(staged)) {
+      rmSync(staged, { force: true });
+      console.log("    DISCARDED: contaminated recording rejected — fix config isolation before re-recording");
+      verdicts.push({ tag: s.tag, pass: false });
+      continue;
+    }
     // A recording that captured an infrastructure failure (rate limit, gateway
     // error) is not a cassette — replaying it grades every engine against the
     // same failure and the scenario silently measures nothing. Discard it so the
@@ -208,17 +262,16 @@ for (const s of SCENARIOS) {
   );
 
   // Only pay for triage when something actually differs.
-  let flaky: Set<string> | undefined;
+  let variance: Awaited<ReturnType<typeof oracleVariance>> | undefined;
   if (tFind.length + eFind.length + rFind.length > 0) {
-    aBaseline = a;
     console.log("    (diff seen — replaying the oracle again to separate nondeterminism)");
-    flaky = await oracleFlakyPaths(s, cassette);
-    if (flaky.size > 0) console.log(`    oracle is nondeterministic on ${flaky.size} path(s)`);
+    variance = await oracleVariance(s, cassette, a);
+    if (variance.total > 0) console.log(`    oracle is nondeterministic on ${variance.total} path(s)`);
   }
 
-  const tOk = report("transcripts", tFind, flaky);
-  const eOk = report("events", eFind, flaky);
-  const rOk = report("requests", rFind, flaky);
+  const tOk = report("transcripts", tFind, variance?.transcripts);
+  const eOk = report("events", eFind, variance?.events);
+  const rOk = report("requests", rFind, variance?.requests);
   // substance check — guards the hollow-pass class (identical-but-empty behavior)
   const failure = s.check?.(a.messages, a.events) ?? null;
   if (failure) console.log(`    substance: FAIL — ${failure}`);
@@ -228,6 +281,10 @@ for (const s of SCENARIOS) {
 
 console.log("\n=== M1 corpus verdicts ===");
 for (const v of verdicts) console.log(`  ${v.pass ? "PASS" : "FAIL"}  ${v.tag}`);
+if (verdicts.length === 0) {
+  console.error("ABORT: no scenario ran — refusing to report a vacuous pass.");
+  process.exit(2);
+}
 const allPass = verdicts.every((v) => v.pass);
 console.log(allPass ? "\nALL PASS" : "\nFAILURES — on the identical-code pair these are harness defects; fix before grading engine-ts");
 process.exitCode = allPass ? 0 : 1;

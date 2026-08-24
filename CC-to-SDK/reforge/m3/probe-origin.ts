@@ -48,7 +48,13 @@ async function rawTurn(origin: unknown): Promise<{ origin: unknown; uuid: unknow
   );
   const uuid = "44444444-4444-4444-8444-444444444444";
   let buf = "";
-  let result: { origin?: unknown; user_message_uuid?: unknown } | null = null;
+  type ResultFrame = { origin?: unknown; user_message_uuid?: unknown };
+  // Collected into an array rather than a `let x = null`: assignments happen
+  // inside the stdout callback, which control-flow analysis cannot see, so a
+  // nullable local stays narrowed to `null` at the read site and its property
+  // reads become `never`. Array element types are not narrowed that way.
+  // (Only surfaced once the tsconfig actually covered m3/.)
+  const results: ResultFrame[] = [];
   child.stdout.on("data", (c: Buffer) => {
     buf += c.toString("utf8");
     let nl: number;
@@ -58,7 +64,7 @@ async function rawTurn(origin: unknown): Promise<{ origin: unknown; uuid: unknow
       if (!line.trim()) continue;
       try {
         const m = JSON.parse(line);
-        if (m.type === "result") result = m;
+        if (m.type === "result") results.push(m);
       } catch {
         /* ignore */
       }
@@ -77,7 +83,8 @@ async function rawTurn(origin: unknown): Promise<{ origin: unknown; uuid: unknow
   child.stdin.end();
   await new Promise<void>((r) => child.on("close", () => r()));
   await proxy.close();
-  return { origin: result?.origin ?? null, uuid: result?.user_message_uuid ?? null };
+  const settled = results.at(-1);
+  return { origin: settled?.origin ?? null, uuid: settled?.user_message_uuid ?? null };
 }
 
 console.log("=== M3-A probe: origin survival on the RAW stream-json path (no sdk.mjs) ===");

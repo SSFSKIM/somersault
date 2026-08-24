@@ -94,9 +94,54 @@ function makeScrubString(ids: Map<string, string>) {
   };
 }
 
+/**
+ * Canonicalize an ordering that is NOT a contract.
+ *
+ * Parallel tool calls come back in COMPLETION order, which races: the oracle
+ * disagrees with itself run to run. Sampling the oracle twice only observes two
+ * of the possible orderings, so an engine producing a third *valid* ordering
+ * still diffs. Remove the nondeterminism at its source instead: within one
+ * message, sort tool_result blocks by `tool_use_id`.
+ *
+ * This is safe precisely because the ids come from the cassette's assistant
+ * message, so they are identical across engines — and it discards only the
+ * arrival order, never the set of results or their contents. Ordering that IS a
+ * contract (the sequence of messages, of content blocks the model authored) is
+ * untouched.
+ */
+function canonicalizeArray(items: unknown[]): unknown[] {
+  const allToolResults =
+    items.length > 1 &&
+    items.every(
+      (x) =>
+        x !== null &&
+        typeof x === "object" &&
+        (x as { type?: string }).type === "tool_result" &&
+        typeof (x as { tool_use_id?: unknown }).tool_use_id === "string",
+    );
+  if (!allToolResults) return items;
+  const sorted = [...items].sort((a, b) =>
+    String((a as { tool_use_id: string }).tool_use_id).localeCompare(String((b as { tool_use_id: string }).tool_use_id)),
+  );
+  // The prompt-cache breakpoint is attached POSITIONALLY (to the last block of
+  // the message), so which tool_result carries it is decided by the same racy
+  // arrival order we just sorted away. Whether the engine sets a breakpoint at
+  // all is real behavior (it drives cost), so keep the COUNT as an explicit
+  // element and drop the positional attachment.
+  let breakpoints = 0;
+  const stripped = sorted.map((x) => {
+    const o = x as Record<string, unknown>;
+    if (!("cache_control" in o)) return x;
+    breakpoints++;
+    const { cache_control: _drop, ...rest } = o;
+    return rest;
+  });
+  return breakpoints > 0 ? [...stripped, { type: "reforge-cache-breakpoints", count: breakpoints }] : stripped;
+}
+
 function normalizeWith(v: unknown, scrub: (s: string) => string): unknown {
   if (typeof v === "string") return scrub(v);
-  if (Array.isArray(v)) return v.map((x) => normalizeWith(x, scrub));
+  if (Array.isArray(v)) return canonicalizeArray(v).map((x) => normalizeWith(x, scrub));
   if (v !== null && typeof v === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
@@ -125,13 +170,45 @@ export function makeRunNormalizer(...sources: unknown[]): (v: unknown) => unknow
   return (v: unknown) => normalizeWith(v, scrub);
 }
 
+/**
+ * The array-level canonicalization above cannot reach parallel tool results in a
+ * TRANSCRIPT, because the SDK emits one message PER result block — so the racy
+ * completion order shows up as message order. Sort each maximal run of
+ * consecutive single-tool_result messages by `tool_use_id`, for the same reason
+ * and with the same safety: the ids come from the cassette, and only arrival
+ * order is discarded.
+ */
+const singleToolResultId = (m: unknown): string | null => {
+  const content = (m as { type?: string; message?: { content?: unknown } })?.message?.content;
+  if ((m as { type?: string })?.type !== "user" || !Array.isArray(content) || content.length !== 1) return null;
+  const b = content[0] as { type?: string; tool_use_id?: unknown };
+  return b?.type === "tool_result" && typeof b.tool_use_id === "string" ? b.tool_use_id : null;
+};
+
+function canonicalizeToolResultRuns(messages: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (let i = 0; i < messages.length; ) {
+    const id = singleToolResultId(messages[i]);
+    if (id === null) {
+      out.push(messages[i++]);
+      continue;
+    }
+    let j = i;
+    while (j < messages.length && singleToolResultId(messages[j]) !== null) j++;
+    const run = messages.slice(i, j);
+    if (run.length > 1) run.sort((a, b) => singleToolResultId(a)!.localeCompare(singleToolResultId(b)!));
+    out.push(...run);
+    i = j;
+  }
+  return out;
+}
+
 export function normalizeTranscript(messages: unknown[]): unknown[] {
   const ids = new Map<string, string>();
   collectRunIds(messages, ids);
   const scrub = makeScrubString(ids);
-  return messages
-    .filter((m) => !DROP_MESSAGE_TYPES.has((m as { type?: string })?.type ?? ""))
-    .map((m) => normalizeWith(m, scrub));
+  const filtered = messages.filter((m) => !DROP_MESSAGE_TYPES.has((m as { type?: string })?.type ?? ""));
+  return canonicalizeToolResultRuns(filtered).map((m) => normalizeWith(m, scrub));
 }
 
 export interface DiffFinding {

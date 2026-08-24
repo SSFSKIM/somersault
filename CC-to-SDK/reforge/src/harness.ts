@@ -4,17 +4,12 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { REFORGE_ROOT, SANDBOX } from "./runTurn.js";
+import { CONFIG_DIR, SANDBOX } from "./runTurn.js";
 
-/**
- * H1 — reforge-owned config dir. `settingSources: []` does NOT contain this:
- * the probe measured the shared real ~/.claude still injecting the user's
- * memory index, personal slash commands, and identity into every system prompt
- * (and 63 session files written into the user's real store). Isolation is
- * total (real-store writes: +0) and makes recordings reproducible; the dir is
- * persistent rather than per-run so first-run/onboarding state stays stable.
- */
-export const CONFIG_DIR = join(REFORGE_ROOT, "config");
+// H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
+// share one definition (runTurn was silently NOT isolated until a review caught
+// it). Re-exported for callers that import it from here.
+export { CONFIG_DIR };
 
 export interface ScenarioContext {
   /** absolute path of the engine wrapper under test */

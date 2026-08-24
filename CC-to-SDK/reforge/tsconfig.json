@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "m0/**/*.ts"]
+  "include": ["src/**/*.ts", "m0/**/*.ts", "m1/**/*.ts", "m2/**/*.ts", "m2c/**/*.ts", "m3/**/*.ts", "strangle/**/*.ts"]
 }
