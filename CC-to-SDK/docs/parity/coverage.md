@@ -469,8 +469,40 @@
 >   `<ChatComposer>` (grep-confirmed: neither prop is assigned anywhere under `src/`), so the hint's own
 >   gate (`if (!readClipboardImageRef.current) return;`, `ChatComposer.tsx`) always short-circuits —
 >   Ctrl-V paste itself still works because it falls back to a real default internally, but the ambient
->   hint's gate checks the raw prop, not that fallback. **I6 is DEAD in the running app; not yet
->   REACHABLE** despite passing test coverage. No domain score claimed for I6 pending a wiring fix.
+>   hint's gate checks the raw prop, not that fallback. **I6 was DEAD in the running app at Task 14 time
+>   despite passing test coverage** — and RESOLVED in the same track before merge (`dfcf961680`): the
+>   two-prop wiring landed in `ChatApp.tsx`, a mounted regression (`clipboardHintChatAppWiring.test.tsx`)
+>   now drives the PRODUCTION wiring path rather than injecting the seam, and the same tmux +
+>   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
+>   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
+
+> - **F10 wave close-out — selection maturity, hover architecture, image reach, maintenance
+>   (2026-08-24)** — four tracks, 31 tasks, spec `docs/superpowers/specs/2026-08-23-f10-wave-design.md`,
+>   ledger `.doperpowers/sdd/2026-08-23-f10-wave/`. Merged in the spec's binding order, each `--no-ff`
+>   with the full gates AND every already-merged track's pty matrix re-run on the assembled tree:
+>   T-MAINT (`407ef8df93`, the `src/media/imageDims.ts` substrate every later track consumes, the
+>   `accountInfo` live bridge, comment/parity corrections) → T-SELECT (`fbc4240e5e`) → T-HOVER
+>   (`7b79a55220`, the `HitRow` union: required `charStart`/`charEnd`/`textStart` + required `ownerKey`
+>   across six constructor sites) → T-IMGREACH (`b1b075a617`, the entry above). **Final whole-wave
+>   external review** (Codex `gpt-5.6-sol`, base `675fd97fe6`): 7 findings, all in wave code — 1 P1 (the
+>   `turn/steerContent` handler invoked the engine capability as a detached function, so the real
+>   `Session` threw on `this.steer` and its stage reservations leaked; every per-task review had passed
+>   it because the object-literal engine fakes are receiver-insensitive) and 6 P2 (stale fullscreen
+>   selection address on a composer press; clipboard-hint throttle armed by an empty check; the
+>   auto-mode notice racing the effect cleanup; the staged normalizer missing `MAX_IMAGES_PER_PROMPT`
+>   against duplicate stage ids; PNG passthrough returned before the structural chunk walk; the retry
+>   ladder halving past `RETRY_FLOOR_DIMENSION`). All 7 verified-first (each reproduced red) and fixed
+>   in one wave (`6864ca05ed`..`48b4b655a9`); a scoped re-review of that range found 3 P2 (the new image
+>   cap's aggregate still counting discarded references; a throttle race across the awaited clipboard
+>   probe; passthrough returning before the post-walk deadline checkpoint), fixed in a second wave
+>   (`1c75ace617`..`a4f384c85a`); a third scoped round returned zero — **7 → 3 → 0, converged.**
+>   **Gates on the final `main` (`a4f384c85a`):**
+>   typecheck clean · build clean · unit 3667 · tui 4651 (11 live-gated skipped keyless) · select-pty
+>   6/6 · hover-cells 2/2 · keyed live cells 8/9 green on the assembled tree · pty hint cell green.
+>   **No domain score moves beyond what the T-IMGREACH entry above records** — T-SELECT, T-HOVER and
+>   T-MAINT are terminal bytes, Ink layout and the composer/hitmap surface; TUI/UX parity: see
+>   `tui-ux.md`'s F10 close-out (§2 71.4% → 72.9%, §1a's K-table ledger ~76% → ~80%, overall ~79.2% →
+>   ~79.4%).
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
 >   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
 >   rejected account-side; user re-minted) the **full live suite is GREEN — 40/40** across all 22 files.

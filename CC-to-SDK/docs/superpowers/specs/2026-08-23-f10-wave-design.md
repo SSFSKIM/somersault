@@ -684,12 +684,133 @@ Seeded from research + design review; implementation appends here.
 - The Segmenter worst case is real quadratic but physically unreachable in a `HitRow` (r4).
 - The F9 ledger's "3 stale comments" is actually 2 (r4).
 
+Implementation-time (2026-08-23/24):
+
+- **Tests green, feature dead (T-IMGREACH Task 14).** The I6 ambient hint's whole suite was green
+  because every test injected `readClipboardImage`/`checkClipboardImage`; `ChatApp` never passed
+  them, so the hint's own gate short-circuited in the real binary. Only the merge gate's mandatory
+  pty run of the real `ccx` saw it. Fixed in-track (`dfcf961680`) with a mounted test on the
+  production wiring path.
+- **Object-literal engine fakes are receiver-insensitive.** `turn/steerContent` invoked the
+  capability detached from `record.session`; the real `Session` throws on `this.steer` and the
+  stage reservation leaks. Passed every per-task review; found by the whole-wave review (P1).
+- **Brief code contradicted the brief's own acceptance text three times** — T-SELECT T2
+  (`selectedSpans` double snap), T-SELECT T8 (per-tick `recordSelectionAddresses` anchor drift: a
+  16-row sweep captured only the last 8), T-IMGREACH T12 (string-growing `StringDecoder` buffering
+  measured ~11 s against the 10 s deadline — raw-`Buffer` accumulation instead; `0x0A` is never a
+  UTF-8 continuation byte). All three deviations upheld on review with independent derivation.
+- **The select pty harness had rotted since T1:** `home=$(launch …)` ran the SESSIONS bookkeeping in
+  a discarded subshell (one leaked tmux/Node process per run) and a loose settle regex matched a
+  documented transient cursor glitch. T9 blocked on `caret-wrap`, which bisected to failing at T1's
+  own head — not an app regression. Script-only fix, mutation-verified against the accumulated
+  zombies.
+- **Ink paints the composer's cursor row as an extra mis-indented row at the exact inner-width
+  boundary** (S1; pre-existing, independent of the origin arithmetic; `caret-wrap` reads the echoed
+  prompt back through a submit rather than scraping the mid-edit frame).
+- **The bindable copy chords were dead on arrival (T-SELECT T7):** the pre-table
+  `useSelectionLifetime` hook discarded the selection before the `hasSelection()`-gated handler
+  ran; the only test bypassed dispatch via `resolveKey`. One-line name+modifier exemption, mounted
+  CSI-u regression tests.
+- **Two per-task Criticals:** BMP V5 colour-mask reads at offsets 54–70 unguarded (a 58-byte
+  hostile file passed every check then threw an uncaught `RangeError`); the daemon's over-cap cells
+  were satisfied vacuously by the setup spawn connection's own close (with the cap check deleted,
+  32/32 stayed green — the counter is now baselined post-setup and a newline-free many-small-chunks
+  flood distinguishes the accumulated-vs-per-chunk branches).
+- **The merge must read the "Replaces X" comments.** Slot 4's one conflict carried `dockCrowded` in
+  from the branch's base after `main` had deleted it (S1 "Replaces `dockCrowded`") — a union that
+  keeps both typechecks and is wrong.
+- **Session-limit kills silently drop Monitor notifications** — one implementer waited hours for a
+  notification that would never come; a direct message ("check the output file, run the gates in
+  the foreground") unstuck it. Auto-backgrounded suites (the 120 s default) self-resume; dispatches
+  now mandate `timeout: 600000` instead.
+
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped (2026-08-24).** All four tracks, 31 tasks, merged to `main` in the binding order
+(T-MAINT `407ef8df93` → T-SELECT `fbc4240e5e` → T-HOVER `7b79a55220` → T-IMGREACH `b1b075a617`),
+each `--no-ff` with the full gates and every already-merged track's pty matrix re-run on the
+assembled tree. Final `main` after the external-review campaign: `a4f384c85a` (fix wave 1 `6864ca05ed`..`48b4b655a9`,
+fix wave 2 `1c75ace617`..`a4f384c85a`; the assembled-acceptance evidence commit `abe91cf252`
+precedes both). Ledger: `.doperpowers/sdd/2026-08-23-f10-wave/round.md`.
+
+**Acceptance — every cell met, each against its named evidence.** Cells 1–5 in
+`t-select-verification.md` (T-SELECT Task 9; keyless matrix 6/6 — `caret-wrap`, `caret-busy`,
+`word-drag`, `extend-chords`, `stream-shift`, `autoscroll-capture` — plus the keyed
+`caret-busy-live` as a real turn); cells 6–7 in `t-hover-acceptance.md` (T-HOVER Task 4; every named
+producer species present; pty `h1`+`h2`); cells 8–12 and the 23-row boundary roll-up in
+`t-imgreach-acceptance.md` (T-IMGREACH Task 14, then re-proven on the assembled `main` — keyed 8/9
+and the pty hint cell); cell 13 inside T-MAINT's own reviewed tasks. Cell 12's pty half FAILED at
+Task 14 (Surprises, first entry) and passed after the in-track fix, before merge — the merge-gate
+rule "a cell that cannot run is a blocker, not a skip" is what made the difference.
+
+**Review yield.** Per task: 31 × (fresh implementer → reviewer with ≥2 reviewer-run mutation checks)
+found 2 Critical (a BMP V5 mask read past a 58-byte buffer; over-cap daemon cells satisfied
+vacuously by the setup connection), 6 Important (an `mkRow` factory bypass, ordering-insensitive
+cells, a reservation-record leak on `dropConnection`, a `submitContent` bypass, a replay boundary, a
+steer rollback) and ~14 Minor — every Critical/Important closed by a fix wave re-reviewed by the
+ORIGINAL reviewer re-running their own mutations. Track verification (a real binary over a real
+pty) found what no per-task review could: the I6 hint dead in the product under a green suite. The
+final whole-wave external review found 7 more (1 P1, 6 P2), all verified-first and fixed; a scoped
+re-review of the fix range found 3 P2 introduced or exposed by the fixes (the aggregate check
+counting references the new image cap discards; a throttle race across the awaited clipboard probe;
+passthrough returning before the post-walk deadline checkpoint), fixed in a second wave; a third
+scoped round returned zero — **7 → 3 → 0, converged**. No finding was dismissed; three plan-mandated
+contradictions were resolved by measurement.
+
+**Retrospective — what this wave taught, in the order it cost us.**
+1. *Tests green, feature dead.* Every I6 test injected the seam the production mount never wired.
+   The merge gate's "behavioral evidence is REQUIRED" rule (review F11) caught it — not a review,
+   not a suite. Keep at least one mounted test per feature on the production wiring path.
+2. *Receiver-insensitive fakes hide `this` bugs.* The P1 passed every per-task review because
+   object-literal engine fakes ignore the receiver. A class-based fake now pins it; prefer class
+   fakes for any capability that is a method.
+3. *The plan's sample code is not the contract; its acceptance text is.* Three brief-vs-brief
+   contradictions, three upheld deviations. Briefs should carry acceptance and interfaces; sample
+   code only where it is the specification.
+4. *pty harness rot is silent.* Teardown bookkeeping must never live in a command substitution;
+   bisect a "regression" to the track's first commit before touching the app.
+5. *A merge must read the "Replaces X" comments.* The union that keeps both sides typechecks and
+   is wrong.
+6. *Pure-function pins can disagree with their real consumer.* The `shouldFire` throttle and the
+   staged normalizer's caps both had unit pins that agreed with themselves and not with their
+   callers (final-review P2s). A cap-boundary table is indexed off the constant AT the consuming
+   surface, not at the helper.
+7. *A fix wave is a diff like any other.* Round 1's fixes introduced or exposed three new P2s (a cap
+   added in one place left a sibling accounting path counting the discarded items; a throttle split
+   opened a race across an `await`). Always re-review the fix range; stop only when a round returns
+   zero.
+
+**Parked with rationale — the Minor roll-up not fixed in the final wave.** All cosmetic or
+test-hygiene, none behavior-changing, each a small change on its own file: guard-ordering cosmetic
+in the normalizer; the hover guard-5 pin-or-delete; CM33 modified-click untested (the drop happens
+upstream in the tap machine's existing rule); `wrapOne` single-assertion coverage;
+`Session.stream(string)` cap row (covered by `userTurn`'s unconditional normalize); the
+600_000-vs-682_667 pin naming; the `onRung` rung-count assertion; `fixtureDaemon.connections`
+value-snapshot; the 128 KiB chunk not pushed through the real frame parser (covered at the injected
+client limit); the T10 aggregate-cap-unreachable spec-drift note (already in the plan); T13's
+focus-in trigger not gating on composer ownership the way the keypress trigger does (focus-in has no
+keystroke to own — intentional per the brief) and its post-await store write without an unmount
+guard (the file's existing convention). Two roll-up items WERE fixed because the final wave touched
+their files anyway: the stale `shouldFire` comment and the stale "node:zlib only" docstring.
+
+**Owner-deferred, unchanged:** the transcript hover `clickable` gate together with canon's clickable
+error/truncated result kinds (one paired ticket); GIF/WebP dimension readers for the staged
+allowlist (spec-drift note 8 in the T-IMGREACH plan); any stranded-session recovery scan (fix
+forward only).
+
+**Cost and operations.** ~31 implementer, ~31 reviewer and 12 fixer dispatches (all sonnet), four
+track verifications, one assembled-acceptance run, three external review rounds (whole-wave, then
+two scoped fix-range rounds — 7 → 3 → 0). Final gates: typecheck/build clean · unit 3667 · tui
+4651/11 skipped. One session-limit kill mid-task (resumed by message with worktree state intact) and one
+process restart during the fix-range re-review (re-launched; nothing lost — the ledger and git
+carried everything).
 
 ## Revision Notes
 
+- v4.2 (2026-08-24): close-out. Outcomes & Retrospective written; nine implementation-time
+  Surprises appended. Decision Log unchanged — no design-level fork arose during execution; the one
+  contract amendment (the `HitRow` union landing across six constructor sites, not five — plan review
+  r3 had predicted `selectionAddress.test.ts`'s fixtures) was the plan's, not the spec's.
 - v4.1 (2026-08-23): plan-review round (26 findings over the four track plans) fed three
   contract amendments back into the spec: the codec's 2 s guard re-stated as cooperative belt
   over a structural `maxOutputLength` inflate bound; the stale round-1 `HitRow.itemRow` Decision
