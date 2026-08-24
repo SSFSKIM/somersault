@@ -443,7 +443,34 @@
 >   REACHABLE, already reflected in the T-IMAGE row above. TUI/UX parity: see `tui-ux.md`'s F9
 >   close-out (§1 ~87.5%, §2 ~71.4%, §1a's own K-table ledger ~76%, overall ~78.1% → ~79.2%).
 
-> - **SDK 0.3.211 bump + Workflow surfacing** (2026-07-17) — all four packages bumped ^0.3.178→^0.3.211
+> - **F10 T-IMGREACH — image reach hardened: no stranded sessions, staged app-server images, daemon
+>   skew, codec ladder** (2026-08-24, Task 14 track verification; ledger
+>   `.doperpowers/sdd/2026-08-23-f10-wave/t-imgreach-acceptance.md`) — image-only turns now normalize
+>   through ONE builder boundary (`Session.userTurn`) on every submit path — the real REPL topology,
+>   a direct `Session.submit`, and `harness.run` — so a session born from an image-only array is never
+>   invisible to `listSessions()`: a synthetic `[Image #N]` label is inserted at index 0 whenever no
+>   text block survives, live-verified on all three paths plus the library colour-naming cell (keyed
+>   live, `test/live/image-reach.e2e.test.ts`). **App-server** gains staged image upload (`image/stage`
+>   ≤128 KiB chunks, PNG/JPEG only, 60 s idle / 10 min absolute / 32 MiB / 64-stage caps) +
+>   `turn/startContent` + `turn/steerContent` (both `experimental:true`), with old-server skew,
+>   fleet-origin, and no-`submitContent`-capability refusals all explicit and zero-turn. **Daemon**
+>   gains a block-array-only `submit_content` op, a pre-F10-peer skew mapping (client-side), a 24 MiB
+>   canonical-derived frame cap, and an inclusive 10 s partial-line deadline. **Codec**: a bounded
+>   downscale-and-retry ladder (structural `maxOutputLength`/`pixel-budget`/`MAX_SOURCE_BYTES` bounds
+>   carry every hostile fixture — bomb/huge-header/truncated/forged-BMP — even with the 2 s wall guard
+>   stubbed to never expire; the guard is a cooperative belt, not the mechanism). All 22 named caps this
+>   track introduced or widened have a measured cap−1/cap/cap+1 row (roll-up in the ledger). Gates on
+>   the assembled tree: typecheck clean · build clean · unit 3635/3635 · tui 4201/4201 (9 live-gated
+>   skipped keyless) · both keyed live suites green.
+>   **CONCERN, not swept under the row**: the I6 ambient clipboard-paste hint (Task 13) is built and
+>   its own unit/component suite is green, but a live tmux-pty run of the real `ccx` binary (focus-in,
+>   then a keypress, fake `osascript` reporting a clipboard image present) never produced the hint.
+>   Root cause: `src/tui/ChatApp.tsx` never passes `readClipboardImage`/`checkClipboardImage` to
+>   `<ChatComposer>` (grep-confirmed: neither prop is assigned anywhere under `src/`), so the hint's own
+>   gate (`if (!readClipboardImageRef.current) return;`, `ChatComposer.tsx`) always short-circuits —
+>   Ctrl-V paste itself still works because it falls back to a real default internally, but the ambient
+>   hint's gate checks the raw prop, not that fallback. **I6 is DEAD in the running app; not yet
+>   REACHABLE** despite passing test coverage. No domain score claimed for I6 pending a wiring fix.
 >   (typecheck/build/unit green everywhere; the 0.3.211 removals touch nothing we import). Re-probe: probe 36
 >   re-verified REACHABLE on 0.3.211; after an auth interruption (the old subscription OAuth token was
 >   rejected account-side; user re-minted) the **full live suite is GREEN — 40/40** across all 22 files.
