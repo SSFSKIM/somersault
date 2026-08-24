@@ -13,11 +13,16 @@
 //
 //   EVERY ROW HOLDS A TURN OPEN, because a dynamic call only exists inside one: the boot helper starts a
 //   turn whose `submit` never resolves, which is what makes `activeTurnId` answer.
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppServer, threadView, type ConnCtx } from "../../../src/appserver/server.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { AppServer, SERVER_OWNED_OVERLAY, threadView, type ConnCtx } from "../../../src/appserver/server.js";
+import { DYNAMIC_TOOLS_DECLARED } from "../../../src/appserver/mcp.js";
+import type { DynamicToolSpec } from "../../../src/appserver/dynamicTools.js";
 import { swapEngine } from "../../../src/appserver/rewind.js";
 import { emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
 import { ERR } from "../../../src/appserver/rpc.js";
@@ -822,5 +827,264 @@ describe("M7 thread status — a parked tool call is visible thread state", () =
     expect(replyTo(a.lines, 74).error.message).toBe("cannot spawn");
     expect(noteOf(await parked)).toBe("Tool call cancelled: thread reopened");
     expect(lastStatus(a.lines)).toEqual({ state: "idle" });
+  });
+});
+
+// ── M7 TASK 7: THE TRANSIENT OVERLAY ─────────────────────────────────────────────────────────────
+//
+// A declaration reaches the engine as MCP servers, and the ONE thing every row below is really about is
+// that those servers live on the config handed to ONE factory call and nowhere else. `record.config` is the
+// clean base the swap family rebuilds from; the overlay is built fresh beside it at every build.
+//
+// THE FACTORY IS THE INSTRUMENT. Every row reads the config a capturing `sessionFactory` was handed, which
+// is exactly what the real `openSession` would have received — there is no engine here to mount anything.
+// The one place that is not enough is the swap family, where the claim is about the RELATIONSHIP between
+// two builds, so those rows compare the WRAPPED instance across generations and then connect both to real
+// transports: an MCP `Server` refuses a second one, so a cached instance rewrapped in a new entry object
+// fails there and passes every identity check on the entry itself.
+
+/** One namespace and one bare function — the two shapes, and therefore the two server slots. */
+const declaration = (): DynamicToolSpec[] => [
+  {
+    type: "namespace", name: "ops", description: "the ops namespace",
+    tools: [{ type: "function", name: "lookup", description: "look something up", inputSchema: { type: "object", properties: { q: { type: "string" } } } }],
+  },
+  { type: "function", name: "ping", description: "ping the client", inputSchema: { type: "object", properties: {} } },
+];
+
+type SdkEntry = { type: "sdk"; name: string; instance: McpServer };
+const overlayOf = (cfg: Record<string, unknown> | undefined): Record<string, SdkEntry> | undefined =>
+  cfg?.dynamicToolServers as Record<string, SdkEntry> | undefined;
+const opsInstance = (cfg: Record<string, unknown>): McpServer => overlayOf(cfg)!.ops.instance;
+
+/** A server whose factory RECORDS every engine config it was handed, in build order. */
+function capturing(opts: { session?: () => any; deps?: Record<string, unknown> } = {}) {
+  const configs: Array<Record<string, unknown>> = [];
+  const make = opts.session ?? (() => fakeSession());
+  const srv = new AppServer({}, {
+    ccxDir: fileCcxDir,
+    sessionFactory: (cfg: Record<string, unknown>) => { configs.push(cfg); return make(); },
+    ...opts.deps,
+  });
+  return { srv, configs };
+}
+
+/** Every MCP client/server pair a row opens, closed after it — an in-memory transport keeps both ends alive. */
+const opened: Array<{ client: Client; instance: McpServer }> = [];
+afterEach(async () => {
+  for (const { client, instance } of opened.splice(0)) {
+    await client.close().catch(() => {});
+    await instance.close().catch(() => {});
+  }
+});
+
+/** A real MCP client initialized against one built instance. THIS is what a reused instance fails: the
+ *  pinned SDK's `Server.connect` refuses a second transport, and the agent SDK swallows that failure with
+ *  a debug log — a thread that silently lost its tools, with no error anywhere. */
+async function connect(instance: McpServer): Promise<Client> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "m7-overlay", version: "0.0.0" });
+  await Promise.all([instance.connect(serverTransport), client.connect(clientTransport)]);
+  opened.push({ client, instance });
+  return client;
+}
+
+/** The text of a tool call's result, as the MCP client sees it. */
+const callNote = async (client: Client, tool: string): Promise<string> => {
+  const result = await client.callTool({ name: tool, arguments: {} }) as { content: Array<{ text?: string }> };
+  return String(result.content[0]?.text ?? "");
+};
+
+/** A swap crosses several real timer boundaries (an awaiting dispose, the chain callback). */
+const settleSwap = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
+
+describe("M7 the transient overlay — what one engine build receives", () => {
+  it("a declaring start hands the factory one server per namespace plus dyn, and record.config never sees them", () => {
+    const { srv, configs } = capturing();
+    const specs = declaration();
+    const record = srv.createThread({ config: { cwd: "/w" }, unattended: "park", dynamicTools: specs });
+
+    expect(Object.keys(overlayOf(configs[0])!).sort()).toEqual(["dyn", "ops"]);
+    const ops = overlayOf(configs[0])!.ops;
+    expect(ops.type).toBe("sdk");
+    expect(ops.name).toBe("ops");
+    expect(ops.instance).toBeInstanceOf(McpServer);
+    // NO `alwaysLoad` on the entry: the CLI ORs the server-level flag with each tool's own
+    // `_meta["anthropic/alwaysLoad"]`, so a server-level true would defeat every `deferLoading: true`.
+    expect(Object.keys(ops).sort()).toEqual(["instance", "name", "type"]);
+
+    // THE CLEAN BASE. The swap family rebuilds every replacement engine from this object, so an overlay
+    // left on it would be re-mounted by a second engine — the same instance, refusing its second transport.
+    expect(record.config).not.toHaveProperty("dynamicToolServers");
+    expect(JSON.stringify(record.config)).not.toContain("dynamicToolServers");
+    expect(JSON.stringify(record.config)).not.toContain("instance");
+    expect(JSON.parse(JSON.stringify(record.config)).cwd).toBe("/w");
+    // …and the declaration itself is remembered ON the record, which is what every later build reads.
+    expect(record.dynamicTools).toEqual(specs);
+  });
+
+  it("a NON-declaring start carries no overlay and no declaration at all", () => {
+    const { srv, configs } = capturing();
+    const record = srv.createThread({ config: { cwd: "/w" }, unattended: "park" });
+    expect(configs[0]).not.toHaveProperty("dynamicToolServers");
+    expect(record.dynamicTools).toBeUndefined();
+  });
+
+  it("forces CLAUDE_AGENT_SDK_MCP_NO_PREFIX off for a declaring thread, and leaves a non-declaring one's env alone", () => {
+    // A truthy value strips the `mcp__<server>__` prefix from every tool name — every namespace collapses
+    // into one flat space and the whole naming invariant this milestone rests on goes with it.
+    const { srv, configs } = capturing();
+    const declaring = srv.createThread({ config: { env: { CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1", KEEP: "yes" } }, unattended: "park", dynamicTools: declaration() });
+    expect(configs[0].env).toEqual({ CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "", KEEP: "yes" });
+    // The kill rides the TRANSIENT config only: what the client asked for is still what the record says.
+    expect((declaring.config as { env: Record<string, string> }).env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX).toBe("1");
+
+    srv.createThread({ config: { env: { CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1" } }, unattended: "park" });
+    expect(configs[1].env).toEqual({ CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1" });
+  });
+
+  it("the resume spine builds the overlay too, beside the resume it folds in", async () => {
+    const { srv, configs } = capturing();
+    const a = attach(srv, "A");
+    await tick();
+    await srv.startThread(a.ctx(), 9, { resume: "sess-x", config: {}, unattended: "park", dynamicTools: declaration() });
+
+    expect(Object.keys(overlayOf(configs[0])!).sort()).toEqual(["dyn", "ops"]);
+    expect(configs[0].resume).toBe("sess-x");
+    const record = srv.registry.list()[0]!;
+    expect(record.config).not.toHaveProperty("dynamicToolServers");
+    expect((record.config as { resume?: string }).resume).toBe("sess-x");
+    expect(record.dynamicTools).toHaveLength(2);
+  });
+
+  it("a declaring start whose factory throws leaves no record and no call registry behind", () => {
+    // The factory runs BEFORE the record and both registries are written, so a synchronous throw — an
+    // engine that cannot spawn — must not orphan a thread nobody can ever reach or settle.
+    const srv = new AppServer({}, { ccxDir: fileCcxDir, sessionFactory: () => { throw new Error("cannot spawn"); } });
+    expect(() => srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() })).toThrow("cannot spawn");
+    expect(srv.registry.list()).toEqual([]);
+    expect((srv as unknown as { dynamicCalls: Map<string, unknown> }).dynamicCalls.size).toBe(0);
+  });
+
+  it("refuses a client that writes the overlay itself, through the config or through the hatch, on both spines", async () => {
+    const { srv } = capturing();
+    const a = attach(srv, "A");
+    await tick();
+    a.lines.length = 0;
+    send(a.conn, { id: 20, method: "thread/start", params: { config: { dynamicToolServers: { ops: {} } } } });
+    send(a.conn, { id: 21, method: "thread/start", params: { config: { extraOptions: { dynamicToolServers: { ops: {} } } } } });
+    send(a.conn, { id: 22, method: "thread/resume", params: { sessionId: "sess-x", config: { dynamicToolServers: {} } } });
+    await settleSwap();
+
+    for (const id of [20, 21, 22]) {
+      expect(replyTo(a.lines, id).error.code).toBe(ERR.INVALID_PARAMS);
+      expect(replyTo(a.lines, id).error.message).toBe(SERVER_OWNED_OVERLAY);
+    }
+    expect(srv.registry.list()).toEqual([]);
+  });
+
+  it("review/start on a declaring target inherits neither the overlay nor the declaration", async () => {
+    // Deliberate: a review is a DETACHED thread reading the target's tree, and the client-side tool runtime
+    // the declaration names belongs to the target's conversation, not to this one.
+    const { srv, configs } = capturing({ session: () => ({ ...fakeSession(), submit: async () => ({ result: {} }) }) });
+    const a = attach(srv, "A");
+    await tick();
+    const target = srv.createThread({ config: { cwd: "/repo" }, unattended: "park", dynamicTools: declaration() });
+    a.lines.length = 0;
+
+    send(a.conn, { id: 30, method: "review/start", params: { threadId: target.id, target: { type: "uncommittedChanges" } } });
+    await settleSwap();
+
+    const reviewThreadId = replyTo(a.lines, 30).result.reviewThreadId as string;
+    expect(configs).toHaveLength(2);
+    expect(overlayOf(configs[1])).toBeUndefined();
+    expect(srv.registry.get(reviewThreadId)!.dynamicTools).toBeUndefined();
+  });
+
+  it("mcpServer/set is refused on a declaring thread and untouched on a non-declaring one", async () => {
+    // A wholesale replacement of the server set would drop the very servers the declared tools are
+    // published under — the model would keep being told about tools nothing can answer.
+    const sets: unknown[] = [];
+    const { srv } = capturing({ session: () => ({ ...fakeSession(), setMcpServers: async (s: unknown) => { sets.push(s); return { added: [], removed: [], errors: {} }; } }) });
+    const a = attach(srv, "A");
+    await tick();
+    const declaring = srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() });
+    const plain = srv.createThread({ config: {}, unattended: "park" });
+    a.lines.length = 0;
+
+    send(a.conn, { id: 50, method: "mcpServer/set", params: { threadId: declaring.id, servers: {} } });
+    send(a.conn, { id: 51, method: "mcpServer/set", params: { threadId: plain.id, servers: { theirs: { type: "sdk" } } } });
+    await settleSwap();
+
+    expect(replyTo(a.lines, 50).error.code).toBe(ERR.INVALID_PARAMS);
+    expect(replyTo(a.lines, 50).error.message).toBe(DYNAMIC_TOOLS_DECLARED);
+    expect(replyTo(a.lines, 51).result).toEqual({ added: [], removed: [], errors: {} });
+    expect(sets).toEqual([{ theirs: { type: "sdk" } }]);
+  });
+});
+
+describe("M7 the transient overlay — every swap builds it again", () => {
+  it("thread/rewind hands the replacement a FRESH instance, and each generation parks under its own epoch", async () => {
+    const swapConfigs: Array<Record<string, unknown>> = [];
+    const { srv, configs } = capturing({
+      session: () => ({ ...fakeSession(), submit: async () => ({ result: {} }), sessionId: "sess-1" }),
+      deps: { resumeAtFactory: (_id: string, _at: string, _dropped: string, cfg: Record<string, unknown>) => { swapConfigs.push(cfg); return fakeSession(); } },
+    });
+    const a = attach(srv, "A");
+    await tick();
+    const record = srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() });
+    a.lines.length = 0;
+
+    send(a.conn, { id: 40, method: "thread/rewind", params: { threadId: record.id, uuid: "u2", prevUuid: "u1", scope: "conversation" } });
+    await settleSwap();
+    expect(replyTo(a.lines, 40).result).toMatchObject({ ok: true });
+
+    const first = opsInstance(configs[0]);
+    const second = opsInstance(swapConfigs[0]!);
+    expect(second).not.toBe(first);
+    // Both connectable — the assertion a rewrapped cached instance cannot pass.
+    const firstClient = await connect(first);
+    const secondClient = await connect(second);
+    // …and each build captured its OWN generation, which is the only thing that tells a late callback from
+    // the discarded engine apart from a live one. Neither call can park (no turn is in flight), and the two
+    // cancellations say WHY in different words — which is the whole proof.
+    expect(await callNote(firstClient, "lookup")).toBe("Tool call cancelled: engine generation superseded");
+    expect(await callNote(secondClient, "lookup")).toBe("Tool call cancelled: no active turn");
+  });
+
+  it("thread/clear hands the fresh conversation a FRESH instance", async () => {
+    const { srv, configs } = capturing({ session: () => ({ ...fakeSession(), submit: async () => ({ result: {} }), sessionId: "sess-1" }) });
+    const a = attach(srv, "A");
+    await tick();
+    const record = srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() });
+    a.lines.length = 0;
+
+    send(a.conn, { id: 41, method: "thread/clear", params: { threadId: record.id } });
+    await settleSwap();
+    expect(replyTo(a.lines, 41).result).toMatchObject({ ok: true });
+
+    expect(configs).toHaveLength(2);
+    expect(opsInstance(configs[1]!)).not.toBe(opsInstance(configs[0]!));
+    await connect(opsInstance(configs[0]!));
+    await connect(opsInstance(configs[1]!));
+  });
+
+  it("thread/reopen hands the recovered engine a FRESH instance", async () => {
+    let ended = false;
+    const { srv, configs } = capturing({ session: () => ({ ...fakeSession(), submit: async () => ({ result: {} }), sessionId: "sess-1", isEnded: () => ended }) });
+    const a = attach(srv, "A");
+    await tick();
+    const record = srv.createThread({ config: {}, unattended: "park", dynamicTools: declaration() });
+    ended = true;      // reopen's whole precondition
+    a.lines.length = 0;
+
+    send(a.conn, { id: 42, method: "thread/reopen", params: { threadId: record.id } });
+    await settleSwap();
+    expect(replyTo(a.lines, 42).result).toMatchObject({ ok: true });
+
+    expect(configs).toHaveLength(2);
+    expect(opsInstance(configs[1]!)).not.toBe(opsInstance(configs[0]!));
+    await connect(opsInstance(configs[0]!));
+    await connect(opsInstance(configs[1]!));
   });
 });

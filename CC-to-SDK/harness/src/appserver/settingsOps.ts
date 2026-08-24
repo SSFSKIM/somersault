@@ -42,6 +42,7 @@ import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { DECISION_PENDING, forwardSwapOp, latchSwap, replySwapThrow, swapBaseConfig, swapEngine } from "./rewind.js";
+import { withThreadDynamicServers } from "./dynamicServers.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { threadBusyReason, type EngineSession, type ThreadRecord } from "./registry.js";
 import { SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
@@ -322,7 +323,10 @@ export const threadClear: Handler = (srv, ctx, id, params) => {
       // into the id this clear just dropped — the exact thing the `undefined` above is passed to avoid —
       // and an inherited `continueSession` would reopen the most recent conversation in the cwd instead of
       // starting one.
-      await swapEngine(srv, record, () => factory(swapBaseConfig(record.config)), undefined);
+      // Through `withThreadDynamicServers` (M7), like the other two local swaps: a cleared thread keeps the
+      // tools it declared — the DECLARATION belongs to the thread, only the conversation was dropped — and
+      // the fresh engine gets fresh server instances, built inside the thunk so they carry the bumped epoch.
+      await swapEngine(srv, record, () => factory(withThreadDynamicServers(srv, record, swapBaseConfig(record.config))), undefined);
       record.updatedAt = nowSec();
       // A clear IS a rewind, as far as a client's transcript is concerned: the conversation it was
       // rendering is gone and every cursor into it is stale. So it rides the SAME notification rather

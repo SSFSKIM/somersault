@@ -116,6 +116,12 @@ export interface HarnessConfig {
   // this programmatic path (verified) — no builder exists for them; raw passthrough is the user's choice.
   hooks?: HooksMap;
   mcpServers?: Record<string, McpServerConfig>;
+  /** M7, and NOT a caller knob: the in-process MCP servers a thread's CLIENT-DECLARED tools are published
+   *  under. The app server owns it end to end — it writes this onto the transient config of one engine
+   *  build (never onto the record it rebuilds from) and refuses any client that sets it — so the value is
+   *  `unknown` here rather than `McpServerConfig`: nothing in this layer constructs or inspects it.
+   *  Merged into `mcpServers` LAST, after `extraOptions`, in resolveOptions. */
+  dynamicToolServers?: Record<string, unknown>;
   plugins?: SdkPluginConfig[];
   // ── Wave-4 knob sweep (probes 53/53b/54; spec 2026-07-17-wave4-knob-completion-design) ──
   // session identity/plumbing
@@ -155,6 +161,13 @@ export interface HarnessConfig {
   env?: Record<string, string | undefined>;
   extraOptions?: Record<string, unknown>;  // merged last into SDK Options, except resolveOptions' SERVER_OWNED keys
 }
+
+/** The SDK env flag that strips the `mcp__<server>__` prefix off every MCP tool name (`d.bool()` in the
+ *  shipped bundle: falsy, or anything outside `1/true/yes/on`, reads as off). Named here because two layers
+ *  must agree on it — the app server writes it onto a declaring thread's engine config, and resolveOptions
+ *  re-asserts it past the `extraOptions` hatch. A truthy value collapses every declared namespace into one
+ *  flat space, which is the whole naming scheme dynamic tools are addressed by. */
+export const MCP_NO_PREFIX_ENV = "CLAUDE_AGENT_SDK_MCP_NO_PREFIX";
 
 export const DEFAULTS = {
   settingSources: ["user", "project", "local"] as SettingSource[],

@@ -48,6 +48,7 @@ import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.j
 import { rewindAnchorsFrom } from "../sessions/rows.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { SESSION_IDENTITY, stripIdentityHatch } from "./sessionIdentity.js";
+import { withThreadDynamicServers } from "./dynamicServers.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./schema/rewind.js";
 
@@ -549,7 +550,12 @@ export const threadRewind: Handler = (srv, ctx, id, params) => {
         // conversation while the `sessionId` passed to `swapEngine` re-stamps the old one, so the thread
         // would report an identity it no longer holds, permanently (routeInit's latch early-returns on a
         // stamped record, so the real id is never learned).
-        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, swapBaseConfig(record.config)), sessionId);
+        // …and through `withThreadDynamicServers` (M7): the replacement engine gets FRESH MCP servers built
+        // from `record.dynamicTools`, never the outgoing engine's — an MCP `Server` refuses a second
+        // transport, and the agent SDK swallows that failure, so a reused instance is a rewound thread that
+        // silently lost its declared tools. Inside the thunk, so the generation it captures is the bumped
+        // one `swapEngine` has already written.
+        await swapEngine(srv, record, () => factory(sessionId, prevUuid!, uuid, withThreadDynamicServers(srv, record, swapBaseConfig(record.config))), sessionId);
       }
       record.updatedAt = nowSec(); // a rewind is a mutation like any other (registry.ts's updatedAt contract)
       // Both scopes at once: the thread's own subscribers, and every server-scoped watcher — a rewind
@@ -673,7 +679,10 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // and this is a spread (see the header). This method's own three (`resumeAt`/`droppedTurnUuid` would
       // resume the recovery truncated at a stale anchor; `forkSession` would silently mint a new id) plus
       // the two it used to miss, now that `swapBaseConfig` states all six in one place.
-      await swapEngine(srv, record, () => factory({ ...swapBaseConfig(record.config), resume: sessionId }), sessionId);
+      // The M7 overlay is rebuilt here too (`withThreadDynamicServers`, applied outermost so the `resume`
+      // folded in above rides inside it): a recovered engine owes the client the tools it declared, and it
+      // owes them as NEW server instances — the dead engine's are spent.
+      await swapEngine(srv, record, () => factory(withThreadDynamicServers(srv, record, { ...swapBaseConfig(record.config), resume: sessionId })), sessionId);
       record.updatedAt = nowSec();
       // Released HERE, ahead of the announcements rather than only in the finally, because everything below
       // describes the RECOVERED thread and would otherwise describe the swap that is finishing. Nothing can

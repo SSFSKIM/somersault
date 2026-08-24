@@ -272,6 +272,24 @@ function checkFunction(tool: DynamicToolFunction, namespace: string, seen: Set<s
 
   const converted = jsonSchemaToZod(tool.inputSchema);
   if (!converted.ok) return refuse(`tool "${tool.name}": unsupported inputSchema: ${converted.keyword}`);
+
+  // THE ADVERTISEMENT CONSTRAINTS, and they come LAST because they are not about conversion at all — the
+  // converter is a deliberately permissive subset and accepts both of these. What refuses them is a real
+  // MCP client reading the schema we advertise VERBATIM, which is a fact about the wire, not about zod.
+  //
+  //   MCP's own `ToolSchema` pins `inputSchema.type` to the literal "object", so a declaration that omits
+  //   it makes a strict client reject the ENTIRE `tools/list` response — every well-formed sibling in that
+  //   namespace vanishes from the model's view while this server goes on serving all of them. (A root that
+  //   names a DIFFERENT type never reaches this line: the converter already refused it, more specifically.)
+  if (tool.inputSchema.type !== "object") return refuse(`tool "${tool.name}": inputSchema must declare root type "object"`);
+  //   And a property named `__proto__` advertises a self-contradiction: a client's own `tools/list` parse
+  //   rebuilds `properties` through zod, which cannot carry that key, while `required` goes on naming it —
+  //   so the tool can never be called, and the argument-side parse strips it too. `hasOwnProperty` because
+  //   that is how the key exists at all (JSON.parse makes it an own key; an object literal would not).
+  const properties = tool.inputSchema.properties;
+  if (typeof properties === "object" && properties !== null && Object.prototype.hasOwnProperty.call(properties, "__proto__")) {
+    return refuse(`tool "${tool.name}": inputSchema declares a property named "__proto__"`);
+  }
   return { ok: true };
 }
 

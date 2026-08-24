@@ -8,6 +8,7 @@ import type { PlanGrantMode } from "../permissions/types.js";
 import type { UserTurnInput } from "../session/turnInput.js";
 import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
+import type { DynamicToolSpec } from "./dynamicTools.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
  *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
@@ -286,6 +287,14 @@ export interface ThreadRecord {
    *  including one it did not raise itself. Absent on every other thread, the reviewed target included: it
    *  points one way, from review to subject. */
   reviewOf?: string;
+  /** M7: the tool declarations this thread was ADMITTED with, verbatim — absent on every thread that
+   *  declared none. WIRE-SILENT: no view projects it, and nothing outside the engine-build path reads it.
+   *
+   *  It lives on the record because the DECLARATION outlives any one engine while the servers built from it
+   *  do not: every replacement engine (rewind, clear, reopen) rebuilds fresh MCP servers from this list, and
+   *  `record.config` deliberately never carries them. Fixed at admission — there is no method that changes
+   *  it, which is also why `mcpServer/set` is refused on a thread that has one (mcp.ts). */
+  dynamicTools?: DynamicToolSpec[];
   epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
                                  // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
                                  // needs "am I still talking to the current engine" reads this, not a

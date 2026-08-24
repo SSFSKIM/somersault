@@ -203,3 +203,45 @@ describe("resolveOptions — extraOptions cannot defeat a server-established gua
     expect(unclaimed.cwd).toBe("/somewhere");
   });
 });
+
+// M7 Task 7: the dynamic-tool overlay is the app server's own — a client declares TOOLS, the server decides
+// which MCP servers publish them, and `dynamicToolServers` is how that decision is carried to one engine
+// build. It is merged AFTER the escape hatch, onto the object this function returns, because everything the
+// naming invariant rests on (`mcp__<namespace>__<tool>`) rides in it.
+describe("resolveOptions — the server-owned dynamic-tool overlay", () => {
+  const overlay = { ops: { type: "sdk", name: "ops", instance: {} } };
+
+  it("merges the overlay into mcpServers beside the caller's own servers", () => {
+    const o: any = resolveOptions({ mcpServers: { theirs: { type: "sdk", name: "theirs", instance: {} } } as any, dynamicToolServers: overlay });
+    expect(Object.keys(o.mcpServers).sort()).toEqual(["ops", "theirs"]);
+    expect(o.mcpServers.ops).toBe(overlay.ops);
+  });
+
+  it("wins over an extraOptions.mcpServers that would otherwise clobber the whole map", () => {
+    // The hatch is spread last and REPLACES mcpServers wholesale. Merged before it, the overlay would
+    // vanish with no error anywhere — the thread's declared tools simply never reach the model.
+    const o: any = resolveOptions({ extraOptions: { mcpServers: { hatch: { type: "sdk", name: "hatch", instance: {} } } }, dynamicToolServers: overlay });
+    expect(Object.keys(o.mcpServers).sort()).toEqual(["hatch", "ops"]);
+    expect(o.mcpServers.ops).toBe(overlay.ops);
+  });
+
+  it("never mutates the caller's own mcpServers map", () => {
+    const mine = { theirs: { type: "sdk", name: "theirs", instance: {} } } as any;
+    resolveOptions({ mcpServers: mine, dynamicToolServers: overlay });
+    expect(Object.keys(mine)).toEqual(["theirs"]);
+  });
+
+  it("forces CLAUDE_AGENT_SDK_MCP_NO_PREFIX off, even against an extraOptions.env that replaced the whole env", () => {
+    // A truthy value strips the `mcp__<server>__` prefix from every tool name and collapses every namespace
+    // into one flat space — the whole naming invariant rides on it being off for a declaring thread.
+    const o: any = resolveOptions({ extraOptions: { env: { CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1", KEEP: "yes" } }, dynamicToolServers: overlay });
+    expect(o.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX).toBe("");
+    expect(o.env.KEEP).toBe("yes");
+  });
+
+  it("leaves a NON-declaring config's mcpServers and env exactly as they were", () => {
+    const o: any = resolveOptions({ mcpServers: { theirs: { type: "sdk", name: "theirs", instance: {} } } as any, env: { CLAUDE_AGENT_SDK_MCP_NO_PREFIX: "1" } });
+    expect(Object.keys(o.mcpServers)).toEqual(["theirs"]);
+    expect(o.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX).toBe("1");
+  });
+});

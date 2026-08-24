@@ -3,13 +3,15 @@
 // list/close). Turn/decision/subscribe/read land in Tasks 7-9 on top of this spine.
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
-import { classify, ERR, type RequestId } from "./rpc.js";
+import { classify, ERR, RpcRefusal, type RequestId } from "./rpc.js";
 import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type ThreadWaiter, type EngineSession } from "./registry.js";
 import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
 import { ThreadDecisions, toWireDecision, type DecisionEvent } from "./broker.js";
 import { DynamicCalls, cancelledCallResult, toWireToolCall, type CallToolResultLike, type DynamicCallEvent, type PendingToolCall } from "./dynamicCalls.js";
+import { withDynamicServers } from "./dynamicServers.js";
+import type { DynamicToolSpec } from "./dynamicTools.js";
 import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js";
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
@@ -156,6 +158,20 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
  *  engine would otherwise have to ask a connected client into a parked decision any client can answer. */
 function buildConfig(parsed: { config?: Record<string, unknown>; unattended: "park" | "deny" }, broker: PermissionBroker, onElicitation: OnElicitation): OpenSessionConfig {
   return { ...(parsed.config as OpenSessionConfig | undefined), permissionBroker: broker, onElicitation };
+}
+
+/** M7: `dynamicToolServers` is the app server's own (config/types.ts) — a client declares TOOLS and the
+ *  server decides what publishes them. A client that writes the key itself would be mounting arbitrary
+ *  in-process servers into someone's engine and, worse, doing it on the config the RECORD keeps, so every
+ *  later engine of that thread would re-mount the same instances. Refused rather than stripped: silently
+ *  dropping a key a caller deliberately set is how a client comes to believe something is wired that is not.
+ *  Both spelling — the typed key and the `extraOptions` hatch it reaches the SDK through — because the two
+ *  are the same request. */
+export const SERVER_OWNED_OVERLAY = "dynamicToolServers is server-owned";
+function refuseServerOwnedOverlay(config: Record<string, unknown> | undefined): void {
+  const hatch = config?.extraOptions;
+  const inHatch = typeof hatch === "object" && hatch !== null && "dynamicToolServers" in hatch;
+  if ((config && "dynamicToolServers" in config) || inHatch) throw new RpcRefusal(ERR.INVALID_PARAMS, SERVER_OWNED_OVERLAY);
 }
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -736,16 +752,22 @@ export class AppServer {
    *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
    *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
    *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
-  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny" }): ThreadRecord {
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): ThreadRecord {
+    refuseServerOwnedOverlay(opts.config);
+    const specs = opts.dynamicTools ?? [];
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-    const session = factory(config as Record<string, unknown>); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
+    // THE OVERLAY IS TRANSIENT (M7): the declared tools become MCP servers on the config THIS build
+    // receives, and `record.config` below stays the clean base every later engine is rebuilt from.
+    // `generation: 0` needs no record read — the epoch always starts there, which is what lets the factory
+    // keep running before the record exists.
+    const session = factory(withDynamicServers(this, { threadId, generation: 0, specs }, config as Record<string, unknown>)); // throws synchronously on an invalid config — dec must NOT be registered yet (else it orphans forever, nothing can ever reach it)
     this.decisions.set(threadId, dec);
     this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
     return record;
@@ -772,16 +794,20 @@ export class AppServer {
    *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
    *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
    *  rest. */
-  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny" }): Promise<void> {
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
+    refuseServerOwnedOverlay(opts.config); // stated by BOTH spines, before either mints anything (see the helper)
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
+    const specs = opts.dynamicTools ?? [];
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
     const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
-    const session = factory(config as Record<string, unknown>); // same ordering as thread/start: register dec only once the factory hasn't thrown
+    // Transient exactly as in `createThread`, and for the same reason — `record.config` below is what every
+    // later engine of this thread is rebuilt from, and it must not carry a mounted server instance.
+    const session = factory(withDynamicServers(this, { threadId, generation: 0, specs }, config as Record<string, unknown>)); // same ordering as thread/start: register dec only once the factory hasn't thrown
     this.decisions.set(threadId, dec);
     this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
@@ -795,11 +821,12 @@ export class AppServer {
     // above): then the engine opens a different id, the registry legitimately knows nothing, and the latch
     // is the only honest source. `deletingSessions` above still fences the parent for both shapes — a fork
     // READS that transcript to replay it, so erasing it mid-admission breaks the session being opened.
-    // `config` is the FULL object the factory received (broker and `resume` included) — M2b's rewind swap
-    // rebuilds the replacement engine from it, so anything dropped here is silently dropped by every later
-    // swap too (registry.ts's field doc).
+    // `config` is the object the factory received MINUS the M7 overlay (broker and `resume` included) —
+    // M2b's rewind swap rebuilds the replacement engine from it, so anything dropped here is silently
+    // dropped by every later swap too (registry.ts's field doc), and anything the overlay added would be
+    // re-mounted by every later engine instead of rebuilt (dynamicServers.ts's carrier note).
     const admits = !forksSession(opts.config);
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
@@ -1222,6 +1249,10 @@ export class AppServer {
     try {
       await handler(this, ctx, id, params);
     } catch (e) {
+      // A refusal DECIDED IN A SPINE carries its own code out (rpc.ts's RpcRefusal) — the remap below would
+      // turn a request the client could fix into an internal error. First, because it is a statement about
+      // the REQUEST, made before the handler touched an engine at all.
+      if (e instanceof RpcRefusal) { ctx.peer.replyError(id, e.code, e.message); return; }
       // one guard for every current and future handler — a thrown/rejecting handler must still reply,
       // never leave the caller hanging or surface as an unhandled rejection (dispatch is fired `void`)
       const gone = this.engineGoneCode(params);

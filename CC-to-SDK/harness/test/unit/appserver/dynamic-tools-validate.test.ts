@@ -294,6 +294,38 @@ describe("validateDeclarations — the per-tool schema caps", () => {
   });
 });
 
+// THE ADVERTISEMENT CONSTRAINTS (T6 discoveries). Both are things the CONVERTER happily accepts and a real
+// MCP client then refuses — measured against a live client over an in-memory transport, not reasoned about
+// — so they are declaration-time refusals rather than conversion ones, and they are checked LAST, after the
+// converter has had its say, so a schema that is outside the subset still hears about that first.
+describe("validateDeclarations — the advertisement constraints", () => {
+  it("refuses a schema without a root type:object, which would kill its whole namespace's tools/list", () => {
+    // MCP's own `ToolSchema` pins `inputSchema.type` to the literal "object". The declaration is advertised
+    // VERBATIM, so a strict client rejects the entire `tools/list` response — every well-formed sibling in
+    // that namespace disappears from the model's view while the server goes on serving all of them.
+    expect(refusal([fn("typeless", { properties: { a: { type: "string" } } })]))
+      .toBe('tool "typeless": inputSchema must declare root type "object"');
+    expect(refusal([fn("empty", {})])).toBe('tool "empty": inputSchema must declare root type "object"');
+    // A root that names a DIFFERENT type never reaches this check — the converter has already refused it,
+    // and its keyword is the more specific answer.
+    expect(refusal([fn("wrongtype", { type: "string" })])).toBe('tool "wrongtype": unsupported inputSchema: type:string');
+    accepted([fn("proper", { type: "object", properties: { a: { type: "string" } } })]);
+  });
+
+  it("refuses a property named __proto__, which a client's own parse drops while `required` keeps naming it", () => {
+    // JSON.parse is how such a key reaches us at all — an object literal `{__proto__: …}` sets the prototype
+    // instead of creating an own key, so the fixture has to travel the same road the wire does.
+    const schema = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}');
+    expect(refusal([fn("polluted", schema)])).toBe('tool "polluted": inputSchema declares a property named "__proto__"');
+  });
+
+  it("leaves an ordinary property named after something else on Object.prototype alone", () => {
+    // The refusal is about the ONE key a client's zod rebuild silently drops, not about prototype names in
+    // general: `constructor` and `toString` survive that rebuild and are perfectly callable tool arguments.
+    accepted([fn("ordinary", { type: "object", properties: { constructor: { type: "string" }, toString: { type: "string" } } })]);
+  });
+});
+
 describe("validateDeclarations — namespace names", () => {
   it("refuses the reserved dyn namespace", () => {
     expect(refusal([ns("dyn", fn("run"))])).toBe('namespace "dyn" is reserved for bare tool declarations');

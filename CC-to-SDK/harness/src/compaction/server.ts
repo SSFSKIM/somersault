@@ -1,7 +1,11 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 
+/** The MCP server name this tool is published under — one constant for the same reason CONTEXT_SERVER is
+ *  one (context/server.ts): the name is a slot in `options.mcpServers`, and `INJECTED_SERVER_NAMES`
+ *  (session/session.ts) derives from it. */
+export const COMPACT_SERVER = "cc-compact";
 /** The model-facing tool id the harness must allowlist for the agent to call it. */
-export const COMPACT_TOOL = "mcp__cc-compact__RequestCompaction";
+export const COMPACT_TOOL = `mcp__${COMPACT_SERVER}__RequestCompaction`;
 
 /** Late-binding seam: the daemon sets `request` to the session's requestCompaction() after query() starts. */
 export interface CompactHolder { request?: () => void }
@@ -30,12 +34,12 @@ export function buildCompactTools(holder: CompactHolder) {
 
 /** Wrap a CompactHolder as an in-process SDK MCP server exposing the RequestCompaction tool. */
 export function createCompactMcpServer(holder: CompactHolder) {
-  return createSdkMcpServer({ name: "cc-compact", version: "0.1.0", tools: buildCompactTools(holder) });
+  return createSdkMcpServer({ name: COMPACT_SERVER, version: "0.1.0", tools: buildCompactTools(holder) });
 }
 
 /** COPY of options with the cc-compact server + its allowed tool merged in (deduped); never mutates input. */
 export function withCompactTool(options: Record<string, unknown>, holder: CompactHolder): Record<string, unknown> {
   const existing = (options.mcpServers as Record<string, unknown> | undefined) ?? {};
   const allowed = (options.allowedTools as string[] | undefined) ?? [];
-  return { ...options, mcpServers: { ...existing, "cc-compact": createCompactMcpServer(holder) }, allowedTools: [...new Set([...allowed, COMPACT_TOOL])] };
+  return { ...options, mcpServers: { ...existing, [COMPACT_SERVER]: createCompactMcpServer(holder) }, allowedTools: [...new Set([...allowed, COMPACT_TOOL])] };
 }

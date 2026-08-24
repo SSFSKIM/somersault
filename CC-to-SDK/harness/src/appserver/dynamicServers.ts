@@ -50,6 +50,7 @@ import type { ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 import type { z } from "zod/v4";
 import { jsonSchemaToZod } from "./schemaToZod.js";
 import { RESERVED_NAMESPACE, type DynamicToolFunction, type DynamicToolSpec } from "./dynamicTools.js";
+import { MCP_NO_PREFIX_ENV } from "../config/types.js";
 import type { CallToolResultLike } from "./dynamicCalls.js";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 
@@ -202,4 +203,59 @@ export function buildDynamicServers(specs: DynamicToolSpec[], park: DynamicToolP
   }
 
   return servers;
+}
+
+// -------------------------------------------------------------------------------------------------
+// THE TRANSIENT OVERLAY (Task 7). Everything above builds servers; this is where they are CARRIED — onto
+// the config of ONE engine build and nothing else. `record.config` stays the clean base the swap family
+// rebuilds from, because an overlay left on it would hand a second engine the same `Server` instances, and
+// a `Server` refuses a second transport: the agent SDK's `connectSdkMcpServer` swallows that failure with
+// a debug log, so the thread would simply lose its tools with no error anywhere.
+
+/** What one build needs to know, as a VALUE. Not the record: both admission spines call the factory BEFORE
+ *  constructing their `ThreadRecord` (a synchronous factory throw must not orphan state), so at the first
+ *  build there is no record to read — and the epoch is 0 there by definition. */
+export type DynamicBuildCtx = { threadId: string; generation: number; specs: DynamicToolSpec[] };
+
+/** The park seam's other end, structurally — `AppServer` satisfies it. Declared here rather than imported
+ *  so this module stays free of a cycle with the server that calls into it. */
+export type ParkHost = {
+  parkToolCall(threadId: string, generation: number, call: DynamicToolCall, signal?: AbortSignal): Promise<CallToolResultLike>;
+};
+
+/** One engine config, plus this thread's declared tools as MCP servers. A declaration-less thread gets its
+ *  config back untouched, key and all — nothing about a non-declaring thread changes.
+ *
+ *  THE BINDING NEVER THROWS AND NEVER REJECTS. `parkToolCall` answers every refusal with a RESOLVED
+ *  cancellation; a rejecting park reaches the model as a raw `MCP error -32603` instead of an `isError`
+ *  result it can read and act on.
+ *
+ *  `generation` is captured by VALUE here, which is the whole point of taking a context rather than a
+ *  record: `swapEngine` bumps the epoch BEFORE it disposes the outgoing engine, so a late callback from
+ *  that engine identifies itself by the OLD number and is refused, while the replacement's own build (which
+ *  runs after the bump) carries the new one.
+ *
+ *  The env write is the other half of the naming scheme: a truthy `CLAUDE_AGENT_SDK_MCP_NO_PREFIX` strips
+ *  the `mcp__<server>__` prefix off every tool name and collapses every declared namespace into one flat
+ *  space. Falsified rather than deleted, because the SDK spreads `process.env` underneath (resolveOptions)
+ *  and the operator's own shell is one of the places a truthy value comes from. */
+export function withDynamicServers(host: ParkHost, ctx: DynamicBuildCtx, cfg: Record<string, unknown>): Record<string, unknown> {
+  if (ctx.specs.length === 0) return cfg;
+  const park: DynamicToolPark = (call) => host.parkToolCall(ctx.threadId, ctx.generation, call, call.signal);
+  return {
+    ...cfg,
+    dynamicToolServers: buildDynamicServers(ctx.specs, park),
+    env: { ...(cfg.env as Record<string, string | undefined> | undefined), [MCP_NO_PREFIX_ENV]: "" },
+  };
+}
+
+/** The same, for a thread that already exists — the three swap factories. Called INSIDE the replacement
+ *  thunk, so `record.epoch` is read after `swapEngine`'s bump: the generation this build captures is the
+ *  one its own engine will park under. */
+export function withThreadDynamicServers(
+  host: ParkHost,
+  record: { id: string; epoch: number; dynamicTools?: DynamicToolSpec[] },
+  cfg: Record<string, unknown>,
+): Record<string, unknown> {
+  return withDynamicServers(host, { threadId: record.id, generation: record.epoch, specs: record.dynamicTools ?? [] }, cfg);
 }

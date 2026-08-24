@@ -3,11 +3,19 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncQueue } from "../swarm/asyncQueue.js";
 import type { QueryFn } from "../swarm/types.js";
 import type { ControllableSession } from "../bridge/types.js";
-import { withContextTool, type QueryHolder, type RawContextUsage } from "../context/server.js";
-import { withCompactTool, parseCompactOutcome, type CompactHolder, type CompactOutcome } from "../compaction/server.js";
+import { withContextTool, CONTEXT_SERVER, type QueryHolder, type RawContextUsage } from "../context/server.js";
+import { withCompactTool, parseCompactOutcome, COMPACT_SERVER, type CompactHolder, type CompactOutcome } from "../compaction/server.js";
 import { classifyLimitMessage, type LimitState } from "../limits/classify.js";
 import { turnFailureOf, type TurnFailure } from "./turnResult.js";
 import { normalizeTurnInput, type UserTurnInput } from "./turnInput.js";
+
+/** The MCP server names THIS layer injects into an engine's `mcpServers` (see the constructor). They are
+ *  named as a SET because they are slots someone else can want: the merge is a plain spread, so a
+ *  same-named server arriving in the caller's config is replaced with no error and no warning — its tools
+ *  simply never appear. Anything that assembles the effective pre-injection server set has to count these
+ *  in (M7's dynamic-tool namespace admission is the first such caller), and it reads them from HERE, off
+ *  the same constants the injection uses, so the two cannot drift. */
+export const INJECTED_SERVER_NAMES: readonly string[] = Object.freeze([CONTEXT_SERVER, COMPACT_SERVER]);
 
 /** One live background task, as carried by system/background_tasks_changed frames. */
 export interface BackgroundTaskInfo { task_id: string; task_type: string; description: string; }
@@ -70,6 +78,8 @@ export class Session implements ControllableSession {
     let opts = options;
     let ctxHolder: QueryHolder | undefined;
     let compactHolder: CompactHolder | undefined;
+    // THE INJECTED SERVERS (see INJECTED_SERVER_NAMES below): both merge into `options.mcpServers` with a
+    // plain spread, so a caller-supplied server of the same name would be replaced — silently.
     if (sessionOpts.contextTool) { ctxHolder = {}; opts = withContextTool(opts, ctxHolder); }
     if (sessionOpts.compactTool) { compactHolder = {}; opts = withCompactTool(opts, compactHolder); }
     this.q = deps.query({ prompt: this.input, options: opts });

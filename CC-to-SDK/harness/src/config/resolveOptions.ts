@@ -1,4 +1,4 @@
-import { DEFAULTS, type HarnessConfig } from "./types.js";
+import { DEFAULTS, MCP_NO_PREFIX_ENV, type HarnessConfig } from "./types.js";
 import { resolveSettings } from "./settings.js";
 import { resolveSystemPrompt } from "./outputStyle.js";
 import { resolveSandbox } from "./sandbox.js";
@@ -132,6 +132,24 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.agentProgressSummaries !== undefined) options.agentProgressSummaries = config.agentProgressSummaries;
   const merged = { ...options, ...(config.extraOptions ?? {}) };
   for (const key of SERVER_OWNED) if (key in options) merged[key] = options[key];
+  // M7 — THE SERVER-OWNED DYNAMIC-TOOL OVERLAY, and it is merged HERE, on the returned object, for a
+  // reason the SERVER_OWNED list above cannot serve: this is not a typed field the hatch might overwrite,
+  // it is a set of servers that must join whatever `mcpServers` ended up being — the caller's, or the one
+  // `extraOptions` replaced them with. A merge before the hatch would let a client's own `mcpServers` key
+  // erase the whole overlay with nothing raised anywhere; the model would simply never be offered the
+  // tools the thread declared. Spread into a NEW object so no caller's map is mutated.
+  //   The env line beside it is the same reasoning applied to the one flag the naming scheme rests on: a
+  // truthy CLAUDE_AGENT_SDK_MCP_NO_PREFIX strips the `mcp__<server>__` prefix and collapses every declared
+  // namespace together, and an `extraOptions.env` replaces the env wholesale — including the falsification
+  // the app server already wrote onto this config.
+  if (config.dynamicToolServers) {
+    merged.mcpServers = { ...(merged.mcpServers as Record<string, unknown> | undefined), ...config.dynamicToolServers };
+    // `process.env` when the merge left no env at all (an `extraOptions.env: undefined`): a bare one-key env
+    // would REPLACE the subprocess environment — PATH and the credentials with it — where the SDK's own
+    // default is to inherit. Same base the typed path uses above.
+    const base = typeof merged.env === "object" && merged.env !== null ? merged.env as Record<string, unknown> : process.env;
+    merged.env = { ...base, [MCP_NO_PREFIX_ENV]: "" };
+  }
   return merged;
 }
 
