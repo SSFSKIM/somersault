@@ -34,11 +34,21 @@
 //   A declaration that omits `type:"object"` is advertised verbatim and the strict client then refuses
 //   the WHOLE list (`ToolSchema.inputSchema` pins `type: "object"`), taking its well-formed siblings with
 //   it while the server keeps serving all of them — a declaration-shape obligation (Task 7).
-import { describe, it, expect, afterEach, vi } from "vitest";
+//
+// TASK 9 ADDS THE PRODUCTION HALF at the foot of this file: the same exchange with NOTHING faked but the
+// engine. A real `AppServer`, a real `thread/start` carrying declarations, a real turn holding ACTIVE, the
+// instance the factory was actually handed, and the settlement travelling the REGISTERED `tool/callResult`
+// over the wire rather than a direct registry poke. All three result kinds cross it.
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { AppServer } from "../../../src/appserver/server.js";
+import type { PeerSink } from "../../../src/appserver/peer.js";
 import {
   buildDynamicServers,
   withDynamicServers,
@@ -66,12 +76,16 @@ const entryOf = (servers: Record<string, unknown>, name: string): SdkEntry => se
 
 /** Every client/server pair a row opens, closed after it — an in-memory transport keeps both ends alive. */
 const opened: Array<{ client: Client; instance: McpServer }> = [];
+/** Every app server the production rows boot, shut down after the row — a shutdown settles whatever is
+ *  still parked, which is the only thing keeping a row's promises alive once its assertions are done. */
+const booted: AppServer[] = [];
 
 afterEach(async () => {
   for (const { client, instance } of opened.splice(0)) {
     await client.close().catch(() => {});
     await instance.close().catch(() => {});
   }
+  for (const srv of booted.splice(0)) await srv.shutdown().catch(() => {});
 });
 
 /** A real MCP client, initialized against the built instance over a linked in-memory pair. Connecting the
@@ -738,5 +752,187 @@ describe("buildDynamicServers — the dispatch table", () => {
     // "no conflicting bare-server handler" row above load-bearing.
     expect(() => entry.instance.server.assertCanSetRequestHandler("tools/list")).toThrow(/already exists/);
     expect(() => entry.instance.server.assertCanSetRequestHandler("tools/call")).toThrow(/already exists/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PRODUCTION HALF (Task 9) — the milestone's keyless acceptance.
+//
+// Everything above drives `buildDynamicServers` directly: a park the row supplies, an instance the row
+// built. That proves the MCP layer and nothing about the SERVER. These rows close the gap by removing
+// every fake but the engine itself:
+//
+//   THE INSTANCE IS THE ONE THE FACTORY WAS HANDED. `thread/start` carries the declarations, the app
+//   server builds the overlay, and the capturing `sessionFactory` records the engine config verbatim. The
+//   client connects `capturedConfig.dynamicToolServers[ns].instance` — the very object a real
+//   `openSession` would have mounted, whose park is the production closure binding `srv.parkToolCall`.
+//
+//   THE TURN IS REAL AND ACTIVE. The fake session's `submit` never resolves, so the thread stays busy and
+//   `activeTurnId` keeps answering — which is what a dynamic call needs to exist at all, and what makes
+//   the `turnId` on the wire assertable rather than incidental.
+//
+//   THE ANSWER TRAVELS THE REGISTERED METHOD. Settlement is a JSON-RPC frame fed to the connection, so the
+//   dispatch table, the params schema, the subscriber-authority check and the registry all run. A row that
+//   poked the registry directly would pass with `tool/callResult` unregistered — precisely the state Task 4
+//   shipped and Task 8 ended.
+//
+// THREE ROWS, ONE PER RESULT KIND: text, image and audio each cross the whole path, because the media two
+// travel `toCallResult`'s `data:` parse and MIME-family arms that the text one never touches, and a green
+// text row says nothing about them.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** One throwaway server-state root for the production rows: `thread/list` and the archive markers resolve
+ *  their directory as `deps.ccxDir ?? fleetRoot()`, and a boot that omits it points the read at the
+ *  operator's own ~/.claude/ccx (commit fd4323ab59). */
+const prodCcxDir = mkdtempSync(join(tmpdir(), "m7ccx-exchange-"));
+afterAll(() => { rmSync(prodCcxDir, { recursive: true, force: true }); });
+
+const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
+const send = (c: { feed(chunk: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
+const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l) as Record<string, any>);
+const notes = (lines: string[], method: string) => parsed(lines).filter((f) => f.method === method);
+const replyTo = (lines: string[], id: number) => parsed(lines).find((f) => f.id === id)!;
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const lastStatus = (lines: string[]): Record<string, unknown> | undefined => {
+  const all = notes(lines, "thread/status/changed").map((n) => n.params.status as Record<string, unknown>);
+  return all[all.length - 1];
+};
+
+/** The engine as a parked tool call needs it: a turn that never ends, so the record stays busy for the
+ *  whole row and `activeTurnId` keeps answering. */
+const parkedSession = () => ({
+  submit: () => new Promise<{ result: unknown }>(() => {}),
+  interrupt: async () => ({}),
+  dispose: async () => {},
+  onFrame: () => () => {},
+  sessionId: "sess-prod",
+});
+
+/** The declaration a real client sends — one namespace and one bare function, children TAGGED
+ *  `type:"function"` exactly as Codex's own `DynamicToolNamespaceTool` spells them. */
+const PROD_DECL: DynamicToolSpec[] = [
+  {
+    type: "namespace", name: "ops", description: "operations tooling",
+    tools: [{ type: "function", name: "lookup", description: "look something up", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
+  },
+  { type: "function", name: "ping", description: "ping the client", inputSchema: { type: "object", properties: {} } },
+];
+
+/** A real app server with a declaring thread and a turn in flight, plus the engine configs its factory was
+ *  handed. The connection is initialized AND subscribed: subscription is both what `tool/callRequested` is
+ *  delivered on and what settlement authority is checked against. */
+async function bootProduction() {
+  const configs: Array<Record<string, unknown>> = [];
+  const srv = new AppServer({}, {
+    ccxDir: prodCcxDir,
+    sessionFactory: (cfg: Record<string, unknown>) => { configs.push(cfg); return parkedSession() as never; },
+  });
+  booted.push(srv);
+  const { lines, sink } = mkSink();
+  const conn = srv.connect(sink);
+  send(conn, { id: 1, method: "initialize", params: { clientInfo: { name: "m7-production" } } });
+  send(conn, { id: 2, method: "thread/start", params: { config: { cwd: "/w" }, dynamicTools: PROD_DECL } });
+  await tick();
+  const threadId = replyTo(lines, 2).result.thread.id as string;
+  send(conn, { id: 3, method: "thread/subscribe", params: { threadId } });
+  send(conn, { id: 4, method: "turn/start", params: { threadId, input: "go" } });
+  await tick();
+  const turnId = srv.registry.get(threadId)!.currentTurnId!;
+  lines.length = 0;
+  const overlay = configs[0]!.dynamicToolServers as Record<string, SdkEntry>;
+  return { srv, conn, lines, threadId, turnId, configs, overlay };
+}
+
+/** The one shape every result-kind row runs: call the tool over MCP, read the request off the wire, answer
+ *  it with the given items over the REGISTERED method, and hand back what the MCP caller resolved with. */
+async function crossTheWire(items: Array<Record<string, unknown>>) {
+  const { conn, lines, threadId, turnId, overlay } = await bootProduction();
+  const client = await connect(overlay.ops!);
+
+  const call = client.callTool({ name: "lookup", arguments: { q: "who" } });
+  await vi.waitFor(() => expect(notes(lines, "tool/callRequested")).toHaveLength(1));
+  const request = notes(lines, "tool/callRequested")[0]!.params;
+
+  // The thread SAYS it is waiting on this call, on the same wire and in the same moment (Task 5's waiter).
+  const parkStatus = lastStatus(lines);
+
+  send(conn, { id: 90, method: "tool/callResult", params: { threadId, callId: request.callId, contentItems: items, success: true } });
+  await tick();
+  const result = await call as CallToolResultLike;
+  return { result, request, threadId, turnId, parkStatus, ack: replyTo(lines, 90) };
+}
+
+describe("the production wiring — a real AppServer, a real turn, the real registered method", () => {
+  it("declares ns + bare at thread/start and hands the engine both servers, off record.config", async () => {
+    const { srv, threadId, configs, overlay } = await bootProduction();
+
+    expect(Object.keys(overlay).sort()).toEqual(["dyn", "ops"]);
+    expect(overlay.ops!.instance).toBeInstanceOf(McpServer);
+    expect(overlay[RESERVED_NAMESPACE]!.instance).toBeInstanceOf(McpServer);
+    // The overlay is TRANSIENT: the record keeps the serializable declaration, never a live instance.
+    const record = srv.registry.get(threadId)!;
+    expect(record.config).not.toHaveProperty("dynamicToolServers");
+    expect(record.dynamicTools).toEqual(PROD_DECL);
+    expect(configs).toHaveLength(1);
+  });
+
+  it("TEXT: the engine's own server calls the tool, the wire answers it, and CallTool resolves with the text block", async () => {
+    const { result, request, threadId, turnId, parkStatus, ack } = await crossTheWire([{ type: "inputText", text: "42" }]);
+
+    expect(request).toEqual({ threadId, callId: request.callId, turnId, namespace: "ops", tool: "lookup", arguments: { q: "who" } });
+    expect(request.callId).toMatch(/^dyncall:[0-9a-f-]{36}$/);
+    expect(parkStatus).toEqual({ state: "active", waitingOn: "toolCall" });
+    expect(ack.result).toEqual({});
+    expect(result).toMatchObject({ isError: false, content: [{ type: "text", text: "42" }] });
+  });
+
+  it("IMAGE: a `data:` image item crosses the same path and resolves as an MCP image block", async () => {
+    const png = "iVBORw0KGgo=";
+    const { result, parkStatus, ack } = await crossTheWire([{ type: "inputImage", imageUrl: `data:image/png;base64,${png}` }]);
+
+    expect(parkStatus).toEqual({ state: "active", waitingOn: "toolCall" });
+    expect(ack.result).toEqual({});
+    expect(result).toMatchObject({ isError: false, content: [{ type: "image", data: png, mimeType: "image/png" }] });
+  });
+
+  it("AUDIO: a `data:` audio item crosses the same path and resolves as an MCP audio block", async () => {
+    const wav = "UklGRiQAAABXQVZF";
+    const { result, parkStatus, ack } = await crossTheWire([{ type: "inputAudio", audioUrl: `data:audio/wav;base64,${wav}` }]);
+
+    expect(parkStatus).toEqual({ state: "active", waitingOn: "toolCall" });
+    expect(ack.result).toEqual({});
+    expect(result).toMatchObject({ isError: false, content: [{ type: "audio", data: wav, mimeType: "audio/wav" }] });
+  });
+
+  it("the park is VISIBLE thread state while it lasts, and the waiter retracts once the wire answers", async () => {
+    const { conn, lines, threadId, overlay } = await bootProduction();
+    const client = await connect(overlay.ops!);
+
+    const call = client.callTool({ name: "lookup", arguments: { q: "who" } });
+    await vi.waitFor(() => expect(notes(lines, "tool/callRequested")).toHaveLength(1));
+    const callId = notes(lines, "tool/callRequested")[0]!.params.callId as string;
+    expect(lastStatus(lines)).toEqual({ state: "active", waitingOn: "toolCall" });
+
+    send(conn, { id: 91, method: "tool/callResult", params: { threadId, callId, contentItems: [{ type: "inputText", text: "done" }], success: true } });
+    await tick();
+    await call;
+    // The turn is still running (`submit` never resolves), so what ended is the WAIT: the waiter goes and
+    // the state does not.
+    expect(lastStatus(lines)).toEqual({ state: "active" });
+  });
+
+  it("a bare declaration is reachable on `dyn` over the same production path, with no namespace on the wire", async () => {
+    const { conn, lines, threadId, overlay } = await bootProduction();
+    const client = await connect(overlay[RESERVED_NAMESPACE]!);
+
+    const call = client.callTool({ name: "ping" });
+    await vi.waitFor(() => expect(notes(lines, "tool/callRequested")).toHaveLength(1));
+    const request = notes(lines, "tool/callRequested")[0]!.params;
+    expect(Object.keys(request).sort()).toEqual(["arguments", "callId", "threadId", "tool", "turnId"]);
+    expect(request.tool).toBe("ping");
+
+    send(conn, { id: 92, method: "tool/callResult", params: { threadId, callId: request.callId, contentItems: [{ type: "inputText", text: "pong" }], success: true } });
+    await tick();
+    await expect(call).resolves.toMatchObject({ content: [{ type: "text", text: "pong" }] });
   });
 });

@@ -4,7 +4,10 @@
 **Grounding:** `docs/superpowers/grounding/2026-08-23-product-trio-ground.md` §2 + its 2026-08-23
 amendment; probe 115 (`probes/probes/115-dynamic-tool-raw-schema.ts`).
 **Sequencing:** executes AFTER the images round, on its own branch, reviewed as its own isolated diff.
-**Rev 2** after the adversarial spec review (twelve findings — Revision Notes).
+**Rev 4** — rev 2 absorbed the adversarial spec review (twelve findings), rev 3 the round-3 measurement that
+moved advertisement to the low-level MCP `Server`, and rev 4 closes execution (Revision Notes).
+**Status: SHIPPED keyless, 2026-08-24** — every keyed row is written, landed and unobserved; the first keyed
+run is due after 2026-08-26 1pm (Outcomes & Retrospective).
 
 ## Purpose
 
@@ -195,29 +198,45 @@ what the in-memory MCP exchange actually exercises, and the live row owns the re
 
 ## Acceptance (behavior-phrased)
 
-Keyless (run from `CC-to-SDK/harness`):
+Keyless (run from `CC-to-SDK/harness`). **File mapping, corrected at execution (T9):** the rows below were
+specified against one unit file and the implementation split them across four, so each item now names where
+its rows actually live. No row was dropped or weakened in the move; the mapping is the only thing that
+changed.
 
-1. `npx vitest run test/unit/appserver/dynamic-tools.test.ts` — declaration validation (each cap and
+1. `npx vitest run test/unit/appserver/dynamic-tools-validate.test.ts test/unit/appserver/dynamic-tools.test.ts test/unit/appserver/dynamic-calls.test.ts`
+   — declaration validation (each cap and
    collision refused with its named message; a canonical Codex-shaped namespace fixture with tagged
-   children parses); the park trio through the REAL wire: `tool/callRequested` reaches a subscriber and
+   children parses) lives in `dynamic-tools-validate.test.ts` (the pure gate) and `dynamic-tools.test.ts`
+   (the same gate reached over the wire at `thread/start`/`thread/resume`); the registry's own lifecycle —
+   first-answer-wins, duplicate answer `-33002` vs fabricated id `-32602`, result caps settling as
+   `isError`, generation stamps — is `dynamic-calls.test.ts`; and the park trio through the REAL wire is
+   `dynamic-tools.test.ts`: `tool/callRequested` reaches a subscriber and
    NOT a watcher-only peer; zero-subscriber park + replay-on-subscribe delivers the full pending
-   request; disconnect-then-reattach settlement; first-answer-wins; duplicate answer `-33002` vs
-   fabricated id `-32602`; result caps settle as `isError`; abort/close/reopen/shutdown each settle
+   request; disconnect-then-reattach settlement; abort/close/reopen/shutdown/interrupt each settle
    pending calls as cancelled; a previous-generation answer never touches the replacement engine.
 2. `npx vitest run test/unit/schemaToZod.test.ts` — subset round-trips; object-root requirement;
    `additionalProperties` absent/true → extra keys SURVIVE to parsed arguments, false → refused;
    out-of-subset keywords refuse naming themselves.
-3. An **in-memory MCP exchange** row (same file as 1 or its own): the built server's `tools/list`
+3. An **in-memory MCP exchange** row — `npx vitest run test/unit/appserver/dynamic-tools-exchange.test.ts`,
+   its own file: the built server's `tools/list`
    advertises **the declared JSON Schema VERBATIM — deep-equal against the declaration object** (rev 3:
    advertisement is the low-level Server's, not a conversion); `tools/call` round-trips through park →
-   wire answer → MCP content result, for all three content kinds; **`review/start` on a declaring
-   target inherits NO declarations** (the deliberate exclusion, pinned); **a parked call is visible
-   thread status** (the tool-call waiter, broadcast on park and settlement; decisions win when both
-   pend).
+   wire answer → MCP content result, for all three content kinds. Two rows sit elsewhere by subject rather
+   than by mechanism: **`review/start` on a declaring target inherits NO declarations** and **a parked call
+   is visible thread status** (the tool-call waiter, broadcast on park and settlement; decisions win when
+   both pend) are in `dynamic-tools.test.ts`, beside the overlay and status rows they belong with. T9 adds
+   the **production half** at the foot of the exchange file: a real `AppServer`, a declaring `thread/start`,
+   a turn held ACTIVE, the instance the factory was handed, and the answer travelling the REGISTERED
+   `tool/callResult` over the wire — text, image and audio each crossing the whole path.
 4. `npx vitest run test/unit/appserver` — full suite green, including `mcpServer/set` vs the overlay
    across thread/rewind, thread/clear, thread/reopen.
-5. `node scripts/drift-check.mjs` — exit 0; the scorecard gains `tool/callResult` (method),
-   `tool/callRequested` (notification row), and the `thread/start` `dynamicTools` note.
+5. `node scripts/drift-check.mjs` (from `CC-to-SDK/`) — exit 0; the scorecard gains `tool/callResult`
+   (method row, `shipped(M7)`, keyed residual in prose — the gate refuses `probe-gated` on a registered
+   method), `tool/callRequested` (notification row, `probe-gated` until the keyed run), the `thread/start`
+   and `thread/resume` `dynamicTools` notes, the `mcpServer/set` refusal, and the M7 known-limits paragraph.
+6. `npx vitest run test/live/appserver-dynamic-tools.test.ts` with NO key present — the keyed file below
+   skips cleanly (3 skipped, 0 run). A skipped suite proves the gating and nothing else, which is why the
+   rows it gates are still called unobserved everywhere they are cited.
 
 Keyed (quota-gated — after 2026-08-26 1pm):
 
@@ -263,6 +282,10 @@ Keyed (quota-gated — after 2026-08-26 1pm):
 - **A root `type: "object"` omission is namespace-lethal at advertisement (T6).** MCP's `ToolSchema` requires the literal; verbatim advertisement passes the omission through and a strict client rejects the entire `tools/list`, disabling every sibling tool. Decision: refuse at declaration time in `validateDeclarations` (-32602 naming the tool), enforced in Task 7; the T1 converter stays a permissive subset.
 - **An unsettled park holds the MCP caller for the transport's request timeout (T6, informational for T9).** The MCP SDK's default request timeout is 60 s; the agent SDK's `MCP_TOOL_TIMEOUT` is effectively unbounded in production, so the bound matters only to tests (the exchange rows pass explicit short timeouts).
 
+- **An invariant stated on two spines had a witness on only one (T7).** The admission ordering — call the engine factory BEFORE writing the record and both per-thread registries, so a factory that throws orphans nothing — held in code on `createThread` and on `startThread` alike, and one row covered it. Re-applying the exact mutation to the OTHER spine (`startThread`, the resume path) left the entire 1,332-row app-server suite green: a real gap, invisible because the rule read as one rule. The lesson generalizes past this milestone: when a rule is written twice, sabotage each site separately — a passing suite is evidence about the site the row happens to drive, not about the rule. The twin row exists now, and it reddens alone under that mutation.
+
+- **A park failure reached the model as a raw `-32603` with a stack (T7, a live defect and not merely a coverage gap).** The seam's contract is that `parkToolCall` answers every refusal with a RESOLVED cancellation, so the model always gets something it can read. Nothing enforced it: any throw or rejection from the app server's own park binding — a registry lookup, a generation check — travelled out of the MCP handler as a transport error, which the model can neither read nor act on and which ends the turn instead of redirecting it. The fix is a guard at the CallTool call site (a strict superset of the binding, since the binding's whole body executes inside it) answering `isError` with the reason. Measured both ways: with the guard, `isError: true` naming the failure; without it, `MCP error -32603`. The general rule this leaves behind: a "the callback always answers" contract needs a guard at the seam that would otherwise leak the exception, not only a discipline in the code that raises it.
+
 - **Rev 1 had the deferLoading polarity backwards** — the SDK's deferred-by-default and Codex's
   direct-by-default pull opposite ways, and only reading Codex's serde default settles which side a
   Codex-compatible client expects.
@@ -279,7 +302,68 @@ Keyed (quota-gated — after 2026-08-26 1pm):
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped, 2026-08-24, over nine tasks on branch `appserver-m7-dynamic-tools`.** A client declares tools at
+`thread/start` or `thread/resume` and IS their runtime: the model's call parks in the server, reaches the
+thread's subscribers as `tool/callRequested`, and the first subscriber to answer `tool/callResult` supplies
+what the model reads. The wire grammar did not change — no server→client request frame exists after this
+milestone either — and the whole feature rides the park trio the server already ran for elicitation. Nine
+new source modules and one rename (`schemaToZod.ts`, `dynamicTools.ts`, `dynamicCalls.ts`,
+`dynamicServers.ts`, `toolCallResult.ts`, `schema/dynamicTools.ts`, plus the admission, overlay and status
+seams threaded through `server.ts`, `subscribe.ts`, `rewind.ts` and `settingsOps.ts`), one new registered
+method (the 67th), one new notification (the 30th), and a `dynamicTools: true` marker on `initialize`'s
+newly registered result schema so a client can detect an old server rather than be silently downgraded.
+
+**Keyless acceptance is complete and green.** `test/unit/appserver` runs 75 files / 1,368 tests; the
+milestone's own rows live in `dynamic-tools-validate.test.ts` (the declaration gate), `dynamic-calls.test.ts`
+(the registry lifecycle), `dynamic-tools.test.ts` (the wire: park, notify, replay, authority, every
+teardown, the overlay across all three swaps, `review/start`'s exclusion, the status waiter),
+`dynamic-tools-exchange.test.ts` (a real MCP client against the built instances — verbatim `tools/list`,
+validation, dispatch, and T9's production half crossing a real `AppServer` with all three result kinds) and
+`test/unit/schemaToZod.test.ts` (the conversion subset). `node scripts/drift-check.mjs` exits 0 at 102
+scorecard rows and 67 registered methods.
+
+**The keyed gate — nothing below has been observed, and the first run is due after 2026-08-26 1pm** (the
+weekly quota was exhausted for the whole of execution, so every live row in this milestone was written and
+landed against a clean skip). `test/live/appserver-dynamic-tools.test.ts` carries both scenarios: **A**
+(spec row 6) — a declared tool reaches a real model, the broker parks `decision/requested` FIRST, the call
+then travels as `tool/callRequested`, the client's answer comes back as the tool result, an `mcp`-species
+item completes on the stream, the reply carries a per-run nonce the model could not have invented, and
+`mcpServer/set` is refused on the same declaring thread; **B** (spec row 7) — three calls in one turn, the
+declared `required` field present in every `arguments`. Three further questions ride that same run:
+
+- **Does `_meta` survive the SDK→CLI control-protocol hop?** (T6 review.) The `tools/list` payload is
+  JSON-serialized onto the CLI's control protocol, and `anthropic/alwaysLoad` is the field the whole
+  `deferLoading` polarity rests on. The keyless rows prove we EMIT it; only a live run proves the CLI
+  received it — a `deferLoading: true` tool should be absent from the model's direct tool list and
+  reachable through ToolSearch.
+- **Does the SDK accept an AUDIO tool result at all?** (T3 review.) `{type:"audio", data, mimeType}` is the
+  correct MCP `AudioContent` shape and it round-trips through our conversion and through a real MCP client
+  — but Claude takes no audio INPUT, so an audio tool RESULT may still fail the turn downstream. If it
+  does, the `audio/*` MIME family is guarding a path that always fails, and the honest answer is to say so
+  on the scorecard rather than keep a shape nothing can carry. This is a discovery item, not a predicted
+  failure: it is unmeasured in either direction.
+- **What actually bounds an unsettled park in production?** (T6.) `MCP_TOOL_TIMEOUT` is effectively
+  unbounded there, where every test passes an explicit short deadline. The milestone's stated bound is the
+  turn's own interrupt/abort (matching elicitation, and every teardown path settles), so a live run is where
+  a client that simply never answers gets its real duration measured rather than assumed.
+
+**What the process is worth repeating for.** The design survived nine planning-review rounds (~62 findings)
+before a line was written, and the one thing that repeatedly moved the design was MEASUREMENT rather than
+argument: the zod-advertisement question was settled by a measurement that refuted the reviewer's claim
+while confirming a worse version of the defect it pointed at, and the resulting rev-3 pivot to the low-level
+MCP `Server` is the reason `tools/list` returns the client's declared schema verbatim instead of a lossy
+rebuild. The per-task reviews then found what planning structurally could not: two of the three entries
+added to Surprises above are execution-time discoveries about seams that read as obviously correct — an
+invariant with a witness on only one of the two spines that state it, and a "the callback always answers"
+contract with nothing enforcing it at the seam that leaks. Both were found by sabotage, not by reading.
+
+**What is deliberately not here.** Fleet threads (structural — no fleet admission path carries the field;
+`tool/callResult` on one answers `-32602` because the registry is real and empty, which is the true
+statement); mid-thread re-declaration; tool-call timeouts of our own. And the four client-facing limits the
+scorecard now states rather than implies: the unconditional `cc-context`/`cc-compact` name reservation,
+declarations NOT persisting into resume defaults (they must be re-sent on every `thread/resume`),
+`thread/fork` and `review/start` minting threads with no declaration path, and settings-file MCP servers
+being invisible to the occupied-name check.
 
 ## Revision Notes
 
@@ -320,3 +404,15 @@ Pending — written at finish.
   delimiter — `ops`+`prod__run` and `ops__prod`+`run` alias to one model-visible name); collision
   comparison is on canonical (underscore-normalized) server names; `review/start` exclusion and
   verbatim advertisement are stated in the sections they govern.
+- rev 4 (2026-08-24, the execution close — Task 9): nothing in the design moved; three things about it were
+  written down that had not been. (1) The Acceptance section's FILE MAPPING is corrected in place — the rows
+  were specified against one unit file and shipped across four (`dynamic-tools-validate`, `dynamic-tools`,
+  `dynamic-calls`, `dynamic-tools-exchange`), plus the keyed file and the keyless-skip run; no row was
+  dropped or weakened, and the item text now says where each lives. (2) Surprises gains the two
+  execution-time discoveries the planning rounds could not have produced, both found by sabotage rather than
+  by reading: an invariant stated on two spines with a witness on only one, and a "the callback always
+  answers" contract with nothing enforcing it at the seam that leaks. (3) Outcomes & Retrospective replaces
+  its placeholder, and states the KEYED GATE explicitly — first keyed run after 2026-08-26 1pm, carrying
+  scenarios A and B plus the `_meta` SDK→CLI hop check (T6 review), the audio model-acceptance question (T3
+  review; a discovery item, unmeasured in either direction) and the production park bound. Every live claim
+  in this spec is "not yet observed" until that run happens.
