@@ -1853,12 +1853,19 @@ export function useChat(
     // deadline. The 800 ms already spent in the delay counts against ACCOUNT_NOTICE_DEADLINE_MS, so the
     // remaining budget is the difference and the two together are exactly 3000 ms from this arming.
     // The banner's own budget is untouched — chrome still never costs first paint.
+    // `cancelled` (review finding P2) — `disposed.current` alone only catches UNMOUNT, but this effect's
+    // own cleanup fires on every mode CHANGE too (it is keyed on `[mode]`), and leaving auto while the
+    // account-facts promise below is still in flight is exactly that: the component stays mounted, so
+    // `disposed.current` stays false throughout. Without a per-invocation flag the cleanup's own
+    // `settleRace?.(undefined)` unblocks the `await` with a plain `undefined` and the callback sails past
+    // the `disposed.current` checks straight into `notice(...)`, telling a thread that is by then back in
+    // "default" mode that it is in auto — and burning the once-only ref doing it.
+    let cancelled = false;
     let raceTimer: ReturnType<typeof setTimeout> | undefined;
     let settleRace: ((f: AccountFacts | undefined) => void) | undefined;
     const id = setTimeout(async () => {
-      if (disposed.current) return;
-      autoNoticeShown.current = true;
-      if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) return;
+      if (disposed.current || cancelled) return;
+      if (!shouldShowAutoModeNotice(loadPrefs(historyEnv))) { autoNoticeShown.current = true; return; }
       const facts = await new Promise<AccountFacts | undefined>((resolve) => {
         settleRace = resolve;
         const bridge = opts.accountBridge;
@@ -1868,9 +1875,13 @@ export function useChat(
         // as `undefined` — the same unknown arm a missed deadline lands on.
         bridge.read().then((f) => { clearTimeout(raceTimer); resolve(f); });
       });
-      // Unmounted while we waited: the cleanup already settled the race so nothing is parked, and this
-      // is what keeps the append out of a disposed tree.
-      if (disposed.current) return;
+      // Unmounted, OR mode already moved on, while we waited: the cleanup already settled the race so
+      // nothing is parked, and this is what keeps the append out of a disposed tree or a stale mode.
+      if (disposed.current || cancelled) return;
+      // Only a genuine, uncancelled fire ever burns the once-per-process guard (review finding P2) — set
+      // HERE, after the cancellation check above, never at the top of the callback: a stale attempt that
+      // gets cancelled mid-flight must leave the session still eligible for the next real auto-mode entry.
+      autoNoticeShown.current = true;
       // T2's rule, unchanged: oauth is true iff the token source is LITERALLY the subscription one, and
       // both false and UNKNOWN keep the cost sentence. The bridge is only ever a LATER, better answer
       // than the launch value — when the banner won its race the two agree by construction.
@@ -1881,7 +1892,7 @@ export function useChat(
       // unguarded throw here would take down an interactive session over a cosmetic flag.
       try { savePrefsFn({ hasSeenAutoModeEntryWarning: true }, historyEnv); } catch { /* best-effort */ }
     }, AUTO_MODE_NOTICE_DELAY_MS);
-    return () => { clearTimeout(id); clearTimeout(raceTimer); settleRace?.(undefined); };
+    return () => { cancelled = true; clearTimeout(id); clearTimeout(raceTimer); settleRace?.(undefined); };
   }, [mode]);   // eslint-disable-line react-hooks/exhaustive-deps
   /** /export, /files and /stats all read the PERSISTED transcript, which the SDK does not write mid-turn
    *  (probes 62-64). Local commands dispatch immediately even while busy, so running one during a turn

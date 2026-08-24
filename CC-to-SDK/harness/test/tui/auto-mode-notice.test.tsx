@@ -340,4 +340,37 @@ describe("useChat — auto-mode entry notice", () => {
       expect(vi.getTimerCount()).toBe(0);                                    // the cleanup cleared the deadline too
     } finally { vi.useRealTimers(); }
   });
+
+  // F10 fix-wave review finding P2: the SAME race as "unmounting between the delay and the answer" above,
+  // but the session stays MOUNTED and only leaves auto mode — a real, reachable path (Shift+Tab, or a
+  // host `state` frame) that `disposed.current` alone cannot catch, since the component never unmounts.
+  // Before the fix, `settleRace?.(undefined)` on cleanup unblocked the awaiting callback with `facts =
+  // undefined`, and the callback's only other guard (`disposed.current`) was still false — so it fell
+  // through and appended the auto-mode notice into a thread that is, by the time it lands, back in
+  // "default" mode, and burned the once-per-process ref doing it.
+  it("leaving auto mode before accountInfo() resolves must not append the notice or burn the once-only guard", async () => {
+    const env = tmpRoot(), fake = fakeRemote(), sink = { text: "" };
+    const { bridge, settle } = deferredBridge();
+    const { unmount } = render(<Host fake={fake} env={env} sink={sink} accountBridge={bridge} />);
+    await tick();
+    vi.useFakeTimers();
+    try {
+      await toAuto(fake);
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS); });   // callback now awaiting bridge.read()
+      // A real mode change AWAY from auto, still mounted — reruns the `[mode]`-keyed effect and its cleanup.
+      await act(async () => { fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "default" } }); });
+      const before = sink.text;
+      await act(async () => { settle({ tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" }); await vi.advanceTimersByTimeAsync(REMAINING * 2); });
+      expect(sink.text).toBe(before);
+      expect(sink.text).not.toContain(AUTO_MODE_DESCRIPTION);
+      expect(sink.text).not.toContain(autoModeNoticeText({ oauth: true }));
+      expect(loadPrefs(env).hasSeenAutoModeEntryWarning).toBeUndefined();      // the stale attempt never persisted the flag either
+      // Re-entering auto afterward still shows the notice once — the once-only guard was NOT consumed by
+      // the stale, cancelled attempt. The bridge's live promise is already settled (with the earlier oauth
+      // facts) by this point, so the second, genuine fire renders the oauth variant.
+      await act(async () => { fake.pushEvent({ kind: "state", status: { state: "working", status: "idle", permissionMode: "auto" } }); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_MODE_NOTICE_DELAY_MS + REMAINING + 10); });
+      expect(sink.text).toContain(autoModeNoticeText({ oauth: true }));
+    } finally { vi.useRealTimers(); unmount(); }
+  });
 });
