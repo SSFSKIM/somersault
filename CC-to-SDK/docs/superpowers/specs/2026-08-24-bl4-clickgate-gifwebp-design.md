@@ -56,9 +56,13 @@ bundle governs.** Research recovered this round (2026-08-24 exploration agents) 
 
 ### Design (the seam is `ownerKey`'s, six edits)
 
-1. **Predicates surfaced where computed** — `resultBody`/`errorBody`/`foldToolOutput` return their
-   already-known `truncated`/`overflow > 0` bit alongside the body (never re-derived by regexing the
-   marker text out of `body`).
+1. **Predicates surfaced where computed, PROJECTION-INDEPENDENT** — `resultBody`/`errorBody`/
+   `foldToolOutput` return their truncation bit alongside the body (never re-derived by regexing the
+   marker text out of `body`), and the bit is computed AS-IF-COMPACT regardless of the projection being
+   rendered (under `detail-all` the fold hides nothing, so a projection-dependent bit would vanish
+   exactly when the expanded row needs it for the collapse click — external review v2 finding). Typed
+   successful producers that fold their own output (Bash via `toolSummaries`) mint the bit too — canon's
+   `BashTool.isResultTruncated` marks truncated SUCCESSFUL results clickable.
 2. **`RenderItem.clickable?: boolean`** minted at the result gutter-block
    (`toolRenderer.tsx:479`-region) when error-and->10-lines OR non-error-and-truncated. Fold-group rows
    (`grouped_tool_use` analog) never get it.
@@ -70,13 +74,19 @@ bundle governs.** Research recovered this round (2026-08-24 exploration agents) 
    clickable result won't brighten while its body does.
 5. **Hover gate:** `hoverAt` sets `hoveredKey` only for clickable owners. **Click:** widen `anchorAt` (or
    a sibling `clickTargetAt`) to a union `{kind:"fold"|"item", key}` so the existing tap machine
-   (press/release anchor-match, multi-click windowing, `discardTap`) works unchanged; release dispatches
-   `toggleFold(anchor)` or the new per-owner toggle. Click on a non-clickable transcript row falls
-   through to click-to-caret exactly as today.
+   (press/release anchor-match, multi-click windowing, `discardTap`) works unchanged — the widened target
+   is a STABLE SCALAR encoding (`"fold:<anchor>"` / `"item:<ownerKey>"` strings), because the tap machine
+   compares targets with `===` and fresh objects would never match across press/release (external review
+   v2 finding); release dispatches `toggleFold` or the new per-owner toggle. Click on a non-clickable
+   transcript row is a NO-OP — no toggle, no state change (`caretAt` accepts only composer rows, so
+   transcript clicks never moved the caret; the v1 "falls through to caret" phrasing was wrong).
 6. **Expansion state:** per-`ownerKey` set beside `expandedFoldsRef` (namespaces are disjoint; a widened
    single set is acceptable), fed through `ProjectionOptions` so the owning item renders `detail-all`;
    cleared at the same two reset sites (`useChat.ts:1130,1279`-region). Expanded row paints the
-   background + padding marker and suppresses hover.
+   background + padding marker and suppresses hover; the padding row is a REAL row in the row model
+   (wrap → height → paging → hitmap all agree on it) — a wrapper-level `paddingBottom` would create a
+   physical row invisible to `hitRowsOf` and shift every following mouse/selection address (external
+   review v2 finding).
 
 Line numbers above are anchors from this round's research; one research pass ran against a mid-rebase
 tree, so **implementers verify every anchor against current `main` before editing.**
@@ -85,7 +95,8 @@ tree, so **implementers verify every anchor against current `main` before editin
 
 - C1 — error result with >10 lines: hovering any of its rows un-dims the whole message; click expands the
   full error text in place with the background+padding marker; second click collapses. (mounted + pty)
-- C2 — error result with ≤10 lines: not clickable — no hover brighten, click falls through to caret.
+- C2 — error result with ≤10 lines: not clickable — no hover brighten; click is a no-op (no toggle, no
+  state change).
 - C3 — truncated ordinary result (`hidden > 0`): hover brightens; click expands full output; the
   compact-marker line is gone while expanded.
 - C4 — prose rows (assistant text, user prompts, thinking): never brighten, never toggle; click-to-caret
@@ -97,7 +108,8 @@ tree, so **implementers verify every anchor against current `main` before editin
 - C7 — fullscreen markers are bare `… +N lines` (no hint tail); classic/pager surfaces keep their
   existing hints (`foldHint` is untouched outside the fullscreen transcript path).
 - C8 — classic renderer: no hover, no click (hitmap-death pins stay green).
-- C9 — pty cell in the real binary: drive a >10-line error result, click it, capture the expanded frame;
+- C9 — pty cell in the real binary: drive a result PROVEN to be `is_error` (assert the error styling in
+  the pre-click frame — a nonzero Bash exit alone does not prove it), click it, capture the expanded frame;
   run from `harness/scripts/` per the select-pty.sh recipe, cells committed to the round ledger.
 
 ## Ticket 2 — T-GIFWEBP: GIF/WebP dimension readers + staged allowlist
@@ -140,7 +152,9 @@ tree, so **implementers verify every anchor against current `main` before editin
   normalization (no `[Image could not be processed…]`).
 - G4 — oversized GIF (logical screen >2000) degrades with the dimension reason, not "unreadable".
 - G5 — `chatAdapter` no longer degrades GIF/WebP client-side.
-- G6 — keyed live turn per format returns a plausible description; keyless run skips.
+- G6 — keyed live turn per format returns the EXACT color word of a per-format distinct, non-guessable
+  fixture color (GIF solid purple, WebP solid orange — a shared red oracle can pass by guessing); keyless
+  run skips.
 
 ## Execution
 
@@ -174,6 +188,15 @@ and `:1985` flip; coverage.md entry), memory, report. Never push.
 - **D9 — codec untouched** (staging never re-encodes); downscale rescue for GIF/WebP explicitly out.
 - **D10 — round runs autonomously** on the owner's standing "Next work would be" directive; push stays
   theirs.
+- **D11 — (v2, from external plan review)** the clickable predicate is projection-independent
+  (as-if-compact) and typed truncating producers mint it; the click target is a scalar string encoding;
+  the expanded marker's padding row lives inside the row model; C2 is a no-op contract; C9 must prove
+  `is_error`; live oracles use distinct per-format colors. Rejected from the same review: per-task-commit
+  "non-atomicity" (the `--no-ff` ticket merge is the atomic unit, standing discipline), synthetic-builder
+  RIFF padding conformance (builders test OUR reader; real-encoder bytes proved all four variants).
+- **D12 — (v2)** Task 4 must VERIFY `linkRangesOf` actually captures OSC-8 links in ordinary (non
+  pre-styled) segments such as path-tool headers before relying on it for the link no-op rule; if it does
+  not, extend the scan (grapheme-aware columns) or record the gap explicitly.
 
 ## Surprises & Discoveries
 
@@ -192,3 +215,6 @@ Pending — written at finish.
 ## Revision Notes
 
 - v1 (2026-08-24): authored from the three research passes; owner scope from the F10 close-out.
+- v2 (2026-08-24): folded the Codex adversarial plan review (9 findings: 6 accepted → D11/D12 + C2/C9/G6
+  rewrites and plan revisions; 3 rejected/parked with reasons in D11). Review verdict was
+  "needs-attention"; the GIF/WebP byte layouts themselves were confirmed correct against the format specs.

@@ -95,9 +95,11 @@ brighten with its body).
 slice wrapper in `FullscreenViewport.tsx` (~L855 region) for the expanded marker;
 `test/tui/fold-click.test.tsx`, `test/tui/fold-expand.test.tsx`.
 
-**Interfaces produced:** `clickTargetAt(col,row): { kind: "fold" | "item"; key: string } | undefined`
-(widening of `anchorAt`; the tap machine compares the target OPAQUELY so press/release matching,
-multi-click windowing via `lastPressRef`, and `discardTap` keep working unchanged);
+**Interfaces produced:** `clickTargetAt(col,row): string | undefined` returning a STABLE SCALAR
+encoding — `"fold:" + anchor` or `"item:" + ownerKey` — because the tap machine compares stored targets
+with `===` and separately-resolved objects would never match across press/release (spec D11); parse the
+prefix at dispatch. Press/release matching, multi-click windowing via `lastPressRef`, and `discardTap`
+keep working unchanged on the scalar;
 `toggleItemExpand(ownerKey: string)` + `expandedItemsRef: Set<string>` in `useChat` (a separate set
 beside `expandedFoldsRef` — do not overload fold semantics), threaded as
 `ProjectionOptions.expandedItems`.
@@ -111,9 +113,16 @@ beside `expandedFoldsRef` — do not overload fold semantics), threaded as
 - [ ] **Step 2:** run — FAIL.
 - [ ] **Step 3: implement.** Release arm: resolve `clickTargetAt`; `"fold"` → `toggleFold`, `"item"` →
   `toggleItemExpand`. Projection: an item whose `ownerKey` is expanded renders its result with
-  `projection: "detail-all"` and NO marker line. Expanded marker: background + `paddingBottom: 1` on
-  that owner's slice; hover context forced false for expanded owners (the ~L855 provider term already
-  has `s.item.expanded !== true` — extend it to the new set's owners).
+  `projection: "detail-all"` and NO marker line — and the clickable bit STAYS true on the expanded
+  projection (Task 1's as-if-compact predicate; add the collapse-while-expanded cell). Expanded marker:
+  the background and the one padding row are REAL rows in the row model — produced where rows are
+  produced, so wrap → height → paging → `hitRowsOf` all agree; never a wrapper-level `paddingBottom`
+  (it would create a physical row invisible to the hitmap and shift every following mouse/selection
+  address — spec D11). Add a cell: an expanded owner spanning the viewport boundary with a following
+  clickable row — the following row's hover/click addresses are unshifted. Hover context forced false
+  for expanded owners (the ~L855 provider term already has `s.item.expanded !== true` — extend it to
+  the new set's owners). If this outgrows the host module, put the expansion row-model logic in a NEW
+  module (both host files are already large).
 - [ ] **Step 4:** the two files + `fold-hitmap.test.tsx` + full `npm run test:tui` PASS.
 - [ ] **Step 5:** `npm run typecheck`; commit `bl4(clickgate): click toggles per-owner verbose expansion with canon's expanded marker`.
 
@@ -122,8 +131,13 @@ beside `expandedFoldsRef` — do not overload fold semantics), threaded as
 **Files:** Modify `src/tui/ChatApp.tsx` or `FullscreenViewport.tsx` (whichever hosts the release
 resolution), `test/tui/fold-click.test.tsx`, `test/tui/hover.test.tsx`.
 
+- [ ] **Step 0: verify the substrate.** Check whether `linkRangesOf` actually captures OSC-8 links in
+  ORDINARY (non pre-styled) segments — e.g. a path-tool (Read/Edit) header line. If it does not, extend
+  the scan to those segments with grapheme-aware column mapping (or surface link metadata structurally);
+  record what you found in the report (spec D12).
 - [ ] **Step 1: failing tests.** (a) a click whose cell sits inside a `HitRow.linkRanges` span of a
-  clickable row does NOT toggle (frame unchanged, caret unmoved — a plain no-op); (b) hover motion over
+  clickable row does NOT toggle (frame unchanged — a plain no-op), covering a path-tool header case if
+  Step 0 shows those carry links; (b) hover motion over
   the blank tail (col > text width, ≤ row width... col within viewport) of an UNexpanded clickable row
   does not brighten it; the same motion over an EXPANDED row keeps its (suppressed-hover) state stable —
   pin canon's `hoverIgnoresBlankCells: !expanded` asymmetry as far as ccx's hover-suppression-on-expanded
@@ -156,8 +170,10 @@ affected pins in `test/tui/` frame tests; `test/tui/toolRenderer.test.tsx`.
 - [ ] Run spec cells C1-C8 as written, naming the covering test for each in the report; full
   `npm run typecheck && npm run test:tui && npm run test:unit`.
 - [ ] C9 (pty, real binary): build (`npm run build`), then per the `scripts/select-pty.sh` recipe drive a
-  session whose turn yields a >10-line error result (a Bash tool call exiting nonzero with 12 lines of
-  stderr is enough), send SGR mouse press/release on the error row, capture before/expanded/after-collapse
+  session whose turn yields a PROVEN error result — a nonzero Bash exit is NOT proof of `is_error`;
+  verify the pre-click frame shows the error styling/predicate (grep the frame for the error body form)
+  before clicking, and pick a producer verified to yield `is_error: true`,
+  send SGR mouse press/release on the error row, capture before/expanded/after-collapse
   frames, and commit them under `.doperpowers/sdd/2026-08-24-bl4-round/` (`git add -f` — the dir is
   gitignored). The cell FAILS the task if the frame does not visibly expand — a cell that cannot run is
   a blocker, not a skip.

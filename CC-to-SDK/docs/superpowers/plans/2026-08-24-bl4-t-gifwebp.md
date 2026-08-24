@@ -123,19 +123,23 @@ export function webpDimensions(buf: Buffer): { width: number; height: number } |
 
 ### Task 3: real-file fixtures + keyed live cells
 
-**Files:** Modify `test/fixtures/images/make.mjs`; create `test/fixtures/images/live-red-64x64.gif`,
-`test/fixtures/images/live-red-64x64.webp` (VP8L), `test/fixtures/images/live-red-64x64-lossy.webp`
+**Files:** Modify `test/fixtures/images/make.mjs`; create `test/fixtures/images/live-purple-64x64.gif`,
+`test/fixtures/images/live-orange-64x64.webp` (VP8L), `test/fixtures/images/live-orange-64x64-lossy.webp`
 (VP8); modify `test/live/image-submit.e2e.test.ts`; update `test/fixtures/images/sizes.json` if make.mjs
 maintains it.
 
 - [ ] **Step 1: generate the binaries once** (they are committed, like `clipboard-v5.bmp`; record the
   exact commands as a comment in `make.mjs` next to a self-assert):
 
+Distinct, non-guessable color PER FORMAT (spec G6: a shared red oracle can pass by the model guessing):
+GIF solid purple, WebP solid orange. Name files by color. Pin the toolchain versions in the make.mjs
+comment (`python3 -c "import PIL; print(PIL.__version__)"`, `cwebp -version`).
+
 ```bash
-python3 -c "from PIL import Image; Image.new('RGB',(64,64),(255,0,0)).save('test/fixtures/images/live-red-64x64.gif')"
-python3 -c "from PIL import Image; Image.new('RGB',(64,64),(255,0,0)).save('/tmp/bl4-red.png')"
-cwebp -lossless /tmp/bl4-red.png -o test/fixtures/images/live-red-64x64.webp
-cwebp -q 80 /tmp/bl4-red.png -o test/fixtures/images/live-red-64x64-lossy.webp
+python3 -c "from PIL import Image; Image.new('RGB',(64,64),(128,0,255)).save('test/fixtures/images/live-purple-64x64.gif')"
+python3 -c "from PIL import Image; Image.new('RGB',(64,64),(255,140,0)).save('/tmp/bl4-orange.png')"
+cwebp -lossless /tmp/bl4-orange.png -o test/fixtures/images/live-orange-64x64.webp
+cwebp -q 80 /tmp/bl4-orange.png -o test/fixtures/images/live-orange-64x64-lossy.webp
 ```
 
 - [ ] **Step 2: self-asserts in make.mjs** (pattern of `make.mjs:418`): read each committed file, assert
@@ -145,8 +149,11 @@ cwebp -q 80 /tmp/bl4-red.png -o test/fixtures/images/live-red-64x64-lossy.webp
   (`git status` shows only the new files).
 - [ ] **Step 3: live cells.** In `test/live/image-submit.e2e.test.ts`, mirror the existing keyed image
   cell: one turn per fixture (GIF, VP8L webp) attaching the block with the correct `media_type`, prompt
-  "One word: what color is this image?", assert `/red/i`. Keyless: `describe.skipIf` exactly as the
-  file's existing gate.
+  "One word: what color is this image?", assert `/purple|violet/i` for the GIF and `/orange/i` for the
+  WebP (distinct per-format oracles). Keyless: `describe.skipIf` exactly as the file's existing gate.
+  ALSO: one daemon-surface accept cell — grep `test/unit` for the existing `submit_content` coverage and
+  add a cell there staging the real GIF fixture through the daemon op (no live key needed); if no daemon
+  test harness exists, record that explicitly in the report instead of inventing one.
 - [ ] **Step 4: run keyed** — `set -a; . ../.env; set +a; npx vitest run test/live/image-submit.e2e.test.ts`
   — the two new cells PASS (paste the two model replies into the task report). Then unset the env vars.
 - [ ] **Step 5:** `npm run typecheck && npm run test:unit`; commit fixtures + tests:
