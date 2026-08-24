@@ -187,6 +187,15 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
     off += 12 + len; // 4 len + 4 type + len data + 4 CRC
   }
 
+  // ── the COOPERATIVE belt, checked between pipeline stages. NOT an interrupt — see the
+  //    PROCESSING_BUDGET_MS doc comment above. Checked HERE, before EITHER post-walk success path
+  //    (F10 fix-wave round-2 review finding P2): the passthrough arm used to return above, before this
+  //    checkpoint ever ran, so a deadline that cleared at entry but expired somewhere over a many-chunk
+  //    palette/interlaced PNG's walk returned a passthrough success instead of the coded `budget-exceeded`
+  //    every other exit path already honours. One checkpoint, shared by both arms below, closes that gap.
+  if (deadline.expired()) {
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+  }
   if (passthrough) {
     // Same structural bar the pixel path clears below: a "PNG" with no IDAT at all never carried image
     // data regardless of colour type, so it is malformed, not a passthrough this caller can trust.
@@ -195,11 +204,6 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
   }
   if (!header) return { ok: false, code: "malformed", reason: "no IHDR chunk found" };
   if (idatParts.length === 0) return { ok: false, code: "malformed", reason: "no IDAT chunk found" };
-  // ── the COOPERATIVE belt, checked between pipeline stages. NOT an interrupt — see the
-  //    PROCESSING_BUDGET_MS doc comment above.
-  if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
-  }
 
   const { width, height } = header;
   // ── THE STRUCTURAL BOUND. inflate capped at the EXACT expected scanline total: one byte over is a

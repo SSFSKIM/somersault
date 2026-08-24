@@ -165,6 +165,24 @@ it("an EXPIRED belt trips between stages with `budget-exceeded` — a cooperativ
   expect(r).toMatchObject({ ok: false, code: "budget-exceeded" });
 });
 
+// F10 fix-wave round-2 review finding P2: the passthrough arm returned success right after the chunk
+// walk, BEFORE the cooperative-belt checkpoint every other post-walk exit already runs — so a deadline
+// clear at entry but expired by the time a many-chunk palette/interlaced PNG's walk finished returned an
+// `ok:true` passthrough instead of the coded `budget-exceeded` the pixel path would have honoured in the
+// identical situation. `expiresAfter(1)` clears the ENTRY checkpoint (call 1) but trips the very next one
+// — proving the checkpoint now runs before the passthrough branch decides anything, not just before the
+// pixel branch's own decode.
+function expiresAfter(n: number): { expired(): boolean } {
+  let calls = 0;
+  return { expired: () => ++calls > n };
+}
+it("a deadline that clears at entry but expires by the end of the chunk walk fails `budget-exceeded` on the PASSTHROUGH arm too, not just the pixel arm", () => {
+  const palette = fixture("palette-64x48.png"); // real, multi-chunk, colorType 3 — decodes to a passthrough
+  expect(decodePng(palette, NEVER_EXPIRES).ok).toBe(true); // sanity: the fixture itself is a valid passthrough
+  const r = decodePng(palette, expiresAfter(1));
+  expect(r).toMatchObject({ ok: false, code: "budget-exceeded" });
+});
+
 // ---------------------------------------------------------------------------------------------
 describe("I5a boundary matrix", () => {
   it.each(triple(MAX_SOURCE_BYTES))("MAX_SOURCE_BYTES $label", ({ at, passes }) => {
