@@ -48,6 +48,39 @@ export function jpegDimensions(buf: Buffer): { width: number; height: number } |
   return null;
 }
 
+/** GIF87a/GIF89a: 6-byte version tag, then the Logical Screen Descriptor's width/height as two
+ *  LE uint16s at bytes 6-10. Both GIF87a and GIF89a lay the descriptor out identically. */
+export function gifDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 10) return null;
+  const tag = buf.toString("ascii", 0, 6);
+  if (tag !== "GIF87a" && tag !== "GIF89a") return null;
+  return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) };
+}
+
+/** WebP: RIFF/WEBP container, then one of three payload fourccs, each with its own dimension
+ *  encoding — lossy VP8's frame tag (a 3-byte start code 0x9d 0x01 0x2a then 14-bit-packed LE
+ *  width/height), lossless VP8L's signature byte 0x2f then a 14-bit-each packed LE bitfield of
+ *  width-1/height-1, and extended VP8X's two 24-bit LE integers of width-1/height-1. All three
+ *  widths/heights are 1-indexed in the encoding except VP8's, which is stored directly. */
+export function webpDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 16 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WEBP") return null;
+  const fourcc = buf.toString("ascii", 12, 16);
+  if (fourcc === "VP8 ") {
+    if (buf.length < 30 || buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return null;
+    return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+  }
+  if (fourcc === "VP8L") {
+    if (buf.length < 25 || buf[20] !== 0x2f) return null;
+    const bits = buf.readUInt32LE(21);
+    return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+  }
+  if (fourcc === "VP8X") {
+    if (buf.length < 30) return null;
+    return { width: buf.readUIntLE(24, 3) + 1, height: buf.readUIntLE(27, 3) + 1 };
+  }
+  return null;
+}
+
 /** canon `v$r`, L174695: the byte ceiling every resized image block must fit under. */
 export const POST_PROCESS_BYTE_BUDGET = 512_000;
 /** canon's per-model `image_limits` (L8503), universal across the current model catalog. */

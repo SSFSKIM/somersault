@@ -8,7 +8,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  MAX_DIMENSION, MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET, jpegDimensions, pngDimensions,
+  MAX_DIMENSION, MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET, gifDimensions, jpegDimensions,
+  pngDimensions, webpDimensions,
 } from "../../src/media/imageDims.js";
 
 /** A 1x1-shaped PNG header: 8-byte signature, then a length+`IHDR` chunk whose width/height sit at
@@ -34,6 +35,31 @@ const jpegHeader = (width: number, height: number): Buffer => {
   return buf;
 };
 
+/** GIF87a/GIF89a: 6-byte tag, then logical screen width/height as two LE uint16s at bytes 6-10. */
+const gifHeader = (w: number, h: number, tag = "GIF89a") => {
+  const b = Buffer.alloc(13); b.write(tag, 0, "ascii"); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b;
+};
+/** WebP lossy (VP8 ): RIFF/WEBP/"VP8 " chunk headers, then the 3-byte sync code 0x9d 0x01 0x2a at
+ *  bytes 23-26, then width/height as 14-bit-packed LE uint16s at bytes 26-30. */
+const webpVp8 = (w: number, h: number) => {
+  const b = Buffer.alloc(30); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(22, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8 ", 12, "ascii"); b.writeUInt32LE(10, 16); b[23] = 0x9d; b[24] = 0x01; b[25] = 0x2a;
+  b.writeUInt16LE(w & 0x3fff, 26); b.writeUInt16LE(h & 0x3fff, 28); return b;
+};
+/** WebP lossless (VP8L): RIFF/WEBP/"VP8L" chunk headers, then the 0x2f signature byte, then width-1/
+ *  height-1 packed as 14 bits each into a little-endian 28-bit field. */
+const webpVp8l = (w: number, h: number) => {
+  const b = Buffer.alloc(25); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(17, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8L", 12, "ascii"); b.writeUInt32LE(5, 16); b[20] = 0x2f;
+  b.writeUInt32LE((w - 1) & 0x3fff | (((h - 1) & 0x3fff) << 14), 21); return b;
+};
+/** WebP extended (VP8X): RIFF/WEBP/"VP8X" chunk headers, then width-1/height-1 as two 24-bit LE
+ *  little-endian integers at bytes 24-30. */
+const webpVp8x = (w: number, h: number) => {
+  const b = Buffer.alloc(30); b.write("RIFF", 0, "ascii"); b.writeUInt32LE(22, 4); b.write("WEBP", 8, "ascii");
+  b.write("VP8X", 12, "ascii"); b.writeUInt32LE(10, 16); b.writeUIntLE(w - 1, 24, 3); b.writeUIntLE(h - 1, 27, 3); return b;
+};
+
 describe("src/media/imageDims.ts — the neutral leaf", () => {
   it("reads PNG IHDR dimensions and rejects a non-PNG", () => {
     expect(pngDimensions(pngHeader(1920, 1080))).toEqual({ width: 1920, height: 1080 });
@@ -43,6 +69,43 @@ describe("src/media/imageDims.ts — the neutral leaf", () => {
   it("reads JPEG SOF dimensions and rejects a non-JPEG", () => {
     expect(jpegDimensions(jpegHeader(320, 240))).toEqual({ width: 320, height: 240 });
     expect(jpegDimensions(Buffer.from([0x00, 0x01, 0x02, 0x03]))).toBeNull();
+  });
+
+  it("reads GIF87a and GIF89a dimensions and rejects a bad tag", () => {
+    expect(gifDimensions(gifHeader(800, 600, "GIF87a"))).toEqual({ width: 800, height: 600 });
+    expect(gifDimensions(gifHeader(800, 600, "GIF89a"))).toEqual({ width: 800, height: 600 });
+    expect(gifDimensions(gifHeader(33, 47, "GIF89a"))).toEqual({ width: 33, height: 47 });
+    expect(gifDimensions(Buffer.from("GIF9garbage", "ascii"))).toBeNull();
+    // Truncated below the 10-byte descriptor `gifDimensions` needs (bytes 6-10 hold height) — a
+    // shorter cut than "builder length minus one" would still carry a complete descriptor here,
+    // since `gifHeader`'s 13-byte alloc has 3 trailing bytes the reader never touches.
+    expect(gifDimensions(gifHeader(800, 600).subarray(0, 9))).toBeNull();
+  });
+
+  it("reads WebP VP8/VP8L/VP8X dimensions and rejects malformed chunks", () => {
+    expect(webpDimensions(webpVp8(800, 600))).toEqual({ width: 800, height: 600 });
+    expect(webpDimensions(webpVp8(33, 47))).toEqual({ width: 33, height: 47 });
+    expect(webpDimensions(webpVp8l(800, 600))).toEqual({ width: 800, height: 600 });
+    expect(webpDimensions(webpVp8l(33, 47))).toEqual({ width: 33, height: 47 });
+    expect(webpDimensions(webpVp8x(800, 600))).toEqual({ width: 800, height: 600 });
+    expect(webpDimensions(webpVp8x(33, 47))).toEqual({ width: 33, height: 47 });
+
+    const noWebp = Buffer.alloc(16); noWebp.write("RIFF", 0, "ascii"); noWebp.write("AVI ", 8, "ascii");
+    expect(webpDimensions(noWebp)).toBeNull();
+
+    const badSync = webpVp8(800, 600); badSync[23] = 0x00;
+    expect(webpDimensions(badSync)).toBeNull();
+
+    const badSig = webpVp8l(800, 600); badSig[20] = 0x00;
+    expect(webpDimensions(badSig)).toBeNull();
+
+    const unknownFourcc = Buffer.alloc(16); unknownFourcc.write("RIFF", 0, "ascii");
+    unknownFourcc.write("WEBP", 8, "ascii"); unknownFourcc.write("ICCP", 12, "ascii");
+    expect(webpDimensions(unknownFourcc)).toBeNull();
+
+    expect(webpDimensions(webpVp8(800, 600).subarray(0, 29))).toBeNull();
+    expect(webpDimensions(webpVp8l(800, 600).subarray(0, 24))).toBeNull();
+    expect(webpDimensions(webpVp8x(800, 600).subarray(0, 29))).toBeNull();
   });
 
   it("carries the three shared budgets at their canon values", () => {
