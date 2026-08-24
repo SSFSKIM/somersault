@@ -137,7 +137,7 @@ export const threadSubscribe: Handler = (srv, ctx, id, params) => {
   // drift; `turnId` comes off the ENTRY rather than from `activeTurnId` — the call names the turn it was
   // parked under, which outlives a subscribe landing between turns.
   for (const call of srv.pendingToolCalls(record.id)) ctx.peer.notify("tool/callRequested", toWireToolCall(call));
-  ctx.peer.notify("thread/status/changed", { threadId: record.id, status: threadStatus(record, pending.length > 0) });
+  ctx.peer.notify("thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.threadWaiter(record.id)) });
 };
 
 export const threadUnsubscribe: Handler = (srv, ctx, id, params) => {

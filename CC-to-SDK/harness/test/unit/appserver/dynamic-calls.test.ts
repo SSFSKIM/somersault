@@ -234,6 +234,29 @@ describe("DynamicCalls — every exit answers the model", () => {
     expect(calls.pending()).toEqual([]);
   });
 
+  it("a throwing `requested` emit leaves no zombie — the entry is dropped and the model answered", async () => {
+    // The mirror of the row above, on the ANNOUNCEMENT rather than the settlement, and the failure it
+    // guards is the worse of the two: `park` inserts into `live` before it announces, so an escaping throw
+    // would leave a call every client can replay and settle — into a promise the caller never received,
+    // because the throw took the place of the return. D-M4-9 says every exit answers the model, and an
+    // exit whose caller holds nothing to answer is the one shape that can never be rescued.
+    const events: DynamicCallEvent[] = [];
+    let boom = true;
+    const calls = new DynamicCalls((ev) => { events.push(ev); if (ev.kind === "requested" && boom) { boom = false; throw new Error("broadcast blew up"); } });
+
+    let parked!: Promise<CallToolResultLike>;
+    expect(() => { parked = calls.park(CALL); }).not.toThrow();
+    expect(calls.pending()).toEqual([]);
+    expect(await settledYet(parked)).toBe(true);
+    expect(noteOf(await parked)).toBe("Tool call cancelled: announcement failed");
+
+    // One call's announcement failed, not the instance: the very next park is ordinary.
+    const after = calls.park(CALL);
+    expect(calls.pending()).toHaveLength(1);
+    expect(calls.respond(mintedId(events), 1, OK)).toEqual({ ok: true });
+    await expect(after).resolves.toEqual(OK);
+  });
+
   it("teardown settles, latches, and answers a later park immediately with the same reason", async () => {
     const { calls, events } = harness();
     const parked = calls.park(CALL);

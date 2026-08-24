@@ -349,12 +349,20 @@ export function threadBusyReason(r: ThreadRecord): "turn" | "closing" | "swappin
   return (r.busy || r.fleetTurnPending) ? "turn" : null;
 }
 
+/** WHAT an active thread is blocked on, when it is blocked on a client at all (M7). Two kinds, because a
+ *  client acts on them differently: a `decision` is a permission prompt the ENGINE raised, a `toolCall` is
+ *  a client-declared tool the model invoked and whose result only a client can supply (`tool/callResult`).
+ *  A thread that parked a dynamic call and reported nothing but `active` told a UI the same story a thread
+ *  merely thinking tells, and the one waiting on the user would sit there forever. */
+export type ThreadWaiter = "decision" | "toolCall";
+
 /** The ONE thread-status shape emitted on the wire (spec D-M2-8): every `threadView`/`thread/status/changed`
  *  site builds its `status` field through this, never by hand. `waitingOn` is the caller's job to compute
- *  (it needs the decisions map, which this function does not have) — see `srv.pendingDecisions`. */
-export function threadStatus(r: ThreadRecord, waitingOn: boolean): { state: "idle" | "active"; waitingOn?: "decision" } {
+ *  (it needs the two park registries, which this function does not have) — see `srv.threadWaiter`, which is
+ *  where the precedence between the two kinds is decided and explained. */
+export function threadStatus(r: ThreadRecord, waitingOn?: ThreadWaiter): { state: "idle" | "active"; waitingOn?: ThreadWaiter } {
   if (!threadBusyReason(r)) return { state: "idle" };
-  return waitingOn ? { state: "active", waitingOn: "decision" } : { state: "active" };
+  return waitingOn ? { state: "active", waitingOn } : { state: "active" };
 }
 
 /** WHERE THIS THREAD RUNS — the one answer, shared by `threadView.cwd` (server.ts) and by the directory

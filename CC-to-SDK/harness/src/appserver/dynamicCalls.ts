@@ -102,6 +102,10 @@ export function cancelledCallResult(reason: string): CallToolResultLike {
  *  reasons `reset`/`teardown` name. */
 const ABORT_REASON = "aborted";
 
+/** What a park whose ANNOUNCEMENT threw is called in its note — see `park`. Distinct from every other
+ *  reason here because it names a failure of this server's own broadcast, not of the thread or the turn. */
+const ANNOUNCE_REASON = "announcement failed";
+
 type Live = { entry: PendingToolCall; resolve: (result: CallToolResultLike) => void; cancel: () => void };
 
 export class DynamicCalls {
@@ -131,7 +135,18 @@ export class DynamicCalls {
     });
     // Announced OUTSIDE the executor: a throwing emit (the broadcast is somebody else's code) would
     // otherwise reject the promise the model is awaiting instead of surfacing at the caller.
-    this.emit({ kind: "requested", entry: full });
+    //
+    // GUARDED, for `settle`'s reason plus one this site owns. By now the entry is ALREADY in `live`, so an
+    // escaping throw would leave a ZOMBIE: a call no client was told about, yet one every client can still
+    // replay off `pending()` and settle — into a promise the caller never received, because the throw took
+    // the place of the return. It is the one exit that could never be rescued afterwards. Funnelled through
+    // `settle` rather than unwound by hand so the single-settlement-path invariant holds here too, and the
+    // model is answered (D-M4-9) exactly as it is on every other exit.
+    try {
+      this.emit({ kind: "requested", entry: full });
+    } catch {
+      this.settle(callId, cancelledCallResult(ANNOUNCE_REASON), "cancelled", ANNOUNCE_REASON);
+    }
     return settled;
   }
 

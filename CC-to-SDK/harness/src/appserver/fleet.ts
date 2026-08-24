@@ -87,10 +87,12 @@ function reconstructOutcome(e: { decision: string; answer?: DecisionOutcome }): 
   return PAYLOAD_FREE_KINDS.has(e.decision) ? ({ kind: e.decision } as DecisionOutcome) : { kind: "deny" };
 }
 
-/** The ONE status shape (registry.ts), same as turns.ts's own private helper — `waitingOn` needs the
- *  decisions map, which the record does not have. */
+/** The ONE status shape (registry.ts), same as turns.ts's own private helper — `waitingOn` needs the two
+ *  park registries, which the record does not have (`srv.threadWaiter`). A fleet thread can never hold a
+ *  parked TOOL call, so in practice this only ever answers the decision kind; it goes through the shared
+ *  derivation anyway, because a second spelling of the status is how the origins drift. */
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
-  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.pendingDecisions(record.id).length > 0) });
+  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.threadWaiter(record.id)) });
 }
 
 /** Everything a fleet thread learns from its host that is NOT an SDK frame (§1b's host-synthesized set).

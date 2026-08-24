@@ -206,6 +206,15 @@ export async function swapEngine(
   srv: AppServer, record: ThreadRecord, makeReplacement: () => EngineSession, nextSessionId: string | undefined,
 ): Promise<void> {
   record.epoch += 1;
+  // M7, and the position is the whole of it: IMMEDIATELY after the bump, BEFORE the dispose is awaited.
+  // `dispose()` awaits a read loop that cannot end while a turn sits blocked inside the dynamic-tool
+  // handler on one of these promises, and this is the only thing that settles them — resetting after the
+  // await is the same circular wait `closeRecord` orders around. Non-latching, because this same registry
+  // serves the replacement engine (dynamicCalls.ts's header). Both wire callers inherit it here rather
+  // than saying it themselves: `thread/rewind` and `thread/clear` differ only in the replacement they
+  // build. `thread/reopen`, the third, settles its own ghost parks with a truer reason at arrival time,
+  // and reaches this line with nothing left to cancel.
+  srv.threadDynamicCalls(record.id)?.reset("engine swapped");
   record.routerOff?.();
   try { await record.session.dispose(); } catch { /* see above — the replacement is what matters */ }
   record.session = makeReplacement();
@@ -608,8 +617,15 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
   // Whether it settles ANYTHING is remembered, because each settle rides a `thread/status/changed` out
   // (server.ts's broadcastDecision) computed while `swapInFlight` is latched — i.e. `{state:"active"}` for
   // a thread that is mid-recovery — and the latch clears without a word. See the correction below.
-  const settledGhostParks = srv.pendingDecisions(threadId).length > 0;
+  // BOTH registries, on both halves of this (r7 finding 4). A dynamic tool call the dead engine abandoned
+  // still parked is a ghost of exactly the same kind — awaited by a read loop that has already ended, yet
+  // listed on the wire and settleable by any subscriber — and its settlement rides the same suppressed
+  // status broadcast, so the retraction below is owed whichever registry had something in it. Reset with
+  // this method's own reason rather than the swap's: what happened to that call is that the thread was
+  // recovered, which is the only thing its note will ever tell the model.
+  const settledGhostParks = srv.pendingDecisions(threadId).length > 0 || srv.pendingToolCalls(threadId).length > 0;
   srv.threadDecisions(threadId)?.reset();
+  srv.threadDynamicCalls(threadId)?.reset("thread reopened");
   const sessionId = record.sessionId;
   record.chain = record.chain.then(async () => {
     try {
@@ -636,9 +652,9 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // until some later turn edge moved it. Conditional because a reopen with nothing parked broadcast no
       // status at all, and an unconditional emit here would give this method a status edge its swap-family
       // siblings do not have. Recomputed rather than asserted idle — the latch is the only term that
-      // changed, and the honest answer comes from the same `threadStatus`/`pendingDecisions` pair every
-      // other emit site uses.
-      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
+      // changed, and the honest answer comes from the same `threadStatus`/`threadWaiter` pair every other
+      // emit site uses.
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.threadWaiter(threadId)) });
       ctx.peer.reply(id, { ok: true, sessionId: record.sessionId ?? null });
     } catch (e) {
       // R11: the FAILURE twin of the success path's retraction above. reset() emitted one
@@ -648,7 +664,7 @@ export const threadReopen: Handler = (srv, ctx, id, params) => {
       // Clear the latch HERE (before the recompute) so the corrected status reads the true post-failure
       // state (idle — the corpse's turn is over), then name the failure.
       record.swapInFlight = false;
-      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.pendingDecisions(threadId).length > 0) });
+      if (settledGhostParks) srv.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, srv.threadWaiter(threadId)) });
       // NOT `replyEngineThrow`: the record is still holding the corpse on this path (the factory threw
       // before `swapEngine` could install anything), so its -33005 re-check would fire and answer "Engine
       // is gone" — true, already known, and it would swallow the factory's own message, which is the only

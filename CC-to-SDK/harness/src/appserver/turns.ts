@@ -145,8 +145,30 @@ export function emitItems(srv: AppServer, record: ThreadRecord, turnId: string, 
 }
 
 function statusChanged(srv: AppServer, record: ThreadRecord): void {
-  const waitingOn = srv.pendingDecisions(record.id).length > 0;
-  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, waitingOn) });
+  srv.broadcast(record.id, "thread/status/changed", { threadId: record.id, status: threadStatus(record, srv.threadWaiter(record.id)) });
+}
+
+/** THE PARK SIDE OF AN INTERRUPT (M7), and it is two steps in a fixed order at two call sites — the two
+ *  interrupt callers that hold `srv`: `turn/interrupt` below and `decision/respond`'s `abortTurn` arm
+ *  (server.ts). `requestInterrupt` itself keeps its record-only signature; fleet.ts's caller is the third
+ *  and needs neither step, because a fleet thread's engine is the host's and can raise no local call.
+ *
+ *  BOTH STEPS, IN ONE SYNCHRONOUS BLOCK, and that is the load-bearing part rather than their order between
+ *  themselves. Settling releases the engine, and a released engine promptly raises one more call — inside
+ *  `interrupt()` itself, which is the shape this was written against: that late call must meet a barrier
+ *  that is already down, or it parks into a registry the interrupt has just swept and `interrupt()` waits
+ *  on it forever. Nothing can interleave between these two lines today (a `resolve` hands control to a
+ *  microtask, never to a synchronous re-entry), so the latch is written first as the order that stays
+ *  correct if that ever stops being true — not as a difference any test can currently observe.
+ *  The barrier then holds past the NEXT turn's arrival and lifts only at its dispatch (`submitRunner`),
+ *  which is what makes "the interrupted turn's work is behind the new submit" provable rather than likely.
+ *
+ *  BEFORE THE `await`, wherever this is called. `Session.interrupt()` reaches an engine whose read loop is
+ *  blocked inside the tool handler on one of these very promises — awaiting the interrupt first is the C1
+ *  circular wait, exactly as awaiting `dispose()` first is in `closeRecord`. */
+export function interruptParkedCalls(srv: AppServer, record: ThreadRecord): void {
+  srv.latchParkBarrier(record.id);
+  srv.threadDynamicCalls(record.id)?.reset("turn interrupted");
 }
 
 /** Turn-end belt for an approved plan_approve that settled but never saw the engine's own
@@ -384,6 +406,15 @@ function submitRunner(srv: AppServer, record: ThreadRecord, input: string | Inpu
       // the base64 that carried it — and so the echo describes what the model was actually handed,
       // degrade notes and all.
       emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(flattenForDisplay(resolved), userUuid) }]);
+      // M7: THE PARK BARRIER LIFTS HERE and at no earlier moment. A prior `turn/interrupt` closed this
+      // thread to new parks (`interruptParkedCalls`) precisely so a CallTool the interrupted turn had
+      // already issued could not be rebound to its successor — and the successor's ARRIVAL is too early to
+      // reopen: an items-form turn resolves its input first, so between arrival and this line the old
+      // engine's straggler is still in flight with a fresh `activeTurnId` waiting to adopt it. Dispatch is
+      // the first instant at which the new submit is provably ahead of that work. Inside `drive` rather
+      // than beside either `releaseSlot`, so both input forms lift it once and the runner's `stopped`
+      // early return — which releases the slot without ever reaching the engine — does not.
+      srv.clearParkBarrier(record.id);
       return record.session.submit(resolved, (m) => emitItems(srv, record, turnId, mapper.ingest(m)), { uuid: userUuid });
     };
     // A STRING takes the exact path it always did, synchronously — see the header on why this function is
@@ -730,6 +761,7 @@ export const turnInterrupt: Handler = async (srv, ctx, id, params) => {
     ctx.peer.reply(id, { interrupted: false, cancelled: [named], ...(cancelledQueued ? { cancelledQueued } : {}) });
     return;
   }
+  interruptParkedCalls(srv, record);   // …and only then the engine: awaiting it first is the C1 circular wait
   await requestInterrupt(record);
   ctx.peer.reply(id, cancelledQueued ? { interrupted: true, cancelledQueued } : { interrupted: true });
 };

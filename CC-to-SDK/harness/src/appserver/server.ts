@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 import { Peer, type PeerSink } from "./peer.js";
 import { classify, ERR, type RequestId } from "./rpc.js";
-import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type EngineSession } from "./registry.js";
+import { Registry, activeTurnId, emptyFlagPerms, originRefusal, seedSettings, threadCwd, threadStatus, type ThreadRecord, type ThreadWaiter, type EngineSession } from "./registry.js";
 import { listRoster, TERMINAL, type RosterRow } from "../fleet/roster.js";
 import { isPidLive } from "../fleet/liveness.js";
 import { openSession, type OpenSessionConfig } from "../session/index.js";
@@ -14,7 +14,7 @@ import { elicitationContentSatisfies, makeOnElicitation } from "./elicitation.js
 import type { DecisionOutcome, PermissionBroker } from "../permissions/types.js";
 import type { ElicitationRequest, OnElicitation } from "@anthropic-ai/claude-agent-sdk";
 import type { PendingDecision } from "../permissions/pending.js";
-import { turnStart, turnInterrupt, turnSteer, requestInterrupt } from "./turns.js";
+import { turnStart, turnInterrupt, turnSteer, requestInterrupt, interruptParkedCalls } from "./turns.js";
 import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
 import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
@@ -110,7 +110,8 @@ export interface ConnCtx {
  *  for it; sessionLib.ts's merged thread/list is what fills that gap from a store match, on the VIEW it
  *  builds, without mutating the record. `preview` stays store-only (no registry equivalent exists) and is
  *  always `undefined` off this function. `status` goes through the one predicate+shape pair (registry.ts,
- *  spec D-M2-8) — `waitingOn` needs the decisions map, which the record itself does not have, hence `srv`.
+ *  spec D-M2-8) — `waitingOn` needs the two park registries, which the record itself does not have, hence
+ *  `srv` (and `srv.threadWaiter`, the one place their precedence is decided).
  *  `queueDepth` (M2b Task 8, flagged addition to §5) is ALWAYS present and 0 when the queue is empty,
  *  rather than omitted-when-zero: a thread row that answers "how many turns are waiting" with a missing
  *  key forces every consumer to write the `?? 0` itself, and one that forgets it renders "unknown" for the
@@ -129,7 +130,6 @@ export interface ConnCtx {
  *  including one another client raised. On the notification instead it would repeat a constant on every
  *  message and still leave a thread list unable to tell the two kinds apart. */
 export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unknown> {
-  const waitingOn = srv.pendingDecisions(r.id).length > 0;
   return {
     id: r.id,
     sessionId: r.sessionId,
@@ -140,7 +140,7 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     model: r.settings.model,
     permissionMode: r.settings.permissionMode,
     thinking: { maxTokens: r.settings.thinkingTokens },
-    status: threadStatus(r, waitingOn),
+    status: threadStatus(r, srv.threadWaiter(r.id)),
     queueDepth: r.queue.length,
     origin: r.origin,
     ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
@@ -564,7 +564,11 @@ export class AppServer {
       if (outcome.kind === "plan_approve" && outcome.mode !== "default") armPlanUpgrade(record, outcome.mode);
       // spec §6: EVERY answer variant may carry abortTurn, not just `deny` — and aborting goes through the
       // same flag-then-interrupt path turn/interrupt uses, else the turn it just aborted reports "completed"
-      if (parsed.data.abortTurn) await requestInterrupt(record);
+      // M7: the park side FIRST, and stated here rather than inside `requestInterrupt` — that one takes
+      // only the record and stays that way (it is also fleet.ts's path, where nothing can ever be parked),
+      // while closing parking needs the server's two registries. Both srv-bearing interrupt callers say it
+      // the same way, through the one helper.
+      if (parsed.data.abortTurn) { interruptParkedCalls(srv, record); await requestInterrupt(record); }
       ctx.peer.reply(id, { ok: true });
     },
     "turn/start": turnStart,
@@ -958,6 +962,12 @@ export class AppServer {
       // registry — after closeRecord deletes it, broadcast() no-ops and the client would never hear.
       r.closing = true;
       flushQueue(this, r);
+      // M7, the third member of that same synchronous pair. `closeRecord` tears the registry down too, but
+      // it runs BEHIND `r.chain` — so a chain item that is itself waiting on the engine would hold the
+      // teardown behind the very promises the engine is blocked on, which is the C1 circular wait one level
+      // out. Settled here instead, before anything is awaited, and named for what is actually happening:
+      // the reason string is the whole of what the model learns about its cancellation (D-M4-9).
+      this.dynamicCalls.get(r.id)?.teardown("server shutting down");
       r.chain = r.chain.then(async () => { if (this.registry.get(r.id)) await this.closeRecord(r); });
       return r.chain.catch(() => {});
     }));
@@ -994,9 +1004,28 @@ export class AppServer {
     return this.dynamicCalls.get(threadId)?.pending() ?? [];
   }
 
-  /** Close this thread to new parks (`turn/interrupt`), and reopen it (the next submit's dispatch). Task 5
-   *  owns both call sites; see `parkBarriers` for why the latch is held that long. */
-  latchParkBarrier(threadId: string): void { this.parkBarriers.add(threadId); }
+  /** WHAT this thread is waiting on a client for, if anything — the one derivation behind every `status`
+   *  on the wire (registry.ts's `threadStatus` takes the answer, never the registries). Two parks can be
+   *  outstanding at once and the wire names ONE, so the precedence is a statement about what the client
+   *  must do next: DECISIONS WIN, because a permission prompt gates the very tool whose call may be
+   *  waiting behind it — telling a client "answer the tool call" while an unanswered prompt blocks the
+   *  engine from ever consuming that answer would point it at the wrong half of its own queue. The
+   *  toolCall waiter surfaces the moment the decisions clear, which is exactly when it becomes actionable. */
+  threadWaiter(threadId: string): ThreadWaiter | undefined {
+    if (this.pendingDecisions(threadId).length > 0) return "decision";
+    if (this.pendingToolCalls(threadId).length > 0) return "toolCall";
+    return undefined;
+  }
+
+  /** Close this thread to new parks (the two interrupt sites), and reopen it (the next submit's dispatch).
+   *  Task 5 owns both call sites; see `parkBarriers` for why the latch is held that long.
+   *
+   *  LIVENESS IS THE SET'S OWN INVARIANT, not the caller's: `closeRecord` is the only sweep, so a latch
+   *  against a threadId it will never see is an entry nothing ever removes. Both callers hold a live record
+   *  today, which is precisely why the guard costs nothing and why "every member names a live thread" is a
+   *  property this set can actually keep. Refusing is also the right answer on its own terms — `parkToolCall`
+   *  already cancels a call on a thread with no record, so a barrier for one would gate nothing. */
+  latchParkBarrier(threadId: string): void { if (this.registry.get(threadId)) this.parkBarriers.add(threadId); }
   clearParkBarrier(threadId: string): void { this.parkBarriers.delete(threadId); }
 
   /** THE PARK SEAM: a client-declared tool was called by the model, and this is where that call waits for
@@ -1097,15 +1126,22 @@ export class AppServer {
     // until the turn ends. Computed AFTER the event has been applied, so `pendingDecisions` is current.
     const record = this.registry.get(threadId);
     if (!record) return;
-    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.pendingDecisions(threadId).length > 0) });
+    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.threadWaiter(threadId)) });
   }
 
-  /** The registry's events, on the wire. Only the request half travels today: a settlement's client-facing
-   *  consequence is the thread's STATUS moving off `waitingOn`, which Task 5 broadcasts from this same
-   *  arm (the event carries `outcome`/`reason` for it). There is deliberately no `tool/callSettled` —
-   *  whoever answered already has its reply, and the rest of the thread learns from the status. */
+  /** The registry's events, on the wire. Only the REQUEST half travels as an event of its own: a
+   *  settlement's client-facing consequence is the thread's STATUS moving off `waitingOn`, broadcast
+   *  below. There is deliberately no `tool/callSettled` — whoever answered already has its reply, and the
+   *  rest of the thread learns from the status. */
   private broadcastToolCall(threadId: string, ev: DynamicCallEvent): void {
     if (ev.kind === "requested") this.broadcast(threadId, "tool/callRequested", toWireToolCall(ev.entry));
+    // BOTH arms move the status, which is the settled arm's entire client-facing consequence — and the
+    // requested arm's too, since a thread parked on a tool call is not merely busy (registry.ts's
+    // `ThreadWaiter`). Computed AFTER the event has been applied, so `threadWaiter` reads the new truth;
+    // `broadcastDecision` is the precedent line for line, so the two parks move the wire the same way.
+    const record = this.registry.get(threadId);
+    if (!record) return;
+    this.broadcast(threadId, "thread/status/changed", { threadId, status: threadStatus(record, this.threadWaiter(threadId)) });
   }
 
   connect(sink: PeerSink): { peer: Peer; feed(chunk: string): void; close(): void } {
