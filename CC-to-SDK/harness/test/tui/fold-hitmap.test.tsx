@@ -28,8 +28,9 @@ import { Box, Text } from "ink";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
 import { FullscreenViewport, type ViewportHitmap, type ViewportScroll } from "../../src/tui/FullscreenViewport.js";
 import { Transcript } from "../../src/tui/Transcript.js";
-import { GROUP_HINT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { GROUP_HINT_GUTTER, projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { tick } from "./keysTestUtil.js";
 
 const FRAME_ROWS = 12, COLS = 40;
@@ -263,5 +264,88 @@ describe("T9: the viewport hitmap resolves a terminal cell to its fold anchor", 
     const foldRow = rowOf(lastFrame(), FOLD_TEXT);
     expect(hitmap.current!.anchorAt(1, foldRow)).toBeUndefined();
     expect(hitmap.current!.anchorAt(1, foldRow + 1)).toBeUndefined();
+  });
+});
+
+// ══ T-CLICKGATE Task 3 review fix — VIEWPORT-BOUNDARY ADDRESS STABILITY ════════════════════════════════
+// The review's own finding: `withExpandedMarker` (toolRenderer.tsx) mints the expanded band's ONE padding
+// row inside the gutter-block's `body` array specifically so wrap/page/hitmap all count it as a real row —
+// but nothing in this suite (the file that owns exactly that arithmetic) had ever fed a REAL expanded item
+// through the real pipeline and checked a row PAST it. `fold-expand.test.tsx`'s own cell only proves the
+// padding row is in the PROJECTED `body` array; it mounts no viewport and hit-tests nothing. A dropped
+// padding row is invisible to that cell's own assertions (the row after it just shows one document row
+// earlier) and would only ever surface here, as a shifted address.
+//
+// THE DOCUMENT IS BUILT THROUGH THE REAL PRODUCTION PATH (`projectCompact` with `expandedItems` set), not a
+// hand-rolled literal — the whole point is to catch a REAL regression in `withExpandedMarker`, and a literal
+// fixture that merely COPIES its current shape would go stale the moment that function's shape did, silently
+// passing forever. A single hand-built `RenderItem` line stands for "the next clickable owner" (no production
+// call needs a second real expanded item to prove the point, and `RenderItem`'s own doc already establishes a
+// hand-built literal is this suite's normal idiom for anything not under direct test).
+//
+// SPANNING THE BOUNDARY NEEDS NO EXPLICIT SCROLL. The document is taller than the region's 8-row grant, so
+// the STICKY default already cuts the expanded item's own header and its first several body rows off the
+// TOP of the window — exactly "an expanded owner spanning the viewport boundary" — while its tail (including
+// the padding row) and the following row both land inside it. And the assertion below is a RELATIVE gap
+// between two rows located by `rowOf` in the SAME painted frame, so it needs no absolute row arithmetic and
+// is provably immune to whichever offset produced that frame: whether the window is sticky, scrolled, or
+// resized, "how many rows sit between these two contents" is a fact about the PROJECTION, not the window.
+describe("T-CLICKGATE Task 3 review fix: an expanded owner spanning the viewport boundary leaves a FOLLOWING clickable row's address unshifted", () => {
+  const errorLines = (n: number) => Array.from({ length: n }, (_, i) => `err line ${i + 1}`).join("\n");
+  const call = (id: string, name: string, input: unknown) =>
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] } }) as Record<string, unknown>;
+  const result = (id: string, content: string, isError = false) =>
+    ({ type: "user", uuid: `u-${id}`, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } }) as Record<string, unknown>;
+  const built = (...messages: Record<string, unknown>[]) => { const doc = new TranscriptDocument(); for (const m of messages) doc.appendSdk("host", m); return doc; };
+  const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: COLS, now: 0, fullscreen: true, expandHint: "" };
+  const FOLLOWING_TEXT = "FOLLOWING-ROW";
+
+  it("keeps the following row's clickTargetAt at the ownerKey the row model predicts, one row past the real padding row", async () => {
+    // 11 error lines clips at ten under compact (clickable), and expands to all eleven plus the ONE padding
+    // row under `expandedItems` — the real production shape `withExpandedMarker` builds.
+    const doc = built(call("e-1", "Mystery", {}), result("e-1", errorLines(11), true));
+    const collapsed = projectCompact(doc, ctx);
+    const ownerKey = collapsed.find((i) => i.kind === "gutter-block")!.ownerKey!;
+    const expandedItems = projectCompact(doc, { ...ctx, expandedItems: new Set([ownerKey]) });
+    // Premise, asserted before anything is built on it: the real projection really does carry the padding
+    // row this cell exists to defend — a fixture that silently stopped doing so would make every assertion
+    // below vacuous rather than red.
+    const block = expandedItems.find((i) => i.kind === "gutter-block")!;
+    expect(block.body.at(-1)!.text).toBe("");
+    expect(block.body.at(-1)!.bg).toBeDefined();
+
+    const items: readonly RenderItem[] = [...expandedItems, { kind: "line", id: "following-row", ownerKey: "owner:following", clickable: true, line: { text: FOLLOWING_TEXT } }];
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(scene({ hitmap, items }));
+    await settle();
+    const frame = lastFrame();
+
+    // THE BOUNDARY, confirmed rather than assumed: the item's OWN early lines are off-screen (sticky cut
+    // them off the top), so what follows is genuinely a PARTIAL tail, not the whole item painted whole.
+    expect(strip(rowsOf(frame).find((l) => l.includes("err line 1")) ?? "")).not.toBe("err line 1");
+    const lastErrRow = rowOf(frame, "err line 11");
+    const followingRow = rowOf(frame, FOLLOWING_TEXT);
+    // ONE row between them — the padding row, blank — is the whole claim. Drop it from `withExpandedMarker`
+    // and this becomes `lastErrRow + 1`, which is exactly the shift a lost row produces (verified by hand
+    // during this fix: reverting `withExpandedMarker`'s trailing `{ text: "", bg }` push made this line fail
+    // with `followingRow === lastErrRow + 1`, and restoring it returned this suite to green).
+    expect(followingRow).toBe(lastErrRow + 2);
+    const paddingRow = lastErrRow + 1;
+
+    // THE ADDRESS ITSELF, not just its row number. `clickTargetAt` is the seam `hoverAt` shares (both read
+    // `hit.current.rows` off the identical column bound) — the seam a shifted row would misattribute through.
+    expect(hitmap.current!.clickTargetAt(8, lastErrRow)).toBe(`item:${ownerKey}`);
+    // The padding row is still part of the SAME clickable block (`hitRowsOf` stamps `clickable` uniformly
+    // across every body row of one item, padding included) — so it answers the EXPANDED owner, not the row
+    // after it. A dropped padding row would make THIS cell answer the following row's target instead — the
+    // exact misattribution the review asked this file to catch.
+    expect(hitmap.current!.clickTargetAt(1, paddingRow)).toBe(`item:${ownerKey}`);
+    // …and the FOLLOWING row's own address is exactly what the row model predicts: its OWN owner, unshifted
+    // by however many rows the expanded block above it actually took.
+    expect(hitmap.current!.clickTargetAt(1, followingRow)).toBe("item:owner:following");
+    // `anchorAt` (unchanged by this task) agrees there is no FOLD anchor at any of the three rows — this is
+    // the click-to-expand address, not the fold one.
+    expect(hitmap.current!.anchorAt(1, lastErrRow)).toBeUndefined();
+    expect(hitmap.current!.anchorAt(1, followingRow)).toBeUndefined();
   });
 });
