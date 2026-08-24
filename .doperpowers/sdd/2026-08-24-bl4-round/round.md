@@ -20,3 +20,17 @@ Fix wave 1: a0a7eacdf6 + 4ae21d751e (both red/green; writeRows audited no-escape
 Fix-range re-review (base 05d9eeddad): ZERO actionable defects. Campaign converged 2 -> 0 on round code (reforge findings relayed, not this round's).
 ROUND CLOSED. Not pushed.
 PUSHED (owner request): merged origin/main (app-server M7, 68 commits; conflict in chatAdapter resolved in favor of M7's stagedSubmit.ts extraction with bl4's four-reader chain carried into it), gates green on merged tree (unit 3962/3962, tui 4689/11 skipped), pushed as 39c29a8f67. Reforge findings (3 P1 + 2 P2) relayed to session cc-to-sdk-79.
+
+## Reforge relay outcome (2026-08-24, post-push)
+
+cc-to-sdk-79 confirmed it IS the reforge session. All five relayed findings reproduced, none
+rejected, all fixed in reforge commit 9a8e509a97: config isolation moved into runTurn.ts; leak
+check now discards the staged cassette and fails the scenario; flaky-path suppression replaced by
+source-level canonicalization (tool_result sort by tool_use_id, explicit cache-breakpoint count,
+consecutive single-result message sort) after the compare-against-oracle-alternatives remedy proved
+insufficient (sampling can't certify unseen orderings); tsconfig widened to all dirs (TS2339 fixed);
+unknown/valueless --scenario aborts exit 2, empty verdict set refused.
+
+NOTE for future review sweeps of reforge/: three scenarios (plain, background-task, fork-session)
+show FAIL because recording hits a sustained account-level 429 (no retry-after header; token refresh
+didn't help). Environmental, not code — documented in reforge/README.md. Do not re-flag.
