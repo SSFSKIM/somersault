@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createResizeChain, createResumeSafeStdout, physicalRows, runChatClient } from "../../src/tui/chatMain.js";
+import { createFocusChain, createResizeChain, createResumeSafeStdout, physicalRows, runChatClient } from "../../src/tui/chatMain.js";
 import { eraseViewport } from "../../src/tui/clearViewport.js";
 import { parkColumn, parkSequence } from "../../src/tui/resizeRepaint.js";
 
@@ -613,6 +613,30 @@ describe("createResizeChain", () => {
     chain.subscribe(() => log.push("b"));
     chain.fire(); chain.fire();
     expect(log).toEqual(["readers", "a", "b", "readers", "b"]);
+  });
+});
+
+// F10 T-IMGREACH Task 13 (I6) — the SAME shape one edge later: `KeymapProvider`'s `onFocusChange` dep is
+// `publish`, `ChatComposer` (three components down, through `ChatApp`'s pass-through prop) is `subscribe`.
+describe("createFocusChain", () => {
+  it("publishes the edge to every subscriber, in subscription order", () => {
+    const log: (boolean | string)[] = [];
+    const chain = createFocusChain();
+    chain.subscribe((f) => log.push(f));
+    chain.subscribe((f) => log.push(f));
+    chain.publish(true);
+    expect(log).toEqual([true, true]);
+  });
+
+  it("publishing with nothing subscribed is a no-op, and unsubscribing stops delivery", () => {
+    const log: boolean[] = [];
+    const chain = createFocusChain();
+    expect(() => chain.publish(true)).not.toThrow();
+    const off = chain.subscribe((f) => log.push(f));
+    chain.publish(true);
+    off();
+    chain.publish(false);
+    expect(log).toEqual([true]);
   });
 });
 

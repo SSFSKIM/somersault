@@ -6,7 +6,7 @@
 // the overlay used to hardcode. That is what lets `honesty.test.tsx`'s corpus of executable proofs — written
 // against those literals — keep auditing the grid without being rewritten to match a new vocabulary.
 import { describe, it, expect } from "vitest";
-import { UNBOUND, backgroundHintText, defaultLookup, formatBinding, formatBindingLower, formatBindings, shortcutRows } from "../../src/tui/keys/hints.js";
+import { UNBOUND, backgroundHintText, defaultLookup, formatBinding, formatBindingLower, formatBindings, imageInClipboardText, shortcutRows } from "../../src/tui/keys/hints.js";
 import { ROWS } from "../../src/tui/ShortcutsOverlay.js";
 
 describe("formatBinding", () => {
@@ -114,5 +114,28 @@ describe("backgroundHintText (LT20)", () => {
   it("renders NO hint at all for an unbound action — never `(unbound)` inside this parenthetical", () => {
     expect(backgroundHintText([], false)).toBeUndefined();
     expect(backgroundHintText([], true)).toBeUndefined();
+  });
+});
+
+// F10 T-IMGREACH Task 13 (I6): canon L493296 verbatim, `Image in clipboard \xB7 <chord> to paste`. The chord
+// is `chat:imagePaste`'s live binding, never a hardcoded literal — a rebind must change the sentence.
+describe("imageInClipboardText (I6)", () => {
+  it("renders canon's copy with the default binding, and the separator is a real middle dot (U+00B7)", () => {
+    expect(imageInClipboardText(["ctrl+v"])).toBe("Image in clipboard · ctrl+v to paste");
+    expect(imageInClipboardText(["ctrl+v"]).codePointAt("Image in clipboard ".length)).toBe(0xb7);
+  });
+
+  it("a rebound chat:imagePaste renders in the sentence — a hardcoded ctrl+v would fail this", () => {
+    expect(imageInClipboardText(["alt+v"], "linux")).toBe("Image in clipboard · alt+v to paste");
+    expect(imageInClipboardText(defaultLookup("chat:imagePaste"))).toBe(imageInClipboardText(["ctrl+v"]));
+  });
+
+  it("no binding at all falls back to ctrl+v — canon's m2 third argument, not formatBindingLower's own \"\"", () => {
+    expect(imageInClipboardText([])).toBe("Image in clipboard · ctrl+v to paste");
+  });
+
+  it("prefers a plain key over a chord alias, and respects the platform's modifier spelling", () => {
+    expect(imageInClipboardText(["ctrl+x ctrl+v", "ctrl+v"])).toBe("Image in clipboard · ctrl+v to paste");
+    expect(imageInClipboardText(["alt+v"], "darwin")).toBe("Image in clipboard · opt+v to paste");
   });
 });

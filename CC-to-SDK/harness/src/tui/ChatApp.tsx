@@ -206,7 +206,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -258,6 +258,11 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  subscribing effect lists it as its only dependency, so a fresh closure per frame would unsubscribe and
    *  re-subscribe the terminal listener on every render. */
   onResize?: (cb: () => void) => () => void;
+  /** F10 T-IMGREACH Task 13 (I6) — terminal focus edges, threaded straight through from `KeymapProvider`'s
+   *  `onFocusChange` dep (`chatMain.tsx`'s `createFocusChain().subscribe`) to `ChatComposer`, the hint's own
+   *  poster. This component holds no state of its own for it: unlike `onResize`, nothing here reacts to a
+   *  focus edge except the composer, so there is nothing to lift. */
+  onFocusChange?: (cb: (focused: boolean) => void) => () => void;
   /** WAVE C TASK 4 — the `deps` seam of every `createDoublePress` arm in this tree (the app's two, and the
    *  composer's three, which this component threads down). Injected for the reason plan constraint 15 gives:
    *  the arms are the one piece of this UI whose whole contract is a DURATION, and a test that waited out a
@@ -1755,6 +1760,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                       // footer-state channel. Both are how the one-row footer and the one-row overlay stay
                       // in sync with a component that unmounts behind every dialog.
                       notifications={notifications} onFooterState={setFooterState} onSuggestOpen={setSuggestOpen}
+                      // I6 — the ambient clipboard hint's primary trigger, threaded straight through; see
+                      // `onFocusChange`'s own doc above for why this component reacts to nothing itself.
+                      onFocusChange={onFocusChange}
                       // WAVE C TASK 4: the Ctrl-C clear channel (see `clearDraftToken`), the ← agents gesture's
                       // destination — `task:background`'s idle branch, the same surface ctrl+b opens — and the
                       // arm clock every double-press in this tree shares.
