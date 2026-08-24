@@ -998,9 +998,9 @@ names are M5 Task 9's `thread/archived` and `thread/unarchived` and M7's `tool/c
 **have rows of their own** — the archive pair added at M5 Task 10 in the server-origin table beside the pair
 that fires them, once `thread/list {archived}` gave a client a partition to repaint; `tool/callRequested` at
 M7 Task 9 in the dynamic-tools section, because a client that cannot answer the call it announces has no
-dynamic tools at all. They are the only notifications in this document with rows, and the recipe above is
-still how the OTHER 27 are counted — by scan, not by row: a row per notification is not the convention here,
-it is what a consumed channel earns. The recipe's 28 and that 27 are **not the same set**, and the near-match
+dynamic tools at all. They are the only notifications in this document with rows, and the OTHER 27
+are counted without one — 25 of them by the scan above, plus the two slashless names it cannot see: a row
+per notification is not the convention here, it is what a consumed channel earns. The recipe's 28 and that 27 are **not the same set**, and the near-match
 is arithmetic rather than meaning: the 28 counts slash-shaped wire literals and INCLUDES all three rowed
 channels, while the 27 is 30 less those three — which excludes them and takes in the two slashless names
 instead. Read either as the headline total and it comes out short, which is what the "Shipped, per the code"

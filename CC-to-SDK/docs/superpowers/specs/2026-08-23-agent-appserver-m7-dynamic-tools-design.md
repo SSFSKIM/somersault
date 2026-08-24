@@ -238,13 +238,14 @@ changed.
    skips cleanly (3 skipped, 0 run). A skipped suite proves the gating and nothing else, which is why the
    rows it gates are still called unobserved everywhere they are cited.
 
-Keyed (quota-gated — after 2026-08-26 1pm):
+Keyed (quota-gated — after 2026-08-26 1pm; the numbering continues the keyless list so every acceptance
+item in this spec has one unique number, which is what "spec row N" cites):
 
-6. A live test declares one tool (the probe-115 schema), and asserts end to end: the broker parks the
+7. A live test declares one tool (the probe-115 schema), and asserts end to end: the broker parks the
    call's PERMISSION first (`decision/requested` → answered over the wire), then `tool/callRequested`
    arrives, is answered over the wire, an `mcp`-species tool item completes on the stream, and the
    model's reply uses the tool's answer; skips cleanly keyless.
-7. Schema fidelity live: the model's `arguments` conform to the declared schema; a required field is
+8. Schema fidelity live: the model's `arguments` conform to the declared schema; a required field is
    never absent across N calls (the in-memory tools/list row is the deterministic half; this row is the
    model-behavior half).
 
@@ -306,7 +307,7 @@ Keyed (quota-gated — after 2026-08-26 1pm):
 `thread/start` or `thread/resume` and IS their runtime: the model's call parks in the server, reaches the
 thread's subscribers as `tool/callRequested`, and the first subscriber to answer `tool/callResult` supplies
 what the model reads. The wire grammar did not change — no server→client request frame exists after this
-milestone either — and the whole feature rides the park trio the server already ran for elicitation. Nine
+milestone either — and the whole feature rides the park trio the server already ran for elicitation. Six
 new source modules and one rename (`schemaToZod.ts`, `dynamicTools.ts`, `dynamicCalls.ts`,
 `dynamicServers.ts`, `toolCallResult.ts`, `schema/dynamicTools.ts`, plus the admission, overlay and status
 seams threaded through `server.ts`, `subscribe.ts`, `rewind.ts` and `settingsOps.ts`), one new registered
@@ -325,10 +326,10 @@ scorecard rows and 67 registered methods.
 **The keyed gate — nothing below has been observed, and the first run is due after 2026-08-26 1pm** (the
 weekly quota was exhausted for the whole of execution, so every live row in this milestone was written and
 landed against a clean skip). `test/live/appserver-dynamic-tools.test.ts` carries both scenarios: **A**
-(spec row 6) — a declared tool reaches a real model, the broker parks `decision/requested` FIRST, the call
+(spec row 7) — a declared tool reaches a real model, the broker parks `decision/requested` FIRST, the call
 then travels as `tool/callRequested`, the client's answer comes back as the tool result, an `mcp`-species
 item completes on the stream, the reply carries a per-run nonce the model could not have invented, and
-`mcpServer/set` is refused on the same declaring thread; **B** (spec row 7) — three calls in one turn, the
+`mcpServer/set` is refused on the same declaring thread; **B** (spec row 8) — three calls in one turn, the
 declared `required` field present in every `arguments`. Three further questions ride that same run:
 
 - **Does `_meta` survive the SDK→CLI control-protocol hop?** (T6 review.) The `tools/list` payload is
@@ -408,7 +409,9 @@ being invisible to the occupied-name check.
   written down that had not been. (1) The Acceptance section's FILE MAPPING is corrected in place — the rows
   were specified against one unit file and shipped across four (`dynamic-tools-validate`, `dynamic-tools`,
   `dynamic-calls`, `dynamic-tools-exchange`), plus the keyed file and the keyless-skip run; no row was
-  dropped or weakened, and the item text now says where each lives. (2) Surprises gains the two
+  dropped or weakened, and the item text now says where each lives; the keyed rows are renumbered 7 and 8
+  so the keyless addition and the keyed scenarios no longer share the number 6, and every "spec row N"
+  citation moved with them. (2) Surprises gains the two
   execution-time discoveries the planning rounds could not have produced, both found by sabotage rather than
   by reading: an invariant stated on two spines with a witness on only one, and a "the callback always
   answers" contract with nothing enforcing it at the seam that leaks. (3) Outcomes & Retrospective replaces

@@ -1,5 +1,5 @@
 // harness/test/live/appserver-dynamic-tools.test.ts — the M7 dynamic-tools spec's two KEYED acceptance
-// rows (6 and 7): a client declares a tool at `thread/start`, a real model calls it, and the CLIENT is the
+// rows (7 and 8): a client declares a tool at `thread/start`, a real model calls it, and the CLIENT is the
 // tool runtime — the call travels out as `tool/callRequested` and the client's `tool/callResult` is what
 // the model reads back.
 //
@@ -28,11 +28,11 @@
 //      present in every call), which the in-memory `tools/list` row can only prove was ADVERTISED.
 //
 // ── THE TWO SCENARIOS ──────────────────────────────────────────────────────────────────────────────
-// A (spec row 6) — one thread, one call, the full ordering: `decision/requested` → allow over the wire →
+// A (spec row 7) — one thread, one call, the full ordering: `decision/requested` → allow over the wire →
 // `tool/callRequested` → `tool/callResult` carrying a value the model could not have invented → an
 // `mcp`-species item completes → the reply contains that value. Plus the `mcpServer/set` refusal on the
 // same declaring thread (rev 2p's conservative-first rule; a keyed survival row is what would relax it).
-// B (spec row 7) — N=3 calls on their own thread, asserting the declared `required` field is present in
+// B (spec row 8) — N=3 calls on their own thread, asserting the declared `required` field is present in
 // every `arguments` the model sent.
 //
 // THE DISCRIMINATING VALUE. The answer the client supplies is a nonce the model has no way to produce
@@ -168,7 +168,10 @@ live("app-server dynamic tools — a declared tool reaches a real model and the 
    *  `unattended: "park"` is what makes that decision wait for this client instead of being auto-denied. */
   async function startDeclaringThread(): Promise<string> {
     const started = await a.call("thread/start", {
-      config: { cwd: root, model: SONNET, settingSources: [], maxTurns: 6 },
+      // `maxTurns: 12` is headroom, not a subject: scenario B alone needs three sequential tool calls plus
+      // a reply, so a single retry or thinking round under a tight cap would redden a row on quota rather
+      // than on its claim.
+      config: { cwd: root, model: SONNET, settingSources: [], maxTurns: 12 },
       unattended: "park",
       dynamicTools: DECLARATION,
     }, 180_000);
@@ -216,6 +219,28 @@ live("app-server dynamic tools — a declared tool reaches a real model and the 
     // A nonce: no prompt-only answer can produce it, so a reply containing it came from the tool result.
     const nonce = `BLOCKED-${randomUUID().slice(0, 8).toUpperCase()}`;
 
+    // SUBSCRIBE THEN ACT: the auto-answer listener is armed BEFORE the turn is dispatched, so no park can
+    // arrive into a window where nobody would answer it. It RESERVES the first `ticket_status` permission
+    // and the first tool call for the body below, which answers those two by hand because their ordering is
+    // this row's own claim; every other park — a second lookup, a permission for some other tool — is
+    // answered here, in any order and any number.
+    let claimedDecision: string | null = null;
+    let claimedCall: string | null = null;
+    a.on((n) => {
+      if (n.params?.threadId !== threadId) return;
+      if (n.method === "decision/requested" && n.params.decision?.kind === "permission") {
+        const d = n.params.decision;
+        if (claimedDecision === null && d.toolName === WIRE_TOOL) { claimedDecision = d.toolUseId; return; }
+        if (d.toolUseId === claimedDecision) return;
+        void a.call("decision/respond", { threadId, toolUseId: d.toolUseId, answer: { kind: "allow_once" } }, 30_000).catch(() => {});
+      } else if (n.method === "tool/callRequested") {
+        const callId = n.params.callId;
+        if (claimedCall === null) { claimedCall = callId; return; }
+        if (callId === claimedCall) return;
+        void a.call("tool/callResult", { threadId, callId, contentItems: [{ type: "inputText", text: nonce }], success: true }, 30_000).catch(() => {});
+      }
+    });
+
     const mark = a.mark();
     const started = await a.call("turn/start", {
       threadId,
@@ -251,18 +276,6 @@ live("app-server dynamic tools — a declared tool reaches a real model and the 
       contentItems: [{ type: "inputText", text: nonce }],
       success: true,
     }, 30_000)).toEqual({});
-
-    // Everything the ORDERING claim needed is captured; from here a model that decides to look the ticket
-    // up twice must not deadlock the turn on an unanswered park. Installed only now, because an auto-allow
-    // armed earlier would have raced the explicit answer above and won.
-    a.on((n) => {
-      if (n.params?.threadId !== threadId) return;
-      if (n.method === "decision/requested" && n.params.decision?.kind === "permission") {
-        void a.call("decision/respond", { threadId, toolUseId: n.params.decision.toolUseId, answer: { kind: "allow_once" } }, 30_000).catch(() => {});
-      } else if (n.method === "tool/callRequested" && n.params.callId !== callNote.params.callId) {
-        void a.call("tool/callResult", { threadId, callId: n.params.callId, contentItems: [{ type: "inputText", text: nonce }], success: true }, 30_000).catch(() => {});
-      }
-    });
 
     const done = await a.waitFor("turn/completed", 300_000,
       (n) => n.method === "turn/completed" && n.params.threadId === threadId && n.params.turn?.id === turnId, mark);
