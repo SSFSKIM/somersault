@@ -185,7 +185,7 @@ Keyless (all must pass, run from `CC-to-SDK/harness`):
 6. `npx vitest run test/unit/appserver` — full suite green.
 7. `node scripts/drift-check.mjs` (from `CC-to-SDK`) — exit 0, `unparsed 0`.
 
-Keyed (quota-gated — run after 2026-08-26 1pm):
+Keyed (first ran 2026-08-25 — 2/2 green; see Outcomes for the subscribe defect the run surfaced):
 
 8. A live test sends one small PNG via `input` items on an inProcess thread and asserts the model's
    reply references the image content; skips cleanly keyless.
@@ -368,10 +368,15 @@ What landed, in build order:
 `turn-items.test.ts` 20/20, the extraction trio (`stageImage` + `client-chat-adapter` + `fleet-engine`)
 88/88, `host-image-transport.test.ts` 15/15, the legacy-skew rows inside rows 1 and 3, the full
 `test/unit/appserver` suite 1180/1180 across 71 files, and `drift-check.mjs` exit 0 with 100 rows and no
-`unparsed` bucket. **Row 8, the keyed one, has been written and has only ever SKIPPED**: the Claude
-weekly quota was exhausted through 2026-08-26 1pm, so `test/live/appserver-image-input.test.ts` is a
-clean keyless skip and nothing more. Until its first keyed run, "a real model reads the pixels an items
-turn delivers" is an unobserved claim in this round, and the file's own header says so.
+`unparsed` bucket. **Row 8, the keyed one, RAN GREEN on 2026-08-25** — both legs, 2/2, once a defect the
+keyless skip could never surface was fixed: the file relied on `initialize{watchThreads:true}` for its turn
+notifications, but `watchThreads` is thread-EXISTENCE fan-out only and every turn/item broadcast goes to
+per-thread SUBSCRIBERS, so both legs first timed out on `<nothing>` regardless of what the model did with
+the pixels. With the thread-start helper subscribing (mirroring the M7 live file), the `data:`-URL leg and
+the `localImage` leg each named both colour bands in left-to-right order on their own threads, the
+`[Image #1]` echo held, and nothing parked. "A real model reads the pixels an items turn delivers" is now an
+observed claim; the session transcripts the run minted at its temp cwd were deleted by the file's own
+teardown (only an empty engine-scaffold project dir remained, removed by hand).
 
 **What the reviews changed.** Four per-task reviews: 0 critical, 4 important, 23 minor. The importants
 were all real and all structural — an interrupt arriving mid-staging reaching the host BEFORE the prompt

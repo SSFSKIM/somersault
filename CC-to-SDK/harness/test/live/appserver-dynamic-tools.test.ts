@@ -163,15 +163,20 @@ live("app-server dynamic tools — a declared tool reaches a real model and the 
   const held = new Set<string>();
 
   /** A DECLARING thread, subscribed. `settingSources: []` so the developer's own settings cannot add MCP
-   *  servers or tools; permissionMode is left at its DEFAULT on purpose — scenario A's first claim is that
-   *  a dynamic tool parks the ordinary permission decision, which a `bypassPermissions` thread would hide.
-   *  `unattended: "park"` is what makes that decision wait for this client instead of being auto-denied. */
+   *  servers or tools; `permissionMode: "default"` is EXPLICIT, not omitted — measured on the first keyed
+   *  run (2026-08-25): the harness's own default mode is `auto`, whose SDK-side classifier allowed the
+   *  read-shaped `ticket_status` call without ever consulting the broker, so `tool/callRequested` arrived
+   *  with NO `decision/requested` leg at all. Scenario A's ordering claim (permission parks FIRST) is a
+   *  claim about the consulting mode, so that mode is pinned here; under `auto` the park trio still works
+   *  end to end — that is what scenario B's green run on the same attempt proved — the decision leg is
+   *  simply the classifier's to skip. `unattended: "park"` is what makes a consult that DOES happen wait
+   *  for this client instead of being auto-denied. */
   async function startDeclaringThread(): Promise<string> {
     const started = await a.call("thread/start", {
       // `maxTurns: 12` is headroom, not a subject: scenario B alone needs three sequential tool calls plus
       // a reply, so a single retry or thinking round under a tight cap would redden a row on quota rather
       // than on its claim.
-      config: { cwd: root, model: SONNET, settingSources: [], maxTurns: 12 },
+      config: { cwd: root, model: SONNET, settingSources: [], maxTurns: 12, permissionMode: "default" },
       unattended: "park",
       dynamicTools: DECLARATION,
     }, 180_000);

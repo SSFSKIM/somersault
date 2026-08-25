@@ -838,19 +838,25 @@ cannot answer a call it was never told about, so the method and the channel are 
 walkable: no host op, no `ControlFrame` verb, no session-store wrapper and no `Query` method mirrors either,
 so the seam-token column repeats the wire name as it does in the server-origin table above.
 
-**The two statuses differ, and the difference is the drift gate's own vocabulary rather than a difference in
-confidence.** `tool/callResult` is REGISTERED in `schema/index.ts`, and the gate refuses a `probe-gated`
-status on a registered method (drift-check.mjs:158) — correctly, since a dispatchable method is shipped
-whatever else is unobserved. So it reads `shipped(M7)` and its **keyed residual is named here in prose**:
-what no keyless row can reach is the far side of the ENGINE — that the declaration survives the SDK→CLI
-control-protocol hop as a mounted in-process MCP server with its `_meta` intact, that the model's call rides
-the ordinary permission surface (the broker's `decision/requested` first, then the tool call), that the
-stream classifies an `mcp__…` call as the `mcp` species end to end, and that the model actually USES the
-client's answer. `tool/callRequested` has no registry entry (notifications have none), so it carries
-`probe-gated`, which is the honest status for a channel whose end-to-end behaviour has been driven only by
-our own MCP client and never by a model. Both flip together after the first keyed run of
-`test/live/appserver-dynamic-tools.test.ts` — **due after 2026-08-26 1pm**, the file having been written and
-landed keyless under an exhausted weekly quota, its only run so far the clean skip.
+**Both rows read `shipped(M7)` since the first keyed run — 2026-08-25**, when
+`test/live/appserver-dynamic-tools.test.ts` went 3/3 against a real engine. What that run measured, in the
+order the keyed residual used to name it: the declaration SURVIVES the SDK→CLI control-protocol hop as a
+mounted in-process MCP server — `_meta` included, and measured discriminatingly: a `deferLoading: true`
+tool arrived only AFTER a completed ToolSearch call item and its nonce still came back in the reply
+(probe 116 R1, `scripts/probe-116-m7-keyed-riders.ts`), so `anthropic/alwaysLoad` crosses the hop intact;
+the stream classifies the call as the `mcp` species end to end; the model USES the client's answer (a
+per-run nonce the prompt cannot produce came back verbatim); and scenario B's three calls each carried the
+declared `required` field. The permission-ordering claim needed ONE correction no keyless row could see:
+the harness's own default `permissionMode` is **`auto`**, whose SDK-side classifier allowed the read-shaped
+call WITHOUT consulting the broker — `tool/callRequested` arrived with no `decision/requested` leg at all.
+Under `permissionMode: "default"` the consult parks first, exactly as spec row 7 claims; the live file now
+pins that mode, and the ordering claim is a claim about CONSULTING modes (under `auto` the park trio still
+works — scenario B went green under it on the same attempt). Two riders beyond the residual, both from
+probe 116: an AUDIO tool result is **accepted end to end** (R2 — the turn completed and the model described
+the WAV it received, so the `audio/*` MIME family guards a live path, not an always-failing one); an
+unsettled park shows **no spontaneous production timeout** across a 180s watch and is bounded by the turn's
+own interrupt, after which the late answer earns `-33002 ALREADY_SETTLED` (R3) — the elicitation-matching
+bound the design stated, now measured rather than assumed.
 
 **Known limits, all client-facing contract statements with no code behind them.** (a) The occupied-name
 check reserves the harness's own injected server names UNCONDITIONALLY, `cc-context` and `cc-compact`
@@ -888,8 +894,8 @@ instead of inherited silently.
 
 | seam token | source | protocol method | origin scope | status |
 |---|---|---|---|---|
-| `tool/callResult` | appserver/toolCallResult.ts | `tool/callResult` | both | shipped(M7) — `{threadId, callId, contentItems, success}` → `{}`, the method a client's tool runtime settles a parked dynamic tool call with; items are Codex's `inputText`/`inputImage`/`inputAudio` trio with media as `data:` URLs. Authority is checked twice: the peer must be in this thread's SUBSCRIBER set, and `callId`s are opaque `dyncall:<uuid>` rather than a guessable counter. First answer wins; a duplicate earns `-33002 ALREADY_SETTLED` off a 128-entry tombstone ring, a fabricated or previous-generation id earns `-32602` "no such pending tool call". The schema deliberately validates neither the media URLs nor a result-item count — a refusal raised before the handler would leave the call parked while the client believed it answered (D-M4-9), so the caps and the `data:` parse settle an `isError` result naming the problem instead. Scored `both` because a fleet thread ANSWERS it: `thread/attach` mints the call registry unconditionally, so the registry exists and holds nothing and `-32602` is the true statement — its absence from `FLEET_UNSUPPORTED` is that decision, not an oversight (a fleet thread never broadcasts a call, so no honest client holds a fleet `callId`). **Keyed residual named in the prose above** — the prose, not a `probe-gated` status, because the gate refuses that status on a registered method |
-| `tool/callRequested` | appserver/toolCallResult.ts | `tool/callRequested` | inProcess | probe-gated — NOT a method: the notification a parked call announces on, `{threadId, callId, turnId, namespace?, tool, arguments}`, delivered to the thread's SUBSCRIBERS only. Watchers are excluded by design (`fanout.ts` defines them as thread-EXISTENCE observers; tool arguments are execution data and the `callId` is settlement authority). Replayed in full by `thread/subscribe` after the pending-decision replay, so a call parked with zero subscribers waits and the first client to attach hears it — which is what makes "the declarer died, a reattaching client answers" true. `inProcess`, unlike the method beside it: only an inProcess engine can raise a dynamic call at all, so a fleet thread never emits this. `probe-gated` until the first keyed run of `test/live/appserver-dynamic-tools.test.ts` (after 2026-08-26 1pm) has driven it from a real model rather than from our own MCP client |
+| `tool/callResult` | appserver/toolCallResult.ts | `tool/callResult` | both | shipped(M7) — `{threadId, callId, contentItems, success}` → `{}`, the method a client's tool runtime settles a parked dynamic tool call with; items are Codex's `inputText`/`inputImage`/`inputAudio` trio with media as `data:` URLs. Authority is checked twice: the peer must be in this thread's SUBSCRIBER set, and `callId`s are opaque `dyncall:<uuid>` rather than a guessable counter. First answer wins; a duplicate earns `-33002 ALREADY_SETTLED` off a 128-entry tombstone ring, a fabricated or previous-generation id earns `-32602` "no such pending tool call". The schema deliberately validates neither the media URLs nor a result-item count — a refusal raised before the handler would leave the call parked while the client believed it answered (D-M4-9), so the caps and the `data:` parse settle an `isError` result naming the problem instead. Scored `both` because a fleet thread ANSWERS it: `thread/attach` mints the call registry unconditionally, so the registry exists and holds nothing and `-32602` is the true statement — its absence from `FLEET_UNSUPPORTED` is that decision, not an oversight (a fleet thread never broadcasts a call, so no honest client holds a fleet `callId`). **Keyed residual CLOSED 2026-08-25** — the prose above records the measured run |
+| `tool/callRequested` | appserver/toolCallResult.ts | `tool/callRequested` | inProcess | shipped(M7) — NOT a method: the notification a parked call announces on, `{threadId, callId, turnId, namespace?, tool, arguments}`, delivered to the thread's SUBSCRIBERS only. Watchers are excluded by design (`fanout.ts` defines them as thread-EXISTENCE observers; tool arguments are execution data and the `callId` is settlement authority). Replayed in full by `thread/subscribe` after the pending-decision replay, so a call parked with zero subscribers waits and the first client to attach hears it — which is what makes "the declarer died, a reattaching client answers" true. `inProcess`, unlike the method beside it: only an inProcess engine can raise a dynamic call at all, so a fleet thread never emits this. Carried `probe-gated` until the first keyed run of `test/live/appserver-dynamic-tools.test.ts` (2026-08-25, 3/3 green) drove it from a REAL model: the call arrived with the active turn's id and the model's own schema-conforming arguments, and the client's answer came back in the model's reply — the measured run the prose above records |
 
 Registered beside those, and NEGOTIATED rather than additive, are **F10's three staged-image methods** —
 `image/stage`, `turn/startContent`, `turn/steerContent`, each `experimental: true` in `schema/index.ts` so
@@ -936,24 +942,28 @@ already parses every row for its staleness pass, so since M3 Task 15 it tallies 
 lines on every run — `N rows by status` and `N rows by origin scope`. Run it; between runs the authority
 is each row's own `status` and `origin scope` column, as it always was.
 
-What those two lines say at this sweep (**M7 dynamic tools, 2026-08-24** — restated per landing, never
-trusted between them): **102 rows, 98 of them shipped** (2 of those `shipped(M4)`, 9 `shipped(M5)`, 1
-`shipped(M7)` — `tool/callResult`), **1 `probe-gated`** (`tool/callRequested`), and the same `N/A` trio as
-the last two sweeps: `seedReadState` (internal plumbing, no protocol method by design), `readFile`
+What those two lines say at this sweep (**M7 keyed follow-up, 2026-08-25** — restated per landing, never
+trusted between them): **105 rows, 102 of them shipped** (15 `shipped(M1)`, 32 `shipped(M2a)`, 32
+`shipped(M2b)`, 7 `shipped(M3)`, 2 `shipped(M4)`, 9 `shipped(M5)`, 2 `shipped(M7)` — the dynamic-tools
+pair, both keyed-observed — and 3 `shipped(F10)`), **zero `probe-gated`**, and the same `N/A` trio as the
+last three sweeps: `seedReadState` (internal plumbing, no protocol method by design), `readFile`
 (probe-dead at 0.3.220, see its row) and `stageImage` (host-local transport by design). No `unparsed`
 bucket, so **an `unparsed` count above zero still means a row's status really is malformed.**
 
-The `probe-gated` bucket is the one that MOVED, and it is worth saying why rather than only that it did:
-it had been empty since M2b Wave 4's Task 5 promoted or retired all four of its members on 2026-08-11, and
-this landing re-opens it with exactly one row. That is the status doing its job rather than a regression —
-the channel is live in code and unobserved against a real model, which is the state the vocabulary has a
-word for. It empties again when `test/live/appserver-dynamic-tools.test.ts` first runs keyed, after
-2026-08-26 1pm. Note the asymmetry with its own method one row above: `tool/callResult` cannot carry this
-status, because the gate refuses `probe-gated` on a name the method registry holds, so its equal residual is
-written as prose in the section above. A reader comparing the two statuses is reading a rule about the gate's
-vocabulary, not a difference in what has been observed.
+The `probe-gated` bucket is the one that MOVED, in both directions inside a single week and each move the
+status doing its job: empty since M2b Wave 4's Task 5 promoted or retired all four of its members on
+2026-08-11, re-opened with exactly one row (`tool/callRequested`) at the M7 landing — live in code,
+unobserved against a real model, the state the vocabulary has a word for — and emptied again on 2026-08-25
+when `test/live/appserver-dynamic-tools.test.ts` first ran keyed (3/3; the run the dynamic-tools section's
+prose records, permission-mode discovery included). Note the asymmetry with its own method one row above:
+`tool/callResult` could never carry this status, because the gate refuses `probe-gated` on a name the
+method registry holds, so its equal residual lived as prose in the section above and closed the same day. A
+reader comparing the two histories is reading a rule about the gate's vocabulary, not a difference in what
+was observed.
 
-The previous sweep read **100 rows, 97 shipped, no `unparsed`** at the app-server image-input landing
+The previous sweep read **102 rows, 98 shipped, 1 `probe-gated`** at the M7 dynamic-tools landing
+(2026-08-24) — before the F10 merge rowed the three staged-image methods. Before that,
+**100 rows, 97 shipped, no `unparsed`** at the app-server image-input landing
 (2026-08-23), which registered no method and added no row. The one before that read **100 rows, 97 shipped,
 `unparsed 1`** at the M6 scorecard repair (2026-08-22), and the sweep before that
 **99 rows, 97 shipped** at M5 Task 11 (2026-08-19), whose delta was `stageImage`'s row alone.
@@ -966,8 +976,8 @@ had to run the gate to be able to say so.
 `thread/stop` shipped; and `fleet-only` by that same Task 9 (gap 4), a mirror scope that turned out to
 describe no method at all. A third, `probe-gated`, was emptied by M2b Wave 4's Task 5, which probed all four
 gated tokens live on 2026-08-11 (three promoted — `streamInput`, `reloadPlugins`, `reloadSkills` — and one
-retired to `N/A`) and stayed empty for thirteen days; **M7 Task 9 re-opens it with `tool/callRequested`**,
-under a quota that forbids the keyed run until 2026-08-26.
+retired to `N/A`) and stayed empty for thirteen days; **M7 Task 9 re-opened it with `tool/callRequested`**
+under an exhausted quota, and the first keyed run (2026-08-25) emptied it again the following day.
 
 **Origin scope is the column that keeps moving**, so what is worth recording is which rows moved and why,
 not the split they add up to. Task 9 moved `thread/stop` from `fleet-only` to `both` (gap 4). Task 10
