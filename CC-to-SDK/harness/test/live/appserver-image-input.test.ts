@@ -170,6 +170,11 @@ live("app-server image input — an items turn delivers real pixels to a real en
     }, 180_000);
     const id = String(started.thread.id);
     held.add(id);
+    // SUBSCRIBED, not just watched: measured on the first keyed run (2026-08-25) — `watchThreads` is
+    // thread-EXISTENCE fan-out only (fanout.ts), and every turn/item broadcast goes to per-thread
+    // SUBSCRIBERS. Without this line both legs time out on `<nothing>` no matter what the model did,
+    // which is exactly how this file failed its first keyed run.
+    await a.call("thread/subscribe", { threadId: id }, 30_000);
     return id;
   }
 
