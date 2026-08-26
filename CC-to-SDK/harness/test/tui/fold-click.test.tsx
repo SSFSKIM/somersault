@@ -576,26 +576,18 @@ describe("T-CLICKGATE Task 3 (bl4 finding 1): a tap on the result's HEADER row r
 });
 
 // ══ T-CLICKGATE Task 4 — edge rules: link-cell clicks are no-ops; blank-tail rules pinned ══════════════════
-// STEP 0's FINDING (full trace in task-4-report.md). `linkRangesOf` (`mouse/hitmap.ts`) walks a line's
-// `segments` and scans ONLY the ones marked `preStyled` for OSC-8 tokens; an ORDINARY segment's own bytes are
-// never inspected, only counted toward the running plain-text offset. Two producers embed an OSC-8 link
-// today: `groupRowLine`'s PR-clause run (`toolFold.ts`'s `href` clause, composed as ONE `preStyled` segment —
-// `linkRangesOf` DOES see this one) and a path tool's header argument (`toolRenderer.tsx`'s `headerArgument` /
-// `osc8FileLink`, wrapped in an ORDINARY segment — `linkRangesOf` MISSES this one; this file's own `unlink()`
-// helper above exists because of exactly that miss, per its own comment at line 32-33). NEITHER producer's row
-// is ever `item.clickable === true` in the shipped renderer (`clickable` is minted only on a tool-RESULT
-// gutter-block body — `toolRenderer.tsx`'s own doc — never a header or a fold-cluster row), so today's
-// click-to-expand can never actually land on a linked cell either way. The no-op rule below is therefore a
-// defensive, forward-looking invariant: both cases stamp `clickable: true` onto a hand-built row directly (the
-// same "cover the `RenderItem` union's case even with no live producer" idiom `fold-hitmap.test.tsx`'s own
-// `WIDE_DOC` uses for its untagged gutter-bearing line arm) rather than reproducing a scenario the renderer
-// cannot currently produce.
-//   Extending `linkRangesOf` to also scan ordinary segments (the brief's own alternative) is disproportionate
-// to this task's edge-rule scope — it would need grapheme-aware column mapping AND a change to a producer
-// contract (`render.ts`'s own doc: an ordinary segment's `text` is supposed to be plain already) that three
-// OTHER tasks' tests already depend on staying exactly as it is. So the no-op is implemented generically
-// against whatever `HitRow.linkRanges` the EXISTING scan captures, and the second case below pins the gap
-// precisely (spec D12) rather than papering over it.
+// STEP 0's FINDING (full trace in task-4-report.md), CLOSED by T-LINKOPEN Task 1. `linkRangesOf`
+// (`mouse/hitmap.ts`) used to walk a line's `segments` and scan ONLY the ones marked `preStyled` for OSC-8
+// tokens; an ORDINARY segment's own bytes were never inspected, only counted toward the running plain-text
+// offset. Two producers embed an OSC-8 link: `groupRowLine`'s PR-clause run (`toolFold.ts`'s `href` clause,
+// composed as ONE `preStyled` segment) and a path tool's header argument (`toolRenderer.tsx`'s
+// `headerArgument` / `osc8FileLink`, wrapped in an ORDINARY segment). `linkRangesOf` used to miss the second
+// shape entirely — this file's own `unlink()` helper above exists because of exactly that miss, per its own
+// comment at line 32-33 — which is the gap `headerRow` below reproduced and the second case used to pin as an
+// accepted limitation (spec D12: "extending `linkRangesOf` to also scan ordinary segments is disproportionate
+// to this task's edge-rule scope"). T-LINKOPEN Task 1 is the task that scope belonged to, and it DOES extend
+// the scan — to every segment regardless of `preStyled`, and to a bare `line.text` when a lone link has no
+// `segments` at all — so the second case below now pins the CLOSED gap instead of the open one.
 const HREF = "https://example.com/a";
 const LINK_LABEL = "a.ts";
 const osc8Open = (href: string) => "\x1b]8;;" + href + "\x07";
@@ -610,15 +602,16 @@ const linkedRow: RenderItem = { kind: "line", id: "link-row", ownerKey: "link-ro
     { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE, preStyled: true },
     { text: " post" },
   ] } as RenderLine };
-// The recorded gap: the SAME shape a path tool's header wears — the OSC-8 bytes sit in an ORDINARY segment,
-// so `linkRangesOf` never records them. `clickable: true` here is synthetic (a real header row never carries
-// the bit) so the case can say precisely what the gap covers, and nothing more.
+// The formerly-recorded gap: the SAME shape a path tool's header wears — the OSC-8 bytes sit in an ORDINARY
+// (non-`preStyled`) segment. T-LINKOPEN Task 1's generalized `linkRangesOf` now records this one too.
+// `clickable: true` here is synthetic (a real header row never carries the bit) so the case can say precisely
+// what the (now-closed) gap covered, and nothing more.
 const HEADER_PLAIN = "Read(a.ts)";
 const HEADER_LINK_COL = 7;    // inside "a.ts" — "Read(" is 5 columns, "a.ts" is columns 6-9
 const headerRow: RenderItem = { kind: "line", id: "header-row", ownerKey: "header-row", clickable: true,
   line: { text: HEADER_PLAIN, segments: [
     { text: "Read(" },
-    { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE },  // NOT preStyled — the gap
+    { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE },  // NOT preStyled — the formerly-recorded gap
     { text: ")" },
   ] } as RenderLine };
 
@@ -641,12 +634,45 @@ describe("T-CLICKGATE Task 4 (a): a click inside a captured `linkRanges` span is
   });
 });
 
-describe("T-CLICKGATE Task 4 (a, recorded gap — spec D12): an ordinary-segment OSC-8 link is not covered", () => {
-  it("still resolves the item target on the header's own link cell, because linkRangesOf never captured it", async () => {
+describe("T-CLICKGATE Task 4 (a, spec D12 gap CLOSED by T-LINKOPEN Task 1): an ordinary-segment OSC-8 link is a no-op too", () => {
+  it("resolves undefined on the header's own link cell now that linkRangesOf scans ordinary segments too", async () => {
     const hitmap = React.createRef<ViewportHitmap>();
     render(linkScene([headerRow], hitmap));
     await settleViewport();
-    expect(hitmap.current!.clickTargetAt(HEADER_LINK_COL, 1)).toBe("item:header-row");
+    expect(hitmap.current!.clickTargetAt(HEADER_LINK_COL, 1)).toBeUndefined();
+  });
+});
+
+// ══ T-LINKOPEN Task 1 (F2): link spans resolve BEFORE the fold answer ══════════════════════════════════════
+// Canon's row `onClick` (research-links.md §3e) reads `if (event.hyperlinkUrl) return event.allowDefault();`
+// as its FIRST statement — before the toggle is even considered — so a link cell on a FOLD-CLUSTER row must
+// defer to the hyperlink exactly as a plain item row's link cell already does above, not toggle the fold
+// underneath it. `foldLinkRow` below carries NO `clickable` bit at all (a real fold row never does), which is
+// also what proves the link check runs UNGATED by `clickableOwners`: the old order's fold-anchor branch ran
+// before the owner gate too, so this fixture would have opened/closed the fold either way pre-reorder — only
+// moving the link check ahead of THAT branch (not just ahead of the owner gate) can make `LINK_COL` resolve
+// to nothing here.
+const FOLD_ANCHOR = "fold-anchor-x";
+const foldLinkRow: RenderItem = { kind: "line", id: "fold-link-row", ownerKey: "fold-link-row", foldAnchor: FOLD_ANCHOR,
+  line: { text: LINK_PLAIN, segments: [
+    { text: "pre " },
+    { text: osc8Open(HREF) + LINK_LABEL + OSC8_CLOSE, preStyled: true },
+    { text: " post" },
+  ] } as RenderLine };
+
+describe("T-LINKOPEN Task 1 (F2): a fold row's own link cell defers to the hyperlink, not the toggle", () => {
+  it("resolves undefined on the fold row's link cell — today (pre-fix) this was \"fold:\" + anchor", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    render(linkScene([foldLinkRow], hitmap));
+    await settleViewport();
+    expect(hitmap.current!.clickTargetAt(LINK_COL, 1)).toBeUndefined();
+  });
+
+  it("the SAME fold row's non-link cell still resolves the fold", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    render(linkScene([foldLinkRow], hitmap));
+    await settleViewport();
+    expect(hitmap.current!.clickTargetAt(OUTSIDE_LINK_COL, 1)).toBe("fold:" + FOLD_ANCHOR);
   });
 });
 

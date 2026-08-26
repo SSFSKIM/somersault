@@ -420,13 +420,30 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   }, []);
   // T-CLICKGATE Task 3 — the click seam's own resolver (interface doc above). Reads the SAME `hit.current`
   // row `anchorAt` does, off the same column bound, so the two never disagree about WHICH cell has anything
-  // at all — only about what to call it. A fold anchor is checked first: the two kinds never coexist on one
-  // row today, so the order is a stated priority rather than an observed conflict.
+  // at all — only about what to call it.
+  //   T-LINKOPEN Task 1 (F2) — THE LINK CHECK RUNS FIRST, ahead of both the fold answer and the item answer,
+  // and it is NOT gated on `clickableOwners`. Canon's own row `onClick` handler (research-links.md §3e) reads
+  // as `if (event.hyperlinkUrl) return event.allowDefault(); …toggle…` — the hyperlink check is the FIRST
+  // statement, before the toggle is even considered, and it runs whether or not the row is one canon's own
+  // `isItemClickable` would ever mark clickable. A prose row is never a "clickable owner" (only a fold
+  // cluster or a clickable tool result is), yet its markdown link cells still have to resolve to no target —
+  // an un-owned row's `clickableOwners.has(...)` check below would otherwise never even get asked. The
+  // 2.1.237-era premise this order used to encode — "canon defers URL-opening entirely" — no longer holds
+  // (2.1.246 self-opens a gated release; T-LINKOPEN Task 3 wires ccx's own opener behind this same
+  // no-target answer). This task only clears the path: an `undefined` here is what lets a later gated
+  // release recognize "the tap machine found nothing" and try the opener instead, and it is what stops a
+  // fold row's own link cell from silently toggling the fold underneath a click aimed at the link.
   const clickTargetAt = useCallback((col: number, row: number): string | undefined => {
     const { top, rows: painted, clickableOwners } = hit.current;
     if (top <= 0) return undefined;
     const at = painted[row - top];
     if (at === undefined || col < 1 || col > at.width) return undefined;
+    // `columnToChar` already answers `undefined` for a gutter column and for a column past the row's own
+    // text (the blank tail), so a click there simply finds no span here and falls through to the fold/item
+    // answers below unchanged — this check only ever NARROWS what those answer, never widens past the width
+    // bound already enforced above.
+    const hitChar = at.linkRanges?.length ? columnToChar(at, col) : undefined;
+    if (hitChar !== undefined && at.linkRanges!.some((r) => hitChar.charStart < r.end && hitChar.charEnd > r.start)) return undefined;
     if (at.anchor !== undefined) return "fold:" + at.anchor;
     // bl4 fix-wave finding 1 (P2): resolved through the OWNER-level set, exactly as `hoverAt` resolves its
     // brightening below — a clickable result's HEADER row shares the owner's key but never carries
@@ -434,14 +451,6 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
     // the tap on a row hover had already brightened. `clickableOwnersOf` is `hit.current`'s own field, read
     // off the SAME frame `at` came from, so this can never disagree with what is actually painted.
     if (!clickableOwners.has(at.ownerKey)) return undefined;
-    // T-CLICKGATE Task 4 — a click landing inside a `linkRanges` span is a no-op, not a toggle: canon defers
-    // URL-opening entirely (this task does not add it), and expanding the result underneath would silently
-    // steal a gesture aimed at the link. `columnToChar` already answers `undefined` for a gutter column and
-    // for a column past the row's own text (the blank tail), so a click there simply finds no span here and
-    // falls through to the ordinary answer below — this check only ever NARROWS the clickable answer, never
-    // widens it past the width bound already enforced above.
-    const hitChar = at.linkRanges?.length ? columnToChar(at, col) : undefined;
-    if (hitChar !== undefined && at.linkRanges!.some((r) => hitChar.charStart < r.end && hitChar.charEnd > r.start)) return undefined;
     return "item:" + at.ownerKey;
   }, []);
   // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
