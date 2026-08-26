@@ -26,8 +26,11 @@ Close the two remaining bl4-parked items whose substrates are ready. Both flippe
 
 - New pure helper in `harness/src/media/imageDims.ts` (the zero-import leaf, import-freedom is
   test-enforced): `sniffImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/gif" | "image/webp" | null`.
-  It reuses the exact signature tests the four dimension readers already perform (PNG 8-byte signature,
-  JPEG FFD8+SOF walkability, `GIF87a`/`GIF89a`, `RIFF…WEBP`); a miss returns `null`, never throws.
+  It transcribes canon's sniffer `b()` VERBATIM (research-sniff.md, offset 184,082,132): prefix-only —
+  `null` under 4 bytes; PNG = first 4 signature bytes; JPEG = `FF D8 FF` (3 bytes); GIF = 6-byte
+  `GIF87a`/`GIF89a`; WebP = `RIFF` + length ≥12 + `WEBP` at 8-11. NOT the dimension readers' fuller
+  discriminators — a prefix-valid but dims-unreadable buffer sniffs to its format and is then refused
+  downstream by the existing dims checks, exactly canon's layering (plan-review F4).
 - **Chain 1 (authoritative), `session/turnInput.ts` `checkImageBlock`:** derive `media_type :=
   sniffImageMediaType(decoded)` and OVERWRITE the declared value in the canonical block, at the same place
   the chain already canonicalizes `data`. If the sniff returns `null` the existing unreadable-image refusal
@@ -40,9 +43,14 @@ Close the two remaining bl4-parked items whose substrates are ready. Both flippe
   other chain and the API accept both. Widen to the four-reader chain and re-home its ad-hoc
   `png ? "image/png" : "image/jpeg"` derivation onto `sniffImageMediaType`. Its existing derive posture and
   comment stay.
-- **Chains 3 & 5** (appserver `imageStage.ts` registry, host `imageStaging.ts`/`assembleStagedContent`)
-  inherit chain 1 downstream — no code, but a test each pins the inheritance (what the host replays as
-  `mediaType` after the fix; registry refusal copy carries through).
+- **Chain 3, `appserver/imageStage.ts` registry — code, not inheritance (plan-review F3):** the first-chunk
+  gate currently refuses any declared `mediaType` outside `IMAGE_MEDIA_TYPES` BEFORE bytes exist, so a valid
+  PNG declared `application/pdf` dies at the wire under pure "inheritance". Under derive semantics the
+  declaration is a hint: the chunk-0 check relaxes to a bounded non-empty string, and format acceptance
+  happens at completion from the SNIFFED bytes (where `validateImageBlock` already runs). Protocol-surface
+  behavior change, deliberate.
+- **Chain 5** (host `imageStaging.ts`/`assembleStagedContent`) inherits chain 1 downstream — no code; a test
+  pins what the host replays as `mediaType` after the fix.
 - Behavior note (public API): a caller-declared `media_type` that contradicts the bytes is silently
   corrected, not refused — this is canon's semantics and degrades nothing (Decision D2).
 
@@ -63,7 +71,14 @@ Close the two remaining bl4-parked items whose substrates are ready. Both flippe
 
 On mouse RELEASE, when the click resolved to no handled target ("unhandled") and the release position
 carries a hyperlink: canon opens it iff ALL of
-- not a VSCode/xterm.js-hosted terminal (host handles OSC 8 itself — stand-down), AND
+- not a VSCode/xterm.js-hosted terminal — canon's `ue()`: `isVscodeTerm` host flag OR
+  `TERM_PROGRAM === "vscode"` OR XTVERSION reply starting `xterm.js`. WE TRANSCRIBE the `TERM_PROGRAM`
+  term; the host-flag and XTVERSION terms are PARKED with D5 (same missing plumbing) — the gate is a
+  PARTIAL transcription and the spec says so (plan-review F5), AND
+- NOT a window-activation press (canon `!e.pressIsWindowActivation` — the click that focuses the terminal
+  window must not open a link). WE BUILD THIS: `FOCUS_ON` (DECSET 1004) is already armed by our alt-screen
+  enter sequence and `keys/parse.ts:132` already recognizes `ESC[I`/`ESC[O`; a press whose immediately
+  preceding input event was focus-in is an activation press (plan-review F5), AND
 - (alt or ctrl modifier bit set) OR (darwin AND `TERM_PROGRAM` is `ghostty` or `WarpTerminal` — those
   forward cmd+click without an SGR modifier bit), AND
 - alt-screen active (our fullscreen viewport — inherently true at this seam),
@@ -88,12 +103,18 @@ to expansion precedence — see below).
    override then `open` (darwin) / `xdg-open` (linux) via injectable spawn (DI-by-deps house style),
    headless-linux guard (`linux && !DISPLAY && !WAYLAND_DISPLAY` → refuse), warn-log refusal for
    non-allowlisted schemes. Pure decision function separated from the spawn so tests never spawn.
-3. **Gate + dispatch** in `FullscreenViewport.tsx`: the click resolver's current link-hit answer
-   (`undefined` = "unhandled", exactly canon's `allowDefault` outcome) stays; a NEW release-path branch
-   resolves the link under the release cell and, if the gate passes (modifiers from the
-   `MouseInputEvent`'s own `ctrl`/`alt` fields; `TERM_PROGRAM` checks), arms a 500 ms timer via the
-   injectable clock; `multiClickSelectionAt` cancels a pending timer (canon's cancellation). Expansion
-   precedence is untouched: a link-span click still never toggles expansion.
+3. **Gate + dispatch — ChatApp owns it (plan-review F1/F2).** `ChatApp.tsx`'s single `useMouseSink` is the
+   production release path, and it DROPS every modified click today (`e.ctrl || e.alt || e.shift → return`)
+   before the viewport is ever consulted — so the wiring lives there, not in the viewport alone. The
+   viewport grows one href-bearing query (`linkHrefAt(col,row): string | undefined`); ChatApp's sink routes
+   a qualifying RELEASE (gate passes; press/release paired on the same cell like the tap machine) through
+   that query and arms ONE 500 ms timer (injectable) calling `openUrl(href)`; a multi-click press and a new
+   armed link click both clear a pending timer (canon's cancellation).
+     **Link-before-fold precedence (F2):** `clickTargetAt` today returns `"fold:"+anchor` BEFORE examining
+   `linkRanges`, so a link cell on a T-PRLINK fold row toggles the fold — canon's row `onClick` defers to
+   the hyperlink FIRST (`allowDefault` is its first statement). The resolver moves link-span resolution
+   ahead of the fold-anchor return: a link-cell click on ANY row kind resolves to no target (plain click →
+   pure no-op; gated click → open), and fold/expansion toggles only ever fire from non-link cells.
 4. **Terminal detection**: `TERM_PROGRAM === "vscode"` → stand-down; darwin + `TERM_PROGRAM`
    `ghostty`/`WarpTerminal` → modifier-free open. XTVERSION-based Ghostty detection (canon's secondary
    probe) is PARKED — we have no XTVERSION plumbing (D5).
@@ -105,8 +126,13 @@ to expansion precedence — see below).
 - Unit: OSC 8 span recovery from a styled prose row (marked-rendered link), from a fold row (existing
   ranges), and their disagreement dedup; `columnToChar` mapping through a row containing OSC 8.
 - Unit: gate truth table — {vscode, plain-click, alt-click, ctrl-click, ghostty-plain-click,
-  warp-plain-click, linux-headless} × open/refuse; 500 ms defer fires exactly once with fake timers;
-  double-click within the window cancels; non-allowlisted scheme refused with warn and no spawn.
+  warp-plain-click, linux-headless, WINDOW-ACTIVATION press (focus-in immediately before)} × open/refuse;
+  500 ms defer fires exactly once with fake timers; double-click within the window cancels;
+  non-allowlisted scheme refused with warn and no spawn.
+- Unit: dispatch is tested through RAW SGR INPUT into the real ChatApp sink (not only a viewport handle) —
+  an alt-click release must reach the opener in production wiring (plan-review F1's false-green guard).
+- Unit: fold-row link precedence — a plain click on a fold-row link cell toggles NOTHING; an alt-click on
+  it opens the exact href and `expandedFolds`/`expandedItems` are unchanged (plan-review F2).
 - Unit: expansion precedence unchanged — a gated link click never toggles `expandedItems`; a clickable
   owner's non-link cell still toggles.
 - e2e (pty, real binary gate): with `BROWSER` set to a recorder script, an alt-click on a rendered link in
@@ -127,8 +153,10 @@ to expansion precedence — see below).
   canon evidence (research-links.md §3d) for a later round.
 - **D4 (allowlist verbatim):** canon's 12-scheme set copied exactly, not curated; fidelity-first.
   REJECTED: https/http-only (diverges observably for slack:/linear:/etc links).
-- **D5 (xtversion Ghostty probe PARKED):** no XTVERSION plumbing exists; `TERM_PROGRAM` covers Ghostty and
-  Warp in the direct case. Parked, not silently dropped.
+- **D5 (XTVERSION-dependent detection PARKED — widened at plan review):** no XTVERSION plumbing exists.
+  Parks BOTH canon probes that need it: the secondary Ghostty detection AND the `xterm.js`-host stand-down
+  term of `ue()` (plus its `isVscodeTerm` host flag, which has no analogue here). `TERM_PROGRAM` carries
+  the transcribed subset; the spec labels the gate a partial transcription. Parked, not silently dropped.
 - **D6 (`file:` NO-OP):** canon routes file: to its editor panel (`fileLinkOpensInPanel`); we have no
   panel. Opening in the browser would diverge from canon; no-op with the span still non-toggling. Parked.
 - **D7 (500 ms timer via injectable clock):** house testability rule; canon's `pE=500` verbatim.
@@ -151,3 +179,10 @@ Pending — written at finish.
 ## Revision Notes
 
 - v1: initial, both research reports folded in.
+- v2 (pre-execution plan review, codex gpt-5.6-sol, 5 findings — ALL accepted, F5 in part):
+  F1 dispatch moved to ChatApp's sink (modified clicks never reached the viewport); F2 link-before-fold
+  precedence (fold-row links toggled instead of deferring — also a latent bl4 canon divergence);
+  F3 chain-3 registry needs code (chunk-0 allowlist ran before bytes); F4 helper transcribes canon's
+  prefix-only `b()` verbatim (dimension-reader discriminators would diverge);
+  F5 window-activation guard BUILT (focus plumbing existed), xterm.js/isVscodeTerm stand-down PARKED into
+  D5 (no plumbing), gate relabelled partial transcription.
