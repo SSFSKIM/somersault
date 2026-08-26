@@ -23,6 +23,7 @@ import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
+import { themeTokens } from "../../src/tui/theme.js";
 
 const openUrlMock = vi.fn();
 vi.mock("../../src/tui/linkOpen.js", async (importOriginal) => {
@@ -49,6 +50,31 @@ const assistantText = (text: string, id: string) =>
 const LINK_URL = "https://example.com/a";
 const LINK_LABEL = "here";
 const LINK_DOC: readonly TranscriptBootstrapEntry[] = [assistantText(`click [${LINK_LABEL}](${LINK_URL}) now`, "link")];
+
+// Fix-wave (task-3 review, mutation 5): a row with TWO resolvable links, far enough apart on the same row
+// that a press on one and a release on the other are unambiguously different cells. If the release path's
+// same-cell pairing check (`at.col === e.col && at.row === e.row`) were ever dropped, this is the doc that
+// proves it — a single-link doc can't: the release cell would have no href at all, so a missing pairing
+// check and a correct one would look identical (both refuse to arm).
+const LINK_URL_ALPHA = "https://example.com/alpha";
+const LINK_URL_BETA = "https://example.com/beta";
+const LINK_LABEL_ALPHA = "alpha";
+const LINK_LABEL_BETA = "beta";
+const CROSS_LINK_DOC: readonly TranscriptBootstrapEntry[] = [
+  assistantText(`open [${LINK_LABEL_ALPHA}](${LINK_URL_ALPHA}) or [${LINK_LABEL_BETA}](${LINK_URL_BETA}) now`, "link2"),
+];
+
+// Fix-wave (task-3 review, mutation 3): the selection-paint seam (`selectionPaint.test.tsx`'s own idiom) —
+// `hasSelection()` requires a non-null `focus`, so a stray one-cell anchor from a modified press is invisible
+// to frame-equality or `openUrlMock`/timer-handle assertions alike. A drag that FOLLOWS the modified press
+// with no intervening real press is the only thing that turns a stray anchor into a visible two-endpoint
+// sweep: `dragTo`'s own guard (`mouse/selection.ts`) never seeds `anchor` itself, so if none was seeded by
+// the press, the drag paints nothing at all, regardless of where it lands.
+const sgrBg = (rgbToken: string): string => {
+  const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(rgbToken)!;
+  return `\x1b[48;2;${m[1]};${m[2]};${m[3]}m`;
+};
+const SEL_BG = sgrBg(themeTokens().selectionBg);
 
 // A genuinely CLICKABLE (click-to-expand) result with no link anywhere on it — T-CLICKGATE's own >10-line
 // error shape (`fold-click.test.tsx`'s `LONG_ERROR_DOC`), reproduced locally per this suite's
@@ -94,6 +120,7 @@ async function mount(entries: readonly TranscriptBootstrapEntry[], clock: Return
 
 const press = (col: number, row: number, mods = 0) => `\x1b[<${mods};${col};${row}M`;
 const release = (col: number, row: number, mods = 0) => `\x1b[<${mods};${col};${row}m`;
+const drag = (col: number, row: number) => `\x1b[<32;${col};${row}M`;   // button 0 + the motion flag, `selectionPaint.test.tsx`'s own byte
 const FOCUS_IN = "\x1b[I";
 const ALT = 8;
 
@@ -278,6 +305,47 @@ describe("T-LINKOPEN Task 3 — alt/ctrl-click on a link cell arms the 500 ms op
     expect(armed.cancelled).toBe(true);
     clock.fire(armed);
     expect(openUrlMock).not.toHaveBeenCalled();
+    r.unmount();
+  });
+
+  // Fix-wave (task-3 review, mutation 3, P2 coverage gap): a modified press must not seed a selection
+  // anchor. `hasSelection()`/frame-equality/`openUrlMock` all stay silent even if it wrongly did (a one-cell
+  // anchor with no drag paints nothing and opens nothing), so this proves it the only way that's actually
+  // load-bearing: drive a plain drag with NO intervening real press, and show it paints no selection at all.
+  it("a modified press seeds no selection anchor — a drag with no press between paints nothing", async () => {
+    setGates({ TERM_PROGRAM: "iTerm.app" });
+    const clock = linkClock();
+    const r = await mount(LINK_DOC, clock);
+    const link = locate(r.lastFrame(), LINK_LABEL);
+    const away = locate(r.lastFrame(), "now");
+
+    r.stdin.write(press(link.col, link.row, ALT));
+    await tick();
+    r.stdin.write(drag(away.col, away.row));
+    await settle();
+
+    expect(r.lastFrame()).not.toContain(SEL_BG);
+    r.unmount();
+  });
+
+  // Fix-wave (task-3 review, mutation 5, P2 coverage gap): every other cell in this file presses and
+  // releases the SAME cell on the modified path, so none of them can tell a dropped same-cell pairing check
+  // apart from a correct one. `CROSS_LINK_DOC` gives the release cell its OWN real href, so a dropped check
+  // would arm the WRONG link (`beta`'s url, off the `alpha` press) instead of refusing outright.
+  it("a modified press and release on DIFFERENT link cells never opens — cross-cell pairing is enforced", async () => {
+    setGates({ TERM_PROGRAM: "iTerm.app" });
+    const clock = linkClock();
+    const r = await mount(CROSS_LINK_DOC, clock);
+    const alpha = locate(r.lastFrame(), LINK_LABEL_ALPHA);
+    const beta = locate(r.lastFrame(), LINK_LABEL_BETA);
+
+    r.stdin.write(press(alpha.col, alpha.row, ALT));
+    await tick();
+    r.stdin.write(release(beta.col, beta.row, ALT));
+    await settle();
+
+    expect(openUrlMock).not.toHaveBeenCalled();
+    expect(clock.handles.length).toBe(0);                          // nothing was ever armed, for EITHER url
     r.unmount();
   });
 });
