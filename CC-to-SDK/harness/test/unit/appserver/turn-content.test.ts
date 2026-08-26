@@ -10,9 +10,17 @@
 // Fixture note: the brief's illustrative regex for the allowlist-rejection cell was `/unsupported image
 // media type/`, but the handler passes parsed params straight to `registry.chunk()` with NO re-mapping
 // (imageStage.ts's own contract, and this task's "practical payoff of the two shapes being one") — so the
-// refusal a client actually sees is the REGISTRY's own message (`... needs a mediaType in [...]`), proven
-// already at Task 7's unit level (image-stage.test.ts). The cells below assert that real message rather
-// than inventing a second one the handler would have to re-map.
+// refusal a client actually sees is the REGISTRY's own message, proven already at Task 7's unit level
+// (image-stage.test.ts). The cells below assert that real message rather than inventing a second one the
+// handler would have to re-map.
+//
+// bl5 T-SNIFF: a declared mediaType outside IMAGE_MEDIA_TYPES is NO LONGER refused at the first chunk —
+// the declaration is a hint, and format acceptance is decided once, at completion, from a sniff of the
+// assembled bytes (imageStage.ts's own comment on `chunk()`). What used to be "allowlist rejection" cells
+// below now stage successfully at chunk 0 and are settled (accepted or refused) at completion instead —
+// garbage bytes still refuse there, with "unreadable image data", and real bytes of a DIFFERENT format
+// than declared are ADMITTED with the derived type (image-stage.test.ts's own F3 cell proves the registry
+// side of that; the wire-level twin is below).
 //
 // Task 11 (I3e) extends this file with `turn/steerContent` — the two handlers share ONE gate helper
 // (turns.ts's `prepareStagedContent`), so the cells below prove the two substitutions (gate 4: "no turn
@@ -216,11 +224,19 @@ describe("I3d: the positive end-to-end JSON-RPC cell", () => {
     expect(sent.some((b: any) => b.type === "text" && b.text.includes(`too many images in one turn (limit ${MAX_IMAGES_PER_PROMPT})`))).toBe(true);
   });
 
-  it("a media type outside the allowlist is refused at the first chunk, and nothing is staged", async () => {
+  it("bl5 T-SNIFF: an allowlist-outside mediaType stages fine (it's a hint) — garbage bytes still refuse, at completion, with 'unreadable image data'", async () => {
     const { client, registry } = await realPeerPair();
     await expect(client.call("image/stage", { stageId: "image/tiff", seq: 0, last: true, bytesTotal: 4, mediaType: "image/tiff", data: "AAAA" }))
-      .rejects.toThrow(/needs a mediaType in/);
+      .rejects.toThrow(/unreadable image data/);
     expect(registry.stats()).toMatchObject({ stageCount: 0, stagedBytes: 0 });
+  });
+
+  it("bl5 T-SNIFF: real PNG bytes declared application/pdf reach the engine with the DERIVED image/png — over the wire", async () => {
+    const { client, engine, threadId } = await realPeerPair();
+    await stageWhole(client, "s1", fixture("rgb8-64x48.png"), "application/pdf");
+    await client.call("turn/startContent", { threadId, text: "pdf?", stagedImageIds: ["s1"] });
+    await waitFor(() => engine.contents.length === 1);
+    expect((engine.contents[0][1] as any).source.media_type).toBe("image/png");
   });
 
   it("bl4 T-GIFWEBP: image/gif and image/webp now stage and reach the engine over the wire", async () => {
@@ -239,9 +255,10 @@ describe("I3d: first-chunk mediaType enforcement, over the wire", () => {
     await expect(client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, data: "AAAA" })).rejects.toThrow(/mediaType/);
   });
 
-  it("outside IMAGE_MEDIA_TYPES is refused", async () => {
-    const { client } = await realPeerPair();
-    await expect(client.call("image/stage", { stageId: "s1", seq: 0, last: true, bytesTotal: 4, mediaType: "image/tiff", data: "AAAA" })).rejects.toThrow(/needs a mediaType in/);
+  it("bl5 T-SNIFF: outside IMAGE_MEDIA_TYPES is no longer refused AT seq 0 — it's a hint now, so this stages", async () => {
+    const { client, registry } = await realPeerPair();
+    await client.call("image/stage", { stageId: "s1", seq: 0, last: false, bytesTotal: 8, mediaType: "image/tiff", data: "AAAA" });
+    expect(registry.stats()).toMatchObject({ stageCount: 1 });
   });
 
   it("present on a later chunk is ignored — the first chunk's mediaType wins", async () => {
