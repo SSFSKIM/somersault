@@ -4,8 +4,13 @@
 to the recommendation (the gateway asserts `prompting`, and clients cannot declare a class).
 **Grounding:** `docs/superpowers/specs/2026-08-22-m6-cross-session-messaging-grounding.md` (the mechanism
 pass) · probe 113c (`probes/probes/113c-cross-session-inbound-envelope.ts`, keyed 2026-08-25:
-ADDRESSABLE) · probes 117 / 117b / 117c (`probes/probes/117*.ts`, keyed 2026-08-26: the four host seams).
+ADDRESSABLE) · probes 117 / 117b / 117c (the four host seams) · probes 118 / 118b (the three outcomes of
+an inbound message), all keyed 2026-08-26.
 **Branch:** `m8-cross-session`, off `f69d1e28e4`.
+**Rev 2** — an adversarial review of rev 1 returned twelve findings; ten survived adjudication and two
+were rejected with reasons (Decision Log). Two of the survivors were load-bearing enough to need their own
+measurement, which is what probes 118 and 118b are, and between them they replaced the whole inbound
+half of the design.
 **Status: DESIGNED — not yet built.**
 
 ## Purpose
@@ -54,6 +59,11 @@ installed CLI (2.1.246) and SDK 0.3.237.
 | `--settings` inline JSON is honored under `settingSources: []`, and an explicit value beats mode parity in **both** directions (117 Q2a/Q2b) | Per-thread policy without touching the user's repo, and a default that cannot be loosened by anything on disk. |
 | With `--replay-user-messages`, a peer turn surfaces as `{type:"user", isReplay:true, origin:{kind:"peer", …}}`; without it **no user prompt frame is emitted at all** (117 Q3) | The doorbell and the notification payload are the same object. 113c's "origin never observed" was a missing flag, not a stripped field. |
 | `Options.settings` as an object serializes to real JSON on argv (117c) | The harness's existing `config.settings` path is sound; no string-encoding workaround is needed. |
+| An inbound message becomes its **own turn**, a **follow-up turn**, or is **folded into the running turn**, depending on whether the receiver was busy and whether it had another model round-trip left (118, 118b Q5) | Arrival and execution are separate facts. A notification fires on arrival; a turn is adopted only when one actually runs. |
+| A peer turn's result carries **no `user_message_uuid`**, and its `origin.kind` is `peer` or `task-notification` depending on which of those paths it took (118b Q2/Q3, 118) | Correlation by uuid is impossible and correlation by origin class is unreliable; settlement rides the unclaimed-result seam instead. |
+| Several messages arriving during one busy turn **batch into a single turn** (118 Q2) | One message ≠ one turn, in either direction. |
+| The replay frame is emitted at **enqueue**, before the running turn's own result (118) | A replay is not proof that the peer turn is executing — it retires rev 1's waiter-ordering argument. |
+| `readLoop` calls every frame subscriber **before** it resolves a matching waiter (`session.ts:373` vs `:388-390`) | A router-driven "has my waiter fired?" fallback always wins the race, so rev 1's belt would have become the only settlement path. |
 
 ## Wire design
 
@@ -107,6 +117,13 @@ wrong guess here delivers a message into somebody else's session.
 `from-name`, `from-mode` — because the receiver re-serializes and compares byte-exactly, and anything out
 of order is silently downgraded to plain text. Only the attributes we set appear.
 
+**Attribute values are escaped, not interpolated.** The envelope is compared byte-exactly by the receiver
+after it re-serializes what it parsed, and two of the values are not ours to trust: a socket path and a
+thread name a client chose. A quote, ampersand, angle bracket or newline in either silently downgrades the
+whole envelope to plain text — which drops the permission attribution and changes the delivery decision
+with nothing raised anywhere. The assembler escapes each value with the CLI's own XML attribute rules, and
+hostile names are a test fixture rather than a hope.
+
 **`from` is always the gateway's own address**, never a thread's. It is the reply route, and receipts come
 back over a connection whose pid the kernel checks: no other value could receive them.
 
@@ -129,12 +146,32 @@ measured size and the limit. The receiver's exact cap is a **delegated unknown**
 minified bundle, and the honest way to learn it is a bisecting probe against a live inbox during
 execution. Until it is pinned, ours is set low enough that no frame we accept can reach theirs.
 
-**Without `fromThreadId` the gateway asserts `from-mode="prompting"`** (the resolved fork). The gateway
-process runs no model and asks no permission; claiming `bypass` would be a false statement about the one
-attribute the recipient uses to decide. The visible consequence, which belongs on the wire docs: a message
-sent with no thread attribution reaches a `bypassPermissions` peer as **held**, and on a headless peer it
-then expires. A client that needs immediate delivery to such a peer attributes the send to a bypass
-thread it owns. Clients cannot declare a class themselves; the surface has no `asMode`.
+That cap binds what THIS server sends, and nothing more. Any same-user process can write to a hosted
+thread's inbox directly, and by the time the replayed frame reaches us the CLI has already admitted the
+body as model input — there is no point at which this server could intervene. The reviewer who raised this
+framed it against a 10K-token ceiling on model-visible injected items; that rule is `AGENTS.md`'s and
+governs `codex-rs/`, which this repository has already adjudicated once (M7 rejected the same misapplied
+import), so it is not a conformance gap here. What remains true is narrower and worth acting on: the only
+bound on inbound size is the CLI's own line cap, whose value we have not measured, and the only control a
+hosted thread has is whether it accepts peer mail at all. That is what makes `refuse` the default rather
+than a preference.
+
+**The gateway always asserts `from-mode="prompting"`, and `fromThreadId` cannot change it.** The first
+draft let attribution to a thread carry that thread's real permission class, on the reasoning that a
+bypass thread speaking should say so. That reasoning was wrong, and the spec's own claim that "clients
+cannot declare a class" was false as written: a client creates its own `bypassPermissions` thread — one
+ordinary `thread/start` — and passes its id, and the gateway then asserts `bypass` on text the client
+authored. That is the rejected `asMode` surface with one setup call in front of it, and what it buys is
+real: `hold` is how a *stranger's* session protects its user from unattributed text, and this would step
+around it into the user's own TUI session.
+
+So the class is a property of the sender, and the sender is a gateway process that runs no model and asks
+no permission: `prompting`, always. `fromThreadId` sets `from-session` (a navigation target) and
+`from-name` (a label) and nothing that any recipient uses to decide. The honest cost is stated on the
+wire: **every message this server sends is held by a `bypassPermissions` peer**, and on a headless peer a
+hold expires. Immediate delivery to such a peer is not something this surface offers, and the way to
+change that is a sender that genuinely holds the class — a model-side send, which this milestone does not
+build — not a parameter.
 
 ### `peer/messageStatus` — the receipt, as a notification
 
@@ -202,118 +239,225 @@ Teardown unlinks both the socket and the key file. A bind failure is not fatal: 
 server-side feature gate (`agents_cross_session_inbox`) that can turn off without an SDK release, so
 runtime detection and degradation are the design's baseline, not its error path.
 
-### Inbound policy injection, and the hole to close
+### What the gateway retains, and what it cannot reach
 
-The resolved policy is written into the thread's settings through the existing
-`config.settings` seam (`config/settings.ts`), which probe 117c confirmed reaches argv as real JSON. A
-thread that opts in also gets `--replay-user-messages` via `extraArgs`, server-owned.
+**The correlation map needs its own lifecycle, because the success path never signals.** A `peer/send`
+records `msgId -> sending connection` so a later receipt can be routed. Delivered and refused messages
+produce no receipt at all, so the common outcomes leave no cleanup signal, and a long-lived client would
+grow the map without bound. Three rules, none of them optional: entries expire on a TTL comfortably longer
+than the hold deadline (`dialogExpiry`, 5 minutes by default and overridable by
+`CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`); a connection's entries are dropped when it closes; and per-connection
+and global counts are capped, with the oldest entry evicted first. `held` is explicitly **not** terminal —
+an `expired` can follow it, so a `held` entry is retained rather than released on arrival. `expired`,
+`delivered`, `refused`, `denied` and `dropped` are terminal and release immediately.
 
-Both are forgeable by a client today: `extraArgs` reaches the CLI as raw argv where the last flag wins, so
-a client-supplied `extraArgs.settings` would override ours. `appserver/sessionIdentity.ts` already strips
-identity flags from both `extraArgs` and the `extraOptions` hatch for exactly this reason; this milestone
-extends that same stripping to `settings` and `replay-user-messages`. The stripping lives beside the
-existing one, in the same function, because the invariant is the same one.
+**One gateway socket cannot serve every peer on the machine.** The receipt sender refuses any reply
+address outside the receiver's own socket directory, and directories vary — `XDG_RUNTIME_DIR`,
+`CLAUDE_CODE_TMPDIR`, an explicit `--messaging-socket-path`. A send to a peer in another namespace is
+therefore deliverable but can never produce a status, which is a contract difference the method must not
+paper over. `peer/send` compares the target's directory with the gateway's and, when they differ, still
+sends and returns `statusReachable: false` beside `delivered: false`. `peer/list` marks the same fact per
+row. Binding a second gateway per namespace is a later option and is deliberately not in this milestone:
+one honest field costs nothing and no measurement yet says multiple namespaces occur in practice.
 
-### Adopting the turn nobody asked for
+### Inbound policy injection, and the three doors to close
 
-The SDK correlates a turn's result to its waiter by `user_message_uuid` **and** by origin class: a waiter
-declares the origin it owns, and a result whose `origin.kind` differs settles nothing. Peer-initiated
-turns therefore need a waiter of their own — without one, the result is counted in `Session`'s existing
-`unmatchedResults` and the thread wedges busy forever.
+The resolved policy is written into the thread's settings through the existing `config.settings` seam
+(`config/settings.ts`), which probe 117c confirmed reaches argv as real JSON. A thread that opts in also
+gets `--replay-user-messages` via `extraArgs`, server-owned.
 
-So `SubmittedOrigin` gains `"peer"`, and `Session` gains one method:
+Three doors let a client reach past that, and all three must be shut — the first draft shut only one:
+
+1. **Startup argv.** `extraArgs` reaches the CLI as raw argv where the last flag wins, so a client-supplied
+   `extraArgs.settings` overrides ours. `appserver/sessionIdentity.ts` already strips identity flags from
+   both `extraArgs` and the `extraOptions` hatch; this extends that same stripping to `settings` and
+   `replay-user-messages`, in the same function, because it is the same invariant.
+2. **`thread/settings/apply`, after startup.** Its params are `z.record(z.string(), z.unknown())` — an open
+   record — and the handler forwards it to `Session.applyFlagSettings`, which writes **the very layer this
+   design relies on**, at runtime, with no mirror write and no `thread/settings/changed` broadcast. Any
+   initialized connection could therefore turn another thread's `refuse` into `accept` and then feed it.
+   `crossSessionInbound` is reserved in that method: refused with `-32602` naming itself, because a
+   silently ignored key would be worse than the refusal. A client that wants to change the policy asks
+   `thread/crossSessionInbound/set` — a small dedicated method with the same value domain and the same
+   inProcess-only rule — so a policy change is always a deliberate, named act.
+3. **Version skew.** `thread/start`'s params are a plain `z.object`, which strips unknown keys silently,
+   so a new client asking an OLDER server for `refuse` gets a healthy thread that still runs mode parity —
+   protection the client believes it has and does not. This is the exact failure the M7 `dynamicTools`
+   marker exists to prevent, and its own schema doc says so. So `initialize`'s result gains
+   `crossSession: true` as a `z.literal(true)`: an older server sends nothing at all, absence is the
+   signal, and a client that means to rely on the policy must read the marker first.
+
+### Arrival is not a turn — the three outcomes, and what each one forces
+
+The first draft of this section assumed an inbound peer message becomes a turn. Probes 118 and 118b
+measured that it becomes **one of three things**, and that nothing observable at delivery time says which:
+
+| Receiver state at delivery | What happens | What the result frame carries |
+|---|---|---|
+| Idle | The message runs as its own turn, preceded by a second `system/init` | `origin: {kind:"peer", from, verifiedPeerPid, name, fromMode, body, msg_id}` — and **no `user_message_uuid`** |
+| Busy, and the running turn ends without another model round-trip | A separate follow-up turn | `origin: {kind:"task-notification"}` — not `peer` |
+| Busy, with round-trips still to come | **Folded into the running turn.** The queue is drained mid-turn, after a tool result and before the next round-trip, and the peer text rides in as an attachment | The running turn's own result, carrying the ORIGINAL turn's uuid and no peer origin. There is no second result at all |
+
+The third row is why the first draft's busy path — park in a pending slot, claim it at `settleTurn` —
+would have minted a turn that never runs and left the thread busy forever. The second row is why an
+adopted waiter cannot declare origin `"peer"`: the same event produces a different origin class depending
+on timing the host does not control. And the missing `user_message_uuid` is why `adoptTurn(uuid)` is
+impossible: the replayed frame that *causes* the turn carries a uuid, and the result it produces does not.
+
+Two further measurements bound the shape:
+
+- **Several messages arriving during one busy turn BATCH into a single turn** — two replays, one result.
+  So a turn can answer N peer messages, and a one-message-one-turn model is wrong in both directions.
+- **The replay frame is emitted at ENQUEUE, not at execution start.** It precedes the running turn's own
+  result. A replay is therefore not proof that the peer turn is executing, which retires the earlier
+  unshift argument along with the waiter it justified.
+
+### The design those measurements leave
+
+**Split arrival from execution.** They are different facts, they are observable at different moments, and
+conflating them is what produced every defect above.
+
+**Arrival** is the replayed frame, and it is exact: it always fires, once per message, carrying the full
+peer `origin` including `msg_id`. `thread/peerMessage` is broadcast from there and promises nothing about
+a turn. A client correlating a send to an arrival uses `msg_id`; a client wanting to know what the message
+*caused* watches the thread's turns like any other observer.
+
+**Execution** is detected the one way that holds across all three outcomes: **frames arriving on a thread
+this server believes is idle.** If `record.busy` is false and the engine starts producing, a turn is
+running that this server did not start — regardless of whether its cause was a peer message, and
+regardless of which origin its eventual result carries. In the fold case no such window ever opens,
+because our own turn is running and owns its frames; nothing is adopted, which is exactly right.
+
+Adoption then mints a turn id, claims `busy` through `beginTurn`'s client-less entry (the same one the
+queue drain uses), and broadcasts `turn/started`. That event carries `origin` when unconsumed peer
+arrivals are on record for the thread and omits it otherwise — best-effort attribution over an exact
+notification, rather than a guess dressed as a fact.
+
+**Settlement rides the one seam that already knows.** `Session.readLoop` increments `unmatchedResults`
+at exactly the point where a result frame matched no waiter (`session.ts:392`) — which is precisely what
+a peer turn's result is, in all three shapes it can take. So `Session` gains a hook there:
 
 ```ts
-adoptTurn(uuid: UserMessageUUID, onMessage: (m: unknown) => void): Promise<TurnOutcome>
+onUnclaimedResult(cb: (result: unknown) => void): () => void
 ```
 
-It registers a waiter exactly like `enqueueTurn` does — and pushes **nothing** onto the input queue. The
-correlation machinery is already right; it was simply never given a turn it did not start.
+The adopted turn settles on it. This replaces the first draft's waiter **and** its belt, and the belt had
+to go regardless: `readLoop` calls every frame subscriber *before* it resolves a matching waiter
+(`session.ts:373` vs `:388-390`), so a router-driven "has my waiter fired yet?" fallback always observes
+it unfired and wins the race unconditionally — the rescue path would have become the only path. One
+settlement site, no race to lose.
 
-**The waiter goes to the FRONT of the queue, and that detail is load-bearing.** Result frames are matched
-by uuid and origin, but every *other* frame is routed to `waiters[0]` and nowhere else
-(`src/session/session.ts:393`). Push the adopted waiter to the back while a client turn sits queued ahead
-of it, and the peer turn's assistant frames stream into the client turn's mapper — items attributed to a
-turn that has not started, on a thread where both turns then look wrong. Unshift is not merely safer, it
-is what the engine's own ordering says: the CLI emits the replayed user frame at the moment it *dequeues*
-that message to run it, so a peer replay frame is proof that the peer turn is the one now executing and
-that anything still queued behind it in `waiters` has not begun. When the peer result settles its waiter
-and it shifts off, the client's turn is head again.
+`unmatchedResults` still increments for anything the hook does not consume, so it keeps its job as the
+tripwire for results nobody owns.
 
-The app-server side is a small state machine in `appserver/peerInbound.ts`, driven by the replayed frame:
+### Interrupt, close, and shutdown
 
-1. A router route sees `{type:"user", isReplay:true, origin.kind === "peer"}` on a thread. Every other
-   replayed frame is ignored — the flag also re-emits our own prompts, and only the peer arm is ours.
-   (The item mapper is unaffected either way: its `onUser` reads `tool_result` blocks only, so a replayed
-   prompt produces no item events. A unit row pins that, so a future mapper change cannot quietly
-   fabricate an item from a replay.)
-2. If the thread is idle, adoption claims the turn through `beginTurn` with no `ctx`/`id` — the same
-   client-less entry the queue drain already uses — and its runner awaits `adoptTurn(frame.uuid)`.
-   `turn/started` carries the peer `origin`, and `thread/peerMessage` is broadcast alongside it.
-3. If the thread is busy, the CLI has queued the message behind our own turn. Adoption parks it in a
-   single pending slot and claims it from `settleTurn`, the same place the queue drain runs. One slot,
-   not a queue: the CLI owns the real queue, and a second one here would be a second source of truth.
-4. The adopted turn settles when its waiter resolves. As a belt, it also settles if the router observes a
-   terminal `result` frame for this thread while an adoption is open and its waiter has not fired —
-   settle-once, latched. This exists because a wedged thread is worse than an approximate completion, and
-   because whether a peer result frame carries `user_message_uuid` is a **delegated unknown** this design
-   names rather than assumes: the live acceptance settles it, and `unmatchedResults` is the instrument
-   that turns a wrong guess into a red test instead of a hang.
+An adopted turn is a real turn and dies like one: `turn/interrupt` interrupts it, `thread/close` and
+`shutdown` settle it `cancelled` through the same flush every client-owned turn goes through. Two
+adoption-specific rules the existing paths cannot infer:
+
+- The `closing` latch **blocks new adoptions**. Frames arriving on a closing thread are not a turn this
+  server will announce; adopting one would emit `turn/started` after `thread/closed`.
+- Unconsumed peer arrivals are dropped at close with no notification of their own. They were announced
+  when they arrived; a second event about a message that will now never run would be inventing an outcome.
+
+Interrupting an adopted turn interrupts the ENGINE's turn, which is the peer's, not a client's — worth
+stating on the wire because the interrupting client did not start it.
+
+### Live and replayed views must agree
+
+The transcript projection turns every persisted top-level user prompt into a `userMessage` item, with no
+`isMeta`, `origin` or `isReplay` filter available to it — the persisted rows carry no such flags
+(`sessions/rows.ts`, probe 68b). A peer prompt therefore appears as a `userMessage` on `thread/read` while
+live subscribers saw only `thread/peerMessage`, so a client that reconnects sees an item that never
+existed live.
+
+Rather than teach the projection to suppress it — the rows cannot support that test — the live path emits
+**the same `userMessage` item** for an adopted turn, id-stable on the replayed frame's `uuid`, alongside
+`thread/peerMessage`. Live and replay then agree by construction, and the notification remains the
+richer, peer-specific channel. This also settles what the item mapper does: nothing, still — its `onUser`
+reads `tool_result` blocks only, and the item is emitted by the adoption path rather than by ingestion,
+which a unit row pins so a future mapper change cannot start fabricating one.
 
 ### Where the code lands
 
 `src/peer/gateway.ts` (socket, key file, receipt parsing), `src/peer/address.ts` (grammar, namespace
 checks, envelope assembly — pure, so its byte-exactness is unit-testable without a socket),
-`src/peer/roster.ts` (registry read + liveness), `appserver/peerDomain.ts` (the two methods),
-`appserver/peerInbound.ts` (the adoption state machine), `appserver/schema/peer.ts` (registered in
-`methodSchemas`, with `result` shapes published — M5's D-M5-19 convention), and the two handlers
-registered in `server.ts` beside `fleet/list` and `thread/attach`. Named `peerDomain`/`peerInbound`
+`src/peer/roster.ts` (registry read + liveness), `src/peer/receipts.ts` (the correlation map and its
+retention rules), `appserver/peerDomain.ts` (`peer/list`, `peer/send`),
+`appserver/peerInbound.ts` (arrival notification + the adoption state machine),
+`appserver/peerPolicy.ts` (`thread/crossSessionInbound/set`, the settings injection, and the reservation
+`thread/settings/apply` enforces), `appserver/schema/peer.ts` (registered in `methodSchemas`, with
+`result` shapes published — M5's D-M5-19 convention), and the handlers registered in `server.ts` beside
+`fleet/list` and `thread/attach`. One change lands outside the domain: `Session` gains
+`onUnclaimedResult` at `session.ts`'s existing unmatched-result site. Named `peerDomain`/`peerInbound`
 because `appserver/peer.ts` is the JSON-RPC framing class and the collision is a known trap.
 
-Both methods are **server-scoped**: they name no thread and bypass the engine-gone and origin gates, like
-`fleet/list` and `config/*`. Errors reuse `-33008` (documented as the fleet-operation code "named for its
-first user") for gateway and delivery failures, and `-32602` for an ambiguous or unresolvable target.
+`peer/list` and `peer/send` are **server-scoped**: they name no thread and bypass the engine-gone and
+origin gates, like `fleet/list` and `config/*`. `thread/crossSessionInbound/set` is thread-scoped and
+inProcess-only. Errors reuse `-33008` (documented as the fleet-operation code "named for its first user")
+for gateway and delivery failures, and `-32602` for an ambiguous target, an over-cap message, or a
+reserved key offered to `thread/settings/apply`.
 
 ## Acceptance (behavior-phrased)
 
 Keyless, run from `CC-to-SDK/harness`:
 
 1. `npx vitest run test/unit/peer/address.test.ts` — the envelope is byte-exact with the CLI's attribute
-   order, and reordering any two attributes changes the bytes; `uds:` addresses parse, `bridge:` is
-   refused naming itself, a path outside the receiver's directory is refused as out-of-namespace; the key
-   file name is `sha256` of the socket path.
+   order, and reordering any two attributes changes the bytes; a thread name or socket path carrying a
+   quote, ampersand, angle bracket or newline is ESCAPED such that the receiver's parse-and-reserialize
+   still matches byte-for-byte; `uds:` addresses parse, `bridge:` is refused naming itself, a path outside
+   the receiver's directory is refused as out-of-namespace; the key file name is `sha256` of the socket
+   path.
 2. `npx vitest run test/unit/peer/gateway.test.ts` — a receipt written by a fake sender is parsed and
    correlated by `orig_msg_id`; the listener closes the connection after consuming a frame; a `type:"user"`
    frame is dropped and raises a `warning`; teardown unlinks socket and key; a bind failure leaves the
-   server up with `peer/*` answering `-33008`.
+   server up with `peer/*` answering `-33008`. The correlation map's lifecycle has its own rows: a `held`
+   receipt does NOT release its entry and a following `expired` still routes; every other status releases
+   immediately; entries expire on the TTL; a closing connection drops its entries; and the per-connection
+   and global caps evict oldest-first rather than growing.
 3. `npx vitest run test/unit/appserver/peer-domain.test.ts` — `peer/list` projects present fields verbatim
-   and omits absent ones, marks `alive`/`inboxBound`/`threadId`, lists dead rows by default and drops them
-   under `aliveOnly`; `peer/send` puts the requested `priority` on the frame and `"next"` when none was
-   asked for, refuses an over-cap message with `-32602` naming the measured size and the limit, sets no
-   `hop-chain` attribute, mints a UUID `msgId`, refuses
-   an ambiguous target with the matches listed, refuses `fromThreadId` on a fleet thread with `-33006`,
-   asserts `from-mode="prompting"` with no attribution and the thread's real class with it, and returns
-   `delivered: false`; a receipt arriving for that `msgId` reaches the sending connection as
-   `peer/messageStatus` and is dropped when that connection is gone.
-4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — a replayed peer frame on an idle thread
-   claims a turn and broadcasts `thread/peerMessage` + `turn/started` carrying the peer origin; on a busy
-   thread it is claimed at `settleTurn`; a replayed **non-peer** frame is ignored and produces no item
-   events; an adoption raised while a client turn is queued ahead of it takes the HEAD of the waiter queue,
-   so the peer turn's assistant frames reach the peer turn's mapper and not the queued turn's;
-   the adopted turn settles on its waiter, and settles once via the belt when the waiter never
-   fires; `crossSessionInbound` is written explicitly at `thread/start` for every value including the
-   default, is stripped from a client's `extraArgs` and `extraOptions`, and is refused on a fleet thread.
-5. `node scripts/drift-check.mjs` from `CC-to-SDK/` — exit 0, with the new methods rowed and the
+   and omits absent ones, marks `alive`/`inboxBound`/`threadId`, flags rows outside the gateway's socket
+   namespace as status-unreachable, lists dead rows by default and drops them under `aliveOnly`;
+   `peer/send` puts the requested `priority` on the frame and `"next"` when none was asked for, refuses an
+   over-cap message with `-32602` naming the measured size and the limit, sets no `hop-chain` attribute,
+   mints a UUID `msgId`, refuses an ambiguous target with the matches listed, refuses `fromThreadId` on a
+   fleet thread with `-33006`, and returns `delivered: false` — plus `statusReachable: false` for a target
+   in another namespace. **`from-mode` is `"prompting"` on every send, including one attributed to a
+   `bypassPermissions` thread**, and `fromThreadId` changes only `from-session` and `from-name`. A receipt
+   arriving for that `msgId` reaches the sending connection as `peer/messageStatus` and is dropped when
+   that connection is gone.
+4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — the three outcomes, each as its own row:
+   a replayed peer frame broadcasts `thread/peerMessage` in ALL of them, exactly once, carrying the
+   origin verbatim including `verifiedPeerPid` and `msg_id`; frames arriving while the thread is idle
+   adopt a turn (turn id minted, `turn/started` broadcast carrying the origin when an unconsumed arrival
+   is on record and omitting it otherwise), and that turn settles on the unclaimed-result hook; frames
+   arriving while a client turn is running adopt NOTHING, so the folded case leaves exactly one turn; two
+   arrivals followed by one adopted turn produce one turn, not two. A replayed **non-peer** frame is
+   ignored and produces no item events. An adopted turn emits an id-stable `userMessage` item so the live
+   view matches what `thread/read` projects from the transcript. `closing` blocks new adoptions, and
+   interrupt/close/shutdown settle an adopted turn through the same flush a client turn takes.
+5. `npx vitest run test/unit/appserver/peer-policy.test.ts` — `crossSessionInbound` is written explicitly
+   at `thread/start` for every value including the default; it is stripped from a client's `extraArgs` and
+   from the `extraOptions` hatch, as is `replay-user-messages`; `thread/settings/apply` REFUSES it with
+   `-32602` naming the key; `thread/crossSessionInbound/set` changes it and is refused on a fleet thread
+   with `-33006`; and `initialize`'s result carries `crossSession: true`.
+6. `node scripts/drift-check.mjs` from `CC-to-SDK/` — exit 0, with the new methods rowed and the
    notifications rowed, and `docs/parity/full-potential.md`'s stale 🚫 row for cross-session receive
    replaced by a scored row (the capability re-enters the denominator).
 
 Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 
-6. The whole loop against a real engine: the server starts a thread with `crossSessionInbound: "accept"`,
-   `peer/list` shows that thread's own row with its `threadId`, `peer/send` addresses it with attribution
-   from a second bypass thread, and the subscriber sees `thread/peerMessage` → `turn/started` with
-   `origin.kind === "peer"` → `turn/completed`, with the model's reply naming the sent token.
-7. The negative leg: the same send into a `crossSessionInbound: "refuse"` thread produces no
+7. The whole loop against a real engine, on an IDLE receiver: the server starts a thread with
+   `crossSessionInbound: "accept"`, `peer/list` shows that thread's own row with its `threadId`,
+   `peer/send` addresses it, and the subscriber sees `thread/peerMessage` → `turn/started` → its items →
+   `turn/completed`, with the model's reply naming the sent token. `unmatchedResults` is unchanged at the
+   end, which is what says the adopted turn's result was consumed rather than dropped.
+8. The fold leg, which is the one no unit test can fake: the receiver is given a turn with several
+   sequential tool calls, the message is delivered mid-turn, and the client sees `thread/peerMessage`
+   **and exactly one turn** — no second `turn/started`, no orphaned turn id, and the running turn's own
+   completion carrying the model's answer to both prompts.
+9. The negative leg: the same send into a `crossSessionInbound: "refuse"` thread produces no
    `thread/peerMessage`, no turn, and no receipt — silence on both channels is the measured contract.
 
 ## Decision Log
@@ -325,10 +469,29 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   a UI client would have to create a thread merely to speak, and `from` must be the gateway's address
   anyway because that is where receipts can land. Rejected: gateway-only with no attribution — the
   receiving side could then never tell which of our threads spoke.
-- **The gateway asserts `prompting`** (owner-resolved fork). Rejected: a client-declared `asMode` — it
-  would let any WS client claim `bypass` and land straight in a stranger's turn queue, and `from-mode` is
-  the exact field the recipient trusts. The cost is stated on the wire: unattributed sends are held by
-  bypass peers.
+- **The gateway asserts `prompting` on every send, with no way for a client to change it** (owner-resolved
+  fork, then hardened in rev 2). Rejected: a client-declared `asMode`. Also rejected, and this is the rev-2
+  correction: letting `fromThreadId` carry the named thread's real class — a client can create its own
+  `bypassPermissions` thread and pass its id, which is the same escalation with one setup call in front of
+  it. The cost is stated on the wire: every send from this server is held by a bypass peer, and immediate
+  delivery would need a sender that genuinely holds the class.
+- **Arrival and execution are separate events** (rev 2, forced by probes 118/118b). Rejected: rev 1's
+  one-replay-one-turn model — measurement showed a message can be folded into a running turn with no turn
+  of its own, batched with others into one turn, or run as its own, and nothing at delivery time predicts
+  which.
+- **Settlement rides `onUnclaimedResult`.** Rejected: rev 1's `adoptTurn(uuid)` (peer results carry no
+  uuid) and its router-driven belt (frame subscribers run before waiter resolution, so the belt would have
+  won every race and become the only path). Rejected: a waiter declaring origin `"peer"` — the same event
+  yields `peer` or `task-notification` depending on timing the host does not control.
+- **`crossSessionInbound` is reserved in `thread/settings/apply` and gets its own setter.** Rejected:
+  leaving the generic settings RPC open — it writes the identical flag layer at runtime, so guarding only
+  startup argv guarded half the door.
+- **`initialize` publishes `crossSession: true`.** Rejected: shipping the field without a marker — a plain
+  `z.object` strips it, so a new client asking an older server for `refuse` would believe it was protected
+  and not be. The repo already learned this once with `dynamicTools`.
+- **A namespace mismatch is disclosed, not hidden.** Rejected: binding a gateway per namespace now (no
+  measurement says multiple namespaces occur in practice) and rejected: silently sending as if status
+  would follow.
 - **Default `refuse`, always written explicitly.** Rejected: CLI-default mode parity — it would open every
   bypass thread this server hosts to any same-user process, spending the user's tokens with no client
   having asked. Rejected: writing the key only when a client sets it — an unwritten key lets a settings
@@ -344,6 +507,18 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 - **`bridge:` refused, not attempted.** Rejected: passing it through untested — cross-machine delivery is
   governed by a different setting and was never measured; a refusal that names itself is honest, an
   untested pass-through is not.
+
+### Findings rejected, with reasons
+
+- **A 10K-token ceiling on model-visible injected items** — the rule is `AGENTS.md`'s, which marks itself
+  the Rust rulebook and whose sibling clause names a Rust path (`core/context`, `ContextualUserFragment`).
+  This repository adjudicated the same misapplied import once already during M7. What survives from the
+  finding is narrower and is stated in the wire design: inbound size is bounded only by the CLI's own line
+  cap, which is why `refuse` is the default.
+- **"`next` injects mid-turn, so a busy receiver never gets its own turn"** — half right, and the half it
+  missed is worse. Measurement showed all three priorities can produce a separate turn AND that any of them
+  can be folded into the running one; the deciding factor is whether the model takes another round-trip,
+  which no host can predict. The design answers the general case rather than the priority.
 
 ## Surprises & Discoveries
 
@@ -361,11 +536,24 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 - **The SDK emits no user prompt frame at all** unless `--replay-user-messages` is passed, which it never
   passes. 113c's "origin.kind='peer' not observed" was therefore about a flag, not about attribution
   being stripped — and the same flag hands us the notification payload for free.
-- **Only the head waiter receives non-result frames.** Reading `session.ts` while writing this spec turned
-  up that every frame except a result goes to `waiters[0]` and nowhere else. Adoption's first draft pushed
-  its waiter to the back, which would have streamed a peer turn's output into a queued client turn's
-  mapper — a defect with no error anywhere, just two turns rendering wrong. The correction (unshift) is
-  one word; finding it needed reading the layer being extended rather than the layer being written.
+- **Only the head waiter receives non-result frames**, and a fix for that was overtaken by a better
+  question. Reading `session.ts` while writing rev 1 turned up that every frame except a result goes to
+  `waiters[0]` and nowhere else, so adoption's first draft — which pushed its waiter to the back — would
+  have streamed a peer turn's output into a queued client turn's mapper. Rev 1 corrected it to an unshift.
+  Rev 2 deleted the waiter entirely, because measurement showed there is often no separate peer turn to
+  own frames in the first place. The lesson is not the unshift: a careful fix inside a wrong model is
+  still inside the wrong model, and only measuring the model's premise exposes that.
+- **The same event has three shapes, and the host cannot tell which is coming.** An inbound message is
+  its own turn, a follow-up turn, or invisible — folded into whatever turn was running, answered in the
+  same reply, with no second result anywhere. This is the measurement that replaced half the design, and
+  the tell is that the reference source and the first probe *disagreed*: the source said `next` drains
+  mid-turn, probe 118 saw a separate turn, and both were right because 118's receiver happened to end its
+  turn early. Two sources agreeing would have hidden it; two disagreeing is what exposed it.
+- **A probe can manufacture its own finding.** Probe 118 reported that no result frame carries a
+  `user_message_uuid` — true of that run, and caused by the probe pushing user objects with no uuid of
+  their own. 118b stamped them the way the harness does and its own turns correlated perfectly, while the
+  peer turn still carried none. The real finding survived; it just needed a run that could not have
+  produced it by accident.
 - **Decompiled reading is a hypothesis, not a measurement.** Reading the minified SDK concluded that
   `Options.settings` as an object would serialize to `"[object Object]"`, which would have meant a live
   latent defect in the harness's autocompact path. Intercepting the real argv (117c) showed it emits
@@ -379,3 +567,11 @@ Pending — written at finish.
 
 - **rev 1 (2026-08-26)** — first draft, written after the grill and probes 117/117b/117c, with the one
   presented fork resolved to the recommendation.
+- **rev 2 (2026-08-26)** — absorbs an adversarial review of rev 1 (twelve findings: ten adopted, two
+  rejected with reasons above) and the two probes it forced. The inbound half is rewritten: arrival and
+  execution are separated, adoption triggers on frames-while-idle rather than on the replay frame, and
+  settlement moves to a new `Session.onUnclaimedResult` seam, retiring both `adoptTurn(uuid)` and the belt.
+  `fromThreadId` loses its ability to confer a permission class. `thread/settings/apply` reserves the
+  policy key and a dedicated setter replaces it; `initialize` gains a `crossSession` marker. The gateway
+  gains a retention policy for its correlation map and discloses namespaces it cannot receive status from;
+  envelope attributes are escaped rather than interpolated.
