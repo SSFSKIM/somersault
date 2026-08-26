@@ -180,22 +180,48 @@ export function columnOfSourceChar(row: HitRow, v: number): number {
 }
 
 /** T-PRLINK's `linkRanges` (`toolFold.ts`'s `FoldClause.linkRanges`), recovered at the ROW rather than parsed
- *  a second time from scratch: `sgrFoldRow.ts`'s `composeFoldRun` already writes each linked span as an
- *  unbroken `OSC8-open label OSC8-close` substring (a hard guarantee its own header states, so the label
- *  between the two never carries an interleaved SGR code), and `groupRowLine` already carries that raw byte
- *  string as a `preStyled` segment beside the line's plain ones. So the "existing channel" this task's brief
- *  points at IS the segment list: nothing here re-derives an href, it just walks `line.segments` in order,
- *  adding each segment's own SGR-stripped length to a running plain-text offset — matching exactly how
- *  `toolRenderer.tsx` builds `RenderLine.text` itself (`segments.map(stripSgr-if-preStyled).join("")`) — and
- *  opens/closes a link span at the OSC-8 tokens it crosses along the way. `undefined` when the line carries no
- *  segments at all (the ordinary un-styled case) or none of them link anything — never an allocated `[]`, so a
- *  consumer can tell "no link data" from "walked and found nothing" without inspecting length either way. */
+ *  a second time from scratch — UNIVERSALIZED (T-LINKOPEN Task 1) to whatever OSC-8 a row's styled text
+ *  carries at all, not only the one shape it started from. Two producers embed a hyperlink today, in two
+ *  genuinely different shapes, and this function has to recover both:
+ *    (1) A FOLD ROW's clause run (`sgrFoldRow.ts`'s `composeFoldRun`) writes each linked span as an unbroken
+ *  `OSC8-open label OSC8-close` substring (a hard guarantee its own header states, so the label between the
+ *  two never carries an interleaved SGR code) inside ONE `preStyled` segment — and `groupRowLine`
+ *  (`toolRenderer.tsx`) hands back a `RenderLine.text` that is ALREADY the stripped plain sentence
+ *  (`segments.map(stripSgr-if-preStyled).join("")`), so nothing but a SEGMENT walk can see those escapes.
+ *    (2) A PROSE markdown link (`markdownInline.ts`'s `osc8()`, reached through `inlineSegments`'s `"link"`
+ *  case) writes the SAME OSC-8 shape into an ORDINARY, non-`preStyled` segment's `text` — and `lineFold.ts`'s
+ *  `foldLine` folds that straight into `RenderLine.text` UNSTRIPPED (`text = kept.map(s => s.text).join("")`,
+ *  no `preStyled` special-casing at all), which means the raw bytes sit in `line.text` itself, WITH or
+ *  WITHOUT a `segments` array beside it — a line whose only content is one link has nothing else to differ in
+ *  style from, so it folds to a bare `text` field and no `segments` at all (this was T-CLICKGATE Task 4's
+ *  recorded gap, spec D12: a path tool's header link went unscanned for exactly this reason).
+ *  So the walk below covers segments with NO `preStyled` gate any more (`scanLinks` finds nothing and costs
+ *  nothing extra on a segment that carries no escapes at all, so lifting the gate cannot regress the fold-row
+ *  case it used to be the only source for), and SEPARATELY scans `line.text` on its own. The two are then
+ *  DEDUPED by identical `{start,end,href}` rather than either one being trusted to fire alone: a mixed prose
+ *  line's `text` is the raw concatenation of the very segments the first walk already covered, so the two
+ *  legitimately rediscover the same span and dedupe is what keeps that from doubling the result.
+ *  `undefined` when neither walk finds anything at all (no segments and a plain `text`, or segments/text that
+ *  link nothing) — never an allocated `[]`, so a consumer can tell "no link data" from "walked and found
+ *  nothing" without inspecting length either way. */
 export function linkRangesOf(line: RenderLine): readonly { start: number; end: number; href: string }[] | undefined {
-  if (!line.segments?.length) return undefined;
+  const fromSegments: { start: number; end: number; href: string }[] = [];
+  if (line.segments?.length) {
+    let pos = 0;
+    for (const segment of line.segments) pos = scanLinks(segment.text, pos, fromSegments);
+  }
+  const fromText: { start: number; end: number; href: string }[] = [];
+  scanLinks(line.text, 0, fromText);
+  if (fromSegments.length === 0 && fromText.length === 0) return undefined;
+  const seen = new Set<string>();
   const out: { start: number; end: number; href: string }[] = [];
-  let pos = 0;
-  for (const segment of line.segments) pos = segment.preStyled === true ? scanLinks(segment.text, pos, out) : pos + segment.text.length;
-  return out.length ? out : undefined;
+  for (const span of [...fromSegments, ...fromText]) {
+    const key = `${span.start}:${span.end}:${span.href}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(span);
+  }
+  return out;
 }
 
 /** One OSC-8 open (non-empty capture) or close (empty capture) token, or an SGR `CSI…m` code that carries no
@@ -204,11 +230,15 @@ export function linkRangesOf(line: RenderLine): readonly { start: number; end: n
  *  Re-declared here rather than imported: that module's copy has no capture group (it only ever strips), and
  *  giving it one for a single other caller would change what every one of its own covering tests pins. */
 const OSC8_OR_SGR = /\x1b\[[0-9;]*m|\x1b\]8;;([^\x07]*)\x07/g;
-/** Walks one `preStyled` segment's raw bytes, emitting a link span (in the ROW's plain-text coordinates,
- *  `pos`-based, not the segment's own) for every OSC-8 open/close pair it crosses, and returns `pos` advanced
- *  by the segment's own SGR-stripped length — the running offset `linkRangesOf` threads across the whole
- *  segment list. An open with no matching close (should not happen — `composeFoldRun` always balances its own
- *  pairs) is simply dropped; a close with no open pending is ignored the same way. */
+/** Walks one raw byte string, emitting a link span (in the caller's plain-text coordinates, `pos`-based, not
+ *  the string's own) for every OSC-8 open/close pair it crosses, and returns `pos` advanced by the string's
+ *  own SGR-stripped length. `linkRangesOf` calls this twice, independently: once per segment with `pos`
+ *  threaded across the whole `segments` list, and once more over the bare `line.text` starting fresh at `0` —
+ *  a string with no escapes at all (the overwhelming common case, either way) simply advances `pos` by its
+ *  own length and pushes nothing, which is what makes calling this unconditionally on EVERY segment (no
+ *  `preStyled` gate) exactly as cheap and exactly as correct as the narrower, gated version this superseded.
+ *  An open with no matching close (should not happen — `composeFoldRun` always balances its own pairs) is
+ *  simply dropped; a close with no open pending is ignored the same way. */
 function scanLinks(raw: string, startPos: number, out: { start: number; end: number; href: string }[]): number {
   let pos = startPos, cursor = 0, openHref: string | undefined, openPos = 0;
   OSC8_OR_SGR.lastIndex = 0;

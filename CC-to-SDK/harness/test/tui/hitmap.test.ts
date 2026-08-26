@@ -11,9 +11,10 @@ import stringWidth from "string-width";
 import { wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
 import { hitRowsOf } from "../../src/tui/FullscreenViewport.js";
-import { columnToChar, charToColumn, sourceEndpointAt, columnOfSourceChar, clickableOwnersOf, type HitRow } from "../../src/tui/mouse/hitmap.js";
+import { columnToChar, charToColumn, sourceEndpointAt, columnOfSourceChar, clickableOwnersOf, linkRangesOf, type HitRow } from "../../src/tui/mouse/hitmap.js";
 import { GROUP_HINT_GUTTER, TOOL_RESULT_GUTTER, projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import type { RenderLine } from "../../src/tui/render.js";
 
 /** Runs a document of `RenderItem`s through the SAME pipeline `FullscreenViewport` publishes from: wrap to
  *  `columns`, window the whole thing (a budget larger than any fixture here needs), then build the hit map.
@@ -117,6 +118,71 @@ describe("hitRowsOf publishes the widened HitRow", () => {
     const [link] = row!.linkRanges!;
     expect(link!.href).toBe("https://github.com/o/r/pull/12");
     expect(row!.text.slice(link!.start, link!.end)).toBe("#12");
+  });
+});
+
+// ── T-LINKOPEN Task 1: `linkRangesOf` universalized — OSC-8 recovered from ANY row's styled text ─────────
+// The fold-row shape above (a `preStyled` segment) was the ONLY source `linkRangesOf` used to scan. A prose
+// markdown link (`markdownInline.ts`'s `osc8()`) writes the identical OSC-8 byte shape into an ORDINARY
+// segment's `text` instead — this is the gap `fold-click.test.tsx`'s "T-CLICKGATE Task 4 (a, recorded gap —
+// spec D12)" case pinned as a known limitation. These cells drive `linkRangesOf` directly with hand-built
+// `RenderLine`s rather than through a real markdown/fold render, because the two producers disagree on
+// whether the link ever reaches `segments` at all (a lone link with nothing else on its line has no other
+// style to differ from, so `lineFold.ts`'s `foldLine` folds it to a bare `text` field with NO `segments`).
+const osc8Open = (href: string): string => "\x1b]8;;" + href + "\x07";
+const OSC8_CLOSE = "\x1b]8;;\x07";
+describe("linkRangesOf — universal OSC-8 span recovery (T-LINKOPEN Task 1)", () => {
+  it("a prose row: one link in an ORDINARY (non-preStyled) segment yields one span, right href, right offsets", () => {
+    const HREF = "https://example.com/a";
+    const line: RenderLine = { text: "pre " + osc8Open(HREF) + "click" + OSC8_CLOSE + " post",
+      segments: [{ text: "pre " }, { text: osc8Open(HREF) + "click" + OSC8_CLOSE, color: "blue" }, { text: " post" }] };
+    const ranges = linkRangesOf(line);
+    expect(ranges).toEqual([{ start: 4, end: 9, href: HREF }]);
+    expect(line.text.replace(/\x1b\][^\x07]*\x07/g, "").slice(4, 9)).toBe("click");
+  });
+
+  it("a prose row with no `segments` at all — a lone link folds to a bare `text` field — still yields its spans", () => {
+    const H1 = "https://a.example", H2 = "https://b.example";
+    const line: RenderLine = { text: "a " + osc8Open(H1) + "one" + OSC8_CLOSE + " b " + osc8Open(H2) + "two" + OSC8_CLOSE };
+    expect(line.segments).toBeUndefined();       // premise: this really is the no-`segments` shape
+    const ranges = linkRangesOf(line);
+    expect(ranges).toEqual([{ start: 2, end: 5, href: H1 }, { start: 8, end: 11, href: H2 }]);
+  });
+
+  it("a fold row's existing preStyled-segment range is untouched by the generalization", () => {
+    const HREF = "https://github.com/o/r/pull/12";
+    const line: RenderLine = { text: "Created PR #12", segments: [
+      { text: "Created PR " }, { text: osc8Open(HREF) + "#12" + OSC8_CLOSE, preStyled: true },
+    ] };
+    expect(linkRangesOf(line)).toEqual([{ start: 11, end: 14, href: HREF }]);
+  });
+
+  it("mixed dedupe: the same span recovered from both the segment walk and the bare-text scan collapses to one", () => {
+    const HREF = "https://example.com/x";
+    // Both `line.text` (raw, unstripped — `foldLine`'s own convention) and `line.segments` carry the
+    // identical OSC-8 pair here, so an implementation that scanned both sources naively would double it.
+    const line: RenderLine = { text: "see " + osc8Open(HREF) + "here" + OSC8_CLOSE,
+      segments: [{ text: "see " }, { text: osc8Open(HREF) + "here" + OSC8_CLOSE, preStyled: true }] };
+    expect(linkRangesOf(line)).toEqual([{ start: 4, end: 8, href: HREF }]);
+  });
+
+  it("no link data at all answers `undefined`, never an allocated `[]`", () => {
+    expect(linkRangesOf({ text: "plain text, nothing linked" })).toBeUndefined();
+    expect(linkRangesOf({ text: "styled but no link", segments: [{ text: "styled but no link", dim: true }] })).toBeUndefined();
+  });
+
+  it("columnToChar addresses correctly through a row whose raw text carries OSC-8 (SGR-stripped character space)", () => {
+    const HREF = "https://example.com/x";
+    const item: RenderItem = { kind: "line", id: "linkline", line: {
+      text: "see " + osc8Open(HREF) + "here" + OSC8_CLOSE + " now",
+      segments: [{ text: "see " }, { text: osc8Open(HREF) + "here" + OSC8_CLOSE, color: "blue" }, { text: " now" }],
+    } };
+    const [row] = publish([item], 40);
+    expect(row!.text).toBe("see here now");                              // OSC-8 contributes ZERO characters
+    expect(row!.linkRanges).toEqual([{ start: 4, end: 8, href: HREF }]);
+    const hit = columnToChar(row!, 5)!;                                   // column 5 is the 'h' of "here"
+    expect(row!.text.slice(hit.charStart, hit.charEnd)).toBe("h");
+    expect(hit.charStart).toBe(4);
   });
 });
 

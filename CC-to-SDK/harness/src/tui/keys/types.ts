@@ -30,10 +30,18 @@ export interface TextEvent { kind: "text"; text: string; raw: string; paste?: tr
  *  parse.ts drops it, same as before.
  *    THE NAME IS `MouseInputEvent`, NOT `MouseEvent`, ON PURPOSE: tsconfig sets no `lib` override, so the DOM's
  *  global `MouseEvent` is in scope and a consumer that forgot the import would silently bind THAT and typecheck
- *  clean, all the way to a runtime shape mismatch. */
+ *  clean, all the way to a runtime shape mismatch.
+ *    T-LINKOPEN Task 3 — `isWindowActivation`, OPTIONAL AND ONLY EVER TRUE. `KeymapProvider`'s dispatch is the
+ *  one place that sees every parsed `InputEvent` in true stream order, so it alone can answer "was the event
+ *  immediately before THIS press a terminal focus-in report" (canon's own `pressIsWindowActivation`,
+ *  research-links.md §3c) — and it stamps that answer onto a `press` event alone (a release pairs with the
+ *  press that recorded it, via the CALLER's own tap anchor, never with this field). Absent rather than `false`
+ *  on every ordinary press: `keys-provider.test.tsx`'s own `toEqual` pins the exact shape a press carries when
+ *  nothing preceded it, and an unconditional `false` would fail that pin for a case the field was never meant
+ *  to touch. */
 export type MouseInputEvent =
   | { kind: "mouse"; action: "press" | "release" | "drag"; button: 0 | 1 | 2;
-      col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string }
+      col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string; isWindowActivation?: true }
   | { kind: "mouse"; action: "motion";
       col: number; row: number; ctrl: boolean; alt: boolean; shift: boolean; raw: string };
 /** Consumed and deliberately dropped — must never reach the composer as text (P86 §1.8). */
