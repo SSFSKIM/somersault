@@ -26,7 +26,10 @@ import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { assembleUserContent, type UserTurnInput } from "../session/turnInput.js";
-import { pngDimensions, jpegDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
+import {
+  pngDimensions, jpegDimensions, gifDimensions, webpDimensions, sniffImageMediaType,
+  MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT,
+} from "../media/imageDims.js";
 
 /** Schema-level bound on the items array (Task 4's `turnStartParams` enforces it; published here so the
  *  wire's cap and the resolver's caps read from one file). A violation is a shape error → -32602, not a
@@ -164,13 +167,21 @@ async function readLocalImage(path: string, aggregateSoFar: number): Promise<Byt
 }
 
 /** The shared suite both item kinds run, in `normalizeTurnInput`'s exact order and with its exact reason
- *  strings. `media_type` comes from WHICH sniffer matched, never from the declaration: a valid PNG
- *  labelled `application/pdf` would pass local validation and then fail the WHOLE engine request against
- *  the SDK's media-type union — one wrong label killing a turn that carried four good images, where a
- *  derived type degrades nothing at all. */
+ *  strings. `media_type` comes from the SNIFFED BYTES, never from the declaration: a valid PNG labelled
+ *  `application/pdf` would pass local validation and then fail the WHOLE engine request against the
+ *  SDK's media-type union — one wrong label killing a turn that carried four good images, where a
+ *  derived type degrades nothing at all.
+ *
+ *  bl5 T-SNIFF task 4 (bug fix, found in passing during the round that generalized this posture
+ *  elsewhere): this used to run only `pngDimensions`/`jpegDimensions`, so a legitimate GIF or WebP
+ *  `image`/`localImage` item was refused as "unreadable image data" even though `IMAGE_MEDIA_TYPES`,
+ *  `checkImageBlock`, and the API itself all accept both — the two missing readers already existed in
+ *  `imageDims.ts`, they just weren't wired in here. Now widened to the same four-reader chain
+ *  `checkImageBlock` runs, and the media type re-homed onto the shared `sniffImageMediaType` sniff (the
+ *  identical `buf`, no second decode) rather than the old ad-hoc `png ? "image/png" : "image/jpeg"`
+ *  ladder, which had no rung for either format this fix adds. */
 function admitBytes(buf: Buffer, aggregateSoFar: number): { ok: true; data: string; mediaType: string; bytes: number } | { ok: false; reason: string } {
-  const png = pngDimensions(buf);
-  const dims = png ?? jpegDimensions(buf);
+  const dims = pngDimensions(buf) ?? jpegDimensions(buf) ?? gifDimensions(buf) ?? webpDimensions(buf);
   if (!dims) return { ok: false, reason: "unreadable image data" };
   // BOTH bounds, not only the upper one. A crafted header declaring width or height 0 sniffs perfectly
   // well and looks like an ordinary small image from here on — but on the fleet origin those same
@@ -186,7 +197,13 @@ function admitBytes(buf: Buffer, aggregateSoFar: number): { ok: true; data: stri
   }
   if (buf.length > POST_PROCESS_BYTE_BUDGET) return { ok: false, reason: `image data exceeds the ${POST_PROCESS_BYTE_BUDGET}-byte limit` };
   if (aggregateSoFar + buf.length > MAX_AGGREGATE_BYTES) return { ok: false, reason: `turn's total image size exceeds the ${MAX_AGGREGATE_BYTES}-byte limit` };
-  return { ok: true, data: buf.toString("base64"), mediaType: png ? "image/png" : "image/jpeg", bytes: buf.length };
+  // `sniffImageMediaType` returning `null` here is dead code given the dims chain above — all four
+  // readers require the identical magic-byte prefix the sniff checks, so `dims` succeeding already
+  // proves a sniff hit (same reasoning `checkImageBlock` documents) — but the fallback is kept literal
+  // per spec rather than asserted away, and lands on the one reason this function already has for it.
+  const mediaType = sniffImageMediaType(buf);
+  if (!mediaType) return { ok: false, reason: "unreadable image data" };
+  return { ok: true, data: buf.toString("base64"), mediaType, bytes: buf.length };
 }
 
 /** Canonical contract (spec rev 3): ONE text block = fold + notes, then surviving images in order. */

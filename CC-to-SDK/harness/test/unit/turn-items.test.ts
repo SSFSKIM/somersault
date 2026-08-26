@@ -13,10 +13,11 @@
 //      not just the failure text.
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 
 // Both "before the I/O" claims — the count gate's and the two byte caps' — are checkable ONLY on the
@@ -77,6 +78,11 @@ function fakeJpeg(width: number, height: number): Buffer {
   buf[11] = 3;
   return buf;
 }
+
+// bl5 T-SNIFF task 4's real GIF/WebP fixtures — the same files `turnInput.test.ts`'s bl5 describe
+// already reads from `test/fixtures/images/`, reused rather than hand-rolled so a header-only fake
+// couldn't paper over a dims-reader disagreement the real bytes would expose.
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
 
 const dataUrl = (buf: Buffer, declared = "image/png") => `data:${declared};base64,${buf.toString("base64")}`;
 const img = (buf: Buffer, declared?: string): InputItem => ({ type: "image", url: dataUrl(buf, declared) });
@@ -160,6 +166,22 @@ describe("resolveInputItems — data: URLs", () => {
     expect(await resolveInputItems([img(png, "application/pdf")])).toEqual([{ type: "text", text: "" }, imageBlock(png)]);
     const jpg = fakeJpeg(4, 4);
     expect(await resolveInputItems([img(jpg, "image/png")])).toEqual([{ type: "text", text: "" }, imageBlock(jpg, "image/jpeg")]);
+  });
+
+  it("bl5 T-SNIFF task 4: admits a real GIF via the shared four-format sniff — today's gap, only PNG/JPEG ran here", async () => {
+    // Coverage bug found during T-SNIFF research: `admitBytes` ran only `pngDimensions`/`jpegDimensions`,
+    // so a legitimate GIF `image` item was refused as "unreadable image data" even though
+    // `IMAGE_MEDIA_TYPES`, `checkImageBlock`, and the API all accept it. The declared type is deliberately
+    // wrong here too, to prove the widened chain keeps the same derive-not-trust posture as PNG/JPEG above.
+    const gif = readFileSync(join(FIXTURES, "live-purple-64x64.gif"));
+    expect(await resolveInputItems([img(gif, "application/octet-stream")]))
+      .toEqual([{ type: "text", text: "" }, imageBlock(gif, "image/gif")]);
+  });
+
+  it("bl5 T-SNIFF task 4: admits a real WebP via the shared four-format sniff — same gap, the other missing sniffer", async () => {
+    const webp = readFileSync(join(FIXTURES, "live-orange-64x64.webp"));
+    expect(await resolveInputItems([img(webp, "application/octet-stream")]))
+      .toEqual([{ type: "text", text: "" }, imageBlock(webp, "image/webp")]);
   });
 
   it("validates the base64 alphabet BEFORE decoding, where Node would decode anyway", async () => {
