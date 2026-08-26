@@ -2163,6 +2163,10 @@ Create `test/unit/appserver/peer-inbound.test.ts`:
 // observer, a close while a turn is adopted. Each is a way a thread can be left busy forever, and none of
 // them is reachable by a test that lets every promise resolve in order first.
 import { describe, it, expect, vi } from "vitest";
+import { afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
@@ -2170,6 +2174,9 @@ const mkSink = () => { const lines: string[] = []; return { lines, sink: { write
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+const fileCcxDir = mkdtempSync(join(tmpdir(), "m8ccx-peer-inbound-"));
+afterAll(() => { rmSync(fileCcxDir, { recursive: true, force: true }); });
 const notes = (lines: string[], method: string) => parsed(lines).filter((m) => m.method === method);
 
 const LIFECYCLE = (state: string, uuid: string) => ({ type: "command_lifecycle", command_uuid: uuid, state, session_id: "s", uuid: "f" });
@@ -2196,18 +2203,26 @@ function pushEngine() {
   };
 }
 
+// The real constructor is `(opts, deps)` and the engine factory is `deps.sessionFactory` — Task 8
+// measured this against the running code, so do not reintroduce a `makeSession` option. `ccxDir` and
+// `listSessions` are injected for the reason peer-policy.test.ts states: without them a resume path
+// reads the operator's real ~/.claude/ccx.
+const boot = (engine: unknown) =>
+  new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => engine) as never });
+
 async function startAccepting(engine: any) {
-  const srv = new AppServer({ makeSession: (() => engine) as any });
+  const srv = boot(engine);
   const { lines, sink } = mkSink();
   const c = srv.connect(sink);
   send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
   send(c, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
   await tick();
-  const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+  // The reply is `{ thread: <view> }` — the one projection every thread-carrying reply goes through.
+  const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
   send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
   await tick();
   lines.length = 0;
-  return { srv, c, lines, threadId, record: (srv as any).registry.get(threadId) };
+  return { srv, c, lines, threadId, record: srv.registry.get(threadId)! };
 }
 
 describe("adoption", () => {
@@ -2290,13 +2305,13 @@ describe("adoption", () => {
     const first = pushEngine();
     const second = pushEngine();
     let n = 0;
-    const srv = new AppServer({ makeSession: (() => (n++ === 0 ? first.engine : second.engine)) as any });
+    const srv = new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => (n++ === 0 ? first.engine : second.engine)) as never });
     const { lines, sink } = mkSink();
     const c = srv.connect(sink);
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
     send(c, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
     await tick();
-    const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
     send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
     await tick();
     send(c, { id: 4, method: "thread/clear", params: { threadId } });
@@ -2312,13 +2327,13 @@ describe("adoption", () => {
 
   it("a refusing thread adopts nothing", async () => {
     const e = pushEngine();
-    const srv = new AppServer({ makeSession: (() => e.engine) as any });
+    const srv = boot(e.engine);
     const { lines, sink } = mkSink();
     const c = srv.connect(sink);
     send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
     send(c, { id: 2, method: "thread/start", params: {} });     // default: refuse
     await tick();
-    const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
     send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
     await tick();
     lines.length = 0;
