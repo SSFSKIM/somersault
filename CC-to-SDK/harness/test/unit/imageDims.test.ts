@@ -163,6 +163,9 @@ describe("src/media/imageDims.ts — the neutral leaf", () => {
       // The FULL 3-byte JPEG SOI+marker signature — but canon's `e.length<4` floor is UNCONDITIONAL,
       // checked before any branch runs, so even a byte-perfect JPEG signature misses below 4 bytes.
       expect(sniffImageMediaType(Buffer.from([0xff, 0xd8, 0xff]))).toBeNull();
+      // reviewer mutation gap: FF D8 followed by a non-FF third byte must NOT sniff as JPEG — this is
+      // the only cell that dies if the signature check is widened to a bare FF D8.
+      expect(sniffImageMediaType(Buffer.from([0xff, 0xd8, 0x00, 0x00]))).toBeNull();
       // `GIF87x`: satisfies `GIF8` and the length floor, but byte 5 is neither `7` nor `9`.
       expect(sniffImageMediaType(Buffer.from("GIF87x", "ascii"))).toBeNull();
       // RIFF container present, but the fourcc at bytes 8-11 is WAVE, not WEBP.
