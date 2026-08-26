@@ -6,17 +6,20 @@
 // paste-time ladder (clipboardImage.ts's `pasteClipboardImage`) gets exactly the same guarantees a
 // pasted image does, because this module re-decodes each block's OWN bytes rather than trusting
 // anything the caller claims about them — the public `UserContentBlock` carries no dimensions field
-// at all, so there is nothing to lie about except the bytes themselves, and the bytes are what gets
-// read.
+// at all, so there is nothing to lie about except the bytes themselves and the declared `media_type`,
+// and bl5 T-SNIFF (canon 2.1.246 parity) closes that last one too: `checkImageBlock` OVERWRITES
+// `media_type` with a sniff of the same decoded bytes, so a caller's declaration never survives past
+// this seam. This is what makes the Anthropic API's mismatch-400 unreachable rather than merely
+// reported.
 //
 // Reused, not reinvented: the four header-only readers (`pngDimensions`/`jpegDimensions`/`gifDimensions`/
-// `webpDimensions`) and the two shared budget constants (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come
-// from `../media/imageDims.js` — a neutral leaf with no imports of its own (F10 T-MAINT item 3 ends the
-// `session/` → `tui/` inversion this paragraph used to argue for: Task 2's paste-time ladder and this
-// builder enforce the identical per-image ceiling from ONE source of truth, and neither now reaches into
-// the other's layer to get it). This builder still re-decodes each block's OWN bytes rather than trusting
-// anything a caller claims about them.
-import { pngDimensions, jpegDimensions, gifDimensions, webpDimensions, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
+// `webpDimensions`), the sniff (`sniffImageMediaType`), and the two shared budget constants
+// (`MAX_DIMENSION`, `POST_PROCESS_BYTE_BUDGET`) come from `../media/imageDims.js` — a neutral leaf with
+// no imports of its own (F10 T-MAINT item 3 ends the `session/` → `tui/` inversion this paragraph used
+// to argue for: Task 2's paste-time ladder and this builder enforce the identical per-image ceiling
+// from ONE source of truth, and neither now reaches into the other's layer to get it). This builder
+// still re-decodes each block's OWN bytes rather than trusting anything a caller claims about them.
+import { pngDimensions, jpegDimensions, gifDimensions, webpDimensions, sniffImageMediaType, MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, MAX_IMAGES_PER_PROMPT } from "../media/imageDims.js";
 
 /** The wire shape canon itself sends (spot-verified at `cli.pretty.js` L371395-371427 and re-proven
  *  live by probe 113): a base64 image block, `media_type` a bare string here (not the Anthropic SDK's
@@ -89,7 +92,9 @@ export const TRUNCATION_SUFFIX = "\n[… prompt text truncated to fit the size l
  *  exact order, because two of the four checks below are enforced on such different scales (5 MiB of
  *  base64 input vs. 512,000 decoded bytes) that a real image trips the SECOND check even when it clears
  *  the first; order is what makes each reason attributable to the boundary that actually produced it. */
-function checkImageBlock(block: UserContentBlock & { type: "image" }): { ok: true; bytes: number; data: string } | { ok: false; reason: string } {
+function checkImageBlock(
+  block: UserContentBlock & { type: "image" },
+): { ok: true; bytes: number; data: string; mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp" } | { ok: false; reason: string } {
   const data = block.source.data;
   // ORDERING CONSTRAINT (final-review finding 1): this length check MUST run BEFORE `Buffer.from`
   // below, and nothing may move it after. `Buffer.from(data, "base64")` allocates a buffer the size of
@@ -110,9 +115,20 @@ function checkImageBlock(block: UserContentBlock & { type: "image" }): { ok: tru
     return { ok: false, reason: `dimensions ${dims.width}x${dims.height} exceed the ${MAX_DIMENSION}x${MAX_DIMENSION}px limit` };
   }
   if (decoded.length > POST_PROCESS_BYTE_BUDGET) return { ok: false, reason: `image data exceeds the ${POST_PROCESS_BYTE_BUDGET}-byte limit` };
+  // bl5 T-SNIFF (canon 2.1.246 parity): `media_type` is DERIVED here, from the same `decoded` buffer
+  // the dims readers above already hold — no second decode. The declared value on `block.source` is a
+  // hint the caller supplied and NOTHING MORE; the bytes are what leave this function. This is what
+  // makes the Anthropic API's mismatch-400 (an image "specified using the image/X media type, but the
+  // image appears to be a image/Y image") unreachable, rather than merely reported after the fact.
+  // `sniffImageMediaType` returning `null` here is dead code given the readers above — every one of the
+  // four dims readers requires the identical magic-byte prefix the sniff checks, so `dims` succeeding
+  // already proves a sniff hit — but the fallback is kept literal per spec: a byte layout none of
+  // today's readers recognize is exactly the existing "unreadable image data" refusal, not a new one.
+  const mediaType = sniffImageMediaType(decoded);
+  if (!mediaType) return { ok: false, reason: "unreadable image data" };
   // Canonical re-encode (round-3 F3): padding and whitespace in the INPUT base64 never survive into the
   // block a caller keeps — the daemon's frame derivation (Task 12) rests on this guarantee.
-  return { ok: true, bytes: decoded.length, data: decoded.toString("base64") };
+  return { ok: true, bytes: decoded.length, data: decoded.toString("base64"), mediaType };
 }
 
 /** ONE image, ONE decode. `checkImageBlock`'s four caps, plus the canonical re-encode, minus the
@@ -128,7 +144,9 @@ export function validateImageBlock(
   return {
     ok: true as const,
     decodedBytes: verdict.bytes,
-    block: { ...block, source: { ...block.source, data: verdict.data } },
+    // bl5 T-SNIFF: `media_type` OVERWRITES whatever `block.source` declared — the sniffed value, never
+    // the caller's. See `checkImageBlock`'s own comment for why this can never diverge from `dims`.
+    block: { ...block, source: { ...block.source, media_type: verdict.mediaType, data: verdict.data } },
   };
 }
 

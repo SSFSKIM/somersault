@@ -6,11 +6,14 @@
 // to exist.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   MAX_DIMENSION, MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET, gifDimensions, jpegDimensions,
-  pngDimensions, webpDimensions,
+  pngDimensions, sniffImageMediaType, webpDimensions,
 } from "../../src/media/imageDims.js";
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
 
 /** A 1x1-shaped PNG header: 8-byte signature, then a length+`IHDR` chunk whose width/height sit at
  *  bytes 16-24. `pngDimensions` never reads past byte 24, so nothing else has to be real. */
@@ -112,6 +115,64 @@ describe("src/media/imageDims.ts — the neutral leaf", () => {
     expect(MAX_DIMENSION).toBe(2000);                    // canon L8503, per-model image_limits
     expect(POST_PROCESS_BYTE_BUDGET).toBe(512_000);      // canon `v$r`, L174695
     expect(MAX_IMAGES_PER_PROMPT).toBe(20);              // ccx's own per-turn count guard, re-homed here
+  });
+
+  // T-SNIFF task 1: `sniffImageMediaType` — a VERBATIM transcription of canon's `b()`
+  // (research-sniff.md offset 184,082,132). Prefix-only: it must sniff off the same few leading bytes
+  // the dimension readers above need a full, well-formed header for, and it must NOT delegate to them
+  // — a truncated-but-recognizable header sniffs correctly even when its dims are unreadable.
+  describe("sniffImageMediaType — canon b() verbatim", () => {
+    it("sniffs each real fixture to its true type", () => {
+      const png = readFileSync(join(FIXTURES, "rgb8-64x48.png"));
+      const jpeg = readFileSync(join(FIXTURES, "tiny.jpg"));
+      const gif = readFileSync(join(FIXTURES, "live-purple-64x64.gif"));
+      const webp = readFileSync(join(FIXTURES, "live-orange-64x64-lossy.webp"));
+      expect(sniffImageMediaType(png)).toBe("image/png");
+      expect(sniffImageMediaType(jpeg)).toBe("image/jpeg");
+      expect(sniffImageMediaType(gif)).toBe("image/gif");
+      expect(sniffImageMediaType(webp)).toBe("image/webp");
+    });
+
+    it("sniffs minimal canonical prefixes, including a header too short to read dims", () => {
+      // 4-byte PNG signature only — no IHDR, so `pngDimensions` would reject this outright.
+      expect(sniffImageMediaType(Buffer.from([137, 80, 78, 71]))).toBe("image/png");
+      // A 4-byte JPEG SOI+marker prefix — one byte past the 3 the SOI+marker signature itself needs,
+      // because canon's `e.length<4` floor at the top of `b()` is UNCONDITIONAL: it gates every
+      // branch, JPEG included, not just PNG's own 4-byte signature. See the misses test below for the
+      // 3-byte case this floor actually rejects.
+      expect(sniffImageMediaType(Buffer.from([0xff, 0xd8, 0xff, 0x00]))).toBe("image/jpeg");
+      // A 9-byte GIF89a prefix: the sniff's own length floor (>=6) is satisfied, but this is well
+      // short of the 10 bytes `gifDimensions` needs to read the Logical Screen Descriptor — proving
+      // the sniff does NOT delegate to the dims reader as a discriminator.
+      const gifPrefix = Buffer.from("GIF89aXXX", "ascii");
+      expect(gifPrefix.length).toBe(9);
+      expect(gifDimensions(gifPrefix)).toBeNull();
+      expect(sniffImageMediaType(gifPrefix)).toBe("image/gif");
+      // 12-byte RIFF/WEBP container header only — no VP8/VP8L/VP8X payload, so `webpDimensions`
+      // (which needs >=16 bytes) would reject this outright.
+      const webpPrefix = Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBP", "ascii")]);
+      expect(webpPrefix.length).toBe(12);
+      expect(webpDimensions(webpPrefix)).toBeNull();
+      expect(sniffImageMediaType(webpPrefix)).toBe("image/webp");
+    });
+
+    it("misses to null rather than throwing", () => {
+      expect(sniffImageMediaType(Buffer.alloc(0))).toBeNull();
+      // Below the sniff's own 4-byte floor — one byte short of the PNG signature it would otherwise match.
+      expect(sniffImageMediaType(Buffer.from([137, 80, 78]))).toBeNull();
+      // The FULL 3-byte JPEG SOI+marker signature — but canon's `e.length<4` floor is UNCONDITIONAL,
+      // checked before any branch runs, so even a byte-perfect JPEG signature misses below 4 bytes.
+      expect(sniffImageMediaType(Buffer.from([0xff, 0xd8, 0xff]))).toBeNull();
+      // reviewer mutation gap: FF D8 followed by a non-FF third byte must NOT sniff as JPEG — this is
+      // the only cell that dies if the signature check is widened to a bare FF D8.
+      expect(sniffImageMediaType(Buffer.from([0xff, 0xd8, 0x00, 0x00]))).toBeNull();
+      // `GIF87x`: satisfies `GIF8` and the length floor, but byte 5 is neither `7` nor `9`.
+      expect(sniffImageMediaType(Buffer.from("GIF87x", "ascii"))).toBeNull();
+      // RIFF container present, but the fourcc at bytes 8-11 is WAVE, not WEBP.
+      const riffWave = Buffer.concat([Buffer.from("RIFF", "ascii"), Buffer.from([0, 0, 0, 0]), Buffer.from("WAVE", "ascii")]);
+      expect(sniffImageMediaType(riffWave)).toBeNull();
+      expect(sniffImageMediaType(Buffer.from("plain text, not an image at all", "ascii"))).toBeNull();
+    });
   });
 
   // THE LAYERING GUARANTEE ITSELF, and the only assertion here that could not be written against the

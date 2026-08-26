@@ -217,6 +217,61 @@ live("F9 T-IMAGE Task 6 — live discrimination through the real REPL submit cha
 });
 
 // ---------------------------------------------------------------------------------------------
+// bl5 T-SNIFF Task 5: keyed live proof that the derive-at-the-seam fix (Tasks 1-4 on this branch —
+// `sniffImageMediaType` plus chains 1/2/4 and the chain-3 registry hint-relaxation) makes the API's
+// mismatch-400 unreachable. A real PNG block DELIBERATELY DECLARED `image/gif` is submitted through the
+// exact same real REPL topology as the suites above; before this branch the API rejected the whole
+// request with 400 ("specified using the image/gif media type, but the image appears to be a image/png
+// image") — after the fix, `checkImageBlock` overwrites the declared type with the sniffed
+// `image/png` before the block ever reaches the wire, so the turn round-trips 200 and the live model
+// reads real PNG pixels (red), never seeing the mislabel.
+live("bl5 T-SNIFF Task 5 — a PNG block declared image/gif round-trips through derive-at-the-seam", () => {
+  it("a real PNG mislabelled image/gif is silently corrected and the live model reads its actual (red) pixels", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bl5sniff-live-"));
+    const fleetRoot = mkdtempSync(join(tmpdir(), "bl5sniff-fleet-"));
+    const env = { ...process.env, CCX_FLEET_ROOT: fleetRoot } as NodeJS.ProcessEnv;
+    const host = new SessionHost(
+      { short: "b15511ff", name: "bl5-sniff-live", cwd, kind: "interactive", detached: false,
+        config: { cwd, model: "claude-sonnet-4-6", permissionMode: "bypassPermissions", settingSources: [], maxTurns: 8 } as never,
+        env },
+    );
+    await host.start();
+    const socketPath = hostSocketPath(process.pid, env);
+    const adapter = remoteChatSession(socketPath);
+    const observer = await RemoteChatSession.connect(socketPath);
+    const turnEnds: Array<{ result?: unknown; failure?: unknown; error?: string }> = [];
+    observer.follow((ev: HostEvent) => { if (ev.kind === "turn" && ev.phase === "end") turnEnds.push({ result: ev.result, failure: ev.failure, error: ev.error }); });
+    await observer.whenFollowed();
+    const nextTurnEnd = async (): Promise<{ result?: unknown; failure?: unknown; error?: string }> => {
+      const deadline = Date.now() + 5000;
+      while (turnEnds.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+      const end = turnEnds.shift();
+      if (!end) throw new Error("no turn-end event observed within 5s of the submit settling");
+      return end;
+    };
+    try {
+      // A real PNG, deliberately DECLARED image/gif — pre-fix, the API 400s the whole request on this
+      // mismatch; post-fix, `checkImageBlock` derives image/png from the bytes and overwrites the label.
+      const mislabelledBlock: UserContentBlock =
+        { type: "image", source: { type: "base64", media_type: "image/gif", data: solidPng(255, 0, 0) } };
+      const frames: Frame[] = [];
+      const content: UserTurnInput = [mislabelledBlock, { type: "text", text: PROMPT }];
+      await adapter.submit(content, (m) => { frames.push(m as Frame); });
+      const end = await nextTurnEnd();
+      expect(end.error).toBeUndefined();
+      expect(end.failure).toBeUndefined();   // is_error:false — the mismatch-400 is unreachable
+      expect(assistantText(frames)).toContain("red");
+    } finally {
+      adapter.detach();
+      observer.detach();
+      await host.stop().catch(() => {});
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(fleetRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------
 // bl4 T-GIFWEBP Task 3: keyed live proof that the widened staged-image pipeline (Tasks 1-2 on this
 // branch — the allowlist plus both validator chains) carries a REAL GIF and a REAL lossless WebP
 // through this same REPL submit chain, and that the live model actually decodes pixels from each —

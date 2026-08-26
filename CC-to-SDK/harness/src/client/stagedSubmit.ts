@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
 import type { UserContentBlock } from "../session/turnInput.js";
-import { MAX_IMAGES_PER_PROMPT, gifDimensions, jpegDimensions, pngDimensions, webpDimensions } from "../media/imageDims.js";
+import { MAX_IMAGES_PER_PROMPT, gifDimensions, jpegDimensions, pngDimensions, sniffImageMediaType, webpDimensions } from "../media/imageDims.js";
 
 /** F9 T-IMAGE Task 5 (I3b), spec v3.1: "version skew is LOUD" — the exact message a caller (`useChat.ts`)
  *  matches on to render this as a capability NOTICE rather than a turn-failure error line. Shared as one
@@ -64,9 +64,22 @@ export async function stageBlocks(prompt: UserContentBlock[], ops: StagedSubmitO
       text += "[Image could not be processed: unreadable image data]";
       continue;
     }
+    // bl5 T-SNIFF task 3: this pre-check must stage the SAME type the authoritative seam
+    // (`checkImageBlock`, task 2) will land on, off the SAME buffer — otherwise the wire would carry
+    // a label the seam is only going to overwrite a moment later, and the host's minted file would sit
+    // under one media type while the canonical block that references it claims another. `sniffImageMediaType`
+    // returning `null` here is dead code given the readers above (same argument as turnInput.ts's twin
+    // comment: every dims reader requires the identical magic-byte prefix the sniff checks), but the
+    // fallback is kept literal — a layout none of today's readers recognize is the existing "unreadable
+    // image data" refusal, not a new one.
+    const mediaType = sniffImageMediaType(buf);
+    if (!mediaType) {
+      text += "[Image could not be processed: unreadable image data]";
+      continue;
+    }
     const sha256 = createHash("sha256").update(buf).digest("hex");
     let stageReply: { ok: boolean; path?: string; error?: string };
-    try { stageReply = await ops.stageImageOp({ mediaType: block.source.media_type, dimensions: dims, size: buf.length, sha256 }); }
+    try { stageReply = await ops.stageImageOp({ mediaType, dimensions: dims, size: buf.length, sha256 }); }
     catch (e) { await cleanup(); throw e; }
     if (!stageReply.ok || !stageReply.path) {
       await cleanup();

@@ -16,7 +16,7 @@ import { RemoteChatSession } from "../../src/client/remote.js";
 import { remoteChatSession, IMAGE_VERSION_SKEW_NOTICE } from "../../src/client/chatAdapter.js";
 import { hostSocketPath, hostImageStagingDir } from "../../src/fleet/paths.js";
 import { POST_PROCESS_BYTE_BUDGET } from "../../src/media/imageDims.js";
-import type { UserTurnInput, UserContentBlock } from "../../src/session/turnInput.js";
+import { normalizeTurnInput, type UserTurnInput, type UserContentBlock } from "../../src/session/turnInput.js";
 
 const fleets: string[] = [];
 const tmpFleet = () => { const d = mkdtempSync(join(tmpdir(), "ccx-imgtransport-")); fleets.push(d); return d; };
@@ -477,5 +477,53 @@ describe("F9 T-IMAGE Task 5 (I3b) — the negotiated stageImage transport, real 
       expect(assembled[0]).toEqual({ type: "text", text: "from the second client" });
       expect(assembled[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
     } finally { primary.detach(); secondary.detach(); await stopQuietly(host); }
+  });
+});
+
+describe("bl5 T-SNIFF: chain-5 inheritance pin — host staging hands off a HINT, the Session builder derives the truth", () => {
+  // `host/imageStaging.ts`'s `readAndValidate` rides the ORIGINAL stage descriptor's declared `mediaType`
+  // through UNEXAMINED (research-sniff.md §A.6) — chain 5 is untouched by this ticket, by design. What
+  // makes a mismatched declaration harmless in production is that `SessionHost` hands its assembled
+  // content straight to the REAL `Session.submit`, whose `userTurn` builder runs EVERY prompt through
+  // `normalizeTurnInput` unconditionally (session/session.ts:51) — the exact seam Task 2 changed. This
+  // fake session reproduces that ONE call (nothing else `Session` does matters to this pin) so the test
+  // observes the real correction without standing up a live SDK query.
+  function normalizingDrivable(sessionId = "sid-sniff-pin") {
+    let emit: (m: unknown) => void = () => {};
+    let finish: (v?: unknown) => void = () => {};
+    const submittedContents: UserTurnInput[] = [];
+    return {
+      sessionId,
+      submit(prompt: UserTurnInput, onMessage: (m: unknown) => void) {
+        submittedContents.push(normalizeTurnInput(prompt));
+        emit = onMessage;
+        return new Promise<unknown>((r) => { finish = r; });
+      },
+      dispose: async () => {},
+      interrupt: async () => {},
+      emit: (m: unknown) => emit(m),
+      finish: (v?: unknown) => finish(v),
+      submittedContents,
+    };
+  }
+
+  it("a staged PNG declared image/gif is corrected to image/png by the time it reaches the Session builder", async () => {
+    const session = normalizingDrivable();
+    const { host, path } = await startHost(session);
+    const client = await RemoteChatSession.connect(path);
+    try {
+      const png = fakePng(4, 4, 64);
+      const sha256 = createHash("sha256").update(png).digest("hex");
+      const staged = await client.stageImageOp({ mediaType: "image/gif", dimensions: { width: 4, height: 4 }, size: png.length, sha256 });
+      expect(staged.ok && staged.path).toBeTruthy();
+      writeFileSync(staged.path!, png);   // real, matching bytes — only the DECLARATION is wrong
+      const reply = await client.prompt("sniff", undefined, [{ stagedId: staged.path!, sha256 }]);
+      expect(reply.ok).toBe(true);
+      await waitFor(() => session.submittedContents.length === 1);
+      const assembled = session.submittedContents[0] as UserContentBlock[];
+      expect(assembled[0]).toEqual({ type: "text", text: "sniff" });
+      expect(assembled[1]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
+      session.finish({ result: "ok" });
+    } finally { client.detach(); await stopQuietly(host); }
   });
 });

@@ -18,11 +18,17 @@ export const IMAGE_STAGE_CHUNK_MAX = 128 * 1024;
 /** Exactly the formats the shared validator can actually read (`validateImageBlock` resolves dimensions
  *  with `pngDimensions(decoded) ?? jpegDimensions(decoded) ?? gifDimensions(decoded) ?? webpDimensions(decoded)`,
  *  `../media/imageDims.ts`) AND the Claude API accepts (bl4 T-GIFWEBP widened this from PNG/JPEG-only once
- *  Task 1 added the GIF/WebP readers). Listing a type here that the validator cannot read would accept a
- *  stage at the handler and then fail it at completion with a confusing reason — this allowlist and that
- *  reader chain must stay the same set. Still OUT, because `imageDims.ts` has no reader for either:
- *  `image/tiff`, `image/bmp`. */
+ *  Task 1 added the GIF/WebP readers). Still the reference set for what a COMPLETED stage can end up
+ *  labelled as (`settleIfComplete`'s block carries `entry.mediaType` only until validation runs — see
+ *  bl5 T-SNIFF below) and for what the completion-time validator will actually accept. Still OUT, because
+ *  `imageDims.ts` has no reader for either: `image/tiff`, `image/bmp`. NOT used to gate the first chunk
+ *  any more (bl5 T-SNIFF) — see `chunk()`'s own comment. */
 export const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+/** bl5 T-SNIFF: the bounded non-empty-string check the FIRST CHUNK's declared `mediaType` gets now that
+ *  it is a hint, not a gate (canon never carries a declaration far enough to cross-check it either — see
+ *  research-sniff.md §B). A cap this size is generous for any real MIME string and exists only to stop
+ *  an unbounded string from riding in a field nothing downstream truncates. */
+const MAX_DECLARED_MEDIA_TYPE_LENGTH = 256;
 export const MAX_STAGES_PER_CONNECTION = 4;
 export const MAX_STAGED_BYTES_GLOBAL = 32 * 1024 * 1024;    // across ALL connections (round-2 F7:
 export const MAX_STAGES_GLOBAL = 64;                        // per-connection caps alone are unbounded
@@ -50,8 +56,11 @@ export interface ImageStageChunk {
   last: boolean;
   /** Total BASE64 bytes the client will send for this stage, declared on every chunk. */
   bytesTotal: number;
-  /** REQUIRED on `seq: 0` and validated against IMAGE_MEDIA_TYPES there; ignored on later chunks. Optional in
-   *  the type because `seq` is a number, not a discriminant — the registry enforces the rule, not the shape. */
+  /** REQUIRED on `seq: 0` (a bounded non-empty string, ≤`MAX_DECLARED_MEDIA_TYPE_LENGTH` chars); ignored
+   *  on later chunks. bl5 T-SNIFF: this is a HINT, not a gate — completion derives the real `media_type`
+   *  from the assembled bytes (`validateImageBlock`'s sniff) and that derived value is what a caller
+   *  actually gets back, regardless of what was declared here. Optional in the type because `seq` is a
+   *  number, not a discriminant — the registry enforces the rule, not the shape. */
   mediaType?: string;
   data: string;
 }
@@ -104,7 +113,9 @@ interface StageEntry {
   connId: number;
   stageId: string;
   bytesTotal: number;
-  mediaType: string;       // captured once, from seq 0; later chunks' mediaType is ignored
+  mediaType: string;       // captured once, from seq 0; later chunks' mediaType is ignored. A HINT
+                            // fed to the validator at completion (bl5 T-SNIFF) — `settleIfComplete`
+                            // builds the block with it, but the validator overwrites it from the bytes.
   assembled: string;       // concatenated base64 received so far (the raw, pre-canonical bytes)
   nextSeq: number;
   complete: boolean;
@@ -159,10 +170,14 @@ export class ImageStageRegistry {
   }
 
   /** Feeds one chunk. Refuses BEFORE any allocation when `bytesTotal` exceeds MAX_BASE64_INPUT_BYTES, when
-   *  `data` exceeds IMAGE_STAGE_CHUNK_MAX, on a bad/missing first-chunk mediaType, on an out-of-order or
-   *  duplicate `seq`, on assembled bytes exceeding `bytesTotal`, and on any of the four caps. On the LAST
-   *  chunk it runs the injected validator exactly once and caches the result; a stage whose bytes are not
-   *  a decodable image FAILS HERE, with the reason on the completion reply — never at reservation. */
+   *  `data` exceeds IMAGE_STAGE_CHUNK_MAX, on a missing/empty/oversized/non-string first-chunk mediaType,
+   *  on an out-of-order or duplicate `seq`, on assembled bytes exceeding `bytesTotal`, and on any of the
+   *  four caps. bl5 T-SNIFF: the first-chunk mediaType check is a SHAPE check, not a format gate — no
+   *  bytes exist yet to sniff, so there is nothing to allowlist against at this point (canon has the same
+   *  property: it never carries a declaration far enough to cross-check it either, research-sniff.md §B).
+   *  Format acceptance is decided once, at completion, by the injected validator against the SNIFFED
+   *  bytes — a stage whose assembled bytes are not a decodable image of a format the API accepts FAILS
+   *  THERE, with the reason on the completion reply — never at reservation, and never here. */
   chunk(connId: number, p: ImageStageChunk): StageResult {
     if (p.data.length > IMAGE_STAGE_CHUNK_MAX) return this.refuse(`chunk data exceeds the ${IMAGE_STAGE_CHUNK_MAX}-byte limit`);
     if (p.bytesTotal > MAX_BASE64_INPUT_BYTES) return this.refuse(`bytesTotal exceeds the ${MAX_BASE64_INPUT_BYTES}-byte limit`);
@@ -172,8 +187,8 @@ export class ImageStageRegistry {
 
     if (!existing) {
       if (p.seq !== 0) return this.refuse(`unknown stage "${p.stageId}" cannot resume at seq ${p.seq}`);
-      if (typeof p.mediaType !== "string" || !(IMAGE_MEDIA_TYPES as readonly string[]).includes(p.mediaType)) {
-        return this.refuse(`first chunk of stage "${p.stageId}" needs a mediaType in [${IMAGE_MEDIA_TYPES.join(", ")}]`);
+      if (typeof p.mediaType !== "string" || p.mediaType.length === 0 || p.mediaType.length > MAX_DECLARED_MEDIA_TYPE_LENGTH) {
+        return this.refuse(`first chunk of stage "${p.stageId}" needs a non-empty mediaType of at most ${MAX_DECLARED_MEDIA_TYPE_LENGTH} characters`);
       }
       if (p.data.length > p.bytesTotal) return this.refuse(`assembled bytes exceed the declared bytesTotal for stage "${p.stageId}"`);
       if (this.connCount(connId) >= MAX_STAGES_PER_CONNECTION) return this.refuse(`connection already has ${MAX_STAGES_PER_CONNECTION} stages open`);

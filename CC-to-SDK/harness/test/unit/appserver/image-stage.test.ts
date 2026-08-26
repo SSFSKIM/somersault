@@ -131,11 +131,34 @@ describe("I3a: chunk assembly and completion", () => {
     expect(r).toMatchObject({ ok: false });
   });
 
-  it("a mediaType outside IMAGE_MEDIA_TYPES is refused", () => {
+  it("an empty-string mediaType on seq 0 is refused — the shape check still holds even though it's a hint now", () => {
+    const { reg } = harness();
+    const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "" }));
+    expect(r).toMatchObject({ ok: false });
+  });
+
+  it("a mediaType over the 256-char length cap on seq 0 is refused", () => {
+    const { reg } = harness();
+    const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "x".repeat(257) }));
+    expect(r).toMatchObject({ ok: false });
+  });
+
+  it("bl5 T-SNIFF: a mediaType outside IMAGE_MEDIA_TYPES is no longer refused at the FIRST chunk — it's a hint, not a gate", () => {
     const { reg } = harness();
     const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "image/tiff" }));
-    expect(r).toMatchObject({ ok: false });
+    // The declared "image/tiff" is not what the API or the validator will end up accepting THIS block
+    // as — but that verdict belongs to completion (the sniff), not to the shape check on chunk 0.
+    expect(r).toMatchObject({ ok: true });
     expect(IMAGE_MEDIA_TYPES).not.toContain("image/tiff");
+  });
+
+  it("bl5 T-SNIFF (plan-review F3): a completed stage of valid PNG bytes declared application/pdf is ADMITTED with the derived image/png", () => {
+    const { reg } = harness();
+    const r = reg.chunk(1, chunkOf(PNG_1X1, { mediaType: "application/pdf" }));
+    expect(r).toEqual({ ok: true, complete: true });
+    const res = reg.reserve(1, ["s1"]);
+    expect(res.ok).toBe(true);
+    expect((res as any).reservation.blocks[0].source.media_type).toBe("image/png");
   });
 
   it("bl4 T-GIFWEBP: image/gif completes and reserves — GIF is now IN the allowlist", () => {

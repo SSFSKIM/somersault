@@ -3,7 +3,8 @@ import { createServer } from "node:net";
 import { mkdtempSync, rmSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SessionHost } from "../../src/host/host.js";
 import type { HostSession } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
@@ -553,6 +554,9 @@ describe("remoteChatSession — lazy ChatSession adapter", () => {
 // what makes the repair the extraction carries observable: the minted path is tracked BEFORE the write,
 // so a failed write no longer leaks the file the host just minted (spec rev 2 finding 9).
 describe("stagedSubmit — the shared staging loop", () => {
+  // bl5 T-SNIFF task 3 house rule: never synthesize a fixture when a real one exists — the same PNG/GIF
+  // files `turnInput.test.ts`'s sibling describe reads from `test/fixtures/images/`.
+  const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
   // Header-only PNG: signature + IHDR width/height, zero-padded. `pngDimensions` never reads past byte
   // 24 (clipboardImage.ts), so this is the cheapest buffer that sniffs as a real image.
   const fakePng = (width: number, height: number, totalBytes = 64): Buffer => {
@@ -646,5 +650,40 @@ describe("stagedSubmit — the shared staging loop", () => {
     expect(staged.text.startsWith("many")).toBe(true);
     expect(staged.text.match(/too many images in one turn/g)).toHaveLength(3);
     await staged.cleanup();
+  });
+
+  // bl5 T-SNIFF task 3: this pre-check must never let a declared type reach the wire that the
+  // AUTHORITATIVE seam (`checkImageBlock`, task 2) would go on to overwrite — otherwise the client
+  // stages bytes under one label and the host's canonical block disagrees under another. Same helper,
+  // same buffer, so the two sides cannot drift: real fixtures from `test/fixtures/images/`, matching
+  // `turnInput.test.ts`'s symmetric pair.
+  describe("bl5 T-SNIFF: the staged mediaType is the SNIFFED type, not the declared one", () => {
+    const realPng = readFileSync(join(FIXTURES, "rgb8-64x48.png"));
+    const realGif = readFileSync(join(FIXTURES, "live-purple-64x64.gif"));
+
+    it("f. real PNG bytes declared image/gif stage with the CORRECTED image/png — no degrade", async () => {
+      const stager = fakeStager();
+      const staged = await stageBlocks([imageBlock(realPng, "image/gif")], stager.ops);
+      expect(stager.calls).toHaveLength(1);
+      expect(stager.calls[0].mediaType).toBe("image/png");
+      expect(staged.text).toBe("");
+      await staged.cleanup();
+    });
+
+    it("g. real GIF bytes declared image/png stage with the CORRECTED image/gif — symmetric", async () => {
+      const stager = fakeStager();
+      const staged = await stageBlocks([imageBlock(realGif, "image/png")], stager.ops);
+      expect(stager.calls).toHaveLength(1);
+      expect(stager.calls[0].mediaType).toBe("image/gif");
+      expect(staged.text).toBe("");
+      await staged.cleanup();
+    });
+
+    it("h. unreadable bytes still degrade with the existing copy — a sniff miss changes nothing here", async () => {
+      const stager = fakeStager();
+      const staged = await stageBlocks([imageBlock(Buffer.from("not an image, just some bytes"), "image/gif")], stager.ops);
+      expect(stager.calls).toHaveLength(0);
+      expect(staged.text).toBe("[Image could not be processed: unreadable image data]");
+    });
   });
 });

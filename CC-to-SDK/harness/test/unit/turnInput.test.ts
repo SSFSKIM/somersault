@@ -6,6 +6,9 @@
 // cell and the `Session.submit` seam proof that normalization cannot be skipped by any caller.
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { z } from "zod/v4";
 import {
@@ -73,6 +76,10 @@ function fakePng(width: number, height: number, totalBytes = 24): Buffer {
   buf.writeUInt32BE(height, 20);
   return buf;
 }
+
+/** Real fixtures (bl5 T-SNIFF house rule: never synthesize when a real one exists) — the same PNG/GIF
+ *  files `imageDims.test.ts` and `turn-content.test.ts` already read from `test/fixtures/images/`. */
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
 
 function imageBlock(buf: Buffer, mediaType = "image/png"): UserContentBlock {
   return { type: "image", source: { type: "base64", media_type: mediaType, data: buf.toString("base64") } };
@@ -171,6 +178,29 @@ describe("normalizeTurnInput — bl4 T-GIFWEBP: GIF/WebP join the validator chai
     const out = normalizeTurnInput([imageBlock(gifHeader(2400, 10), "image/gif")]) as UserContentBlock[];
     expect(out[0].type).toBe("text");
     expect(asText(out[0])).toBe("[Image could not be processed: dimensions 2400x10 exceed the 2000x2000px limit]");
+  });
+});
+
+describe("normalizeTurnInput — bl5 T-SNIFF: media_type is DERIVED from the bytes, not the declaration", () => {
+  const realPng = readFileSync(join(FIXTURES, "rgb8-64x48.png"));
+  const realGif = readFileSync(join(FIXTURES, "live-purple-64x64.gif"));
+
+  it("real PNG bytes declared image/gif come out canonicalized as image/png — the declared type is overwritten", () => {
+    const block = imageBlock(realPng, "image/gif");
+    const out = (normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1];
+    expect(out).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: realPng.toString("base64") } });
+  });
+
+  it("real GIF bytes declared image/png come out canonicalized as image/gif — symmetric", () => {
+    const block = imageBlock(realGif, "image/png");
+    const out = (normalizeTurnInput([textBlock("hi"), block]) as UserContentBlock[])[1];
+    expect(out).toEqual({ type: "image", source: { type: "base64", media_type: "image/gif", data: realGif.toString("base64") } });
+  });
+
+  it("unreadable bytes still refuse with the existing copy — a sniff miss lands on the same 'unreadable image data' reason as a dims miss", () => {
+    const out = normalizeTurnInput([imageBlock(Buffer.from("not an image, just some bytes"), "image/gif")]) as UserContentBlock[];
+    expect(out[0].type).toBe("text");
+    expect(asText(out[0])).toBe("[Image could not be processed: unreadable image data]");
   });
 });
 
