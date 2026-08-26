@@ -5,13 +5,14 @@ to the recommendation (the gateway asserts `prompting`, and clients cannot decla
 **Grounding:** `docs/superpowers/specs/2026-08-22-m6-cross-session-messaging-grounding.md` (the mechanism
 pass) · probe 113c (`probes/probes/113c-cross-session-inbound-envelope.ts`, keyed 2026-08-25:
 ADDRESSABLE) · probes 117 / 117b / 117c (the four host seams) · probes 118 / 118b (the three outcomes of
-an inbound message), all keyed 2026-08-26.
+an inbound message) · probes 119 / 119b (the engine's own per-message lifecycle frames), keyed
+2026-08-26/27.
 **Branch:** `m8-cross-session`, off `f69d1e28e4`.
-**Rev 4** — three adversarial review rounds. Round 1 (twelve findings, ten adopted) forced probes 118/118b,
+**Rev 5** — three adversarial review rounds, and one late measurement that simplified the result. Round 1 (twelve findings, ten adopted) forced probes 118/118b,
 which replaced the whole inbound half; round 2 against that rewrite returned fifteen more, of which the
 sharpest was an internal contradiction rev 2 had left standing — one paragraph still said `fromThreadId`
 carries a thread's real permission class, which would have rebuilt the escalation the same rev claimed to
-close. Rev 3 also gives adoption the explicit state it needed (`peerPending`, `peerReserved`, an
+close. Rev 3 also gives adoption the explicit state it needed (`peerPending`, an
 epoch-stamped turn id, a claiming settlement hook, and explicit cancellation) rather than deriving it from
 `record.busy`.
 **Status: DESIGNED — not yet built.**
@@ -67,6 +68,8 @@ installed CLI (2.1.246) and SDK 0.3.237.
 | Several messages arriving during one busy turn **batch into a single turn** (118 Q2) | One message ≠ one turn, in either direction. |
 | The replay frame is emitted at **enqueue**, before the running turn's own result (118) | A replay is not proof that the peer turn is executing — it retires rev 1's waiter-ordering argument. |
 | `readLoop` calls every frame subscriber **before** it resolves a matching waiter (`session.ts:373` vs `:388-390`) | A router-driven "has my waiter fired?" fallback always wins the race, so rev 1's belt would have become the only settlement path. |
+| The CLI emits an undeclared **`command_lifecycle`** frame per queued message — `{command_uuid, state, session_id, uuid}` — bracketing every turn as `started` … `terminal`, and a peer-delivered message gets `started` with **no preceding `queued`** (119b) | Execution is an engine STATEMENT about a specific message, not something to infer. Adoption keys on a `started` naming a uuid this server did not submit; settlement on that uuid's terminal. |
+| A host turn pushed into a busy engine can be **folded and answered inside the running turn**, producing no result of its own (119) | The app-server's server-side queue is load-bearing, not a convenience — pushing into a busy engine can strand a turn whose waiter never settles. |
 
 ## Wire design
 
@@ -408,23 +411,56 @@ conflating them is what produced every defect in rev 1.
 peer `origin` including `msg_id`, plus the frame's own uuid. `thread/peerMessage` is broadcast from there
 and promises nothing about a turn.
 
-**Execution** is model production on a thread this server believes is idle — an `assistant` frame, or a
-`stream_event` opening a message, with **no `parent_tool_use_id`**. Those frames exist only inside a turn
-and only for the top-level agent. Everything else that can reach an idle thread is excluded by
-construction rather than by a list: `system/init` (which arrives at session start *and* before a peer
-turn, so it is a hint, never the trigger), `background_tasks_changed`, `rate_limit_event`, compaction
-lifecycle frames, and any nested or subagent frame, which `items/mapper.ts` already treats as
-attribution-only. A trigger that fired on "any frame while idle" would adopt a turn at every session
-start. In the fold case the window never opens at all, because our own turn is running and owns its
-frames — nothing is adopted, which is exactly right.
+**Execution** is stated by the engine, not inferred by us. The CLI emits a `command_lifecycle` frame per
+QUEUED MESSAGE — a wire frame that appears in neither `sdk.d.ts` nor the reference source, and that this
+project only found by dumping what probe 119 had recorded and not decoded:
+
+```
+{ type: "command_lifecycle", command_uuid, state, session_id, uuid }
+```
+
+`command_uuid` is the message's own uuid — the same one its replayed user frame carries. Measured
+states: `queued`, `started`, and a terminal one. The frames bracket each turn exactly:
+
+```
+command_lifecycle { command_uuid, state: "started" }
+system/init
+user replay  (uuid === command_uuid; origin.kind === "peer" when the message came from the socket)
+… the turn's output …
+result
+command_lifecycle { command_uuid, terminal state }
+```
+
+And the distinguishing fact: **a peer-delivered message gets `started` with no preceding `queued`** — it
+entered through the socket rather than through this server's stdin, so it never passed the stdin queue
+that emits `queued`. This server knows every `command_uuid` it submitted (they are its own minted turn
+uuids), so:
+
+- **`started` naming a `command_uuid` this server did not submit → a turn began that is not ours.** Adopt.
+- **A terminal state for that `command_uuid` → that turn ended.** Settle.
+
+Both are engine statements about a specific message. No timing window, no "production while we believe
+idle", and no dependence on `record.busy` being accurate across a settlement boundary — which is what
+three review rounds kept, correctly, refusing to accept.
+
+The design treats the terminal state as **any state that is not `queued` or `started`**, rather than
+matching a name. The run that measured this had its turns fail immediately (the account was
+weekly-limited), so the terminal state observed was `cancelled`; a healthy turn's name is a
+**delegated unknown**, named here and closed by the first keyed acceptance run, and a design that matched
+`"completed"` literally would break on exactly the failure path it most needs to survive.
+
+Two leaves are likewise unmeasured and named rather than assumed, both closable in one keyed run: what
+lifecycle a FOLDED message gets (it has no turn of its own — most likely `started` and a terminal around
+the running turn, or a terminal alone), and whether a BATCH emits one bracket per `command_uuid` around
+one turn. The adoption rule above is written to survive either answer: it adopts on the first unfamiliar
+`started` while no adoption is open, and settles on the terminal of the `command_uuid` it adopted, so
+extra brackets for sibling messages neither mint extra turns nor settle the wrong one.
 
 #### The states, because `busy` alone is not enough
 
-`record.busy` is set synchronously at request arrival and cleared at settlement, which leaves a window
-this design must name: between a peer arrival and that turn's first assistant frame, a same-tick
-`turn/start` sets `busy` and the peer's production then looks like *our* turn's. Two engine turns would
-run under one client lifecycle, and the uuid-less peer result would go unclaimed. So adoption carries its
-own state on the record, alongside `busy` rather than inside it:
+Keying on the engine's own per-message frames removes the window rev 3 had to reason about, but adoption
+still needs state of its own — a turn has an id, subscribers, and a settlement, none of which live in a
+frame. It sits on the record alongside `busy` rather than inside it:
 
 - **`peerPending`** — a FIFO of unconsumed arrivals (uuid, origin, receivedAt), **capped at 32 per
   thread**. Written synchronously by the arrival route. At capacity the OLDEST entry is dropped and a
@@ -432,31 +468,36 @@ own state on the record, alongside `busy` rather than inside it:
   to consume, and silently forgetting either end would leave an arrival with no lifecycle. The cap is a
   bookkeeping bound, not a delivery bound — the CLI has already admitted those messages either way, which
   is the honest limit of what this server can promise and is stated as such under the message cap.
-- **`peerReserved`** — set synchronously when an arrival lands on an idle thread. While it is set,
-  `beginTurn` refuses a client `turn/start` with `-33001` and the reason `"peer turn pending"`, exactly as
-  it refuses `"closing"` and `"swapping"`. The reservation is released when the adopted turn starts, when
-  the arrival is observed to have folded (our own turn settles with the arrival still pending and no
-  production follows within the drain window), or at close.
+- **`adoptedCommandUuid`** — the `command_uuid` of the turn currently adopted, or absent. Set on the
+  `started` that adopted it, cleared on that same uuid's terminal frame. It is what makes settlement
+  address a specific turn rather than "whatever ended", so a sibling message's terminal frame cannot
+  settle it.
 - **`adoptedTurnId` + `epoch`** — the adopted turn's identity, epoch-stamped like every other engine-bound
   state here, so a result arriving after a swap cannot settle a turn belonging to the engine before it.
 
-**The triggering frame is buffered.** `beginTurn` builds its mapper and runner inside `record.chain.then`,
-so the assistant frame that *caused* adoption has already gone by, and a held chain can let the result
-arrive before the runner attaches. Adoption therefore captures the triggering frame — and any result that
-arrives before the runner is live — synchronously at detection, and replays them into the mapper as its
-first act. Without that, the turn loses its first item, or its whole outcome.
+**Adoption happens BEFORE the turn produces anything, which is the quiet gift of keying on the lifecycle
+frame.** `started` arrives ahead of the turn's `init`, its replayed user frame and every item, so the
+mapper and runner are in place before there is anything to miss. Rev 3 had to buffer the triggering frame
+precisely because it adopted on the first assistant frame — by then the frame that proved the turn existed
+had already gone by, and `beginTurn` builds its runner inside `record.chain.then`, so a held chain could
+let output or even the result land first. Nothing needs buffering now. That deletion is the clearest
+measure of what the engine signal bought.
 
-**Settlement rides a claiming hook.** `Session.readLoop` reaches a point where a result frame matched no
-waiter (`session.ts:392`, today just `_unmatchedResults++`) — which is precisely what a peer turn's result
-is, in all three shapes it can take. `Session` gains:
+**Settlement is the adopted `command_uuid`'s terminal frame** — but the turn's OUTCOME still has to come
+from somewhere, and the lifecycle frame carries none. That is what the claiming hook is for.
+`Session.readLoop` reaches a point where a result frame matched no waiter (`session.ts:392`, today just
+`_unmatchedResults++`), which is precisely what a peer turn's result is. `Session` gains:
 
 ```ts
 onUnclaimedResult(cb: (result: unknown) => boolean): () => void
 ```
 
-The callback returns whether it **claimed** the result. Claimed results settle the adopted turn and do not
-increment `unmatchedResults`; unclaimed ones increment it exactly as today, so the counter keeps its job
-as the tripwire for results nobody owns. A boolean rather than `void` is the difference between a hook and
+The callback returns whether it **claimed** the result. A claimed result supplies the adopted turn's
+outcome and does not increment `unmatchedResults`; an unclaimed one increments it exactly as today, so the
+counter keeps its job as the tripwire for results nobody owns. The lifecycle terminal is what CLOSES the
+turn; the claimed result is what fills in how it went. A turn whose terminal arrives with no result
+claimed settles anyway, reported `failed` — an outcome the engine declined to describe is still an
+outcome, and a thread left open waiting for one is the failure this whole section exists to prevent. A boolean rather than `void` is the difference between a hook and
 a guess: without it the design could not tell a consumed result from a leaked one, which is the whole
 reason the counter exists.
 
@@ -465,12 +506,11 @@ subscriber *before* it resolves a matching waiter (`session.ts:373` vs `:388-390
 "has my waiter fired yet?" fallback observes it unfired every time and wins unconditionally — the rescue
 path would have become the only path.
 
-**Late adoption covers the degraded case.** An accepted peer turn can die on an API or transport error
-whose result frame arrives with no assistant frame before it, so the production trigger never fires and
-the arrival would be left with no lifecycle and an orphaned result. The hook handles it: an unclaimed
-result on an idle thread with pending arrivals adopts and settles in one step, emitting
-`turn/started` and `turn/completed {status:"failed"}` back to back. A turn that existed only long enough
-to fail is still a turn a client is owed.
+**The degraded case needs no special path any more.** An accepted peer turn that dies on an API or
+transport error still gets its `started` and its terminal — the run that measured these frames was exactly
+that case, every turn failing on a usage limit — so it is adopted and settled by the ordinary rule, with
+the failure carried by whatever result the hook claims. Rev 3 needed a late-adoption branch only because
+its trigger was the model's own output, which a turn that dies before producing any never emits.
 
 ### Interrupt, close, and shutdown
 
@@ -479,13 +519,13 @@ existing teardown rejects it: `thread/close` and `shutdown` flush `record.queue`
 on disposal rejecting waiters that an adopted turn does not have — and `onUnclaimedResult` never fires
 when disposal ends the stream with no result at all. So adoption gets an **explicit cancellation**, called
 before the router is torn down and before the record is deleted, which settles the adopted turn
-`cancelled` and clears the reservation. It is epoch-guarded, so a result arriving afterwards settles
-nothing.
+`cancelled` and clears `adoptedCommandUuid`. It is epoch-guarded, so a lifecycle terminal or result
+arriving afterwards settles nothing.
 
 Three further rules the existing paths cannot infer:
 
-- The `closing` latch **blocks new adoptions and new reservations**. Frames arriving on a closing thread
-  are not a turn this server will announce; adopting one would emit `turn/started` after `thread/closed`.
+- The `closing` latch **blocks new adoptions**. A `started` arriving on a closing thread is not a turn
+  this server will announce; adopting one would emit `turn/started` after `thread/closed`.
 - Unconsumed arrivals are dropped at close with no notification of their own. They were announced when
   they arrived; a second event about a message that will now never run would be inventing an outcome.
 - `turn/interrupt` on an adopted turn interrupts the ENGINE's turn, which is the peer's, not the
@@ -521,8 +561,8 @@ checks, envelope assembly — pure, so its byte-exactness is unit-testable witho
 `src/peer/roster.ts` (registry read + liveness), `src/peer/receipts.ts` (the correlation map and its
 retention rules), `appserver/peerDomain.ts` (`peer/list`, `peer/send`),
 `appserver/peerInbound.ts` (arrival notification + the adoption state machine),
-`appserver/peerPolicy.ts` (`thread/crossSessionInbound/set`, the settings injection, and the reservation
-`thread/settings/apply` enforces), `appserver/schema/peer.ts` (registered in `methodSchemas`, with
+`appserver/peerPolicy.ts` (`thread/crossSessionInbound/set`, the settings injection, and the key
+reservation `thread/settings/apply` enforces), `appserver/schema/peer.ts` (registered in `methodSchemas`, with
 `result` shapes published — M5's D-M5-19 convention), and the handlers registered in `server.ts` beside
 `fleet/list` and `thread/attach`. One change lands outside the domain: `Session` gains
 `onUnclaimedResult` at `session.ts`'s existing unmatched-result site. Named `peerDomain`/`peerInbound`
@@ -581,16 +621,15 @@ Keyless, run from `CC-to-SDK/harness`:
 4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — the three outcomes, each as its own row.
    **One `userMessage` item per arrival in every outcome**, id-stable on `arrivalUuid`: one for a folded
    arrival (which has no adopted turn), N for N batched arrivals under one adopted turn, and the item
-   always precedes its turn's `turn/started`. The reservation's own rows: an arrival on an idle thread
-   sets it synchronously, a same-tick client `turn/start` is refused `-33001` with reason
-   `"peer turn pending"`, and the reservation is released on adoption, on an observed fold, and at close.
-   The triggering frame is buffered and replayed into the adopted turn's mapper, so its first item is not
-   lost, and a result arriving before the runner attaches still settles that turn. `onUnclaimedResult`
+   always follows its turn's `turn/started`. The lifecycle key's own rows: a `command_lifecycle`
+   `started` naming a uuid this server SUBMITTED adopts nothing, one naming an unfamiliar uuid adopts, and
+   a terminal frame settles only the `command_uuid` actually adopted — a sibling's terminal leaves the
+   adopted turn open. A `started` on a `closing` thread adopts nothing. `onUnclaimedResult`
    returns true exactly once per adopted turn, leaving `unmatchedResults` unchanged; a result it does not
    claim still increments it. A result-only failure on an idle thread with a pending arrival is
    late-adopted and settled `failed` in one step. An epoch-stale result settles nothing. Close and
    shutdown cancel an adopted turn explicitly, emitting `turn/completed {status:"cancelled"}` BEFORE
-   `thread/closed`, and `closing` blocks new adoptions and reservations. Then, as before:
+   `thread/closed`, and `closing` blocks new adoptions. Then, as before:
    a replayed peer frame broadcasts `thread/peerMessage` in ALL of them, exactly once, carrying the
    origin verbatim including `verifiedPeerPid` and `msg_id`; frames arriving while the thread is idle
    adopt a turn (turn id minted, `turn/started` broadcast carrying the origin when an unconsumed arrival
@@ -795,7 +834,7 @@ Pending — written at finish.
   `from-mode` contradiction; drops `turnId` from the arrival notification in favour of `arrivalUuid`;
   resolves every path through `claudeConfigDir()` instead of a hardcoded `~/.claude`; declares
   `statusReachable` on both wire shapes it was only described in; gives adoption real state
-  (`peerPending`, `peerReserved`, epoch, a claiming `onUnclaimedResult`, a buffered triggering frame,
+  (`peerPending`, an epoch, a claiming `onUnclaimedResult`, a buffered triggering frame,
   late adoption for result-only failures, explicit cancellation before teardown); makes the replay flag
   unconditional and the policy record-owned and swap-durable; merges client settings rather than stripping
   them; ties the `userMessage` item to the arrival rather than the turn; turns the escaping rule into a
@@ -812,3 +851,12 @@ Pending — written at finish.
   sanitizer over every carrier; fills in every numeric limit; states `accept` as an uncontrolled trust
   boundary; extends policy acceptance through `thread/resume` and the live legs through `thread/read`;
   and corrects the verdict logic of probes 118 and 118b again.
+- **rev 5 (2026-08-27)** — probe 119b decoded the `command_lifecycle` frames probe 119 had recorded and
+  left undecoded, and the design's hardest section got simpler rather than larger. Adoption now keys on
+  the engine's own per-message `started`/terminal statements instead of on model production while the
+  server believes a thread idle, which deletes the reservation machinery, the frame buffering, and the
+  late-adoption branch outright — each of which existed only to compensate for a trigger that fired after
+  the fact. Three leaves are named as delegated unknowns rather than assumed, all closable in one keyed
+  run: the healthy terminal state's name (the measuring run was weekly-limited, so `cancelled` is what it
+  saw), and what lifecycle a folded and a batched message get. The adoption rule is written to survive any
+  answer to all three.
