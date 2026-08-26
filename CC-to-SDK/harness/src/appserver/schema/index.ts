@@ -18,6 +18,7 @@ import { configReadParams, configReadResult, configValueWriteParams, configBatch
 import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
 import { capabilitiesReadResult } from "./introspect.js";
 import { toolCallResultParams, toolCallResultResult } from "./dynamicTools.js";
+import { peerListParams, peerListResult, peerSendParams, peerSendResult, crossSessionInboundSetParams, crossSessionInboundSetResult } from "./peer.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -185,4 +186,17 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // lost, the id unknown, the thread gone — is an error code, so a client that cannot validate the empty
   // reply cannot tell "settled" from a reply it failed to understand.
   "tool/callResult": { params: toolCallResultParams, result: toolCallResultResult },
+  // M8 (§peer): the cross-session domain, registered last because `tool/callResult` was — registration
+  // order IS the artifact's order, and the scorecard lists these three after M7's settlement method.
+  // `peer/list` and `peer/send` are SERVER-scoped (neither names a thread: the subject is every Claude
+  // Code session on this machine, and the ones they reach are sessions this server never opened), while
+  // `thread/crossSessionInbound/set` is thread-scoped — it sets ONE thread's inbound policy. All three
+  // STABLE: the mechanism is this machine's own session registry plus the per-session Unix-socket inbox
+  // the CLI already binds, not an unproven SDK seam. All three publish a `result` (D-M5-19) because
+  // each reply carries a contract no params schema can state — `peer/list`'s `statusReachable` says a
+  // peer can never answer, `peer/send`'s `delivered` is a literal `false` (the frame was WRITTEN; the
+  // CLI tells a sender nothing on the success path), and the setter's ack is the closed `{ok:true}`.
+  "peer/list": { params: peerListParams, result: peerListResult },
+  "peer/send": { params: peerSendParams, result: peerSendResult },
+  "thread/crossSessionInbound/set": { params: crossSessionInboundSetParams, result: crossSessionInboundSetResult },
 };

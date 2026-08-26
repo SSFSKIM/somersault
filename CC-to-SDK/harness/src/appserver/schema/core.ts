@@ -37,6 +37,11 @@ export const initializeResult = z.object({
   version: z.string(),
   platformOs: z.string(),
   dynamicTools: z.literal(true),
+  // M8's marker, for the same reason `dynamicTools` exists: `crossSessionInbound` rides an OPTIONAL param
+  // on thread/start, and an older server's `z.object` STRIPS an optional param it has never heard of —
+  // starting the thread with mode parity still in force, no error, and no signal. A client that means to
+  // rely on the policy must treat this marker's absence as "this server cannot enforce it".
+  crossSession: z.literal(true),
 });
 export const serverStatusParams = z.object({});
 // `decision/list`'s cursor, and now only its. A decimal offset indexes a POSITION in the array being

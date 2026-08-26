@@ -1308,7 +1308,12 @@ export class AppServer {
     // a client cannot otherwise tell this server from one too old to know the param — an older `z.object`
     // strips the declaration silently and starts the thread toolless. Answered here, in the reply every
     // client already reads, before anything can be declared.
-    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true });
+    // `crossSession: true` (M8) is the same marker for the same reason: `thread/start`'s
+    // `crossSessionInbound` is an OPTIONAL param, so an older server strips it and starts the thread with
+    // mode parity still in force, silently. The marker is emitted the moment the schema publishes it —
+    // a published result a reply does not satisfy would make the contract a lie in the one direction a
+    // client cannot check.
+    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true, crossSession: true });
     ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
 
