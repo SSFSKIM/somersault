@@ -41,6 +41,10 @@ import { reviewStart } from "./review.js";
 import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
 import { threadSearch, threadSearchOccurrences } from "./search.js";
 import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js";
+import { peerList, peerSend } from "./peerDomain.js";
+import { ReceiptMap } from "../peer/receipts.js";
+import { readPeerRows as realReadPeerRows, type PeerRow } from "../peer/roster.js";
+import type { PeerGateway } from "../peer/gateway.js";
 import { listArchived, removeArchiveMarker } from "./archive.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
@@ -104,6 +108,14 @@ export interface AppServerDeps {
   // injectable so a test can wrap its `validate` with a spy (the "no second decode" contract must be
   // provable end to end, not just at the registry's own unit level) without reaching into a private field.
   imageStages?: ImageStageRegistry;
+  // M8 (§peer): the bound gateway, or `null` to declare it deliberately absent (a test, and a server that
+  // could not bind). Undefined means "not wired yet" and is treated the same as null — `peer/send` answers
+  // -33008 either way, since a sender with no reply address of its own can never be told what happened.
+  // `readPeerRows`/`peerEnv` are the roster's two seams, defaulted at their accessors (peerRows/peerEnv)
+  // to the real reader and `process.env`, so a suite lists a fixture roster without a home directory.
+  peerGateway?: PeerGateway | null;
+  readPeerRows?: (env?: NodeJS.ProcessEnv) => Promise<PeerRow[]>;
+  peerEnv?: NodeJS.ProcessEnv;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -456,6 +468,10 @@ export class AppServer {
   // its own — the same reason `spawn.ts`'s detached child is unref'd. Public (not private) so a test can
   // assert `hasRef() === false` directly rather than reaching into a private field.
   readonly imageStageSweepTimer: NodeJS.Timeout;
+  /** M8: the `msgId -> connection` map every `peer/send` leaves behind, so a receipt arriving minutes
+   *  later over the gateway reaches the connection that asked. Public for the reason `imageStages` is —
+   *  the gateway's own receipt route (Task 7) and a test both hand frames to it from outside. */
+  readonly receipts: ReceiptMap<ConnCtx>;
   private conns = new Map<number, ConnCtx>();
   private decisions = new Map<string, ThreadDecisions>();
   /** M7: one dynamic-tool-call registry per thread, minted and released exactly beside `decisions` — the
@@ -712,6 +728,11 @@ export class AppServer {
     // those gates exist for.
     "fleet/list": fleetList,
     "thread/attach": threadAttach,
+    // M8 (§ peer domain): server-scoped like their fleet neighbours — no threadId, so neither passes the
+    // -33005 or origin gates. `peer/send`'s `fromThreadId` is ATTRIBUTION, read inside the handler, and
+    // never the request's subject: the subject is another process's inbox on this machine.
+    "peer/list": peerList,
+    "peer/send": peerSend,
     // M3 Task 9 (§1e): ONE method, origin-appropriate meaning. On an inProcess thread this IS
     // `thread/close` — our engine, our call to end it. On a fleet thread the two diverge completely:
     // closing only detaches (the host lives on), so ending the SESSION needs its own op and its own
@@ -828,7 +849,18 @@ export class AppServer {
     this.imageStages = deps.imageStages ?? new ImageStageRegistry();
     this.imageStageSweepTimer = setInterval(() => this.imageStages.sweep(), IMAGE_STAGE_SWEEP_INTERVAL_MS);
     this.imageStageSweepTimer.unref(); // never keeps the process alive on its own (see the field's own note)
+    this.receipts = new ReceiptMap<ConnCtx>({
+      deliver: (conn, msgId, status, reason, from) => {
+        try { conn.peer.notify("peer/messageStatus", { msgId, status, ...(reason ? { reason } : {}), from, receivedAt: Math.floor(Date.now() / 1000) }); } catch { /* the connection went away mid-notify */ }
+      },
+    });
   }
+
+  /** The bound gateway, or undefined when none is. `null` in deps means the same thing and is how a test
+   *  or a failed bind says so explicitly. */
+  gateway(): PeerGateway | undefined { return this.deps.peerGateway ?? undefined; }
+  peerEnv(): NodeJS.ProcessEnv { return this.deps.peerEnv ?? process.env; }
+  peerRows(): Promise<PeerRow[]> { return (this.deps.readPeerRows ?? realReadPeerRows)(this.peerEnv()); }
 
   /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
    *  `review/start` (review.ts) can raise its detached review thread the same way rather than assembling
@@ -1273,8 +1305,10 @@ export class AppServer {
     // tab closing sweeps every record, not just whichever thread it last touched). F10 T-IMGREACH Task 10
     // (I3d): nor may it leave that connection's staged images behind — `dropConnection` releases their
     // bytes and purges any reservation opened on this connection (fix 81a2fd8ac8), so a socket dying
-    // mid-stage cannot hold memory the client will never come back to claim.
-    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); this.imageStages.dropConnection(connId); sink.end(); };
+    // mid-stage cannot hold memory the client will never come back to claim. M8 adds the receipt map for
+    // the same reason: a `peer/send` correlation whose asker is gone can never be routed anywhere, and the
+    // common cross-session outcomes are SILENT, so nothing later would ever release it.
+    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); this.imageStages.dropConnection(connId); this.receipts.dropConnection(connId); sink.end(); };
     return { peer, feed, close };
   }
 
