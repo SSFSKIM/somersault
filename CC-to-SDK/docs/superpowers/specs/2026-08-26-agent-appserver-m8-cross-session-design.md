@@ -114,6 +114,21 @@ back over a connection whose pid the kernel checks: no other value could receive
 target), `from-name` (its name), and `from-mode` (its *actual* permission class, read from the record, not
 from the request).
 
+**`hop-chain` is never set.** It exists in the attribute order for relayed traffic, and nothing here
+relays: this server sends only when a client calls `peer/send`, and it never answers an inbound message on
+its own. A hosted thread whose model uses the CLI's own `SendMessage` tool is the CLI's exchange, with the
+CLI's own loop discipline, and is not this domain's traffic.
+
+**The message is capped, because nothing downstream will tell us if it is not.** The CLI's own sender
+preflights size and refuses with a message naming both figures ("the serialized message is N characters
+and the limit is M … put bulk content in a file the recipient can read rather than in the message"), but
+that preflight belongs to the path we do not use — we write the socket ourselves, and an oversize line
+hits the receiver's own length cap, which drops it *silently*, before the JSON is even parsed. So
+`peer/send` measures the assembled frame and refuses `-32602` above its own conservative cap, naming the
+measured size and the limit. The receiver's exact cap is a **delegated unknown**: it is a constant in a
+minified bundle, and the honest way to learn it is a bisecting probe against a live inbox during
+execution. Until it is pinned, ours is set low enough that no frame we accept can reach theirs.
+
 **Without `fromThreadId` the gateway asserts `from-mode="prompting"`** (the resolved fork). The gateway
 process runs no model and asks no permission; claiming `bypass` would be a false statement about the one
 attribute the recipient uses to decide. The visible consequence, which belongs on the wire docs: a message
@@ -274,7 +289,8 @@ Keyless, run from `CC-to-SDK/harness`:
 3. `npx vitest run test/unit/appserver/peer-domain.test.ts` — `peer/list` projects present fields verbatim
    and omits absent ones, marks `alive`/`inboxBound`/`threadId`, lists dead rows by default and drops them
    under `aliveOnly`; `peer/send` puts the requested `priority` on the frame and `"next"` when none was
-   asked for, mints a UUID `msgId`, refuses
+   asked for, refuses an over-cap message with `-32602` naming the measured size and the limit, sets no
+   `hop-chain` attribute, mints a UUID `msgId`, refuses
    an ambiguous target with the matches listed, refuses `fromThreadId` on a fleet thread with `-33006`,
    asserts `from-mode="prompting"` with no attribution and the thread's real class with it, and returns
    `delivered: false`; a receipt arriving for that `msgId` reaches the sending connection as
