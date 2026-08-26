@@ -20,6 +20,7 @@
 // (lifecycle.ts), which DOES busy-gate: its engine call is heavy enough that running it concurrently with
 // a live turn is not safe, unlike these four.
 import { ERR } from "./rpc.js";
+import { RESERVED_SETTINGS_KEY } from "./peerPolicy.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { resolveAutoModel } from "../config/autoModel.js";
 import { thinkBudget } from "../tui/thinkLevels.js";
@@ -149,6 +150,16 @@ export const thinkingSet: Handler = (srv, ctx, id, params) => {
 export const settingsApply: Handler = (srv, ctx, id, params) => {
   const parsed = settingsApplyParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
+  // M8's RESERVATION, and it is not decoration. This method writes the same flag layer the inbound policy
+  // is carried on, at runtime, with no mirror write and no broadcast — so left open, any initialized
+  // connection could turn another thread's `refuse` into `accept` and then feed it, with `threadView`
+  // still reporting the value admission decided. The policy is decided ONCE, at admission
+  // (peerPolicy.ts's header); this states that in the one place a client could otherwise re-decide it.
+  // Refused on the KEY, before the record lookup, because it is a statement about the request.
+  if (RESERVED_SETTINGS_KEY in parsed.data.settings) {
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `${RESERVED_SETTINGS_KEY} is decided at admission and cannot be applied at runtime`);
+    return;
+  }
   const record = srv.registry.get(parsed.data.threadId);
   if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
   // inProcess-only: no host op carries an arbitrary flag-settings object, so a fleet thread is refused

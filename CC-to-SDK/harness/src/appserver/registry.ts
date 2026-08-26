@@ -9,6 +9,7 @@ import type { UserTurnInput } from "../session/turnInput.js";
 import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
 import type { DynamicToolSpec } from "./dynamicTools.js";
+import type { CrossSessionInbound } from "./peerPolicy.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
  *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
@@ -150,6 +151,14 @@ export type PendingFleetStop = { interrupted: boolean };
 export interface ThreadRecord {
   id: string;
   origin: ThreadOrigin;
+  /** M8: whether a cross-session peer may write into this thread — decided at ADMISSION and never after
+   *  (peerPolicy.ts's header says why there is no runtime setter). Mirrored from
+   *  `config.settings.crossSessionInbound`, which is the truth every replacement engine is rebuilt from;
+   *  this field is the arrival path's cheap read. The two are written in one statement and never apart.
+   *  MANDATORY rather than optional, so a new `ThreadRecord` literal cannot forget it — `fleet.ts`'s
+   *  host-owned record seeds `DEFAULT_INBOUND`, which is the honest value for an engine this server does
+   *  not build and cannot inject settings into. */
+  crossSessionInbound: CrossSessionInbound;
   session: EngineSession;
   unattended: "park" | "deny";
   busy: boolean;

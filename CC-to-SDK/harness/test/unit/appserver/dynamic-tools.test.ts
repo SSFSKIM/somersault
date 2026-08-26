@@ -27,6 +27,7 @@ import { INJECTED_SERVER_NAMES } from "../../../src/session/session.js";
 import { initializeResult } from "../../../src/appserver/schema/core.js";
 import { swapEngine } from "../../../src/appserver/rewind.js";
 import { emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { DEFAULT_INBOUND } from "../../../src/appserver/peerPolicy.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { MAX_IN } from "../../../src/appserver/peer.js";
 import { toolCallResult } from "../../../src/appserver/toolCallResult.js";
@@ -104,7 +105,7 @@ const barriers = (srv: AppServer): Set<string> => (srv as unknown as { parkBarri
  *  this origin raises here, which is what the thread-scoped tool-call reads answer for a thread that can
  *  never park into them. */
 const fleetRecord = (srv: AppServer): ThreadRecord => ({
-  id: srv.registry.mint(), origin: "fleet", session: fakeSession() as any, unattended: "park",
+  id: srv.registry.mint(), origin: "fleet", session: fakeSession() as any, unattended: "park", crossSessionInbound: DEFAULT_INBOUND,
   busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
   subscribers: new Set(), chain: Promise.resolve(),
   sessionId: "sess-fleet", createdAt: 1, updatedAt: 1,

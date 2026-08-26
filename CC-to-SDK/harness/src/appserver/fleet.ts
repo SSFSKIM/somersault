@@ -28,6 +28,7 @@ import type { AnswerReceipt, FleetEngineSession } from "./fleetEngine.js";
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { emptyFlagPerms, fleetTurnId, threadStatus } from "./registry.js";
+import { DEFAULT_INBOUND } from "./peerPolicy.js";
 import type { ThreadRecord } from "./registry.js";
 import { TurnMapper } from "./items/mapper.js";
 import { emitItems, requestInterrupt, snapshot } from "./turns.js";
@@ -408,6 +409,10 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
     if (st.short !== undefined && st.short !== row.short) throw new Error(`roster row ${row.short} is stale — the socket at pid ${row.pid} belongs to session ${st.short}`);
     const record: ThreadRecord = {
       id: srv.registry.mint(), origin: "fleet", session: engine, unattended: "park",
+      // A fleet thread's engine is the HOST's: this server neither builds it nor can inject a settings
+      // layer into it, so `DEFAULT_INBOUND` is the honest seed — "this server has not enabled inbound
+      // here" — rather than a claim about what the host's own config happens to say.
+      crossSessionInbound: DEFAULT_INBOUND,
       busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
       subscribers: new Set(), chain: Promise.resolve(),
       // The read substrate IS the persisted transcript: `thread/read` on a fleet thread is disk-only

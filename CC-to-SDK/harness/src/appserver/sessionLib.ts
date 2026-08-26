@@ -177,6 +177,11 @@ export function storeOnlyView(info: SDKSessionInfo): Record<string, unknown> {
     status: { state: "idle" as const },
     queueDepth: 0,
     origin: undefined,
+    // M8: `undefined` exactly as `origin` is — a session this server never opened had no admission here,
+    // so there is no policy to report. The key is PRESENT for the key-set equality this file claims (and
+    // sessionLib.test.ts pins): a field added to one projection and forgotten on the other is the drift
+    // that test exists to catch.
+    crossSessionInbound: undefined,
     createdAt: info.createdAt !== undefined ? Math.floor(info.createdAt / 1000) : undefined,
     updatedAt: Math.floor(info.lastModified / 1000),
     preview: info.firstPrompt,

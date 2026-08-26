@@ -17,8 +17,8 @@ describe("appserver schema registry", () => {
 });
 
 describe("M8 peer schemas", () => {
-  it("registers all three methods with a published result shape", () => {
-    for (const m of ["peer/list", "peer/send", "thread/crossSessionInbound/set"]) {
+  it("registers both methods with a published result shape", () => {
+    for (const m of ["peer/list", "peer/send"]) {
       expect(methodSchemas[m]).toBeDefined();
       expect(methodSchemas[m].result).toBeDefined();
     }
@@ -38,11 +38,21 @@ describe("M8 peer schemas", () => {
     expect(methodSchemas["peer/send"].result!.safeParse({ msgId: "u", address: "uds:/a.sock", delivered: true, statusReachable: true }).success).toBe(false);
   });
 
-  it("crossSessionInbound takes exactly the three CLI values", () => {
-    for (const v of ["accept", "hold", "refuse"]) {
-      expect(methodSchemas["thread/crossSessionInbound/set"].params.safeParse({ threadId: "t", value: v }).success).toBe(true);
+  // The policy has NO method of its own — it is an admission param on both spines (appserver/peerPolicy.ts
+  // says why there is no runtime setter), so the enum is pinned where a client actually sends it. Both
+  // spines, because a param only one of them publishes is a policy only one of them can be given.
+  it("crossSessionInbound rides both admission spines and takes exactly the three CLI values", () => {
+    expect(methodSchemas["thread/crossSessionInbound/set"]).toBeUndefined();
+    for (const m of ["thread/start", "thread/resume"]) {
+      const base = m === "thread/resume" ? { sessionId: "s-1" } : {};
+      for (const v of ["accept", "hold", "refuse"]) {
+        expect(methodSchemas[m].params.safeParse({ ...base, crossSessionInbound: v }).success).toBe(true);
+      }
+      expect(methodSchemas[m].params.safeParse({ ...base, crossSessionInbound: "maybe" }).success).toBe(false);
+      // OPTIONAL, and its omitted reading is the server's own default — which is why `initialize`
+      // publishes the capability marker below.
+      expect(methodSchemas[m].params.safeParse(base).success).toBe(true);
     }
-    expect(methodSchemas["thread/crossSessionInbound/set"].params.safeParse({ threadId: "t", value: "maybe" }).success).toBe(false);
   });
 
   it("initialize's result publishes the crossSession capability marker", () => {

@@ -1,7 +1,10 @@
-// appserver/schema/peer.ts — M8's three methods. Each publishes a `result` (M5's D-M5-19): these are new,
+// appserver/schema/peer.ts — M8's two methods. Each publishes a `result` (M5's D-M5-19): these are new,
 // so there is no incremental-adoption excuse for omitting one.
 import { z } from "zod/v4";
 
+/** The three values the CLI's own `crossSessionInbound` setting takes. It has no method of its own: the
+ *  policy is decided at ADMISSION (appserver/peerPolicy.ts), so this enum is consumed by
+ *  `threadStartParams`/`threadResumeParams` rather than by a setter's params. */
 export const CROSS_SESSION_INBOUND = ["accept", "hold", "refuse"] as const;
 
 const peerRow = z.object({
@@ -44,9 +47,3 @@ export const peerSendResult = z.object({
   delivered: z.literal(false),
   statusReachable: z.boolean(),
 });
-
-export const crossSessionInboundSetParams = z.object({
-  threadId: z.string().min(1),
-  value: z.enum(CROSS_SESSION_INBOUND),
-});
-export const crossSessionInboundSetResult = z.object({ ok: z.literal(true) });

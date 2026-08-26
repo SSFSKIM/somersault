@@ -42,6 +42,7 @@ import { configRead, configValueWrite, configBatchWrite } from "./configDomain.j
 import { threadSearch, threadSearchOccurrences } from "./search.js";
 import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js";
 import { peerList, peerSend } from "./peerDomain.js";
+import { applyPeerPolicy, DEFAULT_INBOUND, type CrossSessionInbound } from "./peerPolicy.js";
 import { ReceiptMap } from "../peer/receipts.js";
 import { readPeerRows as realReadPeerRows, type PeerRow } from "../peer/roster.js";
 import { PeerGateway } from "../peer/gateway.js";
@@ -166,6 +167,12 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     status: threadStatus(r, srv.threadWaiter(r.id)),
     queueDepth: r.queue.length,
     origin: r.origin,
+    // M8: the inbound policy, ALWAYS present — this is the only place a client can read back what
+    // admission decided, and there is no setter to re-ask (peerPolicy.ts). It rides the thread row for the
+    // reason `reviewOf` does: it is a property of the thread, so one appearance on the view every client
+    // already reads (`thread/started`, `thread/list`, `thread/attach`, `thread/search`) is what lets any
+    // of them tell an addressable thread from a closed one — including one another client raised.
+    crossSessionInbound: r.crossSessionInbound,
     ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -546,7 +553,7 @@ export class AppServer {
       const resumeTarget = typeof cfg?.resume === "string" ? cfg.resume : undefined;
       const resuming = resumeTarget !== undefined && !forksSession(cfg) ? resumeTarget : undefined;
       const register = (): void => {
-        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools });
+        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools, crossSessionInbound: parsed.data.crossSessionInbound });
         // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
         // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
         // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
@@ -573,7 +580,7 @@ export class AppServer {
       // D-M5-21 shelf read), which is the property the reservation's placement depends on.
       const sessionId = parsed.data.sessionId;
       await admitResume(srv, ctx, id, { sessionId, admits: !forksSession(parsed.data.config) },
-        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools }));
+        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools, crossSessionInbound: parsed.data.crossSessionInbound }));
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -896,12 +903,18 @@ export class AppServer {
    *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
    *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
    *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
-  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): ThreadRecord {
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[]; crossSessionInbound?: CrossSessionInbound }): ThreadRecord {
     const specs = opts.dynamicTools ?? [];
     admitDeclarations(opts.config, specs); // both spines, before either mints anything (see the helper)
+    // M8's policy, resolved ONCE and used twice — into the config below (which every replacement engine
+    // is rebuilt from) and onto the record's own mirror. `applyPeerPolicy` throws `RpcRefusal` for a
+    // settings carrier it cannot sanitize, and it runs HERE, beside the declaration gate, so that refusal
+    // also lands before anything is minted.
+    const inbound = opts.crossSessionInbound ?? DEFAULT_INBOUND;
+    const policed = applyPeerPolicy(opts.config, inbound);
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
+    const config = buildConfig({ config: policed, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     // THE OVERLAY IS TRANSIENT (M7): the declared tools become MCP servers on the config THIS build
     // receives, and `record.config` below stays the clean base every later engine is rebuilt from.
@@ -911,7 +924,9 @@ export class AppServer {
     this.decisions.set(threadId, dec);
     this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
+    // `crossSessionInbound` beside the `config` it mirrors, in ONE literal — peerPolicy.ts's rule that the
+    // two are never written apart, enforced by there being no second statement to forget.
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
     return record;
@@ -938,16 +953,22 @@ export class AppServer {
    *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
    *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
    *  rest. */
-  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): Promise<void> {
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[]; crossSessionInbound?: CrossSessionInbound }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
     const specs = opts.dynamicTools ?? [];
     admitDeclarations(opts.config, specs); // stated by BOTH spines, before either mints anything (see the helper)
+    // M8's policy, stated by BOTH spines for the same reason the declaration gate is — a policy only
+    // `thread/start` applied would leave every resumed thread on the CLI's own default. The refusal
+    // `applyPeerPolicy` throws travels out of this async function, through `admitResume`'s `await
+    // register()`, to dispatch's catch, which answers -32602 with the message intact.
+    const inbound = opts.crossSessionInbound ?? DEFAULT_INBOUND;
+    const policed = applyPeerPolicy(opts.config, inbound);
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
+    const config = { ...buildConfig({ config: policed, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     // Transient exactly as in `createThread`, and for the same reason — `record.config` below is what every
     // later engine of this thread is rebuilt from, and it must not carry a mounted server instance.
@@ -970,7 +991,7 @@ export class AppServer {
     // dropped by every later swap too (registry.ts's field doc), and anything the overlay added would be
     // re-mounted by every later engine instead of rebuilt (dynamicServers.ts's carrier note).
     const admits = !forksSession(opts.config);
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
     ctx.peer.reply(id, { thread: threadView(this, record) });
