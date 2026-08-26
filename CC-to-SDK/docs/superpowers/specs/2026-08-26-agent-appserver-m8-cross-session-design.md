@@ -7,10 +7,13 @@ pass) · probe 113c (`probes/probes/113c-cross-session-inbound-envelope.ts`, key
 ADDRESSABLE) · probes 117 / 117b / 117c (the four host seams) · probes 118 / 118b (the three outcomes of
 an inbound message), all keyed 2026-08-26.
 **Branch:** `m8-cross-session`, off `f69d1e28e4`.
-**Rev 2** — an adversarial review of rev 1 returned twelve findings; ten survived adjudication and two
-were rejected with reasons (Decision Log). Two of the survivors were load-bearing enough to need their own
-measurement, which is what probes 118 and 118b are, and between them they replaced the whole inbound
-half of the design.
+**Rev 3** — two adversarial review rounds. Round 1 (twelve findings, ten adopted) forced probes 118/118b,
+which replaced the whole inbound half; round 2 against that rewrite returned fifteen more, of which the
+sharpest was an internal contradiction rev 2 had left standing — one paragraph still said `fromThreadId`
+carries a thread's real permission class, which would have rebuilt the escalation the same rev claimed to
+close. Rev 3 also gives adoption the explicit state it needed (`peerPending`, `peerReserved`, an
+epoch-stamped turn id, a claiming settlement hook, and explicit cancellation) rather than deriving it from
+`record.busy`.
 **Status: DESIGNED — not yet built.**
 
 ## Purpose
@@ -79,13 +82,20 @@ PeerRow {
   alive: boolean;             // pid + procStart match, measured with LC_ALL=C TZ=UTC
   inboxBound: boolean;        // the socket exists on disk
   threadId?: string;          // set when THIS server hosts that session
+  statusReachable: boolean;   // false when this peer's socket namespace differs from the gateway's, so
+                              // no peer/messageStatus can ever come back for a send to it
 }
 ```
 
 The gateway itself never appears here, and that follows from a decision rather than a filter: it
 publishes a key file and no registry row, so nothing scanning `~/.claude/sessions/*.json` can see it.
 
-Read from `~/.claude/sessions/*.json`. Fields beyond `address`/`alive`/`inboxBound`/`threadId` are
+Read from **`<claudeConfigDir()>/sessions/*.json`**, never a hardcoded `~/.claude`: this harness already
+resolves that root through `config/claudeHome.ts` (which handles `CLAUDE_CONFIG_DIR` REPLACING the home
+path, the empty-variable case, and NFC normalization), and `config/tenantPreset.ts` gives each tenant its
+own. Scanning the literal home directory under a tenant preset would list the wrong namespace's peers,
+omit the right ones, and — for the gateway's key file — publish vouching material where no receiver looks.
+Fields beyond `address`/`alive`/`inboxBound`/`threadId` are
 **projected verbatim when present and omitted when absent** — they are another program's file, and a row
 that invents a default is a row that lies. `aliveOnly` defaults false: a dead row is information (it is
 why an address stopped working), and `fleet/list` already sets the precedent of listing terminal rows.
@@ -102,7 +112,8 @@ peer/send {
   message: string;
   priority?: "now" | "next" | "later";   // default "next"
   fromThreadId?: string;      // attribution only; inProcess threads only
-}  ->  { msgId: string; address: string; targetSessionId?: string; delivered: false }
+}  ->  { msgId: string; address: string; targetSessionId?: string;
+         delivered: false; statusReachable: boolean }
 ```
 
 `delivered: false` is a literal, not a status: **this method reports that the frame was written, and
@@ -121,15 +132,22 @@ of order is silently downgraded to plain text. Only the attributes we set appear
 after it re-serializes what it parsed, and two of the values are not ours to trust: a socket path and a
 thread name a client chose. A quote, ampersand, angle bracket or newline in either silently downgrades the
 whole envelope to plain text — which drops the permission attribution and changes the delivery decision
-with nothing raised anywhere. The assembler escapes each value with the CLI's own XML attribute rules, and
-hostile names are a test fixture rather than a hope.
+with nothing raised anywhere. The assembler escapes each value, but "use the CLI's XML rules" is not a specification — the receiver
+compares a canonical *reserialization* byte-for-byte, and a unit test written from the same guess as the
+implementation passes while hostile attributes still downgrade in production. So the exact byte mapping is
+a **spike with a hard fallback**: one probe delivers a message per permitted special character
+(`" & < > '`, plus CR, LF and tab) into a live inbox and records which spelling survives parse-and-compare,
+and the measured table is written into the spec before the assembler is built. Until a character is
+measured to survive, values containing it are **refused** (`-32602`, naming the character) rather than
+sent — an over-strict refusal is recoverable, a silently downgraded envelope is a permission decision made
+on wrong information.
 
 **`from` is always the gateway's own address**, never a thread's. It is the reply route, and receipts come
 back over a connection whose pid the kernel checks: no other value could receive them.
 
 **`fromThreadId` changes attribution only** — `from-session` (that thread's `sessionId`, a navigation
-target), `from-name` (its name), and `from-mode` (its *actual* permission class, read from the record, not
-from the request).
+target) and `from-name` (its name). It does NOT touch `from-mode`; see the class rule below, which is the
+single place that attribute is decided.
 
 **`hop-chain` is never set.** It exists in the attribute order for relayed traffic, and nothing here
 relays: this server sends only when a client calls `peer/send`, and it never answers an inbound message on
@@ -188,9 +206,17 @@ and dropped if that connection is gone.
 ### `thread/peerMessage` — inbound, to the thread's subscribers
 
 ```
-thread/peerMessage { threadId, turnId, origin: { kind: "peer", from, verifiedPeerPid?, name?,
+thread/peerMessage { threadId, arrivalUuid, origin: { kind: "peer", from, verifiedPeerPid?, name?,
                      fromMode?, fromSession?, body?, msg_id? }, receivedAt }
 ```
+
+**There is no `turnId` here, and there cannot be.** This event fires at arrival, and at arrival the
+message's fate is undecided — it may fold into a running turn, batch with others, or cause a turn whose id
+does not exist yet. A `turnId` field would have to be fabricated, delayed, or left null, all three of
+which are worse than not promising it. `arrivalUuid` is the replayed frame's own uuid: it is the id of the
+`userMessage` item this arrival produces, so a client deduplicates against `thread/read` with it, and
+`origin.msg_id` correlates back to a `peer/send`. A client that wants the turn watches the thread's turns
+like any other observer.
 
 The `origin` object is passed through **verbatim from the SDK frame** rather than re-derived. It is
 already exactly the right shape, and `verifiedPeerPid` — the one field the kernel vouches for and the only
@@ -244,10 +270,15 @@ runtime detection and degradation are the design's baseline, not its error path.
 **The correlation map needs its own lifecycle, because the success path never signals.** A `peer/send`
 records `msgId -> sending connection` so a later receipt can be routed. Delivered and refused messages
 produce no receipt at all, so the common outcomes leave no cleanup signal, and a long-lived client would
-grow the map without bound. Three rules, none of them optional: entries expire on a TTL comfortably longer
-than the hold deadline (`dialogExpiry`, 5 minutes by default and overridable by
-`CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`); a connection's entries are dropped when it closes; and per-connection
-and global counts are capped, with the oldest entry evicted first. `held` is explicitly **not** terminal —
+grow the map without bound. Retention cannot be derived from this process's environment: the hold deadline belongs to the RECEIVER,
+which may run with its own `CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`, so a TTL computed from ours could expire
+before a status this server was still owed. The bound is therefore an **absolute protocol-level retention
+window** this design fixes and documents, chosen well above any plausible hold deadline rather than
+calculated from a local value. Alongside it: a connection's entries are dropped when it closes; and
+per-connection and global counts are capped. **Eviction is never silent** — an entry dropped by a cap or
+by the window notifies its still-live sending connection with a terminal `peer/messageStatus` of status
+`dropped` and a reason naming the eviction, because a client that will never hear again should be told
+that, not left waiting. `held` is explicitly **not** terminal —
 an `expired` can follow it, so a `held` entry is retained rather than released on arrival. `expired`,
 `delivered`, `refused`, `denied` and `dropped` are terminal and release immediately.
 
@@ -260,32 +291,50 @@ sends and returns `statusReachable: false` beside `delivered: false`. `peer/list
 row. Binding a second gateway per namespace is a later option and is deliberately not in this milestone:
 one honest field costs nothing and no measurement yet says multiple namespaces occur in practice.
 
-### Inbound policy injection, and the three doors to close
+### Inbound policy: one owner, four doors
 
 The resolved policy is written into the thread's settings through the existing `config.settings` seam
-(`config/settings.ts`), which probe 117c confirmed reaches argv as real JSON. A thread that opts in also
-gets `--replay-user-messages` via `extraArgs`, server-owned.
+(`config/settings.ts`), which probe 117c confirmed reaches argv as real JSON.
 
-Three doors let a client reach past that, and all three must be shut — the first draft shut only one:
+**`--replay-user-messages` is passed on EVERY hosted thread, not only on threads that opt in.** That looks
+like over-reach until you follow the setter: the flag is startup-only argv, so a thread launched at
+`refuse` and later moved to `accept` could take peer input the model acts on while this server sees no
+arrival frame at all — invisible injection, and the worst possible failure for a surface whose whole job
+is to make inbound traffic visible. Passing it always costs an extra echo of our own prompts, which the
+router already filters, and removes the possibility outright.
+
+**The policy lives on `ThreadRecord` and is re-pushed on every engine swap.** The rewind/reopen/clear
+family replaces the engine, and a replacement built from the launch config would silently restore the
+launch policy — including re-opening a thread a client had explicitly moved to `refuse`. The record is the
+owner; the swap spine reads it, the way it already re-applies the other per-thread settings it owns.
+
+Four doors let something other than that owner decide, and all four are shut:
 
 1. **Startup argv.** `extraArgs` reaches the CLI as raw argv where the last flag wins, so a client-supplied
-   `extraArgs.settings` overrides ours. `appserver/sessionIdentity.ts` already strips identity flags from
-   both `extraArgs` and the `extraOptions` hatch; this extends that same stripping to `settings` and
-   `replay-user-messages`, in the same function, because it is the same invariant.
+   `extraArgs.settings` would override ours. `appserver/sessionIdentity.ts` already strips identity flags
+   from both `extraArgs` and the `extraOptions` hatch, and this joins it — but as a **merge, not a strip**.
+   Removing the whole `settings` key would silently delete unrelated SDK settings a client legitimately
+   sent, turning a policy guard into a configuration regression. The rule is narrow: parse the client's
+   settings, overwrite `crossSessionInbound` with the server's value, leave every other key untouched, and
+   refuse with `-32602` when the client's raw `--settings` cannot be parsed rather than dropping it. A
+   client-supplied `replay-user-messages` is likewise redundant now that the flag is unconditional, so it
+   is dropped without ceremony — noted here because it is a real, if harmless, takeover of a flag a client
+   could previously pass.
 2. **`thread/settings/apply`, after startup.** Its params are `z.record(z.string(), z.unknown())` — an open
    record — and the handler forwards it to `Session.applyFlagSettings`, which writes **the very layer this
    design relies on**, at runtime, with no mirror write and no `thread/settings/changed` broadcast. Any
-   initialized connection could therefore turn another thread's `refuse` into `accept` and then feed it.
-   `crossSessionInbound` is reserved in that method: refused with `-32602` naming itself, because a
-   silently ignored key would be worse than the refusal. A client that wants to change the policy asks
-   `thread/crossSessionInbound/set` — a small dedicated method with the same value domain and the same
-   inProcess-only rule — so a policy change is always a deliberate, named act.
-3. **Version skew.** `thread/start`'s params are a plain `z.object`, which strips unknown keys silently,
-   so a new client asking an OLDER server for `refuse` gets a healthy thread that still runs mode parity —
+   initialized connection could turn another thread's `refuse` into `accept` and then feed it.
+   `crossSessionInbound` is reserved there: refused with `-32602` naming itself, because silently ignoring
+   it would be worse than the refusal.
+3. **The dedicated setter.** `thread/crossSessionInbound/set` is how a policy changes: same value domain,
+   inProcess-only, and it updates the record before it touches the engine so a swap racing the change
+   cannot lose it. It broadcasts `thread/settings/changed`, which the generic method deliberately does not
+   — a policy change is exactly the kind of thing every subscriber should see.
+4. **Version skew.** `thread/start`'s params are a plain `z.object`, which strips unknown keys silently, so
+   a new client asking an OLDER server for `refuse` gets a healthy thread that still runs mode parity —
    protection the client believes it has and does not. This is the exact failure the M7 `dynamicTools`
-   marker exists to prevent, and its own schema doc says so. So `initialize`'s result gains
-   `crossSession: true` as a `z.literal(true)`: an older server sends nothing at all, absence is the
-   signal, and a client that means to rely on the policy must read the marker first.
+   marker exists to prevent, and its own schema doc says so. `initialize`'s result gains
+   `crossSession: true` as a `z.literal(true)`: an older server sends nothing, absence is the signal.
 
 ### Arrival is not a turn — the three outcomes, and what each one forces
 
@@ -314,79 +363,110 @@ Two further measurements bound the shape:
 
 ### The design those measurements leave
 
-**Split arrival from execution.** They are different facts, they are observable at different moments, and
-conflating them is what produced every defect above.
+**Split arrival from execution.** They are different facts, observable at different moments, and
+conflating them is what produced every defect in rev 1.
 
 **Arrival** is the replayed frame, and it is exact: it always fires, once per message, carrying the full
-peer `origin` including `msg_id`. `thread/peerMessage` is broadcast from there and promises nothing about
-a turn. A client correlating a send to an arrival uses `msg_id`; a client wanting to know what the message
-*caused* watches the thread's turns like any other observer.
+peer `origin` including `msg_id`, plus the frame's own uuid. `thread/peerMessage` is broadcast from there
+and promises nothing about a turn.
 
-**Execution** is detected the one way that holds across all three outcomes: **model production on a
-thread this server believes is idle.** If `record.busy` is false and the engine starts producing a turn's
-output, a turn is running that this server did not start — regardless of what caused it, and regardless of
-which origin its eventual result carries. In the fold case no such window ever opens, because our own turn
-is running and owns its frames; nothing is adopted, which is exactly right.
+**Execution** is model production on a thread this server believes is idle — an `assistant` frame, or a
+`stream_event` opening a message, with **no `parent_tool_use_id`**. Those frames exist only inside a turn
+and only for the top-level agent. Everything else that can reach an idle thread is excluded by
+construction rather than by a list: `system/init` (which arrives at session start *and* before a peer
+turn, so it is a hint, never the trigger), `background_tasks_changed`, `rate_limit_event`, compaction
+lifecycle frames, and any nested or subagent frame, which `items/mapper.ts` already treats as
+attribution-only. A trigger that fired on "any frame while idle" would adopt a turn at every session
+start. In the fold case the window never opens at all, because our own turn is running and owns its
+frames — nothing is adopted, which is exactly right.
 
-"Model production" is deliberately narrow, and the narrowness is the whole correctness of the trigger. It
-is an `assistant` frame, or a `stream_event` opening a message, with **no `parent_tool_use_id`** — the
-frames that exist only inside a turn and only for the top-level agent. Everything else that can arrive on
-an idle thread is excluded by construction rather than by a list: `system/init` (which arrives at session
-start and again before a peer turn, so it is a *hint*, never the trigger), `background_tasks_changed`,
-`rate_limit_event`, compaction lifecycle frames, and any nested or subagent frame, which
-`items/mapper.ts` already treats as attribution-only. A trigger that fired on "any frame while idle" would
-adopt a turn at every session start.
+#### The states, because `busy` alone is not enough
 
-Adoption then mints a turn id, claims `busy` through `beginTurn`'s client-less entry (the same one the
-queue drain uses), and broadcasts `turn/started`. That event carries `origin` when unconsumed peer
-arrivals are on record for the thread and omits it otherwise — best-effort attribution over an exact
-notification, rather than a guess dressed as a fact.
+`record.busy` is set synchronously at request arrival and cleared at settlement, which leaves a window
+this design must name: between a peer arrival and that turn's first assistant frame, a same-tick
+`turn/start` sets `busy` and the peer's production then looks like *our* turn's. Two engine turns would
+run under one client lifecycle, and the uuid-less peer result would go unclaimed. So adoption carries its
+own state on the record, alongside `busy` rather than inside it:
 
-**Settlement rides the one seam that already knows.** `Session.readLoop` increments `unmatchedResults`
-at exactly the point where a result frame matched no waiter (`session.ts:392`) — which is precisely what
-a peer turn's result is, in all three shapes it can take. So `Session` gains a hook there:
+- **`peerPending`** — a bounded FIFO of unconsumed arrivals (uuid, origin, receivedAt). Written
+  synchronously by the arrival route.
+- **`peerReserved`** — set synchronously when an arrival lands on an idle thread. While it is set,
+  `beginTurn` refuses a client `turn/start` with `-33001` and the reason `"peer turn pending"`, exactly as
+  it refuses `"closing"` and `"swapping"`. The reservation is released when the adopted turn starts, when
+  the arrival is observed to have folded (our own turn settles with the arrival still pending and no
+  production follows within the drain window), or at close.
+- **`adoptedTurnId` + `epoch`** — the adopted turn's identity, epoch-stamped like every other engine-bound
+  state here, so a result arriving after a swap cannot settle a turn belonging to the engine before it.
+
+**The triggering frame is buffered.** `beginTurn` builds its mapper and runner inside `record.chain.then`,
+so the assistant frame that *caused* adoption has already gone by, and a held chain can let the result
+arrive before the runner attaches. Adoption therefore captures the triggering frame — and any result that
+arrives before the runner is live — synchronously at detection, and replays them into the mapper as its
+first act. Without that, the turn loses its first item, or its whole outcome.
+
+**Settlement rides a claiming hook.** `Session.readLoop` reaches a point where a result frame matched no
+waiter (`session.ts:392`, today just `_unmatchedResults++`) — which is precisely what a peer turn's result
+is, in all three shapes it can take. `Session` gains:
 
 ```ts
-onUnclaimedResult(cb: (result: unknown) => void): () => void
+onUnclaimedResult(cb: (result: unknown) => boolean): () => void
 ```
 
-The adopted turn settles on it. This replaces the first draft's waiter **and** its belt, and the belt had
-to go regardless: `readLoop` calls every frame subscriber *before* it resolves a matching waiter
-(`session.ts:373` vs `:388-390`), so a router-driven "has my waiter fired yet?" fallback always observes
-it unfired and wins the race unconditionally — the rescue path would have become the only path. One
-settlement site, no race to lose.
+The callback returns whether it **claimed** the result. Claimed results settle the adopted turn and do not
+increment `unmatchedResults`; unclaimed ones increment it exactly as today, so the counter keeps its job
+as the tripwire for results nobody owns. A boolean rather than `void` is the difference between a hook and
+a guess: without it the design could not tell a consumed result from a leaked one, which is the whole
+reason the counter exists.
 
-`unmatchedResults` still increments for anything the hook does not consume, so it keeps its job as the
-tripwire for results nobody owns.
+This replaces rev 1's waiter **and** its belt. The belt had to go regardless: `readLoop` calls every frame
+subscriber *before* it resolves a matching waiter (`session.ts:373` vs `:388-390`), so a router-driven
+"has my waiter fired yet?" fallback observes it unfired every time and wins unconditionally — the rescue
+path would have become the only path.
+
+**Late adoption covers the degraded case.** An accepted peer turn can die on an API or transport error
+whose result frame arrives with no assistant frame before it, so the production trigger never fires and
+the arrival would be left with no lifecycle and an orphaned result. The hook handles it: an unclaimed
+result on an idle thread with pending arrivals adopts and settles in one step, emitting
+`turn/started` and `turn/completed {status:"failed"}` back to back. A turn that existed only long enough
+to fail is still a turn a client is owed.
 
 ### Interrupt, close, and shutdown
 
-An adopted turn is a real turn and dies like one: `turn/interrupt` interrupts it, `thread/close` and
-`shutdown` settle it `cancelled` through the same flush every client-owned turn goes through. Two
-adoption-specific rules the existing paths cannot infer:
+An adopted turn is a real turn, but it is not backed by a client `submit()` promise, so nothing in the
+existing teardown rejects it: `thread/close` and `shutdown` flush `record.queue` and then dispose, relying
+on disposal rejecting waiters that an adopted turn does not have — and `onUnclaimedResult` never fires
+when disposal ends the stream with no result at all. So adoption gets an **explicit cancellation**, called
+before the router is torn down and before the record is deleted, which settles the adopted turn
+`cancelled` and clears the reservation. It is epoch-guarded, so a result arriving afterwards settles
+nothing.
 
-- The `closing` latch **blocks new adoptions**. Frames arriving on a closing thread are not a turn this
-  server will announce; adopting one would emit `turn/started` after `thread/closed`.
-- Unconsumed peer arrivals are dropped at close with no notification of their own. They were announced
-  when they arrived; a second event about a message that will now never run would be inventing an outcome.
+Three further rules the existing paths cannot infer:
 
-Interrupting an adopted turn interrupts the ENGINE's turn, which is the peer's, not a client's — worth
-stating on the wire because the interrupting client did not start it.
+- The `closing` latch **blocks new adoptions and new reservations**. Frames arriving on a closing thread
+  are not a turn this server will announce; adopting one would emit `turn/started` after `thread/closed`.
+- Unconsumed arrivals are dropped at close with no notification of their own. They were announced when
+  they arrived; a second event about a message that will now never run would be inventing an outcome.
+- `turn/interrupt` on an adopted turn interrupts the ENGINE's turn, which is the peer's, not the
+  interrupting client's. That is worth stating on the wire, because the client did not start it.
 
-### Live and replayed views must agree
+### Live and replayed views must agree — one item per arrival, in every outcome
 
 The transcript projection turns every persisted top-level user prompt into a `userMessage` item, with no
 `isMeta`, `origin` or `isReplay` filter available to it — the persisted rows carry no such flags
-(`sessions/rows.ts`, probe 68b). A peer prompt therefore appears as a `userMessage` on `thread/read` while
-live subscribers saw only `thread/peerMessage`, so a client that reconnects sees an item that never
-existed live.
+(`sessions/rows.ts`, probe 68b). So `thread/read` will show a peer prompt as a `userMessage` whatever the
+live path does, and the live path's only job is to match it.
 
-Rather than teach the projection to suppress it — the rows cannot support that test — the live path emits
-**the same `userMessage` item** for an adopted turn, id-stable on the replayed frame's `uuid`, alongside
-`thread/peerMessage`. Live and replay then agree by construction, and the notification remains the
-richer, peer-specific channel. This also settles what the item mapper does: nothing, still — its `onUser`
-reads `tool_result` blocks only, and the item is emitted by the adoption path rather than by ingestion,
-which a unit row pins so a future mapper change cannot start fabricating one.
+The rule is therefore stated on the arrival, not on the turn: **every peer arrival emits exactly one
+`userMessage` item, id-stable on the replayed frame's uuid — the same `arrivalUuid` the notification
+carries.** That holds in all three outcomes, which is precisely what tying it to the turn would have
+broken: a folded arrival produces no adopted turn but still persists a prompt, and N batched arrivals
+produce one turn but N prompts. Emitting per-turn would have under-produced in both cases.
+
+Ownership follows the outcome without changing the count. An arrival that folds is emitted against the
+running turn; an arrival that is adopted is emitted against the adopted turn, before its `turn/started`
+so a client never sees a turn begin without the message that caused it. The mapper stays out of it
+entirely — its `onUser` reads `tool_result` blocks only, and a unit row pins that so a future change
+cannot start fabricating a second item from the same frame.
 
 ### Where the code lands
 
@@ -436,7 +516,19 @@ Keyless, run from `CC-to-SDK/harness`:
    `bypassPermissions` thread**, and `fromThreadId` changes only `from-session` and `from-name`. A receipt
    arriving for that `msgId` reaches the sending connection as `peer/messageStatus` and is dropped when
    that connection is gone.
-4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — the three outcomes, each as its own row:
+4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — the three outcomes, each as its own row.
+   **One `userMessage` item per arrival in every outcome**, id-stable on `arrivalUuid`: one for a folded
+   arrival (which has no adopted turn), N for N batched arrivals under one adopted turn, and the item
+   always precedes its turn's `turn/started`. The reservation's own rows: an arrival on an idle thread
+   sets it synchronously, a same-tick client `turn/start` is refused `-33001` with reason
+   `"peer turn pending"`, and the reservation is released on adoption, on an observed fold, and at close.
+   The triggering frame is buffered and replayed into the adopted turn's mapper, so its first item is not
+   lost, and a result arriving before the runner attaches still settles that turn. `onUnclaimedResult`
+   returns true exactly once per adopted turn, leaving `unmatchedResults` unchanged; a result it does not
+   claim still increments it. A result-only failure on an idle thread with a pending arrival is
+   late-adopted and settled `failed` in one step. An epoch-stale result settles nothing. Close and
+   shutdown cancel an adopted turn explicitly, emitting `turn/completed {status:"cancelled"}` BEFORE
+   `thread/closed`, and `closing` blocks new adoptions and reservations. Then, as before:
    a replayed peer frame broadcasts `thread/peerMessage` in ALL of them, exactly once, carrying the
    origin verbatim including `verifiedPeerPid` and `msg_id`; frames arriving while the thread is idle
    adopt a turn (turn id minted, `turn/started` broadcast carrying the origin when an unconsumed arrival
@@ -450,10 +542,15 @@ Keyless, run from `CC-to-SDK/harness`:
    view matches what `thread/read` projects from the transcript. `closing` blocks new adoptions, and
    interrupt/close/shutdown settle an adopted turn through the same flush a client turn takes.
 5. `npx vitest run test/unit/appserver/peer-policy.test.ts` — `crossSessionInbound` is written explicitly
-   at `thread/start` for every value including the default; it is stripped from a client's `extraArgs` and
-   from the `extraOptions` hatch, as is `replay-user-messages`; `thread/settings/apply` REFUSES it with
-   `-32602` naming the key; `thread/crossSessionInbound/set` changes it and is refused on a fleet thread
-   with `-33006`; and `initialize`'s result carries `crossSession: true`.
+   at `thread/start` for every value including the default, and `--replay-user-messages` is passed even
+   when the policy is `refuse`; a client's own `settings` are MERGED rather than dropped, with only
+   `crossSessionInbound` overwritten and every other key surviving, and an unparseable client `--settings`
+   refused `-32602` rather than silently discarded; `thread/settings/apply` REFUSES the key with `-32602`
+   naming it; `thread/crossSessionInbound/set` changes it, broadcasts `thread/settings/changed`, updates
+   the record before the engine, is refused on a fleet thread with `-33006`, and **survives an engine
+   swap** — a rewind/reopen/clear re-pushes the record's policy rather than the launch config's, in both
+   directions (a thread moved to `refuse` does not come back `accept`, and vice versa); and `initialize`'s
+   result carries `crossSession: true`.
 6. `node scripts/drift-check.mjs` from `CC-to-SDK/` — exit 0, with the new methods rowed and the
    notifications rowed, and `docs/parity/full-potential.md`'s stale 🚫 row for cross-session receive
    replaced by a scored row (the capability re-enters the denominator).
@@ -465,11 +562,19 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
    `peer/send` addresses it, and the subscriber sees `thread/peerMessage` → `turn/started` → its items →
    `turn/completed`, with the model's reply naming the sent token. `unmatchedResults` is unchanged at the
    end, which is what says the adopted turn's result was consumed rather than dropped.
-8. The fold leg, which is the one no unit test can fake: the receiver is given a turn with several
+8. The separate-follow-up leg: the receiver is busy with a turn that will END without another model
+   round-trip, the message is delivered mid-turn, and the client sees two balanced lifecycles — the
+   client's turn completing, then an adopted `turn/started`/`turn/completed` pair for the peer turn whose
+   result is uuid-less and carries `origin.kind: "task-notification"` — with no orphaned turn id and
+   `unmatchedResults` unchanged. This path exists only against a real SDK; mocked frames cannot produce
+   its ordering.
+9. The arrival-only leg: after the replayed frame reaches the client as `thread/peerMessage`, the test
+   pauses before any production and asserts that NO turn has started — arrival alone begins nothing.
+10. The fold leg, which is the one no unit test can fake: the receiver is given a turn with several
    sequential tool calls, the message is delivered mid-turn, and the client sees `thread/peerMessage`
    **and exactly one turn** — no second `turn/started`, no orphaned turn id, and the running turn's own
    completion carrying the model's answer to both prompts.
-9. The negative leg: the same send into a `crossSessionInbound: "refuse"` thread produces no
+11. The negative leg: the same send into a `crossSessionInbound: "refuse"` thread produces no
    `thread/peerMessage`, no turn, and no receipt — silence on both channels is the measured contract.
 
 ## Decision Log
@@ -520,6 +625,35 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   governed by a different setting and was never measured; a refusal that names itself is honest, an
   untested pass-through is not.
 
+- **Adoption carries explicit state rather than reading `record.busy`** (rev 3). Rejected: deriving
+  everything from `busy` — it is set synchronously at request arrival, so a same-tick client `turn/start`
+  between a peer arrival and its first assistant frame makes the peer's production look like the client's,
+  running two engine turns under one lifecycle.
+- **`--replay-user-messages` on every hosted thread, not only on opt-in threads** (rev 3). Rejected:
+  passing it only when inbound is accepted — the flag is startup-only argv, so a thread later moved to
+  `accept` would take peer input the model acts on while this server saw no arrival frame at all.
+- **The server MERGES a client's settings instead of stripping the key** (rev 3). Rejected: rev 2's
+  wholesale strip, which would have deleted unrelated SDK settings a client legitimately sent — a
+  configuration regression wearing a policy guard's clothes.
+- **One `userMessage` item per ARRIVAL, not per turn** (rev 3). Rejected: emitting per adopted turn — a
+  folded arrival has no turn and still persists a prompt, and N batched arrivals share one turn, so
+  per-turn emission under-produces in exactly the two cases the transcript will disagree about.
+- **The escaping byte mapping is measured before it is implemented, and unmeasured characters are refused**
+  (rev 3). Rejected: writing the assembler from the CLI's rules as read — the receiver compares a canonical
+  reserialization, so a test written from the same guess as the code passes while production downgrades.
+- **Receipt retention is an absolute protocol window, and eviction notifies** (rev 3). Rejected: a TTL
+  derived from this process's `dialogExpiry` — the hold deadline belongs to the receiver, which may run
+  with a different one, so ours could expire before a status we were still owed.
+- **`thread/peerMessage` carries no `turnId`** (rev 3). Rejected: including one — at arrival the message's
+  fate is undecided, so the field could only be fabricated, delayed, or null.
+- **Considered and not taken: shipping the outbound half alone.** A notify-only M8 — `peer/list`,
+  `peer/send`, the policy, and an arrival notification with no turn adoption — would drop most of the
+  machinery above, and it was weighed seriously once the three-outcome measurement landed. It loses the
+  half that makes receiving useful (a client would be told a message arrived and then have to poll
+  `thread/read` to learn what it did), and the owner's grill answer chose the full receive side
+  deliberately. Recorded here because the measurement changed that choice's cost, and a later reader
+  should see the fork was live rather than assume it was never considered.
+
 ### Findings rejected, with reasons
 
 - **A 10K-token ceiling on model-visible injected items** — the rule is `AGENTS.md`'s, which marks itself
@@ -527,6 +661,11 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   This repository adjudicated the same misapplied import once already during M7. What survives from the
   finding is narrower and is stated in the wire design: inbound size is bounded only by the CLI's own line
   cap, which is why `refuse` is the default.
+- **"Rev 2 overstates what 118b measured about priorities other than `next`"** — accepted as a *scoping*
+  correction rather than a defect, and the spec now says only what was run: the fold was forced and
+  observed on `next`. Whether `now` and `later` fold identically follows from the same drain (`later` is
+  drained only on a Sleep-tool iteration) but was not measured, and the design does not depend on it —
+  adoption keys on production, not on priority.
 - **"`next` injects mid-turn, so a busy receiver never gets its own turn"** — half right, and the half it
   missed is worse. Measurement showed all three priorities can produce a separate turn AND that any of them
   can be folded into the running one; the deciding factor is whether the model takes another round-trip,
@@ -587,3 +726,15 @@ Pending — written at finish.
   policy key and a dedicated setter replaces it; `initialize` gains a `crossSession` marker. The gateway
   gains a retention policy for its correlation map and discloses namespaces it cannot receive status from;
   envelope attributes are escaped rather than interpolated.
+- **rev 3 (2026-08-26)** — absorbs the round-2 review of rev 2 (fifteen findings). Deletes the surviving
+  `from-mode` contradiction; drops `turnId` from the arrival notification in favour of `arrivalUuid`;
+  resolves every path through `claudeConfigDir()` instead of a hardcoded `~/.claude`; declares
+  `statusReachable` on both wire shapes it was only described in; gives adoption real state
+  (`peerPending`, `peerReserved`, epoch, a claiming `onUnclaimedResult`, a buffered triggering frame,
+  late adoption for result-only failures, explicit cancellation before teardown); makes the replay flag
+  unconditional and the policy record-owned and swap-durable; merges client settings rather than stripping
+  them; ties the `userMessage` item to the arrival rather than the turn; turns the escaping rule into a
+  measured table with a refuse-until-measured fallback; and adds the busy-follow-up and arrival-only live
+  legs. Probes 118 and 118b keep their conclusions — both were read off transcripts, not off the verdict
+  labels — but their verdict logic is corrected in the same pass so the artifacts cannot mislead a later
+  reader.

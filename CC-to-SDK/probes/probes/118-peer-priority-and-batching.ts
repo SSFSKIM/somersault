@@ -237,7 +237,11 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
   // --- Q2: two messages into ONE busy receiver, to see whether they batch ---
   const B = start("batch");
   if (!await until(() => Boolean(B.init), 120_000)) { log("batch: never emitted init"); process.exit(3); }
-  if (!await untilBusyInTool(B)) log("batch: receiver never entered a tool call");
+  if (!await untilBusyInTool(B)) { log("batch: receiver never entered a tool call — the busy premise failed"); process.exit(4); }
+  // Baselines taken AT DELIVERY: `B.results` already holds the busy turn's own result by the time this
+  // finishes, so classifying on totals is off by one. Everything below is a post-send delta.
+  const batchResultsAtSend = B.results.length;
+  const batchReplaysAtSend = B.replays.length;
   const batchSent: { priority: string; id: string; marker: string }[] = [];
   for (let k = 1; k <= 2; k++) {
     const marker = `P118-BATCH${k}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -248,9 +252,19 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
   }
 
   // Let every receiver run its first turn to completion and then whatever the peer messages caused.
-  log("waiting for turns to settle (up to 300s)…");
-  await until(() => [...priorities.map(p => sessions[p]), B].every(s => s.results.length >= 2), 300_000);
-  await wait(20_000);
+  // Quiescence, not a count: wait until no session has produced a new result for QUIET_MS. A bare
+  // ">= 2" would stop at the first follow-up and could not rule out a later third.
+  log("waiting for quiescence (no new results for 45s, up to 420s)…");
+  const QUIET_MS = 45_000;
+  const all = [...priorities.map(p => sessions[p]), B];
+  let lastTotal = -1, lastChange = Date.now();
+  const deadline = Date.now() + 420_000;
+  while (Date.now() < deadline) {
+    const total = all.reduce((n, s) => n + s.results.length, 0);
+    if (total !== lastTotal) { lastTotal = total; lastChange = Date.now(); }
+    else if (Date.now() - lastChange > QUIET_MS) break;
+    await wait(2000);
+  }
 
   for (const p of priorities) report(`Q1 priority=${p}`, sessions[p], sentPer[p]);
   report("Q2 batching (two 'next' messages, one busy turn)", B, batchSent);
@@ -262,8 +276,12 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
     const insideFirst = s.text.some(t => /INJECTED:\s*(?!none)/i.test(t));
     console.log(`[Q1 ${p}] results=${s.results.length} replays=${s.replays.length} -> ${secondTurn ? "SEPARATE TURN (a second result arrived)" : "NO second result"}${insideFirst ? " | the running turn REPORTED seeing an injected instruction" : ""}`);
   }
-  console.log(`[Q2 batching] two 'next' messages -> replays=${B.replays.length} results=${B.results.length}`
-    + ` -> ${B.replays.length === 2 && B.results.length === 2 ? "one result each (no batching)" : B.replays.length === 2 && B.results.length < 2 ? "BATCHED (two replays, fewer results)" : "see the transcript above"}`);
+  const dReplays = B.replays.length - batchReplaysAtSend;
+  const dResults = B.results.length - batchResultsAtSend;
+  console.log(`[Q2 batching] two 'next' messages -> AFTER DELIVERY: replays +${dReplays}, results +${dResults}`
+    + ` -> ${dReplays === 2 && dResults === 1 ? "BATCHED (both replayed, one turn)"
+      : dReplays === 2 && dResults >= 2 ? "NOT batched (a turn each)"
+      : "inconclusive — read the transcript above"}`);
   const allResults = [...priorities.map(p => sessions[p]), B].flatMap(s => s.results);
   const peerResults = allResults.filter(r => r?.origin?.kind === "peer");
   console.log(`[Q3 correlation] result frames carrying origin.kind='peer': ${peerResults.length} of ${allResults.length}`);

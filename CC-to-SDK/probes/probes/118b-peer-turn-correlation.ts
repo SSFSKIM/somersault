@@ -280,7 +280,12 @@ let init: any;
   const fRow = rowForSession(fInit.session_id);
   // Deliver only once the SECOND tool call has started: the turn is unambiguously mid-flight with
   // round-trips still to come, which is exactly the state the mid-turn drain claims to act on.
-  if (!await until(() => fToolCalls >= 2 && fResults.length === 0, 240_000)) log("phase 2: never reached the second tool call");
+  if (!await until(() => fToolCalls >= 2 && fResults.length === 0, 240_000)) {
+    // A missed precondition is not a result. Exiting zero here would publish a fold verdict drawn from a
+    // turn that was never busy in the way the question requires.
+    log("phase 2 PRECONDITION FAILED: never reached a second tool call with the turn still open");
+    process.exit(5);
+  }
   const FMARK = `P118B-FOLD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const fFrames: unknown[] = [];
   const fToken = peerTokenFor(fRow?.pid);
@@ -292,14 +297,34 @@ let init: any;
   });
   log(`phase 2: delivering mid-turn after ${fToolCalls} tool calls: ${await sendFrames(fSock, fFrames)}`);
   const fResultsAtSend = fResults.length;
-  await until(() => fResults.length > fResultsAtSend, 420_000);
-  await wait(20_000);
+  const fFrameAtSend = F.length;
+  if (!await until(() => fResults.length > fResultsAtSend, 420_000)) { log("phase 2 PRECONDITION FAILED: no result after delivery"); process.exit(5); }
+  // Quiescence rather than a fixed wait: a separate follow-up can emit the marker after the first result
+  // and produce its OWN result later, which a 20s sleep would have scored as a fold.
+  {
+    let last = -1, since = Date.now();
+    const deadline = Date.now() + 240_000;
+    while (Date.now() < deadline) {
+      if (fResults.length !== last) { last = fResults.length; since = Date.now(); }
+      else if (Date.now() - since > 45_000) break;
+      await wait(2000);
+    }
+  }
 
   console.log("\n--- phase 2 transcript (the fold) ---");
   for (const r of F) console.log(`   ${String(r.i).padStart(3)} ${r.type.padEnd(16)} ${r.detail}`);
-  const foldedIntoRunningTurn = fResults.length === fResultsAtSend + 1 && fTexts.some(t => t.includes(FMARK));
+  // The fold claim is positional, not textual: the marker must appear in text emitted BEFORE the first
+  // result after delivery, and that result must carry the ORIGINAL turn's uuid — i.e. the running turn
+  // answered it. A marker echoed by a later turn cannot satisfy this.
+  const firstResultIdx = F.findIndex((r, i) => i >= fFrameAtSend && r.type === "result");
+  const markerBeforeFirstResult = F.some((r, i) => i >= fFrameAtSend && i < firstResultIdx && r.type === "assistant/text" && r.detail.includes(FMARK))
+    || fTexts.some(t => t.includes(FMARK)) && firstResultIdx >= 0 && F[firstResultIdx].detail.includes(String(fReplays[0]?.uuid ?? "\u0000"));
+  const foldedIntoRunningTurn = fResults.length === fResultsAtSend + 1 && markerBeforeFirstResult;
   console.log(`\n[Q5 fold] results after delivery: ${fResults.length - fResultsAtSend} | replays: ${fReplays.length}`);
   console.log(`      the marker appears in the model's text: ${fTexts.some(t => t.includes(FMARK)) ? "yes" : "no"}`);
+  console.log(`      the first result after delivery carries the ORIGINAL turn's uuid: ${firstResultIdx >= 0 && F[firstResultIdx].detail.includes(String(fReplays[0]?.uuid ?? "\u0000")) ? "yes" : "no"}`);
+  console.log(`      NOTE: this phase forces the fold on priority "next" only. Whether "now" and "later"`);
+  console.log(`      fold identically follows from the same drain but was not run here.`);
   console.log(`      => ${foldedIntoRunningTurn
     ? "FOLDED INTO THE RUNNING TURN — one result, no separate turn: a host cannot assume a peer message becomes its own turn"
     : fResults.length >= fResultsAtSend + 2
