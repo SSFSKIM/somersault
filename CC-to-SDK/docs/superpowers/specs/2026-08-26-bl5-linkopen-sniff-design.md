@@ -27,7 +27,7 @@ Close the two remaining bl4-parked items whose substrates are ready. Both flippe
 - New pure helper in `harness/src/media/imageDims.ts` (the zero-import leaf, import-freedom is
   test-enforced): `sniffImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/gif" | "image/webp" | null`.
   It transcribes canon's sniffer `b()` VERBATIM (research-sniff.md, offset 184,082,132): prefix-only —
-  `null` under 4 bytes; PNG = first 4 signature bytes; JPEG = `FF D8 FF` (3 bytes); GIF = 6-byte
+  `null` under 4 bytes; PNG = first 4 signature bytes; JPEG = `FF D8 FF` (3 prefix bytes, but the global length gate means a buffer under 4 bytes is ALWAYS null); GIF = 6-byte
   `GIF87a`/`GIF89a`; WebP = `RIFF` + length ≥12 + `WEBP` at 8-11. NOT the dimension readers' fuller
   discriminators — a prefix-valid but dims-unreadable buffer sniffs to its format and is then refused
   downstream by the existing dims checks, exactly canon's layering (plan-review F4).
