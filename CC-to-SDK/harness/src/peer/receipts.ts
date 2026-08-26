@@ -65,11 +65,13 @@ export class ReceiptMap<C extends { connId: number }> {
   }
 
   /** `retentionMs` is overridable so shutdown can expire everything still tracked rather than leaving
-   *  those senders unanswered. */
+   *  those senders unanswered — and `sweep(0)` MUST mean "retain nothing", which is why an entry expires
+   *  at the cutoff rather than strictly past it. With `at >= cutoff` surviving, an entry tracked in the
+   *  same millisecond as the shutdown outlived the sweep meant to clear it. */
   sweep(retentionMs: number = this.retentionMs): void {
     const cutoff = this.now() - retentionMs;
     for (const [msgId, e] of [...this.entries]) {
-      if (e.at >= cutoff) continue;
+      if (e.at > cutoff) continue;
       this.entries.delete(msgId);
       // Never a SILENT drop: a client that will never hear about this message again should be told that,
       // not left waiting for a status the map has already forgotten how to route.

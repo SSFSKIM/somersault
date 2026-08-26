@@ -179,3 +179,36 @@ describe("peer/send", () => {
     expect(() => srv.receipts.route({ orig_msg_id: msgId2, status: "expired", from: "uds:/sock/11.sock" })).not.toThrow();
   });
 });
+
+// The gateway is the server's OWN reply address, so its lifetime is the server's — not a connection's and
+// not a thread's: bound once before the listener accepts anything, torn down inside shutdown() while the
+// connections still owed a receipt are there to be told the correlation is gone.
+describe("gateway lifecycle", () => {
+  it("closes the bound gateway on shutdown", async () => {
+    let closed = false;
+    const { gw } = fakeGateway();
+    gw.close = async () => { closed = true; };
+    const srv = new AppServer({}, { listSessions: async () => [], peerGateway: gw, readPeerRows: async () => [] } as any);
+    await srv.shutdown();
+    expect(closed).toBe(true);
+  });
+
+  it("sweeps the receipt map on shutdown rather than leaving a sender unanswered", async () => {
+    const { srv, a, conn } = boot([ROW()]);
+    send(conn, { id: 2, method: "peer/send", params: { target: "s-1", message: "hi" } });
+    await tick();
+    const msgId = parsed(a.lines).find((f) => f.id === 2).result.msgId;
+    expect(srv.receipts.size()).toBe(1);
+    await srv.shutdown();
+    expect(srv.receipts.size()).toBe(0);
+    const note = parsed(a.lines).filter((f) => f.method === "peer/messageStatus").at(-1);
+    expect(note.params).toMatchObject({ msgId, status: "dropped", reason: "correlation expired" });
+  });
+
+  it("leaves a deliberately absent gateway absent — `null` is an answer, not a gap to fill", async () => {
+    const srv = new AppServer({}, { listSessions: async () => [], peerGateway: null, readPeerRows: async () => [] } as any);
+    await srv.bindGateway();
+    expect(srv.gateway()).toBeUndefined();
+    expect(srv.deps.peerGateway).toBeNull();
+  });
+});

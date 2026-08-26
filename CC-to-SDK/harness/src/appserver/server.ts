@@ -44,7 +44,7 @@ import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js
 import { peerList, peerSend } from "./peerDomain.js";
 import { ReceiptMap } from "../peer/receipts.js";
 import { readPeerRows as realReadPeerRows, type PeerRow } from "../peer/roster.js";
-import type { PeerGateway } from "../peer/gateway.js";
+import { PeerGateway } from "../peer/gateway.js";
 import { listArchived, removeArchiveMarker } from "./archive.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
@@ -859,8 +859,31 @@ export class AppServer {
   /** The bound gateway, or undefined when none is. `null` in deps means the same thing and is how a test
    *  or a failed bind says so explicitly. */
   gateway(): PeerGateway | undefined { return this.deps.peerGateway ?? undefined; }
+
   peerEnv(): NodeJS.ProcessEnv { return this.deps.peerEnv ?? process.env; }
   peerRows(): Promise<PeerRow[]> { return (this.deps.readPeerRows ?? realReadPeerRows)(this.peerEnv()); }
+
+  /** Bind the peer gateway, once, before the listener starts accepting — so no connection can ever see a
+   *  half-decided gateway (an unbound one that is about to bind answers -33008 for a request that would
+   *  have worked a millisecond later).
+   *
+   *  NEVER throws, and a failed bind is NOT fatal: `PeerGateway.bind` already answers `undefined` for an
+   *  unwritable socket directory or a taken address, and this records that as an explicit `null`. A
+   *  machine that cannot host a reply address still serves every non-peer method, and `peer/send` answers
+   *  -33008 — which is the honest answer anyway, since a sender with no reply address of its own could
+   *  never be told what became of the message. `undefined` in deps means "not wired yet"; anything else —
+   *  an injected gateway, or a `null` that says "deliberately absent" — is already an answer and is left
+   *  alone, which is what makes this idempotent and keyless in tests. */
+  async bindGateway(): Promise<void> {
+    if (this.deps.peerGateway !== undefined) return;
+    const gw = await PeerGateway.bind({
+      onReceipt: (frame) => { this.receipts.route(frame); },
+      // The gateway is a reply address, not a session. A frame that assumes otherwise goes to stderr
+      // rather than to the clients: no connection asked for it, and it is attributable to none of them.
+      onStrayFrame: (kind) => console.error(`cc-harness appserver: ignored a ${kind} frame on the peer gateway — it is a reply address, not a session`),
+    }, { env: this.peerEnv() });
+    this.deps.peerGateway = gw ?? null;
+  }
 
   /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
    *  `review/start` (review.ts) can raise its detached review thread the same way rather than assembling
@@ -1103,6 +1126,14 @@ export class AppServer {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     clearInterval(this.imageStageSweepTimer); // unref'd already, but a shut-down server owes it no more ticks
+    // M8: the peer half, BEFORE the threads are awaited and therefore while every connection is still
+    // open. A tracked message whose status can now never be routed (the gateway is about to stop
+    // listening) is told so — the common cross-session outcomes are silent, so a client left holding a
+    // correlation the server has forgotten would wait for a notification that can no longer exist. The
+    // gateway closes after that sweep: unlinking the socket and the key file is what stops a peer from
+    // writing a receipt into an address nothing is reading.
+    this.receipts.sweep(0);
+    await this.deps.peerGateway?.close();
     await Promise.all(this.registry.list().map((r) => {
       // The same latch+flush pair thread/close raises, per record, BEFORE anything is awaited (M2b Wave 4):
       // the server-wide `shuttingDown` flag above refuses new THREADS, but a turn/start on a thread that
