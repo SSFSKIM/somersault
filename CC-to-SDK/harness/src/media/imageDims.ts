@@ -81,6 +81,22 @@ export function webpDimensions(buf: Buffer): { width: number; height: number } |
   return null;
 }
 
+/** canon's `b()` (research-sniff.md offset 184,082,132), transcribed VERBATIM — a pure byte-signature
+ *  sniff over exactly the four media types ccx's image pipeline speaks. Prefix-only, and deliberately
+ *  NOT built on the dimension readers above: a truncated-but-recognizable header (e.g. a 9-byte GIF89a
+ *  prefix with no readable Logical Screen Descriptor) must still sniff correctly, because dims validity
+ *  is a separate, downstream concern from what type the bytes claim to be. Miss returns `null`, never
+ *  throws — callers that need a default (canon's own `P()`/`Y()` wrappers) apply `?? "image/png"`
+ *  themselves; this leaf stays a pure sniff with no fallback opinion. */
+export function sniffImageMediaType(buf: Buffer): "image/png" | "image/jpeg" | "image/gif" | "image/webp" | null {
+  if (buf.length < 4) return null;
+  if (buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+  if (buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+  if (buf.length >= 6 && buf[0] === 71 && buf[1] === 73 && buf[2] === 70 && buf[3] === 56 && (buf[4] === 55 || buf[4] === 57) && buf[5] === 97) return "image/gif";
+  if (buf[0] === 82 && buf[1] === 73 && buf[2] === 70 && buf[3] === 70 && buf.length >= 12 && buf[8] === 87 && buf[9] === 69 && buf[10] === 66 && buf[11] === 80) return "image/webp";
+  return null;
+}
+
 /** canon `v$r`, L174695: the byte ceiling every resized image block must fit under. */
 export const POST_PROCESS_BYTE_BUDGET = 512_000;
 /** canon's per-model `image_limits` (L8503), universal across the current model catalog. */
