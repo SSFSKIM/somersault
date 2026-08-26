@@ -39,7 +39,15 @@ const ops = [];   // this run's own op log — printed on SIGTERM/SIGINT so a pr
 /** The frames `FAKE_HOST_SCRIPT` can name, each producing zero or more `HostEvent`s (host/wire.ts). Kept
  *  to exactly what `caret-busy` needs: a live-turn spinner and a task panel, no model text at all. */
 function framesFor(word) {
-  const [name, arg] = word.split(":");
+  // bl5 T-LINKOPEN task 4 — FIRST-colon split, not `.split(":")`'s all-colons one: a `message:` payload
+  // carrying a markdown link (`[text](https://host/path)`) has TWO more colons of its own (the `https:`
+  // scheme, and none else here, but the general case is real), and the old `const [name, arg] =
+  // word.split(":")` silently truncated `arg` at the SECOND colon — dropping everything from `//host/path`
+  // onward. Every existing caller (`tasks:3`, `message:<text with no colon>`) has at most one colon, so this
+  // is a strict widening, not a behavior change for them.
+  const sep = word.indexOf(":");
+  const name = sep === -1 ? word : word.slice(0, sep);
+  const arg = sep === -1 ? undefined : word.slice(sep + 1);
   if (name === "turn-start") return [{ kind: "turn", phase: "start", seq: 1 }];
   if (name === "turn-end") return [{ kind: "turn", phase: "end", seq: 1 }];
   if (name === "tasks") {
@@ -52,6 +60,51 @@ function framesFor(word) {
     return out;
   }
   if (name === "message") return [{ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: arg ?? "" }] } } }];
+  // bl5 T-LINKOPEN task 4 — a real `gh pr create` Bash call, scraped by `gitOps.ts`'s `recognizeGitOps` into
+  // a linked `GitPrOp`, through the fold pipeline into ONE collapsed-cluster row whose clause reads
+  // "Created PR #12" with an OSC-8 hyperlink on `#12` (the exact fixture `fullscreen-prlink.test.tsx`/
+  // `hitmap.test.ts` pin — reused here verbatim so the pty cell exercises the same, already-proven wire
+  // shape rather than an invented one). The closing prose message is the fold-run BREAKER
+  // (`projectCompact`'s own rule: a trailing run stays pending, not `group:`-published, until something
+  // after it closes it) — without it the cluster row never reaches Static at all.
+  if (name === "prlink") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-bash-1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "gh pr create --fill" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-bash-1", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: "https://github.com/o/r/pull/12\n", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-prlink-done", content: [{ type: "text", text: "pr done" }] } } },
+    ];
+  }
+  // bl5 T-LINKOPEN task 4 — the hover-suppression producer, lifted verbatim from `test/tui/hover.test.tsx`'s
+  // own `CLUSTER_BASH`/`NO_OUTPUT` fixture (the "T3 (b, review Critical)" cell): two `cat`-headed Bash calls
+  // fold into ONE "read" cluster (`classifyBashCommand`'s `BASH_READ` set), the second's EMPTY result makes
+  // `toolSummaries.ts`'s `bashRows` emit a genuinely dim `(No output)` row — content that (unlike an error's
+  // "…+N lines" marker, or an ordinary fold's own marker) survives being re-projected at `detail-all` once
+  // the cluster is expanded, which is exactly the state a hover-suppression assertion needs to not be
+  // vacuous (that file's own review note: a fixture with nothing dim at `detail-all` cannot tell "hover
+  // suppressed" from "there was never anything to un-dim"). The collapsed clause reads "Read 2 files".
+  if (name === "errcluster") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-bash-c1", content: [{ type: "tool_use", id: "bash-c1", name: "Bash", input: { command: "cat a.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-bash-c1", message: { content: [{ type: "tool_result", tool_use_id: "bash-c1", content: "line one", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-bash-c2", content: [{ type: "tool_use", id: "bash-c2", name: "Bash", input: { command: "cat b.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-bash-c2", message: { content: [{ type: "tool_result", tool_use_id: "bash-c2", content: "", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-cluster-done", content: [{ type: "text", text: "cluster done" }] } } },
+    ];
+  }
+  // bl5 T-LINKOPEN task 4 — the DISTRACTOR clickable owner for the hover-suppression cell: a standalone
+  // (never fold-classified — "Mystery" claims no species in `toolFold.ts`) tool whose error result is 12
+  // physical lines, one past `ERROR_PHYSICAL_ROWS` (ten), so `resultBody` stamps its gutter-block
+  // `clickable: true` and renders a genuinely dim "… +2 lines" marker under the transcript's default
+  // (collapsed) projection — the same fixture `hover-owner.test.tsx`/`hover.test.tsx`'s own T-CLICKGATE
+  // cells use. Left un-clicked (never expanded) for the whole cell, so its marker stays dim until hovered.
+  if (name === "mysteryerr") {
+    const lines = Array.from({ length: 12 }, (_, i) => `err line ${i + 1}`).join("\n");
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-mystery-1", content: [{ type: "tool_use", id: "mystery-1", name: "Mystery", input: {} }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-mystery-1", message: { content: [{ type: "tool_result", tool_use_id: "mystery-1", content: lines, is_error: true }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-mystery-done", content: [{ type: "text", text: "mystery done" }] } } },
+    ];
+  }
   return [];
 }
 
