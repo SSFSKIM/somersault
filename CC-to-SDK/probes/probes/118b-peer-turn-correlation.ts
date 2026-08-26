@@ -265,7 +265,9 @@ let init: any;
         else fPush("user", "tool_result");
       } else if (m.type === "assistant") {
         for (const b of m.message?.content ?? []) {
-          if (b.type === "text" && b.text.trim()) { fTexts.push(b.text.trim()); fPush("assistant/text", b.text.trim().slice(0, 100)); }
+          // Full text, not a 100-char slice: the fold predicate searches these records positionally, and a
+          // truncated record can hide the very marker it looks for.
+          if (b.type === "text" && b.text.trim()) { fTexts.push(b.text.trim()); fPush("assistant/text", b.text.trim()); }
           if (b.type === "tool_use") { fToolCalls++; fPush("assistant/tool_use", String(b.name)); }
         }
       } else if (m.type === "result") {
@@ -313,16 +315,21 @@ let init: any;
 
   console.log("\n--- phase 2 transcript (the fold) ---");
   for (const r of F) console.log(`   ${String(r.i).padStart(3)} ${r.type.padEnd(16)} ${r.detail}`);
-  // The fold claim is positional, not textual: the marker must appear in text emitted BEFORE the first
-  // result after delivery, and that result must carry the ORIGINAL turn's uuid — i.e. the running turn
-  // answered it. A marker echoed by a later turn cannot satisfy this.
+  // The fold claim requires BOTH halves, not either: the marker must appear in text emitted BEFORE the
+  // first result after delivery, AND that result must be the ORIGINAL turn's. The first correction wrote
+  // them as an OR, whose second arm a slow separate follow-up could satisfy on its own.
+  const originalTurnUuid = fReplays.find(r => r.origin?.kind !== "peer")?.uuid as string | undefined;
   const firstResultIdx = F.findIndex((r, i) => i >= fFrameAtSend && r.type === "result");
-  const markerBeforeFirstResult = F.some((r, i) => i >= fFrameAtSend && i < firstResultIdx && r.type === "assistant/text" && r.detail.includes(FMARK))
-    || fTexts.some(t => t.includes(FMARK)) && firstResultIdx >= 0 && F[firstResultIdx].detail.includes(String(fReplays[0]?.uuid ?? "\u0000"));
-  const foldedIntoRunningTurn = fResults.length === fResultsAtSend + 1 && markerBeforeFirstResult;
+  const markerBeforeFirstResult = firstResultIdx >= 0
+    && F.some((r, i) => i >= fFrameAtSend && i < firstResultIdx && r.type === "assistant/text" && r.detail.includes(FMARK));
+  const firstResultIsOriginal = firstResultIdx >= 0 && originalTurnUuid !== undefined
+    && F[firstResultIdx].detail.includes(originalTurnUuid);
+  const foldedIntoRunningTurn = fResults.length === fResultsAtSend + 1
+    && markerBeforeFirstResult && firstResultIsOriginal;
   console.log(`\n[Q5 fold] results after delivery: ${fResults.length - fResultsAtSend} | replays: ${fReplays.length}`);
   console.log(`      the marker appears in the model's text: ${fTexts.some(t => t.includes(FMARK)) ? "yes" : "no"}`);
-  console.log(`      the first result after delivery carries the ORIGINAL turn's uuid: ${firstResultIdx >= 0 && F[firstResultIdx].detail.includes(String(fReplays[0]?.uuid ?? "\u0000")) ? "yes" : "no"}`);
+  console.log(`      marker emitted before the first result after delivery: ${markerBeforeFirstResult ? "yes" : "no"}`);
+  console.log(`      that result carries the ORIGINAL turn's uuid (${originalTurnUuid ?? "unknown"}): ${firstResultIsOriginal ? "yes" : "no"}`);
   console.log(`      NOTE: this phase forces the fold on priority "next" only. Whether "now" and "later"`);
   console.log(`      fold identically follows from the same drain but was not run here.`);
   console.log(`      => ${foldedIntoRunningTurn

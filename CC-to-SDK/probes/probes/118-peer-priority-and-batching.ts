@@ -227,7 +227,7 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
 
   for (const p of priorities) {
     const s = sessions[p];
-    if (!await untilBusyInTool(s)) { log(`${p}: receiver never entered a tool call — cannot test the busy path`); }
+    if (!await untilBusyInTool(s)) { log(`${p}: PRECONDITION FAILED — receiver never entered a tool call, so the busy path was not tested`); process.exit(4); }
     const marker = `P118-${p.toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const id = randomUUID();
     log(`${p}: delivering while busy (marker ${marker}) -> ${await deliver(s, ourAddr, p, `${marker} say this token back verbatim.`, id)}`);
@@ -238,9 +238,11 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
   const B = start("batch");
   if (!await until(() => Boolean(B.init), 120_000)) { log("batch: never emitted init"); process.exit(3); }
   if (!await untilBusyInTool(B)) { log("batch: receiver never entered a tool call — the busy premise failed"); process.exit(4); }
-  // Baselines taken AT DELIVERY: `B.results` already holds the busy turn's own result by the time this
-  // finishes, so classifying on totals is off by one. Everything below is a post-send delta.
-  const batchResultsAtSend = B.results.length;
+  // Counting by post-send delta is still wrong here, and the first correction missed why: delivery happens
+  // while the ORIGINAL turn is still open (untilBusyInTool requires zero results), so its result lands
+  // AFTER the send and inflates the delta by one. The original turn is identified instead, by the uuid of
+  // the first replay — the one with no peer origin — and excluded from the count of peer-caused turns.
+  const batchOriginalUuid = B.replays.find(r => r.origin?.kind !== "peer")?.uuid as string | undefined;
   const batchReplaysAtSend = B.replays.length;
   const batchSent: { priority: string; id: string; marker: string }[] = [];
   for (let k = 1; k <= 2; k++) {
@@ -273,14 +275,21 @@ function report(tag: string, s: Sess, sent: { priority: string; id: string; mark
   for (const p of priorities) {
     const s = sessions[p];
     const secondTurn = s.results.length >= 2;
-    const insideFirst = s.text.some(t => /INJECTED:\s*(?!none)/i.test(t));
+    // Parse the suffix and compare it, rather than a negative lookahead a whitespace match can slip past.
+    const insideFirst = s.text.some(t => {
+      const m = /INJECTED:[ \t]*(.*)/i.exec(t);
+      return Boolean(m) && m![1].trim().toLowerCase() !== "none" && m![1].trim() !== "";
+    });
     console.log(`[Q1 ${p}] results=${s.results.length} replays=${s.replays.length} -> ${secondTurn ? "SEPARATE TURN (a second result arrived)" : "NO second result"}${insideFirst ? " | the running turn REPORTED seeing an injected instruction" : ""}`);
   }
   const dReplays = B.replays.length - batchReplaysAtSend;
-  const dResults = B.results.length - batchResultsAtSend;
-  console.log(`[Q2 batching] two 'next' messages -> AFTER DELIVERY: replays +${dReplays}, results +${dResults}`
-    + ` -> ${dReplays === 2 && dResults === 1 ? "BATCHED (both replayed, one turn)"
-      : dReplays === 2 && dResults >= 2 ? "NOT batched (a turn each)"
+  // Peer-caused turns = every result except the original turn's own.
+  const peerCausedResults = B.results.filter(r => r.user_message_uuid !== batchOriginalUuid
+    || (batchOriginalUuid === undefined && false)).length - (batchOriginalUuid === undefined ? 1 : 0);
+  console.log(`[Q2 batching] two 'next' messages -> peer replays +${dReplays}, peer-caused turns ${peerCausedResults}`
+    + ` (original turn uuid ${batchOriginalUuid ?? "unknown — counted by position"})`
+    + ` -> ${dReplays === 2 && peerCausedResults === 1 ? "BATCHED (both replayed, one turn)"
+      : dReplays === 2 && peerCausedResults >= 2 ? "NOT batched (a turn each)"
       : "inconclusive — read the transcript above"}`);
   const allResults = [...priorities.map(p => sessions[p]), B].flatMap(s => s.results);
   const peerResults = allResults.filter(r => r?.origin?.kind === "peer");

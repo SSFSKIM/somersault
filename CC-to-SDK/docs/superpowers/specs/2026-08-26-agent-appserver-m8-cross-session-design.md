@@ -7,7 +7,7 @@ pass) · probe 113c (`probes/probes/113c-cross-session-inbound-envelope.ts`, key
 ADDRESSABLE) · probes 117 / 117b / 117c (the four host seams) · probes 118 / 118b (the three outcomes of
 an inbound message), all keyed 2026-08-26.
 **Branch:** `m8-cross-session`, off `f69d1e28e4`.
-**Rev 3** — two adversarial review rounds. Round 1 (twelve findings, ten adopted) forced probes 118/118b,
+**Rev 4** — three adversarial review rounds. Round 1 (twelve findings, ten adopted) forced probes 118/118b,
 which replaced the whole inbound half; round 2 against that rewrite returned fifteen more, of which the
 sharpest was an internal contradiction rev 2 had left standing — one paragraph still said `fromThreadId`
 carries a thread's real permission class, which would have rebuilt the escalation the same rev claimed to
@@ -88,7 +88,8 @@ PeerRow {
 ```
 
 The gateway itself never appears here, and that follows from a decision rather than a filter: it
-publishes a key file and no registry row, so nothing scanning `~/.claude/sessions/*.json` can see it.
+publishes a key file and no registry row, so nothing scanning `<claudeConfigDir()>/sessions/*.json` can
+see it.
 
 Read from **`<claudeConfigDir()>/sessions/*.json`**, never a hardcoded `~/.claude`: this harness already
 resolves that root through `config/claudeHome.ts` (which handles `CLAUDE_CONFIG_DIR` REPLACING the home
@@ -169,10 +170,17 @@ thread's inbox directly, and by the time the replayed frame reaches us the CLI h
 body as model input — there is no point at which this server could intervene. The reviewer who raised this
 framed it against a 10K-token ceiling on model-visible injected items; that rule is `AGENTS.md`'s and
 governs `codex-rs/`, which this repository has already adjudicated once (M7 rejected the same misapplied
-import), so it is not a conformance gap here. What remains true is narrower and worth acting on: the only
-bound on inbound size is the CLI's own line cap, whose value we have not measured, and the only control a
-hosted thread has is whether it accepts peer mail at all. That is what makes `refuse` the default rather
-than a preference.
+import), so it is not a conformance gap here. What remains true is narrower and worth acting on, and it is stated here as a property of the surface
+rather than buried: **`accept` is an uncontrolled trust boundary.** The only bound on inbound size is the
+CLI's own line cap, whose value we have not measured; several accepted arrivals batch into one model
+request; and there is no seam between the socket and the model's context where this server could
+intervene — by the time the replayed frame reaches us, the body is already input. So a same-user process
+that a thread has accepted can spend that thread's context and tokens up to the CLI's own limit, and the
+only control this server holds is the binary one: whether the thread accepts at all. That is what makes
+`refuse` the default rather than a preference, and it is what a client turning a thread to `accept` is
+consenting to. Measuring the CLI's line cap is a follow-up worth doing (one bisecting probe against a live
+inbox) — it would let `peer/list` publish the real ceiling — but it would sharpen the disclosure, not
+change it: the enforcement point belongs to the CLI either way.
 
 **The gateway always asserts `from-mode="prompting"`, and `fromThreadId` cannot change it.** The first
 draft let attribution to a thread carry that thread's real permission class, on the reasoning that a
@@ -241,13 +249,27 @@ Refused with `-33006` on fleet threads: this server does not write that engine's
 
 ### The gateway inbox (`src/peer/gateway.ts`)
 
-One socket per server process, bound at `<socketDir>/<our pid>.sock` where `socketDir` is taken from a
-hosted session's own `messaging_socket_path` when one is known and otherwise from
-`${XDG_RUNTIME_DIR||/tmp}/cc-socks` — the receipt sender refuses any reply address outside the receiver's
-own directory, so this is a correctness requirement, not a convention. Alongside it, one key file at
-`~/.claude/sessions/<pid>.<sha256(socket path)>.key` containing a freshly minted 32-hex `peerToken` and
-our `procStart`. **No registry row**: a key alone vouches, and publishing a row would put the app-server
-in every session-listing tool on the machine as if it were a session.
+**The gateway has one namespace, and the server declares it.** A peer namespace is the pair
+(socket directory, config root) — the socket directory because the receipt sender refuses any reply
+address outside the receiver's own, and the config root because that is where the vouching key must be
+published for a receiver to find it. Both are per-process values a hosted thread could in principle
+differ on: `config/tenantPreset.ts` gives each tenant its own `CLAUDE_CONFIG_DIR`. So the server resolves
+ONE namespace at startup — `claudeConfigDir()` and the socket directory derived from it — and **refuses
+to host peer methods at all when a thread is started under a different config root**, answering `-33008`
+and naming the mismatch. One honest refusal beats a roster that silently lists the wrong tenant's peers
+and a key no receiver will ever read. Binding per-namespace gateways is a later option, deliberately not
+this milestone.
+
+Within that namespace: one socket at `<socketDir>/<our pid>.sock`, where `socketDir` comes from a hosted
+session's own `messaging_socket_path` when one is known and otherwise from
+`${XDG_RUNTIME_DIR||/tmp}/cc-socks`. Alongside it, one key file at
+`<claudeConfigDir()>/sessions/<pid>.<sha256(socket path)>.key` containing a freshly minted 32-hex
+`peerToken` and our `procStart`. **No registry row**: a key alone vouches, and publishing a row would put
+the app-server in every session-listing tool on the machine as if it were a session.
+
+`statusReachable` is therefore a two-part test, not a directory comparison: a peer is status-reachable
+when its socket sits in our socket directory AND it resolves the same config root we publish our key
+under. A peer that fails either can be sent to and can never answer.
 
 The listener accepts, reads NDJSON lines, and **closes the connection as soon as it has consumed a
 frame**. The receipt sender writes one buffer, never reads, and times out idle after five seconds — a
@@ -272,10 +294,10 @@ records `msgId -> sending connection` so a later receipt can be routed. Delivere
 produce no receipt at all, so the common outcomes leave no cleanup signal, and a long-lived client would
 grow the map without bound. Retention cannot be derived from this process's environment: the hold deadline belongs to the RECEIVER,
 which may run with its own `CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`, so a TTL computed from ours could expire
-before a status this server was still owed. The bound is therefore an **absolute protocol-level retention
-window** this design fixes and documents, chosen well above any plausible hold deadline rather than
-calculated from a local value. Alongside it: a connection's entries are dropped when it closes; and
-per-connection and global counts are capped. **Eviction is never silent** — an entry dropped by a cap or
+before a status this server was still owed. The bound is therefore an **absolute protocol-level retention window of 30 minutes** — six times the
+CLI's 5-minute default hold deadline, fixed here rather than computed from a local value so a client can
+know how long correlation is meaningful. Alongside it: a connection's entries are dropped when it closes;
+**256 entries per connection and 4096 across the server**, oldest-first. **Eviction is never silent** — an entry dropped by a cap or
 by the window notifies its still-live sending connection with a terminal `peer/messageStatus` of status
 `dropped` and a reason naming the eviction, because a client that will never hear again should be told
 that, not left waiting. `held` is explicitly **not** terminal —
@@ -303,16 +325,26 @@ arrival frame at all — invisible injection, and the worst possible failure for
 is to make inbound traffic visible. Passing it always costs an extra echo of our own prompts, which the
 router already filters, and removes the possibility outright.
 
-**The policy lives on `ThreadRecord` and is re-pushed on every engine swap.** The rewind/reopen/clear
-family replaces the engine, and a replacement built from the launch config would silently restore the
-launch policy — including re-opening a thread a client had explicitly moved to `refuse`. The record is the
-owner; the swap spine reads it, the way it already re-applies the other per-thread settings it owns.
+**The policy lives on `ThreadRecord`, and a replacement engine is BUILT with it — not corrected
+afterwards.** The rewind/reopen/clear family replaces the engine, and a replacement built from the launch
+config would silently restore the launch policy, including re-opening a thread a client had explicitly
+moved to `refuse`. Re-pushing after the swap is not enough and is the wrong shape twice over: the swap
+spine starts the replacement and installs its router before the re-push lands, so there is a real window
+in which a fresh engine runs the LAUNCH policy and can take peer mail; and a re-push is best-effort, so a
+rejection would leave the launch policy in force permanently — failing exactly when the policy matters
+most. So the record's current policy (and the unconditional replay flag) go into the replacement's startup
+config, before the process exists. Any later re-push is reconciliation, never the mechanism.
 
 Four doors let something other than that owner decide, and all four are shut:
 
-1. **Startup argv.** `extraArgs` reaches the CLI as raw argv where the last flag wins, so a client-supplied
-   `extraArgs.settings` would override ours. `appserver/sessionIdentity.ts` already strips identity flags
-   from both `extraArgs` and the `extraOptions` hatch, and this joins it — but as a **merge, not a strip**.
+1. **Startup options, through every carrier there is.** A client's settings can reach the CLI by more
+   routes than one, and a guard that covers some of them covers none: `config.settings`,
+   `extraOptions.settings` (and `extraOptions` is spread LAST in `resolveOptions`, so it wins),
+   `extraArgs.settings`, `extraOptions.extraArgs.settings` (which REPLACES the sanitized top-level map
+   rather than merging with it), and the `settings=<json>` equals-encoding of either argv form. The rule is
+   therefore stated as one **effective-options sanitizer** that runs AFTER the final merge, walks every one
+   of those carriers, and reasserts the server's policy on whatever survived — not a per-carrier patch, and
+   not a strip: it is a **merge**.
    Removing the whole `settings` key would silently delete unrelated SDK settings a client legitimately
    sent, turning a policy guard into a configuration regression. The rule is narrow: parse the client's
    settings, overwrite `crossSessionInbound` with the server's value, leave every other key untouched, and
@@ -327,9 +359,15 @@ Four doors let something other than that owner decide, and all four are shut:
    `crossSessionInbound` is reserved there: refused with `-32602` naming itself, because silently ignoring
    it would be worse than the refusal.
 3. **The dedicated setter.** `thread/crossSessionInbound/set` is how a policy changes: same value domain,
-   inProcess-only, and it updates the record before it touches the engine so a swap racing the change
-   cannot lose it. It broadcasts `thread/settings/changed`, which the generic method deliberately does not
-   — a policy change is exactly the kind of thing every subscriber should see.
+   inProcess-only, serialized through `record.chain` like every other thread-scoped mutation. It applies
+   to the ENGINE first and commits to the record only after the engine accepts — the commit-after-accept
+   rule the existing flag-layer setters already follow. Rev 3 had it backwards, reasoning that a
+   record-first write could not be lost to a racing swap; but `record.chain` already orders the setter
+   against swaps, so record-first bought no safety and cost a real hazard: a rejected `applyFlagSettings`
+   would leave the record claiming a policy the running engine never took, and that phantom would then
+   become real at the next swap. It broadcasts `thread/settings/changed` on success, which the generic
+   method deliberately does not — a policy change is exactly the kind of thing every subscriber should
+   see.
 4. **Version skew.** `thread/start`'s params are a plain `z.object`, which strips unknown keys silently, so
    a new client asking an OLDER server for `refuse` gets a healthy thread that still runs mode parity —
    protection the client believes it has and does not. This is the exact failure the M7 `dynamicTools`
@@ -388,8 +426,12 @@ this design must name: between a peer arrival and that turn's first assistant fr
 run under one client lifecycle, and the uuid-less peer result would go unclaimed. So adoption carries its
 own state on the record, alongside `busy` rather than inside it:
 
-- **`peerPending`** — a bounded FIFO of unconsumed arrivals (uuid, origin, receivedAt). Written
-  synchronously by the arrival route.
+- **`peerPending`** — a FIFO of unconsumed arrivals (uuid, origin, receivedAt), **capped at 32 per
+  thread**. Written synchronously by the arrival route. At capacity the OLDEST entry is dropped and a
+  `warning` is broadcast naming the thread and the count: the newest arrivals are the ones a turn is about
+  to consume, and silently forgetting either end would leave an arrival with no lifecycle. The cap is a
+  bookkeeping bound, not a delivery bound — the CLI has already admitted those messages either way, which
+  is the honest limit of what this server can promise and is stated as such under the message cap.
 - **`peerReserved`** — set synchronously when an arrival lands on an idle thread. While it is set,
   `beginTurn` refuses a client `turn/start` with `-33001` and the reason `"peer turn pending"`, exactly as
   it refuses `"closing"` and `"swapping"`. The reservation is released when the adopted turn starts, when
@@ -462,9 +504,13 @@ carries.** That holds in all three outcomes, which is precisely what tying it to
 broken: a folded arrival produces no adopted turn but still persists a prompt, and N batched arrivals
 produce one turn but N prompts. Emitting per-turn would have under-produced in both cases.
 
-Ownership follows the outcome without changing the count. An arrival that folds is emitted against the
-running turn; an arrival that is adopted is emitted against the adopted turn, before its `turn/started`
-so a client never sees a turn begin without the message that caused it. The mapper stays out of it
+Ownership follows the outcome without changing the count, and so does ORDER — which follows the
+protocol's existing rule rather than inventing one. Every turn on this wire publishes its edge before its
+items (`beginTurn`, and subscribe-time replay, both do), so an adopted arrival is
+`thread/peerMessage` → `turn/started` → the `userMessage` item → the model's items. Emitting the item
+first would hand a client an item belonging to a turn id it has not been told about, and live order would
+disagree with replay order. For a FOLD there is no edge to precede: the turn already began, so the
+notification and the item are emitted against the running turn, in that order. The mapper stays out of it
 entirely — its `onUser` reads `tool_result` blocks only, and a unit row pins that so a future change
 cannot start fabricating a second item from the same frame.
 
@@ -487,6 +533,22 @@ origin gates, like `fleet/list` and `config/*`. `thread/crossSessionInbound/set`
 inProcess-only. Errors reuse `-33008` (documented as the fleet-operation code "named for its first user")
 for gateway and delivery failures, and `-32602` for an ambiguous target, an over-cap message, or a
 reserved key offered to `thread/settings/apply`.
+
+## How this lands, in reviewable stages
+
+The evidence and the architecture are separable and should be reviewed separately: the probes are read
+by checking them against a live engine, the design by checking it against the probes. Three stages, each
+its own diff:
+
+1. **The host-seam probes** (117 / 117b / 117c) — the gateway's shape, the policy injection route, and the
+   stream-visibility flag.
+2. **The outcome probes** (118 / 118b / 119 / 119b) — what an inbound message actually does to a session,
+   and the corrections their own first runs earned.
+3. **This design**, which synthesizes them.
+
+Implementation then follows the plan, which cuts the same way: the outbound half (`peer/list`,
+`peer/send`, the gateway, the receipt channel) is independently useful and independently reviewable, and
+the inbound half (policy, arrival, adoption) lands after it.
 
 ## Acceptance (behavior-phrased)
 
@@ -550,7 +612,10 @@ Keyless, run from `CC-to-SDK/harness`:
    the record before the engine, is refused on a fleet thread with `-33006`, and **survives an engine
    swap** — a rewind/reopen/clear re-pushes the record's policy rather than the launch config's, in both
    directions (a thread moved to `refuse` does not come back `accept`, and vice versa); and `initialize`'s
-   result carries `crossSession: true`.
+   result carries `crossSession: true`. **Every row in this file runs through `thread/resume` as well as
+   `thread/start`** — they are separate spines today, so an implementation can secure new threads while
+   resumed ones quietly keep mode parity and lose the replay flag, which is the invisible-injection case
+   with a different door.
 6. `node scripts/drift-check.mjs` from `CC-to-SDK/` — exit 0, with the new methods rowed and the
    notifications rowed, and `docs/parity/full-potential.md`'s stale 🚫 row for cross-session receive
    replaced by a scored row (the capability re-enters the denominator).
@@ -738,3 +803,12 @@ Pending — written at finish.
   legs. Probes 118 and 118b keep their conclusions — both were read off transcripts, not off the verdict
   labels — but their verdict logic is corrected in the same pass so the artifacts cannot mislead a later
   reader.
+- **rev 4 (2026-08-27)** — absorbs round 3, which confirmed thirteen findings closed and named the rest
+  relocated rather than fixed. Deletes an ordering contradiction rev 3 introduced (the item now follows
+  `turn/started`, per the protocol's existing edge-before-items rule); makes the peer namespace an
+  explicit (socket directory, config root) pair resolved once, with a refusal for threads under a
+  different root; builds the policy into a replacement engine's startup config instead of re-pushing after
+  the swap, and returns the setter to engine-first commit-after-accept; states the settings guard as one
+  sanitizer over every carrier; fills in every numeric limit; states `accept` as an uncontrolled trust
+  boundary; extends policy acceptance through `thread/resume` and the live legs through `thread/read`;
+  and corrects the verdict logic of probes 118 and 118b again.
