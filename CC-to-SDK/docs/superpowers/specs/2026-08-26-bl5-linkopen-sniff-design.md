@@ -84,7 +84,7 @@ carries a hyperlink: canon opens it iff ALL of
 - alt-screen active (our fullscreen viewport — inherently true at this seam),
 then opens AFTER A 500 ms TIMER, cancelled if a double/triple-click arrives in the window. The opener
 scheme-allowlists the URL — `https: http:` plus app schemes `vscode: vscode-insiders: cursor: windsurf:
-zed: jetbrains: idea: slack: linear: notion: figma:` (canon's 12-entry set verbatim) — refuses others with
+zed: jetbrains: idea: slack: linear: notion: figma:` (canon's 13-entry set verbatim) — refuses others with
 a warn log, and spawns `$BROWSER || open <url>` fire-and-forget (house pattern: `copy.ts`'s spawn with
 ignored stdio). `file:` URLs open in canon's editor panel — we have no panel: `file:` is a NO-OP this
 round (parked, D6). Plain unmodified left-click on a link stays a no-op for the opener (it already defers
@@ -151,7 +151,7 @@ to expansion precedence — see below).
   soft-wrapped logical line and bails on elided spans. We lack logical-line reconstruction in the hitmap; a
   single-visual-row approximation risks opening a TRUNCATED URL — worse than not opening. Parked with the
   canon evidence (research-links.md §3d) for a later round.
-- **D4 (allowlist verbatim):** canon's 12-scheme set copied exactly, not curated; fidelity-first.
+- **D4 (allowlist verbatim):** canon's 13-scheme set copied exactly, not curated; fidelity-first.
   REJECTED: https/http-only (diverges observably for slack:/linear:/etc links).
 - **D5 (XTVERSION-dependent detection PARKED — widened at plan review):** no XTVERSION plumbing exists.
   Parks BOTH canon probes that need it: the secondary Ghostty detection AND the `xterm.js`-host stand-down
