@@ -361,16 +361,32 @@ Four doors let something other than that owner decide, and all four are shut:
    initialized connection could turn another thread's `refuse` into `accept` and then feed it.
    `crossSessionInbound` is reserved there: refused with `-32602` naming itself, because silently ignoring
    it would be worse than the refusal.
-3. **The dedicated setter.** `thread/crossSessionInbound/set` is how a policy changes: same value domain,
-   inProcess-only, serialized through `record.chain` like every other thread-scoped mutation. It applies
-   to the ENGINE first and commits to the record only after the engine accepts — the commit-after-accept
-   rule the existing flag-layer setters already follow. Rev 3 had it backwards, reasoning that a
-   record-first write could not be lost to a racing swap; but `record.chain` already orders the setter
-   against swaps, so record-first bought no safety and cost a real hazard: a rejected `applyFlagSettings`
-   would leave the record claiming a policy the running engine never took, and that phantom would then
-   become real at the next swap. It broadcasts `thread/settings/changed` on success, which the generic
-   method deliberately does not — a policy change is exactly the kind of thing every subscriber should
-   see.
+3. **The dedicated setter — gated on a measurement it never had (rev 6).** `thread/crossSessionInbound/set`
+   was specified through rev 5 as the way a policy changes at runtime: inProcess-only, serialized through
+   `record.chain`, engine-first and committed to the record only after the engine accepts, broadcasting
+   `thread/settings/changed` where the generic method deliberately does not.
+
+   That design is retained, and it is not implemented yet, because it rests on a claim nothing measured:
+   that the CLI RE-READS `crossSessionInbound` off the live flag layer that `applyFlagSettings` writes.
+   The write itself is certain — this repository already drives `applyFlagSettings` for permissions,
+   output style and effort level — but probe 102 established that it accepts values it never validates, so
+   a resolved call is not evidence that anything took effect. A security-shaped knob that reports success
+   for a change that did not happen is the one failure this door cannot have.
+
+   The policy is therefore decided at admission, on BOTH spines (`thread/start` and `thread/resume` are
+   different functions in this server), and reported on `thread/get`. Probe 120 answers the re-read
+   question; the setter ships if and only if it says yes, in the direction or directions it says yes for,
+   and lands on the canonical settings spine — the one `thread/settings/changed` payload shape that
+   `broadcastSettings` and `routeSettingsMirror` both build — rather than inventing a second, partial one.
+
+   A fourth door was found in the same pass and is closed unconditionally: the SDK types `Options.settings`
+   as `string | Settings`, and a string there is a PATH to a settings file on disk. `resolveOptions`
+   spreads `extraOptions` last, so an admitted path would replace the whole settings object,
+   `crossSessionInbound` included. A path cannot be sanitized without rewriting a file this server does not
+   own, so it is REFUSED with `-32602` rather than admitted — as is a `--settings` argv value that does not
+   parse as inline JSON, for the same reason.
+
+
 4. **Version skew.** `thread/start`'s params are a plain `z.object`, which strips unknown keys silently, so
    a new client asking an OLDER server for `refuse` gets a healthy thread that still runs mode parity —
    protection the client believes it has and does not. This is the exact failure the M7 `dynamicTools`
@@ -561,7 +577,7 @@ checks, envelope assembly — pure, so its byte-exactness is unit-testable witho
 `src/peer/roster.ts` (registry read + liveness), `src/peer/receipts.ts` (the correlation map and its
 retention rules), `appserver/peerDomain.ts` (`peer/list`, `peer/send`),
 `appserver/peerInbound.ts` (arrival notification + the adoption state machine),
-`appserver/peerPolicy.ts` (`thread/crossSessionInbound/set`, the settings injection, and the key
+`appserver/peerPolicy.ts` (the settings injection and the key
 reservation `thread/settings/apply` enforces), `appserver/schema/peer.ts` (registered in `methodSchemas`, with
 `result` shapes published — M5's D-M5-19 convention), and the handlers registered in `server.ts` beside
 `fleet/list` and `thread/attach`. One change lands outside the domain: `Session` gains
@@ -569,7 +585,7 @@ reservation `thread/settings/apply` enforces), `appserver/schema/peer.ts` (regis
 because `appserver/peer.ts` is the JSON-RPC framing class and the collision is a known trap.
 
 `peer/list` and `peer/send` are **server-scoped**: they name no thread and bypass the engine-gone and
-origin gates, like `fleet/list` and `config/*`. `thread/crossSessionInbound/set` is thread-scoped and
+origin gates, like `fleet/list` and `config/*`. `thread/crossSessionInbound/set`, if probe 120 licenses it, lands beside the other three setters in `appserver/settings.ts` rather than in `peerPolicy.ts` — it is a settings mutation, and this server has exactly one `thread/settings/changed` payload shape, built by `broadcastSettings` and `routeSettingsMirror` together. It is thread-scoped and
 inProcess-only. Errors reuse `-33008` (documented as the fleet-operation code "named for its first user")
 for gateway and delivery failures, and `-32602` for an ambiguous target, an over-cap message, or a
 reserved key offered to `thread/settings/apply`.
@@ -632,9 +648,12 @@ Keyless, run from `CC-to-SDK/harness`:
    `thread/closed`, and `closing` blocks new adoptions. Then, as before:
    a replayed peer frame broadcasts `thread/peerMessage` in ALL of them, exactly once, carrying the
    origin verbatim including `verifiedPeerPid` and `msg_id`; frames arriving while the thread is idle
-   adopt a turn (turn id minted, `turn/started` broadcast carrying the origin when an unconsumed arrival
-   is on record and omitting it otherwise), and that turn settles on the unclaimed-result hook; frames
-   arriving while a client turn is running adopt NOTHING, so the folded case leaves exactly one turn; two
+   adopt a turn through `beginTurn` — so its `turn/started` payload is the ordinary
+   `{threadId, turn}` and carries no origin field (rev 6: `beginTurn` has no origin parameter, and a turn
+   edge that differs by how the turn was caused is a shape every subscriber would have to special-case) —
+   and that turn settles on the unclaimed-result hook, through `turnFailureOf`, so a failed result reports
+   `failed` rather than `completed`; frames arriving while a client turn is running adopt NOTHING, because
+   `beginTurn` refuses a busy thread, so the folded case leaves exactly one turn; two
    arrivals followed by one adopted turn produce one turn, not two. The trigger's narrowness has its own
    rows: `system/init`, `background_tasks_changed`, `rate_limit_event` and a nested frame carrying
    `parent_tool_use_id` each arrive on an idle thread and adopt NOTHING, so a session start does not mint
@@ -647,7 +666,8 @@ Keyless, run from `CC-to-SDK/harness`:
    when the policy is `refuse`; a client's own `settings` are MERGED rather than dropped, with only
    `crossSessionInbound` overwritten and every other key surviving, and an unparseable client `--settings`
    refused `-32602` rather than silently discarded; `thread/settings/apply` REFUSES the key with `-32602`
-   naming it; `thread/crossSessionInbound/set` changes it, broadcasts `thread/settings/changed`, updates
+   naming it. **The setter row is conditional on probe 120** (rev 6): if the CLI does re-read the key off
+   the live flag layer, `thread/crossSessionInbound/set` changes it, broadcasts `thread/settings/changed`, updates
    the record before the engine, is refused on a fleet thread with `-33006`, and **survives an engine
    swap** — a rewind/reopen/clear re-pushes the record's policy rather than the launch config's, in both
    directions (a thread moved to `refuse` does not come back `accept`, and vice versa); and `initialize`'s
@@ -860,3 +880,22 @@ Pending — written at finish.
   run: the healthy terminal state's name (the measuring run was weekly-limited, so `cancelled` is what it
   saw), and what lifecycle a folded and a batched message get. The adoption rule is written to survive any
   answer to all three.
+- **rev 6 (2026-08-27)** — absorbs an adversarial review scoped to the plan's Stage B (eighteen findings),
+  every load-bearing one of which was verified against the real code before adoption. Four defects were
+  facts about this codebase the design had assumed away: admission is TWO functions, not one, so a policy
+  only `createThread` applied was a policy `thread/resume` ignored; `fleet.ts` holds a second
+  `ThreadRecord` literal, so every mandatory field added to that type must be seeded there or the
+  typecheck fails before any test runs; `swapEngine` uninstalls and reinstalls only the ROUTER, so an
+  inbound observer installed at admission would leave the replacement engine deaf; and `Options.settings`
+  accepts a file path, which is a policy bypass no object-shaped sanitizer can see. The inbound half is
+  rewritten around them: adoption now goes THROUGH `beginTurn` rather than beside it, so an adopted turn
+  inherits the mapper (its model output reaches subscribers at all), `turnFailureOf` (a failed result
+  reports failed, not completed), and the close/interrupt re-check; frames are captured synchronously at
+  lifecycle start and drained when the chained runner installs, which is what keeps a terminal that
+  arrives during a held chain from wedging the thread forever; nothing branches on `record.busy`, which
+  the spec's own measurement says cannot decide an arrival's fate; teardown folds into the same task as
+  adoption, because a commit that can open a turn only a LATER commit knows how to close is a reachable
+  hole; and every attacker-influenced collection is bounded, including the own-turn uuid set, which is now
+  per-record and forgotten at each terminal. The runtime setter becomes a spike (see door 3 above). A
+  fourth delegated unknown joins the three already named: which lifecycle field carries the uuid this
+  server submits under.

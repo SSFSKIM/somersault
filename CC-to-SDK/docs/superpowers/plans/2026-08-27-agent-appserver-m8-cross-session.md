@@ -39,7 +39,7 @@
 
 **New, `src/appserver/` — the wire half:**
 - `src/appserver/peerDomain.ts` — `peer/list`, `peer/send` handlers.
-- `src/appserver/peerPolicy.ts` — policy injection into a thread's options, the settings sanitizer, `thread/crossSessionInbound/set`, and the `thread/settings/apply` reservation.
+- `src/appserver/peerPolicy.ts` — policy injection into a thread's options, the settings sanitizer, and the `thread/settings/apply` reservation. (The runtime setter is Task 11's, and lands on the canonical settings spine in `settings.ts` if its measurement licenses it at all.)
 - `src/appserver/peerInbound.ts` — the arrival route and the adoption state machine.
 - `src/appserver/schema/peer.ts` — params/result schemas for the three new methods.
 
@@ -1615,74 +1615,84 @@ git commit -m "feat(appserver): bind the peer gateway into the server lifecycle"
 
 ---
 
-### Task 8: Inbound policy — injection, the sanitizer, the reservation, and the setter
+### Task 8: Inbound policy at admission — one sanitizer, both spines, durable across swaps
 
 **Files:**
 - Create: `src/appserver/peerPolicy.ts`
-- Modify: `src/appserver/settings.ts`, `src/appserver/server.ts`, `src/appserver/registry.ts`
+- Modify: `src/appserver/server.ts`, `src/appserver/settings.ts`, `src/appserver/registry.ts`, `src/appserver/fleet.ts`
 - Test: `test/unit/appserver/peer-policy.test.ts`
 
 **Interfaces:**
-- Consumes: from Task 5: `crossSessionInboundSetParams`, `CROSS_SESSION_INBOUND`.
+- Consumes: from Task 5: `CROSS_SESSION_INBOUND` (the zod enum) and the `crossSessionInbound` field already present on `threadStartParams` and `threadResumeParams`.
 - Produces:
   - `type CrossSessionInbound = "accept" | "hold" | "refuse"`
   - `DEFAULT_INBOUND: CrossSessionInbound` (`"refuse"`)
-  - `applyPeerPolicy(config: Record<string, unknown>, value: CrossSessionInbound): Record<string, unknown>`
-  - `crossSessionInboundSet: Handler`
-  - On `ThreadRecord`: `crossSessionInbound: CrossSessionInbound`
+  - `SETTINGS_KEY = "crossSessionInbound"` and `RESERVED_SETTINGS_KEY` (its alias, for the `thread/settings/apply` reservation)
+  - `applyPeerPolicy(config: Record<string, unknown> | undefined, value: CrossSessionInbound): Record<string, unknown>` — throws `RpcRefusal(ERR.INVALID_PARAMS, …)`
+  - On `ThreadRecord`: `crossSessionInbound: CrossSessionInbound` (mandatory)
+
+**What this task is NOT.** There is no runtime setter here. `crossSessionInbound` is decided once, at admission, and reported on `thread/get`. A setter would need the CLI to re-read the key mid-session off the flag layer, and nothing has measured that it does — `applyFlagSettings` accepts writes it never validates (probe 102), so a resolved call is not evidence of effect. Task 11 owns that question and is gated on measuring it.
+
+**Why the policy is written into `record.config` and not only onto the record.** Every replacement engine this server builds — `thread/rewind`, `thread/clear`, `thread/reopen`, and settingsOps' own swap — is constructed from `swapBaseConfig(record.config)` (`src/appserver/rewind.ts:121`). A policy stored only as a record field would be rebuilt out of the launch config on the first swap, silently restoring whatever the thread opened with. Writing it into `record.config` at admission makes durability a property of the config spine that already exists, rather than four separate call sites each remembering to re-apply it. `record.crossSessionInbound` is the cheap read for the arrival path; `record.config` is the truth the engine is built from. **Both are written in the same statement, in `applyPeerPolicy`'s caller, and never apart.**
+
+**Why `fleet.ts` is in the file list.** `src/appserver/fleet.ts:410` builds the repository's second `ThreadRecord` literal (`origin: "fleet"`). Making `crossSessionInbound` mandatory without seeding that literal fails `npx tsc --noEmit` before any test runs. Fleet threads are host-owned: this server does not build their engine and cannot inject settings into it, so the honest seed is `DEFAULT_INBOUND` — the value that means "this server has not enabled inbound here".
+
+---
 
 - [ ] **Step 1: Write the failing test**
 
 Create `test/unit/appserver/peer-policy.test.ts`:
 
 ```ts
-// test/unit/appserver/peer-policy.test.ts — the policy's four doors. The property under test is not "the
-// key is set" but "nothing else can decide it": not a settings file on disk, not a client's escape hatch,
-// not a later RPC, and not an engine swap.
+// test/unit/appserver/peer-policy.test.ts — the policy's doors. The property under test is not "the key
+// is set" but "nothing else can decide it": not a settings file on disk, not a client's escape hatch, not
+// the generic settings RPC, and not an engine swap. Every case that admits a thread runs against BOTH
+// admission spines, because thread/start and thread/resume are different functions in this server and a
+// policy that only one of them applies is a policy.
 import { describe, it, expect } from "vitest";
-import { AppServer } from "../../../src/appserver/server.js";
+import { applyPeerPolicy, DEFAULT_INBOUND, SETTINGS_KEY } from "../../../src/appserver/peerPolicy.js";
+import { swapBaseConfig } from "../../../src/appserver/rewind.js";
 import { ERR } from "../../../src/appserver/rpc.js";
-import { applyPeerPolicy, DEFAULT_INBOUND } from "../../../src/appserver/peerPolicy.js";
-import type { PeerSink } from "../../../src/appserver/peer.js";
 
-const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
-const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
-const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
-const tick = () => new Promise((r) => setTimeout(r, 0));
-const init = (c: { feed(ch: string): void }, id: number) => send(c, { id, method: "initialize", params: { clientInfo: { name: "t" } } });
+const settingsOf = (c: Record<string, unknown>) => c.settings as Record<string, unknown>;
 
 describe("applyPeerPolicy", () => {
   it("defaults to refuse and always writes the key explicitly", () => {
     expect(DEFAULT_INBOUND).toBe("refuse");
-    const out = applyPeerPolicy({}, "refuse");
-    expect((out.settings as any).crossSessionInbound).toBe("refuse");
+    // Explicitly, never by omission: the CLI's own default for an absent key is not this server's to
+    // assume, and probe 117 measured that an EXPLICIT value beats mode parity in both directions.
+    expect(settingsOf(applyPeerPolicy({}, "refuse"))[SETTINGS_KEY]).toBe("refuse");
+    expect(settingsOf(applyPeerPolicy(undefined, "accept"))[SETTINGS_KEY]).toBe("accept");
   });
 
   it("passes --replay-user-messages on EVERY thread, including a refusing one", () => {
-    for (const v of ["accept", "refuse"] as const) {
+    // The flag is what makes a peer message VISIBLE in the stream at all. A refusing thread still needs
+    // it: `refuse` is measured by observing that nothing arrives, and an invisible stream cannot
+    // distinguish "refused" from "never sent".
+    for (const v of ["accept", "hold", "refuse"] as const) {
       expect((applyPeerPolicy({}, v).extraArgs as any)["replay-user-messages"]).toBeNull();
     }
   });
 
   it("MERGES a client's settings rather than dropping them", () => {
-    const out = applyPeerPolicy({ settings: { autoCompactEnabled: true, crossSessionInbound: "accept" } }, "refuse");
-    expect(out.settings).toEqual({ autoCompactEnabled: true, crossSessionInbound: "refuse" });
+    const out = applyPeerPolicy({ settings: { autoCompactEnabled: true, [SETTINGS_KEY]: "accept" } }, "refuse");
+    expect(settingsOf(out)).toEqual({ autoCompactEnabled: true, [SETTINGS_KEY]: "refuse" });
   });
 
-  it("overrides the key in every carrier a client can reach", () => {
+  it("overrides the key in every OBJECT carrier a client can reach", () => {
     const out = applyPeerPolicy({
-      settings: { crossSessionInbound: "accept" },
-      extraArgs: { settings: JSON.stringify({ crossSessionInbound: "accept" }) },
+      settings: { [SETTINGS_KEY]: "accept" },
+      extraArgs: { settings: JSON.stringify({ [SETTINGS_KEY]: "accept" }) },
       extraOptions: {
-        settings: { crossSessionInbound: "accept" },
-        extraArgs: { settings: JSON.stringify({ crossSessionInbound: "accept" }) },
+        settings: { [SETTINGS_KEY]: "accept" },
+        extraArgs: { settings: JSON.stringify({ [SETTINGS_KEY]: "accept" }) },
       },
     }, "refuse");
-    expect((out.settings as any).crossSessionInbound).toBe("refuse");
-    expect(JSON.parse((out.extraArgs as any).settings).crossSessionInbound).toBe("refuse");
+    expect(settingsOf(out)[SETTINGS_KEY]).toBe("refuse");
+    expect(JSON.parse((out.extraArgs as any).settings)[SETTINGS_KEY]).toBe("refuse");
     const hatch = out.extraOptions as any;
-    expect(hatch.settings.crossSessionInbound).toBe("refuse");
-    expect(JSON.parse(hatch.extraArgs.settings).crossSessionInbound).toBe("refuse");
+    expect(hatch.settings[SETTINGS_KEY]).toBe("refuse");
+    expect(JSON.parse(hatch.extraArgs.settings)[SETTINGS_KEY]).toBe("refuse");
   });
 
   it("handles the equals-encoding of an argv settings key", () => {
@@ -1690,267 +1700,301 @@ describe("applyPeerPolicy", () => {
     const args = out.extraArgs as Record<string, unknown>;
     const key = Object.keys(args).find((k) => k.startsWith("settings"));
     const json = key!.includes("=") ? key!.slice(key!.indexOf("=") + 1) : String(args[key!]);
-    expect(JSON.parse(json).crossSessionInbound).toBe("refuse");
+    expect(JSON.parse(json)[SETTINGS_KEY]).toBe("refuse");
   });
 
-  it("throws on an unparseable client settings string rather than discarding it", () => {
-    expect(() => applyPeerPolicy({ extraArgs: { settings: "{not json" } }, "refuse")).toThrow(/settings/);
+  // THE HOLE THE SDK's OWN TYPE OPENS. `Options.settings` is `string | Settings`
+  // (node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts:1976), and a string there is a PATH to a
+  // settings file on disk — not JSON this server could rewrite. `resolveOptions` spreads `extraOptions`
+  // last, so an admitted path would replace the whole settings object, `crossSessionInbound` included.
+  // A path cannot be sanitized without rewriting somebody else's file, so it is REFUSED instead.
+  it("refuses a settings carrier this server cannot sanitize", () => {
+    for (const carrier of [
+      { extraOptions: { settings: "/tmp/mine.json" } },
+      { extraOptions: { settings: 7 } },
+      { extraOptions: { settings: null } },
+      { settings: "/tmp/mine.json" },
+    ]) {
+      let code: number | undefined;
+      try { applyPeerPolicy(carrier, "refuse"); } catch (e) { code = (e as any).code; }
+      expect(code).toBe(ERR.INVALID_PARAMS);
+    }
+  });
+
+  it("refuses an unparseable argv settings string rather than discarding it", () => {
+    // Discarding it would silently drop settings the client asked for; admitting it would admit an
+    // unsanitizable carrier. Refusing is the only answer that is true to both.
+    let code: number | undefined;
+    try { applyPeerPolicy({ extraArgs: { settings: "{not json" } }, "refuse"); } catch (e) { code = (e as any).code; }
+    expect(code).toBe(ERR.INVALID_PARAMS);
   });
 
   it("strips a client-supplied replay-user-messages, which is ours now", () => {
-    const out = applyPeerPolicy({ extraArgs: { "replay-user-messages": null, verbose: null } }, "accept");
-    expect((out.extraArgs as any).verbose).toBeNull();
-    expect(Object.keys(out.extraArgs as object).filter((k) => k === "replay-user-messages")).toHaveLength(1);
-  });
-});
-
-function boot() {
-  const applied: Array<Record<string, unknown>> = [];
-  const configs: Array<Record<string, unknown>> = [];
-  const srv = new AppServer({}, {
-    sessionFactory: (config: Record<string, unknown>) => {
-      configs.push(config);
-      return { submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "sess-1",
-        applyFlagSettings: async (s: Record<string, unknown>) => { applied.push(s); } } as any;
-    },
-    listSessions: async () => [],
-    peerGateway: null,
-  } as any);
-  const a = mkSink(); const conn = srv.connect(a.sink);
-  init(conn, 1);
-  return { srv, a, conn, applied, configs };
-}
-
-describe("the policy on the wire", () => {
-  it("writes refuse into the start config when the client asks for nothing", async () => {
-    const { conn, configs } = boot();
-    send(conn, { id: 2, method: "thread/start", params: {} });
-    await tick();
-    expect((configs[0].settings as any).crossSessionInbound).toBe("refuse");
+    const out = applyPeerPolicy({ extraArgs: { "replay-user-messages": "no" } }, "refuse");
+    expect((out.extraArgs as any)["replay-user-messages"]).toBeNull();
   });
 
-  it("honours an explicit value at thread/start", async () => {
-    const { conn, configs } = boot();
-    send(conn, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
-    await tick();
-    expect((configs[0].settings as any).crossSessionInbound).toBe("accept");
-  });
-
-  it("REFUSES crossSessionInbound through the generic settings RPC", async () => {
-    const { a, conn, applied } = boot();
-    send(conn, { id: 2, method: "thread/start", params: {} });
-    await tick();
-    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
-    send(conn, { id: 3, method: "thread/settings/apply", params: { threadId, settings: { crossSessionInbound: "accept" } } });
-    await tick();
-    const err = parsed(a.lines).find((f) => f.id === 3).error;
-    expect(err.code).toBe(ERR.INVALID_PARAMS);
-    expect(err.message).toContain("crossSessionInbound");
-    expect(applied).toEqual([]);
-  });
-
-  it("still applies unrelated settings through the generic RPC", async () => {
-    const { a, conn, applied } = boot();
-    send(conn, { id: 2, method: "thread/start", params: {} });
-    await tick();
-    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
-    send(conn, { id: 3, method: "thread/settings/apply", params: { threadId, settings: { autoCompactEnabled: true } } });
-    await tick();
-    expect(applied).toEqual([{ autoCompactEnabled: true }]);
-  });
-
-  it("changes the policy through the dedicated setter, engine first, and broadcasts", async () => {
-    const { srv, a, conn, applied } = boot();
-    send(conn, { id: 2, method: "thread/start", params: {} });
-    await tick();
-    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
-    send(conn, { id: 90, method: "thread/subscribe", params: { threadId } });
-    await tick();
-    a.lines.length = 0;
-    send(conn, { id: 3, method: "thread/crossSessionInbound/set", params: { threadId, value: "accept" } });
-    await tick();
-    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ ok: true });
-    expect(applied).toEqual([{ crossSessionInbound: "accept" }]);
-    expect(srv.registry.get(threadId)!.crossSessionInbound).toBe("accept");
-    expect(parsed(a.lines).some((f) => f.method === "thread/settings/changed")).toBe(true);
-  });
-
-  it("does NOT commit to the record when the engine rejects the change", async () => {
-    const srv = new AppServer({}, {
-      sessionFactory: () => ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId: "s",
-        applyFlagSettings: async () => { throw new Error("engine said no"); } }) as any,
-      listSessions: async () => [], peerGateway: null,
-    } as any);
-    const a = mkSink(); const conn = srv.connect(a.sink);
-    init(conn, 1);
-    send(conn, { id: 2, method: "thread/start", params: {} });
-    await tick();
-    const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
-    send(conn, { id: 3, method: "thread/crossSessionInbound/set", params: { threadId, value: "accept" } });
-    await tick();
-    expect(parsed(a.lines).find((f) => f.id === 3).error).toBeDefined();
-    expect(srv.registry.get(threadId)!.crossSessionInbound).toBe("refuse");
+  // DURABILITY, stated where it is actually enforced. Every replacement engine in this server is built
+  // from `swapBaseConfig(record.config)`; a policy that survives that function survives all four swaps at
+  // once, and this asserts the composition rather than trusting four call sites to remember.
+  it("survives swapBaseConfig, which is what every replacement engine is built from", () => {
+    const admitted = applyPeerPolicy({ model: "opus" }, "accept");
+    const replacement = swapBaseConfig(admitted);
+    expect(settingsOf(replacement)[SETTINGS_KEY]).toBe("accept");
+    expect((replacement.extraArgs as any)["replay-user-messages"]).toBeNull();
   });
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
-
-Run: `npx vitest run test/unit/appserver/peer-policy.test.ts`
-Expected: FAIL — `src/appserver/peerPolicy.js` does not resolve.
-
-- [ ] **Step 3: Write the implementation**
-
-Create `src/appserver/peerPolicy.ts`:
+Then append the wire half — both spines, one loop:
 
 ```ts
-// appserver/peerPolicy.ts — who decides whether a hosted thread receives peer mail.
+import { AppServer } from "../../../src/appserver/server.js";
+import type { PeerSink } from "../../../src/appserver/peer.js";
+
+const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
+const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
+const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** Both admission spines, described the way a test can drive them. `thread/start` and `thread/resume`
+ *  are separate functions (server.ts's `createThread` and `startThread`), and every policy assertion
+ *  below runs against both — a policy only one spine applies is the defect this table exists to catch. */
+const SPINES = [
+  { name: "thread/start", method: "thread/start", extra: {} as Record<string, unknown> },
+  { name: "thread/resume", method: "thread/resume", extra: { sessionId: "11111111-1111-4111-8111-111111111111" } },
+];
+
+describe("crossSessionInbound at admission", () => {
+  for (const spine of SPINES) {
+    it(`${spine.name} defaults to refuse and records it`, async () => {
+      const seen: Record<string, unknown>[] = [];
+      const srv = new AppServer({ makeSession: ((cfg: Record<string, unknown>) => { seen.push(cfg); return fakeEngine(); }) as any });
+      const { lines, sink } = mkSink();
+      const c = srv.connect(sink);
+      send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+      send(c, { id: 2, method: spine.method, params: { ...spine.extra } });
+      await tick(); await tick();
+      expect((seen[0].settings as any)[SETTINGS_KEY]).toBe("refuse");
+      const reply = parsed(lines).find((m) => m.id === 2);
+      expect(reply.error).toBeUndefined();
+    });
+
+    it(`${spine.name} honors an explicit accept, and thread/get reports it`, async () => {
+      const seen: Record<string, unknown>[] = [];
+      const srv = new AppServer({ makeSession: ((cfg: Record<string, unknown>) => { seen.push(cfg); return fakeEngine(); }) as any });
+      const { lines, sink } = mkSink();
+      const c = srv.connect(sink);
+      send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+      send(c, { id: 2, method: spine.method, params: { ...spine.extra, crossSessionInbound: "accept" } });
+      await tick(); await tick();
+      expect((seen[0].settings as any)[SETTINGS_KEY]).toBe("accept");
+      const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+      send(c, { id: 3, method: "thread/get", params: { threadId } });
+      await tick();
+      expect(parsed(lines).find((m) => m.id === 3)!.result.crossSessionInbound).toBe("accept");
+    });
+
+    it(`${spine.name} refuses a settings carrier it cannot sanitize`, async () => {
+      const srv = new AppServer({ makeSession: (() => fakeEngine()) as any });
+      const { lines, sink } = mkSink();
+      const c = srv.connect(sink);
+      send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+      send(c, { id: 2, method: spine.method, params: { ...spine.extra, config: { extraOptions: { settings: "/tmp/mine.json" } } } });
+      await tick(); await tick();
+      expect(parsed(lines).find((m) => m.id === 2)!.error.code).toBe(ERR.INVALID_PARAMS);
+    });
+  }
+
+  it("thread/settings/apply cannot reach the reserved key", async () => {
+    const srv = new AppServer({ makeSession: (() => fakeEngine()) as any });
+    const { lines, sink } = mkSink();
+    const c = srv.connect(sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick(); await tick();
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+    send(c, { id: 3, method: "thread/settings/apply", params: { threadId, settings: { [SETTINGS_KEY]: "accept" } } });
+    await tick(); await tick();
+    expect(parsed(lines).find((m) => m.id === 3)!.error.code).toBe(ERR.INVALID_PARAMS);
+  });
+});
+```
+
+`fakeEngine()` is the house fake — copy it verbatim from `test/unit/appserver/settings.test.ts` rather than inventing one; it is `async` exactly where the real `EngineSession` is, and a synchronous stand-in makes chain-ordering tests pass that should not.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npx vitest run test/unit/appserver/peer-policy.test.ts`
+Expected: FAIL — `Cannot find module '.../peerPolicy.js'`.
+
+- [ ] **Step 3: Write `src/appserver/peerPolicy.ts`**
+
+```ts
+// appserver/peerPolicy.ts — the inbound policy, decided ONCE at admission and written into the config
+// every engine for this thread is built from.
 //
-// The answer is: this server, and nothing else. Not a settings file on disk (an explicit flag-layer value
-// beats mode parity in BOTH directions, measured in probe 117), not a client's escape hatch, not a later
-// RPC, and not an engine swap. The policy is written EXPLICITLY for every value including the default,
-// because an unwritten key lets something else decide.
-import { ERR } from "./rpc.js";
-import type { Handler } from "./server.js";
-import { crossSessionInboundSetParams } from "./schema/peer.js";
+// Four doors lead to the CLI's settings, and a policy that closes three of them closes none:
+//   1. `config.settings`            — the SDK's typed object
+//   2. `config.extraArgs.settings`  — the `--settings` argv flag, JSON or a path
+//   3. `config.extraOptions`        — the escape hatch, spread LAST by resolveOptions
+//   4. a settings FILE on disk      — reachable only as a string in doors 1 and 3
+//
+// Doors 1-3 are rewritten. Door 4 is REFUSED: a string in `settings` is a path
+// (sdk.d.ts `settings?: string | Settings`), and sanitizing it would mean rewriting a file this server
+// does not own. Refusing is the only answer that neither admits an unsanitized carrier nor silently
+// discards what the client asked for.
+import { ERR, RpcRefusal } from "./rpc.js";
 
 export type CrossSessionInbound = "accept" | "hold" | "refuse";
 
-/** Default REFUSE. A server product does not take turn-consuming injections no client asked for, and
- *  `hold` on a hosted thread is a DELAYED refuse anyway — the CLI says so in its own words
- *  (`headless: held peer message expired (no approval surface)`, probe 117b). */
+/** Refuse, always, unless a client says otherwise on the admission call. A machine-wide inbox that any
+ *  local process can write to is not something a thread should acquire by default. */
 export const DEFAULT_INBOUND: CrossSessionInbound = "refuse";
 
-const SETTINGS_KEY = "crossSessionInbound";
+export const SETTINGS_KEY = "crossSessionInbound";
+/** The same constant under the name the reservation reads it by (settings.ts). One constant, two
+ *  readers — so the reservation cannot drift from the key it reserves. */
+export const RESERVED_SETTINGS_KEY = SETTINGS_KEY;
+
 const REPLAY_FLAG = "replay-user-messages";
 
-function overrideJsonArg(args: Record<string, unknown>, value: CrossSessionInbound): Record<string, unknown> {
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A `settings` slot this server is allowed to rewrite: absent, or a plain object. Anything else — a
+ *  path, a number, null — is refused rather than sanitized. */
+function assertSanitizableSettings(v: unknown, where: string): void {
+  if (v === undefined || isPlainObject(v)) return;
+  throw new RpcRefusal(ERR.INVALID_PARAMS,
+    `${where}.settings must be an object; this server cannot enforce ${SETTINGS_KEY} through a settings file path`);
+}
+
+/** Rewrite the `settings` value of an argv map in place-ish, honoring both spellings the CLI accepts:
+ *  `{settings: "<json>"}` and the equals-encoded `{"settings=<json>": null}`. Returns a NEW map. */
+function withArgvSettings(args: Record<string, unknown> | undefined, value: CrossSessionInbound): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (k === REPLAY_FLAG) continue;                       // ours now; re-added unconditionally below
-    const base = k.split("=")[0];
-    if (base !== "settings") { out[k] = v; continue; }
-    // Both argv encodings: `settings <json>` and `settings=<json>`.
-    const raw = k.includes("=") ? k.slice(k.indexOf("=") + 1) : typeof v === "string" ? v : "";
-    let obj: Record<string, unknown>;
-    try { obj = raw ? JSON.parse(raw) as Record<string, unknown> : {}; }
-    catch { throw new Error(`client settings could not be parsed, so the server's ${SETTINGS_KEY} policy could not be asserted over it`); }
-    obj[SETTINGS_KEY] = value;
-    out["settings"] = JSON.stringify(obj);
+  for (const [k, v] of Object.entries(args ?? {})) {
+    if (k === REPLAY_FLAG) continue;              // ours now — stripped, then re-added below
+    if (k !== "settings" && !k.startsWith("settings=")) { out[k] = v; continue; }
+    const raw = k.startsWith("settings=") ? k.slice("settings=".length) : String(v ?? "");
+    let obj: unknown;
+    try { obj = JSON.parse(raw); } catch {
+      // Unparseable means it is a PATH (the flag accepts either), which lands in the same hole as door 4.
+      throw new RpcRefusal(ERR.INVALID_PARAMS,
+        `extraArgs.settings must be inline JSON; this server cannot enforce ${SETTINGS_KEY} through a settings file path`);
+    }
+    if (!isPlainObject(obj)) throw new RpcRefusal(ERR.INVALID_PARAMS, "extraArgs.settings must be a JSON object");
+    out.settings = JSON.stringify({ ...obj, [SETTINGS_KEY]: value });
   }
+  // `--replay-user-messages` is what makes an inbound peer message visible in the stream at all
+  // (probe 117). It is passed on EVERY thread, refusing ones included: `refuse` is verified by observing
+  // that nothing arrives, and an invisible stream cannot tell "refused" from "never sent". A
+  // client-supplied copy is dropped above and re-stated here so its VALUE is ours, not theirs.
   out[REPLAY_FLAG] = null;
   return out;
 }
 
-/** Assert the policy over EVERY carrier a client's options can reach the CLI through, after the final
- *  merge rather than per-site: `config.settings`, `extraOptions.settings` (spread LAST in resolveOptions,
- *  so it wins), `extraArgs.settings`, `extraOptions.extraArgs.settings` (which REPLACES the sanitized
- *  top-level map rather than merging), and the equals-encoding of either argv form. A guard that covers
- *  some carriers covers none.
+/** The one place the policy is stamped into a config. Returns a new config; never mutates the input.
  *
- *  A MERGE, never a strip: removing the whole `settings` key would silently delete unrelated SDK settings
- *  a client legitimately sent — a configuration regression wearing a policy guard's clothes.
- *
- *  `--replay-user-messages` rides on EVERY hosted thread, not only the accepting ones. It is startup-only
- *  argv, so a thread launched at `refuse` and later moved to `accept` could otherwise take peer input the
- *  model acts on while this server sees no arrival frame at all — invisible injection, and the worst
- *  possible failure for a surface whose whole job is to make inbound traffic visible. */
-export function applyPeerPolicy(config: Record<string, unknown>, value: CrossSessionInbound): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...config };
-  out.settings = { ...(config.settings as Record<string, unknown> | undefined), [SETTINGS_KEY]: value };
-  out.extraArgs = overrideJsonArg((config.extraArgs as Record<string, unknown>) ?? {}, value);
-  const hatch = config.extraOptions;
-  if (hatch && typeof hatch === "object") {
-    const h: Record<string, unknown> = { ...(hatch as Record<string, unknown>) };
-    if (h.settings && typeof h.settings === "object") h.settings = { ...(h.settings as Record<string, unknown>), [SETTINGS_KEY]: value };
-    if (h.extraArgs && typeof h.extraArgs === "object") h.extraArgs = overrideJsonArg(h.extraArgs as Record<string, unknown>, value);
-    out.extraOptions = h;
+ *  Call this at admission and write BOTH results in the same statement — `record.config` (which every
+ *  replacement engine is rebuilt from, via rewind.ts's `swapBaseConfig`) and `record.crossSessionInbound`
+ *  (the arrival path's cheap read). They are one fact; storing one without the other is how a swap
+ *  silently restores the launch policy. */
+export function applyPeerPolicy(config: Record<string, unknown> | undefined, value: CrossSessionInbound): Record<string, unknown> {
+  const src = config ?? {};
+  assertSanitizableSettings(src.settings, "config");
+  const hatch = isPlainObject(src.extraOptions) ? src.extraOptions : undefined;
+  if (src.extraOptions !== undefined && !hatch) throw new RpcRefusal(ERR.INVALID_PARAMS, "config.extraOptions must be an object");
+  if (hatch) assertSanitizableSettings(hatch.settings, "config.extraOptions");
+
+  const out: Record<string, unknown> = { ...src };
+  out.settings = { ...(isPlainObject(src.settings) ? src.settings : {}), [SETTINGS_KEY]: value };
+  out.extraArgs = withArgvSettings(isPlainObject(src.extraArgs) ? src.extraArgs : undefined, value);
+  if (hatch) {
+    out.extraOptions = {
+      ...hatch,
+      settings: { ...(isPlainObject(hatch.settings) ? hatch.settings : {}), [SETTINGS_KEY]: value },
+      ...(hatch.extraArgs !== undefined
+        ? { extraArgs: withArgvSettings(isPlainObject(hatch.extraArgs) ? hatch.extraArgs : undefined, value) }
+        : {}),
+    };
   }
   return out;
 }
-
-/** The one deliberate way a policy changes after start. ENGINE FIRST, commit after accept — the rule the
- *  existing flag-layer setters already follow. Committing to the record first would leave it claiming a
- *  policy the engine rejected, and that phantom would become real at the next swap. `record.chain`
- *  already orders this against swaps, so record-first bought nothing. */
-export const crossSessionInboundSet: Handler = (srv, ctx, id, params) => {
-  const parsed = crossSessionInboundSetParams.safeParse(params);
-  if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
-  const record = srv.registry.get(parsed.data.threadId);
-  if (!record) { ctx.peer.replyError(id, ERR.THREAD_NOT_FOUND, "Thread not found"); return; }
-  if (record.origin === "fleet") { ctx.peer.replyError(id, ERR.UNSUPPORTED_FOR_ORIGIN, "unsupported for fleet-origin threads"); return; }
-  record.chain = record.chain.then(async () => {
-    try {
-      await record.session.applyFlagSettings?.({ [SETTINGS_KEY]: parsed.data.value });
-      record.crossSessionInbound = parsed.data.value;
-      ctx.peer.reply(id, { ok: true });
-      // The generic settings RPC deliberately announces nothing; a POLICY change is exactly the kind of
-      // thing every subscriber should see.
-      srv.broadcast(record.id, "thread/settings/changed", { threadId: record.id, crossSessionInbound: parsed.data.value });
-    } catch (e) {
-      ctx.peer.replyError(id, ERR.INTERNAL, String((e as Error).message ?? e));
-    }
-  });
-};
-
-/** The reservation `thread/settings/apply` enforces: the generic method writes the SAME flag layer this
- *  policy relies on, at runtime, with no mirror write and no broadcast — so leaving it open would let any
- *  initialized connection turn another thread's `refuse` into `accept` and then feed it. */
-export const RESERVED_SETTINGS_KEY = SETTINGS_KEY;
 ```
 
-In `src/appserver/settings.ts`, inside `settingsApply` after the record lookup:
+- [ ] **Step 4: Wire both admission spines**
+
+1. `src/appserver/registry.ts` — add the mandatory field to `ThreadRecord`, beside `origin`:
+
+```ts
+  /** Decided at admission, mirrored from `config.settings.crossSessionInbound`. Written together with
+   *  the config it mirrors and never apart — see peerPolicy.ts's header. */
+  crossSessionInbound: CrossSessionInbound;
+```
+
+2. `src/appserver/server.ts` — `createThread` (the `thread/start` spine, ~line 844) and `startThread` (the `thread/resume` spine, ~line 886) each take `crossSessionInbound?: CrossSessionInbound` in their opts, resolve it once, and use it twice:
+
+```ts
+    const inbound = opts.crossSessionInbound ?? DEFAULT_INBOUND;
+    const config = applyPeerPolicy(opts.config, inbound);
+```
+
+…then pass `config` to the engine factory and seed `crossSessionInbound: inbound` on the record literal. `applyPeerPolicy` throws `RpcRefusal`, which dispatch's catch already answers with the code and message intact (server.ts:219) — do not wrap it.
+
+3. Both handler call sites (server.ts ~533 and ~560) forward `crossSessionInbound: parsed.data.crossSessionInbound` from the already-parsed params.
+
+4. `thread/get`'s reply (server.ts ~156, the `origin: r.origin` literal) gains `crossSessionInbound: r.crossSessionInbound`.
+
+5. `src/appserver/fleet.ts:410` — seed the literal:
+
+```ts
+      id: srv.registry.mint(), origin: "fleet", session: engine, unattended: "park",
+      crossSessionInbound: DEFAULT_INBOUND,   // host-owned engine: this server injects nothing into it
+```
+
+6. `src/appserver/settings.ts` — `settingsApply` refuses the reserved key before it touches the engine:
 
 ```ts
   if (RESERVED_SETTINGS_KEY in parsed.data.settings) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `${RESERVED_SETTINGS_KEY} is reserved — use thread/crossSessionInbound/set`);
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, `${RESERVED_SETTINGS_KEY} is decided at admission and cannot be applied at runtime`);
     return;
   }
 ```
-with `import { RESERVED_SETTINGS_KEY } from "./peerPolicy.js";` added.
 
-In `src/appserver/registry.ts`, add to `ThreadRecord` (after `dynamicTools?`):
+The reservation is not decoration: `thread/settings/apply` writes the same flag layer the policy relies on, at runtime, with no mirror write and no broadcast. Left open, any initialized connection could turn another thread's `refuse` into `accept` and then feed it.
 
-```ts
-  /** M8: the inbound peer policy this thread is RUNNING under, owned by the record rather than by the
-   *  launch config. A replacement engine is BUILT with this value (rewind/reopen/clear), because
-   *  re-pushing it after the swap leaves a window in which a fresh engine runs the launch policy — and a
-   *  best-effort re-push that fails leaves it permanently, failing exactly where the policy matters. */
-  crossSessionInbound: CrossSessionInbound;
-```
-with `import type { CrossSessionInbound } from "./peerPolicy.js";`.
+- [ ] **Step 5: Un-advertise the method this plan no longer implements**
 
-In `src/appserver/server.ts`:
-- register `"thread/crossSessionInbound/set": crossSessionInboundSet,` in the handlers table;
-- add `crossSessionInbound` to `FLEET_UNSUPPORTED` in `registry.ts` so the dispatch-level origin gate refuses it before the handler runs:
-```ts
-  "thread/settings/apply", "thread/crossSessionInbound/set", "mcpServer/set",
-```
-- in `createThread`, read the optional param, seed the record, and run the config through the sanitizer:
-```ts
-    const inbound = (opts.crossSessionInbound as CrossSessionInbound | undefined) ?? DEFAULT_INBOUND;
-    const config = applyPeerPolicy(rawConfig, inbound);
-```
-and set `crossSessionInbound: inbound` on the record literal;
-- in the swap spine (`rewind.ts`'s shared engine rebuild), run the base config through `applyPeerPolicy(base, record.crossSessionInbound)` before the replacement engine is constructed;
-- add `crossSessionInbound: z.enum(CROSS_SESSION_INBOUND).optional()` to `threadStartParams` and `threadResumeParams` in `schema/threads.ts`;
-- add `crossSession: true` to the `initialize` reply literal.
+Task 5 registered `thread/crossSessionInbound/set` in `methodSchemas` on the assumption that Task 8 would
+implement it. It does not (see this task's opening), and a registered method with no handler is worse than
+an absent one: the generated schema advertises it, a client calls it, and the server answers
+`METHOD_NOT_FOUND` for something it published. Remove it now and let Task 11 re-add it in the same commit
+that registers its handler.
 
-- [ ] **Step 4: Run it and watch it pass**
+- In `src/appserver/schema/index.ts`, delete the `"thread/crossSessionInbound/set"` entry from `methodSchemas`.
+- In `src/appserver/schema/peer.ts`, delete `crossSessionInboundSetParams` and `crossSessionInboundSetResult`.
+  Keep `CROSS_SESSION_INBOUND` — the admission params use it.
+- In `test/unit/appserver/schema.test.ts`, drop the method from the registration loop and delete the two
+  assertions that parse its params (Task 5 added them at the end of the file).
+- Run `npm run emit-schema` and commit the regenerated stable artifact; `schemaGen.test.ts` byte-compares it.
+
+- [ ] **Step 6: Run the tests**
 
 Run: `npx vitest run test/unit/appserver/peer-policy.test.ts`
-Expected: PASS, 13 tests.
+Expected: PASS.
 
-- [ ] **Step 5: Regression + typecheck**
+Run: `npx vitest run test/unit/appserver` then `npx tsc --noEmit`
+Expected: both green. The typecheck is the real gate on the `fleet.ts` seed — a missed record literal fails here, not in a test.
 
-Run: `npx vitest run test/unit/appserver && npx tsc --noEmit`
-Expected: all green; no tsc output.
+If `methodSchemas` changed shape in this task, also run `npm run emit-schema` and commit the regenerated stable artifact; `schemaGen.test.ts` byte-compares it.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/appserver/peerPolicy.ts src/appserver/settings.ts src/appserver/registry.ts src/appserver/server.ts src/appserver/schema/threads.ts test/unit/appserver/peer-policy.test.ts
-git commit -m "feat(appserver): inbound policy — explicit, merged, reserved, and swap-durable"
+git add src/appserver/peerPolicy.ts src/appserver/server.ts src/appserver/settings.ts src/appserver/registry.ts src/appserver/fleet.ts src/appserver/schema/index.ts src/appserver/schema/peer.ts test/unit/appserver/peer-policy.test.ts test/unit/appserver/schema.test.ts src/appserver/schema/json/stable/appserver.json
+git commit -m "feat(appserver): inbound policy is decided at admission, on both spines, and survives every swap"
 ```
 
 ---
@@ -2077,486 +2121,601 @@ git commit -m "feat(session): onUnclaimedResult — a claiming hook at the unmat
 
 ---
 
-### Task 10: Arrival and adoption
+### Task 10: Arrival and adoption — an inbound message becomes a real turn, and every way out of it settles
 
 **Files:**
 - Create: `src/appserver/peerInbound.ts`
-- Modify: `src/appserver/registry.ts`, `src/appserver/router.ts`, `src/appserver/server.ts`
+- Modify: `src/appserver/server.ts`, `src/appserver/registry.ts`, `src/appserver/rewind.ts`
 - Test: `test/unit/appserver/peer-inbound.test.ts`
 
 **Interfaces:**
-- Consumes: from Task 9: `Session.onUnclaimedResult` (through `EngineSession`); from Task 8: `record.crossSessionInbound`.
+- Consumes: from Task 1: `MAX_FRAME_CHARS`; from Task 8: `CrossSessionInbound`; from Task 9: `Session.onUnclaimedResult`.
 - Produces:
-  - `installPeerInbound(srv: AppServer, record: ThreadRecord): () => void`
-  - On `ThreadRecord`: `peerPending: PeerArrival[]`, `adoptedCommandUuid?: string`
-  - `interface PeerArrival { uuid: string; origin: Record<string, unknown>; receivedAt: number }`
-  - `PEER_PENDING_CAP = 32`
-  - On `EngineSession`: `onUnclaimedResult?(cb: (result: unknown) => boolean): () => void`
+  - `installPeerInbound(srv: AppServer, record: ThreadRecord): void`
+  - `uninstallPeerInbound(record: ThreadRecord): void`
+  - `notePeerTurnUuid(record: ThreadRecord, uuid: string): void`
+  - `settleAdopted(srv: AppServer, record: ThreadRecord, reason: "cancelled" | "interrupted"): void`
+  - On `ThreadRecord`: `peerInbound?: PeerInboundState` — **one optional field**, not several mandatory ones
+
+**Why one optional field.** `src/appserver/fleet.ts:410` builds this repository's second `ThreadRecord` literal. Every mandatory field added to `ThreadRecord` must be seeded there or `npx tsc --noEmit` fails before a single test runs. A fleet thread has no inbound machinery at all — this server does not own its engine — so the state that adoption needs is one optional object that a fleet record simply never has. That is cheaper and truer than a discriminated union, and it is why only `crossSessionInbound` (Task 8) is mandatory: `thread/get` reports that one on every origin.
+
+**Adoption goes through `beginTurn`, not around it.** An adopted turn is a real turn: subscribers must see `turn/started`, the model's items, and a `turn/completed` whose status distinguishes completed from failed from interrupted from cancelled. `beginTurn` already does all of that, including the close/interrupt re-check on the far side of the chain and the `turnFailureOf`-shaped failure tagging. Synthesizing a parallel turn beside it would mean reimplementing each of those — and getting the ones nobody tested wrong. So adoption supplies `beginTurn` with a runner, and everything else is inherited.
+
+**Three races the shape has to survive**, because the frames do not wait for our chain:
+
+1. **The runner is chain-deferred.** `beginTurn` installs the runner inside `record.chain.then(...)`, so a settings mutation ahead of it can hold the callback while the engine's result and terminal frames are already arriving. Frames are therefore **captured synchronously** at lifecycle start and drained into the mapper when the runner installs. If the terminal has already passed by then, the runner resolves immediately with the outcome that was recorded rather than returning a promise nobody will ever settle.
+2. **`record.busy` cannot decide an arrival's turn.** The spec's measurement is explicit that a message delivered during a busy turn has three possible fates and no way to predict which. An arrival is therefore held unassigned until lifecycle evidence decides: it is emitted as an item of whichever turn actually starts, or of the running turn once that turn's own frames carry it. Nothing branches on `busy`.
+3. **`busy` is set before `turn/started` goes out.** `beginTurn` sets `record.busy = true` and mints the turn id synchronously (turns.ts ~250) but broadcasts `turn/started` inside the chained callback (turns.ts:304). Items are therefore emitted only from **inside the runner**, which `beginTurn` invokes after that broadcast — never from the observer, which can run in the gap.
+
+**The one unknown, and why the design is safe under either answer.** Whether the `command_uuid` on a `command_lifecycle` frame equals the `uuid` this server passes to `submit()` is not yet measured (Task 13's keyed half asserts it). The code matches our recorded uuid against **both** `command_uuid` and `uuid` on the frame, and if neither matches it adopts. Mis-adopting one of our own turns is harmless: `beginTurn` refuses while `record.busy` is true and returns `false`, so the attempt is a no-op rather than a second turn. The failure mode under the unmeasured half is "an own turn is briefly considered and declined", not a corrupt wire.
+
+---
 
 - [ ] **Step 1: Write the failing test**
 
 Create `test/unit/appserver/peer-inbound.test.ts`:
 
 ```ts
-// test/unit/appserver/peer-inbound.test.ts — arrival and adoption, driven by the frames the ENGINE emits.
+// test/unit/appserver/peer-inbound.test.ts — adoption, and every way out of it.
 //
-// Arrival and execution are separate facts here because measurement made them separate: an inbound
-// message becomes its own turn, a follow-up turn, or nothing at all (folded into whatever turn was
-// running), and nothing at delivery time predicts which. So the notification fires on the replayed frame,
-// and a turn is adopted only when a `command_lifecycle` `started` names a command_uuid this server did
-// not submit.
-import { describe, it, expect } from "vitest";
+// The tests that matter here are the ones where the ENGINE moves before the SERVER does: a chain held by
+// a settings mutation, a terminal that lands before the runner installs, a swap under an installed
+// observer, a close while a turn is adopted. Each is a way a thread can be left busy forever, and none of
+// them is reachable by a test that lets every promise resolve in order first.
+import { describe, it, expect, vi } from "vitest";
 import { AppServer } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
-const tick = () => new Promise((r) => setTimeout(r, 0));
-const init = (c: { feed(ch: string): void }, id: number) => send(c, { id, method: "initialize", params: { clientInfo: { name: "t" } } });
+const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+const notes = (lines: string[], method: string) => parsed(lines).filter((m) => m.method === method);
 
-const peerOrigin = (msgId = "m-1") => ({ kind: "peer", from: "uds:/sock/1.sock", verifiedPeerPid: 4242, name: "sender", fromMode: "bypass", body: "hello", msg_id: msgId });
+const LIFECYCLE = (state: string, uuid: string) => ({ type: "command_lifecycle", command_uuid: uuid, state, session_id: "s", uuid: "f" });
+const ASSISTANT = (text: string) => ({ type: "assistant", message: { id: "m1", role: "assistant", content: [{ type: "text", text }] } });
+const RESULT = (over: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, ...over });
 
-/** An engine whose frames a test drives by hand, exposing both seams the design uses. */
-function driveableEngine() {
-  const frameCbs = new Set<(m: unknown, replay?: true) => void>();
-  const unclaimed = new Set<(r: unknown) => boolean>();
-  const submitted: string[] = [];
+/** An engine fake that lets a test PUSH frames, so the observer under test is driven by frame order
+ *  rather than by promise order. `onFrame` and `onUnclaimedResult` mirror the real Session seams —
+ *  both return an unsubscribe, and both are consulted synchronously from the read loop. */
+function pushEngine() {
+  const frameSubs = new Set<(f: unknown) => void>();
+  const resultSubs = new Set<(r: unknown) => boolean>();
   return {
-    emit: (m: unknown) => { for (const cb of [...frameCbs]) cb(m); },
-    /** Feed a result the way readLoop would when no waiter owned it. */
-    emitUnclaimed: (r: unknown) => { let claimed = false; for (const cb of [...unclaimed]) if (cb(r)) claimed = true; return claimed; },
-    submitted,
     engine: {
-      submit: async (_p: string, _on: (m: unknown) => void, opts?: { uuid?: string }) => { if (opts?.uuid) submitted.push(opts.uuid); return { result: {} }; },
-      interrupt: async () => ({}),
+      onFrame: (cb: (f: unknown) => void) => { frameSubs.add(cb); return () => frameSubs.delete(cb); },
+      onUnclaimedResult: (cb: (r: unknown) => boolean) => { resultSubs.add(cb); return () => resultSubs.delete(cb); },
+      submit: async () => undefined,
       dispose: async () => {},
-      onFrame: (cb: (m: unknown, replay?: true) => void) => { frameCbs.add(cb); return () => frameCbs.delete(cb); },
-      onUnclaimedResult: (cb: (r: unknown) => boolean) => { unclaimed.add(cb); return () => unclaimed.delete(cb); },
-      sessionId: "sess-1",
+      interrupt: async () => {},
     } as any,
+    push: (f: unknown) => { for (const s of [...frameSubs]) s(f); },
+    pushResult: (r: unknown) => { let claimed = false; for (const s of [...resultSubs]) claimed = s(r) || claimed; return claimed; },
+    live: () => frameSubs.size,
   };
 }
 
-async function boot() {
-  const d = driveableEngine();
-  const srv = new AppServer({}, { sessionFactory: () => d.engine, listSessions: async () => [], peerGateway: null } as any);
-  const a = mkSink(); const conn = srv.connect(a.sink);
-  init(conn, 1);
-  send(conn, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
+async function startAccepting(engine: any) {
+  const srv = new AppServer({ makeSession: (() => engine) as any });
+  const { lines, sink } = mkSink();
+  const c = srv.connect(sink);
+  send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+  send(c, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
   await tick();
-  const threadId = parsed(a.lines).find((f) => f.id === 2).result.thread.id;
-  send(conn, { id: 90, method: "thread/subscribe", params: { threadId } });
+  const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+  send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
   await tick();
-  a.lines.length = 0;
-  return { srv, a, conn, threadId, d };
+  lines.length = 0;
+  return { srv, c, lines, threadId, record: (srv as any).registry.get(threadId) };
 }
 
-describe("arrival", () => {
-  it("announces a replayed peer frame exactly once, carrying the origin verbatim", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
+describe("adoption", () => {
+  it("a foreign lifecycle start opens a real turn, and the model's output reaches subscribers", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-1"));
     await tick();
-    const notes = parsed(a.lines).filter((f) => f.method === "thread/peerMessage");
-    expect(notes).toHaveLength(1);
-    expect(notes[0].params.arrivalUuid).toBe("cmd-1");
-    expect(notes[0].params.origin).toEqual(peerOrigin());
-    expect("turnId" in notes[0].params).toBe(false);
+    expect(notes(lines, "turn/started")).toHaveLength(1);
+
+    e.push(ASSISTANT("hello from the peer's turn"));
+    await tick();
+    // THE POINT OF THIS CASE: an adopted turn that publishes only lifecycle edges is a turn whose
+    // subscribers see none of the model's answer. The assistant frame must reach TurnMapper.ingest.
+    const items = notes(lines, "item/completed").concat(notes(lines, "item/started"), notes(lines, "item/updated"));
+    expect(JSON.stringify(items)).toContain("hello from the peer's turn");
+
+    e.pushResult(RESULT());
+    e.push(LIFECYCLE("completed", "foreign-1"));
+    await tick();
+    const done = notes(lines, "turn/completed");
+    expect(done).toHaveLength(1);
+    expect(done[0].params.turn.status).toBe("completed");
   });
 
-  it("ignores a replayed NON-peer frame and produces no items", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "own-1", message: { content: "x" } });
+  it("a FAILED result is reported failed, not completed", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-2"));
     await tick();
-    expect(parsed(a.lines)).toEqual([]);
+    e.pushResult(RESULT({ is_error: true, subtype: "error_during_execution" }));
+    e.push(LIFECYCLE("completed", "foreign-2"));
+    await tick();
+    expect(notes(lines, "turn/completed")[0].params.turn.status).toBe("failed");
   });
 
-  it("drops the oldest arrival at the cap and warns", async () => {
-    const { a, d } = await boot();
-    for (let i = 0; i < 33; i++) d.emit({ type: "user", isReplay: true, uuid: `c-${i}`, origin: peerOrigin(`m-${i}`), message: { content: "x" } });
+  it("no result at all still settles the turn", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-3"));
     await tick();
-    expect(parsed(a.lines).some((f) => f.method === "warning" && String(f.params.code).includes("peerPending"))).toBe(true);
+    e.push(LIFECYCLE("cancelled", "foreign-3"));
+    await tick();
+    expect(notes(lines, "turn/completed")).toHaveLength(1);
+  });
+
+  // RACE 1. The chain is held, and the whole turn happens inside the hold.
+  it("survives a held chain: a terminal that lands before the runner installs still settles", async () => {
+    const e = pushEngine();
+    const { lines, record } = await startAccepting(e.engine);
+    let release!: () => void;
+    record.chain = record.chain.then(() => new Promise<void>((r) => { release = r; }));
+    e.push(LIFECYCLE("started", "foreign-4"));
+    e.push(ASSISTANT("answered while the chain was held"));
+    e.pushResult(RESULT());
+    e.push(LIFECYCLE("completed", "foreign-4"));
+    await tick();
+    expect(notes(lines, "turn/started")).toHaveLength(0);   // nothing ran yet — the chain is held
+    release();
+    await tick();
+    const done = notes(lines, "turn/completed");
+    expect(done).toHaveLength(1);
+    expect(done[0].params.turn.status).toBe("completed");
+    expect(record.busy).toBe(false);                        // the thread is USABLE again — the wedge test
+    expect(JSON.stringify(notes(lines, "item/completed"))).toContain("answered while the chain was held");
+  });
+
+  // RACE 2. Items never precede the turn edge that owns them.
+  it("emits the arrival item after turn/started, never before", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-5"));
+    await tick();
+    const order = parsed(lines).map((m) => m.method).filter((m) => m === "turn/started" || String(m).startsWith("item/"));
+    expect(order[0]).toBe("turn/started");
+  });
+
+  // RACE 3. A swap replaces the engine; the replacement must be heard.
+  it("re-observes the replacement engine after a swap, and stops observing the old one", async () => {
+    const first = pushEngine();
+    const second = pushEngine();
+    let n = 0;
+    const srv = new AppServer({ makeSession: (() => (n++ === 0 ? first.engine : second.engine)) as any });
+    const { lines, sink } = mkSink();
+    const c = srv.connect(sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
+    await tick();
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await tick();
+    lines.length = 0;
+    first.push(LIFECYCLE("started", "old-engine"));
+    await tick();
+    expect(notes(lines, "turn/started")).toHaveLength(0);   // the disposed engine is not listened to
+    second.push(LIFECYCLE("started", "new-engine"));
+    await tick();
+    expect(notes(lines, "turn/started")).toHaveLength(1);   // the replacement is
+  });
+
+  it("a refusing thread adopts nothing", async () => {
+    const e = pushEngine();
+    const srv = new AppServer({ makeSession: (() => e.engine) as any });
+    const { lines, sink } = mkSink();
+    const c = srv.connect(sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });     // default: refuse
+    await tick();
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.threadId;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+    lines.length = 0;
+    e.push(LIFECYCLE("started", "foreign-6"));
+    await tick();
+    expect(notes(lines, "turn/started")).toHaveLength(0);
   });
 });
 
-describe("adoption", () => {
-  it("adopts on a started naming a command_uuid this server did not submit", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
+describe("adoption teardown", () => {
+  it("thread/close settles an adopted turn instead of abandoning it", async () => {
+    const e = pushEngine();
+    const { c, lines, threadId, record } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-7"));
     await tick();
-    const started = parsed(a.lines).find((f) => f.method === "turn/started");
-    expect(started).toBeDefined();
-    expect(started.params.origin.kind).toBe("peer");
-    // The item follows the edge, per the protocol's existing order.
-    const idxStarted = a.lines.findIndex((l) => JSON.parse(l).method === "turn/started");
-    const idxItem = a.lines.findIndex((l) => JSON.parse(l).method === "item/completed");
-    expect(idxItem).toBeGreaterThan(idxStarted);
+    send(c, { id: 9, method: "thread/close", params: { threadId } });
+    await tick();
+    const done = notes(lines, "turn/completed");
+    expect(done).toHaveLength(1);
+    expect(done[0].params.turn.status).toBe("cancelled");
+    // A thread/closed that goes out with a turn still open is a subscriber left holding a turn id that
+    // never terminates — the edge must precede it.
+    const methods = parsed(lines).map((m) => m.method);
+    expect(methods.indexOf("turn/completed")).toBeLessThan(methods.indexOf("thread/closed"));
+    expect(record.busy).toBe(false);
   });
 
-  it("adopts NOTHING for a started naming a uuid this server submitted", async () => {
-    const { a, conn, threadId, d } = await boot();
-    send(conn, { id: 3, method: "turn/start", params: { threadId, input: "hello" } });
+  it("turn/interrupt on an adopted turn reports interrupted", async () => {
+    const e = pushEngine();
+    const { c, lines, threadId } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-8"));
     await tick();
-    a.lines.length = 0;
-    d.emit({ type: "command_lifecycle", command_uuid: d.submitted[0], state: "started" });
+    send(c, { id: 9, method: "turn/interrupt", params: { threadId } });
     await tick();
-    expect(parsed(a.lines).filter((f) => f.method === "turn/started")).toHaveLength(0);
+    // The engine's own terminal is what actually ends the CLI's turn; the interrupt spine only asks.
+    e.push(LIFECYCLE("cancelled", "foreign-8"));
+    await tick();
+    expect(parsed(lines).find((m) => m.id === 9)!.error).toBeUndefined();
+    expect(notes(lines, "turn/completed")[0].params.turn.status).toBe("interrupted");
   });
 
-  it("settles on the adopted uuid's terminal frame, whatever it is called", async () => {
-    for (const terminal of ["completed", "cancelled", "whatever_the_engine_calls_it"]) {
-      const { a, d } = await boot();
-      d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-      d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-      await tick();
-      d.emitUnclaimed({ type: "result", subtype: "success", result: "done" });
-      d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: terminal });
-      await tick();
-      expect(parsed(a.lines).filter((f) => f.method === "turn/completed")).toHaveLength(1);
+  it("a stale-epoch lifecycle frame settles the thread rather than wedging it", async () => {
+    const e = pushEngine();
+    const { lines, record } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-9"));
+    await tick();
+    record.epoch += 1;                        // as an engine swap would
+    e.push(LIFECYCLE("completed", "foreign-9"));
+    await tick();
+    // The old assertion — "no completion was broadcast" — passes while the thread is permanently busy.
+    // What has to be true is that the thread is USABLE.
+    expect(record.busy).toBe(false);
+    expect(record.peerInbound?.adopted).toBeUndefined();
+    e.push(LIFECYCLE("started", "foreign-10"));
+    await tick();
+    expect(notes(lines, "turn/started").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("bounded state", () => {
+  it("holds a bounded number of arrivals and drops the oldest", async () => {
+    const e = pushEngine();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { record } = await startAccepting(e.engine);
+    for (let i = 0; i < 200; i++) e.push({ type: "user", message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">m${i}</cross-session-message>` } });
+    await tick();
+    expect(record.peerInbound.arrivals.length).toBeLessThanOrEqual(32);
+    warn.mockRestore();
+  });
+
+  it("does not accumulate our own turn uuids across turns", async () => {
+    const e = pushEngine();
+    const { record } = await startAccepting(e.engine);
+    for (let i = 0; i < 50; i++) {
+      const u = `own-${i}`;
+      (record.peerInbound.ourUuids as Set<string>).add(u);
+      e.push(LIFECYCLE("started", u));
+      e.push(LIFECYCLE("completed", u));
     }
-  });
-
-  it("a sibling's terminal frame leaves the adopted turn open", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
     await tick();
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-other", state: "completed" });
-    await tick();
-    expect(parsed(a.lines).filter((f) => f.method === "turn/completed")).toHaveLength(0);
-  });
-
-  it("claims the unclaimed result exactly once, and declines when nothing is adopted", async () => {
-    const { d } = await boot();
-    expect(d.emitUnclaimed({ type: "result" })).toBe(false);
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    expect(d.emitUnclaimed({ type: "result" })).toBe(true);
-    expect(d.emitUnclaimed({ type: "result" })).toBe(false);
-  });
-
-  it("settles failed when the terminal arrives with no result claimed", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "cancelled" });
-    await tick();
-    expect(parsed(a.lines).find((f) => f.method === "turn/completed").params.turn.status).toBe("failed");
-  });
-
-  it("adopts nothing on a closing thread", async () => {
-    const { a, conn, threadId, d } = await boot();
-    send(conn, { id: 3, method: "thread/close", params: { threadId } });
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    expect(parsed(a.lines).filter((f) => f.method === "turn/started")).toHaveLength(0);
-  });
-
-  it("emits one userMessage item per ARRIVAL, id-stable on arrivalUuid, in every outcome", async () => {
-    const { a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin("m-1"), message: { content: "x" } });
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-2", origin: peerOrigin("m-2"), message: { content: "y" } });
-    await tick();
-    const items = parsed(a.lines).filter((f) => f.method === "item/completed");
-    expect(items.map((i) => i.params.item.id).sort()).toEqual(["cmd-1", "cmd-2"]);
+    // Every own turn that reached a terminal has been forgotten. A set that only grows is a leak with no
+    // signal, and a long-lived thread is exactly where it would not be noticed.
+    expect((record.peerInbound.ourUuids as Set<string>).size).toBe(0);
   });
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [ ] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts`
-Expected: FAIL — no `thread/peerMessage` is ever emitted.
+Expected: FAIL — `Cannot find module '.../peerInbound.js'`.
 
-- [ ] **Step 3: Write the implementation**
-
-Create `src/appserver/peerInbound.ts`:
+- [ ] **Step 3: Write `src/appserver/peerInbound.ts`**
 
 ```ts
-// appserver/peerInbound.ts — the arrival notification and the adoption state machine.
+// appserver/peerInbound.ts — an inbound peer message becomes a REAL turn.
 //
-// ARRIVAL and EXECUTION are separate facts, because measurement made them separate (probes 118/118b): an
-// inbound message becomes its own turn, a follow-up turn, or nothing at all — folded into whatever turn
-// was running, answered in the same reply, with no second result anywhere — and nothing observable at
-// delivery time predicts which. So:
-//
-//   arrival   = the replayed user frame. Exact: it always fires, once per message, carrying the full peer
-//               origin. `thread/peerMessage` is broadcast from there and promises nothing about a turn.
-//   execution = a `command_lifecycle` frame naming a command_uuid this server did not submit. The engine
-//               STATES this; we do not infer it. `started` opens the turn, the uuid's terminal closes it.
-//
-// Keying on the engine's own per-message frames is why this file has no reservation machinery, no frame
-// buffering and no late-adoption branch: `started` arrives ahead of the turn's init and every item, so
-// there is nothing to compensate for.
+// The engine does not wait for this server's chain. Every hard case here is the same shape: a frame
+// arrives before the machinery that was going to handle it exists. The answer is always to record what
+// happened synchronously and let the machinery drain it when it installs — never to assume ordering the
+// read loop does not promise.
 import { randomUUID } from "node:crypto";
+import { TurnMapper } from "./items/mapper.js";
+import { turnFailureOf } from "../session/turnResult.js";
 import { beginTurn, emitItems } from "./turns.js";
 import type { ThreadRecord } from "./registry.js";
 import type { AppServer } from "./server.js";
 
-export interface PeerArrival { uuid: string; origin: Record<string, unknown>; receivedAt: number }
+/** How many un-adopted arrivals one thread holds. Attacker-influenced — any local process that can write
+ *  this session's socket can produce them — so it is capped and oldest-first evicted, never grown. */
+const MAX_ARRIVALS = 32;
+/** How many frames one adopted turn captures while its runner is still behind the chain. Bounded for the
+ *  same reason; a turn that overruns it loses the earliest frames rather than the process. */
+const MAX_CAPTURED = 512;
 
-/** A bookkeeping bound, not a delivery bound — the CLI has already admitted those messages either way. */
-export const PEER_PENDING_CAP = 32;
+interface Arrival { msgId: string; text: string; at: number }
 
-const nowSec = (): number => Math.floor(Date.now() / 1000);
-
-/** Anything that is not `queued` or `started` is terminal. Deliberately NOT a match on "completed": the
- *  run that measured these frames had its turns fail immediately, so the terminal state it saw was
- *  `cancelled`, and a healthy turn's name is a delegated unknown the spec records. A rule that matched one
- *  literal would break on exactly the failure path it most needs to survive. */
-const isTerminalState = (state: unknown): boolean => typeof state === "string" && state !== "queued" && state !== "started";
-
-export function installPeerInbound(srv: AppServer, record: ThreadRecord): () => void {
-  const offFrame = record.session.onFrame((frame) => {
-    const f = frame as Record<string, any>;
-    if (f?.type === "user" && f.isReplay === true && f.origin?.kind === "peer" && typeof f.uuid === "string") { onArrival(srv, record, f); return; }
-    if (f?.type === "command_lifecycle" && typeof f.command_uuid === "string") onLifecycle(srv, record, f.command_uuid, f.state);
-  });
-  const offResult = record.session.onUnclaimedResult?.((result) => claimResult(record, result)) ?? (() => {});
-  return () => { offFrame(); offResult(); };
+interface AdoptedTurn {
+  commandUuid: string;
+  /** The `record.epoch` adoption started under. A frame that arrives after a swap belongs to a
+   *  conversation that no longer exists, and acting on it would move a turn that is not this one. */
+  epoch: number;
+  captured: unknown[];
+  mapper?: TurnMapper;
+  turnId?: string;
+  resolve?: (o: { stopped?: string; error?: { message: string } } | undefined) => void;
+  /** Set when the terminal arrives. If the runner has not installed yet, this is what it resolves with
+   *  the moment it does — the difference between a settled turn and a thread busy forever. */
+  outcome?: { stopped?: string; error?: { message: string } };
+  terminated: boolean;
 }
 
-function onArrival(srv: AppServer, record: ThreadRecord, f: Record<string, any>): void {
-  const arrival: PeerArrival = { uuid: f.uuid, origin: f.origin as Record<string, unknown>, receivedAt: nowSec() };
-  record.peerPending.push(arrival);
-  if (record.peerPending.length > PEER_PENDING_CAP) {
-    record.peerPending.shift();
-    for (const peer of record.subscribers) {
-      try { peer.notify("warning", { code: "peerPendingOverflow", message: `thread ${record.id}: more than ${PEER_PENDING_CAP} unconsumed peer arrivals; the oldest was dropped from this server's bookkeeping` }); } catch { /* a subscriber went away */ }
+export interface PeerInboundState {
+  off?: () => void;
+  offResult?: () => void;
+  arrivals: Arrival[];
+  /** The command uuids of turns THIS server submitted, so their lifecycle brackets are not adopted.
+   *  Per-record (it dies with the thread) and deleted at each terminal (it does not grow with turns). */
+  ourUuids: Set<string>;
+  adopted?: AdoptedTurn;
+}
+
+const ENVELOPE = /<cross-session-message\s[^>]*>([\s\S]*?)<\/cross-session-message>/;
+
+/** Record a uuid this server is about to submit under, so its own lifecycle bracket is recognised.
+ *  Called from turns.ts's `submitRunner` beside the `randomUUID()` that mints it. */
+export function notePeerTurnUuid(record: ThreadRecord, uuid: string): void {
+  record.peerInbound?.ourUuids.add(uuid);
+}
+
+const isOurs = (state: PeerInboundState, frame: any): boolean =>
+  // BOTH fields, because which one carries the submit uuid is not yet measured (Task 13's keyed half).
+  // Under the wrong guess this over-adopts, and beginTurn's busy gate makes that a no-op — see the task
+  // header. Under the right one it never adopts an own turn at all.
+  state.ourUuids.has(String(frame.command_uuid)) || state.ourUuids.has(String(frame.uuid));
+
+const forget = (state: PeerInboundState, frame: any): void => {
+  state.ourUuids.delete(String(frame.command_uuid));
+  state.ourUuids.delete(String(frame.uuid));
+};
+
+/** `queued` and `started` are the two non-terminal states probe 119b observed; anything else ends the
+ *  bracket. Written as "not one of these" rather than as a list of terminals because the healthy
+ *  terminal's NAME is a delegated unknown — only the failure path's `cancelled` has been seen — and a
+ *  closed list would silently fail to settle a turn whose terminal is spelled something else. */
+const isTerminalState = (s: unknown): boolean => s !== "queued" && s !== "started";
+
+export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
+  if (record.crossSessionInbound === "refuse") return;   // nothing is coming; observe nothing
+  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set() };
+  record.peerInbound = state;
+
+  const onFrame = (frame: any): void => {
+    if (!frame || typeof frame !== "object") return;
+
+    if (frame.type === "command_lifecycle") {
+      const adopted = state.adopted;
+      if (adopted && String(frame.command_uuid) === adopted.commandUuid) {
+        if (!isTerminalState(frame.state)) return;
+        adopted.terminated = true;
+        // A frame from a conversation that has been swapped out settles the turn as CANCELLED and clears
+        // everything — the branch that used to clear only the uuid left `busy` true forever.
+        if (record.epoch !== adopted.epoch) { settleAdopted(srv, record, "cancelled"); return; }
+        const resolve = adopted.resolve;
+        state.adopted = undefined;
+        if (resolve) resolve(adopted.outcome);
+        // else: the runner has not installed. It reads `outcome` off the object it still holds.
+        return;
+      }
+      if (isOurs(state, frame)) { if (isTerminalState(frame.state)) forget(state, frame); return; }
+      if (adopted) return;                               // one adopted turn at a time
+      if (isTerminalState(frame.state)) return;          // a terminal for a bracket we never saw open
+      adopt(srv, record, state, String(frame.command_uuid));
+      return;
     }
-  }
-  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid: arrival.uuid, origin: arrival.origin, receivedAt: arrival.receivedAt });
-  // A turn is already running: this arrival folded into it, so its item belongs to that turn and can go
-  // out now. Otherwise it waits for the turn its `started` will open.
-  if (record.busy && record.currentTurnId) emitArrivalItem(srv, record, arrival, record.currentTurnId);
-  else record.peerItemsPending.push(arrival);
-}
 
-/** ONE item per ARRIVAL, id-stable on the replayed frame's uuid — not per turn. A folded arrival has no
- *  turn of its own and still persists a prompt, and N batched arrivals share one turn, so per-turn
- *  emission would under-produce in exactly the two cases `thread/read` will disagree about.
- *
- *  It is emitted against a turn rather than free-floating, because `emitItems` keys the replay buffer by
- *  turn id and an item with no turn could never be replayed to a late subscriber. */
-function emitArrivalItem(srv: AppServer, record: ThreadRecord, arrival: PeerArrival, turnId: string): void {
-  emitItems(srv, record, turnId, [
-    { kind: "completed", item: { type: "userMessage", id: arrival.uuid, text: String(arrival.origin.body ?? "") } as any },
-  ]);
-}
+    const adopted = state.adopted;
+    if (adopted && !adopted.terminated) {
+      if (adopted.mapper && adopted.turnId) {
+        emitItems(srv, record, adopted.turnId, adopted.mapper.ingest(frame));
+      } else if (adopted.captured.length < MAX_CAPTURED) {
+        adopted.captured.push(frame);
+      }
+    }
 
-function onLifecycle(srv: AppServer, record: ThreadRecord, commandUuid: string, state: unknown): void {
-  if (record.adoptedCommandUuid === commandUuid && isTerminalState(state)) { settleAdopted(srv, record); return; }
-  if (state !== "started") return;
-  if (record.adoptedCommandUuid !== undefined) return;          // one adoption at a time; siblings ride it
-  if (srv.submittedTurnUuids.has(commandUuid)) return;          // ours — beginTurn already owns it
-  if (record.closing || record.busy) return;                    // closing announces nothing; busy is our own turn
-  adopt(srv, record, commandUuid);
-}
+    if (frame.type === "user") noteArrival(state, frame);
+  };
 
-function adopt(srv: AppServer, record: ThreadRecord, commandUuid: string): void {
-  record.adoptedCommandUuid = commandUuid;
-  record.adoptedEpoch = record.epoch;
-  // `releaseSlot` is called IMMEDIATELY, not at settlement. Its contract is "call it the instant the
-  // engine call is dispatched", and for an adopted turn the engine call was never ours to make — so
-  // there is nothing to hold `record.chain` for, and holding it until settlement would park every
-  // chained op for the length of somebody else's turn.
-  const started = beginTurn(srv, undefined, undefined, record, (turnId, _mapper, releaseSlot) => {
-    releaseSlot();
-    // Items queued by arrivals that had no turn yet belong to this one, AFTER its `turn/started` — the
-    // protocol's edge-before-items order, which beginTurn has already satisfied by the time a runner runs.
-    for (const a of record.peerItemsPending.splice(0)) emitArrivalItem(srv, record, a, turnId);
-    return new Promise((resolve) => { record.adoptedResolve = resolve as (v: unknown) => void; });
+  state.off = record.session.onFrame?.(onFrame);
+  state.offResult = record.session.onUnclaimedResult?.((result: unknown) => {
+    const adopted = state.adopted;
+    if (!adopted || adopted.terminated) return false;
+    // Normalized through the SAME reader ordinary turns use. A raw result stored and reported as "some
+    // result arrived" makes `is_error` and an API error read as a clean completion.
+    const failure = turnFailureOf(result);
+    adopted.outcome = failure ? { error: failure } : undefined;
+    if (adopted.mapper && adopted.turnId) emitItems(srv, record, adopted.turnId, adopted.mapper.ingest(result));
+    else if (adopted.captured.length < MAX_CAPTURED) adopted.captured.push(result);
+    return true;                                          // CLAIMED — this is what keeps it off the unmatched counter
   });
-  if (!started) { record.adoptedCommandUuid = undefined; record.adoptedEpoch = undefined; }
 }
 
-function claimResult(record: ThreadRecord, result: unknown): boolean {
-  if (record.adoptedCommandUuid === undefined) return false;
-  if (record.adoptedOutcome !== undefined) return false;         // already have one; a second is not ours
-  record.adoptedOutcome = result;
-  return true;
+function noteArrival(state: PeerInboundState, frame: any): void {
+  const content = frame?.message?.content;
+  const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
+  const m = ENVELOPE.exec(text);
+  if (!m) return;
+  state.arrivals.push({ msgId: randomUUID(), text: m[1], at: Date.now() });
+  // Oldest-first, and the drop is announced: a silently truncated queue reads to an operator exactly like
+  // a queue nothing was ever written to.
+  while (state.arrivals.length > MAX_ARRIVALS) {
+    state.arrivals.shift();
+    console.warn(`[peer] arrival queue full on thread ${state.arrivals.length}; dropped the oldest`);
+  }
 }
 
-function settleAdopted(srv: AppServer, record: ThreadRecord): void {
-  if (record.adoptedEpoch !== record.epoch) { record.adoptedCommandUuid = undefined; return; } // a swap happened under it
-  const uuid = record.adoptedCommandUuid;
-  record.adoptedCommandUuid = undefined;
-  record.peerPending = record.peerPending.filter((a) => a.uuid !== uuid);
-  const outcome = record.adoptedOutcome;
-  record.adoptedOutcome = undefined;
-  // A turn whose terminal arrives with no result claimed settles anyway, reported failed: an outcome the
-  // engine declined to describe is still an outcome, and a thread left waiting for one is the failure
-  // this whole module exists to prevent.
-  record.adoptedResolve?.(outcome === undefined ? { error: { message: "peer turn ended without a result" } } as any : undefined);
-  record.adoptedResolve = undefined;
+function adopt(srv: AppServer, record: ThreadRecord, state: PeerInboundState, commandUuid: string): void {
+  const adopted: AdoptedTurn = { commandUuid, epoch: record.epoch, captured: [], terminated: false };
+  state.adopted = adopted;
+  const started = beginTurn(srv, undefined, undefined, record, (turnId, mapper, releaseSlot) => {
+    // Released IMMEDIATELY: the slot's contract is to release the instant the engine call is dispatched,
+    // and for an adopted turn there is no engine call of ours to dispatch. Holding it would park every
+    // op chained behind this thread for the length of somebody ELSE's turn.
+    releaseSlot();
+    if (record.epoch !== adopted.epoch) return Promise.resolve({ stopped: "cancelled" });
+    adopted.mapper = mapper;
+    adopted.turnId = turnId;
+    // Everything the engine said while we were behind the chain, in order, through the same mapper an
+    // ordinary turn uses. This runs INSIDE the runner, which beginTurn invokes after it has broadcast
+    // turn/started — so no item can precede the turn edge that owns it.
+    const captured = adopted.captured;
+    adopted.captured = [];
+    for (const f of captured) emitItems(srv, record, turnId, mapper.ingest(f));
+    // The arrivals this turn is carrying, as user items, now that a turn exists to carry them.
+    const arrivals = state.arrivals.splice(0, state.arrivals.length);
+    for (const a of arrivals) {
+      emitItems(srv, record, turnId, [{ kind: "completed", item: { id: a.msgId, type: "userMessage", text: a.text } as any }]);
+    }
+    if (adopted.terminated) { state.adopted = undefined; return Promise.resolve(adopted.outcome); }
+    return new Promise((resolve) => { adopted.resolve = resolve; });
+  });
+  // beginTurn refuses a busy thread. That is the safety net under the unmeasured uuid correlation: an
+  // own turn mistaken for a foreign one is declined here rather than becoming a second turn.
+  if (!started) state.adopted = undefined;
+}
+
+/** Settle an adopted turn from OUTSIDE the frame stream — a close, a shutdown, a stale epoch. Idempotent:
+ *  a turn already settled has no resolver left to call. */
+export function settleAdopted(srv: AppServer, record: ThreadRecord, reason: "cancelled" | "interrupted"): void {
+  const adopted = record.peerInbound?.adopted;
+  if (!adopted) return;
+  record.peerInbound!.adopted = undefined;
+  adopted.terminated = true;
+  adopted.resolve?.({ stopped: reason });
+}
+
+export function uninstallPeerInbound(record: ThreadRecord): void {
+  const state = record.peerInbound;
+  if (!state) return;
+  state.off?.(); state.off = undefined;
+  state.offResult?.(); state.offResult = undefined;
+  state.arrivals.length = 0;
 }
 ```
 
-In `src/appserver/registry.ts`, add to `ThreadRecord`:
+- [ ] **Step 4: Wire it into the four lifecycle moments**
+
+1. `src/appserver/registry.ts` — `peerInbound?: PeerInboundState` on `ThreadRecord` (optional; `fleet.ts` needs no seed).
+
+2. `src/appserver/server.ts` — call `installPeerInbound(this, record)` in **both** admission spines, immediately after `installRouter`, so the two engines are observed by the same rule.
+
+3. `src/appserver/rewind.ts`'s `swapEngine` — beside the two router lines it already has, and for the same reason:
 
 ```ts
-  /** M8: unconsumed peer arrivals, and the adopted turn's identity. `adoptedEpoch` is stamped so a
-   *  lifecycle terminal arriving after an engine swap settles nothing. */
-  peerPending: PeerArrival[];
-  /** Arrivals whose `userMessage` item has no turn to belong to yet; drained by the turn they open. */
-  peerItemsPending: PeerArrival[];
-  adoptedCommandUuid?: string;
-  adoptedEpoch?: number;
-  adoptedOutcome?: unknown;
-  adoptedResolve?: (v: unknown) => void;
+  record.routerOff?.();
+  uninstallPeerInbound(record);          // the outgoing engine is about to be disposed
+  …
+  installRouter(srv, record);
+  installPeerInbound(srv, record);       // the replacement is a different engine; the old handle is deaf
 ```
 
-In `src/appserver/server.ts`: seed `peerPending: []` and `peerItemsPending: []` on every record literal, track submitted turn uuids in a `readonly submittedTurnUuids = new Set<string>()` (added in `submitRunner`'s `opts.uuid` site in `turns.ts`), call `installPeerInbound` beside the router install, and call its returned disposer in `closeRecord` beside `routerOff`.
+Before the dispose, `settleAdopted(srv, record, "cancelled")` — a swap discards the conversation the adopted turn belonged to, and a turn whose conversation is gone must not be left open.
 
-In `src/appserver/registry.ts`'s `EngineSession`, add:
+4. `src/appserver/server.ts`'s `closeRecord` (~line 1070, beside `record.routerOff?.()`) and the shutdown path:
+
 ```ts
-  /** M8: a claiming hook at the unmatched-result site (session.ts). Optional because the fleet engine has
-   *  no equivalent — a fleet thread's engine is another process's session and this server never adopts on
-   *  it. */
-  onUnclaimedResult?(cb: (result: unknown) => boolean): () => void;
+    settleAdopted(this, record, "cancelled");   // the turn edge FIRST — before thread/closed goes out
+    uninstallPeerInbound(record);
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+5. `src/appserver/turns.ts`'s `submitRunner`, beside the `const userUuid = randomUUID();` at ~line 452:
+
+```ts
+      notePeerTurnUuid(record, userUuid);   // so this turn's own lifecycle bracket is not adopted
+```
+
+- [ ] **Step 5: Run the tests**
 
 Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS.
 
-- [ ] **Step 5: Regression + typecheck**
-
-Run: `npx vitest run test/unit && npx tsc --noEmit`
-Expected: all green; no tsc output.
+Run: `npx vitest run test/unit/appserver` then `npx vitest run test/unit` then `npx tsc --noEmit`
+Expected: all green. The whole-`test/unit` run matters here and not in the earlier tasks: this one edits `turns.ts` and `rewind.ts`, which every turn and every swap in the suite goes through.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/appserver/peerInbound.ts src/appserver/registry.ts src/appserver/server.ts src/appserver/turns.ts test/unit/appserver/peer-inbound.test.ts
-git commit -m "feat(appserver): arrival and adoption, keyed on the engine's command_lifecycle frames"
+git add src/appserver/peerInbound.ts src/appserver/server.ts src/appserver/registry.ts src/appserver/rewind.ts src/appserver/turns.ts test/unit/appserver/peer-inbound.test.ts
+git commit -m "feat(appserver): an inbound peer message becomes a real turn, and every way out of it settles"
 ```
 
 ---
 
-### Task 11: Interrupt, close and shutdown for an adopted turn
+### Task 11: The runtime policy setter — a spike first, then whichever implementation the measurement licenses
 
-**Files:**
-- Modify: `src/appserver/peerInbound.ts`, `src/appserver/server.ts`
-- Test: `test/unit/appserver/peer-inbound.test.ts` (extend)
+**BLOCKED until 2026-08-31 00:00 Asia/Seoul** (the account's weekly limit). Step 1 is keyed. Nothing else in the plan depends on this task: Stage B is complete and shippable without it, and `crossSessionInbound` is already decided at admission on both spines (Task 8) and reported by `thread/get`.
 
-**Interfaces:**
-- Consumes: from Task 10: `installPeerInbound`, the record fields.
-- Produces: `cancelAdopted(srv: AppServer, record: ThreadRecord): void`
+**Files (Step 1):**
+- Create: `CC-to-SDK/probes/probes/120-runtime-inbound-policy.ts`
 
-- [ ] **Step 1: Write the failing test**
+**Files (Step 3, only under verdict A):**
+- Modify: `src/appserver/settings.ts`, `src/appserver/router.ts`, `src/appserver/schema/peer.ts`, `src/appserver/schema/index.ts`
+- Test: `test/unit/appserver/peer-policy.test.ts` (extended)
 
-Append to `test/unit/appserver/peer-inbound.test.ts`:
+**Why this is a spike and not an implementation.** A runtime setter has to write `crossSessionInbound` into the CLI's live flag layer through `applyFlagSettings` and have the CLI *re-read it* on the next inbound message. The first half is certain — this repository already drives `applyFlagSettings` for permissions, output style and effort level. The second half is not measured, and it is not inferable: probe 102 established that `applyFlagSettings` accepts values it never validates, so a resolved call is not evidence that anything took effect. Shipping the setter on that basis would put a method on the wire that reports success for a policy change that did not happen — the one failure mode a security-shaped knob cannot have.
 
-```ts
-describe("teardown", () => {
-  it("cancels an adopted turn on close, BEFORE thread/closed", async () => {
-    const { a, conn, threadId, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    a.lines.length = 0;
-    send(conn, { id: 3, method: "thread/close", params: { threadId } });
-    await tick();
-    const methods = parsed(a.lines).map((f) => f.method);
-    const iCompleted = methods.indexOf("turn/completed");
-    const iClosed = methods.indexOf("thread/closed");
-    expect(iCompleted).toBeGreaterThanOrEqual(0);
-    expect(iClosed).toBeGreaterThan(iCompleted);
-    expect(parsed(a.lines).find((f) => f.method === "turn/completed").params.turn.status).toBe("cancelled");
-  });
+---
 
-  it("cancels an adopted turn on shutdown", async () => {
-    const { srv, a, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    a.lines.length = 0;
-    await srv.shutdown();
-    expect(parsed(a.lines).some((f) => f.method === "turn/completed" && f.params.turn.status === "cancelled")).toBe(true);
-  });
+- [ ] **Step 1: Build and run the measurement**
 
-  it("settles nothing when a terminal arrives after the epoch moved", async () => {
-    const { srv, a, threadId, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "started" });
-    await tick();
-    srv.registry.get(threadId)!.epoch++;
-    a.lines.length = 0;
-    d.emit({ type: "command_lifecycle", command_uuid: "cmd-1", state: "completed" });
-    await tick();
-    expect(parsed(a.lines).filter((f) => f.method === "turn/completed")).toHaveLength(0);
-  });
+Create `CC-to-SDK/probes/probes/120-runtime-inbound-policy.ts`, modelled on `113c` (which already builds a receiver, sends an enveloped frame to it, and reports whether the body reached the model). The new legs:
 
-  it("drops unconsumed arrivals at close without a second notification about them", async () => {
-    const { a, conn, threadId, d } = await boot();
-    d.emit({ type: "user", isReplay: true, uuid: "cmd-1", origin: peerOrigin(), message: { content: "x" } });
-    await tick();
-    a.lines.length = 0;
-    send(conn, { id: 3, method: "thread/close", params: { threadId } });
-    await tick();
-    expect(parsed(a.lines).filter((f) => f.method === "thread/peerMessage")).toHaveLength(0);
-  });
-});
-```
+- **Leg A — refuse ➜ accept.** Open a receiver with `crossSessionInbound: "refuse"`. Send a message; confirm nothing arrives. Call `applyFlagSettings({ crossSessionInbound: "accept" })` on the live session. Send a second message. **Does it arrive?**
+- **Leg B — accept ➜ refuse.** The mirror image, which is the one that matters for safety: a policy that can be turned on at runtime but not off is worse than one that cannot move at all.
+- **Leg C — the control.** A third receiver opened at `accept` from the start, to prove the send path itself is working in this run and that leg A's silence means "refused", not "misdelivered".
 
-- [ ] **Step 2: Run it and watch it fail**
+Record every leg's verdict verbatim in the spec's `## Surprises & Discoveries`, whichever way it goes.
 
-Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts -t teardown`
-Expected: FAIL — no `turn/completed` before `thread/closed`.
+Run: `cd CC-to-SDK/probes && npx tsx probes/120-runtime-inbound-policy.ts`
+Expected output: a per-leg PASS/FAIL table and one overall verdict line.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 2: Apply the promote-or-discard criteria**
 
-Add to `src/appserver/peerInbound.ts`:
+- **Verdict A — both legs move the policy.** The setter ships. Continue to Step 3.
+- **Verdict B — the CLI latches the value at startup (leg A and/or leg B does not move).** The setter does **not** ship as a live write. Record the finding, and record the alternative it leaves: the same effect is reachable through the engine swap `settingsOps.ts` already performs for settings that require one — at the cost of a fresh CLI process per policy change. Do not build that here; open it as its own round with the measurement attached. Delete the probe's scaffolding but keep the probe file.
+- **Verdict C — asymmetric** (say, off works and on does not). Ship only the direction that was measured, and name the missing direction on the wire — a method that silently no-ops in one direction is the failure this whole task exists to avoid.
 
-```ts
-/** An adopted turn is a real turn but is backed by no client `submit()` promise, so nothing in the
- *  existing teardown rejects it: close and shutdown flush `record.queue` and then dispose, relying on
- *  disposal rejecting waiters an adopted turn does not have — and the unclaimed-result hook never fires
- *  when disposal ends the stream with no result at all. Hence an explicit cancellation, called before the
- *  router is torn down and before the record is deleted. Epoch-guarded, so a frame arriving afterwards
- *  settles nothing. */
-export function cancelAdopted(srv: AppServer, record: ThreadRecord): void {
-  if (record.adoptedCommandUuid === undefined) return;
-  record.adoptedCommandUuid = undefined;
-  record.adoptedOutcome = undefined;
-  record.peerPending = [];
-  record.peerItemsPending = [];
-  const resolve = record.adoptedResolve;
-  record.adoptedResolve = undefined;
-  resolve?.({ stopped: "cancelled" } as any);
-}
-```
+Either way, add the verdict to the spec's Decision Log and close the spec's open item. Under B or C, also strike the setter row from the scorecard (Task 12) rather than leaving a row nothing implements.
 
-In `src/appserver/server.ts`'s `closeRecord`, before `record.routerOff?.()`:
-```ts
-    cancelAdopted(this, record);
-```
-and in `shutdown()`, inside the per-record callback before `flushQueue(this, r)`:
-```ts
-      cancelAdopted(this, r);
-```
+- [ ] **Step 3 (verdict A only): Implement the setter on the canonical settings spine**
 
-- [ ] **Step 4: Run it and watch it pass**
+The house has exactly one `thread/settings/changed` payload shape, built by two sites: `settings.ts`'s `broadcastSettings` (the client leg) and `router.ts`'s `routeSettingsMirror` (the engine leg). A setter that invents a fourth, partial payload gives one change two incompatible announcements. So:
 
-Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts`
-Expected: PASS, 15 tests.
+1. Extend `broadcastSettings`'s payload with `crossSessionInbound: record.crossSessionInbound`, and extend `routeSettingsMirror`'s payload identically — reading the server's own mirror, not the frame, since the engine's settings mirror does not carry this key.
+2. Write the setter beside the other three in `settings.ts`, following `modelSet` line for line: `safeParse` guard, registry lookup, `record.origin === "fleet"` ➜ `ERR.UNSUPPORTED_FOR_ORIGIN` (this server does not own a fleet thread's engine), then the body inside `record.chain.then`.
+3. Inside the body, in this order: `await record.session.applyFlagSettings?.({ [SETTINGS_KEY]: value })`; then `record.crossSessionInbound = value`; then **`record.config = applyPeerPolicy(record.config, value)`** — without that line the next engine swap rebuilds from the launch config and silently restores the old policy (Task 8's header); then `record.updatedAt = nowSec()`; then `broadcastSettings(srv, record)`; then reply.
+4. If the new value is `"refuse"` call `uninstallPeerInbound(record)`, and if it moves off `"refuse"` call `installPeerInbound(srv, record)` — the observer is installed conditionally on the policy (Task 10), so a policy that moves without it is a policy the arrival path never learns about.
+5. Catch through `replyEngineThrow(record, ctx, id, e, ERR.INTERNAL)`, never a bare `replyError`: these bodies are chain-deferred, so the engine can die after dispatch's arrival-time gate let the request through, and a dead read loop owes the caller -33005, not -32603.
 
-- [ ] **Step 5: Regression + typecheck**
+Tests to add to `test/unit/appserver/peer-policy.test.ts`:
+- the full `thread/settings/changed` payload is **deep-equal** to the canonical five-key shape plus the new key, on **two** subscribers — a test that asserts only "some notification exists" passes while the payload is wrong;
+- `updatedAt` moved;
+- a dead engine answers `-33005` (drive it the way `settings.test.ts`'s dead-engine cases do);
+- a fleet-origin thread answers `-33006`;
+- `accept` ➜ `refuse` ➜ a foreign lifecycle frame is **not** adopted, and `refuse` ➜ `accept` ➜ a foreign lifecycle frame **is**;
+- after the setter, an engine swap leaves the policy where the setter put it (compose through `swapBaseConfig`, as Task 8's durability test does).
 
-Run: `npx vitest run test/unit && npx tsc --noEmit`
-Expected: all green; no tsc output.
+- [ ] **Step 4: Gates and commit**
 
-- [ ] **Step 6: Commit**
+Run: `npx vitest run test/unit/appserver/peer-policy.test.ts`, then `npx vitest run test/unit/appserver`, then `npx tsc --noEmit`, then `npm run emit-schema` and commit the regenerated stable artifact (this task adds a method to `methodSchemas`).
 
 ```bash
-git add src/appserver/peerInbound.ts src/appserver/server.ts test/unit/appserver/peer-inbound.test.ts
-git commit -m "feat(appserver): an adopted turn dies like a turn — interrupt, close, shutdown"
+git add CC-to-SDK/probes/probes/120-runtime-inbound-policy.ts
+git commit -m "probe(120): does the CLI re-read crossSessionInbound off the live flag layer"
+# then, under verdict A only:
+git add src/appserver/settings.ts src/appserver/router.ts src/appserver/schema/peer.ts src/appserver/schema/index.ts test/unit/appserver/peer-policy.test.ts src/appserver/schema/json/stable/appserver.json
+git commit -m "feat(appserver): the inbound policy moves at runtime, on the settings spine that already exists"
 ```
 
 ---
@@ -2574,16 +2733,20 @@ git commit -m "feat(appserver): an adopted turn dies like a turn — interrupt, 
 - [ ] **Step 1: Run the gate and read its complaint**
 
 Run (from `CC-to-SDK/`): `node scripts/drift-check.mjs`
-Expected: FAIL — the three new registered methods have no scorecard row (the gate's bijection direction).
+Expected: FAIL — the two new registered methods (`peer/list`, `peer/send`) have no scorecard row (the gate's bijection direction).
 
 - [ ] **Step 2: Add the method rows**
 
-In `CC-to-SDK/docs/parity/appserver.md`, in the **server-origin table** (the one whose seam-token column repeats the method name), add three rows after `thread/searchOccurrences`:
+In `CC-to-SDK/docs/parity/appserver.md`, in the **server-origin table** (the one whose seam-token column repeats the method name), add two rows after `thread/searchOccurrences`.
+
+**A third row belongs to Task 11 and is not added here.** `thread/crossSessionInbound/set` ships only under
+that task's verdict A, and Task 11 is blocked on a keyed measurement. The drift gate's bijection runs over
+REGISTERED methods, so a row for a method no task has registered fails the gate exactly as a registered
+method with no row does. Add its row in Task 11, in the same commit that registers it.
 
 ```
 | `peer/list` | appserver/peerDomain.ts | `peer/list` | N/A | shipped(M8) — the machine's addressable sessions, read from `<claudeConfigDir()>/sessions/*.json` (never a hardcoded `~/.claude`: the tenant preset gives each tenant its own root, and scanning the literal home directory would list the wrong namespace and omit the right one). Fields beyond `address`/`alive`/`inboxBound`/`threadId`/`statusReachable` are projected VERBATIM when present and omitted when absent — the rows belong to another program, and a row that invents a default lies about a session we do not own. `alive` is pid + `procStart` under `LC_ALL=C TZ=UTC`, the same comparison `fleet/liveness.ts` makes and for the same reason. `aliveOnly` defaults false: a dead row is information — it is why an address stopped working — and `fleet/list` already sets that precedent. `statusReachable` is a TWO-part test, not a directory comparison: a peer is reachable for status only when its socket sits in our socket directory AND it resolves the same config root we publish our key under; a peer failing either can be sent to and can never answer |
 | `peer/send` | appserver/peerDomain.ts | `peer/send` | N/A | shipped(M8) — writes one enveloped frame to a peer's inbox and **reports nothing more**: `delivered` is a literal `false`, because the CLI tells a sender nothing on the success path (measured — only `held` and `expired` produce a receipt at all), so any other value would be the wire's own lie. Target resolution copies `thread/attach`'s rule exactly — a SIMULTANEOUS filter over `sessionId`/`pid`/`address`/`name`, where more than one match is an error carrying the matches rather than a precedence, because a wrong guess delivers into somebody else's session. The envelope is assembled in the CLI's fixed attribute order (`from`, `from-session`, `hop-chain`, `from-name`, `from-mode`) and compared byte-exactly by the receiver, so attribute values are ESCAPED and a value carrying a control character is refused `-32602` rather than sent — a silently downgraded envelope is a permission decision made on wrong information. **`from-mode` is always `prompting`**, and there is no parameter of any spelling that changes it: this gateway runs no model and asks no permission, and `fromThreadId` is attribution only (`from-session`, `from-name`). The recorded consequence: every message this server sends is HELD by a `bypassPermissions` peer, and on a headless peer a hold expires. `msg_id` is a server-minted UUID — a non-UUID id comes back with no `orig_msg_id` and silently costs all correlation. `hop-chain` is never set (nothing here relays). Refuses `-32602` above a 60 000-character frame cap of our own, because the CLI's sender-side preflight belongs to the path we do not use and an oversize line meets the receiver's own cap, which drops it before the JSON is parsed and tells nobody |
-| `thread/crossSessionInbound/set` | appserver/peerPolicy.ts | `thread/crossSessionInbound/set` | inProcess | shipped(M8) — the one deliberate way a hosted thread's inbound policy changes after start. ENGINE FIRST, commit to the record after the engine accepts (the commit-after-accept rule the other flag-layer setters follow): a record-first write would leave the record claiming a policy the engine rejected, and that phantom would become real at the next swap. Broadcasts `thread/settings/changed`, which the generic `thread/settings/apply` deliberately does not — a policy change is exactly the kind of thing every subscriber should see. `-33006` on a fleet thread (its engine is another process's session, whose settings this server does not write) |
 ```
 
 Add two notification rows (a row per consumed channel is what the convention earns):
@@ -2664,12 +2827,15 @@ Create `test/live/appserver-cross-session.test.ts`:
 // file: without a key the whole describe skips, so this runs in CI as a no-op and against a real engine
 // when a key is present.
 //
-// Three of the spec's delegated unknowns close here, and each is ASSERTED rather than assumed, so a wrong
+// Four of the spec's delegated unknowns close here, and each is ASSERTED rather than assumed, so a wrong
 // guess is a red test rather than a silent divergence:
 //   1. the healthy terminal `command_lifecycle` state's NAME (the measuring run was weekly-limited, so
 //      only the failure path's `cancelled` has ever been seen);
 //   2. what lifecycle a FOLDED message gets (it has no turn of its own);
-//   3. whether a BATCH emits one bracket per command_uuid around one turn.
+//   3. whether a BATCH emits one bracket per command_uuid around one turn;
+//   4. WHICH field of the lifecycle frame carries the uuid this server passed to `submit()` —
+//      `command_uuid`, `uuid`, or neither. Task 10 matches against both and relies on beginTurn's busy
+//      gate to make a wrong guess a no-op; this is the assertion that turns that safety net into a fact.
 // Each is recorded into the spec's Surprises & Discoveries by the step that follows this file.
 import { describe, it, expect } from "vitest";
 
@@ -2681,7 +2847,8 @@ live("M8 cross-session, against a real engine", () => {
   it.todo("arrival-only: after thread/peerMessage lands, NO turn has started");
   it.todo("fold: a message delivered mid-turn with round-trips remaining produces thread/peerMessage and exactly one turn");
   it.todo("refuse: the same send into a crossSessionInbound:'refuse' thread produces no thread/peerMessage, no turn, and no receipt");
-  it.todo("records the healthy terminal state name, the folded lifecycle, and the batched lifecycle into the spec");
+  it.todo("own turns are never adopted: a local turn/start emits exactly ONE turn/started, and its command_uuid or uuid equals the uuid this server submitted under");
+  it.todo("records the healthy terminal state name, the folded lifecycle, the batched lifecycle, and which field carries the submit uuid, into the spec");
 });
 ```
 
@@ -2701,11 +2868,16 @@ Replace each `it.todo` with a real test following the spec's acceptance rows 7�
 ```bash
 set -a; . ../.env; set +a; npx vitest run test/live/appserver-cross-session.test.ts
 ```
-Expected: all legs PASS. Assert, and do not assume: the terminal state's name, the folded message's lifecycle frames, and the batch's bracket count.
+Expected: all legs PASS. Assert, and do not assume: the terminal state's name, the folded message's lifecycle frames, the batch's bracket count, and which lifecycle field carries the submit uuid.
 
-- [ ] **Step 7: AFTER 2026-08-31 — record the three verdicts in the spec**
+If the uuid leg shows that NEITHER field carries it, say so plainly rather than working around it — that
+result means own turns cannot be told from foreign ones by uuid at all, and adoption needs a different
+discriminator. It does not break what shipped (the busy gate keeps a mis-adoption a no-op), but it is a
+finding, not a detail.
 
-Add to the spec's `## Surprises & Discoveries` the measured answer to each delegated unknown, and write `## Outcomes & Retrospective` against the spec's original purpose, replacing its "Pending — written at finish." line.
+- [ ] **Step 7: AFTER 2026-08-31 — record the four verdicts in the spec, and run Task 11's spike**
+
+Add to the spec's `## Surprises & Discoveries` the measured answer to each delegated unknown. **Task 11 is unblocked by the same reset** — run its spike (probe 120) and apply its promote-or-discard criteria before finishing the branch, since its verdict decides whether a method and a scorecard row exist at all. Then write `## Outcomes & Retrospective` against the spec's original purpose, replacing its "Pending — written at finish." line.
 
 - [ ] **Step 8: AFTER 2026-08-31 — commit and finish the branch**
 
