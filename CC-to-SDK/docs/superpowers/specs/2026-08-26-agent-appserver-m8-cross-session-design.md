@@ -322,11 +322,20 @@ peer `origin` including `msg_id`. `thread/peerMessage` is broadcast from there a
 a turn. A client correlating a send to an arrival uses `msg_id`; a client wanting to know what the message
 *caused* watches the thread's turns like any other observer.
 
-**Execution** is detected the one way that holds across all three outcomes: **frames arriving on a thread
-this server believes is idle.** If `record.busy` is false and the engine starts producing, a turn is
-running that this server did not start — regardless of whether its cause was a peer message, and
-regardless of which origin its eventual result carries. In the fold case no such window ever opens,
-because our own turn is running and owns its frames; nothing is adopted, which is exactly right.
+**Execution** is detected the one way that holds across all three outcomes: **model production on a
+thread this server believes is idle.** If `record.busy` is false and the engine starts producing a turn's
+output, a turn is running that this server did not start — regardless of what caused it, and regardless of
+which origin its eventual result carries. In the fold case no such window ever opens, because our own turn
+is running and owns its frames; nothing is adopted, which is exactly right.
+
+"Model production" is deliberately narrow, and the narrowness is the whole correctness of the trigger. It
+is an `assistant` frame, or a `stream_event` opening a message, with **no `parent_tool_use_id`** — the
+frames that exist only inside a turn and only for the top-level agent. Everything else that can arrive on
+an idle thread is excluded by construction rather than by a list: `system/init` (which arrives at session
+start and again before a peer turn, so it is a *hint*, never the trigger), `background_tasks_changed`,
+`rate_limit_event`, compaction lifecycle frames, and any nested or subagent frame, which
+`items/mapper.ts` already treats as attribution-only. A trigger that fired on "any frame while idle" would
+adopt a turn at every session start.
 
 Adoption then mints a turn id, claims `busy` through `beginTurn`'s client-less entry (the same one the
 queue drain uses), and broadcasts `turn/started`. That event carries `origin` when unconsumed peer
@@ -433,7 +442,10 @@ Keyless, run from `CC-to-SDK/harness`:
    adopt a turn (turn id minted, `turn/started` broadcast carrying the origin when an unconsumed arrival
    is on record and omitting it otherwise), and that turn settles on the unclaimed-result hook; frames
    arriving while a client turn is running adopt NOTHING, so the folded case leaves exactly one turn; two
-   arrivals followed by one adopted turn produce one turn, not two. A replayed **non-peer** frame is
+   arrivals followed by one adopted turn produce one turn, not two. The trigger's narrowness has its own
+   rows: `system/init`, `background_tasks_changed`, `rate_limit_event` and a nested frame carrying
+   `parent_tool_use_id` each arrive on an idle thread and adopt NOTHING, so a session start does not mint
+   a turn. A replayed **non-peer** frame is
    ignored and produces no item events. An adopted turn emits an id-stable `userMessage` item so the live
    view matches what `thread/read` projects from the transcript. `closing` blocks new adoptions, and
    interrupt/close/shutdown settle an adopted turn through the same flush a client turn takes.
