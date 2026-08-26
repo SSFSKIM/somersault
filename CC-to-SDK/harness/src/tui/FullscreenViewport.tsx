@@ -130,6 +130,15 @@ export interface ViewportHitmap {
    *  (today the two never coexist on one row — `RenderItem`'s own doc — so this is a stated priority, not an
    *  observed case). */
   clickTargetAt(col: number, row: number): string | undefined;
+  /** T-LINKOPEN Task 3 — the href a TERMINAL CELL's link span carries, or `undefined` — the same painted-frame
+   *  hitmap `clickTargetAt` reads (same `hit.current`, same `top`/width guards), because the two answer the
+   *  SAME question about the SAME cell for two different callers: `clickTargetAt` already resolves a link
+   *  cell to `undefined` (Task 1, link-before-fold), which is exactly the "nothing to toggle here" signal
+   *  ChatApp's sink uses to decide a release is a candidate for the opener rather than a caret move — this is
+   *  the seam that then answers WHAT to open. Never widens `clickTargetAt`'s own answer or reads `anchor`/
+   *  `clickableOwners` at all: a link lives on a row regardless of whether that row is a fold cluster, a
+   *  clickable result, or a plain prose line the click-to-expand gate has never heard of. */
+  linkHrefAt(col: number, row: number): string | undefined;
   /** F9 T-MOUSE Task 3 — resolve a motion report's cell to the row-cluster's `itemKey` (same bound `anchorAt`
    *  uses: past the window or past a row's own painted width answers "hover nothing") and set it HOVERED for
    *  the next repaint. Owned here rather than duplicated as ChatApp state: the row list this resolves against
@@ -453,6 +462,20 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
     if (!clickableOwners.has(at.ownerKey)) return undefined;
     return "item:" + at.ownerKey;
   }, []);
+  // T-LINKOPEN Task 3 — the same guards `clickTargetAt` opens with (`top <= 0`, the row lookup, the `col`
+  // bound), because a cell that is off the published frame or past a row's painted width has no link on it
+  // any more than it has a fold anchor. `columnToChar` already answers `undefined` for the gutter and for the
+  // blank tail past the text, so a link-free or out-of-bounds column simply falls out the bottom as
+  // `undefined` with no extra branch here.
+  const linkHrefAt = useCallback((col: number, row: number): string | undefined => {
+    const { top, rows: painted } = hit.current;
+    if (top <= 0) return undefined;
+    const at = painted[row - top];
+    if (at === undefined || col < 1 || col > at.width || !at.linkRanges?.length) return undefined;
+    const hitChar = columnToChar(at, col);
+    if (hitChar === undefined) return undefined;
+    return at.linkRanges.find((r) => hitChar.charStart < r.end && hitChar.charEnd > r.start)?.href;
+  }, []);
   // F9 T-MOUSE Task 3 — HOVER STATE. Plain `useState`, not a ref: unlike the tap anchor (which rides the NEXT
   // click's own comparison, nothing else painting differently for it meanwhile) a hovered row IS the paint —
   // nothing else in this render would otherwise change to reflect the pointer having moved, so this state
@@ -720,10 +743,10 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
   }, [repaint, scroll]);
 
   useImperativeHandle(hitmapRef, () => ({
-    anchorAt, clickTargetAt, hoverAt, clearHover,
+    anchorAt, clickTargetAt, linkHrefAt, hoverAt, clearHover,
     startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelection: hasSelectionHandle, discardSelection, selectedText,
     moveSelectionFocus: moveFocus,
-  }), [anchorAt, clickTargetAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
+  }), [anchorAt, clickTargetAt, linkHrefAt, hoverAt, clearHover, startSelectionAt, dragSelectionTo, multiClickSelectionAt, endSelectionDrag, hasSelectionHandle, discardSelection, selectedText, moveFocus]);
 
   // ── THE `Scroll` CONTEXT (T11) ──────────────────────────────────────────────────────────────────────────
   // Pushed for as long as the viewport is mounted, which is exactly "fullscreen" — this component exists on no

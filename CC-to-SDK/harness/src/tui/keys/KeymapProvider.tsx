@@ -144,6 +144,16 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   // if the sentinel were a number, and this parser has already had one 0-vs-unset bug (parse.ts's own doc).
   const lastMotionColRef = useRef<number | null>(null);
   const lastMotionRowRef = useRef<number | null>(null);
+  // T-LINKOPEN Task 3 — WINDOW-ACTIVATION PROVENANCE. Canon's `pressIsWindowActivation` (research-links.md
+  // §3c) rides the click object from the terminal's own mouse subsystem; this port has no such object, only a
+  // parsed event stream, so the honest equivalent is "the event immediately before this press was a terminal
+  // focus-in report" (`ESC[I`, DECSET 1004, already armed by `altScreen.ts:201` and already recognized —
+  // dropped — by `parse.ts:132`). `dispatch` below is the ONE place that sees every parsed `InputEvent` in
+  // true order with no filtering ahead of it, so it is the only place that can answer this without
+  // reconstructing order a layer up — one boolean, read and overwritten on every single dispatched event
+  // (a wheel-guarded tick, a swallowed press, an unrelated key all count as "something happened since the
+  // focus report" and must clear it, exactly as a true adjacency test would).
+  const lastWasFocusInRef = useRef(false);
 
   const pendingRef = useRef<KeySpec[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,6 +185,12 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
   };
 
   const dispatch = (ev: InputEvent) => {
+    // T-LINKOPEN Task 3 — read BEFORE anything below can return early (see `lastWasFocusInRef`'s own doc):
+    // only a mouse PRESS ever consults the flag (a release/drag/motion pairs with whatever press recorded it,
+    // in the CALLER's own state, not in this stream-level one), and the flag is then immediately overwritten
+    // for the NEXT event regardless of what this one turned out to be.
+    const isWindowActivation = ev.kind === "mouse" && ev.action === "press" && lastWasFocusInRef.current;
+    lastWasFocusInRef.current = ev.kind === "ignored" && ev.reason === "focus" && ev.raw.endsWith("I");
     // FSW BACKLOG 5, ABOVE EVERYTHING — including the ctrl+z hook, which no arrow can reach anyway. The
     // alternate-scroll fallback turns a wheel tick into a bare arrow key, and an arrow that reaches the table
     // is already a history step: the drop has to happen before resolution, not inside a binding. It lives
@@ -263,7 +279,10 @@ export function KeymapProvider({ children, deps }: { children: React.ReactNode; 
         lastMotionRowRef.current = ev.row;
       }
       if (swallowed) return;
-      mouseHandler(reg)?.(ev);
+      // T-LINKOPEN Task 3 — stamped ONLY when true (never `isWindowActivation: false`), which is what keeps
+      // `keys-provider.test.tsx`'s exact-shape `toEqual` pins on an ordinary press green: those presses were
+      // never preceded by a focus report, so the object they pin carries no such field at all.
+      mouseHandler(reg)?.(ev.action === "press" && isWindowActivation ? { ...ev, isWindowActivation } : ev);
       return;
     }
     if (ev.kind === "text") {

@@ -49,6 +49,7 @@ import { todoPanelRows } from "./taskPanelModel.js";
 import { FullscreenViewport, type ViewportHitmap } from "./FullscreenViewport.js";
 import type { KeyEvent, MouseInputEvent, TextEvent } from "./keys/types.js";
 import { copyText, copyToastText } from "./copy.js";
+import { openUrl, shouldOpenOnClick } from "./linkOpen.js";
 import { mouseMode } from "./altScreen.js";
 import { RegionPager } from "./RegionPager.js";
 import { dumpTranscript } from "./transcriptDump.js";
@@ -164,6 +165,9 @@ const TRANSCRIPT_DUMP_NOTICE_MS = 4000;
 // post (`Footer.tsx`'s `footerNotice` draws ONLY `"immediate"` entries in fullscreen — the mode this feature
 // exists in — so anything lower would silently never paint) with a short, self-clearing timeout.
 const COPY_TOAST_MS = 4000;
+// T-LINKOPEN Task 3 — canon's own `pE` (research-links.md §3c): the deferred-open window a double/triple
+// click, or a fresh armed link click, cancels before it fires.
+const LINK_OPEN_DELAY_MS = 500;
 /** Stable empties for the transient region while the pager owns the screen — fresh `[]` literals per render
  *  would remount the (empty) region every frame for nothing. */
 const EMPTY_ITEMS: readonly RenderItem[] = [];
@@ -225,7 +229,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, linkOpenDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -287,6 +291,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
    *  the arms are the one piece of this UI whose whole contract is a DURATION, and a test that waited out a
    *  real 800 ms window would be timing-dependent in exactly the place fidelity is being asserted. */
   doublePressDeps?: DoublePressDeps;
+  /** T-LINKOPEN Task 3 — the pending-hyperlink timer's own DI seam, on the same reasoning `doublePressDeps`
+   *  states above it: the one piece of the opener wiring whose whole contract is a 500 ms DURATION (canon's
+   *  own `pE`, research-links.md §3c), and a test that waited out a real window would be timing-dependent in
+   *  exactly the place fidelity is being asserted. Absent — every production mount — falls back to the real
+   *  globals; a separate seam from `doublePressDeps` rather than a shared one because the two time completely
+   *  unrelated things and a reader of either prop should not have to know about the other. */
+  linkOpenDeps?: { setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void };
   /** WAVE C TASK 8 (EP-C4a) — the launch identity (`--name`), the third rung of the terminal-title ladder.
    *  Absent for `ccx attach` (that client joins a host whose name it never saw) and for a bare `ccx`, both of
    *  which fall through to the literal `ccx`. */
@@ -937,7 +948,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // Still a plain string, so `===` across press and release still works by VALUE (JS string equality),
   // exactly as it did when the field held a bare anchor — the widening changes what the string can name, not
   // how the comparison behaves.
-  const tapAnchorRef = useRef<{ col: number; row: number; target: string | undefined } | null>(null);
+  //   T-LINKOPEN Task 3 — `isWindowActivation` rides the same anchor for the same reason `target` does:
+  // canon's own click object carries `pressIsWindowActivation` from the press all the way to the release it
+  // pairs with (research-links.md §3c), and this file has no such object, only this ref. A MODIFIED press
+  // (alt/ctrl) sets `target: undefined` deliberately — never resolved via `clickTargetAt` — which is what
+  // makes "a modified click never toggles" true by construction at the release's own `target !== undefined`
+  // guard, with no second gate anywhere to keep in sync.
+  const tapAnchorRef = useRef<{ col: number; row: number; target: string | undefined; isWindowActivation: boolean } | null>(null);
   // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
   // timestamp AND resolved target, so the NEXT press can tell "is this a continuation of the same click
   // sequence" — 500 ms AND within 1 cell in BOTH axes (plan Global Constraints) AND, beyond canon (which
@@ -992,6 +1009,25 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     performAutoCopy();
   };
   const discardTap = useCallback(() => { tapAnchorRef.current = null; lastPressRef.current = null; hitmapRef.current?.clearHover(); popupHitRef.current?.clearHover(); hitmapRef.current?.discardSelection(); copyLatchRef.current = false; }, []);
+  // T-LINKOPEN Task 3 — THE PENDING HYPERLINK TIMER (research-links.md §3c). A ref exactly like `tapAnchorRef`/
+  // `copyLatchRef` beside it: nothing on screen renders differently for a pending open, so there is nothing
+  // here for React state to buy. `linkOpenDeps` (see its own doc on the prop) supplies the schedule/cancel
+  // functions in a test; every production mount falls back to the real globals.
+  const pendingLinkTimerRef = useRef<unknown>(null);
+  const scheduleLinkOpen = linkOpenDeps?.setTimeout ?? ((fn: () => void, ms: number): unknown => setTimeout(fn, ms));
+  const cancelLinkSchedule = linkOpenDeps?.clearTimeout ?? ((h: unknown): void => clearTimeout(h as ReturnType<typeof setTimeout>));
+  // ONLY ONE PENDING TIMER EVER EXISTS (plan Global Constraints) — every caller that might already have one
+  // running clears it first, whether it is about to replace it with a fresh 500 ms wait (a new armed link
+  // click, canon's own `clearTimeout` immediately before its own `setTimeout`) or simply retiring it for good
+  // (a multi-click's cancellation, or this component's own unmount).
+  const cancelPendingLinkOpen = () => { if (pendingLinkTimerRef.current !== null) { cancelLinkSchedule(pendingLinkTimerRef.current); pendingLinkTimerRef.current = null; } };
+  const armLinkOpen = (href: string) => {
+    cancelPendingLinkOpen();
+    pendingLinkTimerRef.current = scheduleLinkOpen(() => { pendingLinkTimerRef.current = null; openUrl(href); }, LINK_OPEN_DELAY_MS);
+  };
+  // An unmounted ChatApp must not fire a deferred open into a torn-down tree — the same discipline
+  // `typingTimer`'s own cleanup effect follows above.
+  useEffect(() => cancelPendingLinkOpen, []);
   useMouseSink((e: MouseInputEvent) => {
     // F9 T-MOUSE Task 3 — HOVER, ANSWERED BEFORE THE TAP GATE. Un-dimming a row is a pure paint effect (it
     // mutates nothing a later gesture could act on wrongly), so it does NOT share the tap machine's
@@ -1023,9 +1059,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // through to the "does this match the press?" check below and read as that press's release. Treated
     // exactly like the existing modified-click case: kill the tap (already done above), do nothing.
     if (e.action === "motion") return;
-    // Modified clicks are canon's own no-op, and a non-primary button is somebody else's gesture. Both land
-    // here rather than in a guard around the press alone, so either one also kills a tap already in flight.
-    if (e.button !== 0 || e.ctrl || e.alt || e.shift) return;
+    // T-LINKOPEN Task 3 (plan-review F1) — THE BLANKET MODIFIER DROP IS GONE. On 2.1.237 "modified clicks are
+    // canon's own no-op" was true and this line said so; on 2.1.246 it is false (research-links.md §3c):
+    // canon self-opens a gated release, and the gate is exactly alt-click, ctrl-click, or ANY click at all on
+    // macOS Ghostty/Warp (those two forward cmd+click to the app with no SGR modifier bit set at all, so a
+    // PLAIN release is the only signal that ever reaches here for them). So only SHIFT and a non-primary
+    // button stay an absolute drop: shift is this file's own selection vocabulary elsewhere
+    // (`SELECTION_EXTEND_KEYS` and the ctrl+c intercept above), never canon's opener gate, and a right/middle
+    // button is nobody's gesture in either track. Both still kill a tap already in flight, exactly as the
+    // blanket drop used to.
+    if (e.button !== 0 || e.shift) return;
+    const modified = e.ctrl || e.alt;
     if (e.action === "press") {
       // F10 T-HOVER Task 2 (CM33). The popup owns the dock band it painted; a press it claims is not a
       // transcript press, and `lastPressRef` is dropped so the release that follows cannot pair with
@@ -1033,8 +1077,18 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // Same single `useMouseSink` as everything else here — the registry resolves only the innermost sink
       // (`registry.ts:98-100`), so a second registration would simply never fire.
       if (popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
+      // T-LINKOPEN Task 3 — A MODIFIED PRESS RECORDS ITS OWN ANCHOR AND STOPS THERE. It must not start a
+      // selection, and it must not extend or restart the multi-click run — `lastPressRef` is left exactly as
+      // it was, so an alt/ctrl click can neither poison a plain-click sequence running either side of it nor
+      // start one of its own. `target: undefined` is not "didn't bother to resolve it": it is the answer that
+      // makes the paired release's own `target !== undefined` toggle guard refuse a modified click BY
+      // CONSTRUCTION, with no second gate to keep in sync (canon: modified clicks never toggle).
+      // `isWindowActivation` is `KeymapProvider`'s own stamp (the one place that sees every parsed event in
+      // stream order) carried from this press to the release it pairs with, exactly as canon's own click
+      // object carries `pressIsWindowActivation`.
+      if (modified) { tapAnchorRef.current = { col: e.col, row: e.row, target: undefined, isWindowActivation: e.isWindowActivation === true }; return; }
       const target = hitmapRef.current?.clickTargetAt(e.col, e.row);
-      tapAnchorRef.current = { col: e.col, row: e.row, target };
+      tapAnchorRef.current = { col: e.col, row: e.row, target, isWindowActivation: e.isWindowActivation === true };
       // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
       // 1 cell in both axes, AND the same resolved target (see `lastPressRef`'s own doc) extends the run;
       // anything else (too slow, too far, or a different cluster) restarts it at 1. `count >= 2` is canon's
@@ -1050,12 +1104,32 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // kind of press this is, so a second selection after an already-copied one starts clean.
       checkAutoCopy(true);
       if (count >= 2) {
+        // T-LINKOPEN Task 3 (research-links.md §3c, offset 184524763) — canon cancels a pending hyperlink
+        // timer the instant a click forms a multi-click run, whatever armed it: a double/triple click is
+        // unambiguous evidence the user is selecting text, not confirming an open a stray earlier click armed.
+        cancelPendingLinkOpen();
         hitmapRef.current?.multiClickSelectionAt(e.col, e.row, count === 2 ? 2 : 3);
         // A double/triple click IS a complete selection at press time — no drag follows, so nothing else
         // would ever call `checkAutoCopy(false)` for it (canon: "no drag required for hasSelection to
         // answer true").
         checkAutoCopy(false);
       } else hitmapRef.current?.startSelectionAt(e.col, e.row);
+      return;
+    }
+    // T-LINKOPEN Task 3 — THE MODIFIED RELEASE. Mirrors canon's own release-time branch exactly (§3c): ask the
+    // gate, ask the viewport for a href at THIS cell, and if both answer, arm the deferred open. A modified
+    // release NEVER falls through to the toggle/caret logic below — the press already recorded `target:
+    // undefined`, so falling through would refuse anyway, and returning here says so plainly rather than
+    // relying on that guard a second time. The same-cell check mirrors the one every other release path below
+    // shares (`at.col`/`at.row`), which is what proves the `isWindowActivation` read off `at` here is the
+    // RIGHT press's, not a stray one from earlier in the stream.
+    if (modified) {
+      if (at && at.col === e.col && at.row === e.row) {
+        const href = hitmapRef.current?.linkHrefAt(e.col, e.row);
+        if (href !== undefined && shouldOpenOnClick({ alt: e.alt, ctrl: e.ctrl, isWindowActivation: at.isWindowActivation }, process.env, process.platform)) {
+          armLinkOpen(href);
+        }
+      }
       return;
     }
     // F9 T-MOUSE Task 6 — THE CLICK/SWEEP DISCRIMINANT, read BEFORE anything else on release: canon's own
@@ -1084,6 +1158,23 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (target !== undefined && target === at.target) {
       if (target.startsWith("fold:")) { toggleFold(target.slice(5)); return; }
       if (target.startsWith("item:")) { toggleItemExpand(target.slice(5)); return; }
+    }
+    // T-LINKOPEN Task 3 — THE GHOSTTY/WARP PLAIN-RELEASE PATH. `target === undefined` here means the tap
+    // machine found nothing to toggle at this cell, which is now ALSO true of a link cell (Task 1 resolves
+    // link spans before the fold/item answer, on every row kind) — exactly the "unhandled" release canon's
+    // own gate consults the hyperlink for (§3c: `if (f==="unhandled" && !pressIsWindowActivation)`).
+    // `shouldOpenOnClick` is what keeps this a no-op everywhere except macOS Ghostty/Warp: an ordinary
+    // terminal's plain, unmodified click never satisfies the gate, so iTerm2/Terminal.app/etc. fall straight
+    // through to `caretAt` below exactly as they always have. `at.target === undefined` (not only `target`)
+    // pins the press AND the release to the SAME "nothing here" answer — the anchor-stability rule every
+    // other branch in this sink already enforces (T-MOUSE Task 6's own "the anchor is the cluster, not the
+    // cell") — so a row that swapped a real target for a link cell mid-gesture, or the reverse, does not open.
+    if (target === undefined && at.target === undefined) {
+      const href = hitmapRef.current?.linkHrefAt(e.col, e.row);
+      if (href !== undefined && shouldOpenOnClick({ alt: false, ctrl: false, isWindowActivation: at.isWindowActivation }, process.env, process.platform)) {
+        armLinkOpen(href);
+        return;
+      }
     }
     // F9 T-MOUSE Task 4 — click-to-caret, on the SAME press/release pairing as the toggles above rather
     // than a second registration (the registry resolves only the innermost sink — `registry.ts:98-100` — so a
