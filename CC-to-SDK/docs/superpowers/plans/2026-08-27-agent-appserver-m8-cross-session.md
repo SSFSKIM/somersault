@@ -203,11 +203,11 @@ export function keyFileName(pid: number, socketPath: string): string {
  *  so a newline or tab that we escape one way and it re-emits another silently downgrades the whole
  *  envelope to plain text — which drops the permission attribution and changes the delivery decision with
  *  nothing raised anywhere. Refusing is recoverable; a silent downgrade is not. */
-export const UNSAFE_ATTR_CHARS = /[ -]/;
+export const UNSAFE_ATTR_CHARS = /[\u0000-\u001f\u007f]/;
 
 /** The five XML attribute entities. Measured spelling for these is a delegated unknown the spec names;
  *  until a probe pins the receiver's canonical form, only these five are permitted and everything in
- *  UNSAFE_ATTR_CHARS is refused upstream. */
+ *  UNSAFE_ATTR_CHARS (the C0 controls and DEL) is refused upstream. */
 export function escapeAttr(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -235,7 +235,7 @@ export function buildEnvelope(a: { from: string; fromSession?: string; fromName?
 - [ ] **Step 4: Run it and watch it pass**
 
 Run: `npx vitest run test/unit/peer/address.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS, 13 tests.
 
 - [ ] **Step 5: Typecheck**
 
