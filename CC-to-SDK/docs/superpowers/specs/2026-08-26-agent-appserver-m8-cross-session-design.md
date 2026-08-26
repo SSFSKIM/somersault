@@ -212,9 +212,18 @@ So `SubmittedOrigin` gains `"peer"`, and `Session` gains one method:
 adoptTurn(uuid: UserMessageUUID, onMessage: (m: unknown) => void): Promise<TurnOutcome>
 ```
 
-It registers a waiter exactly like `enqueueTurn` does — and pushes **nothing** onto the input queue. That
-is the whole of the session-layer change: the correlation machinery is already right, it was simply never
-given a turn it did not start.
+It registers a waiter exactly like `enqueueTurn` does — and pushes **nothing** onto the input queue. The
+correlation machinery is already right; it was simply never given a turn it did not start.
+
+**The waiter goes to the FRONT of the queue, and that detail is load-bearing.** Result frames are matched
+by uuid and origin, but every *other* frame is routed to `waiters[0]` and nowhere else
+(`src/session/session.ts:393`). Push the adopted waiter to the back while a client turn sits queued ahead
+of it, and the peer turn's assistant frames stream into the client turn's mapper — items attributed to a
+turn that has not started, on a thread where both turns then look wrong. Unshift is not merely safer, it
+is what the engine's own ordering says: the CLI emits the replayed user frame at the moment it *dequeues*
+that message to run it, so a peer replay frame is proof that the peer turn is the one now executing and
+that anything still queued behind it in `waiters` has not begun. When the peer result settles its waiter
+and it shifts off, the client's turn is head again.
 
 The app-server side is a small state machine in `appserver/peerInbound.ts`, driven by the replayed frame:
 
@@ -273,7 +282,9 @@ Keyless, run from `CC-to-SDK/harness`:
 4. `npx vitest run test/unit/appserver/peer-inbound.test.ts` — a replayed peer frame on an idle thread
    claims a turn and broadcasts `thread/peerMessage` + `turn/started` carrying the peer origin; on a busy
    thread it is claimed at `settleTurn`; a replayed **non-peer** frame is ignored and produces no item
-   events; the adopted turn settles on its waiter, and settles once via the belt when the waiter never
+   events; an adoption raised while a client turn is queued ahead of it takes the HEAD of the waiter queue,
+   so the peer turn's assistant frames reach the peer turn's mapper and not the queued turn's;
+   the adopted turn settles on its waiter, and settles once via the belt when the waiter never
    fires; `crossSessionInbound` is written explicitly at `thread/start` for every value including the
    default, is stripped from a client's `extraArgs` and `extraOptions`, and is refused on a fleet thread.
 5. `node scripts/drift-check.mjs` from `CC-to-SDK/` — exit 0, with the new methods rowed and the
@@ -334,6 +345,11 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 - **The SDK emits no user prompt frame at all** unless `--replay-user-messages` is passed, which it never
   passes. 113c's "origin.kind='peer' not observed" was therefore about a flag, not about attribution
   being stripped — and the same flag hands us the notification payload for free.
+- **Only the head waiter receives non-result frames.** Reading `session.ts` while writing this spec turned
+  up that every frame except a result goes to `waiters[0]` and nowhere else. Adoption's first draft pushed
+  its waiter to the back, which would have streamed a peer turn's output into a queued client turn's
+  mapper — a defect with no error anywhere, just two turns rendering wrong. The correction (unshift) is
+  one word; finding it needed reading the layer being extended rather than the layer being written.
 - **Decompiled reading is a hypothesis, not a measurement.** Reading the minified SDK concluded that
   `Options.settings` as an object would serialize to `"[object Object]"`, which would have meant a live
   latent defect in the harness's autocompact path. Intercepting the real argv (117c) showed it emits
