@@ -482,8 +482,12 @@ git commit -m "feat(peer): the roster, read through claudeConfigDir and projecte
 - Consumes: nothing.
 - Produces:
   - `type ReceiptStatus = "held" | "expired" | "delivered" | "refused" | "denied" | "dropped"`
-  - `interface ReceiptSink { deliver(msgId: string, status: ReceiptStatus, reason: string | undefined, from: string): void }`
-  - `class ReceiptMap { constructor(sink: ReceiptSink, opts?: { now?: () => number; retentionMs?: number; perConn?: number; global?: number }); track(msgId: string, connId: number): void; route(frame: { orig_msg_id?: unknown; status?: unknown; reason?: unknown; from?: unknown }): boolean; dropConnection(connId: number): void; sweep(): void; size(): number }`
+  - `interface ReceiptSink<C> { deliver(conn: C, msgId: string, status: ReceiptStatus, reason: string | undefined, from: string): void }`
+  - `class ReceiptMap<C extends { connId: number }> { constructor(sink: ReceiptSink<C>, opts?: { now?: () => number; retentionMs?: number; perConn?: number; global?: number }); track(msgId: string, conn: C): void; route(frame: { orig_msg_id?: unknown; status?: unknown; reason?: unknown; from?: unknown }): boolean; dropConnection(connId: number): void; sweep(retentionMs?: number): void; size(): number }`
+
+  The map holds the CONNECTION HANDLE, not an id it would have to look up elsewhere. A second
+  `msgId -> connection` map in the server would outlive every release this one performs — a leak with no
+  signal, and exactly the shape of bug the retention rules exist to prevent.
   - `RETENTION_MS = 30 * 60_000`, `PER_CONN_CAP = 256`, `GLOBAL_CAP = 4096`
 
 - [ ] **Step 1: Write the failing test**
@@ -500,33 +504,34 @@ import { ReceiptMap, RETENTION_MS, PER_CONN_CAP, GLOBAL_CAP, type ReceiptStatus 
 
 function mk(now = { t: 0 }) {
   const seen: Array<{ msgId: string; status: ReceiptStatus; reason?: string; from: string }> = [];
-  const map = new ReceiptMap({ deliver: (msgId, status, reason, from) => { seen.push({ msgId, status, ...(reason ? { reason } : {}), from }); } }, { now: () => now.t });
-  return { map, seen, now };
+  const map = new ReceiptMap<{ connId: number }>({ deliver: (_conn, msgId, status, reason, from) => { seen.push({ msgId, status, ...(reason ? { reason } : {}), from }); } }, { now: () => now.t });
+  const track = (msgId: string, connId: number) => map.track(msgId, { connId });
+  return { map, seen, now, track };
 }
 
 describe("ReceiptMap", () => {
   it("routes a receipt to the connection that sent the message", () => {
-    const { map, seen } = mk();
-    map.track("m-1", 7);
+    const { map, seen, track } = mk();
+    track("m-1", 7);
     expect(map.route({ orig_msg_id: "m-1", status: "held", reason: "parity", from: "uds:/a.sock" })).toBe(true);
     expect(seen).toEqual([{ msgId: "m-1", status: "held", reason: "parity", from: "uds:/a.sock" }]);
   });
 
   it("ignores a receipt for a msgId it never tracked", () => {
-    const { map, seen } = mk();
+    const { map, seen, track } = mk();
     expect(map.route({ orig_msg_id: "nope", status: "held", from: "uds:/a.sock" })).toBe(false);
     expect(seen).toEqual([]);
   });
 
   it("ignores a frame with no orig_msg_id — a non-UUID msg_id costs correlation, and silence is correct", () => {
-    const { map } = mk();
-    map.track("m-1", 7);
+    const { map, track } = mk();
+    track("m-1", 7);
     expect(map.route({ status: "held", from: "uds:/a.sock" })).toBe(false);
   });
 
   it("KEEPS the entry after held, because expired can still follow", () => {
-    const { map, seen } = mk();
-    map.track("m-1", 7);
+    const { map, seen, track } = mk();
+    track("m-1", 7);
     map.route({ orig_msg_id: "m-1", status: "held", from: "uds:/a.sock" });
     expect(map.size()).toBe(1);
     map.route({ orig_msg_id: "m-1", status: "expired", from: "uds:/a.sock" });
@@ -536,16 +541,16 @@ describe("ReceiptMap", () => {
 
   it("releases immediately on every terminal status", () => {
     for (const status of ["expired", "delivered", "refused", "denied", "dropped"] as ReceiptStatus[]) {
-      const { map } = mk();
-      map.track("m-1", 7);
+      const { map, track } = mk();
+      track("m-1", 7);
       map.route({ orig_msg_id: "m-1", status, from: "uds:/a.sock" });
       expect(map.size()).toBe(0);
     }
   });
 
   it("drops a connection's entries when it closes", () => {
-    const { map } = mk();
-    map.track("m-1", 7); map.track("m-2", 8);
+    const { map, track } = mk();
+    track("m-1", 7); track("m-2", 8);
     map.dropConnection(7);
     expect(map.size()).toBe(1);
     expect(map.route({ orig_msg_id: "m-1", status: "held", from: "uds:/a.sock" })).toBe(false);
@@ -553,8 +558,8 @@ describe("ReceiptMap", () => {
 
   it("expires entries past the retention window and TELLS the sender", () => {
     const now = { t: 0 };
-    const { map, seen } = mk(now);
-    map.track("m-1", 7);
+    const { map, seen, track } = mk(now);
+    track("m-1", 7);
     now.t = RETENTION_MS + 1;
     map.sweep();
     expect(map.size()).toBe(0);
@@ -562,15 +567,15 @@ describe("ReceiptMap", () => {
   });
 
   it("evicts oldest-first at the per-connection cap, and says so", () => {
-    const { map, seen } = mk();
-    for (let i = 0; i <= PER_CONN_CAP; i++) map.track(`m-${i}`, 7);
+    const { map, seen, track } = mk();
+    for (let i = 0; i <= PER_CONN_CAP; i++) track(`m-${i}`, 7);
     expect(map.size()).toBe(PER_CONN_CAP);
     expect(seen[0]).toEqual({ msgId: "m-0", status: "dropped", reason: "correlation evicted", from: "" });
   });
 
   it("evicts oldest-first at the global cap across connections", () => {
-    const { map } = mk();
-    for (let i = 0; i <= GLOBAL_CAP; i++) map.track(`g-${i}`, i % 64);
+    const { map, track } = mk();
+    for (let i = 0; i <= GLOBAL_CAP; i++) track(`g-${i}`, i % 64);
     expect(map.size()).toBe(GLOBAL_CAP);
   });
 });
@@ -596,8 +601,10 @@ Create `src/peer/receipts.ts`:
 // Hence three rules, none optional: an absolute retention window, drop-on-connection-close, and caps.
 export type ReceiptStatus = "held" | "expired" | "delivered" | "refused" | "denied" | "dropped";
 
-export interface ReceiptSink {
-  deliver(msgId: string, status: ReceiptStatus, reason: string | undefined, from: string): void;
+/** Generic over the connection handle so this module never imports an app-server type: it stores what it
+ *  was handed and gives it back, which is what keeps ONE map with ONE lifecycle. */
+export interface ReceiptSink<C> {
+  deliver(conn: C, msgId: string, status: ReceiptStatus, reason: string | undefined, from: string): void;
 }
 
 /** Six times the CLI's 5-minute default hold deadline. FIXED here rather than derived from this process's
@@ -611,25 +618,25 @@ export const GLOBAL_CAP = 4096;
  *  status that leaves its entry in place. */
 const TERMINAL: ReadonlySet<ReceiptStatus> = new Set<ReceiptStatus>(["expired", "delivered", "refused", "denied", "dropped"]);
 
-interface Entry { connId: number; at: number }
+interface Entry<C> { conn: C; at: number }
 
-export class ReceiptMap {
-  private entries = new Map<string, Entry>();   // insertion-ordered, which is what makes oldest-first eviction a shift
+export class ReceiptMap<C extends { connId: number }> {
+  private entries = new Map<string, Entry<C>>();   // insertion-ordered, which is what makes oldest-first eviction a shift
   private readonly now: () => number;
   private readonly retentionMs: number;
   private readonly perConn: number;
   private readonly globalCap: number;
 
-  constructor(private sink: ReceiptSink, opts: { now?: () => number; retentionMs?: number; perConn?: number; global?: number } = {}) {
+  constructor(private sink: ReceiptSink<C>, opts: { now?: () => number; retentionMs?: number; perConn?: number; global?: number } = {}) {
     this.now = opts.now ?? Date.now;
     this.retentionMs = opts.retentionMs ?? RETENTION_MS;
     this.perConn = opts.perConn ?? PER_CONN_CAP;
     this.globalCap = opts.global ?? GLOBAL_CAP;
   }
 
-  track(msgId: string, connId: number): void {
-    this.entries.set(msgId, { connId, at: this.now() });
-    this.evict((e) => e.connId === connId, this.perConn);
+  track(msgId: string, conn: C): void {
+    this.entries.set(msgId, { conn, at: this.now() });
+    this.evict((e) => e.conn.connId === conn.connId, this.perConn);
     this.evict(() => true, this.globalCap);
   }
 
@@ -641,36 +648,38 @@ export class ReceiptMap {
     const entry = this.entries.get(msgId);
     if (!entry) return false;
     const status = (typeof frame.status === "string" ? frame.status : "dropped") as ReceiptStatus;
-    this.sink.deliver(msgId, status, typeof frame.reason === "string" ? frame.reason : undefined, typeof frame.from === "string" ? frame.from : "");
+    this.sink.deliver(entry.conn, msgId, status, typeof frame.reason === "string" ? frame.reason : undefined, typeof frame.from === "string" ? frame.from : "");
     if (TERMINAL.has(status)) this.entries.delete(msgId);
     return true;
   }
 
   dropConnection(connId: number): void {
-    for (const [msgId, e] of [...this.entries]) if (e.connId === connId) this.entries.delete(msgId);
+    for (const [msgId, e] of [...this.entries]) if (e.conn.connId === connId) this.entries.delete(msgId);
   }
 
-  sweep(): void {
-    const cutoff = this.now() - this.retentionMs;
+  /** `retentionMs` is overridable so shutdown can expire everything still tracked rather than leaving
+   *  those senders unanswered. */
+  sweep(retentionMs: number = this.retentionMs): void {
+    const cutoff = this.now() - retentionMs;
     for (const [msgId, e] of [...this.entries]) {
       if (e.at >= cutoff) continue;
       this.entries.delete(msgId);
       // Never a SILENT drop: a client that will never hear about this message again should be told that,
       // not left waiting for a status the map has already forgotten how to route.
-      this.sink.deliver(msgId, "dropped", "correlation expired", "");
+      this.sink.deliver(e.conn, msgId, "dropped", "correlation expired", "");
     }
   }
 
   size(): number { return this.entries.size; }
 
-  private evict(match: (e: Entry) => boolean, cap: number): void {
+  private evict(match: (e: Entry<C>) => boolean, cap: number): void {
     let n = 0;
     for (const e of this.entries.values()) if (match(e)) n++;
     for (const [msgId, e] of this.entries) {
       if (n <= cap) break;
       if (!match(e)) continue;
       this.entries.delete(msgId);
-      this.sink.deliver(msgId, "dropped", "correlation evicted", "");
+      this.sink.deliver(e.conn, msgId, "dropped", "correlation evicted", "");
       n--;
     }
   }
@@ -1412,7 +1421,7 @@ export const peerSend: Handler = async (srv, ctx, id, params) => {
     priority: priority ?? "next",
     msg_id: msgId,
   });
-  srv.receipts.track(msgId, ctx.connId);
+  srv.receipts.track(msgId, ctx);
   await gw.sendFrames(addr.path, frames);
   ctx.peer.reply(id, {
     msgId,
@@ -1453,38 +1462,30 @@ import type { PeerGateway } from "../peer/gateway.js";
 
 4. Add the fields and accessors to `AppServer` (beside `imageStages`):
 ```ts
-  readonly receipts: ReceiptMap;
+  readonly receipts: ReceiptMap<ConnCtx>;
 ```
 and in the constructor, after the `imageStages` line:
 ```ts
-    this.receipts = new ReceiptMap({
-      deliver: (msgId, status, reason, from) => {
-        const conn = this.connForMsg.get(msgId);
-        if (!conn) return;
-        try { conn.peer.notify("peer/messageStatus", { msgId, status, ...(reason ? { reason } : {}) , from, receivedAt: Math.floor(Date.now() / 1000) }); } catch { /* the connection went away mid-notify */ }
+    this.receipts = new ReceiptMap<ConnCtx>({
+      deliver: (conn, msgId, status, reason, from) => {
+        try { conn.peer.notify("peer/messageStatus", { msgId, status, ...(reason ? { reason } : {}), from, receivedAt: Math.floor(Date.now() / 1000) }); } catch { /* the connection went away mid-notify */ }
       },
     });
 ```
-plus the small map and accessors:
+plus the field and accessors:
 ```ts
-  private connForMsg = new Map<string, ConnCtx>();
   /** The bound gateway, or undefined when none is. `null` in deps means the same thing and is how a test
    *  or a failed bind says so explicitly. */
   gateway(): PeerGateway | undefined { return this.deps.peerGateway ?? undefined; }
   peerEnv(): NodeJS.ProcessEnv { return this.deps.peerEnv ?? process.env; }
   peerRows(): Promise<PeerRow[]> { return (this.deps.readPeerRows ?? realReadPeerRows)(this.peerEnv()); }
-  trackReceiptConn(msgId: string, ctx: ConnCtx): void { this.connForMsg.set(msgId, ctx); }
 ```
 
-5. In `peerDomain.ts`'s `peerSend`, replace `srv.receipts.track(msgId, ctx.connId);` with both lines:
+5. In `connect()`'s `close` callback — the one that already reads
+   `this.conns.delete(connId); … this.imageStages.dropConnection(…)`, and for the same reason: a socket
+   that dies must not leave this server holding state the client will never come back to claim — add:
 ```ts
-  srv.receipts.track(msgId, ctx.connId);
-  srv.trackReceiptConn(msgId, ctx);
-```
-
-6. Where a connection is dropped (the `close`/disconnect path that removes it from `this.conns`), add:
-```ts
-    this.receipts.dropConnection(ctx.connId);
+    this.receipts.dropConnection(connId);
 ```
 
 - [ ] **Step 4: Run it and watch it pass**
