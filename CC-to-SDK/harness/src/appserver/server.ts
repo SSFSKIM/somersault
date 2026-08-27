@@ -29,6 +29,7 @@ import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
 import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } from "./sessionLib.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
+import { installPeerInbound, settleAdopted, uninstallPeerInbound } from "./peerInbound.js";
 import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { rewindAnchors, rewindDryRun, threadRewind, threadReopen } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
@@ -929,6 +930,12 @@ export class AppServer {
     const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+    // M8, beside the router and for the same reason it sits here rather than anywhere later: this whole
+    // spine is synchronous from `factory(...)` to this line, and a real engine's read loop cannot dispatch
+    // its first frame before a microtask — so nothing the engine says can be missed, and an arrival that
+    // lands in the very next tick is observed. Stated by BOTH admission spines, so the two engines are
+    // observed by one rule (peerInbound.ts).
+    installPeerInbound(this, record);
     return record;
   }
 
@@ -994,6 +1001,7 @@ export class AppServer {
     const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
+    installPeerInbound(this, record); // …and the arrival observer, beside it — see createThread's note on why here
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
     // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
@@ -1111,6 +1119,13 @@ export class AppServer {
     // for the same circular-wait reason the decisions are: the engine's read loop cannot end while a turn
     // sits blocked on one of these promises, and this is the only thing that settles them.
     this.dynamicCalls.get(record.id)?.teardown("thread closed");
+    // M8, and the ORDER is the whole of it: the turn edge goes out FIRST, while the record is still
+    // registered and the dispose has not begun. A `thread/closed` published with an adopted turn still
+    // open leaves every subscriber holding a turn id that never terminates. `settleAdopted` resolves the
+    // runner's promise, so `beginTurn`'s own success path broadcasts `turn/completed{status:"cancelled"}`
+    // — the same word the close flush gives the queued turns beside it (queue.ts).
+    settleAdopted(this, record, "cancelled");
+    uninstallPeerInbound(record);
     record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
     record.fleetOff?.();  // …and, for a fleet thread, the event layer installed alongside it (M3 Task 9:
                           // the two are installed as a pair and are released as one, so no subscription

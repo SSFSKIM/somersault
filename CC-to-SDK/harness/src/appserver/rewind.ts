@@ -39,6 +39,7 @@
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
 import { installRouter } from "./router.js";
+import { installPeerInbound, settleAdopted, uninstallPeerInbound } from "./peerInbound.js";
 import { flushQueue } from "./queue.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { emptyFlagPerms, seedSettings, threadBusyReason, threadStatus, type EngineSession, type ThreadRecord } from "./registry.js";
@@ -216,7 +217,14 @@ export async function swapEngine(
   // build. `thread/reopen`, the third, settles its own ghost parks with a truer reason at arrival time,
   // and reaches this line with nothing left to cancel.
   srv.threadDynamicCalls(record.id)?.reset("engine swapped");
+  // M8, and it is DEFENCE rather than a live path: every wire caller of this function refuses on
+  // `threadBusyReason`, which an adopted turn latches as "turn", so no swap can be admitted while one is
+  // open. The line stays because "unreachable" here rests on three separate handlers each remembering the
+  // gate, and the cost of being wrong is a turn whose conversation was discarded and whose subscribers are
+  // never told. A no-op when nothing is adopted.
+  settleAdopted(srv, record, "cancelled");
   record.routerOff?.();
+  uninstallPeerInbound(record);          // the outgoing engine is about to be disposed
   try { await record.session.dispose(); } catch { /* see above — the replacement is what matters */ }
   record.session = makeReplacement();
   record.sessionId = nextSessionId;
@@ -234,6 +242,7 @@ export async function swapEngine(
   // indefinitely (the gap scalpel-5#2 names on the fleet path), and the first init after the swap would
   // then read as a CHANGE and put a `thread/capabilities/changed` on the wire for a value that never moved.
   installRouter(srv, record);
+  installPeerInbound(srv, record);       // the replacement is a different engine; the old handle is deaf
   await repushThreadState(srv, record);
 }
 

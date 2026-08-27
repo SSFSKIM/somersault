@@ -10,6 +10,7 @@ import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
 import type { DynamicToolSpec } from "./dynamicTools.js";
 import type { CrossSessionInbound } from "./peerPolicy.js";
+import type { PeerInboundState } from "./peerInbound.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
  *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
@@ -61,6 +62,12 @@ export interface EngineSession {
    *  consumer that must tell history from news — the frame router — can read it without knowing which
    *  engine it is installed on. */
   onFrame(cb: (m: unknown, replay?: true) => void): () => void;
+  /** Optional (the real lib Session has it — src/session/session.ts's `onUnclaimedResult`; a DI fake and
+   *  the fleet engine need not): a terminal `result` frame that matched NO waiter, which is precisely what
+   *  a peer-initiated turn's result is. The callback answers whether it CLAIMED the result — a claim
+   *  supplies an adopted turn's outcome (peerInbound.ts) and keeps `unmatchedResults` meaning "a result
+   *  nobody owns". */
+  onUnclaimedResult?(cb: (result: unknown) => boolean): () => void;
   /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
    *  session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;
@@ -193,6 +200,13 @@ export interface ThreadRecord {
                                 // per-approval watcher — so there is no planUpgradeOff here.
   routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
+  /** M8: the arrival observer's whole state — its two unsubscribes, the un-adopted arrivals, the uuids of
+   *  our own turns, and the adopted turn if one is open (peerInbound.ts). ONE OPTIONAL FIELD rather than
+   *  several mandatory ones, deliberately: `fleet.ts` builds this repository's second `ThreadRecord`
+   *  literal, and a fleet thread has no inbound machinery at all — this server does not own its engine —
+   *  so the honest shape is a field it simply never has. `crossSessionInbound` above is mandatory for the
+   *  opposite reason: `thread/get` reports it on every origin. */
+  peerInbound?: PeerInboundState;
   fleetOff?: () => void;        // FLEET ONLY (M3 §1b): unsubscribes the fleet EVENT LAYER — the item fan
                                  // plus the seven host-event fans `installFleetEvents` installs (fleet.ts).
                                  // closeRecord calls it beside `routerOff`, which is the whole point:
