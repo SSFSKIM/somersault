@@ -87,3 +87,6 @@ dispatched on main. (First review launch orphaned by the usage-limit outage — 
   (base c6be8b5594).
 - Scoped fix-range re-review: ZERO findings ("No actionable diff-introduced defects"). Campaign 3→0.
 - Close-out: parity blocks committed 704b403366; spec retrospective written. ROUND CLOSED 2026-08-27.
+- PUSHED (owner request): merged origin/main's M7 keyed follow-up (PR #10, clean merge — appserver/live
+  test files, no overlap with bl5), merged tree gated green (typecheck clean, unit 4015/4015, tui
+  4710/4721 w/ 11 gated skips), pushed as 3f35210ee4. main == origin/main.
