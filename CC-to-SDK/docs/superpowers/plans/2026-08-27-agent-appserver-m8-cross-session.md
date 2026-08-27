@@ -2667,6 +2667,241 @@ git commit -m "feat(appserver): an inbound peer message becomes a real turn, and
 
 ---
 
+### Task 10b: `thread/peerMessage` — the arrival notification the rewrite dropped
+
+**Files:**
+- Modify: `src/appserver/peerInbound.ts`, `docs/parity/appserver.md` (under `CC-to-SDK/`)
+- Test: `test/unit/appserver/peer-inbound.test.ts` (extend)
+
+**Interfaces:**
+- Consumes: from Task 10: `installPeerInbound`, `PeerInboundState`, the arrival queue.
+- Produces: the `thread/peerMessage` notification.
+
+**Why this task exists.** The spec gives this notification its own section and four keyed acceptance legs are written against it, but the rev-6 rewrite of Task 10 authored an arrival path that never emits it — an omission, not a decision. Two things follow from leaving it out, and both are why this cannot wait for a later round:
+
+- **The peer's identity never reaches a client at all.** `verifiedPeerPid` is the only field in the whole exchange the kernel vouches for; `from` is sender-authored and forgeable by any same-user process. Without this notification the one non-forgeable fact is read by this server and then discarded.
+- **An arrival that causes no turn is announced on nothing.** A message that folds into a running turn, or that the CLI holds, produces no turn edge of its own, so a subscriber cannot distinguish "a message arrived and was absorbed" from "nothing happened".
+
+**What the SDK gives us, and why the current parse should defer to it.** The replayed user frame (`SDKUserMessageReplay`) carries three fields this path should be using and currently is not:
+
+- `uuid` — the frame's own transcript id. Task 10 mints a fresh `randomUUID()` for the arrival instead, which means the `userMessage` item it emits carries an id that will NOT match the one `thread/read` returns from the persisted transcript. The spec's whole reason for exposing `arrivalUuid` is that a client can deduplicate the live item against the replayed one; a minted id silently breaks that.
+- `origin` — the `SDKMessageOrigin` union. Its `kind: "peer"` variant is the CLI's own signal that this is a cross-session message, which is a stronger discriminator than matching an envelope by regex.
+- `origin.body` — "Decoded message body with the peer envelope stripped — byte-exact with what the model sees." That is exactly what the regex is reconstructing by hand, supplied by the process that did the framing.
+
+The regex stays as a fallback, because `origin.body` is documented as present "only when the turn is exactly one harness-formed envelope" and this server does not control what a peer sends.
+
+---
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `test/unit/appserver/peer-inbound.test.ts`. `PEER_FRAME` builds a replayed user frame the way the CLI does — note that `origin` is what makes it a peer message, and the envelope text is what a sender without an `origin` would produce:
+
+```ts
+const PEER_FRAME = (over: Record<string, unknown> = {}) => ({
+  type: "user",
+  uuid: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+  session_id: "s",
+  isReplay: true,
+  parent_tool_use_id: null,
+  message: { role: "user", content: "<cross-session-message from=\"uds:/a.sock\" from-session=\"s1\" hop-chain=\"a\" from-name=\"peer\" from-mode=\"prompting\">hello</cross-session-message>" },
+  origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", fromSession: "s1", body: "hello", verifiedPeerPid: 4242 },
+  ...over,
+});
+
+describe("thread/peerMessage", () => {
+  it("announces an arrival, carrying the origin verbatim", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    await tick();
+    const note = notes(lines, "thread/peerMessage");
+    expect(note).toHaveLength(1);
+    // VERBATIM, not re-derived: verifiedPeerPid is the only field the kernel vouches for, and a
+    // reconstructed origin would be this server's opinion of an identity it did not verify.
+    expect(note[0].params.origin).toEqual({
+      kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer",
+      fromSession: "s1", body: "hello", verifiedPeerPid: 4242,
+    });
+    expect(note[0].params.arrivalUuid).toBe("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
+    // No turnId, and there cannot be one: at arrival the message's fate is undecided.
+    expect(note[0].params.turnId).toBeUndefined();
+  });
+
+  it("fires exactly once per message, even when a turn adopts it", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    e.push(LIFECYCLE("started", "foreign-b1"));
+    await tick();
+    e.pushResult(RESULT());
+    e.push(LIFECYCLE("completed", "foreign-b1"));
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+  });
+
+  it("announces an arrival that never causes a turn", async () => {
+    // THE CASE THAT MOTIVATES THE CHANNEL. No lifecycle frame follows, so there is no turn edge; without
+    // this notification the arrival would be indistinguishable from silence.
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(notes(lines, "turn/started")).toHaveLength(0);
+  });
+
+  it("the emitted item's id is the FRAME's uuid, so a client can dedupe against thread/read", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    e.push(LIFECYCLE("started", "foreign-b2"));
+    await tick();
+    const items = notes(lines, "item/completed").filter((m) => JSON.stringify(m.params).includes("hello"));
+    expect(items).toHaveLength(1);
+    expect(items[0].params.item.id).toBe("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
+  });
+
+  it("prefers origin.body over re-parsing the envelope", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    // The body and the envelope text deliberately disagree; the FRAMER's decoding wins.
+    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "decoded by the framer" } }));
+    e.push(LIFECYCLE("started", "foreign-b3"));
+    await tick();
+    expect(JSON.stringify(notes(lines, "item/completed"))).toContain("decoded by the framer");
+  });
+
+  it("falls back to the envelope when no origin is present", async () => {
+    // origin.body is documented as present only when the turn is exactly one harness-formed envelope, and
+    // this server does not control what a peer sends.
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME({ origin: undefined }));
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(notes(lines, "thread/peerMessage")[0].params.origin).toBeUndefined();
+  });
+
+  it("says nothing about an ordinary local user frame", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push({ type: "user", uuid: "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb", session_id: "s", isReplay: true, parent_tool_use_id: null, message: { role: "user", content: "just a local prompt" }, origin: { kind: "human" } });
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+  });
+
+  it("a refusing thread announces nothing", async () => {
+    const e = pushEngine();
+    const srv = boot(e.engine);
+    const { lines, sink } = mkSink();
+    const c = srv.connect(sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+    lines.length = 0;
+    e.push(PEER_FRAME());
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts -t "thread/peerMessage"`
+Expected: FAIL — no such notification is emitted.
+
+- [ ] **Step 3: Emit it from the arrival path**
+
+In `src/appserver/peerInbound.ts`, rewrite `noteArrival` so that it recognises a peer frame by the SDK's own signal, keeps the frame's identity, and announces the arrival:
+
+```ts
+/** Note one arrival; returns whether the frame was a cross-session message at all.
+ *
+ *  Recognition is `origin.kind === "peer"` FIRST — that is the CLI's own statement about the frame,
+ *  and it is not reconstructible from the text. The envelope regex is the fallback for a sender whose
+ *  host stamps no origin, which the SDK's own field docs say is possible. */
+function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundState, frame: any): boolean {
+  const origin = frame?.origin;
+  const isPeer = origin?.kind === "peer";
+  const content = frame?.message?.content;
+  const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
+  const envelope = ENVELOPE.exec(text);
+  if (!isPeer && !envelope) return false;
+
+  // The FRAMER's decoding wins over ours: `origin.body` is documented byte-exact with what the model
+  // saw, while the regex is this server's second-hand reconstruction of the same thing.
+  const body = typeof origin?.body === "string" ? origin.body : (envelope ? envelope[1] : text);
+  // The FRAME's own uuid, never a minted one. This id is what the transcript persists, and it is the id
+  // the `userMessage` item below carries — which is the whole mechanism by which a client deduplicates
+  // the live item against the one `thread/read` replays. A fresh uuid here would make every arrival
+  // appear twice to any client that reads its own history.
+  const arrivalUuid = typeof frame?.uuid === "string" ? frame.uuid : randomUUID();
+
+  state.arrivals.push({ msgId: arrivalUuid, text: body.slice(0, MAX_FRAME_CHARS), at: Date.now() });
+  while (state.arrivals.length > MAX_ARRIVALS) {
+    state.arrivals.shift();
+    console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
+  }
+
+  // ANNOUNCED HERE, at arrival, and with NO turnId — at this moment the message's fate is genuinely
+  // undecided (it may fold into a running turn, batch with others, or cause a turn whose id does not
+  // exist yet), so the field could only be fabricated, delayed, or null. A client correlates through
+  // `arrivalUuid`, which is also the id of the item this arrival eventually produces.
+  //
+  // `origin` travels VERBATIM. `verifiedPeerPid` is the only field in this exchange the kernel vouches
+  // for — `from` is sender-authored and forgeable by any same-user process — so re-deriving the object
+  // would replace a verified fact with this server's opinion of it.
+  srv.broadcast(record.id, "thread/peerMessage", {
+    threadId: record.id,
+    arrivalUuid,
+    ...(origin !== undefined ? { origin } : {}),
+  });
+  return true;
+}
+```
+
+Update its one caller to pass `srv`:
+
+```ts
+    if (frame.type === "user" && noteArrival(srv, record, state, frame)) drainArrivals(srv, record, state);
+```
+
+**Verify rather than assume:** that `srv.broadcast` is the right fan-out for this. It must reach the thread's SUBSCRIBERS, which is a different audience from the server-scoped watchers — an arrival is content, not the existence of a thread, and the images round already established that distinction. Read `src/appserver/fanout.ts` and confirm before settling on the call.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `npx vitest run test/unit/appserver/peer-inbound.test.ts`
+Expected: PASS — Task 10's twelve plus this task's eight.
+
+Run: `npx vitest run test/unit/appserver`, then `npx vitest run test/unit`, then `npx tsc --noEmit`.
+Expected: all green, and the total is the prior baseline plus this task's new tests.
+
+- [ ] **Step 5: Row it, and close gap 12**
+
+Task 12 recorded this omission as gap 12 in `CC-to-SDK/docs/parity/appserver.md`'s "Notable gaps and discrepancies" section, and referenced it from `full-potential.md`. Now that the code sends the notification, add its row to the same server-origin table Task 12 appended to:
+
+```
+| `thread/peerMessage` | appserver/peerInbound.ts | `thread/peerMessage` | inProcess | shipped(M8) — an inbound peer message ARRIVED. Fires on the replayed user frame, once per message, to the thread's SUBSCRIBERS (content, not existence — `watchThreads` is existence fan-out, a distinction the images round established). Recognition is the SDK's own `origin.kind === "peer"`, with the envelope regex as the fallback for a sender whose host stamps no origin. Carries `origin` VERBATIM rather than re-derived, because `verifiedPeerPid` is the one field the kernel vouches for and the only non-forgeable identity in the exchange — `from` is sender-authored. **No `turnId`, and there cannot be one**: at arrival the message's fate is undecided (fold, batch, or a turn whose id does not exist yet), so the field could only be fabricated, delayed, or null. `arrivalUuid` is the replayed frame's OWN uuid, which is also the id of the `userMessage` item the arrival produces, so a client deduplicates against `thread/read` with it |
+```
+
+Then delete gap 12 and the reference to it, since the gap is closed rather than merely documented.
+
+Run (from `CC-to-SDK/`): `node scripts/drift-check.mjs`
+Expected: exit 0. Restate the Totals sweep from the gate's own printed tallies — the row count moves by one.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add CC-to-SDK/harness/src/appserver/peerInbound.ts CC-to-SDK/harness/test/unit/appserver/peer-inbound.test.ts CC-to-SDK/docs/parity/appserver.md CC-to-SDK/docs/parity/full-potential.md
+git commit -m "feat(appserver): an arrival is announced, carrying the one identity the kernel vouches for"
+```
+
+---
+
 ### Task 11: The runtime policy setter — a spike first, then whichever implementation the measurement licenses
 
 **BLOCKED until 2026-08-31 00:00 Asia/Seoul** (the account's weekly limit). Step 1 is keyed. Nothing else in the plan depends on this task: Stage B is complete and shippable without it, and `crossSessionInbound` is already decided at admission on both spines (Task 8) and reported by `thread/get`.
@@ -2831,7 +3066,8 @@ Expected: all green; no tsc output.
 - [ ] **Step 3: Run the drift gate**
 
 Run (from `CC-to-SDK/`): `node scripts/drift-check.mjs`
-Expected: exit 0.
+Expected: exit 0. Tasks 12 and 10b both moved the row count; the Totals sweep should already be restated
+from the gate's own tallies, and this run is the check that it was.
 
 - [ ] **Step 4: Write the live file (keyless-skipping)**
 
