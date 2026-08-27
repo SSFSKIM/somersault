@@ -139,7 +139,7 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // held unassigned until lifecycle evidence gives it a turn to belong to. Nothing here branches on
     // `record.busy` — the spec's own measurement is that a message delivered during a busy turn has three
     // possible fates and no way to predict which.
-    if (frame.type === "user" && noteArrival(record, state, frame)) drainArrivals(srv, record, state);
+    if (frame.type === "user" && noteArrival(srv, record, state, frame)) drainArrivals(srv, record, state);
   };
 
   state.off = record.session.onFrame(onFrame);
@@ -156,21 +156,55 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
   });
 }
 
-/** Note one arrival; returns whether the frame carried an envelope at all. */
-function noteArrival(record: ThreadRecord, state: PeerInboundState, frame: any): boolean {
+/** Note one arrival, and ANNOUNCE it; returns whether the frame was a cross-session message at all.
+ *
+ *  Recognition is `origin.kind === "peer"` FIRST — that is the CLI's own statement about the frame, and
+ *  it is not reconstructible from the text. The envelope regex is the fallback for a sender whose host
+ *  stamps no origin, which the SDK's own field docs say is possible. */
+function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundState, frame: any): boolean {
+  const origin = frame?.origin;
+  const isPeer = origin?.kind === "peer";
   const content = frame?.message?.content;
   const text = typeof content === "string" ? content : JSON.stringify(content ?? "");
-  const m = ENVELOPE.exec(text);
-  if (!m) return false;
+  const envelope = ENVELOPE.exec(text);
+  if (!isPeer && !envelope) return false;
+
+  // The FRAMER's decoding wins over ours: `origin.body` is documented byte-exact with what the model saw,
+  // while the regex is this server's second-hand reconstruction of the same thing.
+  const body = typeof origin?.body === "string" ? origin.body : (envelope ? envelope[1] : text);
+  // The FRAME's own uuid, never a minted one. This id is what the transcript persists, and `items/replay.ts`
+  // gives a replayed user row exactly this id — which is the whole mechanism by which a client deduplicates
+  // the live item against the one `thread/read` returns. A fresh uuid here would make every arrival appear
+  // twice to any client that reads its own history.
+  const arrivalUuid = typeof frame?.uuid === "string" ? frame.uuid : randomUUID();
+
   // Truncated at the same ceiling `peer/send` refuses above (peer/address.ts): the body is written by a
   // process this server does not control, and the socket it came in on is not necessarily our gateway.
-  state.arrivals.push({ msgId: randomUUID(), text: m[1].slice(0, MAX_FRAME_CHARS), at: Date.now() });
+  state.arrivals.push({ msgId: arrivalUuid, text: body.slice(0, MAX_FRAME_CHARS), at: Date.now() });
   // Oldest-first, and the drop is announced: a silently truncated queue reads to an operator exactly like
   // a queue nothing was ever written to.
   while (state.arrivals.length > MAX_ARRIVALS) {
     state.arrivals.shift();
     console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
   }
+
+  // ANNOUNCED HERE, at arrival, and with NO turnId — at this moment the message's fate is genuinely
+  // undecided (it may fold into a running turn, batch with others, or cause a turn whose id does not exist
+  // yet), so the field could only be fabricated, delayed, or null. A client correlates through
+  // `arrivalUuid`, which is also the id of the item this arrival eventually produces.
+  //
+  // `origin` travels VERBATIM. `verifiedPeerPid` is the only field in this exchange the kernel vouches for
+  // — `from` is sender-authored and forgeable by any same-user process — so re-deriving the object would
+  // replace a verified fact with this server's opinion of it.
+  //
+  // `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
+  // the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
+  // (fanout.ts). It is the same call `emitItems` makes for the item this arrival becomes.
+  srv.broadcast(record.id, "thread/peerMessage", {
+    threadId: record.id,
+    arrivalUuid,
+    ...(origin !== undefined ? { origin } : {}),
+  });
   return true;
 }
 

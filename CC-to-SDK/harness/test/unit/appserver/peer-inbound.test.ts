@@ -265,3 +265,116 @@ describe("bounded state", () => {
     expect((record.peerInbound!.ourUuids as Set<string>).size).toBe(0);
   });
 });
+
+// A replayed user frame the way the CLI stamps one: `origin` is what MAKES it a peer message, and the
+// envelope text is what a sender whose host stamps no origin would leave behind on its own.
+const PEER_FRAME = (over: Record<string, unknown> = {}) => ({
+  type: "user",
+  uuid: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+  session_id: "s",
+  isReplay: true,
+  parent_tool_use_id: null,
+  message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s1" hop-chain="a" from-name="peer" from-mode="prompting">hello</cross-session-message>` },
+  origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", fromSession: "s1", body: "hello", verifiedPeerPid: 4242 },
+  ...over,
+});
+
+describe("thread/peerMessage", () => {
+  it("announces an arrival, carrying the origin verbatim", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    await tick();
+    const note = notes(lines, "thread/peerMessage");
+    expect(note).toHaveLength(1);
+    // VERBATIM, not re-derived: verifiedPeerPid is the only field the kernel vouches for, and a
+    // reconstructed origin would be this server's opinion of an identity it did not verify.
+    expect(note[0].params.origin).toEqual({
+      kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer",
+      fromSession: "s1", body: "hello", verifiedPeerPid: 4242,
+    });
+    expect(note[0].params.arrivalUuid).toBe("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
+    // No turnId, and there cannot be one: at arrival the message's fate is undecided.
+    expect(note[0].params.turnId).toBeUndefined();
+  });
+
+  it("fires exactly once per message, even when a turn adopts it", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    e.push(LIFECYCLE("started", "foreign-b1"));
+    await tick();
+    e.pushResult(RESULT());
+    e.push(LIFECYCLE("completed", "foreign-b1"));
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+  });
+
+  it("announces an arrival that never causes a turn", async () => {
+    // THE CASE THAT MOTIVATES THE CHANNEL. No lifecycle frame follows, so there is no turn edge; without
+    // this notification the arrival would be indistinguishable from silence.
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(notes(lines, "turn/started")).toHaveLength(0);
+  });
+
+  it("the emitted item's id is the FRAME's uuid, so a client can dedupe against thread/read", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    e.push(LIFECYCLE("started", "foreign-b2"));
+    await tick();
+    const items = notes(lines, "item/completed").filter((m) => JSON.stringify(m.params).includes("hello"));
+    expect(items).toHaveLength(1);
+    expect(items[0].params.item.id).toBe("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
+  });
+
+  it("prefers origin.body over re-parsing the envelope", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    // The body and the envelope text deliberately disagree; the FRAMER's decoding wins.
+    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "decoded by the framer" } }));
+    e.push(LIFECYCLE("started", "foreign-b3"));
+    await tick();
+    expect(JSON.stringify(notes(lines, "item/completed"))).toContain("decoded by the framer");
+  });
+
+  it("falls back to the envelope when no origin is present", async () => {
+    // origin.body is documented as present only when the turn is exactly one harness-formed envelope, and
+    // this server does not control what a peer sends.
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME({ origin: undefined }));
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(notes(lines, "thread/peerMessage")[0].params.origin).toBeUndefined();
+  });
+
+  it("says nothing about an ordinary local user frame", async () => {
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push({ type: "user", uuid: "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb", session_id: "s", isReplay: true, parent_tool_use_id: null, message: { role: "user", content: "just a local prompt" }, origin: { kind: "human" } });
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+  });
+
+  it("a refusing thread announces nothing", async () => {
+    const e = pushEngine();
+    const srv = boot(e.engine);
+    const { lines, sink } = mkSink();
+    const c = srv.connect(sink);
+    send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(c, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
+    send(c, { id: 3, method: "thread/subscribe", params: { threadId } });
+    await tick();
+    lines.length = 0;
+    e.push(PEER_FRAME());
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+  });
+});

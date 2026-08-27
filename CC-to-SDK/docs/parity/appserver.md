@@ -588,23 +588,18 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
     the `prompt` row — whose protocol-method cell IS `turn/start` — spells the union out in prose, here
     and in the registration-order list above: the only instrument that can see a field is a sentence.
 
-12. **`thread/peerMessage` is designed in the M8 spec and is NOT emitted by any code that shipped**
-    (found at M8 Task 12, while rowing the peer domain). The spec gives inbound arrivals their own
-    announcement — `thread/peerMessage {threadId, arrivalUuid, origin}` to the thread's subscribers,
-    carrying the `verifiedPeerPid` the kernel vouches for — and both the spec's acceptance rows and the
-    keyed live file are written against it. `appserver/peerInbound.ts` broadcasts no such notification:
-    an arrival is recorded, then surfaces only as a `userMessage` ITEM of whichever turn ends up running
-    it. Two consequences, and they are the reason this is written down rather than left to be
-    rediscovered. (a) The peer `origin` never reaches a client at all, so the one non-forgeable identity
-    in the exchange is server-side knowledge only. (b) An arrival that causes no turn — held in
-    `state.arrivals` until lifecycle evidence gives it one, which is the measured arrival-only case — is
-    announced on NO channel, so a subscriber cannot tell it from silence. **No row claims it**, which is
-    the only thing a scorecard can honestly do about a channel nothing fires: a `shipped` row for it
-    would be exactly the false coverage claim the gate's staleness pass exists to catch, and would trip
-    that pass, since the name appears nowhere under `appserver/`. Closing this is a code change in the
-    arrival path plus a schema, not a documentation edit, and it belongs to whichever round takes M8's
-    keyed acceptance: the live legs assert an ordering (`thread/peerMessage` -> `turn/started` -> items)
-    that today's code cannot produce.
+12. **CLOSED at M8 Task 10b** (kept at this number so older references still resolve). The arrival
+    ANNOUNCEMENT the M8 spec designs and Task 10's rewrite dropped is emitted: `appserver/peerInbound.ts`
+    broadcasts `thread/peerMessage {threadId, arrivalUuid, origin?}` to the thread's SUBSCRIBERS the
+    moment the replayed user frame lands, once per message and before any turn edge, so an arrival that
+    causes no turn is no longer indistinguishable from silence and the peer `origin` — with the
+    `verifiedPeerPid` the kernel vouches for, the one non-forgeable identity in the exchange — reaches a
+    client verbatim instead of being read and discarded. The same change made recognition the SDK's own
+    `origin.kind === "peer"` (the envelope regex is now the fallback) and gave the arrival the FRAME's
+    uuid rather than a minted one, which is what makes the live `userMessage` item deduplicate against
+    the row `thread/read` replays under that same id. It has a scorecard row and no `methodSchemas`
+    entry, which is what the registry means: a notification is dispatched by nobody. Keyed acceptance —
+    the live legs asserting `thread/peerMessage` -> `turn/started` -> items — is still ahead of it.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose
@@ -842,6 +837,7 @@ sent the message, and a client that has gone away is owed nothing.
 | `peer/list` | appserver/peerDomain.ts | `peer/list` | N/A | shipped(M8) — the machine's addressable sessions, read from `<claudeConfigDir()>/sessions/*.json` (never a hardcoded `~/.claude`: `CLAUDE_CONFIG_DIR` REPLACES that path outright and this harness's own tenant preset exports one per tenant, so scanning the literal home directory would list the wrong namespace and omit the right one). A registry row is another program's file, so the projection is a type-guarded WHITELIST — `sessionId`, `entrypoint`, `kind`, `name`, `cwd`, `version`, `peerProtocol`, `peerFeatures` — each copied VERBATIM when present and well-typed, omitted when absent, and never defaulted: a row that invents a value lies about a session we do not own, and a wholesale spread would republish that program's internals as our contract. `address` is `uds:<messagingSocketPath>`; a file carrying no socket path or no numeric pid produces no row at all. `alive` is pid + `procStart` through `fleet/liveness.ts`'s own `isPidLive` (which compares `ps -o lstart=` under `LC_ALL=C TZ=UTC`, and treats an absent `procStart` as live exactly as the binary does), the same comparison `fleet/list` makes and for the same reason. `inboxBound` is whether that socket exists on disk. `aliveOnly` defaults false: a dead row is information — it is why an address stopped working — and `fleet/list` already sets that precedent. `threadId` and `statusReachable` are the two fields only this server can add: the thread it holds for that `sessionId` when it holds one, and whether a status could ever come back. `statusReachable` is the receipt path's own test and nothing more — this server has a BOUND gateway, and the peer's address parses as `uds:` whose DIRECTORY equals our own socket's (`$XDG_RUNTIME_DIR/cc-socks`, else `/tmp/cc-socks`). A directory comparison is the right test because that is what was measured: the receipt sender refuses any reply address outside its own socket directory (probe 117b), so a peer failing it can be sent to and can never answer. It is deliberately NOT a config-root test — our vouching key file sits under `claudeConfigDir()/sessions/`, but no receipt is ever routed by it |
 | `peer/send` | appserver/peerDomain.ts | `peer/send` | N/A | shipped(M8) — writes one enveloped frame to a peer's inbox (behind an `auth` frame carrying that peer's own vouching token, when its key file is readable) and **reports nothing more**: `delivered` is a literal `false`, because the CLI tells a sender nothing on the success path (measured — only `held` and `expired` produce a receipt at all), so any other value would be the wire's own lie. Target resolution copies `thread/attach`'s rule exactly — a SIMULTANEOUS filter over `sessionId`/`pid`/`address`/`name`, where more than one match is `-32602` carrying the matches rather than a precedence, because a wrong guess delivers into somebody else's session. The envelope is assembled in the CLI's fixed attribute order (`from`, `from-session`, `hop-chain`, `from-name`, `from-mode`) and compared byte-exactly by the receiver, so attribute values are ESCAPED and a value carrying a C0 control character or DEL is refused `-32602` rather than sent — a silently downgraded envelope is a permission decision made on wrong information. **`from-mode` is always `prompting`**, and there is no parameter of any spelling that changes it: this gateway runs no model and asks no permission, and `fromThreadId` is attribution only (`from-session`, `from-name`), refused `-33004` for a thread this server does not hold and `-33006` for a fleet-origin one. The recorded consequence: every message this server sends is HELD by a `bypassPermissions` peer, and on a headless peer a hold expires. `msg_id` is a server-minted UUID — a non-UUID id comes back with no `orig_msg_id` and silently costs all correlation. `hop-chain` is never set (nothing here relays). Refuses `-32602` above a 60 000-character frame cap of our own, because the CLI's sender-side preflight belongs to the path we do not use and an oversize line meets the receiver's own cap, which drops it before the JSON is parsed and tells nobody; and `-33008` when no gateway is bound at all, since a send with no reply address is a message nothing could ever report on. `bridge:` targets — the cross-machine path, governed by a setting never measured here — are refused BY NAME rather than falling through to "no such peer" |
 | `peer/messageStatus` | appserver/server.ts | `peer/messageStatus` | N/A | shipped(M8) — NOT a method: the delivery-status receipt, `{msgId, status, reason?, from, receivedAt}`, routed to the CONNECTION that sent the `peer/send` and dropped when that connection is gone (this is that request's delayed completion, not thread state, which is why it is connection-scoped where every other channel here is subscriber-scoped). The full status vocabulary is declared because the CLI's control frame declares it, but the measured truth is narrower and stated here: **only `held` and `expired` are observed** — delivered and refused messages produce no receipt at all, so silence is the success path, and `held` is therefore the one status that does NOT release its correlation entry. Correlation is retained for an absolute 30 minutes (six times the CLI's default hold deadline, and FIXED rather than derived from this process's env, since the deadline belongs to the receiver), capped at 256 per connection and 4096 server-wide, and an entry evicted by either bound — or expired by shutdown's own sweep — notifies its sender `dropped` rather than vanishing |
+| `thread/peerMessage` | appserver/peerInbound.ts | `thread/peerMessage` | inProcess | shipped(M8) — an inbound peer message ARRIVED. Fires on the replayed user frame, once per message, to the thread's SUBSCRIBERS (content, not existence — `watchThreads` is existence fan-out, a distinction the images round established). Recognition is the SDK's own `origin.kind === "peer"`, with the envelope regex as the fallback for a sender whose host stamps no origin. Carries `origin` VERBATIM rather than re-derived, because `verifiedPeerPid` is the one field the kernel vouches for and the only non-forgeable identity in the exchange — `from` is sender-authored. **No `turnId`, and there cannot be one**: at arrival the message's fate is undecided (fold, batch, or a turn whose id does not exist yet), so the field could only be fabricated, delayed, or null. `arrivalUuid` is the replayed frame's OWN uuid, which is also the id of the `userMessage` item the arrival produces, so a client deduplicates against `thread/read` with it |
 
 ## Review domain — M4 (a method and the channel it announces on)
 
@@ -955,17 +951,20 @@ cannot carry content says so, loudly, rather than running a truncated text-only 
 ## Totals
 
 35 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **80 walked tokens**,
-all rowed above — plus the 21 server-origin method rows and the 3 NOTIFICATION rows beside them (the
-archive pair and M8's `peer/messageStatus`), which no walker produces, plus M4's 2 review rows and M7's
-2 dynamic-tools rows (a method and its notification, the same pairing), for
-**108 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
+all rowed above — plus the 21 server-origin method rows and the 4 NOTIFICATION rows beside them (the
+archive pair, M8's `peer/messageStatus` and M8's `thread/peerMessage`), which no walker produces, plus
+M4's 2 review rows and M7's 2 dynamic-tools rows (a method and its notification, the same pairing), for
+**109 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
 until then, having missed Task 7's adoption pair as well as its own workspace pair; Task 13's
 `thread/shellCommand` is the eighth server-origin row and Task 14's `thread/reopen` the ninth. M3 Task 15
 is the last landing that had to recount by hand: the gate prints the row total itself now, and both counts
 agreed at 88 there, at 90 at M4 Task 9, at 91 at M5 Task 2 (`config/read`), at 93 at M5 Task 4 (the write pair), at 94 at M5 Task 7 (`thread/search`), at 95 at M5 Task 8 (`thread/searchOccurrences`), at 97 at M5 Task 9 (the archive pair) and at 99 at M5 Task 10, which registers **no new method** and adds the two rows the archive pair's notifications had gone without. That asymmetry is the point of restating it: the row count and the method count move independently, and a landing that moves only one is exactly where a summary carried over from the last one goes wrong. M7 Task 9 moves BOTH — one new method (`tool/callResult`, the 67th registered) and two new rows, the method's and its notification's — for **102** there. **F10's three staged-image methods** (`image/stage`, `turn/startContent`, `turn/steerContent`) then landed registered but UNROWED, and were rowed when that wave met the M7 branch: three methods and three rows, both counts moving together, for **105 rows** over **70 registered methods** there. **M8's peer domain** moves both again and by
 different amounts, which is the pattern this history exists to show: two new methods (`peer/list` and
 `peer/send`, the 71st and 72nd registered) but THREE new rows, the two methods' and the `peer/messageStatus`
-receipt channel's — **108 rows** over **72 registered methods**. The third M8 method the spec names,
+receipt channel's — 108 rows over 72 registered methods there; M8 Task 10b then adds a FOURTH row and no
+method at all, the `thread/peerMessage` arrival announcement, for **109 rows** over **72 registered
+methods** (a notification is registered nowhere: `methodSchemas` pins dispatchable methods, and the gate's
+staleness pass finds a notification's name by scanning `appserver/**/*.ts` instead). The third M8 method the spec names,
 `thread/crossSessionInbound/set`, is registered nowhere and rowed nowhere, deliberately and as a pair: it
 ships only if a blocked measurement licenses it, and a row ahead of the registration would fail this gate
 in the same breath as a registration ahead of the row. F10's three staged-image rows were found by the gate's third pass — the registry→scorecard direction, which starts from the CODE — and not by any recount, which is what that pass exists for. **The gate would not have caught a miscount at this landing**, which is
@@ -983,15 +982,18 @@ lines on every run — `N rows by status` and `N rows by origin scope`. Run it; 
 is each row's own `status` and `origin scope` column, as it always was.
 
 What those two lines say at this sweep (**M8 cross-session landing, 2026-08-27** — restated per landing,
-never trusted between them): **108 rows, 105 of them shipped** (15 `shipped(M1)`, 32 `shipped(M2a)`, 32
+never trusted between them): **109 rows, 106 of them shipped** (15 `shipped(M1)`, 32 `shipped(M2a)`, 32
 `shipped(M2b)`, 7 `shipped(M3)`, 2 `shipped(M4)`, 9 `shipped(M5)`, 2 `shipped(M7)`, 3 `shipped(F10)` and
-3 `shipped(M8)` — `peer/list`, `peer/send` and the `peer/messageStatus` receipt channel, all three
-keyless-observed, their keyed acceptance still ahead of them), **zero `probe-gated`**, and the same
+4 `shipped(M8)` — `peer/list`, `peer/send`, the `peer/messageStatus` receipt channel and the
+`thread/peerMessage` arrival announcement, all four keyless-observed, their keyed acceptance still ahead
+of them), **zero `probe-gated`**, and the same
 `N/A` trio as the last four sweeps: `seedReadState` (internal plumbing, no protocol method by design), `readFile`
 (probe-dead at 0.3.220, see its row) and `stageImage` (host-local transport by design). No `unparsed`
 bucket, so **an `unparsed` count above zero still means a row's status really is malformed.** The origin
-line moved only in the `N/A` bucket, 15 to 18: all three M8 rows name no thread, which is the same
-reading the peer section's prose gives for a different reason on each of them.
+line moved in the `N/A` bucket, 15 to 18 — the peer domain's three method-and-receipt rows name no thread,
+which is the same reading the peer section's prose gives for a different reason on each of them — and then
+in `inProcess`, 15 to 16, for Task 10b's `thread/peerMessage`, which names a thread and is announced only
+on threads this server itself admits (a fleet record seeds `DEFAULT_INBOUND`, so it observes nothing).
 
 The `probe-gated` bucket is the one that MOVED, in both directions inside a single week and each move the
 status doing its job: empty since M2b Wave 4's Task 5 promoted or retired all four of its members on
