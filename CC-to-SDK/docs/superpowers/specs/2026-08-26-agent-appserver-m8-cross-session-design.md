@@ -833,6 +833,18 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   `Options.settings` as an object would serialize to `"[object Object]"`, which would have meant a live
   latent defect in the harness's autocompact path. Intercepting the real argv (117c) showed it emits
   proper JSON. The reading was careful and wrong; the cheap interception settled it in one run.
+- **The persisted peer `origin` carries `msg_id`, which the SDK does not declare.** Measured on this
+  machine's own transcripts (2026-08-27): a persisted cross-session row's `origin` holds
+  `{kind, from, fromMode, name, body, verifiedPeerPid, msg_id}`, while the installed SDK's
+  `SDKMessageOrigin` peer variant (sdk.d.ts 0.3.237) declares every one of those except `msg_id`. It is
+  the sender's own correlation id — the same value `peer/send` mints and `peer/messageStatus` reports
+  against — so a receiving client can tie an arrival to a specific send without this server correlating
+  anything. It reaches clients already, because `thread/peerMessage` carries `origin` verbatim; it is
+  recorded here because an undeclared field is one an SDK bump can remove without a type error.
+- **The persisted `content` is not what the peer sent.** The CLI prefixes the envelope with
+  `"Another Claude session sent a message: "` before persisting. Any path that renders a peer arrival
+  from raw transcript text therefore shows a preamble the sender never wrote — which is the second
+  reason, independent of the live/cold stitch, that `origin.body` is the display text.
 
 ## Outcomes & Retrospective
 

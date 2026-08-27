@@ -33,7 +33,18 @@ export function itemsFromTranscript(messages: unknown[]): Item[] {
     if (f?.type === "user" && !f.parent_tool_use_id) {
       const content = f.message?.content;
       const hasToolResult = Array.isArray(content) && content.some((b: any) => b?.type === "tool_result");
-      if (!hasToolResult) { items.push(userItem(flattenForDisplay(content as UserTurnInput), String(f.uuid ?? ""))); continue; }
+      if (!hasToolResult) {
+        // Task 10c: a PEER arrival's display text is the FRAMER's, not ours — the same rule the live
+        // arrival path follows (peerInbound.ts's `noteArrival`), and the reason this branch needs it: the
+        // comment above says the cold-vs-live id stitch rests on the two paths producing identical items,
+        // and Task 10b already made both paths give this arrival the frame's own uuid. Same id with
+        // different text is worse than either alone — a client that dedupes by id would then render
+        // whichever copy it happened to see first. The raw persisted `content` also carries a CLI-added
+        // preamble ("Another Claude session sent a message: "), so it is not what the peer sent either.
+        const body = f.origin?.kind === "peer" && typeof f.origin.body === "string" ? f.origin.body : undefined;
+        items.push(userItem(body ?? flattenForDisplay(content as UserTurnInput), String(f.uuid ?? "")));
+        continue;
+      }
     }
     for (const ev of mapper.ingest(frame)) if (ev.kind === "completed") items.push(ev.item);
   }

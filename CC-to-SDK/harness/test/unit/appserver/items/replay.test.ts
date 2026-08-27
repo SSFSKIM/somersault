@@ -66,6 +66,48 @@ describe("itemsFromTranscript", () => {
     expect(itemsFromTranscript(withPhantoms)).toEqual(itemsFromTranscript(frames)); // identical to the phantom-free fixture
   });
 
+  // Task 10c: a peer arrival's display text is the FRAMER's decoding (`origin.body`), on this path exactly
+  // as on the live one (peerInbound.ts's `noteArrival`). Task 10b gave both paths the same id — the frame's
+  // own uuid — which is what lets a client dedupe the live item against the one `thread/read` returns; same
+  // id plus different text is worse than either alone, because the rendered message would then depend on
+  // whether anyone happened to be subscribed. Measured on this machine's transcripts (2026-08-27): the raw
+  // persisted `content` also carries a CLI-added preamble the sender never wrote, so it is not the message.
+  it("Task 10c: a replayed peer arrival displays the framer's decoded body, not the raw envelope", () => {
+    const rows = [{
+      type: "user",
+      uuid: "cccccccc-1111-4111-8111-cccccccccccc",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "Another Claude session sent a message: <cross-session-message from=\"uds:/a.sock\" from-session=\"s1\" hop-chain=\"a\" from-name=\"peer\" from-mode=\"prompting\">hello</cross-session-message>" },
+      origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242, msg_id: "m-1" },
+    }];
+    // Whole item, not only the text: this is the exact object `noteArrival` -> `drainArrivals` emits live
+    // for the same frame (`userItem(origin.body, frame.uuid)`).
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "cccccccc-1111-4111-8111-cccccccccccc", text: "hello" }]);
+  });
+
+  it("Task 10c: an ordinary local user row is untouched by the peer rule", () => {
+    const rows = [{
+      type: "user",
+      uuid: "dddddddd-1111-4111-8111-dddddddddddd",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "just a local prompt" },
+      origin: { kind: "human" },
+    }];
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "dddddddd-1111-4111-8111-dddddddddddd", text: "just a local prompt" }]);
+  });
+
+  it("Task 10c: a peer row whose framer supplied no body falls back to the flattened text", () => {
+    // `origin.body` is documented present only when the turn is exactly one harness-formed envelope.
+    const rows = [{
+      type: "user",
+      uuid: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "two envelopes, unframed" },
+      origin: { kind: "peer", from: "uds:/a.sock" },
+    }];
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed" }]);
+  });
+
   // I3e (Task 11): the persisted content array for an image turn is exactly `UserContentBlock[]` —
   // `session.ts`'s `userTurn` builds the SDKUserMessage from `normalizeTurnInput(input)`, the SAME wire
   // shape `turns.ts`'s `submitRunner` flattens live via `flattenForDisplay(input)` — so proving replay.ts
