@@ -3032,6 +3032,187 @@ git commit -m "fix(appserver): a peer arrival reads the same live and replayed"
 
 ---
 
+### Task 10d: One rule, one reader — the live and cold paths stop agreeing by coincidence
+
+**Files:**
+- Modify: `src/peer/address.ts`, `src/appserver/peerInbound.ts`, `src/appserver/items/replay.ts`
+- Test: `test/unit/peer/address.test.ts` (extend), `test/unit/appserver/items/replay.test.ts` (extend)
+
+**Interfaces:**
+- Produces, from `src/peer/address.ts`:
+  - `peerArrival(frame: unknown): { text: string; uuid: string | undefined; origin: Record<string, unknown> | undefined } | undefined`
+    — `undefined` when the frame is not a cross-session arrival at all.
+
+**Why this task exists.** Tasks 10b and 10c made the live and replayed items for one arrival identical *for the measured shape*, by writing the same rule into two files. Task 10c's own report then named three inputs where the two still disagree, all of them the same defect the previous two tasks were fixing:
+
+1. **Truncation.** The live path caps the body at `MAX_FRAME_CHARS`; the replay path does not. A body above that ceiling renders truncated live and complete when replayed — under the same id, which is precisely the condition that makes a client's dedup show whichever it saw first.
+2. **Envelope fallback.** A peer row carrying `origin` but no `body` is envelope-stripped live and shown raw — CLI preamble included — when replayed. A row carrying an envelope but no `origin` at all is recognised as an arrival live and treated as an ordinary prompt when replayed.
+3. **A non-string uuid** mints a random id live and yields the empty string cold.
+
+Two files agreeing by construction is not the same as one rule. The fix is the one Task 10c's report proposed: a single function that decides what a peer arrival IS and what it reads as, called by both paths, so a future change cannot move one without the other.
+
+**Why `src/peer/address.ts` is the home.** That module already owns the envelope in the outbound direction — `buildEnvelope`, the fixed attribute order, the escaping rules and `MAX_FRAME_CHARS`. The inbound reading of the same envelope is its mirror, and putting it anywhere else leaves the grammar split across two files that must not drift. It also keeps `src/appserver/items/replay.ts` free of any import from `appserver/peerInbound.ts`, which would be a new dependency from the cold path onto the live one.
+
+---
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `test/unit/peer/address.test.ts`. This is where the rule now lives, so this is where its edges are pinned:
+
+```ts
+describe("peerArrival", () => {
+  const ENVELOPE_TEXT = "<cross-session-message from=\"uds:/a.sock\" from-session=\"s1\" hop-chain=\"a\" from-name=\"peer\" from-mode=\"prompting\">hello</cross-session-message>";
+  const row = (over: Record<string, unknown> = {}) => ({
+    type: "user", uuid: "cccccccc-1111-4111-8111-cccccccccccc", parent_tool_use_id: null,
+    message: { role: "user", content: `Another Claude session sent a message: ${ENVELOPE_TEXT}` },
+    origin: { kind: "peer", from: "uds:/a.sock", body: "hello", verifiedPeerPid: 4242 },
+    ...over,
+  });
+
+  it("prefers the framer's decoded body", () => {
+    expect(peerArrival(row())!.text).toBe("hello");
+  });
+
+  it("strips the envelope when the framer supplied no body", () => {
+    // The CLI-authored preamble goes with it: it is not what the peer sent.
+    const a = peerArrival(row({ origin: { kind: "peer", from: "uds:/a.sock" } }))!;
+    expect(a.text).toBe("hello");
+  });
+
+  it("recognises an arrival that carries an envelope but no origin", () => {
+    // A sender whose host stamps no origin is still a peer. The live path already treated this as an
+    // arrival; before this task the cold path read it as an ordinary local prompt.
+    const a = peerArrival(row({ origin: undefined }))!;
+    expect(a.text).toBe("hello");
+    expect(a.origin).toBeUndefined();
+  });
+
+  it("truncates at the SAME ceiling on every input shape", () => {
+    const long = "x".repeat(MAX_FRAME_CHARS + 500);
+    expect(peerArrival(row({ origin: { kind: "peer", body: long } }))!.text).toHaveLength(MAX_FRAME_CHARS);
+    const framed = `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">${long}</cross-session-message>`;
+    expect(peerArrival(row({ origin: undefined, message: { role: "user", content: framed } }))!.text).toHaveLength(MAX_FRAME_CHARS);
+  });
+
+  it("reports the frame's uuid, and undefined when it is not a string", () => {
+    expect(peerArrival(row())!.uuid).toBe("cccccccc-1111-4111-8111-cccccccccccc");
+    expect(peerArrival(row({ uuid: 7 }))!.uuid).toBeUndefined();
+  });
+
+  it("says nothing about an ordinary local user row", () => {
+    expect(peerArrival(row({ origin: { kind: "human" }, message: { role: "user", content: "a local prompt" } }))).toBeUndefined();
+  });
+
+  it("says nothing about a non-user frame", () => {
+    expect(peerArrival({ type: "assistant", origin: { kind: "peer" } })).toBeUndefined();
+  });
+
+  it("handles block-array content", () => {
+    const a = peerArrival(row({ origin: undefined, message: { role: "user", content: [{ type: "text", text: ENVELOPE_TEXT }] } }))!;
+    expect(a.text).toBe("hello");
+  });
+});
+```
+
+Then append to `test/unit/appserver/items/replay.test.ts` the two cases the cold path previously got wrong. Use the file's real entry point, `itemsFromTranscript`, and its whole-item `toEqual` style:
+
+```ts
+  it("reads an envelope-only peer row as an arrival, like the live path", () => {
+    const rows = [{ type: "user", uuid: "ffffffff-1111-4111-8111-ffffffffffff", parent_tool_use_id: null,
+      message: { role: "user", content: "Another Claude session sent a message: <cross-session-message from=\"uds:/a.sock\" from-session=\"s1\" hop-chain=\"a\" from-name=\"peer\" from-mode=\"prompting\">hello</cross-session-message>" } }];
+    expect(itemsFromTranscript(rows as never).filter((i) => i.type === "userMessage"))
+      .toEqual([{ type: "userMessage", id: "ffffffff-1111-4111-8111-ffffffffffff", text: "hello" }]);
+  });
+
+  it("truncates a replayed peer body at the same ceiling the live path uses", () => {
+    const long = "y".repeat(MAX_FRAME_CHARS + 500);
+    const rows = [{ type: "user", uuid: "99999999-1111-4111-8111-999999999999", parent_tool_use_id: null,
+      message: { role: "user", content: "x" }, origin: { kind: "peer", from: "uds:/a.sock", body: long } }];
+    expect(itemsFromTranscript(rows as never).filter((i) => i.type === "userMessage")[0].text).toHaveLength(MAX_FRAME_CHARS);
+  });
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run both files.
+Expected: FAIL — `peerArrival` does not exist, and the two replay cases produce raw text and an untruncated body.
+
+- [ ] **Step 3: Move the rule into `src/peer/address.ts`**
+
+Add, beside `buildEnvelope` (whose mirror this is):
+
+```ts
+/** The envelope in the INBOUND direction — `buildEnvelope`'s mirror, and deliberately its neighbour so the
+ *  grammar cannot drift between the two files that would otherwise each hold half of it. */
+const ENVELOPE = /<cross-session-message\s[^>]*>([\s\S]*?)<\/cross-session-message>/;
+
+/** What a frame IS, when it is a cross-session arrival — and `undefined` when it is not.
+ *
+ *  ONE reader for both paths (the live `onFrame` observer and the cold transcript replay). Before this
+ *  existed the two agreed by construction, which is not the same as agreeing: they diverged on a body
+ *  above the cap, on a row whose framer supplied no decoded body, and on a row carrying an envelope but
+ *  no origin at all — each time producing two different texts under ONE id, which is exactly the input a
+ *  client's id-dedup cannot resolve.
+ *
+ *  Recognition is `origin.kind === "peer"` first, because that is the CLI's own statement about the frame
+ *  and is not reconstructible from text; the envelope match is the fallback for a sender whose host
+ *  stamps no origin. The text is the framer's `body` when it supplied one — documented byte-exact with
+ *  what the model saw — else the envelope's own capture, which also drops the CLI-authored
+ *  "Another Claude session sent a message: " preamble that is not what the peer wrote. */
+export function peerArrival(frame: unknown): { text: string; uuid: string | undefined; origin: Record<string, unknown> | undefined } | undefined {
+  const f = frame as any;
+  if (f?.type !== "user") return undefined;
+  const origin = f.origin && typeof f.origin === "object" ? f.origin as Record<string, unknown> : undefined;
+  const isPeer = origin?.kind === "peer";
+  const content = f.message?.content;
+  const raw = typeof content === "string" ? content : JSON.stringify(content ?? "");
+  const envelope = ENVELOPE.exec(raw);
+  if (!isPeer && !envelope) return undefined;
+  const body = typeof origin?.body === "string" ? origin.body : (envelope ? envelope[1] : raw);
+  return {
+    // ONE ceiling, applied on every input shape. The body is written by a process this server does not
+    // control, and a cap enforced on one path only is a cap that changes what a message says depending on
+    // who is reading it.
+    text: body.slice(0, MAX_FRAME_CHARS),
+    uuid: typeof f.uuid === "string" ? f.uuid : undefined,
+    origin,
+  };
+}
+```
+
+- [ ] **Step 4: Both callers read the one rule**
+
+In `src/appserver/peerInbound.ts`, `noteArrival` keeps its queueing, capping and broadcasting, and delegates the *decision* — is this an arrival, and what does it read as — to `peerArrival`. Delete the module-private `ENVELOPE` regex and the inline body/uuid derivation; keep the `randomUUID()` fallback for a frame with no usable uuid, which is a live-only concern.
+
+In `src/appserver/items/replay.ts`, the direct user-row branch asks the same function first:
+
+```ts
+      if (!hasToolResult) {
+        // The SAME reader the live arrival path uses (peer/address.ts). Asking it here is what makes the
+        // cold-vs-live id stitch this file's comment above depends on true for peer rows by construction
+        // of one rule, rather than by two files happening to hold the same one.
+        const arrival = peerArrival(f);
+        items.push(arrival
+          ? userItem(arrival.text, String(f.uuid ?? ""))
+          : userItem(flattenForDisplay(content as UserTurnInput), String(f.uuid ?? "")));
+        continue;
+      }
+```
+
+**Verify rather than assume:** that no ordinary local user row can match `peerArrival`. A local prompt that merely quotes the string `<cross-session-message …>` — a transcript of this very work would — must still read as an ordinary prompt on both paths. If the envelope-only fallback makes that possible, say so and tighten the recognition rather than shipping it; a review prompt that pastes an envelope is a real row that exists in this repository's own transcripts.
+
+- [ ] **Step 5: Gates and commit**
+
+Run: both test files, then `npx vitest run test/unit/peer`, `npx vitest run test/unit/appserver`, `npx vitest run test/unit`, `npx tsc --noEmit`, then `node scripts/drift-check.mjs` from `CC-to-SDK/`.
+Expected: all green; the gate's row count is unchanged.
+
+```bash
+git add CC-to-SDK/harness/src/peer/address.ts CC-to-SDK/harness/src/appserver/peerInbound.ts CC-to-SDK/harness/src/appserver/items/replay.ts CC-to-SDK/harness/test/unit/peer/address.test.ts CC-to-SDK/harness/test/unit/appserver/items/replay.test.ts
+git commit -m "refactor(peer): one reader decides what an arrival is, and what it reads as"
+```
+
+---
+
 ### Task 11: The runtime policy setter — a spike first, then whichever implementation the measurement licenses
 
 **BLOCKED until 2026-08-31 00:00 Asia/Seoul** (the account's weekly limit). Step 1 is keyed. Nothing else in the plan depends on this task: Stage B is complete and shippable without it, and `crossSessionInbound` is already decided at admission on both spines (Task 8) and reported by `thread/get`.
