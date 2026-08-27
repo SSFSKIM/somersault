@@ -160,6 +160,15 @@ to expansion precedence — see below).
 - **D6 (`file:` NO-OP):** canon routes file: to its editor panel (`fileLinkOpensInPanel`); we have no
   panel. Opening in the browser would diverge from canon; no-op with the span still non-toggling. Parked.
 - **D7 (500 ms timer via injectable clock):** house testability rule; canon's `pE=500` verbatim.
+- **D9 (whole-round review — press-bound href):** the opener requires the href resolved at PRESS time to
+  still be the href at RELEASE; a streaming reflow that moves a different link under the cell refuses to
+  open. Canon evidence is silent on press-binding — adopted as a deliberate NARROWING guard (it can only
+  refuse opens canon might have made on shifted content, never add one).
+- **D10 (whole-round review — popup modifier gate):** the suggestion popup's `pressAt` never sees
+  modified presses, restoring the pre-bl5 contract the sink rework had silently widened.
+- **D11 (whole-round review — win32 launcher):** `rundll32 url.dll,FileProtocolHandler <url>` (single
+  argv, no shell) for Windows; REJECTED `cmd /c start` (metacharacter-injectable). $BROWSER still wins
+  everywhere; the headless guard stays linux-only.
 - **D8 (new canon clickable kinds NOTED, not built):** 2.1.246's `isItemClickable` adds
   `collapsed_read_search`, `goal_status` attachments with reason, and advisor results — recorded for the
   parity doc; out of round scope.
@@ -186,3 +195,5 @@ Pending — written at finish.
   prefix-only `b()` verbatim (dimension-reader discriminators would diverge);
   F5 window-activation guard BUILT (focus plumbing existed), xterm.js/isVscodeTerm stand-down PARKED into
   D5 (no plumbing), gate relabelled partial transcription.
+- v3 (whole-round codex review, 3 P2, all accepted → D9/D10/D11): press-bound href narrowing guard;
+  popup modifier gate restored; win32 rundll32 launcher.
