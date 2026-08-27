@@ -23,6 +23,7 @@ import { renderWithKeymap, tick } from "./keysTestUtil.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import type { ChatSession } from "../../src/tui/useChat.js";
 import type { TranscriptBootstrapEntry } from "../../src/tui/transcriptModel.js";
+import type { HostEvent } from "../../src/host/wire.js";
 import { themeTokens } from "../../src/tui/theme.js";
 
 const openUrlMock = vi.fn();
@@ -63,6 +64,25 @@ const LINK_LABEL_BETA = "beta";
 const CROSS_LINK_DOC: readonly TranscriptBootstrapEntry[] = [
   assistantText(`open [${LINK_LABEL_ALPHA}](${LINK_URL_ALPHA}) or [${LINK_LABEL_BETA}](${LINK_URL_BETA}) now`, "link2"),
 ];
+
+// Fix-wave (bl5 round review, finding 1, P2): a document that OVERFLOWS the 24-row terminal, alpha and beta
+// on adjacent bottom rows (same shape as `fold-click.test.tsx`'s own `TWO_CLUSTER_DOC` — 30 pad lines put
+// the tail against the sticky bottom, so a line arriving on the stream slides the WHOLE document up under a
+// held button with no gesture anywhere). Adjacent rather than two-apart: that file's own `streamLine` helper
+// moves the tail by exactly one row per pushed message, proven there by the identical mechanism, so ONE push
+// is enough to slide beta onto the exact cell alpha was pressed on.
+const REFLOW_PAD: readonly TranscriptBootstrapEntry[] = Array.from({ length: 30 }, (_, i) => assistantText(`PAD-${i}`, `rp${i}`));
+const REFLOW_LINK_DOC: readonly TranscriptBootstrapEntry[] = [
+  ...REFLOW_PAD,
+  assistantText(`open [${LINK_LABEL_ALPHA}](${LINK_URL_ALPHA}) now`, "refa"),
+  assistantText(`open [${LINK_LABEL_BETA}](${LINK_URL_BETA}) now`, "refb"),
+];
+/** One assistant line as it arrives LIVE on the host event stream — `fold-click.test.tsx`'s own `streamLine`
+ *  (the model talking, not the test scrolling), reproduced locally per this suite's no-cross-file-test-
+ *  imports convention (`hover-owner.test.tsx`'s header, `CLICKABLE_DOC`'s own note above). */
+const streamLine = (fake: ReturnType<typeof fakeRemote>, id: string): void =>
+  fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: `us-${id}`,
+    message: { id: `ms-${id}`, content: [{ type: "text", text: `NEW-${id}` }] } } } as HostEvent);
 
 // Fix-wave (task-3 review, mutation 3): the selection-paint seam (`selectionPaint.test.tsx`'s own idiom) —
 // `hasSelection()` requires a non-null `focus`, so a stray one-cell anchor from a modified press is invisible
@@ -346,6 +366,96 @@ describe("T-LINKOPEN Task 3 — alt/ctrl-click on a link cell arms the 500 ms op
 
     expect(openUrlMock).not.toHaveBeenCalled();
     expect(clock.handles.length).toBe(0);                          // nothing was ever armed, for EITHER url
+    r.unmount();
+  });
+
+  // Fix-wave (bl5 round review, finding 1, P2): the SAME (col,row) on press and release is not enough — the
+  // cell's own CONTENT must not have moved. Before the fix, the release resolved `linkHrefAt` fresh at ITS
+  // OWN cell and opened on that answer alone, so a reflow between press and release that slid a DIFFERENT
+  // link under the identical coordinates opened the WRONG url. `REFLOW_LINK_DOC` already overflows the
+  // screen (30 pad lines, `fold-click.test.tsx`'s own proven mechanism), so a single streamed line — no
+  // gesture anywhere — slides the whole tail up by exactly one row: beta inherits alpha's former cell, and
+  // alpha itself scrolls fully off the top.
+  it("a same-cell release whose HREF changed mid-gesture never opens (content reflow under a held press)", async () => {
+    setGates({ TERM_PROGRAM: "iTerm.app" });
+    const clock = linkClock();
+    const r = await mount(REFLOW_LINK_DOC, clock);
+    const alpha = locate(r.lastFrame(), LINK_LABEL_ALPHA);
+    expect(locate(r.lastFrame(), LINK_LABEL_BETA).row).toBe(alpha.row + 1);   // premise: adjacent, same column
+
+    r.stdin.write(press(alpha.col, alpha.row, ALT));
+    await tick();
+    streamLine(r.fake, "shift");
+    await settle();
+    expect(locate(r.lastFrame(), LINK_LABEL_BETA)).toEqual(alpha);           // premise: beta really took the cell
+
+    r.stdin.write(release(alpha.col, alpha.row, ALT));
+    await settle();
+
+    expect(openUrlMock).not.toHaveBeenCalled();
+    expect(clock.handles.length).toBe(0);                          // the mismatched href was never armed
+    r.unmount();
+  });
+
+  // The control for the cell above, on the identical document and the identical press: nothing arrives
+  // before the release, so the press-time and release-time hrefs agree and the open proceeds exactly as
+  // every other cell in this file's opening describe already proves — pinning that the fix NARROWS only the
+  // reflow case and does not regress the ordinary alt-click path.
+  it("a same-cell release whose href did NOT change still opens (the fix narrows, it does not break the happy path)", async () => {
+    setGates({ TERM_PROGRAM: "iTerm.app" });
+    const clock = linkClock();
+    const r = await mount(REFLOW_LINK_DOC, clock);
+    const alpha = locate(r.lastFrame(), LINK_LABEL_ALPHA);
+
+    r.stdin.write(press(alpha.col, alpha.row, ALT));
+    await tick();
+    r.stdin.write(release(alpha.col, alpha.row, ALT));
+    await settle();
+    expect(openUrlMock).not.toHaveBeenCalled();                    // deferred — not yet
+    clock.fire(clock.latest());
+    expect(openUrlMock).toHaveBeenCalledTimes(1);
+    expect(openUrlMock).toHaveBeenCalledWith(LINK_URL_ALPHA, undefined);
+    r.unmount();
+  });
+});
+
+describe("T-LINKOPEN fix-wave finding 2 — the popup never accepts a MODIFIED press", () => {
+  // Pre-bl5, the blanket modifier drop ran BEFORE `popupHitRef.current?.pressAt(...)`, so the popup never
+  // saw a modified click at all. T-LINKOPEN Task 3 moved the modifier handling below that call to make room
+  // for the transcript link opener, which let an alt/ctrl-click on a visible popup row reach `pressAt` →
+  // `onSelect` for the first time — restored here by gating the call itself on `!modified`, the smallest
+  // change that puts the popup back to never seeing one, exactly `popup-hover.test.tsx`'s own palette-opening
+  // technique (typing `/`, reading the popup rows out of the painted frame) reproduced locally per this
+  // suite's no-cross-file-test-imports convention.
+  const popupRowIndices = (frame: string | undefined): number[] => {
+    const idxs: number[] = [];
+    rowsOf(frame).forEach((l, idx) => { if (/^ {2}\/[a-zA-Z]/.test(l)) idxs.push(idx); });
+    return idxs;
+  };
+  const popupRowOf = (frame: string | undefined, i: number): number => {
+    const idxs = popupRowIndices(frame);
+    expect(idxs.length, `fewer than ${i + 1} popup rows painted:\n${clean(frame)}`).toBeGreaterThan(i);
+    return idxs[i]! + 1;
+  };
+  const POPUP_COL = 5;   // two leading spaces of paddingX + "/" — comfortably inside every command's own row
+
+  it("alt-click on a command-palette row selects nothing — the query and the popup are untouched", async () => {
+    const clock = linkClock();
+    const r = await mount([], clock);
+    r.stdin.write("/");
+    await settle();
+    await waitFor(() => clean(r.lastFrame()).includes("/model"));
+    const row = popupRowOf(r.lastFrame(), 0);
+    const before = r.lastFrame();
+
+    r.stdin.write(press(POPUP_COL, row, ALT));
+    await tick();
+    r.stdin.write(release(POPUP_COL, row, ALT));
+    await settle();
+
+    expect(r.lastFrame()).toBe(before);                             // nothing selected — bl5's own regression
+    expect(openUrlMock).not.toHaveBeenCalled();
+    expect(clock.handles.length).toBe(0);                           // the dock band has no link under it either
     r.unmount();
   });
 });

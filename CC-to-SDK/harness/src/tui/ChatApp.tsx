@@ -954,7 +954,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // (alt/ctrl) sets `target: undefined` deliberately — never resolved via `clickTargetAt` — which is what
   // makes "a modified click never toggles" true by construction at the release's own `target !== undefined`
   // guard, with no second gate anywhere to keep in sync.
-  const tapAnchorRef = useRef<{ col: number; row: number; target: string | undefined; isWindowActivation: boolean } | null>(null);
+  //   Fix-wave (bl5 round review, finding 1, P2) — `href` RIDES THE SAME ANCHOR TOO, for a reflow reason
+  // `target` never had: a streaming transcript can reflow BETWEEN a modified press and its release, so the
+  // cell the press named can end up under a completely different link by the time the release fires. Only a
+  // MODIFIED press ever populates it (`linkHrefAt` resolved right there, at press time); the plain-click
+  // press branch below leaves it `undefined` because nothing on that path ever reads it back.
+  const tapAnchorRef = useRef<{ col: number; row: number; target: string | undefined; href: string | undefined; isWindowActivation: boolean } | null>(null);
   // F9 T-MOUSE Task 6 — MULTI-CLICK WINDOWING. Canon's own `clickCount` (R1 §2.2): the LAST press's cell,
   // timestamp AND resolved target, so the NEXT press can tell "is this a continuation of the same click
   // sequence" — 500 ms AND within 1 cell in BOTH axes (plan Global Constraints) AND, beyond canon (which
@@ -1076,7 +1081,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // anything (`tapAnchorRef.current` is already nulled above this branch by the sink's own preamble).
       // Same single `useMouseSink` as everything else here — the registry resolves only the innermost sink
       // (`registry.ts:98-100`), so a second registration would simply never fire.
-      if (popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
+      //   Fix-wave (bl5 round review, finding 2, P2) — `!modified` GATES THE CALL ITSELF, not just what it
+      // does with the answer. Pre-bl5, the blanket modifier drop ran BEFORE this line ever executed, so the
+      // popup never even SAW a modified press; T-LINKOPEN Task 3 moved the modifier handling below this
+      // check to make room for the transcript link opener, which let an alt/ctrl-click on a visible popup
+      // row reach `pressAt` → `onSelect` for the first time — a real regression, not a widened contract (no
+      // canon evidence anywhere says a popup accepts a modified click). Restoring the old shape here, rather
+      // than reordering the two branches, keeps the modified-press branch immediately below unconditional:
+      // a modified press over the popup's own band still falls into it and records a (harmless, dock-side)
+      // anchor exactly as it would over a plain transcript cell with nothing under it.
+      if (!modified && popupHitRef.current?.pressAt(e.col, e.row) === true) { lastPressRef.current = null; return; }
       // T-LINKOPEN Task 3 — A MODIFIED PRESS RECORDS ITS OWN ANCHOR AND STOPS THERE. It must not start a
       // selection, and it must not extend or restart the multi-click run — `lastPressRef` is left exactly as
       // it was, so an alt/ctrl click can neither poison a plain-click sequence running either side of it nor
@@ -1086,9 +1100,15 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
       // `isWindowActivation` is `KeymapProvider`'s own stamp (the one place that sees every parsed event in
       // stream order) carried from this press to the release it pairs with, exactly as canon's own click
       // object carries `pressIsWindowActivation`.
-      if (modified) { tapAnchorRef.current = { col: e.col, row: e.row, target: undefined, isWindowActivation: e.isWindowActivation === true }; return; }
+      //   Fix-wave (bl5 round review, finding 1, P2) — `href` is resolved HERE, at press time, and carried
+      // to the release the same way `isWindowActivation` is: the release used to ask `linkHrefAt` fresh at
+      // ITS OWN cell and open on the answer alone, so a reflow between press and release that slid a
+      // DIFFERENT link under the same (col,row) opened the wrong URL. `undefined` here (no link under the
+      // press at all) is a legitimate answer, not a bug — it flows into the release's equality check below
+      // and refuses exactly like a genuine mismatch would.
+      if (modified) { const href = hitmapRef.current?.linkHrefAt(e.col, e.row); tapAnchorRef.current = { col: e.col, row: e.row, target: undefined, href, isWindowActivation: e.isWindowActivation === true }; return; }
       const target = hitmapRef.current?.clickTargetAt(e.col, e.row);
-      tapAnchorRef.current = { col: e.col, row: e.row, target, isWindowActivation: e.isWindowActivation === true };
+      tapAnchorRef.current = { col: e.col, row: e.row, target, href: undefined, isWindowActivation: e.isWindowActivation === true };
       // F9 T-MOUSE Task 6 — clickCount against the LAST PRESS (not the last release): within 500 ms, within
       // 1 cell in both axes, AND the same resolved target (see `lastPressRef`'s own doc) extends the run;
       // anything else (too slow, too far, or a different cluster) restarts it at 1. `count >= 2` is canon's
@@ -1123,10 +1143,17 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // relying on that guard a second time. The same-cell check mirrors the one every other release path below
     // shares (`at.col`/`at.row`), which is what proves the `isWindowActivation` read off `at` here is the
     // RIGHT press's, not a stray one from earlier in the stream.
+    //   Fix-wave (bl5 round review, finding 1, P2) — SAME CELL IS NOT ENOUGH; SAME HREF IS REQUIRED TOO. A
+    // held button does not freeze the document under it (`fold-click.test.tsx`'s own T10 (d′): a streamed
+    // line sliding the whole tail up is not a gesture, and canon never faces a buffer that moves under it in
+    // the first place). `href !== at.href` — including the undefined-at-press case, which never equals a
+    // resolved string — refuses rather than opens whatever now happens to sit at that coordinate; this is a
+    // pure NARROWING of an already-gated path, so it can only refuse opens canon's own gate never guaranteed
+    // in the first place, never widen one.
     if (modified) {
       if (at && at.col === e.col && at.row === e.row) {
         const href = hitmapRef.current?.linkHrefAt(e.col, e.row);
-        if (href !== undefined && shouldOpenOnClick({ alt: e.alt, ctrl: e.ctrl, isWindowActivation: at.isWindowActivation }, process.env, process.platform)) {
+        if (href !== undefined && href === at.href && shouldOpenOnClick({ alt: e.alt, ctrl: e.ctrl, isWindowActivation: at.isWindowActivation }, process.env, process.platform)) {
           armLinkOpen(href);
         }
       }
