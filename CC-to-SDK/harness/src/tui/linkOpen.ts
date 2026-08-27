@@ -107,11 +107,25 @@ function isHeadlessLinux(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): boo
  *  itself does not block the click handler on the child's exit, and `openUrl`'s own signature is `void`.
  *  A synchronous throw from `spawn` (a stub simulating "command not found" without the child's own
  *  `error` event, or a real ENOENT on some platforms) and the child's async `error` event are both
- *  swallowed — there is nothing left here to report a spawn failure to. */
+ *  swallowed — there is nothing left here to report a spawn failure to.
+ *  Fix-wave (bl5 round review, finding 3, P2) — WIN32 GOT NONE OF THIS. The un-widened fallback handed
+ *  every win32 box `xdg-open`, a binary that does not exist there: `spawn` throws or the child emits
+ *  `error`, both already swallowed above, so every qualifying click was a silent no-op — a plain,
+ *  reachable-by-canon click on Windows, refusing to do anything, forever. The fix is `rundll32
+ *  url.dll,FileProtocolHandler <url>` — Windows' own documented "hand this URL to the shell's registered
+ *  handler" call, and the ONE Windows launcher that takes its argument as a real argv entry rather than a
+ *  string a sub-shell re-parses. `cmd /c start <url>` was deliberately NOT used: `cmd.exe`'s `start` reads
+ *  its argument through its OWN metacharacter grammar (`&|<>^"`), so a hostile `url` (this function's only
+ *  input, never sanitized upstream — `classifyLinkUrl` allowlists SCHEMES, not the rest of the string)
+ *  could inject a second command; `rundll32` receives it as one argv slot, same as `spawn(..., [url])`
+ *  already does for darwin/linux, so this platform gets the identical no-shell guarantee for free. */
 function launchBrowser(url: string, spawn: SpawnFn, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
-  const command = env.BROWSER || (platform === "darwin" ? "open" : "xdg-open");
+  const [command, args]: [string, string[]] = env.BROWSER ? [env.BROWSER, [url]]
+    : platform === "darwin" ? ["open", [url]]
+    : platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+    : ["xdg-open", [url]];
   try {
-    const child = spawn(command, [url], { stdio: ["ignore", "ignore", "ignore"], detached: true });
+    const child = spawn(command, args, { stdio: ["ignore", "ignore", "ignore"], detached: true });
     child.on("error", () => {});
     child.unref?.();
   } catch {

@@ -172,6 +172,48 @@ describe("openUrl — spawn wrapper (research-links.md §2a `f(r)`/`p()`)", () =
     const spawn = vi.fn(() => { throw new Error("ENOENT"); });
     expect(() => openUrl("https://example.com", { spawn, env: {}, platform: "darwin" })).not.toThrow();
   });
+
+  // Fix-wave (bl5 round review, finding 3, P2). Before this fix, win32 fell through to the darwin/linux
+  // ternary's `xdg-open` branch — a binary that does not exist on Windows — so every qualifying click was a
+  // silent no-op there (the ENOENT is swallowed by the same `try`/`child.on("error")` pair the cell above
+  // exercises). `rundll32 url.dll,FileProtocolHandler <url>` is Windows' own "hand this to the registered
+  // handler" call, and — like `open`/`xdg-open` above — the url travels as its OWN argv entry, never through
+  // `cmd /c start`'s shell grammar (`&|<>^"` are live metacharacters there; a malicious `url` could inject a
+  // second command). `classifyLinkUrl` allowlists the URL's SCHEME, not the rest of the string, so the argv
+  // boundary here is the only thing standing between a crafted path/query and command injection.
+  it("win32 default (no $BROWSER) spawns 'rundll32' via url.dll, not a shell", () => {
+    const spawn = vi.fn(() => fakeChild()) as unknown as typeof realSpawn;
+    openUrl("https://example.com", { spawn, env: {}, platform: "win32" });
+    expect(spawn).toHaveBeenCalledWith(
+      "rundll32",
+      ["url.dll,FileProtocolHandler", "https://example.com"],
+      expect.objectContaining({ stdio: ["ignore", "ignore", "ignore"] }),
+    );
+  });
+
+  it("$BROWSER override wins on win32 too, exactly as it does on darwin/linux", () => {
+    const spawn = vi.fn(() => fakeChild()) as unknown as typeof realSpawn;
+    openUrl("https://example.com", { spawn, env: { BROWSER: "firefox" }, platform: "win32" });
+    expect(spawn).toHaveBeenCalledWith(
+      "firefox",
+      ["https://example.com"],
+      expect.objectContaining({ stdio: ["ignore", "ignore", "ignore"] }),
+    );
+  });
+
+  // `isHeadlessLinux` names `platform==="linux"` explicitly (openUrl's own guard above), so this is really
+  // pinning that the guard's scope never silently widens: the identical env a linux box would refuse under
+  // (no DISPLAY, no WAYLAND_DISPLAY, no BROWSER) still spawns on win32 — the DISPLAY concept does not exist
+  // there and must never gate it.
+  it("win32 is NOT subject to the linux headless-DISPLAY guard", () => {
+    const spawn = vi.fn(() => fakeChild()) as unknown as typeof realSpawn;
+    openUrl("https://example.com", { spawn, env: {}, platform: "win32" });
+    expect(spawn).toHaveBeenCalledWith(
+      "rundll32",
+      ["url.dll,FileProtocolHandler", "https://example.com"],
+      expect.objectContaining({ stdio: ["ignore", "ignore", "ignore"] }),
+    );
+  });
 });
 
 /** A minimal spawn-result stand-in: `openUrl` is fire-and-forget, so it only needs the shape it actually
