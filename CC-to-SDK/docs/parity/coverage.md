@@ -476,6 +476,19 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl5 round close-out — link-click opening + sniff-derived media type (2026-08-27)** — spec
+>   `docs/superpowers/specs/2026-08-26-bl5-linkopen-sniff-design.md`, ledger
+>   `.doperpowers/sdd/2026-08-26-bl5-round/`. **T-LINKOPEN** (merge `07f3385b01`): canon 2.1.246 FLIPPED —
+>   it now self-opens clicked transcript links (gated: alt/ctrl or Ghostty/Warp-darwin plain click, 500 ms
+>   multi-click-cancellable, 13-scheme allowlist, vscode stand-down, activation-press veto); ccx
+>   transcribes the pipeline end to end (OSC 8 spans on every row kind, link-before-fold precedence,
+>   press-bound href, `$BROWSER`/`open`/`xdg-open`/win32 `rundll32`), pty-proven in the real binary.
+>   **T-SNIFF** (merge `81fbd8d52f`): every image chain now DERIVES `media_type` from a byte sniff (canon
+>   `b()` verbatim) instead of trusting the declaration — the API's mismatch-400 is locally unreachable;
+>   `admitBytes`'s PNG/JPEG-only gap (refused valid GIF/WebP app-server items) fixed. Campaign:
+>   plan-review 5 findings (2 high, both would have shipped broken wiring) → whole-round 3 P2 → fix wave →
+>   re-review ZERO. Live mislabelled-block cell SKIPPED-429 until the weekly cap resets (Aug 31).
+
 > - **bl4 round close-out — the two F10 owner-deferred follow-ups (2026-08-24)** — spec
 >   `docs/superpowers/specs/2026-08-24-bl4-clickgate-gifwebp-design.md`, ledger
 >   `.doperpowers/sdd/2026-08-24-bl4-round/`. **T-GIFWEBP** (merge `26a1d8ddab`, 3 tasks): the staged-image

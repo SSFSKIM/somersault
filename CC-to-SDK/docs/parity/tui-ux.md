@@ -1000,6 +1000,37 @@ for the converged tally). Canon note: this round reads the installed 2.1.237 bun
 on disk); the leaked source tree is confirmed OLDER than canon for the clickable subsystem — its
 `is_error → not clickable` branch is the opposite of shipped canon.
 
+**bl5 close-out (2026-08-27) — link-click opening + sniff-derived media type, one round.**
+**T-LINKOPEN** (merge `07f3385b01`, 5 tasks + fix waves): canon **2.1.246 FLIPPED the link contract** —
+where 2.1.237 deferred URL-opening to the terminal (bl4's recorded delta), the installed binary now
+SELF-OPENS a clicked transcript link behind a gate engineered to fire exactly where the terminal would
+not have: alt/ctrl-click anywhere non-VSCode, ANY click on macOS Ghostty/Warp (cmd+click arrives without
+an SGR modifier bit), alt-screen only, 500 ms deferred and multi-click-cancellable, 13-scheme allowlist,
+`$BROWSER || open`/`xdg-open`/win32 `rundll32` spawn. ccx transcribes it: `linkRangesOf` recovers OSC 8
+spans on EVERY row kind (prose markdown links included — the old D12 accepted gap is closed), links
+resolve BEFORE fold anchors (canon's `allowDefault`-first row handler; bl4's fold-anchor-first order was
+a latent divergence), `ChatApp`'s sink routes gated releases through a press-href-bound 500 ms timer, and
+a window-activation press (focus-in immediately preceding) never opens. Proven in the REAL binary over a
+pty (`.doperpowers/sdd/2026-08-26-bl5-round/t-linkopen-pty-evidence.txt`, independently re-run by the
+task reviewer): alt-click opens the exact URL; a fold-row link opens WITHOUT toggling (frame
+byte-identical); hover stays suppressed on an expanded owner. Parked with evidence: bare-URL regex
+recovery over the reconstructed logical line (D3), XTVERSION/xterm.js-host stand-down + `isVscodeTerm`
+(D5 — gate is a PARTIAL transcription, `TERM_PROGRAM` subset), `file:` opening (D6 — canon routes to an
+editor panel ccx lacks). New canon clickable kinds recorded, not built (D8): `collapsed_read_search`,
+`goal_status` attachments with reason, advisor results. **T-SNIFF** (merge `81fbd8d52f`, 5 tasks): canon
+never validates a declared image media type — it DERIVES `media_type` from a byte sniff of the final
+bytes (`P(a)=b(a)??"image/png"`, offset 184,082,132) — and the API 400s a mismatch whole-request
+(live-verified). ccx now derives at every chain: `sniffImageMediaType` (canon `b()` verbatim,
+prefix-only) in the zero-import `imageDims.ts`; `checkImageBlock` overwrites the declared type;
+`stageBlocks` stages the corrected type; the app-server registry's chunk-0 allowlist relaxes to a
+bounded hint (format decided at completion from bytes); and `admitBytes`'s PNG/JPEG-only sniff — a real
+bl4 coverage gap that refused valid GIF/WebP app-server items — widens to four formats. The live
+mislabelled-block cell is committed but SKIPPED-429 (weekly account cap, resets Aug 31). No §-score
+movement: both land inside rows already scored (recorded-delta closure). External campaign: pre-execution
+plan review (5 findings, 2 high — the ChatApp-owns-dispatch and link-before-fold catches that would have
+shipped dead/wrong wiring) → whole-round review 3 P2 (press-bound href; popup modifier gate; win32
+launcher) → fix wave → scoped re-review ZERO. Ledger `.doperpowers/sdd/2026-08-26-bl5-round/round.md`.
+
 ## Recorded additions (ours, outside the parity denominator)
 
 On a **cloning** scorecard, scoring ✅ for something upstream does not have at all is a category error —
