@@ -183,7 +183,27 @@ to expansion precedence — see below).
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+Round CLOSED 2026-08-27. Both tickets merged --no-ff (T-SNIFF `81fbd8d52f`, T-LINKOPEN `07f3385b01`),
+merged-tree gates green throughout; campaign: pre-execution plan review 5 findings (all accepted, F5
+partially) → per-task reviews with reviewer-run mutations (silent mutations produced two coverage fix
+waves, both re-approved by their ORIGINAL reviewers) → whole-round review 3 P2 → one fix wave
+(`476a1e8a75`, `1656f1dad3`) → scoped re-review ZERO. Real-binary pty acceptance independently
+reproduced by its reviewer.
+
+What the round proved again: (1) canon re-verification per subsystem is not optional — the flip from
+"defers" (2.1.237) to "self-opens" (2.1.246) turned a parked convenience into a parity regression in
+waiting, and the sniff item's own title ("cross-check") encoded a wrong premise canon's derive posture
+overturned; (2) the pre-execution plan review remains the cheapest gate — its two high findings
+(ChatApp owns dispatch; link-before-fold) would each have shipped a dead or wrong feature that unit
+tests around the planned seams would NOT have caught; (3) implementers who follow quoted canon over my
+prose caught two spec-text errors (3-byte JPEG vs the length<4 gate; "12" vs 13 allowlist entries) —
+verbatim excerpts in research docs beat paraphrase.
+
+Residue: live mislabelled-block API cell SKIPPED-429 until the weekly cap resets (Aug 31) — rerun then;
+`imageCodec-encode` retry-ladder test confirmed flaky standalone (pre-existing); ccx attach drops the
+first frame after a fresh attach (follow() establishment race — new discovery, worked around in the pty
+driver, candidate backlog ticket); owner-parked: D3 bare-URL recovery, D5 XTVERSION probes, D6 file:
+panel, D8 new canon clickable kinds (collapsed_read_search / goal_status / advisor).
 
 ## Revision Notes
 
