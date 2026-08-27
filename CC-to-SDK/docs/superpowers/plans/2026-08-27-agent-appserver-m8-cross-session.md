@@ -2902,6 +2902,136 @@ git commit -m "feat(appserver): an arrival is announced, carrying the one identi
 
 ---
 
+### Task 10c: One arrival, one text — the replay path adopts the framer's decoding too
+
+**Files:**
+- Modify: `src/appserver/items/replay.ts`
+- Test: `test/unit/appserver/items-replay.test.ts` (or whichever file already covers `replay.ts` — find it rather than creating a second one)
+
+**Interfaces:**
+- Consumes: from Task 10b: the rule that a peer arrival's display text is `origin.body` when the framer supplied one.
+- Produces: nothing new; it restores an invariant this file already declares.
+
+**The defect, and why this file is where it is fixed.** Task 10b made the LIVE arrival item carry `origin.body` — the body the framing process already decoded, byte-exact with what the model saw. The COLD path still builds its item from the raw persisted text. Both items now carry the same id (the frame's `uuid`, which is the point of Task 10b) and different text. A client that deduplicates by id therefore keeps whichever copy it happened to see first, so the text a user reads depends on whether they were subscribed at the time.
+
+`items/replay.ts` states the governing rule itself, in the comment above the very line that needs changing: *"the cold-vs-live id stitch rests on the two paths producing identical items."* Task 10b broke that for peer arrivals. This task restores it, on the side that is wrong — the live path is right, because the SDK's own field documentation says to render `origin.body` "instead of re-parsing the message text".
+
+**This is measured, not inferred.** Persisted transcript rows for real cross-session messages on this machine carry `origin` with `kind: "peer"`, `body`, `verifiedPeerPid`, `msg_id`, `from`, `fromMode` and `name`. The raw persisted `content` additionally carries a CLI-added preamble (`"Another Claude session sent a message: <cross-session-message …>"`), which is a second, independent reason the raw text is the wrong thing to display: it is not what the peer sent, and it is not what `peer/send` wrote.
+
+**Worth recording while you are here.** The persisted `origin` carries **`msg_id`**, which the installed SDK's `SDKMessageOrigin` peer variant does not declare. That is the sender's own correlation id — the same id `peer/send` mints and `peer/messageStatus` reports against — and it is strictly more useful for correlation than anything currently on the notification. Do not add it to the notification in this task; `origin` already travels verbatim, so it is already reaching clients. Record the undeclared field in the spec's `## Surprises & Discoveries` as Step 4.
+
+---
+
+- [ ] **Step 1: Write the failing test**
+
+Find the existing test file for `items/replay.ts` and append. Build the persisted row the way the measurement above found it — preamble in `content`, decoded body in `origin`:
+
+```ts
+it("a replayed peer arrival displays the framer's decoded body, not the raw envelope", () => {
+  const rows = [{
+    type: "user",
+    uuid: "cccccccc-1111-4111-8111-cccccccccccc",
+    parent_tool_use_id: null,
+    message: { role: "user", content: "Another Claude session sent a message: <cross-session-message from=\"uds:/a.sock\" from-session=\"s1\" hop-chain=\"a\" from-name=\"peer\" from-mode=\"prompting\">hello</cross-session-message>" },
+    origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242, msg_id: "m-1" },
+  }];
+  const items = replayItems(rows as never);
+  const user = items.filter((i) => i.type === "userMessage");
+  expect(user).toHaveLength(1);
+  // The id is the frame's uuid — that is what makes the live/cold stitch possible at all.
+  expect(user[0].id).toBe("cccccccc-1111-4111-8111-cccccccccccc");
+  // And the TEXT must equal what the live path emits for the same arrival. Same id plus different text
+  // is worse than either alone: a client that dedupes by id shows whichever copy arrived first, so the
+  // rendered message depends on whether anyone happened to be subscribed.
+  expect(user[0].text).toBe("hello");
+  expect(user[0].text).not.toContain("cross-session-message");
+  expect(user[0].text).not.toContain("Another Claude session sent");
+});
+
+it("an ordinary local user row is untouched by the peer rule", () => {
+  const rows = [{
+    type: "user",
+    uuid: "dddddddd-1111-4111-8111-dddddddddddd",
+    parent_tool_use_id: null,
+    message: { role: "user", content: "just a local prompt" },
+    origin: { kind: "human" },
+  }];
+  const user = replayItems(rows as never).filter((i) => i.type === "userMessage");
+  expect(user[0].text).toBe("just a local prompt");
+});
+
+it("a peer row whose framer supplied no body falls back to the raw text", () => {
+  // origin.body is documented as present only when the turn is exactly one harness-formed envelope.
+  const rows = [{
+    type: "user",
+    uuid: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee",
+    parent_tool_use_id: null,
+    message: { role: "user", content: "two envelopes, unframed" },
+    origin: { kind: "peer", from: "uds:/a.sock" },
+  }];
+  const user = replayItems(rows as never).filter((i) => i.type === "userMessage");
+  expect(user[0].text).toBe("two envelopes, unframed");
+});
+```
+
+Adapt the import and the entry-point name to whatever the file actually exports — read it first.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run the file with a `-t` filter on the new tests.
+Expected: FAIL — the first test's `text` is the full preamble-plus-envelope string.
+
+- [ ] **Step 3: Prefer the framer's decoding**
+
+In `src/appserver/items/replay.ts`, at the `userItem(flattenForDisplay(content as UserTurnInput), String(f.uuid ?? ""))` line, take the body from `origin` when it is there:
+
+```ts
+      if (!hasToolResult) {
+        // A PEER arrival's display text is the framer's, not ours — the same rule the live arrival path
+        // follows (peerInbound.ts), and the reason this branch exists at all: the comment above says the
+        // cold-vs-live id stitch rests on the two paths producing identical items, and these two paths
+        // now agree on the text as well as the id. The raw persisted `content` additionally carries a
+        // CLI-added preamble, so it is not what the peer sent either.
+        const body = f.origin?.kind === "peer" && typeof f.origin.body === "string" ? f.origin.body : undefined;
+        items.push(userItem(body ?? flattenForDisplay(content as UserTurnInput), String(f.uuid ?? "")));
+        continue;
+      }
+```
+
+**Verify rather than assume:** that `userItem`'s first parameter really is the display string on both paths, and that nothing else in this function or its callers re-derives the text from `content` afterwards. If the live and cold items differ in any other field for a peer row, say so in your report — the invariant is about the whole item, not only the text.
+
+- [ ] **Step 4: Record the undeclared field**
+
+Add to the spec's `## Surprises & Discoveries` in
+`CC-to-SDK/docs/superpowers/specs/2026-08-26-agent-appserver-m8-cross-session-design.md`:
+
+```
+- **The persisted peer `origin` carries `msg_id`, which the SDK does not declare.** Measured on this
+  machine's own transcripts (2026-08-27): a persisted cross-session row's `origin` holds
+  `{kind, from, fromMode, name, body, verifiedPeerPid, msg_id}`, while the installed SDK's
+  `SDKMessageOrigin` peer variant (sdk.d.ts 0.3.237) declares every one of those except `msg_id`. It is
+  the sender's own correlation id — the same value `peer/send` mints and `peer/messageStatus` reports
+  against — so a receiving client can tie an arrival to a specific send without this server correlating
+  anything. It reaches clients already, because `thread/peerMessage` carries `origin` verbatim; it is
+  recorded here because an undeclared field is one an SDK bump can remove without a type error.
+- **The persisted `content` is not what the peer sent.** The CLI prefixes the envelope with
+  `"Another Claude session sent a message: "` before persisting. Any path that renders a peer arrival
+  from raw transcript text therefore shows a preamble the sender never wrote — which is the second
+  reason, independent of the live/cold stitch, that `origin.body` is the display text.
+```
+
+- [ ] **Step 5: Gates and commit**
+
+Run: the replay test file, then `npx vitest run test/unit/appserver`, then `npx vitest run test/unit`, then `npx tsc --noEmit`, then `node scripts/drift-check.mjs` from `CC-to-SDK/`.
+Expected: all green; the gate's row count is unchanged by this task.
+
+```bash
+git add CC-to-SDK/harness/src/appserver/items/replay.ts CC-to-SDK/harness/test/unit/appserver/items-replay.test.ts CC-to-SDK/docs/superpowers/specs/2026-08-26-agent-appserver-m8-cross-session-design.md
+git commit -m "fix(appserver): a peer arrival reads the same live and replayed"
+```
+
+---
+
 ### Task 11: The runtime policy setter — a spike first, then whichever implementation the measurement licenses
 
 **BLOCKED until 2026-08-31 00:00 Asia/Seoul** (the account's weekly limit). Step 1 is keyed. Nothing else in the plan depends on this task: Stage B is complete and shippable without it, and `crossSessionInbound` is already decided at admission on both spines (Task 8) and reported by `thread/get`.
