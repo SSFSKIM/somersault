@@ -6,8 +6,11 @@ amendment; probe 115 (`probes/probes/115-dynamic-tool-raw-schema.ts`).
 **Sequencing:** executes AFTER the images round, on its own branch, reviewed as its own isolated diff.
 **Rev 4** — rev 2 absorbed the adversarial spec review (twelve findings), rev 3 the round-3 measurement that
 moved advertisement to the low-level MCP `Server`, and rev 4 closes execution (Revision Notes).
-**Status: SHIPPED keyless, 2026-08-24** — every keyed row is written, landed and unobserved; the first keyed
-run is due after 2026-08-26 1pm (Outcomes & Retrospective).
+**Status: SHIPPED and KEYED-OBSERVED, 2026-08-25** — the acceptance file ran 3/3 against a real engine and
+all three keyed riders are answered (Outcomes & Retrospective, final entry). One premise was corrected by
+the run: the permission-ordering claim holds under `permissionMode: "default"`, which the live file now
+pins — the harness default `auto` lets the SDK classifier allow a read-shaped call without consulting the
+broker (Surprises & Discoveries).
 
 ## Purpose
 
@@ -307,6 +310,25 @@ item in this spec has one unique number, which is what "spec row N" cites):
   `Server` — ListTools returns the client's declared JSON Schema VERBATIM (full Codex parity, exactly
   testable), CallTool validates with the converted zod (where passthrough/strict semantics live), and
   `_meta["anthropic/alwaysLoad"]` + `instructions` are set directly.
+- **The permission-ordering claim is a claim about CONSULTING modes (first keyed run, 2026-08-25).** The
+  harness's own default `permissionMode` is `auto`, whose SDK-side classifier allowed the read-shaped
+  `ticket_status` call without ever consulting the broker: `tool/callRequested` arrived with NO
+  `decision/requested` leg, and scenario A timed out waiting for a consult that mode never makes — while
+  scenario B went green under the same mode on the same attempt, proving the park trio does not depend on
+  the decision leg. The live file now pins `permissionMode: "default"` on its declaring threads, and under
+  it the consult parks first exactly as row 7 claims. No keyless row could have seen this: the fake engines
+  encode the consult, only the real classifier gets to skip it.
+- **`watchThreads` is existence-only fan-out, and the images live file paid for assuming otherwise (first
+  keyed run, 2026-08-25).** The M7 live file subscribes per thread and went green; the sibling
+  image-input file relied on `initialize{watchThreads:true}` alone, so every turn/item broadcast passed it
+  by and both legs timed out on `<nothing>` — a defect only a keyed run could surface, in a file whose only
+  prior run was the clean skip. Fixed by subscribing in its thread-start helper, then 2/2 green.
+- **All three keyed riders answered (probe 116, 2026-08-25).** `_meta` SURVIVES the SDK→CLI hop: a
+  `deferLoading: true` tool's call arrived only after a completed ToolSearch item, nonce intact. An AUDIO
+  tool result is ACCEPTED end to end (the turn completed; the model described the WAV it received), so the
+  `audio/*` MIME family guards a live path and the shipped shape stands. An unsettled park has NO
+  spontaneous production timeout at 180 s; `turn/interrupt` settles the turn (`status: "interrupted"`) and
+  the late `tool/callResult` earns `-33002 ALREADY_SETTLED` — the stated interrupt bound, measured.
 
 ## Outcomes & Retrospective
 
@@ -374,6 +396,19 @@ scorecard now states rather than implies: the unconditional `cc-context`/`cc-com
 declarations NOT persisting into resume defaults (they must be re-sent on every `thread/resume`),
 `thread/fork` and `review/start` minting threads with no declaration path, and settings-file MCP servers
 being invisible to the occupied-name check.
+
+**The keyed gate CLOSED, 2026-08-25** — a working token arrived a day ahead of the predicted window and the
+whole residual resolved in one sitting. `test/live/appserver-dynamic-tools.test.ts` 3/3: scenario A's full
+ordering (consult parks first under the now-pinned `permissionMode: "default"` → allow → `tool/callRequested`
+with the active turn's id and the model's own arguments → the client's nonce verbatim in the reply, the
+`mcp`-species item completing on the way) plus the `mcpServer/set` refusal, and scenario B's three calls each
+carrying the declared `required` field with all three tickets covered. The three riders (probe 116,
+`harness/scripts/probe-116-m7-keyed-riders.ts`): `_meta` hop SURVIVED, audio result ACCEPTED, unsettled park
+bounded by interrupt with `-33002` for the late answer. Two premises were corrected by measurement on the
+way — the harness-default `auto` mode consults no broker for read-shaped calls, and `watchThreads` alone
+delivers no turn broadcasts (the images sibling file's defect) — both now recorded in Surprises and pinned
+in the files. What stays open is exactly one conservative bound: whether `mcpServer/set`'s control frame can
+carry in-process server INSTANCES (the rev-2p relaxation), which no row in this round measured.
 
 ## Revision Notes
 
