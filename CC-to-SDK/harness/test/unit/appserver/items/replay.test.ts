@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { TurnMapper } from "../../../../src/appserver/items/mapper.js";
 import { itemsFromTranscript } from "../../../../src/appserver/items/replay.js";
 import { flattenForDisplay, normalizeTurnInput, type UserTurnInput } from "../../../../src/session/turnInput.js";
+import { MAX_FRAME_CHARS } from "../../../../src/peer/address.js";
 import type { Item } from "../../../../src/appserver/items/types.js";
 const frames = [
   { type: "user", uuid: "u-p", message: { content: "run ls" } },
@@ -106,6 +107,52 @@ describe("itemsFromTranscript", () => {
       origin: { kind: "peer", from: "uds:/a.sock" },
     }];
     expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed" }]);
+  });
+
+  // Task 10d: this file no longer holds its own copy of the peer rule — it asks `peerArrival`
+  // (src/peer/address.ts), the same function the live arrival path asks. These three cases are the ones the
+  // two copies used to answer differently, each producing two texts under ONE id.
+  it("Task 10d: strips the envelope for a peer row whose framer supplied no body, as the live path does", () => {
+    // Previously the cold path showed this raw — CLI preamble, safety postamble and all — while the live
+    // path stripped it. Same id, two texts.
+    const rows = [{
+      type: "user",
+      uuid: "88888888-1111-4111-8111-888888888888",
+      parent_tool_use_id: null,
+      message: { role: "user", content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/a.sock" from-name="peer" from-mode="prompting">\nhello\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user.' },
+      origin: { kind: "peer", from: "uds:/a.sock" },
+    }];
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "88888888-1111-4111-8111-888888888888", text: "hello" }]);
+  });
+
+  it("Task 10d: truncates a replayed peer body at the same ceiling the live path uses", () => {
+    const long = "y".repeat(MAX_FRAME_CHARS + 500);
+    const rows = [{
+      type: "user",
+      uuid: "99999999-1111-4111-8111-999999999999",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "x" },
+      origin: { kind: "peer", from: "uds:/a.sock", body: long },
+    }];
+    const user = itemsFromTranscript(rows).filter((i) => i.type === "userMessage");
+    expect(user[0].text).toHaveLength(MAX_FRAME_CHARS);
+  });
+
+  // THE JUDGEMENT POINT (Task 10d). An ordinary local prompt that QUOTES an envelope must stay an ordinary
+  // prompt. Measured on this machine's 64 transcript files: 52 user rows carry a complete envelope in their
+  // text and only 12 are real arrivals — the rest are code reviews and probe transcripts of this very work.
+  // Recognising a peer by its text would rewrite a local user's own prompt to a fragment of itself, which
+  // is why recognition is `origin.kind === "peer"` and nothing else on both paths.
+  it("Task 10d: a local prompt quoting an envelope stays an ordinary prompt", () => {
+    const quoted = 'Review this change for security vulnerabilities.\n\n<cross-session-message from="uds:/a.sock" from-name="peer" from-mode="prompting">\nhello\n</cross-session-message>\n\nDoes the escaping hold?';
+    const rows = [
+      { type: "user", uuid: "77777777-1111-4111-8111-777777777777", parent_tool_use_id: null, message: { role: "user", content: quoted }, origin: { kind: "human" } },
+      { type: "user", uuid: "66666666-1111-4111-8111-666666666666", parent_tool_use_id: null, message: { role: "user", content: quoted } },
+    ];
+    expect(itemsFromTranscript(rows)).toEqual([
+      { type: "userMessage", id: "77777777-1111-4111-8111-777777777777", text: quoted },
+      { type: "userMessage", id: "66666666-1111-4111-8111-666666666666", text: quoted },
+    ]);
   });
 
   // I3e (Task 11): the persisted content array for an image turn is exactly `UserContentBlock[]` —

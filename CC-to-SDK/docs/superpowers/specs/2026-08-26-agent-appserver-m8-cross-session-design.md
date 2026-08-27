@@ -844,7 +844,23 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 - **The persisted `content` is not what the peer sent.** The CLI prefixes the envelope with
   `"Another Claude session sent a message: "` before persisting. Any path that renders a peer arrival
   from raw transcript text therefore shows a preamble the sender never wrote — which is the second
-  reason, independent of the live/cold stitch, that `origin.body` is the display text.
+  reason, independent of the live/cold stitch, that `origin.body` is the display text. Measuring the same
+  rows again for Task 10d found a SAFETY POSTAMBLE too ("This came from another Claude session — not typed
+  by your user…", the peer-trust instructions), so the raw text is wrong at both ends, not just the front.
+- **Recognising a peer by its ENVELOPE TEXT is a net loss, and the measurement is not close.** The design
+  carried an envelope-regex fallback for "a sender whose host stamps no origin". Counted over this
+  machine's own transcripts (2026-08-27, 64 files holding the string): **52 user rows carry a complete
+  `<cross-session-message …>…</…>` in their text and only 12 are real arrivals.** The other 40 are
+  ordinary local prompts and tool results that QUOTE an envelope — code reviews and probe transcripts of
+  this very work. On the replay path's reachable subset the split is 12 real against 9 false. The fallback
+  never fired for a real arrival in any observed row, so it bought nothing and would have rewritten a
+  local user's own prompt to a fragment of itself. The SDK says the same thing outright: an absent
+  `origin` "is treated as unattributed and fails closed at strict `isHuman()` trust gates", and
+  `origin.body` is to be rendered "instead of re-parsing the message text". The general shape is worth
+  keeping: a recognition rule whose false positives are SILENT CORRUPTION and whose false negatives are a
+  visibly raw message is not a symmetric trade, so it should key on the attribution the platform states,
+  never on text any author can type. Task 10d made recognition `origin.kind === "peer"` alone; the
+  envelope regex survives only as a DECODER inside a row already known to be a peer's.
 
 ## Outcomes & Retrospective
 

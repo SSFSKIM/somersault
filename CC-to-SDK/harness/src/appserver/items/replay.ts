@@ -16,6 +16,7 @@ import type { Item } from "./types.js";
 import { TurnMapper, userItem } from "./mapper.js";
 import { rowKind } from "../../sessions/rows.js";
 import { flattenForDisplay, type UserTurnInput } from "../../session/turnInput.js";
+import { peerArrival } from "../../peer/address.js";
 
 const PHANTOM_ROW_KINDS = new Set(["command_echo", "command_output", "caveat", "compact_summary"]);
 
@@ -34,15 +35,15 @@ export function itemsFromTranscript(messages: unknown[]): Item[] {
       const content = f.message?.content;
       const hasToolResult = Array.isArray(content) && content.some((b: any) => b?.type === "tool_result");
       if (!hasToolResult) {
-        // Task 10c: a PEER arrival's display text is the FRAMER's, not ours — the same rule the live
-        // arrival path follows (peerInbound.ts's `noteArrival`), and the reason this branch needs it: the
-        // comment above says the cold-vs-live id stitch rests on the two paths producing identical items,
-        // and Task 10b already made both paths give this arrival the frame's own uuid. Same id with
-        // different text is worse than either alone — a client that dedupes by id would then render
-        // whichever copy it happened to see first. The raw persisted `content` also carries a CLI-added
-        // preamble ("Another Claude session sent a message: "), so it is not what the peer sent either.
-        const body = f.origin?.kind === "peer" && typeof f.origin.body === "string" ? f.origin.body : undefined;
-        items.push(userItem(body ?? flattenForDisplay(content as UserTurnInput), String(f.uuid ?? "")));
+        // Task 10d: the SAME reader the live arrival path uses (`peerArrival`, src/peer/address.ts). Asking
+        // it here is what makes the cold-vs-live id stitch this file's comment above depends on true for
+        // peer rows by construction of ONE rule, rather than by two files happening to hold the same one.
+        // Same id with different text is worse than either alone — a client that dedupes by id would render
+        // whichever copy it happened to see first, so the message would depend on who was subscribed.
+        // A peer row's text is never the raw persisted `content`: that carries a CLI-authored preamble
+        // ("Another Claude session sent a message:") and safety postamble the sender never wrote.
+        const arrival = peerArrival(f);
+        items.push(userItem(arrival ? arrival.text : flattenForDisplay(content as UserTurnInput), String(f.uuid ?? "")));
         continue;
       }
     }

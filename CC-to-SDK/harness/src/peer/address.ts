@@ -59,3 +59,70 @@ export function buildEnvelope(a: { from: string; fromSession?: string; fromName?
   const open = `<cross-session-message ${attrs.join(" ")}>`;
   return (body: string) => `${open}\n${body}\n</cross-session-message>`;
 }
+
+/** The envelope in the INBOUND direction — `buildEnvelope`'s mirror, and deliberately its neighbour so the
+ *  grammar cannot drift between two files that would otherwise each hold half of it. It is a DECODER and
+ *  never a RECOGNISER: see `peerArrival` on why that distinction is the whole point. */
+const ENVELOPE = /<cross-session-message\s[^>]*>([\s\S]*?)<\/cross-session-message>/;
+
+/** `buildEnvelope` writes the body as `\n${body}\n`. Undoing exactly that one wrapping pair — never more —
+ *  is what makes a row the framer left no `body` on read as the body the framer would have decoded. */
+const unwrapBody = (s: string): string => s.replace(/^\n/, "").replace(/\n$/, "");
+
+/** The text a frame carries, before any envelope is considered. A block array is joined on its text blocks
+ *  rather than JSON-stringified: stringifying turns a real newline into the two characters `\` and `n`, so
+ *  the envelope's own line breaks would survive into what a user reads. */
+const rawTextOf = (content: unknown): string =>
+  typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("\n")
+      : JSON.stringify(content ?? "");
+
+export interface PeerArrival {
+  text: string;
+  /** The frame's own uuid, or `undefined` when the frame carries none usable. What to do about that is the
+   *  CALLER's: the live path must mint one, and the cold path has no id to mint that a client could match. */
+  uuid: string | undefined;
+  /** Verbatim. `verifiedPeerPid` is the only field in this exchange the kernel vouches for — `from` is
+   *  sender-authored and forgeable by any same-user process — so re-deriving it would replace a verified
+   *  fact with this server's opinion of it. */
+  origin: Record<string, unknown>;
+}
+
+/** What a frame IS, when it is a cross-session arrival — and `undefined` when it is not.
+ *
+ *  ONE reader for both paths (the live `onFrame` observer in appserver/peerInbound.ts and the cold
+ *  transcript replay in appserver/items/replay.ts). Before this existed the two agreed by construction,
+ *  which is not the same as agreeing: they diverged on a body above the cap, on a row whose framer supplied
+ *  no decoded body, and on a row carrying an envelope but no origin — each time producing two different
+ *  texts under ONE id, which is exactly the input a client's id-dedup cannot resolve.
+ *
+ *  RECOGNITION IS `origin.kind === "peer"` AND NOTHING ELSE. An earlier envelope-text fallback was measured
+ *  against this machine's own transcripts (2026-08-27, 64 files): 52 user rows carry a complete
+ *  `<cross-session-message …>…</…>` in their text and only 12 are real arrivals — the other 40 are ordinary
+ *  local prompts and tool results that QUOTE an envelope, code reviews of this very work among them. Text
+ *  recognition would rewrite a local user's own prompt to a fragment of itself, which is strictly worse
+ *  than the divergences it was meant to close. It is also what the SDK says: an absent `origin` "is treated
+ *  as unattributed and fails closed", and `origin.body` is to be rendered "instead of re-parsing the
+ *  message text". Failing to recognise an unstamped arrival degrades it to a visibly raw message; falsely
+ *  recognising one silently destroys a message nobody sent.
+ *
+ *  The TEXT is the framer's `body` when it supplied one — documented byte-exact with what the model saw —
+ *  else the envelope's own capture, which also drops the CLI-authored preamble and safety postamble that
+ *  the peer did not write, else the raw text. */
+export function peerArrival(frame: unknown): PeerArrival | undefined {
+  const f = frame as any;
+  if (f?.type !== "user") return undefined;
+  const origin = f.origin && typeof f.origin === "object" ? (f.origin as Record<string, unknown>) : undefined;
+  if (origin?.kind !== "peer") return undefined;
+  const raw = rawTextOf(f.message?.content);
+  const envelope = ENVELOPE.exec(raw);
+  const body = typeof origin.body === "string" ? origin.body : envelope ? unwrapBody(envelope[1]) : raw;
+  return {
+    // ONE ceiling, applied on every input shape. The body is written by a process this server does not
+    // control, and a cap enforced on one path only is a cap that changes what a message says depending on
+    // who is reading it.
+    text: body.slice(0, MAX_FRAME_CHARS),
+    uuid: typeof f.uuid === "string" ? f.uuid : undefined,
+    origin,
+  };
+}

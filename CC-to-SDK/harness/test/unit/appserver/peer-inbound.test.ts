@@ -136,7 +136,7 @@ describe("adoption", () => {
   it("emits the arrival item after turn/started, never before", async () => {
     const e = pushEngine();
     const { lines } = await startAccepting(e.engine);
-    e.push({ type: "user", message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">ping</cross-session-message>` } });
+    e.push({ type: "user", origin: { kind: "peer", from: "uds:/a.sock" }, message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">ping</cross-session-message>` } });
     e.push(LIFECYCLE("started", "foreign-5"));
     await tick();
     const order = parsed(lines).map((m) => m.method).filter((m) => m === "turn/started" || String(m).startsWith("item/"));
@@ -244,9 +244,12 @@ describe("bounded state", () => {
     const e = pushEngine();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { record } = await startAccepting(e.engine);
-    for (let i = 0; i < 200; i++) e.push({ type: "user", message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">m${i}</cross-session-message>` } });
+    for (let i = 0; i < 200; i++) e.push({ type: "user", origin: { kind: "peer", from: "uds:/a.sock" }, message: { role: "user", content: `<cross-session-message from="uds:/a.sock" from-session="s" hop-chain="a" from-name="n" from-mode="prompting">m${i}</cross-session-message>` } });
     await tick();
-    expect(record.peerInbound!.arrivals.length).toBeLessThanOrEqual(32);
+    // Exactly the cap, not merely under it: `toBeLessThanOrEqual` also passes for a queue nothing reached,
+    // which is the shape a recognition change can silently produce.
+    expect(record.peerInbound!.arrivals.length).toBe(32);
+    expect(record.peerInbound!.arrivals.at(-1)!.text).toBe("m199");   // oldest-first eviction, newest kept
     warn.mockRestore();
   });
 
@@ -342,15 +345,32 @@ describe("thread/peerMessage", () => {
     expect(JSON.stringify(notes(lines, "item/completed"))).toContain("decoded by the framer");
   });
 
-  it("falls back to the envelope when no origin is present", async () => {
-    // origin.body is documented as present only when the turn is exactly one harness-formed envelope, and
-    // this server does not control what a peer sends.
+  it("falls back to the envelope when the framer supplied no body, but still needs a peer origin", async () => {
+    // `origin.body` is documented present only when the turn is exactly one harness-formed envelope, and
+    // this server does not control what a peer sends — so the envelope stays as a DECODER.
     const e = pushEngine();
     const { lines } = await startAccepting(e.engine);
-    e.push(PEER_FRAME({ origin: undefined }));
+    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock" } }));
     await tick();
     expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
-    expect(notes(lines, "thread/peerMessage")[0].params.origin).toBeUndefined();
+    expect(notes(lines, "thread/peerMessage")[0].params.origin).toEqual({ kind: "peer", from: "uds:/a.sock" });
+  });
+
+  // Task 10d: the envelope is a decoder, never a RECOGNISER. Measured over this machine's own transcripts
+  // (2026-08-27, 64 files): 52 user rows carry a complete envelope in their text and only 12 are real
+  // arrivals — the other 40 are local prompts and tool results that QUOTE one, code reviews of this very
+  // work among them. Announcing those as peer messages, and rewriting each to the fragment inside the
+  // quoted envelope, is silent corruption of a message nobody sent; failing to recognise an unattributed
+  // arrival merely shows it raw. The SDK agrees: an absent `origin` "is treated as unattributed and fails
+  // closed at strict isHuman() trust gates".
+  it("says nothing about a frame that carries an envelope but no peer origin", async () => {
+    const e = pushEngine();
+    const { record, lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME({ origin: undefined }));
+    e.push(PEER_FRAME({ origin: { kind: "human" }, message: { role: "user", content: `Review this: ${PEER_FRAME().message.content}` } }));
+    await tick();
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+    expect(record.peerInbound!.arrivals).toHaveLength(0);
   });
 
   it("says nothing about an ordinary local user frame", async () => {
