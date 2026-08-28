@@ -1,0 +1,89 @@
+T-CLUSTER Task 3 — pty acceptance evidence (real ccx binary, tmux, fake-host)
+==============================================================================
+Worktree: /Users/new/Developer/GitHub/codex_somersault/.claude/worktrees/bl6-t-cluster
+Files: CC-to-SDK/harness/scripts/fake-host.mjs (new `thinkcluster` word producer)
+       CC-to-SDK/harness/scripts/cluster-expand-cells.sh (new driver, cloned from linkopen-cells.sh)
+
+Producer under test — `thinkcluster` (fake-host.mjs): tool_use Read(/work/alpha.txt) -> its
+tool_result -> an assistant message whose ONLY content block is `{type:"thinking", thinking:
+"First I skim the alpha file for context.\n\nThen zebra quartz reasoning tells me which file to
+read next.", signature:"sig"}` (the thinking-ONLY / "leadingThought" shape that
+test/tui/fold-expand.test.tsx's T-CLUSTER Task 2 cell proves absorbs into the fold run as
+"neutral" rather than breaking it) -> tool_use Read(/work/beta.txt) -> its tool_result -> a
+closing prose message ("thinkcluster done") as the fold-run breaker. Two distinct file_paths make
+`toolFold.ts`'s `readFilePaths` set count 2, so the collapsed clause reads "Read 2 files" (same
+clause fold-expand.test.tsx's T8(c) hook cell pins for the same two-Read shape).
+
+Cell — `cluster-expand-cells.sh` / `run_cluster_expand_cell`:
+  1. Launches fake-host.mjs, gets its SHORT id.
+  2. Pushes `thinkcluster` to the fake host's OWN stdin BEFORE `ccx attach` is ever launched — the
+     FIRST-EVER push, no warmup sentinel. This deliberately exercises T-ATTACH's merged
+     replay-on-follow contract (a frame pushed before the first `follow` is buffered and replayed,
+     marked replay:true, to the first follower) rather than the already-following path
+     linkopen-cells.sh's cells use.
+  3. Launches `ccx attach <short>` (the real built binary) and waits for "mode on".
+  4. Asserts the collapsed summary row ("Read 2 files") is present, and the thinking phrase
+     ("zebra quartz reasoning") is NOT yet visible (premise check, avoids a vacuous cell).
+  5. Locates the collapsed row's column via linkopen-col-of.py, sends a plain-click SGR
+     press+release (button 0), and waits for "zebra quartz reasoning" to appear.
+  6. Asserts a `∴` gutter line is present, and that in capture LINE ORDER:
+     "Read(/work/alpha.txt)" < "zebra quartz reasoning" < "Read(/work/beta.txt)" — i.e. the
+     absorbed thinking body renders strictly BETWEEN the two Read member rows.
+  7. Clicks again to collapse. FINDING (see below): the click must NOT land on the `Read(...)`
+     member header's own path argument, because that argument carries an OSC-8 hyperlink
+     (T-LINKOPEN) and a plain click landing inside a link range resolves to "no target" rather
+     than a fold toggle (FullscreenViewport.tsx's `clickTargetAt`: the link check runs before the
+     fold-anchor check and swallows the click). The cell instead clicks the absorbed thinking
+     body's own text ("First I skim..."), which carries no link and is tagged with the same fold
+     anchor as every other row the expansion drew.
+  8. Asserts the summary row ("Read 2 files") is back and the thinking phrase is gone.
+
+Diagnostic note (not a defect — a real click-routing property, verified live via a throwaway
+debug script before the cell was finalized): a plain click on `⏺ Read(/work/alpha.txt)`'s header
+row did nothing (capture unchanged) because the click landed inside the path's hyperlink range;
+the identical click one row down, on the thinking body's plain text, collapsed the cluster
+immediately. The shipped cell's second click targets the thinking-body text for exactly this
+reason, documented inline in the script.
+
+Step — 3x runs -> PASS x3
+--------------------------
+
+Run 1 (--no-build, prior `npm run build` already done for Tasks 1-2's source changes):
+bl6 T-CLUSTER task 3 — pty acceptance (socket -L bl6clus63876)
+  cell cluster-expand: clicking the collapsed cluster shows the ∴ thinking body between its two Read rows; a second click collapses it back
+      ok   cluster-expand premise: collapsed summary row present, thinking phrase not yet visible
+      ok   cluster-expand: ∴ gutter line present in the expanded capture
+      ok   cluster-expand: order is Read(/work/alpha.txt) [line 1] → thinking phrase [line 6] → Read(/work/beta.txt) [line 7]
+      ok   cluster-expand: second click restored the summary row and the thinking phrase is gone
+  PASS cluster-expand
+── 1 passed, 0 failed ──
+exit=0
+
+Run 2 (--no-build):
+bl6 T-CLUSTER task 3 — pty acceptance (socket -L bl6clus64514)
+  cell cluster-expand: clicking the collapsed cluster shows the ∴ thinking body between its two Read rows; a second click collapses it back
+      ok   cluster-expand premise: collapsed summary row present, thinking phrase not yet visible
+      ok   cluster-expand: ∴ gutter line present in the expanded capture
+      ok   cluster-expand: order is Read(/work/alpha.txt) [line 1] → thinking phrase [line 6] → Read(/work/beta.txt) [line 7]
+      ok   cluster-expand: second click restored the summary row and the thinking phrase is gone
+  PASS cluster-expand
+── 1 passed, 0 failed ──
+exit=0
+
+Run 3 (full build — exercises the cell against a freshly-recompiled `dist/`):
+bl6 T-CLUSTER task 3 — pty acceptance (socket -L bl6clus65489)
+  cell cluster-expand: clicking the collapsed cluster shows the ∴ thinking body between its two Read rows; a second click collapses it back
+      ok   cluster-expand premise: collapsed summary row present, thinking phrase not yet visible
+      ok   cluster-expand: ∴ gutter line present in the expanded capture
+      ok   cluster-expand: order is Read(/work/alpha.txt) [line 1] → thinking phrase [line 6] → Read(/work/beta.txt) [line 7]
+      ok   cluster-expand: second click restored the summary row and the thinking phrase is gone
+  PASS cluster-expand
+── 1 passed, 0 failed ──
+exit=0
+
+Result: 3/3 cell-passes across 3 consecutive runs (two --no-build, one with a full `npm run
+build`). Teardown verified clean after each run: `tmux -L <that run's socket> list-sessions`
+reports "no server running" for all three sockets (bl6clus63876, bl6clus64514, bl6clus65489), and
+no `/tmp/cluster-expand-cells-*` scratch directories remained. No session named PTC/ptc was ever
+created; only this run's own private-socket sessions were killed by name, never `kill-server` on
+the default/shared socket.

@@ -1,0 +1,84 @@
+T-ATTACH Task 2 — pty acceptance evidence (warmup_follow removed)
+==================================================================
+Worktree: /Users/new/Developer/GitHub/codex_somersault/.claude/worktrees/bl6-t-attach
+Script: CC-to-SDK/harness/scripts/linkopen-cells.sh
+Change: deleted warmup_follow() (the disposable-sentinel workaround for the pre-Task-1 fake-host
+follow-establishment race) and its three call sites (self-open, fold-link, hover-suppress). Each
+cell now pushes its REAL content as the first-ever push into the fake host, relying on Task 1's
+replay-on-follow buffer (fake-host.mjs, commit e6fb091167) instead of a sentinel warmup round-trip.
+
+Step 2 — 3x idle runs
+----------------------
+
+Run 1 (with build):
+bl5 T-LINKOPEN task 4 — pty acceptance (socket -L bl5link47504)
+  cell self-open: alt-click on a rendered markdown link invokes $BROWSER with the exact URL
+      ok   self-open: recorder received the exact URL within .75s
+  PASS self-open
+  cell self-open (F2): alt-click on a T-PRLINK fold row's link opens it AND does not toggle the fold
+      ok   fold-link: recorder received the exact PR URL
+      ok   fold-link: the frame is byte-identical before/after — the fold did not toggle
+  PASS fold-link
+  cell hover-suppress: an EXPANDED clickable owner does not brighten on hover; a different one still does
+      ok   hover-suppress premise: '(No output)' is genuinely dim on the expanded owner before hover
+      ok   hover-suppress: '(No output)' stayed dim under the pointer — the expanded owner did not brighten
+      ok   hover-suppress: the different, non-expanded clickable owner brightened normally on hover
+  PASS hover-suppress
+── 3 passed, 0 failed ──
+
+Run 2 (--no-build):
+bl5 T-LINKOPEN task 4 — pty acceptance (socket -L bl5link48046)
+  cell self-open: ... ok (.50s)                PASS self-open
+  cell self-open (F2)/fold-link: ... ok, ok    PASS fold-link
+  cell hover-suppress: ... ok, ok, ok          PASS hover-suppress
+── 3 passed, 0 failed ──
+
+Run 3 (--no-build):
+bl5 T-LINKOPEN task 4 — pty acceptance (socket -L bl5link48650)
+  cell self-open: ... ok (.50s)                PASS self-open
+  cell self-open (F2)/fold-link: ... ok, ok    PASS fold-link
+  cell hover-suppress: ... ok, ok, ok          PASS hover-suppress
+── 3 passed, 0 failed ──
+
+Result: 9/9 cell-passes across 3 consecutive idle runs. All three cells' first push into the fake
+host is now their real content (message/prlink/errcluster) — no sentinel round-trip beforehand.
+
+Step 3 — 1x run under CPU load
+-------------------------------
+Started 10 busy-loop background processes:
+  for i in $(seq 10); do (while :; do :; done) & done
+PIDs recorded: 50615 50616 50617 50618 50619 50620 50621 50622 50623 50624
+(confirmed via `ps -p <pids> -o pid,pcpu,command`: each ~64-66% CPU, `while :; do :; done` loops)
+
+Suite run under load (--no-build):
+bl5 T-LINKOPEN task 4 — pty acceptance (socket -L bl5link50866)
+  cell self-open: ... ok (.50s)                PASS self-open
+  cell self-open (F2)/fold-link: ... ok, ok    PASS fold-link
+  cell hover-suppress: ... ok, ok, ok          PASS hover-suppress
+── 3 passed, 0 failed ──
+
+Load-run result: PASS, 3/3 cells, even with 10 CPU-saturating busy loops running concurrently —
+confirms the fake-host replay buffer (not a race-sensitive warmup) is what makes the first real
+push land reliably.
+
+Teardown: `kill 50615 50616 50617 50618 50619 50620 50621 50622 50623 50624` — verified gone via
+`ps -p <same 10 pids>` returning no matching processes. No other process was touched.
+
+Step 4 — select-pty.sh / hover-cells.sh drop-tolerance check
+--------------------------------------------------------------
+Research doc claimed a "stream-shift cell silently tolerating a possibly-dropped first frame" in
+scripts/select-pty.sh. Grepped both scripts/select-pty.sh and scripts/hover-cells.sh for
+warmup/sentinel/tolerate/retry/drop/"first push"/"first frame" patterns and read the stream-shift
+cell (select-pty.sh lines ~536-734) and the caret-busy cell in full.
+
+Finding: NO first-push drop-tolerance or retry-on-drop logic exists in either file. Every push in
+both scripts is followed by a hard, non-tolerant wait_ready/wait_for_capture that FAILS the cell
+(not skips or silently retries) if the expected content never appears — e.g. select-pty.sh line
+238-240 explicitly notes "a build that silently drops one is exactly the regression this cell
+exists to catch," the opposite of a tolerance. The lone "retry" hit (line 56) is an rmdir-cleanup
+retry, unrelated to frame delivery. No drop-tolerance verified to exist — per the brief, touched
+nothing in select-pty.sh or hover-cells.sh.
+
+Step 5 — gates
+---------------
+npm run typecheck: PASS (tsc --noEmit, no output/errors)
