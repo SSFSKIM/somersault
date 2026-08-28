@@ -26,6 +26,7 @@ const TABLE: [keyof HarnessConfig, unknown, string, unknown?][] = [
   ["onElicitation", noop, "onElicitation"],
   ["onUserDialog", noop, "onUserDialog"],
   ["supportedDialogKinds", ["refusal_fallback_prompt"], "supportedDialogKinds"],
+  ["perTaskStopAffordance", true, "perTaskStopAffordance"],
   ["spawnClaudeCodeProcess", spawn, "spawnClaudeCodeProcess"],
   ["pathToClaudeCodeExecutable", "/opt/claude/cli.js", "pathToClaudeCodeExecutable"],
   ["executable", "node", "executable"],
@@ -53,12 +54,13 @@ describe("W4.1 knob sweep", () => {
   });
 
   it("falsy-but-meaningful values still map (continueSession/strictMcpConfig/debug false, maxThinkingTokens 0)", () => {
-    const opts = resolveOptions({ continueSession: false, strictMcpConfig: false, debug: false, maxThinkingTokens: 0, includeHookEvents: false });
+    const opts = resolveOptions({ continueSession: false, strictMcpConfig: false, debug: false, maxThinkingTokens: 0, includeHookEvents: false, perTaskStopAffordance: false });
     expect(opts.continue).toBe(false);
     expect(opts.strictMcpConfig).toBe(false);
     expect(opts.debug).toBe(false);
     expect(opts.maxThinkingTokens).toBe(0);
     expect(opts.includeHookEvents).toBe(false);
+    expect(opts.perTaskStopAffordance).toBe(false);
   });
 
   it("extraOptions still wins over a first-class knob", () => {
