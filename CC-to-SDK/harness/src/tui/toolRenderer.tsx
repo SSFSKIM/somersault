@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -960,10 +960,44 @@ export function clampHintText(text: string, width: number, maxLines: number): st
  *  cluster and pushes the `tool_result` out, two halves of one call. Our atoms carry both halves together,
  *  so drawing every member would draw that call a second time. The caller passes the ids IT is emitting on
  *  its own — the two projections emit different sets, so neither can be inferred from here. */
+/** T-CLUSTER Task 2: one absorbed thinking body, rendered through the SAME `renderMessage` seam
+ *  `projectMessageEntry` (above) already uses for every other non-tool message — a synthetic single-block
+ *  message wraps the retained body and reaches the real `∴`-gutter/dim-markdown builder (render.ts's
+ *  `withThinkingGutter` + `renderMarkdown`, behind `showThinking`) instead of a second, hand-rolled one.
+ *  That builder is module-private in render.ts, so going THROUGH `renderMessage` — rather than exporting
+ *  it to call directly — needed no export at all; `projectMessageEntry`'s own per-block call is the
+ *  existing precedent for "one content block in, `renderMessage` out, wrap each line into a `RenderItem`".
+ *
+ *  `sdkItemId`/`sdkOwnerKey` keyed on `thought.key` (unique per absorbed atom, minted in `foldAtoms`) reuse
+ *  the exact id shape `projectMessageEntry` mints for an ordinary message's blocks. That is safe rather than
+ *  collision-prone: `expandedMemberItems` only ever runs under the folded, non-verbose projection (`groupItems`'s
+ *  one call site, itself only reached under `compact && !verbose`), and under that projection `showThinking`
+ *  is false, so the absorbed message's OWN `Anchored.items` (computed once, up in `buildAnchoredEntries`) came
+ *  back empty — it is never rendered standalone anywhere else this key could clash with.
+ *
+ *  One leading blank-text line stands for canon's `Box{marginTop:1}` around the row (research §1.2(b)) — a
+ *  plain `RenderLine` with no gutter, ahead of the gutter-bearing content, the same device `renderMarkdown`'s
+ *  own `gap: 1` uses one level down (a blank line marks vertical space in this item model; there is no
+ *  `marginTop` field to set). NO duration text: canon's `∴` block carries none (spec D4), and `renderMessage`
+ *  is never handed a clock for it. */
+function thinkingRowItems(thought: AbsorbedThinking, anchorId: string, options: ProjectionOptions): readonly RenderItem[] {
+  const message = { type: "assistant", message: { content: [{ type: "thinking", thinking: thought.body }] } };
+  const lines = renderMessage(message, { width: options.columns, showThinking: true, cwd: options.cwd });
+  return [{ text: "" } as RenderLine, ...lines].map((line, index): RenderItem => ({
+    kind: "line", id: sdkItemId(thought.key, `thinking:${index}`), ownerKey: sdkOwnerKey(thought.key), line, foldAnchor: anchorId, expanded: true,
+  }));
+}
 function expandedMemberItems(group: FoldGroup, anchorId: string, options: ProjectionOptions, emitted: ReadonlySet<string> | undefined): readonly RenderItem[] {
   const detail: ProjectionOptions = { ...options, projection: "detail-all", verbose: true };
   const byId = new Map((options.toolEvents ?? []).map((event) => [event.id, event] as const));
-  const out: RenderItem[] = [];
+  // T-CLUSTER Task 2, spec §3.2(2)/D12: ONE total order across members and absorbed thinking. A member's key
+  // is its `tool_use`'s transcript position (`event.callSequence`) — NEVER `resultSequence` and NEVER
+  // `memberIds` position, which reorders as overlapping calls settle out of order (T8 (f)'s own cell). A
+  // thinking row's key is `messageSequence`. Equal keys are unmeasured in real transcripts (D12) but still
+  // ordered deterministically: thinking before members (`rank`), members keeping their `memberIds` extraction
+  // order (`Array.prototype.sort` is stable, so two members tied on `callSequence` — never observed — fall
+  // back to the order they were pushed below, which is `memberIds` order).
+  const entries: { key: number; rank: 0 | 1; items: readonly RenderItem[] }[] = [];
   for (const memberId of group.memberIds) {
     if (emitted?.has(memberId) === true) continue;
     const event = byId.get(memberId);
@@ -976,9 +1010,12 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     const items = normalized.status === "suppressed"
       ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
       : renderToolEvent(event, normalized, detail);
-    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId, expanded: true });
+    const tagged = reid(items, event.id, event.result ? event.result.resultSequence : "pending").map((item): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true }));
+    entries.push({ key: event.callSequence, rank: 1, items: tagged });
   }
-  return out;
+  for (const thought of group.absorbedThinking ?? []) entries.push({ key: thought.messageSequence, rank: 0, items: thinkingRowItems(thought, anchorId, options) });
+  entries.sort((a, b) => a.key - b.key || a.rank - b.rank);
+  return entries.flatMap((entry) => entry.items);
 }
 
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
@@ -1051,8 +1088,11 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
 /** `identity`/`thinking` are the F3 thinking clock's two document-derived halves, computed once in
  *  `buildAnchoredEntries` (both are pure functions of the retained message, so they are cache-safe — the
  *  live DURATION is not, and enters strictly later, in `foldAtoms`). `thinking` doubles as upstream
- *  `Ae_`'s predicate: it is set only for a message whose FIRST content block is non-blank thinking. */
-type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string };
+ *  `Ae_`'s predicate: it is set only for a message whose FIRST content block is non-blank thinking.
+ *  `thinkingBody` (bl6 T-CLUSTER retention) is that same block's text `.trim()`ed but NOT whitespace-
+ *  collapsed, present iff `thinking` is — the raw multi-line body an expanded cluster later renders,
+ *  where `thinking` (whitespace-collapsed) only ever serves the collapsed row's one-line hint. */
+type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string; thinkingBody?: string };
 /** The sentinels upstream renders in place of a reply: they are chatter, never the "real assistant text" that
  *  ends a run (§1.3). */
 const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
@@ -1090,17 +1130,24 @@ function sdkMessageIdentity(message: Record<string, unknown>): string | undefine
   return typeof id === "string" && id.length > 0 ? `message:${id}` : undefined;
 }
 /** Upstream `Ae_` (L302003–302010): a message is thought-bearing only when its FIRST content block is a
- *  `thinking` block whose text is not blank. The summary is that block's WHOLE text, whitespace-collapsed —
- *  upstream `PMd` L302267 assigns exactly `u.text.trim().replace(/\s+/g, " ")`. (F3 Task 3 shipped the first
- *  line only, a plan error corrected here in Task 4: the first line leaves upstream's 10-line `OAH` clamp
- *  with nothing to do, and it is the clamp — not the extraction — that decides how much of a long thought
- *  the hint slot shows.) */
-function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
+ *  `thinking` block whose text is not blank — the shared guard both the collapsed summary and (bl6
+ *  T-CLUSTER) the retained expansion body key off, so it is extracted once rather than parsed twice.
+ *  Returns the trimmed text UNCOLLAPSED (newlines intact); `thinkingSummaryOf` whitespace-collapses it. */
+function thinkingBodyOf(message: Record<string, unknown>): string | undefined {
   const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
   const first = content[0];
   if (!isRecord(first) || first.type !== "thinking" || typeof first.thinking !== "string") return undefined;
   const text = first.thinking.trim();
-  return text === "" ? undefined : text.replace(/\s+/g, " ");
+  return text === "" ? undefined : text;
+}
+/** The summary is the thought-bearing block's WHOLE text, whitespace-collapsed — upstream `PMd` L302267
+ *  assigns exactly `u.text.trim().replace(/\s+/g, " ")`. (F3 Task 3 shipped the first line only, a plan
+ *  error corrected here in Task 4: the first line leaves upstream's 10-line `OAH` clamp with nothing to
+ *  do, and it is the clamp — not the extraction — that decides how much of a long thought the hint slot
+ *  shows.) */
+function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
+  const body = thinkingBodyOf(message);
+  return body === undefined ? undefined : body.replace(/\s+/g, " ");
 }
 
 /** F4 Task 10c: `Jbn` (L425363) — how many messages a collapsed teammate row is standing in for. A per-entry
@@ -1141,10 +1188,12 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
       continue;
     }
     const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
-    const identity = sdkMessageIdentity(entry.message), thinking = identity === undefined ? undefined : thinkingSummaryOf(entry.message);
+    const identity = sdkMessageIdentity(entry.message);
+    const thinkingBody = identity === undefined ? undefined : thinkingBodyOf(entry.message);
+    const thinking = thinkingBody === undefined ? undefined : thinkingBody.replace(/\s+/g, " ");
     const record: Anchored = {
       sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items),
-      ...(identity === undefined || thinking === undefined ? {} : { identity, thinking }),
+      ...(identity === undefined || thinking === undefined ? {} : { identity, thinking, thinkingBody }),
     };
     anchored.push(record);
     open = run === undefined ? undefined : { name: run.name, count: run.count, record };
@@ -1302,7 +1351,10 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
  *     dynamic region's fold (see `projectPending`).
  *  `fullscreen` defaults false, which is the classic gate above; Task 5 threads `ProjectionOptions.fullscreen`
  *  into every caller, so the flag now decides the diversion on live rows rather than only in unit tests. */
-function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
+// Test-only seam (bl6 T-CLUSTER, Cell 3): exported so a production-pipeline test can drive
+// `buildAnchoredEntries` → `foldAtoms` → `segmentRuns` end to end without duplicating any of the three —
+// the same reasoning as `projectionDeps.buildAnchored` above. Production callers still reach it directly.
+export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
   // One duration per MESSAGE, spent once. The engine emits one assistant frame per content block and all
   // of them share a single `message.id` (P82), while `LiveTurn` already sums every thinking block of that
   // id — so a message that arrived as two thinking frames would otherwise stamp its whole total twice.
@@ -1318,7 +1370,16 @@ function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMa
     // clause without a single replay-side branch.
     const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : opts.thoughtMs?.get(a.identity);
     if (ms !== undefined) spent.add(a.identity!);
-    return { kind: "neutral", sequence: index, messageSequence: a.sequence, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
+    // `thinkingBody`/`thinkingKey` (bl6 T-CLUSTER) ride WHENEVER the entry is thought-bearing, independent
+    // of the live clock above — a replayed/attached entry is never in `opts.thoughtMs` and must still carry
+    // its body for later expansion. `thinkingKey` disambiguates two thinking frames sharing one `message.id`
+    // (P82) by pairing the identity with this entry's own transcript sequence.
+    const thoughtBearing = a.thinkingBody !== undefined;
+    return {
+      kind: "neutral", sequence: index, messageSequence: a.sequence,
+      ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }),
+      ...(thoughtBearing ? { thinkingBody: a.thinkingBody, thinkingKey: `${a.identity ?? "anon"}:${a.sequence}` } : {}),
+    };
   });
 }
 

@@ -154,6 +154,93 @@ describe("T8 (b2): a member the projection already emitted standalone is not dra
   });
 });
 
+// ── T-CLUSTER Task 2: the expansion interleaves absorbed thinking with member rows ──────────────────────
+// bl6 Task 1 gave `FoldGroup.absorbedThinking` (key, messageSequence, raw body). This is the read side: an
+// expanded cluster must show every absorbed thinking body, in transcript order against the member calls it
+// sat beside — canon's `∴` gutter over the FULL dim-markdown body, no duration clause anywhere (spec D4).
+// The ORDER KEY IS `callSequence`/`messageSequence`, NEVER `memberIds` position: membership reorders as
+// overlapping calls settle out of order (T8 (f), above), so an implementation that just walks `memberIds`
+// and appends thinking rows afterward gets both member order and thinking placement wrong at once — which
+// is exactly what the second cell below is built to catch.
+describe("T-CLUSTER Task 2: absorbed thinking interleaves with member rows in transcript order", () => {
+  // A message whose ONLY content is thinking (no `tool_use` riding along) — the standalone/leading shape
+  // Task 1's own Cell 3 pipeline test uses, and the one a mid-run absorbed thought takes on the wire.
+  const leadingThought = (messageId: string, thinking: string) =>
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
+  // The full ordered text stream a reader sees: `line` items contribute their (delink'd) text, a
+  // `gutter-block`'s body contributes one entry per body row — same order the items array already holds.
+  const allTexts = (items: readonly RenderItem[]): string[] =>
+    items.flatMap((i) => (i.kind === "line" ? [unlink(i.line.text)] : i.body.map((l) => l.text)));
+  const THINKING_GUTTER_GLYPH = "∴";
+
+  it("shows the ∴ gutter and the FULL dim-markdown body between the two Read rows it sat between", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      leadingThought("m-think", "Alpha\n\nBeta"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"),
+      prose("done"));
+
+    // Not on the collapsed path at all.
+    const collapsed = allTexts(projectCompact(doc, FS));
+    expect(collapsed.some((t) => t.includes("Alpha"))).toBe(false);
+    expect(collapsed.some((t) => t.includes(THINKING_GUTTER_GLYPH))).toBe(false);
+
+    const items = projectCompact(doc, { ...FS, expandedFolds: new Set(["read-1"]) });
+    const texts = allTexts(items).map((t) => t.trim());
+    const ia = texts.findIndex((t) => t.includes("Read(a.ts)"));
+    const ithink = texts.findIndex((t) => t === "Alpha");
+    const ibeta = texts.findIndex((t) => t === "Beta");
+    const ib = texts.findIndex((t) => t.includes("Read(b.ts)"));
+    expect(ia).toBeGreaterThanOrEqual(0);
+    expect(ithink).toBeGreaterThan(ia);
+    expect(ibeta).toBeGreaterThan(ithink);
+    expect(ib).toBeGreaterThan(ibeta);
+
+    // No "thought for"/duration clause anywhere in the expanded form (spec D4).
+    expect(texts.some((t) => /thought for/i.test(t))).toBe(false);
+    expect(texts.some((t) => /\bctrl\+o\b/i.test(t))).toBe(false);
+
+    // The gutter itself: dim+italic ∴, on a `line` item tagged like every other cluster row; the BODY line
+    // is dim but NOT italic (render.ts:18's note — the gutter is italic, the body never is).
+    const gutterLine = items.find((i): i is Extract<RenderItem, { kind: "line" }> =>
+      i.kind === "line" && i.line.gutter?.text.includes(THINKING_GUTTER_GLYPH) === true);
+    expect(gutterLine).toBeDefined();
+    expect(gutterLine!.line.gutter).toMatchObject({ dim: true, italic: true });
+    expect(gutterLine!.line.italic).not.toBe(true);
+    expect(gutterLine!.line.dim).toBe(true);
+    expect(gutterLine!.foldAnchor).toBe("read-1");
+    expect(gutterLine!.expanded).toBe(true);
+  });
+
+  it("orders the expansion by transcript sequence, not memberIds position — the ORDERING KILL CELL", () => {
+    // read-1 calls, then a mid-run thought, then read-2 calls — but read-2 SETTLES FIRST, which reorders
+    // the finalized `memberIds` to [read-2, read-1] (same mechanic as T8 (f) above). The correct expansion
+    // order still follows `callSequence`/`messageSequence`: Read(a.ts), then the thought, then Read(b.ts).
+    // An implementation that walks `memberIds` verbatim renders Read(b.ts) before Read(a.ts); one that
+    // additionally appends absorbed thinking after every member renders the thought last of all. Both are
+    // wrong here, and only the correct total order passes.
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }),
+      leadingThought("m-think", "Gamma"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }),
+      result("read-2"),
+      result("read-1"),
+      prose("done"));
+
+    // The premise: the run really did reorder at settlement.
+    expect(groupRows(projectCompact(doc, FS))[0]!.id).toBe("group:read-2,read-1:row");
+
+    const items = projectCompact(doc, { ...FS, expandedFolds: new Set(["read-1"]) });
+    const texts = allTexts(items).map((t) => t.trim());
+    const ia = texts.findIndex((t) => t.includes("Read(a.ts)"));
+    const igamma = texts.findIndex((t) => t === "Gamma");
+    const ib = texts.findIndex((t) => t.includes("Read(b.ts)"));
+    expect(ia).toBeGreaterThanOrEqual(0);
+    expect(igamma).toBeGreaterThan(ia);
+    expect(ib).toBeGreaterThan(igamma);
+  });
+});
+
 // ── The hook: toggle, reset, and the pending-projection pin ─────────────────────────────────────────────
 type Hook = ReturnType<typeof useChat>;
 const tick = (ms = 20) => new Promise((r) => { setTimeout(r, ms); });

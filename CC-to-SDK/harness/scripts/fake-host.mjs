@@ -110,6 +110,28 @@ function framesFor(word) {
       { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-mystery-done", content: [{ type: "text", text: "mystery done" }] } } },
     ];
   }
+  // bl6 T-CLUSTER task 3 — the pty acceptance producer: two real `Read` calls (distinct `file_path`s, so
+  // `toolFold.ts`'s `readFilePaths` set counts two and the collapsed clause reads "Read 2 files", the same
+  // clause `fold-expand.test.tsx`'s own T8(c) cell pins for this exact two-Read shape) with a THINKING-ONLY
+  // assistant message sandwiched between them — `content[0].type === "thinking"` and nothing else, the
+  // `leadingThought` shape that file's T-CLUSTER Task 2 cell uses, which is what makes it absorb into the
+  // fold run as "neutral" (`entryAtom`, toolRenderer.tsx) rather than break it. The thinking body is
+  // multi-line (a blank-line paragraph break) so the expanded `∴` block renders more than one row, and
+  // carries "zebra quartz reasoning" — a phrase distinctive enough not to collide with any other screen
+  // text — so the pty cell can assert it lands strictly between the two `Read(...)` member rows. The
+  // closing prose message is the fold-run BREAKER (`projectCompact`'s own rule: a trailing run stays
+  // pending, not `group:`-published, until something after it closes it) — without it the cluster row
+  // never reaches Static at all, same as `prlink`/`errcluster` above.
+  if (name === "thinkcluster") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-think-read-1", content: [{ type: "tool_use", id: "think-read-1", name: "Read", input: { file_path: "/work/alpha.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-think-read-1", message: { content: [{ type: "tool_result", tool_use_id: "think-read-1", content: "alpha file body", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-think-thought", content: [{ type: "thinking", thinking: "First I skim the alpha file for context.\n\nThen zebra quartz reasoning tells me which file to read next.", signature: "sig" }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-think-read-2", content: [{ type: "tool_use", id: "think-read-2", name: "Read", input: { file_path: "/work/beta.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-think-read-2", message: { content: [{ type: "tool_result", tool_use_id: "think-read-2", content: "beta file body", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-thinkcluster-done", content: [{ type: "text", text: "thinkcluster done" }] } } },
+    ];
+  }
   return [];
 }
 

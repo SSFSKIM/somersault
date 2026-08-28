@@ -4,7 +4,8 @@ import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import wrapAnsi from "wrap-ansi";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clampHintText, displayPath, foldToolOutput, GROUP_HINT_GUTTER, groupOwnerKey, osc8FileLink, osc8WebLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { clampHintText, displayPath, foldAtoms, foldToolOutput, GROUP_HINT_GUTTER, groupOwnerKey, osc8FileLink, osc8WebLink, projectCompact, projectDetail, projectionDeps, projectPending, renderToolEvent, RenderItemView, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { segmentRuns } from "../../src/tui/toolFold.js";
 import { FoldPendingState, stampToolStarts } from "../../src/tui/foldPendingState.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { normalizeToolResult } from "../../src/tui/toolResult.js";
@@ -596,6 +597,37 @@ describe("F3 thought clause on the collapsed group row", () => {
       call("read-1", "Read", { file_path: "/work/a.ts" }, "m1"), result("read-1"), prose("done"));
     const rows = groupRows(projectCompact(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": 3200 }) }));
     expect((rows[0] as { line: RenderLine }).line.text).toBe("  Thought for 3s, read 1 file (ctrl+o to expand)");
+  });
+});
+
+// bl6 T-CLUSTER Task 1, Cell 3 (spec §3.2(1)(ii)): the production-pipeline test. A test that builds `FoldAtom`s
+// by hand (as the F3 blocks above and `toolFold.test.ts` do) can pass while `buildAnchoredEntries`/`foldAtoms`
+// never actually carry a real document's thinking body — so this cell drives a REAL `TranscriptDocument`
+// through the exact chain a live projection uses: `projectionDeps.buildAnchored` (the message-level half) is
+// merged with `document.toolEvents()` (the tool-call half — the same merge `projectAll` performs at
+// `toolRenderer.tsx:1290-1293`, minus agent batching, which this single-call fixture never exercises) and fed
+// through the exported `foldAtoms` → `segmentRuns`. A leading thinking entry with NO `thoughtMs` map entry
+// (the replay/attach shape) precedes a Read + result, and a breaker (`prose`) closes the run.
+describe("bl6 T-CLUSTER: retention survives the real buildAnchoredEntries → foldAtoms → segmentRuns pipeline", () => {
+  const leadingThought = (messageId: string, thinking: string) =>
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: messageId, content: [{ type: "thinking", thinking, signature: "sig" }] } }) as Record<string, unknown>;
+
+  it("carries the raw body through the whole chain with no thought-clock entry", () => {
+    const doc = built(leadingThought("m1", "First thought line\n\nSecond paragraph"), call("read-1", "Read", { file_path: "/work/a.ts" }, "m2"), result("read-1"), prose("done"));
+    const full = { ...context, projection: "compact" as const, verbose: false, toolEvents: doc.toolEvents() };
+    const anchored = [...projectionDeps.buildAnchored(doc, full)];
+    for (const event of doc.toolEvents()) {
+      if (event.route !== "top-level" || !event.result) continue;
+      anchored.push({ sequence: event.result.resultSequence, rank: 1, event, items: [] });
+    }
+    anchored.sort((a, b) => a.sequence - b.sequence || a.rank - b.rank);
+    const atoms = foldAtoms(anchored, {});                          // no `thoughtMs` map at all — the replay/attach shape
+    const items = segmentRuns(atoms, { cwd: context.cwd, home: context.home });
+    const group = items.find((i) => i.kind === "group");
+    expect(group?.kind).toBe("group");
+    const found = group?.kind === "group" ? group.group : undefined;
+    expect(found?.counts.thoughtForMs).toBeUndefined();
+    expect(found?.absorbedThinking).toEqual([{ key: expect.stringContaining(":"), messageSequence: expect.any(Number), body: "First thought line\n\nSecond paragraph" }]);
   });
 });
 
