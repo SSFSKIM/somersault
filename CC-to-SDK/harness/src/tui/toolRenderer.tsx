@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -960,10 +960,44 @@ export function clampHintText(text: string, width: number, maxLines: number): st
  *  cluster and pushes the `tool_result` out, two halves of one call. Our atoms carry both halves together,
  *  so drawing every member would draw that call a second time. The caller passes the ids IT is emitting on
  *  its own — the two projections emit different sets, so neither can be inferred from here. */
+/** T-CLUSTER Task 2: one absorbed thinking body, rendered through the SAME `renderMessage` seam
+ *  `projectMessageEntry` (above) already uses for every other non-tool message — a synthetic single-block
+ *  message wraps the retained body and reaches the real `∴`-gutter/dim-markdown builder (render.ts's
+ *  `withThinkingGutter` + `renderMarkdown`, behind `showThinking`) instead of a second, hand-rolled one.
+ *  That builder is module-private in render.ts, so going THROUGH `renderMessage` — rather than exporting
+ *  it to call directly — needed no export at all; `projectMessageEntry`'s own per-block call is the
+ *  existing precedent for "one content block in, `renderMessage` out, wrap each line into a `RenderItem`".
+ *
+ *  `sdkItemId`/`sdkOwnerKey` keyed on `thought.key` (unique per absorbed atom, minted in `foldAtoms`) reuse
+ *  the exact id shape `projectMessageEntry` mints for an ordinary message's blocks. That is safe rather than
+ *  collision-prone: `expandedMemberItems` only ever runs under the folded, non-verbose projection (`groupItems`'s
+ *  one call site, itself only reached under `compact && !verbose`), and under that projection `showThinking`
+ *  is false, so the absorbed message's OWN `Anchored.items` (computed once, up in `buildAnchoredEntries`) came
+ *  back empty — it is never rendered standalone anywhere else this key could clash with.
+ *
+ *  One leading blank-text line stands for canon's `Box{marginTop:1}` around the row (research §1.2(b)) — a
+ *  plain `RenderLine` with no gutter, ahead of the gutter-bearing content, the same device `renderMarkdown`'s
+ *  own `gap: 1` uses one level down (a blank line marks vertical space in this item model; there is no
+ *  `marginTop` field to set). NO duration text: canon's `∴` block carries none (spec D4), and `renderMessage`
+ *  is never handed a clock for it. */
+function thinkingRowItems(thought: AbsorbedThinking, anchorId: string, options: ProjectionOptions): readonly RenderItem[] {
+  const message = { type: "assistant", message: { content: [{ type: "thinking", thinking: thought.body }] } };
+  const lines = renderMessage(message, { width: options.columns, showThinking: true, cwd: options.cwd });
+  return [{ text: "" } as RenderLine, ...lines].map((line, index): RenderItem => ({
+    kind: "line", id: sdkItemId(thought.key, `thinking:${index}`), ownerKey: sdkOwnerKey(thought.key), line, foldAnchor: anchorId, expanded: true,
+  }));
+}
 function expandedMemberItems(group: FoldGroup, anchorId: string, options: ProjectionOptions, emitted: ReadonlySet<string> | undefined): readonly RenderItem[] {
   const detail: ProjectionOptions = { ...options, projection: "detail-all", verbose: true };
   const byId = new Map((options.toolEvents ?? []).map((event) => [event.id, event] as const));
-  const out: RenderItem[] = [];
+  // T-CLUSTER Task 2, spec §3.2(2)/D12: ONE total order across members and absorbed thinking. A member's key
+  // is its `tool_use`'s transcript position (`event.callSequence`) — NEVER `resultSequence` and NEVER
+  // `memberIds` position, which reorders as overlapping calls settle out of order (T8 (f)'s own cell). A
+  // thinking row's key is `messageSequence`. Equal keys are unmeasured in real transcripts (D12) but still
+  // ordered deterministically: thinking before members (`rank`), members keeping their `memberIds` extraction
+  // order (`Array.prototype.sort` is stable, so two members tied on `callSequence` — never observed — fall
+  // back to the order they were pushed below, which is `memberIds` order).
+  const entries: { key: number; rank: 0 | 1; items: readonly RenderItem[] }[] = [];
   for (const memberId of group.memberIds) {
     if (emitted?.has(memberId) === true) continue;
     const event = byId.get(memberId);
@@ -976,9 +1010,12 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     const items = normalized.status === "suppressed"
       ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
       : renderToolEvent(event, normalized, detail);
-    for (const item of reid(items, event.id, event.result ? event.result.resultSequence : "pending")) out.push({ ...item, foldAnchor: anchorId, expanded: true });
+    const tagged = reid(items, event.id, event.result ? event.result.resultSequence : "pending").map((item): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true }));
+    entries.push({ key: event.callSequence, rank: 1, items: tagged });
   }
-  return out;
+  for (const thought of group.absorbedThinking ?? []) entries.push({ key: thought.messageSequence, rank: 0, items: thinkingRowItems(thought, anchorId, options) });
+  entries.sort((a, b) => a.key - b.key || a.rank - b.rank);
+  return entries.flatMap((entry) => entry.items);
 }
 
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
