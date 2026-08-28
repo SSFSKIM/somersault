@@ -27,7 +27,7 @@ import { connectFleetEngine } from "./fleetEngine.js";
 import type { AnswerReceipt, FleetEngineSession } from "./fleetEngine.js";
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
-import { emptyFlagPerms, fleetTurnId, threadStatus } from "./registry.js";
+import { emptyFlagPerms, fleetTurnId, settingsChangedPayload, threadStatus } from "./registry.js";
 import { DEFAULT_INBOUND } from "./peerPolicy.js";
 import type { ThreadRecord } from "./registry.js";
 import { TurnMapper } from "./items/mapper.js";
@@ -288,7 +288,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       if (s.model !== undefined) record.settings.model = s.model;
       if (s.thinkingTokens !== undefined) record.settings.thinkingTokens = s.thinkingTokens;
       record.updatedAt = nowSec();
-      srv.broadcast(record.id, "thread/settings/changed", { threadId: record.id, source: "engine", model: record.settings.model, permissionMode: record.settings.permissionMode, thinkingTokens: record.settings.thinkingTokens });
+      // The shared builder (registry.ts), like the other three producers — its `crossSessionInbound`
+      // included, which for a fleet record is the `DEFAULT_INBOUND` seed this record was admitted with and
+      // that `thread/get` already publishes for it. Dropping the key here would make the wire shape depend
+      // on the thread's ORIGIN.
+      srv.broadcast(record.id, "thread/settings/changed", settingsChangedPayload(record, "engine"));
     }
     // The host's own busy/waitingFor is NOT mirrored onto `record.busy`: the turn events above own that,
     // and a `state` frame arrives for reasons that are not turn edges (a park, a setter, a swap).

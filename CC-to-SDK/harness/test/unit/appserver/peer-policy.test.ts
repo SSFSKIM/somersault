@@ -4,14 +4,15 @@
 // admission spines, because thread/start and thread/resume are different functions in this server
 // (`createThread` and `startThread`) and a policy that only one of them applies is a policy.
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyPeerPolicy, DEFAULT_INBOUND, SETTINGS_KEY } from "../../../src/appserver/peerPolicy.js";
 import { swapBaseConfig } from "../../../src/appserver/rewind.js";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
-import { ORIGIN_REFUSAL_MESSAGE, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { ORIGIN_REFUSAL_MESSAGE, emptyFlagPerms, settingsChangedPayload, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const settingsOf = (c: Record<string, unknown>) => c.settings as Record<string, unknown>;
@@ -428,6 +429,41 @@ describe("thread/crossSessionInbound/set — the tightening ratchet", () => {
     expect(record.busy).toBe(false);
   });
 
+  // THE RACE, not a sequence. A handler runs synchronously only up to the point of scheduling its body on
+  // `record.chain`, so two PIPELINED requests both evaluate the arrival-time ratchet before either body
+  // runs — and a test that awaits the first reply before sending the second cannot see it: it passes
+  // against code that has no in-chain re-check at all.
+  it("two PIPELINED tightenings cannot be composed into a loosening: accept -> refuse -> hold refuses the second at commit time", async () => {
+    const e = recordingEngine();
+    const { a, b, connA, threadId, record } = await admit("accept", e.engine);
+
+    // Both sent before either is answered — the shape a pipelining client produces. Against an
+    // arrival-time-only ratchet both read `accept`, both look like tightenings, and the second lands.
+    send(connA, { id: 3, method: "thread/crossSessionInbound/set", params: { threadId, value: "refuse" } });
+    send(connA, { id: 4, method: "thread/crossSessionInbound/set", params: { threadId, value: "hold" } });
+    await tick(); await tick(); await tick(); await tick();
+
+    expect(replyTo(a.lines, 3).result).toEqual({ ok: true });
+    expect(replyTo(a.lines, 4).error.code).toBe(ERR.INVALID_PARAMS);
+    // The in-chain refusal reads the value CURRENT at commit time, so it names `refuse` — not the `accept`
+    // the arrival check saw.
+    expect(replyTo(a.lines, 4).error.message).toContain('"refuse" -> "hold"');
+    // The record and the config it mirrors both END at the tighter value. The config half is the sharp one:
+    // a RUNTIME loosening is what the engine ignores, but `record.config` is what every replacement engine
+    // is BUILT from, and a launch-time policy is honoured in both directions — so a `hold` landing here
+    // would genuinely widen the thread at the next swap.
+    expect(record.crossSessionInbound).toBe("refuse");
+    expect(settingsOf(record.config!)[SETTINGS_KEY]).toBe("refuse");
+    expect(swapBaseConfig(record.config).settings).toEqual(expect.objectContaining({ [SETTINGS_KEY]: "refuse" }));
+    // The refused request touched nothing: one engine push, one announcement, to each subscriber.
+    expect(e.applied).toEqual([{ [SETTINGS_KEY]: "refuse" }]);
+    for (const lines of [a.lines, b.lines]) {
+      const evts = notifsOf(lines, "thread/settings/changed");
+      expect(evts).toHaveLength(1);
+      expect(evts[0].params).toEqual(changedPayload(threadId, "refuse"));
+    }
+  });
+
   it("the value the setter put there survives swapBaseConfig, which is what every replacement engine is built from", async () => {
     const { connA, threadId, record } = await admit("accept");
 
@@ -438,5 +474,56 @@ describe("thread/crossSessionInbound/set — the tightening ratchet", () => {
     const replacement = swapBaseConfig(record.config);
     expect(settingsOf(replacement)[SETTINGS_KEY]).toBe("refuse");
     expect((replacement.extraArgs as Record<string, unknown>)["replay-user-messages"]).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// ONE PAYLOAD SHAPE, FOUR PRODUCERS.
+//
+// `thread/settings/changed` is emitted from four places — settings.ts's client leg, router.ts's
+// engine-frame mirror, fleet.ts's host `state` change and rewind.ts's post-swap reconciliation — and each
+// used to build its own object literal. M8's `crossSessionInbound` reached only two of them, so the wire
+// shape depended on which producer happened to fire: API surface drift by AGENTS.md's payload rules, and a
+// subscriber forced to branch on which leg it received is reading a diff out of what is documented as a
+// full post-update snapshot. The fix is one builder; these two cases are what keeps it one.
+
+describe("thread/settings/changed — one shape, whichever producer fired", () => {
+  const appserverDir = fileURLToPath(new URL("../../../src/appserver/", import.meta.url));
+
+  it("every producer in src/appserver builds its payload with the shared builder — no site keeps a literal", () => {
+    // A literal at ANY of these sites is how the shape drifted the first time, so the guard is over the
+    // call sites themselves rather than over the four payloads a behavioural test can reach. It also names
+    // the producer set: a fifth one has to be added here deliberately, which is the moment to notice it.
+    const producers: { file: string; line: string }[] = [];
+    for (const f of readdirSync(appserverDir).filter((n) => n.endsWith(".ts"))) {
+      for (const line of readFileSync(join(appserverDir, f), "utf8").split("\n")) {
+        if (/broadcast\(.*"thread\/settings\/changed"/.test(line)) producers.push({ file: f, line });
+      }
+    }
+    expect(producers.map((p) => p.file).sort()).toEqual(["fleet.ts", "rewind.ts", "router.ts", "settings.ts"]);
+    for (const p of producers) expect(p.line, p.file).toMatch(/settingsChangedPayload\(/);
+  });
+
+  it("the builder's key set is the same on both sources and on a FLEET record, which reports its own policy", () => {
+    const CANONICAL = ["crossSessionInbound", "model", "permissionMode", "source", "thinkingTokens", "threadId"];
+    const inProcess: ThreadRecord = {
+      id: "t1", origin: "inProcess", session: fakeEngine() as never, unattended: "park",
+      crossSessionInbound: "accept", busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
+      subscribers: new Set(), chain: Promise.resolve(), createdAt: 1, updatedAt: 1,
+      settings: { model: "opus", permissionMode: "default", thinkingTokens: 1024 },
+      flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
+    };
+    // A fleet record's engine is the HOST's, so its policy is the honest `DEFAULT_INBOUND` seed this server
+    // admitted it at (fleet.ts) — the same value `thread/get` publishes for it. That is a value, not a gap:
+    // dropping the key for this origin would make the wire shape depend on where the engine lives.
+    const fleet: ThreadRecord = { ...inProcess, id: "t2", origin: "fleet", crossSessionInbound: DEFAULT_INBOUND, settings: {} };
+    for (const [record, source] of [[inProcess, "client"], [inProcess, "engine"], [fleet, "engine"]] as const) {
+      expect(Object.keys(settingsChangedPayload(record, source)).sort()).toEqual(CANONICAL);
+    }
+    expect(settingsChangedPayload(fleet, "engine")).toEqual({
+      threadId: "t2", source: "engine",
+      model: undefined, permissionMode: undefined, thinkingTokens: undefined,
+      crossSessionInbound: DEFAULT_INBOUND,
+    });
   });
 });

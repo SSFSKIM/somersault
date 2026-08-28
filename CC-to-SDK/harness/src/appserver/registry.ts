@@ -355,6 +355,37 @@ export function seedSettings(config: Record<string, unknown> | undefined): Threa
   };
 }
 
+/** The ONE `thread/settings/changed` payload, built from the record — every producer of that notification
+ *  calls this, and none builds the object itself.
+ *
+ *  There are FOUR producers, which is precisely why the builder exists: settings.ts's client-leg
+ *  `broadcastSettings`, router.ts's engine-frame `routeSettingsMirror`, fleet.ts's host `state` change, and
+ *  rewind.ts's post-swap reconciliation. Each had its own literal, and M8's fourth knob reached only two of
+ *  them — so the wire shape depended on which producer happened to fire, which is API surface drift by
+ *  AGENTS.md's payload rules (a subscriber that has to guess which keys its leg populated is reading a
+ *  diff, and this notification is a full post-update snapshot, never a diff). Centralized rather than
+ *  patched per site: patching leaves the same trap armed for the fifth producer.
+ *
+ *  `crossSessionInbound` is the one field read off the RECORD rather than off `record.settings` — the
+ *  engine's own settings mirror never carries the key (settings.ts, router.ts). It is mandatory on every
+ *  origin, so the FLEET producer reports it honestly too: a fleet record seeds `DEFAULT_INBOUND` because
+ *  this server neither built that engine nor can inject a settings layer into it, and that is the same
+ *  value `thread/get` already publishes for the thread. */
+export function settingsChangedPayload(r: ThreadRecord, source: "client" | "engine"): {
+  threadId: string; source: "client" | "engine";
+  model: string | undefined; permissionMode: string | undefined; thinkingTokens: number | undefined;
+  crossSessionInbound: CrossSessionInbound;
+} {
+  return {
+    threadId: r.id,
+    source,
+    model: r.settings.model,
+    permissionMode: r.settings.permissionMode,
+    thinkingTokens: r.settings.thinkingTokens,
+    crossSessionInbound: r.crossSessionInbound,
+  };
+}
+
 /** A record's flag layer at birth. A FUNCTION, not a shared constant: the four arrays are replaced
  *  wholesale on every accepted push, but a shared literal would still let one thread's accumulator be
  *  aliased by every other thread created before the first push. */

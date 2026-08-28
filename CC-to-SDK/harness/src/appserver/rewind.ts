@@ -42,7 +42,7 @@ import { installRouter } from "./router.js";
 import { installPeerInbound, settleAdopted, uninstallPeerInbound } from "./peerInbound.js";
 import { flushQueue } from "./queue.js";
 import { broadcastToSubscribersAndWatchers } from "./fanout.js";
-import { emptyFlagPerms, seedSettings, threadBusyReason, threadStatus, type EngineSession, type ThreadRecord } from "./registry.js";
+import { emptyFlagPerms, seedSettings, settingsChangedPayload, threadBusyReason, threadStatus, type EngineSession, type ThreadRecord } from "./registry.js";
 import { FleetBusyError, SWAP_TIMEOUT_MS, type FleetEngineSession } from "./fleetEngine.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
@@ -385,11 +385,9 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
     // contract). Both swap callers happen to bump afterwards, but this correction can be the only thing that
     // changed on a swap the caller reports as a plain success — so it must not depend on them.
     record.updatedAt = nowSec();
-    // The identical payload settings.ts/router.ts build — full post-update mirror, never a partial diff.
-    srv.broadcast(record.id, "thread/settings/changed", {
-      threadId: record.id, source: "engine",
-      model: record.settings.model, permissionMode: record.settings.permissionMode, thinkingTokens: record.settings.thinkingTokens,
-    });
+    // The identical payload settings.ts / router.ts / fleet.ts build, because all four call the ONE builder
+    // (registry.ts's `settingsChangedPayload`) — full post-update mirror, never a partial diff.
+    srv.broadcast(record.id, "thread/settings/changed", settingsChangedPayload(record, "engine"));
   }
   // The FLAG LAYER reconciles exactly like the mirror above, and for a sharper reason than symmetry
   // (external review 2026-08-11, superseding the deliberate asymmetry appserver.md's gap 9 recorded). The

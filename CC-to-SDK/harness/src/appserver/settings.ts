@@ -20,36 +20,26 @@
 // input items to resolve (or host bytes to stage) first. Contrast Task 11's thread/reinitialize
 // (lifecycle.ts), which DOES busy-gate: its engine call is heavy enough that running it concurrently with
 // a live turn is not safe, unlike these four.
-import { ERR } from "./rpc.js";
+import { ERR, type RequestId } from "./rpc.js";
 import { applyPeerPolicy, RESERVED_SETTINGS_KEY, SETTINGS_KEY, type CrossSessionInbound } from "./peerPolicy.js";
 import { settleAdopted, uninstallPeerInbound } from "./peerInbound.js";
 import { replyEngineThrow } from "./engineThrow.js";
 import { resolveAutoModel } from "../config/autoModel.js";
 import { thinkBudget } from "../tui/thinkLevels.js";
-import { ORIGIN_REFUSAL_MESSAGE, type ThreadRecord } from "./registry.js";
-import type { AppServer, Handler } from "./server.js";
+import { ORIGIN_REFUSAL_MESSAGE, settingsChangedPayload, type ThreadRecord } from "./registry.js";
+import type { AppServer, ConnCtx, Handler } from "./server.js";
 import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApplyParams } from "./schema/settings.js";
 import { crossSessionInboundSetParams } from "./schema/peer.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors router.ts's own nowSec — registry.ts's `updatedAt` is unix seconds, not ms
 
-/** The one `thread/settings/changed` shape every leg emits — router.ts's routeSettingsMirror builds the
- *  identical payload for the engine leg; this is its client-leg twin. Full post-update record.settings
- *  snapshot, never a partial diff ("one shape, all three knobs", spec Wave 1). */
+/** The client leg of `thread/settings/changed`. The payload itself is built by registry.ts's
+ *  `settingsChangedPayload` — the one builder all FOUR producers of this notification share (this one,
+ *  router.ts's engine-frame mirror, fleet.ts's host `state` change, rewind.ts's post-swap reconciliation),
+ *  so the wire shape cannot depend on which producer fired. Full post-update snapshot, never a partial
+ *  diff ("one shape, all three knobs", spec Wave 1 — plus M8's fourth). */
 function broadcastSettings(srv: AppServer, record: ThreadRecord): void {
-  srv.broadcast(record.id, "thread/settings/changed", {
-    threadId: record.id,
-    source: "client",
-    model: record.settings.model,
-    permissionMode: record.settings.permissionMode,
-    thinkingTokens: record.settings.thinkingTokens,
-    // M8's fourth knob, and the ONE that is not read off `record.settings`: the inbound policy is mirrored
-    // on the record itself (registry.ts) because it is also the arrival path's cheap read, and the
-    // engine's settings mirror never carries the key. Carried on EVERY leg — including the three setters
-    // that do not touch it — because this payload is a full post-update snapshot, not a diff, and a
-    // subscriber that has to guess which keys a given leg populated is reading a diff.
-    crossSessionInbound: record.crossSessionInbound,
-  });
+  srv.broadcast(record.id, "thread/settings/changed", settingsChangedPayload(record, "client"));
 }
 
 /** Whether THIS handler writes the mirror, or only asks (M3 §1a-c, Task 10).
@@ -211,6 +201,32 @@ export const settingsApply: Handler = (srv, ctx, id, params) => {
  *  stand still; never up. */
 const INBOUND_RANK: Record<CrossSessionInbound, number> = { accept: 0, hold: 1, refuse: 2 };
 
+/** The ratchet's ONE comparison and its ONE refusal. Returns true when it refused — a caller that gets
+ *  true has already answered this request and must do nothing else (no engine call, no record or config
+ *  write, no `updatedAt`, no broadcast, no observer teardown).
+ *
+ *  Extracted because it is called TWICE, and the second call is not redundant. The first is at ARRIVAL
+ *  time, so a refused request never serializes behind a running turn. But a handler runs synchronously
+ *  only up to the point of SCHEDULING its body on `record.chain`, so two pipelined requests both evaluate
+ *  the arrival check before either body runs: on a thread at `accept`, a pipelined `refuse` then `hold`
+ *  both read `accept`, both look like tightenings, and the second would commit a genuine LOOSENING —
+ *  reported to the client as success. Worse than a wrong reply, because the body also rewrites
+ *  `record.config` through `applyPeerPolicy`, and while a RUNTIME loosening is what the engine ignores, a
+ *  LAUNCH-time policy is honoured in both directions: the next engine swap (rewind/reopen/clear) would
+ *  build a genuinely wider engine, widening a thread's inbound access through the very method written to
+ *  prevent it. So the AUTHORITATIVE check is the in-chain one, against the value current at commit time —
+ *  it needs no new state, because every accepted body has already written `record.crossSessionInbound`
+ *  before the next body starts. */
+function refuseLoosening(ctx: ConnCtx, id: RequestId, current: CrossSessionInbound, value: CrossSessionInbound): boolean {
+  if (INBOUND_RANK[value] >= INBOUND_RANK[current]) return false;
+  ctx.peer.replyError(id, ERR.INVALID_PARAMS,
+    `crossSessionInbound only tightens at runtime: "${current}" -> "${value}" is a loosening, and a loosening `
+    + `write to the live flag layer is ignored in silence — so this server refuses rather than report a change `
+    + `that did not happen. Widening needs an engine BUILT with the wider value: admit a thread at it `
+    + `(thread/start / thread/resume), since no method exposes a replacement engine for this key today.`);
+  return true;
+}
+
 export const crossSessionInboundSet: Handler = (srv, ctx, id, params) => {
   const parsed = crossSessionInboundSetParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -225,9 +241,9 @@ export const crossSessionInboundSet: Handler = (srv, ctx, id, params) => {
   // origin refusal that lives where its subject is visible.
   if (record.origin === "fleet") { ctx.peer.replyError(id, ERR.UNSUPPORTED_FOR_ORIGIN, ORIGIN_REFUSAL_MESSAGE); return; }
   const value = parsed.data.value;
-  const current = record.crossSessionInbound;
   // THE RATCHET, AT ARRIVAL TIME — before the chain, so a refused request never serializes behind a running
-  // turn and never reaches the engine at all.
+  // turn and never reaches the engine at all. A FAST FAIL only: the authoritative check is the in-chain one
+  // below (see `refuseLoosening`), since this read happens before any pipelined predecessor's body has run.
   //
   // Compared against the CURRENT recorded value rather than the LAUNCH one, deliberately: every measured
   // leg flipped exactly once from its launch value, so the matrix cannot tell those two readings apart.
@@ -238,17 +254,17 @@ export const crossSessionInboundSet: Handler = (srv, ctx, id, params) => {
   // EXPLICITLY UNMEASURED, and refused rather than guessed: a tighten-then-partially-loosen sequence
   // (accept → refuse → hold). No leg ever probed a second move, so nothing is known about what the engine
   // would do with one — and this ratchet declines it before the engine could show us.
-  if (INBOUND_RANK[value] < INBOUND_RANK[current]) {
-    ctx.peer.replyError(id, ERR.INVALID_PARAMS,
-      `crossSessionInbound only tightens at runtime: "${current}" -> "${value}" is a loosening, and a loosening `
-      + `write to the live flag layer is ignored in silence — so this server refuses rather than report a change `
-      + `that did not happen. Widening needs an engine BUILT with the wider value: admit a thread at it `
-      + `(thread/start / thread/resume), since no method exposes a replacement engine for this key today.`);
-    return;
-  }
+  if (refuseLoosening(ctx, id, record.crossSessionInbound, value)) return;
   // An equal-value request falls through and applies: a tightening move of size zero, and refusing it would
   // make a retry an error.
   record.chain = record.chain.then(async () => {
+    // THE AUTHORITATIVE RATCHET, at COMMIT time — the first thing in the body, before the engine is asked
+    // anything, so a request that a pipelined predecessor turned into a loosening is refused having touched
+    // nothing: no engine call, no record or config write, no `updatedAt`, no broadcast, and none of the
+    // `settleAdopted`/`uninstallPeerInbound` teardown below. Its refusal is OURS and is about the REQUEST,
+    // so it answers -32602 directly rather than through `replyEngineThrow` (which exists for a throw from
+    // an engine that may have died mid-body — a different question, still asked below).
+    if (refuseLoosening(ctx, id, record.crossSessionInbound, value)) return;
     try {
       // The engine FIRST, as every setter in this file does: a rejected write must not move the mirror.
       await record.session.applyFlagSettings?.({ [SETTINGS_KEY]: value });
