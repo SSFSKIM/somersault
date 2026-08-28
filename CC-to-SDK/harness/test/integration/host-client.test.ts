@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { SessionHost } from "../../src/host/host.js";
 import { RemoteChatSession } from "../../src/client/remote.js";
 import { remoteChatSession } from "../../src/client/chatAdapter.js";
 import { hostSocketPath } from "../../src/fleet/paths.js";
 import { readRoster } from "../../src/fleet/roster.js";
+
+// test/integration -> harness/
+const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const rewindUser = (text: string, uuid: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
 const rewindAssistant = (uuid: string) => ({ type: "assistant", uuid, message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
@@ -252,6 +257,55 @@ describe("host + client over a real socket", () => {
     } finally {
       chat.detach();
       await stopQuietly(host);
+    }
+  });
+});
+
+// T-ATTACH — the pty stand-in host (`scripts/fake-host.mjs`) must obey the same replay-on-follow
+// contract the real host does (`SessionHost.follow()`, host.ts:730-772): a frame pushed on its stdin
+// BEFORE any follower exists is buffered and replayed, marked `replay: true`, to the first follower —
+// not silently dropped. Needs a built `dist/` (the script imports `../dist/fleet/*.js`); loud-skip
+// rather than a silent pass when that's missing, so a missing build reads as "skipped", not "green".
+const distBuilt = existsSync(join(harnessRoot, "dist/fleet/paths.js"));
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe.skipIf(!distBuilt)("fake-host replay-on-follow (needs `npm run build` for dist/)", () => {
+  it("replays a pre-follow stdin push to the first follower, marked replay", async () => {
+    const fleetRoot = mkdtempSync(join(tmpdir(), "bl6-fh-"));
+    const fh = spawn("node", [join(harnessRoot, "scripts/fake-host.mjs")], {
+      env: { ...process.env, CCX_FLEET_ROOT: fleetRoot },
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    let chat: ReturnType<typeof remoteChatSession> | undefined;
+    try {
+      const socketPath = await new Promise<string>((res, rej) => {
+        let buf = "";
+        fh.stdout!.on("data", (c) => {
+          buf += c.toString();
+          const m = buf.match(/SOCKET=(.+)/);
+          if (m) res(m[1].trim());
+        });
+        fh.once("exit", (code) => rej(new Error(`fake-host exited early: ${code}`)));
+        setTimeout(() => rej(new Error("no SOCKET= line within 5s")), 5000);
+      });
+      expect(fh.exitCode).toBeNull();               // still alive before we connect a client
+
+      fh.stdin!.write("message:prefollowword\n");    // pushed BEFORE any client exists — fans out to zero followers
+      await delay(300);
+
+      chat = remoteChatSession(socketPath);
+      await chat.whenReady();                        // completes the connect -> follow -> whenFollowed handshake
+
+      const events: unknown[] = [];
+      chat.onSessionEvent((ev) => events.push(ev));   // subscribed AFTER ready — exercises the adapter's own backlog too
+
+      await vi.waitFor(() => expect(events.some((e) => JSON.stringify(e).includes("prefollowword"))).toBe(true), { timeout: 5000 });
+      const msg = events.find((e) => JSON.stringify(e).includes("prefollowword")) as { replay?: boolean };
+      expect(msg.replay).toBe(true);
+    } finally {
+      chat?.detach();
+      fh.kill();
+      rmSync(fleetRoot, { recursive: true, force: true });
     }
   });
 });
