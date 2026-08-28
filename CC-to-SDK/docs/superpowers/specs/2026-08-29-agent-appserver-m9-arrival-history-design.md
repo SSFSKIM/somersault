@@ -1,6 +1,6 @@
 # M9 — arrival history: making an inbound peer message survive into `thread/read`
 
-**Status:** design, rev 1 · **Task:** #59 · **Depends on:** M8 (merged, `06bf3c0e44`)
+**Status:** design, rev 2 · **Task:** #59 · **Depends on:** M8 (merged, `06bf3c0e44`)
 
 ## Why this exists
 
@@ -14,226 +14,231 @@ absent while the assistant's answer to it is present — **history shows an answ
 A client that reconnects, or that renders a thread it did not subscribe to, cannot reconstruct why
 the model said what it said.
 
-This is the largest outstanding gap M8 shipped with, and it was written down rather than smoothed
-over. This spec closes it.
-
 The purpose is not "un-filter a row". It is that **a thread's readable history should contain
-everything the thread actually received**, whoever sent it, so that the record a client reads back
-matches the conversation that happened.
+everything the thread actually received**, so the record a client reads back matches the conversation
+that happened.
 
-## What is measured, and what it cost to learn
+## The measurements this design stands on
 
-Every claim in this section was measured against real transcripts during this design round
-(1,076,891 rows across 7,131 files under `~/.claude/projects`). None of it is inference. That
-discipline is deliberate: M8's retrospective records that this exact component was reasoned about
-rather than re-read, and the resulting false premise survived five spec revisions and produced two
-tasks of correct code that cannot run.
+Measured against 1,076,891 rows across 7,131 real transcripts. Where rev 1 got a number wrong, the
+correction is kept in place rather than quietly replaced — see `## Surprises & Discoveries`.
 
-**M1 — the drop is unconditional, and no SDK option reaches it.** `getSessionMessages` filters with
+**M1 — the drop is unconditional and no SDK option reaches it.** `getSessionMessages` filters with
+`if (e.isMeta) return false` after routing on type; `includeSystemMessages` gates only
+`type: "system"` and never reaches `isMeta`. The projection that follows is a fixed field literal
+with no `origin`. **Byte-identical in 0.3.237 and 0.3.250**, checked against both bundles — the
+task #60 bump does not close this and there is no option to ask for.
 
-```js
-if (e.type === "user" || e.type === "assistant") ; else if (e.type === "system" && t) ; else return false;
-if (e.isMeta) return false; if (e.isSidechain) return false; if (e.teamName) return false; return true;
-```
+**M2 — `origin` is a clean structural discriminator.** `isMeta` rows are 0.28% of all rows. They
+split with no overlap: those carrying an `origin` object are genuine inbound messages; those without
+are CLI bookkeeping (local-command caveats, skill injections, loop ticks, image placeholders, system
+reminders). So the blanket drop exists for a real reason, and `origin` — not text matching — is the
+discriminator. M8 removed a text-recognition rule from this codebase after counting showed it never
+fired correctly; this design does not reintroduce that pattern.
 
-`includeSystemMessages` (the `t` above) gates only `type: "system"`; it does not reach `isMeta`. The
-projection that follows is a fixed field literal — `type, uuid, session_id, message,
-parent_tool_use_id, parent_agent_id, timestamp` — so `origin` cannot survive even for rows that pass.
-**This is byte-identical in 0.3.237 and 0.3.250**, checked directly against both bundles, so the SDK
-bump in task #60 does not close this and there is no option to ask for.
+**M3 — in the corpus this reader actually opens, the hidden population is peer messages and nothing
+else.** Separating main transcripts from `subagents/`:
 
-**M2 — `origin` is the discriminator, and it is clean.** `isMeta` rows are 0.28% of all rows (2,962).
-They separate on one structural field with no overlap:
-
-| carries an `origin` object | 800 | genuine inbound messages |
-| no `origin` | 2,160 | CLI bookkeeping |
-
-The bookkeeping side is entirely local-command caveats (632), skill injections (665), autonomous-loop
-ticks (91), "Continue from where you left off." (54), image placeholders, and system reminders —
-nothing a user sent. **So the blanket drop exists for a real reason, and `origin` is a better rule
-than "peer": it is structural, it is what the CLI itself stamps, and it needs no text matching.**
-M8 already removed one text-recognition rule from this codebase after counting showed it never fired
-correctly; this design does not reintroduce the pattern.
-
-**M3 — only peer origins carry a payload.** Broken out by kind:
-
-| kind | rows | of those `isMeta` | keys on `origin` |
+| corpus | files | rows | hidden `isMeta`+`origin` rows |
 | --- | --- | --- | --- |
-| `task-notification` | 4,578 | 94 | `kind` only |
-| `human` | 2,520 | 6 | `kind` only |
-| `coordinator` | 571 | **571** | `kind` only |
-| `peer` | 130 | **130** | `kind, from, name, body`, + `senderTaskId` (112) / `verifiedPeerPid` (18) |
-| `auto-continuation` | 2 | 2 | `kind` only |
+| **main** (what `getSessionMessages` reads) | 3,856 | 567,273 | **`peer` 69, `auto-continuation` 2** |
+| `subagents/` (read only by `getSubagentMessages`) | 3,281 | 511,923 | `coordinator` 573, `task-notification` 94, `peer` 61, `human` 6 |
 
-Two things follow, and the second corrected an error made earlier in this round. First, `peer` is the
-only kind carrying the sender-authored `body`, so it is the only kind that can be rendered from
-anything but raw persisted content. Second, **the gap is not "every origin-bearing message"** — an
-early read of the aggregate suggested it was six times larger than task #59 states. It is not:
-`task-notification` and `human` rows are overwhelmingly *not* `isMeta` and were never hidden. The
-genuinely hidden populations are `peer` (130) and `coordinator` (571).
+Every subagent row is `isSidechain` (511,876 of 511,923). **Coordinator history is not reachable
+through this reader at all**, so rev 1's proposal to surface non-peer origin rows addressed a
+population that does not exist in scope. The in-scope gap is peer messages.
 
-**M4 — peer rows come in two populations, and only one has verified identity.**
+**M4 — peer rows carry two provenances, and only one is verified.** 112 rows carry
+`{body, from, kind, name, senderTaskId}` (the coordinator SendMessage path); 18 carry
+`verifiedPeerPid` and `fromMode` (the M8 gateway path). `verifiedPeerPid` is the only field the
+kernel vouches for; `from` is sender-authored and forgeable by any same-user process.
 
-- 112 rows / 26 files: `{body, from, kind, name, senderTaskId}` — the coordinator SendMessage path.
-- 18 rows: `{body, from, fromMode, kind, name, verifiedPeerPid, …}` — the M8 gateway path.
+**M5 — the transcript is not a safe source to splice.** In main transcripts: **1,562 duplicate uuid
+occurrences** across 2 files, **31 of which disagree with the first occurrence on `parentUuid`**, and
+**335 dangling `parentUuid` references** naming rows absent from the file. A uuid-keyed map over raw
+rows is therefore last-write-wins over an ambiguous graph, in cases that occur in the wild.
 
-`peerArrival` accepts both (it requires only `origin.kind === "peer"`). `verifiedPeerPid` is the only
-field the kernel vouches for; `from` is sender-authored and forgeable by any same-user process. A
-replayed item must therefore **not** assert verified identity that its row does not carry.
+**M6 — the SDK's read window is post-compaction only.** In the largest transcript examined the last
+compaction summary is at line 18,064 and the SDK's first returned row is line 18,063. This applies to
+every message type, ordinary user prompts included; it is the SDK's window, not our gap.
 
-**M5 — the splice is exact, and needs none of the SDK's chain logic.** Using the SDK's own output as
-the ordering spine and walking raw `parentUuid` links to re-insert dropped rows: **25 of 25** on-chain
-arrivals placed exactly, zero unplaced, across 29 transcripts. Leaf selection, tree resolution and
-compaction handling all stay with the SDK.
-
-**M6 — the "missing" 45 are pre-compaction, not a splice failure.** 45 of 70 arrivals sat off the
-selected chain. That looked like a 36% coverage ceiling. It is not: in the largest case the last
-compaction summary is at line 18,064 and the SDK's first returned row is line 18,063. The reader
-returns the post-compaction window only — for *every* message type, ordinary user prompts included.
-Our own `tui/rewindRebuild.ts` already documents this. **The splice recovers 100% of the arrivals
-inside the window `thread/read` actually returns.**
+**M7 — a folded arrival persists nothing.** No row of any kind, measured against a positive control
+on the same transcript. No reader of the engine's transcript can recover it.
 
 ## Design
 
-### The shape
+### The pivot, stated plainly
 
-One new reader, used by one caller. `thread/read` (in `appserver/subscribe.ts`) stops calling the
-shared reader and calls an **arrival-preserving reader** that returns the SDK's rows with two
-additions: dropped origin-bearing rows spliced back into position, and `origin` preserved on every
-row that has one. `itemsFromTranscript` then runs unchanged, and the `peerArrival` branch that Tasks
-10c/10d already wrote — correct, tested, and unfed since the day it landed — starts receiving rows.
+Rev 1 proposed recovering arrivals from the engine's transcript: use the SDK reader's output as an
+ordering spine and splice back the rows it dropped, using raw `parentUuid` links. An adversarial
+review broke that approach in six independent places, and checking its claims against the corpus
+confirmed them. The approach is abandoned. **This server persists its own record of the arrivals it
+handled, and merges that record into `thread/read`.**
+
+The reasoning is not that the splice was unfixable — it is that every one of its problems came from
+the same root, and the alternative does not have that root. The splice reads a file **another process
+owns and writes**, and then tries to reconstruct **that process's private ordering decisions** from
+it. Hence: two unsynchronised reads that can straddle a rewind; a graph with duplicate and dangling
+nodes we must mirror the engine's normalisation of; and attribution metadata any same-user process
+can forge, rendered as a user's words. The arrival log has none of those because the server writes
+what it already saw, on the live path, from the engine's own frame.
+
+It is also strictly more capable: it is the only approach that can give a **folded** arrival any
+history at all (M7), which is the gap M8 called its largest.
+
+### Shape
+
+On the live path, `peerInbound.ts` already recognises an arrival, mints its id, and broadcasts
+`thread/peerMessage`. It gains one more step: append the arrival to a durable per-thread **arrival
+log** — the id it announced, the text `peerArrival` resolved, the origin as received, and the epoch
+it belongs to.
+
+`thread/read` composes: the SDK reader's output, unchanged and still through
+`srv.deps.getSessionMessages`, merged with this thread's logged arrivals.
 
 ```
-thread/read ──► arrivalReader(sessionId)                    [new]
-                  ├─ sdkGetSessionMessages()   the spine: chain, leaf, compaction window
-                  ├─ raw JSONL by uuid         recovers origin + the dropped rows
-                  └─ splice by parentUuid      M5: exact, 25/25
-                            │
-                            ▼
-                itemsFromTranscript()  ──► peerArrival branch  [already correct]
+live:   engine frame ──► peerArrival ──► thread/peerMessage broadcast
+                                    └──► arrival log  (append: id, text, origin, epoch, position)
+
+read:   srv.deps.getSessionMessages()  ─┐
+                                        ├─► merge by position ──► itemsFromTranscript ──► items
+        arrival log for this thread    ─┘
 ```
 
-### Why a dedicated reader and not the shared dep
+The `peerArrival` branch in `items/replay.ts` — correct, tested, and unfed since it landed — is what
+renders a merged arrival, so the replayed item is produced by the **same rule** as the live one and
+carries the same id. That is what makes a client dedupe them rather than double-render, and it is
+preserved from rev 1 because it was the one part of that design nothing attacked.
 
-`srv.deps.getSessionMessages` is also consumed by `appserver/search.ts` and `appserver/rewind.ts`.
-Widening it would change both, and one of those changes is dangerous:
+### Why the record is trustworthy, where the transcript was not
 
-- **`rewind.ts`** builds anchors with `rewindAnchorsFrom`, which selects rows where
-  `rowKind(m) === "prompt"` and records a positional `index`. A peer arrival row is `type: "user"`,
-  has a uuid, and carries no `tool_result` — so it classifies as `"prompt"`. Widening the shared
-  reader would silently turn every peer arrival into a rewind anchor **and shift the index of every
-  anchor after it.** That is a behaviour change to rewind that nobody asked for, arriving as a side
-  effect of a read fix.
-- **`search.ts`** would begin matching arrival text. Defensible, but it is a product decision about
-  what search covers, and it should be made deliberately rather than inherited.
+The log is written by this server, on the live path, from the frame the engine handed it — the same
+frame `thread/peerMessage` is built from. Nothing else writes it. So `thread/read` and
+`thread/peerMessage` report the same thing by construction, and a same-user process that can write
+files cannot inject a forged "user question" into a thread's rendered history. Persisted `origin` in
+the engine's transcript stays what it is: another process's unauthenticated assertion, which this
+design no longer reads.
 
-So the widening is scoped to the one caller whose contract is "show me this thread's history".
-Whether rewind and search should follow is a genuine question, deferred rather than answered by
-accident.
+`verifiedPeerPid` is logged when the arrival carried one and omitted when it did not (M4). A replayed
+item asserts exactly what its arrival asserted, and manufactures nothing to look uniform.
 
-### What each origin kind renders as
+### Position, and the coordinate system
 
-- **`peer`** — through `peerArrival`, exactly as today's live path does. Same rule, same id, same
-  text, which is what makes the live item and the replayed item deduplicate by id rather than
-  double-render. This is the case the whole design exists for.
-- **every other kind** — through the existing content path, becoming an ordinary `userMessage`.
-  They carry no `body`, so there is nothing to unwrap; their text is the persisted content including
-  whatever framing the CLI wrote around it.
+This is the design's hardest remaining problem, and rev 1 wrongly deferred it as an unknown. It is a
+deterministic contract question that must be settled **before** implementation:
 
-The recommendation is that non-peer origin rows **do** surface, on the grounds that a message the
-session actually received is better rendered with CLI framing than omitted entirely — 571 coordinator
-messages are invisible today. This is the design's most arguable call and is flagged for review.
+`thread/read` pages by row offset within an epoch, and `thread/searchOccurrences` publishes a
+`readCursor` built from a *filtered* row offset for direct use by `thread/read`. If read merges rows
+that search does not, the two coordinate systems diverge and a search jump lands on the wrong row.
 
-### Identity, and what a replayed item may claim
+So the merge defines **one canonical coordinate space**, and every producer of a `thread/read` cursor
+uses it. An arrival is logged with the anchor it precedes — durable and uuid-based, never a numeric
+offset, because offsets are exactly what shifts. Paging and search-jump translation both resolve
+through that anchor.
 
-`thread/peerMessage` forwards `origin` verbatim, deliberately, because re-deriving it would replace a
-kernel-verified fact with this server's opinion. The replayed path inherits that rule unchanged: it
-forwards what the row carries and asserts nothing it does not. Per M4, most peer rows have no
-`verifiedPeerPid`, so any consumer treating presence as guaranteed is wrong — and a replayed item
-must not manufacture one to look uniform.
+### Epoch, rewind, and clear
 
-### What this design does not fix, stated plainly
+The log is epoch-scoped. `thread/clear` bumps the epoch and the log's earlier entries stop
+participating; a rewind that invalidates outstanding cursors invalidates the log's view the same way.
+This is the one place the arrival log takes on a consistency obligation the splice did not have, and
+it is a tractable one: it reuses the epoch mechanism `thread/read` already relies on, rather than
+inventing a second notion of "which history is current".
 
-- **A folded arrival persists nothing** — no row of any kind, measured against a positive control on
-  the same transcript. No reader can recover what was never written. `thread/peerMessage` remains its
-  only record, which makes that announcement load-bearing rather than a convenience. Giving folded
-  arrivals durable history requires this server to persist its own record, which is a different
-  design with its own consistency questions, and is not attempted here.
-- **Pre-compaction arrivals stay invisible**, exactly as pre-compaction user prompts do (M6). This is
-  the SDK's read window, not our gap, and pretending otherwise would mean reimplementing compaction
-  semantics to no benefit.
-- **Store-backed sessions.** `GetSessionMessagesOptions.sessionStore` allows a transcript to live
-  somewhere other than the local filesystem. Reading raw JSONL bypasses that. The app-server passes
-  no `sessionStore` anywhere today (verified: zero occurrences under `src/appserver`), so nothing
-  breaks now — but the reader must degrade to plain SDK output rather than fail when the file is
-  absent, and that is a required behaviour, not a nicety.
+### What this does not fix
+
+- **Arrivals this server never handled** — a thread's history from before this feature, or handled by
+  a different process, has no log entries. Those arrivals were never visible to this server's clients
+  either, so the boundary is honest rather than convenient: the server reports what it received.
+- **Pre-compaction history** stays outside the read window (M6), as it does for every message type.
+- **Coordinator and task-notification history** is subagent history (M3), reachable only through
+  `getSubagentMessages`. Out of scope, and named so it is not rediscovered.
 
 ## Acceptance
 
-Phrased as observable behaviour. The keyed legs run against a real engine.
+Phrased as observable behaviour. Keyed legs run against a real engine.
 
-1. **A peer message answered by a thread appears in that thread's history.** Send a message to an
-   accepting thread, let the turn complete, then call `thread/read`: the arrival is present, before
-   the assistant's answer, carrying the sender's text — not the CLI's envelope preamble.
-2. **The replayed item and the live item are the same item.** The id `thread/read` returns for the
-   arrival equals the `arrivalUuid` that `thread/peerMessage` announced, so a client that dedupes by
-   id renders it once.
-3. **Ordinary history is unchanged.** For a thread that never received a peer message, `thread/read`
-   returns byte-identical output before and after this change.
-4. **CLI bookkeeping stays out.** A thread whose transcript contains local-command caveats, skill
-   injections, or system reminders shows none of them in `thread/read`.
-5. **Rewind is untouched.** Rewind anchors and their indices for a thread containing a peer arrival
-   are identical before and after this change — the shared reader still feeds them.
-6. **A missing or unreadable transcript file degrades, never throws.** `thread/read` returns what the
-   SDK returns.
-7. **The M8 live legs that assert the gap go red and are updated, not weakened.** They assert current
-   behaviour deliberately; their reddening is the signal this landed, and each is rewritten to assert
-   the new behaviour rather than deleted or loosened.
+1. **A peer message answered by a thread appears in that thread's history.** Send to an accepting
+   thread, let the turn complete, call `thread/read`: the arrival is present, before the assistant's
+   answer, carrying the sender's text — not the CLI's envelope preamble.
+2. **The replayed item and the live item are one item.** The id `thread/read` returns equals the
+   `arrivalUuid` `thread/peerMessage` announced, so a client that dedupes by id renders it once.
+3. **A folded arrival has history too** — the case no transcript reader can serve (M7).
+4. **Ordinary history is unchanged.** For a thread that never received a peer message, `thread/read`
+   is byte-identical before and after.
+5. **Paging and search jumps stay consistent.** A `readCursor` from `thread/searchOccurrences` lands
+   on the row it names, with an arrival on either side of the boundary; a full paged walk returns
+   every row exactly once, with no gap or repeat.
+6. **A refused or held arrival produces no history**, because it produced no turn.
+7. **`thread/clear` drops the thread's arrival history with the rest of it.**
+8. **A forged `origin` on disk changes nothing.** Writing a row with a fabricated peer `origin` into
+   a thread's transcript does not make it appear in `thread/read`.
+9. **The M8 live legs that assert the gap go red and are rewritten**, not weakened — their reddening
+   is the signal this landed.
 
 ## Delegated unknowns
 
-Empirical, to be closed during implementation rather than argued now:
+Empirical, to be closed during implementation:
 
-- **U1 — does a widened row disturb `rowKind`?** `sessions/rows.ts` opens by asserting "The rows carry
-  NO meta flags (probe 68b)". That is true of its *input* (SDK-projected rows) but is written as a
-  fact about the rows, and it is false on disk. Once richer rows reach it, confirm no classifier
-  branch changes verdict, and correct the comment either way.
-- **U2 — cursor stability.** `thread/read` pages by row offset within an epoch. Inserting rows shifts
-  offsets. Confirm a cursor minted and consumed within one server version still walks without gap or
-  repeat; a cursor spanning a version upgrade is out of scope.
-- **U3 — the second population's live twin.** M4 found 112 peer rows carrying `senderTaskId` and no
-  `verifiedPeerPid`. Confirm `peerArrival` renders those correctly from disk, since M8's live legs
-  only ever exercised the 18-row gateway population.
+- **U1 — where the log lives.** It must survive process restart, be per-thread, and be cheap to read
+  on every `thread/read`. Whether that is a sidecar file beside the transcript, a row in an existing
+  store, or in-memory with a durable backing is an implementation question with a measurable answer
+  (restart survival, read cost at realistic history sizes).
+- **U2 — anchor resolution when the anchor is gone.** An arrival's anchor row can fall outside the
+  SDK's post-compaction window (M6). Decide, by measurement, whether such an arrival is dropped with
+  its anchor or surfaces at the window's head.
+- **U3 — does `rowKind` change verdict on any merged row?** `sessions/rows.ts` opens by asserting
+  "The rows carry NO meta flags (probe 68b)". True of its input, false of the rows on disk, and
+  written as though it were a fact about the rows. Confirm no classifier branch changes, and correct
+  that comment either way.
 
 ## Decision Log
 
-- **The reader rule is `origin`, not `peer`.** Rejected: matching on `origin.kind === "peer"` at the
-  reader. It bakes one consumer's interest into a shared boundary, and M2 shows `origin` is already
-  the clean structural split. Also rejected: text recognition of the envelope — M8 removed exactly
-  that rule after counting showed 40 of 52 matches were local prompts quoting an envelope.
-- **Splice over reimplementation.** Rejected: reproducing the SDK's chain walk in our tree. It would
-  duplicate leaf selection, tree resolution and compaction-window semantics — the subtle parts — to
-  recover rows the SDK already positions for us. M5 measured the splice exact at 25/25.
-- **A dedicated reader, not the shared dep.** Rejected: widening `srv.deps.getSessionMessages`. It
-  would silently turn peer arrivals into rewind anchors and shift every subsequent anchor index.
-- **Non-peer origin rows surface as ordinary user messages.** Rejected: hiding them until they can be
-  rendered richly, which keeps 571 real messages invisible for a cosmetic reason. Flagged as the most
-  arguable call here.
-- **Folded arrivals are documented, not synthesised.** Rejected: minting a placeholder item for an
-  arrival with no persisted row. It would put a fabricated row in a record whose whole value is
-  being what actually happened.
+- **The server logs arrivals; it does not reconstruct them from the engine's transcript.** Rejected:
+  the rev 1 splice. Six independent review findings, all confirmed against the corpus: unsynchronised
+  two-source reads that can straddle a rewind; raw parent links that are not the graph the SDK orders
+  (M5 — 1,562 duplicate uuids, 31 disagreeing on parent, 335 dangling refs); a cursor namespace
+  incompatible with search's published `readCursor`; a target population that is subagent history
+  (M3); forgeable `origin` rendered as a user's words; and a bypass of the public
+  `AppServerDeps.getSessionMessages` seam that embedders override. The alternative removes the root
+  those share and additionally serves folded arrivals.
+- **`thread/read` keeps calling `srv.deps.getSessionMessages`.** Rejected: a filesystem reader behind
+  the dep. That dep is the documented seam an embedder overrides to point at its own session store;
+  bypassing it hands such an embedder empty or foreign history from the local disk.
+- **Scope is peer arrivals.** Rejected: rev 1's proposal to surface every origin-bearing row. M3
+  shows that population is subagent history this reader never opens — the call rev 1 flagged as its
+  most arguable was answered by measurement rather than argument.
+- **Anchors are uuid-based, never numeric offsets.** Rejected: recording an insertion index. Offsets
+  are precisely what merging shifts, and search publishes a cursor computed in the unmerged space.
+- **Persisted `origin` is untrusted and unread.** Rejected: validating it and rendering it when it
+  looks well-formed. Validation reduces the forgery surface; it does not remove it, and there is no
+  need to accept any of it once the server has its own record.
+- **A folded arrival is logged, not synthesised from nothing.** Its log entry records a real event the
+  server observed. Still rejected: minting a placeholder for an arrival the server never saw.
 
 ## Surprises & Discoveries
 
-- The SDK's `includeSystemMessages` option looked like the seam and is not — it gates `type:"system"`
-  only and never reaches `isMeta`. Reading the bundled implementation, not the type declaration, is
-  what settled it.
-- 45 of 70 arrivals appearing "off-chain" looked like a hard coverage ceiling for a full working
-  session's reasoning. It was compaction, shared with every other message type. The lesson repeats
-  M8's: an aggregate number invited a conclusion, and one concrete example refuted it in a minute.
-- The claim that this gap covers "every origin-bearing message, six times larger than the task says"
-  was made and then disproved within the same design round, by breaking the aggregate down per kind.
-  It is recorded here rather than quietly dropped.
+- **Rev 1's central population number was wrong, and the refuting data was already in hand.** It
+  reported a hidden population spanning five origin kinds and recommended surfacing all of them. Once
+  main transcripts were separated from `subagents/`, the in-scope population was `peer` 69 and
+  `auto-continuation` 2 — and rev 1's own splice script had already excluded `subagents/`, printing a
+  peer count of 68 against a census of 130 without that discrepancy being chased. The aggregate was
+  read; the disagreement between two of my own numbers was not.
+- **A number stated in-round and disproved in-round.** Rev 1 claimed the gap was "six times larger
+  than the task says". Breaking the aggregate down per kind disproved it the same day. Recorded
+  rather than dropped.
+- **45 of 70 arrivals appearing unreachable looked like a coverage ceiling and was compaction** —
+  shared with every message type. One concrete example refuted a conclusion that a working session's
+  reasoning had already accepted.
+- **The review found more than it was asked to.** It was pointed at the splice, cursors, and the
+  trust boundary; it also found that the target population was subagent history and that the design
+  bypassed a public embedder seam. Two of six findings were outside the questions posed, which is the
+  argument for adversarial review over a checklist.
+- **An SDK bump is an engine change.** During this round, task #60's bump moved the bundled CLI from
+  2.1.237 to 2.1.250 (each SDK package's `manifest.json` names its CLI), and a cross-session contract
+  changed with it: a `peer/send` into a `refuse` thread, previously silent, now returns a
+  `peer/messageStatus` of `expired` with an explicit reason. Established by controlled experiment —
+  the same single leg passes on 0.3.237 and fails on 0.3.250, minutes apart on one machine. The
+  refusal is still enforced (no turn, no items); only the sender's visibility improved.
 
 ## Outcomes & Retrospective
 
@@ -241,5 +246,12 @@ Pending — written at finish.
 
 ## Revision Notes
 
-- **rev 1 (2026-08-29)** — first draft, written from measurement (M1–M6) rather than from reading
-  the M8 spec's prose about this component, which was wrong for five revisions.
+- **rev 1 (2026-08-29)** — first draft, from measurement rather than from the M8 spec's prose about
+  this reader.
+- **rev 2 (2026-08-29)** — design pivot after adversarial review. Six findings, all confirmed against
+  the corpus; two refuted rev 1's own claims. Transcript splicing is abandoned for a server-side
+  arrival log: it removes the shared root of every finding (reading and re-deriving another process's
+  private ordering from a file it owns), keeps `thread/read` on the public reader seam, and is the
+  only approach that can serve a folded arrival. Scope narrowed from all origin kinds to peer
+  arrivals on the evidence of M3. The cursor question moved from a delegated unknown to a settled
+  part of the design, because it is a deterministic contract break rather than something to discover.
