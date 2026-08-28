@@ -1047,7 +1047,62 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**What shipped.** The app-server is a participant in Claude Code's machine-local messaging fabric, in
+both directions. Outbound: `peer/list` enumerates the machine's addressable sessions, `peer/send` writes
+one enveloped frame into a peer's inbox in the CLI's own fixed attribute order, and `peer/messageStatus`
+returns whatever the receiver says became of it. Inbound: a thread admitted with
+`crossSessionInbound: "accept"` turns an arriving peer message into a fully visible turn —
+`thread/peerMessage` carrying the sender's kernel-verified pid, then the model's actual output through
+the ordinary mapper, then an ending that separates completed from failed from interrupted from
+cancelled. `thread/crossSessionInbound/set` tightens a live thread's policy. Five scorecard rows,
+73 registered methods, 110 rows, gate green.
+
+**Verified.** 4092 unit tests across 266 files; typecheck clean; drift gate exit 0; nine keyed
+acceptance legs green against a real engine, re-run independently after the implementing agent reported
+them. Every number here was read off a run at the branch's final commit, not carried forward.
+
+**What the round got right.** The design was rewritten three times by measurement rather than by review,
+and each rewrite deleted machinery instead of adding it. Probe 119b's `command_lifecycle` discovery
+removed the reservation machinery, the frame buffering and the late-adoption branch outright, because
+each existed only to compensate for a trigger that fired after the fact. The Stage B review's eighteen
+findings reduced to four facts about this codebase the design had assumed away — two admission spines, a
+second `ThreadRecord` literal, a swap that reinstalls only the router, and a settings field that accepts
+a file path — and adoption moved to run THROUGH `beginTurn` rather than beside it, which is what makes an
+adopted turn's model output reach subscribers at all. Holding the runtime setter back as a spike was
+right for the reason it was argued: the measurement narrowed it to a ratchet, and shipping it on
+reasoning would have put a security-shaped knob on the wire that reports success in a direction the
+engine ignores.
+
+**What the round got wrong, and it is the same failure twice.** Both times, a measurement this project
+already owned was not connected to the path that needed it.
+
+The first was recoverable: a fallback that recognised peer arrivals by envelope TEXT rather than sender
+attribution. Counting real transcripts showed 52 rows containing the envelope of which only 12 were
+genuine arrivals — the other 40 were local prompts quoting one, including code-review requests about
+this very work — and the fallback had never once recovered a real arrival. It was removed before it
+shipped.
+
+The second was not caught until the last possible moment. Probe 107 measured, on 2026-08-12, that the
+SDK reader drops every `isMeta` row and projects the rest onto a fixed shape. This design was written six
+weeks later, asserted the opposite in prose ("the persisted rows carry no such flags, so `thread/read`
+will show a peer prompt as a `userMessage` whatever the live path does"), and built two whole tasks —
+10c and 10d — on making the cold path agree with the live one. The cold path is correct and cannot run:
+`thread/read` shows an inbound peer message not at all, and a folded arrival is persisted nowhere. A
+client sees the model's answer with no question in front of it. Nothing but a live leg trying to read an
+arrival back would have found it, and the leg was nearly not written, because the same reasoning that
+produced the wrong premise also made the leg look redundant.
+
+The lesson is narrow enough to act on: a prior probe's result is only as good as the paths someone
+remembers to apply it to, and prose that says "so X will happen" about a component nobody re-read in
+this round is a claim, not a citation. Two tasks of correct work now wait on task #59 for a reader that
+can feed them.
+
+**Honest limits of what shipped.** `hold` on a hosted thread is a delayed refuse, since there is no
+approval surface. The inbound policy cannot be loosened at runtime, by the engine's design and now by
+ours explicitly. A batched turn announces only the message that caused it, so the other members arrive
+unannounced — the engine's attribution, forwarded verbatim rather than guessed at. And inbound peer
+messages have no durable history through this server's own read path, which is the round's largest
+outstanding gap and is written down rather than smoothed over.
 
 ## Revision Notes
 
