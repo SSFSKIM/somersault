@@ -13,6 +13,11 @@
 // painted fullscreen REPL against the fake" in select-pty.sh, which is exactly the failure mode the task
 // brief says to report rather than paper over.
 //
+// REPLAY-ON-FOLLOW (T-ATTACH): both ways of producing frames — the `FAKE_HOST_SCRIPT` env var and this
+// process's own stdin — now obey the same ordering rule the real host's `SessionHost.follow()` does
+// (drain-before-register): a frame produced before the first `follow` op is buffered, not dropped, and
+// is replayed (marked `replay: true`) to that first follower before any later, live push is delivered.
+//
 // USAGE: CCX_FLEET_ROOT=<isolated root> FAKE_HOST_SCRIPT=turn-start,tasks:3 node scripts/fake-host.mjs
 // Prints its own short id (`SHORT=<id>`) once the roster row is written and the socket is listening, so
 // the caller can `ccx attach <that id>`. Holds the connection open until killed (SIGTERM/SIGINT).
@@ -114,14 +119,26 @@ function framesFor(word) {
 // process's stdin — the same `word` syntax `FAKE_HOST_SCRIPT` uses, e.g. `message:more text` — can be
 // pushed on demand: `tmux send-keys` into the fake host's own pane delivers it as a normal line, since
 // nothing here puts the tty into raw mode.
+//
+// T-ATTACH — this path used to fan out straight to `followers` and drop the frame on the floor when that
+// set was empty, which is exactly the connect-to-`follow` race the real host's own `follow()` handshake
+// exists to close (drain-before-register, host.ts:730-772). `preFollowBuffer` gives the stdin path the
+// same ordering rule the `FAKE_HOST_SCRIPT` path below already had by construction (it never pushes
+// before the first `follow` ack is sent): a frame pushed with no follower yet is queued here, then
+// replayed — marked `replay: true`, matching the real host — to the first follower before live pushes
+// resume.
 const followers = new Set();
+const preFollowBuffer = [];   // frames pushed while nobody is following yet
 let stdinBuf = "";
 process.stdin.on("data", (chunk) => {
   stdinBuf += chunk.toString();
   for (let nl = stdinBuf.indexOf("\n"); nl >= 0; nl = stdinBuf.indexOf("\n")) {
     const word = stdinBuf.slice(0, nl).trim(); stdinBuf = stdinBuf.slice(nl + 1);
     if (!word) continue;
-    for (const ev of framesFor(word)) for (const push of followers) push(ev);
+    for (const ev of framesFor(word)) {
+      if (followers.size === 0) preFollowBuffer.push(ev);
+      else for (const push of followers) push(ev);
+    }
   }
 });
 
@@ -154,6 +171,10 @@ const server = createServer((sock) => {
         send(base);
         if (!following) {
           following = true;
+          // Drain-before-register, same order as the real host's follow() (host.ts:770 adds LAST): any
+          // stdin push that landed with zero followers is replayed to THIS first follower before it is
+          // added to `followers`, so a live push racing this drain can never be delivered out of order.
+          for (const ev of preFollowBuffer.splice(0)) pushEvent({ ...ev, replay: true });
           followers.add(pushEvent);
           // After the FIRST follow ack, push the requested frames with a small delay between them — long
           // enough that the REPL's own effects (spinner mount, task-panel mount) settle between events

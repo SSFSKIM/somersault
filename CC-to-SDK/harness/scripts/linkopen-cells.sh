@@ -116,26 +116,6 @@ launch_fake_host() {                          # launch_fake_host <session> <home
   return 1
 }
 push() { tmux -L "$TM" send-keys -t "$1" -l "$2"; tmux -L "$TM" send-keys -t "$1" Enter; sleep 0.3; }  # push <fake-host-session> <word>
-# LIVE-PROBE FINDING (this file): the footer painting "mode on" proves the attach client is UP, but not yet
-# FOLLOWING — the very first frame pushed into a freshly-attached fake host is reliably dropped (reproduced
-# 3/3 with `prlink` as the first-ever push; a harmless `message:` push beforehand always lands). This is a
-# `follow()` establishment race, not a `prlink`/fold defect — pushing one disposable sentinel message and
-# waiting for it to render is what the real cells below need before their own first real push.
-warmup_follow() {                             # warmup_follow <fake-host-session> <attach-session>
-  # RETRIES the push, not just the wait: the race is in `follow()` establishing on the ATTACH side, which a
-  # single push can lose outright (the frame arrives before the client is listening and is simply gone, not
-  # merely slow) — re-pushing the identical, idempotent-to-read sentinel every ~1.5s until it is seen (or a
-  # generous 15s ceiling) covers both that race and ordinary machine-load slowness in one loop.
-  local fh="$1" s="$2" i=0
-  while [ "$i" -lt 10 ]; do
-    push "$fh" "message:readyframesentinel"      # no markdown-special chars — underscores render as `**bold**`
-    CAP="$ROOT/cap-$RANDOM"
-    capture "$s" > "$CAP"
-    grep -qF "readyframesentinel" "$CAP" && return 0
-    sleep 1.2; i=$((i+1))
-  done
-  return 1
-}
 
 launch_attach() {                             # launch_attach <session> <home-dir> <short> <extra-env...>
   local s="$1" home="$2" short="$3"; shift 3
@@ -162,7 +142,6 @@ run_self_open_cell() {
   # `HYPERLINK_TERMS`, so the assistant text actually gets an OSC-8 link at all) and the brief's own pin.
   launch_attach "$s" "$home" "$short" "TERM_PROGRAM=iTerm.app" "BROWSER=$RECORDER" "LINKOPEN_RECORDER_OUT=$out" \
     || { echo "      FAIL self-open: ccx attach never reached the ready frame"; record self-open 1; kill_cell "$s"; kill_cell "$fh"; return; }
-  warmup_follow "$fh" "$s" || { echo "      FAIL self-open: the attach client never showed the warmup frame (follow never established)"; record self-open 1; kill_cell "$s"; kill_cell "$fh"; return; }
   push "$fh" "message:See [my link](https://example.com/self-open-target) for details"
   wait_for_capture "$s" "my link" || { record self-open 1; kill_cell "$s"; kill_cell "$fh"; return; }
   local rc_pair; rc_pair=$(col_of "$CAP" "my link" 2) || { echo "      FAIL self-open: could not locate the link's own column"; record self-open 1; kill_cell "$s"; kill_cell "$fh"; return; }
@@ -185,7 +164,6 @@ run_self_open_cell() {
   local out2="$ROOT/lo2-opened.txt"
   launch_attach "$s2" "$home2" "$short2" "TERM_PROGRAM=iTerm.app" "BROWSER=$RECORDER" "LINKOPEN_RECORDER_OUT=$out2" \
     || { echo "      FAIL fold-link: ccx attach never reached the ready frame"; record fold-link 1; kill_cell "$s2"; kill_cell "$fh2"; return; }
-  warmup_follow "$fh2" "$s2" || { echo "      FAIL fold-link: the attach client never showed the warmup frame (follow never established)"; record fold-link 1; kill_cell "$s2"; kill_cell "$fh2"; return; }
   push "$fh2" "prlink"
   wait_for_capture "$s2" "Created PR #12" || { record fold-link 1; kill_cell "$s2"; kill_cell "$fh2"; return; }
   local before; before=$(cat "$CAP")
@@ -227,7 +205,6 @@ run_hover_suppress_cell() {
   short=$(launch_fake_host "$fh" "$home") || { echo "      FAIL hover-suppress: fake-host.mjs never printed its short id"; record hover-suppress 1; kill_cell "$fh"; return; }
   launch_attach "$s" "$home" "$short" \
     || { echo "      FAIL hover-suppress: ccx attach never reached the ready frame"; record hover-suppress 1; kill_cell "$s"; kill_cell "$fh"; return; }
-  warmup_follow "$fh" "$s" || { echo "      FAIL hover-suppress: the attach client never showed the warmup frame (follow never established)"; record hover-suppress 1; kill_cell "$s"; kill_cell "$fh"; return; }
   push "$fh" "errcluster"
   push "$fh" "mysteryerr"
   wait_for_capture "$s" "+2 lines" || { record hover-suppress 1; kill_cell "$s"; kill_cell "$fh"; return; }
