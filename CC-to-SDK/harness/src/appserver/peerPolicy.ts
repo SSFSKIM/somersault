@@ -1,5 +1,11 @@
-// appserver/peerPolicy.ts — the inbound policy, decided ONCE at admission and written into the config
-// every engine for this thread is built from.
+// appserver/peerPolicy.ts — the inbound policy, decided at admission and written into the config every
+// engine for this thread is built from.
+//
+// It moves after admission in exactly one direction. `thread/crossSessionInbound/set` (settings.ts) is a
+// TIGHTENING ratchet: probes 120/120b measured that the CLI re-reads this key off the live flag layer only
+// when the new value is stricter, and a loosening write is ignored in silence — so loosening is refused
+// there rather than reported as done. Every accepted move re-runs the function below over `record.config`,
+// which is what keeps the ratchet's result durable across the next engine swap.
 //
 // Four doors lead to the CLI's settings, and a policy that closes three of them closes none:
 //   1. `config.settings`            — the SDK's typed object
@@ -66,7 +72,8 @@ function withArgvSettings(args: Record<string, unknown> | undefined, value: Cros
 
 /** The one place the policy is stamped into a config. Returns a new config; never mutates the input.
  *
- *  Call this at admission and write BOTH results in the same statement — `record.config` (which every
+ *  Call this at admission, and again on every accepted tightening (settings.ts's `crossSessionInboundSet`),
+ *  writing BOTH results in the same statement — `record.config` (which every
  *  replacement engine is rebuilt from, via rewind.ts's `swapBaseConfig`) and `record.crossSessionInbound`
  *  (the arrival path's cheap read). They are one fact; storing one without the other is how a swap
  *  silently restores the launch policy.

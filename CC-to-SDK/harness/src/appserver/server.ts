@@ -23,7 +23,7 @@ import { ImageStageRegistry, IMAGE_STAGE_SWEEP_INTERVAL_MS } from "./imageStage.
 import { imageStageParams } from "./schema/images.js";
 import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
-import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
+import { modelSet, permissionModeSet, thinkingSet, settingsApply, crossSessionInboundSet } from "./settings.js";
 import { capabilitiesRead, contextUsageRead, usageRead, initRead, accountRead } from "./introspect.js";
 import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
 import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } from "./sessionLib.js";
@@ -741,6 +741,11 @@ export class AppServer {
     // never the request's subject: the subject is another process's inbox on this machine.
     "peer/list": peerList,
     "peer/send": peerSend,
+    // …and the policy's own setter, which IS thread-scoped (unlike the two above) and therefore does pass
+    // the -33005 gate. It lives with the other settings setters in settings.ts, on the same
+    // `thread/settings/changed` spine, and refuses a fleet thread in its own body — see its header on why
+    // the refusal is not in FLEET_UNSUPPORTED.
+    "thread/crossSessionInbound/set": crossSessionInboundSet,
     // M3 Task 9 (§1e): ONE method, origin-appropriate meaning. On an inProcess thread this IS
     // `thread/close` — our engine, our call to end it. On a fleet thread the two diverge completely:
     // closing only detaches (the host lives on), so ending the SESSION needs its own op and its own

@@ -158,8 +158,9 @@ export type PendingFleetStop = { interrupted: boolean };
 export interface ThreadRecord {
   id: string;
   origin: ThreadOrigin;
-  /** M8: whether a cross-session peer may write into this thread — decided at ADMISSION and never after
-   *  (peerPolicy.ts's header says why there is no runtime setter). Mirrored from
+  /** M8: whether a cross-session peer may write into this thread — decided at ADMISSION, and afterwards
+   *  movable only in the restrictive direction (`thread/crossSessionInbound/set`, a tightening ratchet;
+   *  settings.ts states what was measured). Mirrored from
    *  `config.settings.crossSessionInbound`, which is the truth every replacement engine is rebuilt from;
    *  this field is the arrival path's cheap read. The two are written in one statement and never apart.
    *  MANDATORY rather than optional, so a new `ThreadRecord` literal cannot forget it — `fleet.ts`'s

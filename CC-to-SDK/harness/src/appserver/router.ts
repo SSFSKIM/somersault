@@ -169,6 +169,11 @@ function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type
     model: record.settings.model,
     permissionMode: record.settings.permissionMode,
     thinkingTokens: record.settings.thinkingTokens,
+    // M8's knob, read off the RECORD and never off the frame: the engine's settings mirror does not carry
+    // this key, and no status frame has ever been observed to. It rides this leg anyway because the payload
+    // is one shape — settings.ts's `broadcastSettings` is this function's client-leg twin, and a key that
+    // appears on only one of the two legs is a client's branch on which leg it happened to receive.
+    crossSessionInbound: record.crossSessionInbound,
   });
 }
 

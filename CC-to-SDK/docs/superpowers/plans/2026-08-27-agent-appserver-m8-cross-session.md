@@ -3251,6 +3251,18 @@ Either way, add the verdict to the spec's Decision Log and close the spec's open
 
 - [ ] **Step 3 (verdict A only): Implement the setter on the canonical settings spine**
 
+> **What actually landed: verdict C, so this step shipped NARROWED (2026-08-28).** Probes 120/120b found the
+> re-read real but one-directional — every tightening move took effect, every loosening move was ignored in
+> silence — so the method ships as a monotonic tightening ratchet, compared against the thread's CURRENT
+> recorded value and refusing a loosening request `-32602` at arrival time. Two items below are dead as
+> written and were NOT implemented: item 4's `installPeerInbound` branch (no transition the ratchet admits
+> can need one, since loosening never happens) and the test bullet "`refuse` ➜ `accept` ➜ a foreign
+> lifecycle frame **is** adopted" (that flip is now a refusal). Everything else in this step shipped as
+> written, plus one addition the code demanded: the `refuse` branch settles an adopted turn before
+> uninstalling the observer, because detaching the frame observer deafens this server to that turn's
+> terminal and would otherwise leave the thread busy forever. The row this step's commit adds to the
+> scorecard is the one Task 12 Step 2 deliberately deferred here.
+
 The house has exactly one `thread/settings/changed` payload shape, built by two sites: `settings.ts`'s `broadcastSettings` (the client leg) and `router.ts`'s `routeSettingsMirror` (the engine leg). A setter that invents a fourth, partial payload gives one change two incompatible announcements. So:
 
 1. Extend `broadcastSettings`'s payload with `crossSessionInbound: record.crossSessionInbound`, and extend `routeSettingsMirror`'s payload identically — reading the server's own mirror, not the frame, since the engine's settings mirror does not carry this key.

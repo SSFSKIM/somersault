@@ -38,12 +38,23 @@ describe("M8 peer schemas", () => {
     expect(methodSchemas["peer/send"].result!.safeParse({ msgId: "u", address: "uds:/a.sock", delivered: true, statusReachable: true }).success).toBe(false);
   });
 
-  // The policy has NO method of its own — it is an admission param on both spines (appserver/peerPolicy.ts
-  // says why there is no runtime setter), so the enum is pinned where a client actually sends it. Both
-  // spines, because a param only one of them publishes is a policy only one of them can be given.
-  it("crossSessionInbound rides both admission spines and takes exactly the three CLI values", () => {
-    expect(methodSchemas["thread/crossSessionInbound/set"]).toBeUndefined();
-    for (const m of ["thread/start", "thread/resume"]) {
+  // The policy is an admission param on BOTH spines — a param only one of them publishes is a policy only
+  // one of them can be given — and, since probes 120/120b, also a runtime method. The enum is pinned in all
+  // three places a client can send it, from ONE tuple, so no carrier can drift from the others.
+  it("crossSessionInbound rides both admission spines and its own setter, taking exactly the three CLI values", () => {
+    for (const m of ["thread/start", "thread/resume", "thread/crossSessionInbound/set"]) {
+      if (m === "thread/crossSessionInbound/set") {
+        for (const v of ["accept", "hold", "refuse"]) {
+          expect(methodSchemas[m].params.safeParse({ threadId: "t", value: v }).success).toBe(true);
+        }
+        expect(methodSchemas[m].params.safeParse({ threadId: "t", value: "maybe" }).success).toBe(false);
+        // `value` is REQUIRED here, unlike the admission param: a setter with no value names no policy.
+        expect(methodSchemas[m].params.safeParse({ threadId: "t" }).success).toBe(false);
+        // The setter's own params carry no ratchet — the schema cannot see the thread's current value, so
+        // `accept` is a well-formed REQUEST and the handler is what refuses a loosening one (-32602).
+        expect(methodSchemas[m].params.safeParse({ threadId: "t", value: "accept" }).success).toBe(true);
+        continue;
+      }
       const base = m === "thread/resume" ? { sessionId: "s-1" } : {};
       for (const v of ["accept", "hold", "refuse"]) {
         expect(methodSchemas[m].params.safeParse({ ...base, crossSessionInbound: v }).success).toBe(true);

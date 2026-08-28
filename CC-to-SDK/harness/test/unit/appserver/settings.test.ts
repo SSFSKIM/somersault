@@ -100,7 +100,11 @@ describe("appserver settings setters (Task 9)", () => {
 
     for (const lines of [a.lines, b.lines]) {
       const evt = parsed(lines).find((f) => f.method === "thread/settings/changed");
-      expect(evt.params).toEqual({ threadId, source: "client", model: "claude-opus-4-8", permissionMode: undefined, thinkingTokens: undefined });
+      // The WHOLE canonical shape, M8's fourth knob included: `crossSessionInbound` rides every leg of this
+      // notification, not only the leg that changes it (settings.ts's broadcastSettings), because the
+      // payload is a full post-update snapshot rather than a diff. This thread was admitted with no
+      // `crossSessionInbound` param, so it carries the default.
+      expect(evt.params).toEqual({ threadId, source: "client", model: "claude-opus-4-8", permissionMode: undefined, thinkingTokens: undefined, crossSessionInbound: "refuse" });
     }
   });
 
@@ -323,7 +327,7 @@ describe("appserver settings setters (Task 9)", () => {
     expect(calls.setPermissionMode).toEqual(["auto"]);
 
     const evt = parsed(a.lines).find((f) => f.method === "thread/settings/changed");
-    expect(evt.params).toEqual({ threadId, source: "client", model: "claude-sonnet-5", permissionMode: "auto", thinkingTokens: undefined });
+    expect(evt.params).toEqual({ threadId, source: "client", model: "claude-sonnet-5", permissionMode: "auto", thinkingTokens: undefined, crossSessionInbound: "refuse" });
     expect(evt.params.source).not.toBe("engine");
   });
 

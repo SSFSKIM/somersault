@@ -18,7 +18,7 @@ import { configReadParams, configReadResult, configValueWriteParams, configBatch
 import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
 import { capabilitiesReadResult } from "./introspect.js";
 import { toolCallResultParams, toolCallResultResult } from "./dynamicTools.js";
-import { peerListParams, peerListResult, peerSendParams, peerSendResult } from "./peer.js";
+import { peerListParams, peerListResult, peerSendParams, peerSendResult, crossSessionInboundSetParams, crossSessionInboundSetResult } from "./peer.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -195,12 +195,14 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // schema can state — `peer/list`'s `statusReachable` says a peer can never answer, and `peer/send`'s
   // `delivered` is a literal `false` (the frame was WRITTEN; the CLI tells a sender nothing on success).
   //
-  // THE INBOUND POLICY HAS NO METHOD HERE, deliberately. It is decided at ADMISSION and reported on the
-  // thread view (appserver/peerPolicy.ts): a runtime setter would need the CLI to re-read the key off the
-  // flag layer mid-session, and nothing has measured that it does — `applyFlagSettings` accepts writes it
-  // never validates, so a resolved call is not evidence of effect. A method registered here is a method
-  // this artifact ADVERTISES, and one the dispatcher answers METHOD_NOT_FOUND for is worse than an absent
-  // one; it re-appears the day a handler does.
+  // THE INBOUND POLICY'S METHOD IS REGISTERED — and it took a measurement to earn the entry. It was absent
+  // while nothing had established that the CLI re-reads the key off the live flag layer mid-session
+  // (`applyFlagSettings` accepts writes it never validates, so a resolved call is not evidence of effect),
+  // because a method this artifact ADVERTISES and the engine silently ignores is worse than an absent one.
+  // Probes 120/120b then measured it in both directions: the re-read is real, but only when the value gets
+  // STRICTER. So what is registered is a tightening ratchet, and the direction that does not move is
+  // refused `-32602` by the handler rather than published as if it worked (appserver/settings.ts).
   "peer/list": { params: peerListParams, result: peerListResult },
   "peer/send": { params: peerSendParams, result: peerSendResult },
+  "thread/crossSessionInbound/set": { params: crossSessionInboundSetParams, result: crossSessionInboundSetResult },
 };

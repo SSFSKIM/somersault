@@ -2039,6 +2039,28 @@
         "message"
       ],
       "additionalProperties": false
+    },
+    "thread/crossSessionInbound/set": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "hold",
+            "refuse"
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "value"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -2624,6 +2646,19 @@
         "address",
         "delivered",
         "statusReachable"
+      ],
+      "additionalProperties": false
+    },
+    "thread/crossSessionInbound/set": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
       ],
       "additionalProperties": false
     }

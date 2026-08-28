@@ -11,6 +11,7 @@ import { applyPeerPolicy, DEFAULT_INBOUND, SETTINGS_KEY } from "../../../src/app
 import { swapBaseConfig } from "../../../src/appserver/rewind.js";
 import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
+import { ORIGIN_REFUSAL_MESSAGE, emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const settingsOf = (c: Record<string, unknown>) => c.settings as Record<string, unknown>;
@@ -214,5 +215,228 @@ describe("crossSessionInbound at admission", () => {
     send(c, { id: 4, method: "thread/settings/apply", params: { threadId, settings: { autoCompactEnabled: true } } });
     await tick(); await tick();
     expect(replyTo(lines, 4).result).toEqual({ ok: true });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// THE RUNTIME SETTER, WHICH IS A RATCHET.
+//
+// Probes 120/120b measured all six single flips against a fixed baseline: accept→refuse, accept→hold and
+// hold→refuse each changed the disposition of the very next inbound message, while hold→accept,
+// refuse→accept and refuse→hold changed nothing at all, in silence. Ordered by permissiveness
+// (accept > hold > refuse), every tightening move took effect and every loosening move was ignored.
+//
+// So the cases below are not "does the setter work" — they are the two halves of the contract. A tightening
+// move must land everywhere at once (engine, record, config, wire), and a loosening move must land NOWHERE,
+// including on the wire: this server refuses it because the engine would ignore it in silence, and
+// reporting success for a change that did not happen is the one failure this method exists to avoid.
+
+const notifsOf = (lines: string[], method: string) => parsed(lines).filter((f) => f.method === method);
+
+/** The full canonical `thread/settings/changed` payload for a thread admitted with no settings config —
+ *  spelled out ONCE, so each case below asserts the whole shape rather than the one key it cares about. A
+ *  payload assertion that reads only its own key passes while the other four are wrong. */
+const changedPayload = (threadId: string, crossSessionInbound: string) => ({
+  threadId, source: "client",
+  model: undefined, permissionMode: undefined, thinkingTokens: undefined,
+  crossSessionInbound,
+});
+
+/** An engine fake that records every `applyFlagSettings` push, so a case can assert the ENGINE was asked —
+ *  not merely that the server wrote its own mirror. `push`/`live` expose the frame seam for the adoption
+ *  case (peer-inbound.test.ts's `pushEngine`, narrowed to what is needed here). */
+function recordingEngine(overrides: Record<string, unknown> = {}) {
+  const applied: Record<string, unknown>[] = [];
+  const frameSubs = new Set<(f: unknown) => void>();
+  const engine = {
+    ...fakeEngine(),
+    onFrame: (cb: (f: unknown) => void) => { frameSubs.add(cb); return () => frameSubs.delete(cb); },
+    applyFlagSettings: async (s: Record<string, unknown>) => { applied.push(s); },
+    ...overrides,
+  };
+  return { engine, applied, push: (f: unknown) => { for (const s of [...frameSubs]) s(f); }, live: () => frameSubs.size };
+}
+
+/** One admitted thread with TWO subscribed connections. Two, deliberately: a notification is a FAN-OUT, and
+ *  a single subscriber cannot show that the second one was served the same payload — the same
+ *  "second client sees the first client's change" shadow settings.test.ts boots for its own setters. */
+async function admit(value: string | undefined, engine: unknown = fakeEngine()) {
+  const srv = new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => engine) as never });
+  const a = mkSink(); const connA = srv.connect(a.sink);
+  const b = mkSink(); const connB = srv.connect(b.sink);
+  send(connA, { id: 1, method: "initialize", params: { clientInfo: { name: "A" } } });
+  send(connB, { id: 1, method: "initialize", params: { clientInfo: { name: "B" } } });
+  send(connA, { id: 2, method: "thread/start", params: value ? { crossSessionInbound: value } : {} });
+  await tick(); await tick();
+  const threadId = replyTo(a.lines, 2).result.thread.id;
+  send(connA, { id: 90, method: "thread/subscribe", params: { threadId } });
+  send(connB, { id: 91, method: "thread/subscribe", params: { threadId } });
+  await tick();
+  a.lines.length = 0; b.lines.length = 0;
+  return { srv, a, b, connA, connB, threadId, record: srv.registry.get(threadId)! };
+}
+
+const setInbound = async (conn: { feed(ch: string): void }, id: number, threadId: string, value: string) => {
+  send(conn, { id, method: "thread/crossSessionInbound/set", params: { threadId, value } });
+  await tick(); await tick();
+};
+
+describe("thread/crossSessionInbound/set — the tightening ratchet", () => {
+  it("a tightening move reaches the engine, the record, the config and BOTH subscribers, as the whole canonical payload", async () => {
+    const e = recordingEngine();
+    const { a, b, connA, threadId, record } = await admit("accept", e.engine);
+    record.updatedAt = 0; // unix SECONDS: a set inside the same second would otherwise be indistinguishable
+
+    await setInbound(connA, 3, threadId, "hold");
+
+    expect(replyTo(a.lines, 3).result).toEqual({ ok: true });
+    expect(e.applied).toEqual([{ [SETTINGS_KEY]: "hold" }]);
+    expect(record.crossSessionInbound).toBe("hold");
+    // The record and the config are ONE fact: without the config write the next engine swap would rebuild
+    // from the launch config and silently restore `accept`.
+    expect(settingsOf(record.config!)[SETTINGS_KEY]).toBe("hold");
+    expect(record.updatedAt).toBeGreaterThan(0);
+    for (const lines of [a.lines, b.lines]) {
+      const evts = notifsOf(lines, "thread/settings/changed");
+      expect(evts).toHaveLength(1);
+      expect(evts[0].params).toEqual(changedPayload(threadId, "hold"));
+    }
+  });
+
+  it("an EQUAL-value move applies idempotently and still announces — a tightening move of size zero is not an error", async () => {
+    const e = recordingEngine();
+    const { a, connA, threadId, record } = await admit("hold", e.engine);
+
+    await setInbound(connA, 3, threadId, "hold");
+
+    expect(replyTo(a.lines, 3).result).toEqual({ ok: true });
+    expect(e.applied).toEqual([{ [SETTINGS_KEY]: "hold" }]);
+    expect(record.crossSessionInbound).toBe("hold");
+    // Announced, not suppressed: refusing or silencing a re-statement would make a client's retry an error.
+    expect(notifsOf(a.lines, "thread/settings/changed")[0].params).toEqual(changedPayload(threadId, "hold"));
+  });
+
+  it.each([["hold", "accept"], ["refuse", "accept"], ["refuse", "hold"]])(
+    "a LOOSENING move (%s -> %s) is refused -32602 and changes nothing anywhere — no engine call, no record write, no config write, no timestamp, NO notification",
+    async (from, to) => {
+      const e = recordingEngine();
+      const { a, b, connA, threadId, record } = await admit(from, e.engine);
+      const before = { ...record.config } as Record<string, unknown>;
+      record.updatedAt = 0;
+
+      await setInbound(connA, 3, threadId, to);
+
+      const err = replyTo(a.lines, 3).error;
+      expect(err.code).toBe(ERR.INVALID_PARAMS);
+      // The refusal names BOTH values and says whose refusal it is. The engine does not refuse a loosening
+      // write — it ACCEPTS it and ignores it — so the message must not claim otherwise, and must point at
+      // the only thing that does widen the policy: an engine built with the wider value.
+      expect(err.message).toContain(`"${from}" -> "${to}"`);
+      expect(err.message).toMatch(/ignored in silence/);
+      expect(err.message).toMatch(/thread\/start/);
+      expect(e.applied).toEqual([]);
+      expect(record.crossSessionInbound).toBe(from);
+      expect(record.config).toEqual(before);
+      expect(record.updatedAt).toBe(0);
+      // The ABSENCE, asserted: a refusal that still broadcast would tell every subscriber the policy moved.
+      for (const lines of [a.lines, b.lines]) expect(notifsOf(lines, "thread/settings/changed")).toEqual([]);
+    });
+
+  it("the refusal is answered at ARRIVAL time — it never enters the chain, so it cannot serialize behind a running turn", async () => {
+    // A chain deliberately left unresolved: anything deferred into it stays deferred for the whole test.
+    const { a, connA, threadId, record } = await admit("refuse");
+    record.chain = new Promise(() => {});
+
+    await setInbound(connA, 3, threadId, "accept");
+
+    expect(replyTo(a.lines, 3).error.code).toBe(ERR.INVALID_PARAMS);
+  });
+
+  it("an engine that DIED mid-setter answers -33005, not -32603", async () => {
+    // The body is chain-deferred, so it runs after dispatch's arrival-time -33005 gate has already let the
+    // request through: the engine can die in between, and scoring that throw -32603 would report a
+    // server-internal fault for a dead read loop the caller can see for itself (engineThrow.ts).
+    let ended = false;
+    const e = recordingEngine({
+      isEnded: () => ended,
+      applyFlagSettings: async () => { ended = true; throw new Error("Session is not running"); },
+    });
+    const { a, connA, threadId, record } = await admit("accept", e.engine);
+
+    await setInbound(connA, 3, threadId, "refuse");
+
+    expect(replyTo(a.lines, 3).error.code).toBe(ERR.ENGINE_GONE);
+    expect(record.crossSessionInbound).toBe("accept"); // the engine kept its value; the mirror must too
+    expect(notifsOf(a.lines, "thread/settings/changed")).toEqual([]);
+  });
+
+  it("a FLEET-origin thread answers -33006 — this server did not build that engine and cannot inject a settings key into it", async () => {
+    const { srv, a, connA } = await admit("accept");
+    // A fleet record as `thread/attach` admits one (fleet.ts), minus the socket — enough for the one
+    // question this origin raises here. It seeds an `accept` policy on purpose, so the refusal below cannot
+    // be the ratchet's doing.
+    const fleet: ThreadRecord = {
+      id: srv.registry.mint(), origin: "fleet", session: fakeEngine() as never, unattended: "park",
+      crossSessionInbound: "accept", busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
+      subscribers: new Set(), chain: Promise.resolve(), sessionId: "sess-fleet", createdAt: 1, updatedAt: 1,
+      settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
+    };
+    srv.registry.add(fleet);
+
+    await setInbound(connA, 3, fleet.id, "refuse");
+
+    const err = replyTo(a.lines, 3).error;
+    expect(err.code).toBe(ERR.UNSUPPORTED_FOR_ORIGIN);
+    expect(err.message).toBe(ORIGIN_REFUSAL_MESSAGE); // the one string every origin refusal carries
+    expect(fleet.crossSessionInbound).toBe("accept");
+  });
+
+  it("accept -> refuse detaches the arrival path: a foreign lifecycle frame is NOT adopted afterwards", async () => {
+    const e = recordingEngine();
+    const { a, connA, threadId } = await admit("accept", e.engine);
+    // TWO frame subscribers on a non-refusing thread: the per-thread router (router.ts, on every thread)
+    // and the arrival observer (peerInbound.ts, on non-refusing threads only). The router is what must
+    // still be there afterwards — this flip detaches the arrival path, not the thread's own frame routing.
+    expect(e.live()).toBe(2);
+
+    await setInbound(connA, 3, threadId, "refuse");
+    expect(replyTo(a.lines, 3).result).toEqual({ ok: true });
+    expect(e.live()).toBe(1);
+
+    e.push({ type: "command_lifecycle", command_uuid: "foreign-1", state: "started", session_id: "s", uuid: "f" });
+    await tick(); await tick();
+    // No turn, and nothing to render one from: the policy moved and the arrival path moved with it.
+    expect(notifsOf(a.lines, "turn/started")).toEqual([]);
+  });
+
+  it("a turn ALREADY adopted when the flip lands is settled, not abandoned — detaching the observer must not leave the thread busy forever", async () => {
+    // The hazard the close and swap paths already pair `settleAdopted` with `uninstallPeerInbound` for:
+    // the terminal `command_lifecycle` of an adopted turn arrives on the very observer this flip detaches,
+    // so settling nothing would leave `busy` true and every later turn refused. `cancelled` says THIS
+    // SERVER stopped following the turn — the engine survives the flip, unlike at those two sites.
+    const e = recordingEngine();
+    const { a, connA, threadId, record } = await admit("accept", e.engine);
+    e.push({ type: "command_lifecycle", command_uuid: "foreign-9", state: "started", session_id: "s", uuid: "f" });
+    await tick(); await tick();
+    expect(notifsOf(a.lines, "turn/started")).toHaveLength(1);
+
+    await setInbound(connA, 3, threadId, "refuse");
+
+    const done = notifsOf(a.lines, "turn/completed");
+    expect(done).toHaveLength(1);
+    expect(done[0].params.turn.status).toBe("cancelled");
+    expect(record.busy).toBe(false);
+  });
+
+  it("the value the setter put there survives swapBaseConfig, which is what every replacement engine is built from", async () => {
+    const { connA, threadId, record } = await admit("accept");
+
+    await setInbound(connA, 3, threadId, "refuse");
+
+    // Composed rather than trusted to four call sites: `thread/rewind`, `thread/clear`, `thread/reopen` and
+    // the fork path all rebuild from this one function, so a policy that survives it survives all of them.
+    const replacement = swapBaseConfig(record.config);
+    expect(settingsOf(replacement)[SETTINGS_KEY]).toBe("refuse");
+    expect((replacement.extraArgs as Record<string, unknown>)["replay-user-messages"]).toBeNull();
   });
 });

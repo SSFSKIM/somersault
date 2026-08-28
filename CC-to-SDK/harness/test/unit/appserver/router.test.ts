@@ -203,7 +203,10 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
 
     expect(record.settings.permissionMode).toBe("plan");
     const evt = calls.find((c) => c.method === "thread/settings/changed");
-    expect(evt?.params).toEqual({ threadId: "t1", source: "engine", model: undefined, permissionMode: "plan", thinkingTokens: undefined });
+    // M8's knob rides the ENGINE leg too, read off the record (no status frame carries it) — the two legs
+    // are one payload shape, so a key present on only one of them would be a client branch on which leg it
+    // happened to receive. `DEFAULT_INBOUND` here, since mkRecord admits nothing else.
+    expect(evt?.params).toEqual({ threadId: "t1", source: "engine", model: undefined, permissionMode: "plan", thinkingTokens: undefined, crossSessionInbound: "refuse" });
   });
 
   it("a status frame echoing the mirror's value broadcasts NOTHING (echo-dedup)", () => {
