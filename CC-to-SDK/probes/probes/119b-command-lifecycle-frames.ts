@@ -214,7 +214,11 @@ const FOLD_MARK = `P119B-FOLD-${Math.random().toString(36).slice(2, 8).toUpperCa
   for (const l of lifecycle.slice(0, 8)) console.log(`      @${String(l.i).padStart(3)} ${JSON.stringify(redact(l.frame))}`);
   const peerReplays = replays.filter(r => r.origin?.kind === "peer");
   const idleUuid = peerReplays[0]?.uuid, foldUuid = peerReplays[1]?.uuid;
-  const carries = (u?: string) => u === undefined ? "(no replay)" : lifecycle.filter(l => JSON.stringify(l.frame).includes(u)).map(l => String(l.frame?.subtype ?? l.frame?.status ?? l.frame?.phase ?? "?")).join(",") || "none";
+  // The state field is spelled `state`. The first cut of this line guessed `subtype`/`status`/`phase`
+  // and therefore printed `?` for every frame while the raw dump above carried the answer all along —
+  // the same failure mode probes 118/118b had, and the reason their verdict logic was corrected too:
+  // a probe that misreports its own measurement is worse than one that reports nothing.
+  const carries = (u?: string) => u === undefined ? "(no replay)" : lifecycle.filter(l => JSON.stringify(l.frame).includes(u)).map(l => String(l.frame?.state ?? "?")).join(",") || "none";
   console.log(`[Q2] lifecycle entries naming the IDLE peer message (${idleUuid ?? "?"}): ${carries(idleUuid)}`);
   console.log(`[Q3] lifecycle entries naming the FOLDED peer message (${foldUuid ?? "?"}): ${carries(foldUuid)}`);
   console.log(`      host turn 1 uuid ${HOST_UUID}: ${carries(HOST_UUID)}`);

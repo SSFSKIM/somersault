@@ -361,22 +361,52 @@ Four doors let something other than that owner decide, and all four are shut:
    initialized connection could turn another thread's `refuse` into `accept` and then feed it.
    `crossSessionInbound` is reserved there: refused with `-32602` naming itself, because silently ignoring
    it would be worse than the refusal.
-3. **The dedicated setter — gated on a measurement it never had (rev 6).** `thread/crossSessionInbound/set`
-   was specified through rev 5 as the way a policy changes at runtime: inProcess-only, serialized through
-   `record.chain`, engine-first and committed to the record only after the engine accepts, broadcasting
-   `thread/settings/changed` where the generic method deliberately does not.
+3. **The dedicated setter — measured, and narrowed to the direction that moves (rev 7).**
+   `thread/crossSessionInbound/set` was specified through rev 5 as the way a policy changes at runtime:
+   inProcess-only, serialized through `record.chain`, engine-first and committed to the record only after
+   the engine accepts, broadcasting `thread/settings/changed` where the generic method deliberately does
+   not. Rev 6 held it back as a spike. Probes 120 and 120b have now answered it, and it ships as a
+   **monotonic tightening operation** — a ratchet.
 
-   That design is retained, and it is not implemented yet, because it rests on a claim nothing measured:
-   that the CLI RE-READS `crossSessionInbound` off the live flag layer that `applyFlagSettings` writes.
-   The write itself is certain — this repository already drives `applyFlagSettings` for permissions,
-   output style and effort level — but probe 102 established that it accepts values it never validates, so
-   a resolved call is not evidence that anything took effect. A security-shaped knob that reports success
-   for a change that did not happen is the one failure this door cannot have.
+   The claim the spike existed to test was that the CLI RE-READS `crossSessionInbound` off the live flag
+   layer `applyFlagSettings` writes. Probe 102 had already shown that call resolves for values it never
+   validates, so a resolved call could never be the evidence. Probe 120 measured it behaviourally, and
+   120b completed the matrix over the whole vocabulary, each run carrying a control leg proving the send
+   path worked and holding 113c's measured-good baseline fixed:
 
-   The policy is therefore decided at admission, on BOTH spines (`thread/start` and `thread/resume` are
-   different functions in this server), and reported on `thread/get`. Probe 120 answers the re-read
-   question; the setter ships if and only if it says yes, in the direction or directions it says yes for,
-   and lands on the canonical settings spine — the one `thread/settings/changed` payload shape that
+   | launch   | flip to  | pre-flip  | post-flip | moved |
+   |----------|----------|-----------|-----------|-------|
+   | `accept` | `refuse` | DELIVERED | REFUSED   | yes   |
+   | `accept` | `hold`   | DELIVERED | HELD      | yes   |
+   | `hold`   | `refuse` | HELD      | REFUSED   | yes   |
+   | `hold`   | `accept` | HELD      | HELD      | no    |
+   | `refuse` | `accept` | REFUSED   | REFUSED   | no    |
+   | `refuse` | `hold`   | REFUSED   | REFUSED   | no    |
+
+   Order the vocabulary by permissiveness — `accept` > `hold` > `refuse` — and the pattern is total: every
+   TIGHTENING move takes effect, every LOOSENING move is silently ignored. The flag layer is re-read, but
+   in one direction only. That reads as design rather than defect: a session may restrict its own inbound
+   access at runtime but cannot grant itself more access than it launched with, which is the only safe
+   direction for a value writable by anything that can reach that layer.
+
+   So the setter applies a value equal-or-more-restrictive than the thread's current one, and REFUSES a
+   loosening request with `-32602` naming both values and the alternative. The refusal is OURS, not the
+   engine's: the engine ignores a loosening write silently, and a method that reported success for a
+   change that did not happen is the one failure this door cannot have. The comparison is against the
+   record's CURRENT value rather than its launch value because every measured leg flips exactly once, so
+   the two readings are indistinguishable in this matrix — and current-value is the reading that is safe
+   under both, at the price of occasionally refusing a request the engine might have honoured. A
+   tighten-then-partially-loosen sequence (`accept` -> `refuse` -> `hold`) is therefore an explicitly
+   UNMEASURED cell that our own ratchet refuses before the engine ever sees it.
+
+   Loosening being unreachable at runtime is not a gap in the surface, because admission already covers
+   it: the policy is decided at admission on BOTH spines (`thread/start` and `thread/resume` are different
+   functions in this server) and reported on `thread/get`, so a client that wants a thread open to peers
+   asks for it when the thread starts. Re-opening a running thread would need a replacement engine, which
+   the rewind/reopen/clear family already performs; that is a later round's work, and it is named here
+   rather than built.
+
+   The setter lands on the canonical settings spine — the one `thread/settings/changed` payload shape that
    `broadcastSettings` and `routeSettingsMirror` both build — rather than inventing a second, partial one.
 
    A fourth door was found in the same pass and is closed unconditionally: the SDK types `Options.settings`
@@ -778,6 +808,17 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   deliberately. Recorded here because the measurement changed that choice's cost, and a later reader
   should see the fork was live rather than assume it was never considered.
 
+- **The runtime policy setter ships as a ratchet, not as a two-way switch (rev 7).** Probes 120 and 120b
+  measured every transition in the `accept`/`hold`/`refuse` vocabulary and found tightening honoured and
+  loosening silently ignored. Three options were open. *Ship both directions* was rejected outright: it
+  would report success for a change the engine ignores, which is the specific failure the spike existed to
+  prevent. *Ship nothing* (rev 6's provisional position, and plan Task 11's verdict B) was rejected
+  because the direction that does work is the safety-critical one — revoking a thread's inbound access
+  while it runs — and it works retroactively, denying messages already held. *Ship the measured direction
+  and name the missing one on the wire* was taken, which is plan Task 11's verdict C applied literally.
+  The cost is a client that opened a thread refusing cannot open it later without a new thread; that cost
+  is visible in an error message rather than hidden in a no-op.
+
 ### Findings rejected, with reasons
 
 - **A 10K-token ceiling on model-visible injected items** — the rule is `AGENTS.md`'s, which marks itself
@@ -862,6 +903,69 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   never on text any author can type. Task 10d made recognition `origin.kind === "peer"` alone; the
   envelope regex survives only as a DECODER inside a row already known to be a peer's.
 
+- **The runtime inbound policy is a RATCHET.** The spike asked a yes/no question — is the flag layer
+  re-read? — and the answer was neither. Probe 120 found it asymmetric; two mechanisms explained that
+  equally well and licensed different setters, so 120b measured the two cells they disagree on and the
+  rest of the matrix with them. Both hypotheses were wrong: it is not a latch on `refuse` and not one
+  unreachable value, but a total ordering — tightening always takes effect, loosening never does. The
+  lesson repeats this round's pattern: one measured cell is not a rule, and the cheapest way to find out
+  which rule you are looking at is to measure the cells your competing explanations disagree about.
+- **Tightening is RETROACTIVE, and `denied` is a receipt status we said was never observed.** Flipping a
+  thread to `refuse` did not merely stop the next message: it resolved one already HELD, and the sender
+  got a `denied` receipt for it. That corrects the earlier bullet above — the observed status vocabulary
+  is `held`, `expired` AND `denied`, and silence remains the success path only for messages that are
+  delivered or refused outright. It also means the setter has real teeth: revoking access disposes of
+  what is already parked, rather than leaving it to expire.
+- **Probe 120 leg D is the first LIVE confirmation that peerPolicy's door 1 works.** A launch policy
+  written through the SDK's typed `settings` object was refused by a real CLI. Every unit test for that
+  door asserts the config this server BUILDS; none of them can observe what an engine does with it, so
+  until this leg the whole four-door design rested on one untested hop.
+- **A peer we message can message us BACK, on the gateway's own socket.** A `type:"user"` frame carrying a
+  `hop-chain` attribute arrived on the address `peer/send` publishes as `from` — the receiving session's
+  model had replied through the same channel. The gateway already answers this correctly, as a stray
+  ("a reply address, not a session"), and the measurement turns that from a reasoned choice into a
+  defended one: routing such a frame into the SENDING thread would deliver unsolicited peer text into a
+  thread whose own policy may be `refuse`, which is a policy bypass built out of a courtesy feature.
+- **The live `origin` and the persisted `origin` are not the same object.** The live peer frame carries
+  `{kind, from, verifiedPeerPid, name, fromMode, body}` — no `msg_id` — while a persisted row for the same
+  kind of message carries `msg_id` too (recorded earlier in this section). Nothing depends on it today,
+  because `thread/peerMessage` forwards whatever the frame holds verbatim, but a client correlating a
+  send to an arrival can only do so from the persisted side.
+
+- **Three of the four delegated unknowns are now measured (probe 119b, keyed, 2026-08-28, two runs).** Rev 5 and
+  rev 6 named four leaves the design was written to survive any answer to. A keyed re-run of 119b — the
+  probe already written to dump the frames verbatim, and weekly-limited when it was authored — answers
+  three of them off the raw transcript:
+  - **The healthy terminal state is `completed`.** The observed vocabulary is `queued` -> `started` ->
+    `completed`; rev 5 had only ever seen the failure path's `cancelled`.
+  - **The uuid this server submits under rides on `command_uuid`, not `uuid`.** The frame's own `uuid`
+    field is a FRESH value on every frame — three different values were emitted for one `command_uuid` —
+    so `uuid` identifies the frame and `command_uuid` identifies the message. The host turn's `result`
+    carried `0629caa6…`, matching that turn's `command_uuid` exactly. `peerInbound.ts` matches against
+    both fields and relies on `beginTurn`'s busy gate to make a wrong guess a no-op; that safety net is
+    still correct, and it is no longer what the correctness of adoption rests on.
+  - **A FOLDED message gets a complete lifecycle bracket of its own, nested inside the host turn's, and
+    never produces a `result`.** The peer message's `started`/`completed` pair sat entirely within the
+    host turn's own pair. Two brackets are therefore open at once, which means a folded arrival emits a
+    `started` while this server knows itself to be busy — exactly the input `beginTurn`'s busy gate turns
+    into a no-op. The design's "a wrong guess is harmless" claim is now an observation rather than an
+    argument.
+  - **Peer messages skip `queued`.** Host turns emitted all three states; both peer messages went
+    straight to `started`. Nothing depends on this, and it is recorded because an adoption rule that
+    keyed on `queued` would have been silently dead.
+  Both runs produced the same three answers, and the second echoed the folded message's marker where the
+  first did not — so the fold is confirmed as a real delivery the model answered inside the host turn,
+  rather than a message that vanished.
+  The fourth unknown — whether a BATCH emits one bracket per `command_uuid` around a single turn —
+  remains open, and is confirmatory rather than load-bearing: whatever the answer, the second `started`
+  arrives while the first has made the record busy, so the busy gate yields one turn either way.
+- **Probe 119b misreported its own measurement, and the raw dump is what saved it.** Its verdict lines
+  read the lifecycle state from `subtype`/`status`/`phase` and printed `?` for every frame, while the
+  field is spelled `state` and the answer sat in the transcript above it. This is the third time in this
+  round that a probe's SUMMARY was wrong while its evidence was right (118 and 118b were the first two),
+  and the practice that keeps catching it is the same one: read conclusions off the dumped frames, never
+  off the verdict label, and correct the label in the same pass so the artifact cannot mislead later.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
@@ -927,3 +1031,12 @@ Pending — written at finish.
   per-record and forgotten at each terminal. The runtime setter becomes a spike (see door 3 above). A
   fourth delegated unknown joins the three already named: which lifecycle field carries the uuid this
   server submits under.
+- **rev 7 (2026-08-28)** — the keyed half. Probes 120 and 120b closed the spike rev 6 opened, and the
+  answer narrowed a method rather than unblocking it: the runtime inbound policy is a ratchet, so
+  `thread/crossSessionInbound/set` ships as a tightening-only operation that refuses a loosening request
+  in its own voice instead of forwarding a write the engine ignores. Door 3 is rewritten around the
+  measurement; the Decision Log records why shipping both directions and shipping nothing were both
+  rejected. Four side findings land in Surprises: door 1 is confirmed against a real engine for the first
+  time, tightening is retroactive and produces a `denied` receipt the spec had said was never observed, a
+  messaged peer can reply onto the gateway's own socket (already handled as a stray, now for a measured
+  reason), and the live and persisted `origin` objects differ by `msg_id`.
