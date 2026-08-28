@@ -263,12 +263,21 @@ const commandHint = (command: string): string => {
 /** A `neutral` atom carries the F3 thinking clock: `thoughtForMs` is the LOCALLY CLOCKED duration of the
  *  thinking blocks of the assistant message this atom stands for (P82 — the wire has no timestamps, and a
  *  replayed message therefore carries none), `thinkingSummary` its whole text whitespace-collapsed
- *  (upstream `PMd` L302267), which rides to Task 4's italic hint variant and is clamped at render. */
+ *  (upstream `PMd` L302267), which rides to Task 4's italic hint variant and is clamped at render.
+ *  `thinkingBody`/`thinkingKey` (bl6 T-CLUSTER) are the RETENTION half, and ride WHENEVER the atom is
+ *  thought-bearing — independent of `thoughtForMs`/`thinkingSummary`'s live-clock gate, since a replayed or
+ *  attached entry never has a clock entry but must still retain its body for a later expansion to render.
+ *  `thinkingKey` is `` `${identity ?? "anon"}:${messageSequence}` ``: two thinking frames can share one
+ *  `message.id` (P82), so identity alone cannot key them apart. */
 /** `sequence` on a non-tool atom is the caller's OWN back-pointer (the projection keys it to the array index it
  *  replays from) and means nothing on the transcript's sequence line. `messageSequence` is the real one, carried
  *  separately and optionally so the pop-out window test can see a thought or a breaker land between a silent
  *  call and its error result; an atom that omits it simply cannot close that window. */
-export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string };
+export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string; thinkingBody?: string; thinkingKey?: string };
+/** One absorbed thinking block's retained shape (bl6 T-CLUSTER): `key` disambiguates same-`message.id` frames
+ *  (`FoldAtom.thinkingKey`), `messageSequence` is its transcript position (for later interleave-by-sequence
+ *  rendering), `body` is the raw `.trim()`ed — NOT whitespace-collapsed — thinking text. */
+export type AbsorbedThinking = { key: string; messageSequence: number; body: string };
 /** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
  *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
  *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
@@ -301,7 +310,10 @@ export type GroupCounts = {
  *  so a run of overlapping calls whose later-started member finishes first REORDERS as its members settle.
  *  Everything display state is keyed on downstream — the expansion set, the counter watermark — must survive
  *  that, and only call order does: `callSequence` is stamped once and never moves. */
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string> }
+/** `absorbedThinking` (bl6 T-CLUSTER) is present only when non-empty — the same style as `thoughtForMs`/
+ *  `latestThinkingSummary` above — and holds every thinking block this run absorbed, in absorption order,
+ *  for a later expansion to interleave with the member rows by `messageSequence`. */
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string>; absorbedThinking?: readonly AbsorbedThinking[] }
 /** `poppedOnError` marks the one standalone tool this module emits for a reason of its own rather than because
  *  the policy called it non-collapsible: an errored `popsOutOnError` call, pushed out so the failure is never
  *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
@@ -318,14 +330,14 @@ const THOUGHT_CAP_MS = 600000;
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
-  thoughtForMs: number; latestThinkingSummary?: string;
+  thoughtForMs: number; latestThinkingSummary?: string; absorbedThinking: AbsorbedThinking[];
   bashCount: number; bashCommands: Map<string, string>;
   gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
   /** Members that earned a counter. A run of nothing but silently-absorbed calls has every counter at zero and
    *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
   visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, thoughtForMs: 0, bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, thoughtForMs: 0, absorbedThinking: [], bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
 
 /** Canon reads its scrape text off `message.toolUseResult` — a single per-MESSAGE `{ stdout, stderr }` object,
  *  joined as `(stdout ?? "") + "\n" + (stderr ?? "")` (236996–236998). Our equivalent is the P94 structured
@@ -436,6 +448,7 @@ const emit = (run: RunState): FoldGroup => ({
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorId: run.anchorId, anchorSequence: run.anchorSequence, open: run.open,
   ...(run.newestInFlight === undefined ? {} : { newestInFlightId: run.newestInFlight }),
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
+  ...(run.absorbedThinking.length === 0 ? {} : { absorbedThinking: run.absorbedThinking }),
   ...(run.bashCommands.size === 0 ? {} : { bashCommands: run.bashCommands }),
 });
 
@@ -445,11 +458,14 @@ const emit = (run: RunState): FoldGroup => ({
  *  — with ONE fullscreen exception, canon's `popsOutOnError` path (2.1.234:237198–237210), handled below. */
 export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean }): readonly FoldItem[] {
   const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
-  // The PENDING-THOUGHT buffer (F3 Task 3). Upstream pushes the thinking message straight into the open
-  // accumulator, so the thought belongs to the run being accumulated and is lost at its next flush. Our
-  // groups are tool runs and cannot exist without a member, so a thought that arrives with no run open is
-  // HELD for the one that starts next — and dropped by any flush before it, exactly as upstream loses it.
-  let pending: { ms: number; summary?: string } | undefined;
+  // The PENDING-THOUGHT buffer (F3 Task 3; `bodies` added bl6 T-CLUSTER). Upstream pushes the thinking
+  // message straight into the open accumulator, so the thought belongs to the run being accumulated and is
+  // lost at its next flush. Our groups are tool runs and cannot exist without a member, so a thought that
+  // arrives with no run open is HELD for the one that starts next — and dropped by any flush before it,
+  // exactly as upstream loses it. `bodies` rides the SAME buffer but on its own gate (`thinkingBody !==
+  // undefined`, not `ms > 0`): a replayed/attached leading thought never has a clock entry and would
+  // otherwise never reach `pending` at all, leaving a resumed cluster's retained thinking permanently empty.
+  let pending: { ms: number; summary?: string; bodies: AbsorbedThinking[] } | undefined;
   const applyThought = (ms: number, summary: string | undefined) => {
     run.thoughtForMs += ms;
     if (summary !== undefined) run.latestThinkingSummary = summary;
@@ -509,7 +525,7 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     if (atom.kind === "tool") {
       const fold = classifyToolEvent(atom.event, options);
       if (fold.collapsible) {
-        if (pending !== undefined) { applyThought(pending.ms, pending.summary); pending = undefined; }
+        if (pending !== undefined) { applyThought(pending.ms, pending.summary); run.absorbedThinking.push(...pending.bodies); pending = undefined; }
         absorb(run, atom.event, fold.kind, options);
         // An error result for a `popsOutOnError` tool ALWAYS ends the run (every branch of 237198–237210 flushes
         // and pushes the message); only the relocation is conditional. The spec's own invariant — a pop-out must
@@ -550,10 +566,22 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     }
     if (atom.kind === "neutral") {
       const ms = atom.thoughtForMs === undefined ? 0 : Math.min(atom.thoughtForMs, THOUGHT_CAP_MS);
-      // Already open ⇒ the thought is this run's now; nothing open ⇒ hold it, summing consecutive thoughts
-      // the way upstream's `o.thoughtForMs +=` does, with the LATEST summary winning.
-      if (ms > 0 && run.memberIds.length > 0) applyThought(ms, atom.thinkingSummary);
-      else if (ms > 0) pending = { ms: (pending?.ms ?? 0) + ms, ...((atom.thinkingSummary ?? pending?.summary) === undefined ? {} : { summary: atom.thinkingSummary ?? pending?.summary }) };
+      // The retained BODY rides on its own gate — `thinkingBody !== undefined` — not on `ms > 0`: a
+      // replayed/attached atom never has a clock but must still be retained (bl6 T-CLUSTER, spec §3.2(1)(i)).
+      const body: AbsorbedThinking | undefined = atom.thinkingBody === undefined ? undefined
+        : { key: atom.thinkingKey ?? "anon", messageSequence: atom.messageSequence ?? atom.sequence, body: atom.thinkingBody };
+      // Already open ⇒ the thought (and any body) is this run's now; nothing open ⇒ hold both, summing
+      // consecutive thoughts the way upstream's `o.thoughtForMs +=` does, with the LATEST summary winning.
+      if (run.memberIds.length > 0) {
+        if (ms > 0) applyThought(ms, atom.thinkingSummary);
+        if (body !== undefined) run.absorbedThinking.push(body);
+      } else if (ms > 0 || body !== undefined) {
+        pending = {
+          ms: (pending?.ms ?? 0) + ms,
+          ...((atom.thinkingSummary ?? pending?.summary) === undefined ? {} : { summary: atom.thinkingSummary ?? pending?.summary }),
+          bodies: body === undefined ? (pending?.bodies ?? []) : [...(pending?.bodies ?? []), body],
+        };
+      }
       (run.memberIds.length > 0 ? deferred : out).push({ kind: "passthrough", sequence: atom.sequence }); continue;
     }
     flush(); out.push({ kind: "passthrough", sequence: atom.sequence });

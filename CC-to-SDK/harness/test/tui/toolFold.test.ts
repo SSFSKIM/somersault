@@ -271,6 +271,46 @@ describe("F3 thought attachment (upstream Ae_/PMd, cap rRo = 600000)", () => {
   });
 });
 
+// bl6 T-CLUSTER Task 1: retention. `absorbedThinking` rides ALONGSIDE `thoughtForMs`/`thinkingSummary` but on
+// its own gate (`thinkingBody !== undefined`), so a replayed/attached entry with NO live-clock entry still
+// retains its raw body for a later expansion to render (spec §3.2(1), plan-review finding 2 / D11).
+describe("bl6 T-CLUSTER: FoldGroup retains absorbed thinking bodies", () => {
+  const thoughtWithBody = (sequence: number, ms: number | undefined, body: string, key = `id:${sequence}`): FoldAtom =>
+    ({ kind: "neutral", sequence, messageSequence: sequence, ...(ms === undefined ? {} : { thoughtForMs: ms }), thinkingBody: body, thinkingKey: key });
+  const firstGroup = (atoms: readonly FoldAtom[]) => { const first = segmentRuns(atoms, OPTIONS).find((i) => i.kind === "group"); return first?.kind === "group" ? first.group : undefined; };
+
+  // Cell 1 (mid-run): tool A → thinking → tool B, one run — the body must ride even though this atom carries
+  // no `thoughtForMs` (mirrors the no-clock replay shape; the clocked case is covered by the F3 block above).
+  it("retains a mid-run thinking body (key, sequence, raw newline-preserving text) on the flushed group", () => {
+    const group = firstGroup([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })),
+      thoughtWithBody(2, undefined, "First thought line\n\nSecond paragraph"),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 })),
+    ]);
+    expect(group?.absorbedThinking).toEqual([
+      { key: expect.stringContaining(":"), messageSequence: 2, body: "First thought line\n\nSecond paragraph" },
+    ]);
+  });
+
+  // Cell 2 (no-clock LEADING thinking — the replay/attach case, spec §3.2(1)(i)): a thinking atom arrives
+  // BEFORE the first collapsible tool, with NO live-clock duration at all. `thoughtForMs` must stay absent
+  // (unchanged clock semantics) while `absorbedThinking` must still be present — this is RED until the
+  // `pending` accumulator carries bodies independently of `ms`.
+  it("retains a LEADING (pre-run) thinking body with no thought-clock entry (the replay/attach case)", () => {
+    const group = firstGroup([
+      thoughtWithBody(1, undefined, "Leading thought, no clock"),
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 2 })),
+    ]);
+    expect(group?.counts.thoughtForMs).toBeUndefined();
+    expect(group?.absorbedThinking).toEqual([{ key: expect.stringContaining(":"), messageSequence: 1, body: "Leading thought, no clock" }]);
+  });
+
+  it("still clears a buffered body on a breaker, exactly as it clears the clock", () => {
+    const group = firstGroup([thoughtWithBody(1, undefined, "discarded"), { kind: "breaker", sequence: 2 }, atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 3 }))]);
+    expect(group?.absorbedThinking).toBeUndefined();
+  });
+});
+
 // TS Task 3: the fullscreen fold-policy widening (canon 2.1.234). Two axes are pinned in every cell — what the
 // CLASSIC renderer returns (frozen, A9's model-level guard) and what the FULLSCREEN renderer returns — because the
 // whole widening is an `opts.fullscreen` gate and a regression that leaks into classic is the one failure this

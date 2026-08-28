@@ -1051,8 +1051,11 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
 /** `identity`/`thinking` are the F3 thinking clock's two document-derived halves, computed once in
  *  `buildAnchoredEntries` (both are pure functions of the retained message, so they are cache-safe — the
  *  live DURATION is not, and enters strictly later, in `foldAtoms`). `thinking` doubles as upstream
- *  `Ae_`'s predicate: it is set only for a message whose FIRST content block is non-blank thinking. */
-type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string };
+ *  `Ae_`'s predicate: it is set only for a message whose FIRST content block is non-blank thinking.
+ *  `thinkingBody` (bl6 T-CLUSTER retention) is that same block's text `.trim()`ed but NOT whitespace-
+ *  collapsed, present iff `thinking` is — the raw multi-line body an expanded cluster later renders,
+ *  where `thinking` (whitespace-collapsed) only ever serves the collapsed row's one-line hint. */
+type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string; thinkingBody?: string };
 /** The sentinels upstream renders in place of a reply: they are chatter, never the "real assistant text" that
  *  ends a run (§1.3). */
 const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
@@ -1090,17 +1093,24 @@ function sdkMessageIdentity(message: Record<string, unknown>): string | undefine
   return typeof id === "string" && id.length > 0 ? `message:${id}` : undefined;
 }
 /** Upstream `Ae_` (L302003–302010): a message is thought-bearing only when its FIRST content block is a
- *  `thinking` block whose text is not blank. The summary is that block's WHOLE text, whitespace-collapsed —
- *  upstream `PMd` L302267 assigns exactly `u.text.trim().replace(/\s+/g, " ")`. (F3 Task 3 shipped the first
- *  line only, a plan error corrected here in Task 4: the first line leaves upstream's 10-line `OAH` clamp
- *  with nothing to do, and it is the clamp — not the extraction — that decides how much of a long thought
- *  the hint slot shows.) */
-function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
+ *  `thinking` block whose text is not blank — the shared guard both the collapsed summary and (bl6
+ *  T-CLUSTER) the retained expansion body key off, so it is extracted once rather than parsed twice.
+ *  Returns the trimmed text UNCOLLAPSED (newlines intact); `thinkingSummaryOf` whitespace-collapses it. */
+function thinkingBodyOf(message: Record<string, unknown>): string | undefined {
   const inner = message.message, content = isRecord(inner) && Array.isArray(inner.content) ? inner.content : [];
   const first = content[0];
   if (!isRecord(first) || first.type !== "thinking" || typeof first.thinking !== "string") return undefined;
   const text = first.thinking.trim();
-  return text === "" ? undefined : text.replace(/\s+/g, " ");
+  return text === "" ? undefined : text;
+}
+/** The summary is the thought-bearing block's WHOLE text, whitespace-collapsed — upstream `PMd` L302267
+ *  assigns exactly `u.text.trim().replace(/\s+/g, " ")`. (F3 Task 3 shipped the first line only, a plan
+ *  error corrected here in Task 4: the first line leaves upstream's 10-line `OAH` clamp with nothing to
+ *  do, and it is the clamp — not the extraction — that decides how much of a long thought the hint slot
+ *  shows.) */
+function thinkingSummaryOf(message: Record<string, unknown>): string | undefined {
+  const body = thinkingBodyOf(message);
+  return body === undefined ? undefined : body.replace(/\s+/g, " ");
 }
 
 /** F4 Task 10c: `Jbn` (L425363) — how many messages a collapsed teammate row is standing in for. A per-entry
@@ -1141,10 +1151,12 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
       continue;
     }
     const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
-    const identity = sdkMessageIdentity(entry.message), thinking = identity === undefined ? undefined : thinkingSummaryOf(entry.message);
+    const identity = sdkMessageIdentity(entry.message);
+    const thinkingBody = identity === undefined ? undefined : thinkingBodyOf(entry.message);
+    const thinking = thinkingBody === undefined ? undefined : thinkingBody.replace(/\s+/g, " ");
     const record: Anchored = {
       sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items),
-      ...(identity === undefined || thinking === undefined ? {} : { identity, thinking }),
+      ...(identity === undefined || thinking === undefined ? {} : { identity, thinking, thinkingBody }),
     };
     anchored.push(record);
     open = run === undefined ? undefined : { name: run.name, count: run.count, record };
@@ -1302,7 +1314,10 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
  *     dynamic region's fold (see `projectPending`).
  *  `fullscreen` defaults false, which is the classic gate above; Task 5 threads `ProjectionOptions.fullscreen`
  *  into every caller, so the flag now decides the diversion on live rows rather than only in unit tests. */
-function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
+// Test-only seam (bl6 T-CLUSTER, Cell 3): exported so a production-pipeline test can drive
+// `buildAnchoredEntries` → `foldAtoms` → `segmentRuns` end to end without duplicating any of the three —
+// the same reasoning as `projectionDeps.buildAnchored` above. Production callers still reach it directly.
+export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMap<string, number>; inert?: (event: ToolEvent) => boolean; fullscreen?: boolean } = {}): FoldAtom[] {
   // One duration per MESSAGE, spent once. The engine emits one assistant frame per content block and all
   // of them share a single `message.id` (P82), while `LiveTurn` already sums every thinking block of that
   // id — so a message that arrived as two thinking frames would otherwise stamp its whole total twice.
@@ -1318,7 +1333,16 @@ function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: ReadonlyMa
     // clause without a single replay-side branch.
     const ms = a.identity === undefined || a.thinking === undefined || spent.has(a.identity) ? undefined : opts.thoughtMs?.get(a.identity);
     if (ms !== undefined) spent.add(a.identity!);
-    return { kind: "neutral", sequence: index, messageSequence: a.sequence, ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }) };
+    // `thinkingBody`/`thinkingKey` (bl6 T-CLUSTER) ride WHENEVER the entry is thought-bearing, independent
+    // of the live clock above — a replayed/attached entry is never in `opts.thoughtMs` and must still carry
+    // its body for later expansion. `thinkingKey` disambiguates two thinking frames sharing one `message.id`
+    // (P82) by pairing the identity with this entry's own transcript sequence.
+    const thoughtBearing = a.thinkingBody !== undefined;
+    return {
+      kind: "neutral", sequence: index, messageSequence: a.sequence,
+      ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }),
+      ...(thoughtBearing ? { thinkingBody: a.thinkingBody, thinkingKey: `${a.identity ?? "anon"}:${a.sequence}` } : {}),
+    };
   });
 }
 
