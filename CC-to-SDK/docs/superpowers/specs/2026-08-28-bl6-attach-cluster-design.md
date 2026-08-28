@@ -248,7 +248,35 @@ mutation checks, fix waves re-reviewed by the original reviewer, whole-round cod
 
 ## 8. Outcomes & Retrospective
 
-Pending — written at finish.
+Round closed 2026-08-29. Both tickets shipped and merged (`1f78cd9c5c` T-ATTACH, `6350a6d2cd`
+T-CLUSTER); assembled-tree gates green after each merge (typecheck clean, unit 4015/4015, tui
+4716/4727 with 11 gated skips, both pty matrices re-run PASS). External campaign: pre-execution
+plan review 3 high findings (2 accepted, 1 premise-refuted by measurement — D10-D12) → whole-round
+review **ZERO findings on the first pass**, no fix wave needed (a first for these rounds; credit
+the plan-review gate catching both wiring-level holes before implementation).
+
+What the round taught:
+- **Second consecutive round where a parked item's premise was wrong** (bl5: "cross-check"; bl6:
+  "production attach race"). The research phase, not the backlog title, decides the ticket's shape —
+  T-ATTACH shrank from a transport fix to a six-line test-infra fix plus workaround deletion.
+- The plan-review gate again caught what unit tests could not: the clock-gated `pending` hole would
+  have shipped retention that silently failed on exactly the replay/attach transcripts the feature
+  exists for, with every planned test green.
+- A reviewer quantifying a probabilistic feature-kill (3/5 failures) is worth more than a single
+  red run — adopted into the evidence bar for race-shaped fixes.
+- One implementer was killed by a usage-limit outage AFTER completing its work; the worktree's git
+  state + report file were the recoverable truth (its agent record was not). The review-reproduces-
+  everything protocol absorbed the loss cleanly.
+
+Minor roll-up (real, tiny, non-blocking): fake-host's "only the first follow drains" clause has no
+multi-connection test (pre-existing single-connection gap, reviewer-rated informational); one
+unidentified unit-suite flake on the first post-merge gate (full rerun + suspect file 2x standalone
+green — consistent with the tracked imageCodec flake). Both logged here in lieu of a tech-debt file.
+
+Deferred with evidence (unchanged from §3.3): hook block / relevant memories / task-notification
+absorption / D8 goal_status + advisor — probe after the weekly cap resets Aug 31, alongside bl5's
+SKIPPED-429 live cell rerun and the new signed-thinking-flush divergence note (T-CLUSTER task-4
+report).
 
 ## 9. Revision Notes
 

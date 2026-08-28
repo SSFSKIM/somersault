@@ -476,6 +476,20 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl6 round close-out — expanded-cluster absorbed thinking + attach-race premise flip (2026-08-29)** —
+>   spec `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`, ledger
+>   `.doperpowers/sdd/2026-08-28-bl6-round/`. **T-CLUSTER** (merge `6350a6d2cd`): an expanded tool
+>   cluster now renders its absorbed thinking bodies (canon 2.1.250 transcribed: transcript-order
+>   interleave, `∴` dim-markdown full body, no duration; clock-independent retention so
+>   resumed/attached transcripts work), pty-proven with a feature-kill mutation. Hook block, memories,
+>   task-notification rows and the D8 goal_status/advisor clickable kinds: recorded, probe-gated
+>   (weekly cap resets Aug 31). **T-ATTACH** (merge `1f78cd9c5c`): the "ccx attach drops the first
+>   frame" backlog item's premise was WRONG — production replay-on-follow is airtight; the loss lived
+>   in the pty stand-in host, which now buffers and replays pre-follow pushes (`warmup_follow`
+>   workaround retired). Campaign: plan review 3 high (2 accepted, 1 premise-refuted by measurement)
+>   → whole-round review ZERO findings first pass. **No domain score moves** — renderer projection
+>   and test infra over already-claimed surfaces. Canon moved 2.1.246 → 2.1.250 mid-stream; bl5's
+>   link-gate and sniffer re-verified byte-identical.
 > - **bl5 round close-out — link-click opening + sniff-derived media type (2026-08-27)** — spec
 >   `docs/superpowers/specs/2026-08-26-bl5-linkopen-sniff-design.md`, ledger
 >   `.doperpowers/sdd/2026-08-26-bl5-round/`. **T-LINKOPEN** (merge `07f3385b01`): canon 2.1.246 FLIPPED —

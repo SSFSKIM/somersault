@@ -1031,6 +1031,33 @@ plan review (5 findings, 2 high — the ChatApp-owns-dispatch and link-before-fo
 shipped dead/wrong wiring) → whole-round review 3 P2 (press-bound href; popup modifier gate; win32
 launcher) → fix wave → scoped re-review ZERO. Ledger `.doperpowers/sdd/2026-08-26-bl5-round/round.md`.
 
+**bl6 close-out (2026-08-29) — expanded-cluster absorbed thinking + the attach-race premise flip, one round.**
+**T-CLUSTER** (merge `6350a6d2cd`, 4 tasks): canon 2.1.250's expansion branch (offsets
+177043425-177044786) renders four absorbed content kinds when a cluster opens; ccx now ships the one
+reachable on its default path — **absorbed thinking bodies**, retained clock-independently in
+`FoldGroup.absorbedThinking` (raw text + sequence; the pre-run `pending` accumulator carries bodies
+without a live thought-clock, so resumed/attached transcripts expand correctly) and rendered
+interleaved with member rows in transcript order (`callSequence`/`messageSequence`, equal-key
+tie-break thinking-first), canon's exact form: `∴` gutter, full multi-line body as dim markdown,
+blank line above, NO duration clause (the clock speaks only in the collapsed row). Proven in the
+real binary over a pty (`cluster-expand-cells.sh`, sentinel-free first push; feature-kill mutation
+fails the cell). Recorded, not built (canon evidence, reachability probe-gated on the weekly cap
+resetting Aug 31): the PreToolUse hook block, relevant-memory blocks, `<task-notification>` rows
+(focus-mode-only in canon — out of reach), the D8 `goal_status`/advisor clickable kinds, and canon's
+signed-thinking flush carve-out (ccx absorbs all thinking; divergence recorded in the T-CLUSTER
+task-4 membership-parity note). **T-ATTACH** (merge `1f78cd9c5c`, test-infra only — zero `src/`
+changes): the bl4/bl5 "ccx attach drops the first frame" backlog premise was WRONG — the production
+transport is airtight (SessionHost.follow() replays its TurnBuffer before registering, measured
+race window ±30 ms); the drop lived in the pty drivers' stand-in host, whose stdin path pushed into
+an empty follower set with no buffer. fake-host.mjs now buffers pre-follow pushes and replays them
+(`replay: true`, drain-before-register) on first follow; `warmup_follow` is deleted and the three
+linkopen cells push real content first (3 idle + 1 loaded runs PASS; reverting the buffer fails
+3/5 runs — the race quantified). External campaign: pre-execution plan review 3 high findings (2
+accepted — the fake-host process contract, the clock-gated pending hole; 1 premise-refuted with a
+measurement, tie-break adopted as robustness) → whole-round review **ZERO findings first pass**.
+Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
+`docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
+
 ## Recorded additions (ours, outside the parity denominator)
 
 On a **cloning** scorecard, scoring ✅ for something upstream does not have at all is a category error —
