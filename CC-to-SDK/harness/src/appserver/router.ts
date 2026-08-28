@@ -10,7 +10,7 @@
 // any more: the frame is a boundary marker, not a verdict, so it could not report a failed compaction at
 // all. That notification now goes out from lifecycle.ts, off the parsed outcome `compact()` resolves —
 // the rule being that a frame relay is only the right shape when the frame IS the payload.
-import type { ThreadRecord } from "./registry.js";
+import { settingsChangedPayload, type ThreadRecord } from "./registry.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
 import { classifyLimitMessage } from "../limits/classify.js";
 import type { AppServer } from "./server.js";
@@ -163,13 +163,11 @@ function routeSettingsMirror(srv: AppServer, record: ThreadRecord, frame: { type
   }
   if (!changed) return; // echo-dedup: the frame's value(s) already equal the mirror — nothing to announce
   record.updatedAt = nowSec();
-  srv.broadcast(record.id, "thread/settings/changed", {
-    threadId: record.id,
-    source: "engine",
-    model: record.settings.model,
-    permissionMode: record.settings.permissionMode,
-    thinkingTokens: record.settings.thinkingTokens,
-  });
+  // One builder, four producers (registry.ts's `settingsChangedPayload`). M8's `crossSessionInbound` is
+  // read off the RECORD and never off the frame: the engine's settings mirror does not carry that key, and
+  // no status frame has ever been observed to. It rides this leg anyway because the payload is one shape,
+  // and a key that appears on only some legs is a client's branch on which leg it happened to receive.
+  srv.broadcast(record.id, "thread/settings/changed", settingsChangedPayload(record, "engine"));
 }
 
 /** `result` frames carrying `usage`/`modelUsage` → `thread/tokenUsage/updated {threadId, usage}`. Both

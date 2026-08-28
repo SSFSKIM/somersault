@@ -27,6 +27,7 @@ import { INJECTED_SERVER_NAMES } from "../../../src/session/session.js";
 import { initializeResult } from "../../../src/appserver/schema/core.js";
 import { swapEngine } from "../../../src/appserver/rewind.js";
 import { emptyFlagPerms, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { DEFAULT_INBOUND } from "../../../src/appserver/peerPolicy.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { MAX_IN } from "../../../src/appserver/peer.js";
 import { toolCallResult } from "../../../src/appserver/toolCallResult.js";
@@ -104,7 +105,7 @@ const barriers = (srv: AppServer): Set<string> => (srv as unknown as { parkBarri
  *  this origin raises here, which is what the thread-scoped tool-call reads answer for a thread that can
  *  never park into them. */
 const fleetRecord = (srv: AppServer): ThreadRecord => ({
-  id: srv.registry.mint(), origin: "fleet", session: fakeSession() as any, unattended: "park",
+  id: srv.registry.mint(), origin: "fleet", session: fakeSession() as any, unattended: "park", crossSessionInbound: DEFAULT_INBOUND,
   busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
   subscribers: new Set(), chain: Promise.resolve(),
   sessionId: "sess-fleet", createdAt: 1, updatedAt: 1,
@@ -1400,12 +1401,16 @@ describe("M7 initialize publishes the capability that makes declaring safe", () 
     // The schema is the COMPLETE current reply, not just the marker: a result schema that described one
     // field would tell a generated client the other three are unknown extras.
     expect(initializeResult.safeParse(result).success).toBe(true);
-    expect(Object.keys(result).sort()).toEqual(["dynamicTools", "platformOs", "userAgent", "version"]);
+    expect(Object.keys(result).sort()).toEqual(["crossSession", "dynamicTools", "platformOs", "userAgent", "version"]);
     // Registered, or the artifact's `results` map never carries it and a generated client cannot look.
     expect(methodSchemas["initialize"].result).toBe(initializeResult);
-    // A downgraded reply — the marker absent — must FAIL that schema, or the detection is not a detection.
+    // A downgraded reply — a marker absent — must FAIL that schema, or the detection is not a detection.
+    // Both markers, separately: each answers a different optional param, so a schema that let either one
+    // go missing would tell a client the wrong thing about the half it actually meant to use.
     const { dynamicTools: _marker, ...downgraded } = result;
     expect(initializeResult.safeParse(downgraded).success).toBe(false);
+    const { crossSession: _m8, ...noCrossSession } = result;
+    expect(initializeResult.safeParse(noCrossSession).success).toBe(false);
   });
 });
 

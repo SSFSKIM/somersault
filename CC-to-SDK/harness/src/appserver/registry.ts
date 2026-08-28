@@ -9,6 +9,8 @@ import type { UserTurnInput } from "../session/turnInput.js";
 import type { TurnFailure } from "../session/turnResult.js";
 import { ERR, type RpcError } from "./rpc.js";
 import type { DynamicToolSpec } from "./dynamicTools.js";
+import type { CrossSessionInbound } from "./peerPolicy.js";
+import type { PeerInboundState } from "./peerInbound.js";
 
 /** Where a thread's engine lives: one this server spawned (`inProcess`), or a running ccx fleet session
  *  this server attached to over its host socket (`fleet`, M3 §1b). The distinction is not cosmetic —
@@ -60,6 +62,12 @@ export interface EngineSession {
    *  consumer that must tell history from news — the frame router — can read it without knowing which
    *  engine it is installed on. */
   onFrame(cb: (m: unknown, replay?: true) => void): () => void;
+  /** Optional (the real lib Session has it — src/session/session.ts's `onUnclaimedResult`; a DI fake and
+   *  the fleet engine need not): a terminal `result` frame that matched NO waiter, which is precisely what
+   *  a peer-initiated turn's result is. The callback answers whether it CLAIMED the result — a claim
+   *  supplies an adopted turn's outcome (peerInbound.ts) and keeps `unmatchedResults` meaning "a result
+   *  nobody owns". */
+  onUnclaimedResult?(cb: (result: unknown) => boolean): () => void;
   /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
    *  session's permission mode through — see appserver/planUpgrade.ts. */
   setPermissionMode?(mode: string): Promise<void>;
@@ -150,6 +158,15 @@ export type PendingFleetStop = { interrupted: boolean };
 export interface ThreadRecord {
   id: string;
   origin: ThreadOrigin;
+  /** M8: whether a cross-session peer may write into this thread — decided at ADMISSION, and afterwards
+   *  movable only in the restrictive direction (`thread/crossSessionInbound/set`, a tightening ratchet;
+   *  settings.ts states what was measured). Mirrored from
+   *  `config.settings.crossSessionInbound`, which is the truth every replacement engine is rebuilt from;
+   *  this field is the arrival path's cheap read. The two are written in one statement and never apart.
+   *  MANDATORY rather than optional, so a new `ThreadRecord` literal cannot forget it — `fleet.ts`'s
+   *  host-owned record seeds `DEFAULT_INBOUND`, which is the honest value for an engine this server does
+   *  not build and cannot inject settings into. */
+  crossSessionInbound: CrossSessionInbound;
   session: EngineSession;
   unattended: "park" | "deny";
   busy: boolean;
@@ -184,6 +201,13 @@ export interface ThreadRecord {
                                 // per-approval watcher — so there is no planUpgradeOff here.
   routerOff?: () => void;       // unsubscribes the ONE per-thread frame router (router.ts, Task 8a,
                                  // spec D-M2-6) — closeRecord calls this before disposing the engine
+  /** M8: the arrival observer's whole state — its two unsubscribes, the un-adopted arrivals, the uuids of
+   *  our own turns, and the adopted turn if one is open (peerInbound.ts). ONE OPTIONAL FIELD rather than
+   *  several mandatory ones, deliberately: `fleet.ts` builds this repository's second `ThreadRecord`
+   *  literal, and a fleet thread has no inbound machinery at all — this server does not own its engine —
+   *  so the honest shape is a field it simply never has. `crossSessionInbound` above is mandatory for the
+   *  opposite reason: `thread/get` reports it on every origin. */
+  peerInbound?: PeerInboundState;
   fleetOff?: () => void;        // FLEET ONLY (M3 §1b): unsubscribes the fleet EVENT LAYER — the item fan
                                  // plus the seven host-event fans `installFleetEvents` installs (fleet.ts).
                                  // closeRecord calls it beside `routerOff`, which is the whole point:
@@ -328,6 +352,37 @@ export function seedSettings(config: Record<string, unknown> | undefined): Threa
     model: config?.model as string | undefined,
     permissionMode: config?.permissionMode as string | undefined,
     thinkingTokens: thinking?.type === "enabled" ? thinking.budgetTokens : undefined,
+  };
+}
+
+/** The ONE `thread/settings/changed` payload, built from the record — every producer of that notification
+ *  calls this, and none builds the object itself.
+ *
+ *  There are FOUR producers, which is precisely why the builder exists: settings.ts's client-leg
+ *  `broadcastSettings`, router.ts's engine-frame `routeSettingsMirror`, fleet.ts's host `state` change, and
+ *  rewind.ts's post-swap reconciliation. Each had its own literal, and M8's fourth knob reached only two of
+ *  them — so the wire shape depended on which producer happened to fire, which is API surface drift by
+ *  AGENTS.md's payload rules (a subscriber that has to guess which keys its leg populated is reading a
+ *  diff, and this notification is a full post-update snapshot, never a diff). Centralized rather than
+ *  patched per site: patching leaves the same trap armed for the fifth producer.
+ *
+ *  `crossSessionInbound` is the one field read off the RECORD rather than off `record.settings` — the
+ *  engine's own settings mirror never carries the key (settings.ts, router.ts). It is mandatory on every
+ *  origin, so the FLEET producer reports it honestly too: a fleet record seeds `DEFAULT_INBOUND` because
+ *  this server neither built that engine nor can inject a settings layer into it, and that is the same
+ *  value `thread/get` already publishes for the thread. */
+export function settingsChangedPayload(r: ThreadRecord, source: "client" | "engine"): {
+  threadId: string; source: "client" | "engine";
+  model: string | undefined; permissionMode: string | undefined; thinkingTokens: number | undefined;
+  crossSessionInbound: CrossSessionInbound;
+} {
+  return {
+    threadId: r.id,
+    source,
+    model: r.settings.model,
+    permissionMode: r.settings.permissionMode,
+    thinkingTokens: r.settings.thinkingTokens,
+    crossSessionInbound: r.crossSessionInbound,
   };
 }
 

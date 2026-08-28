@@ -18,6 +18,7 @@ import { configReadParams, configReadResult, configValueWriteParams, configBatch
 import { threadSearchParams, threadSearchResult, threadSearchOccurrencesParams, threadSearchOccurrencesResult } from "./search.js";
 import { capabilitiesReadResult } from "./introspect.js";
 import { toolCallResultParams, toolCallResultResult } from "./dynamicTools.js";
+import { peerListParams, peerListResult, peerSendParams, peerSendResult, crossSessionInboundSetParams, crossSessionInboundSetResult } from "./peer.js";
 
 /** `experimental`: this method is an X-gate in the spec's sense — it exists because a probe found the seam
  *  reachable, and it may change shape or disappear without a deprecation. It is the ONLY thing that decides
@@ -185,4 +186,23 @@ export const methodSchemas: Record<string, MethodSchema> = {
   // lost, the id unknown, the thread gone — is an error code, so a client that cannot validate the empty
   // reply cannot tell "settled" from a reply it failed to understand.
   "tool/callResult": { params: toolCallResultParams, result: toolCallResultResult },
+  // M8 (§peer): the cross-session domain, registered last because `tool/callResult` was — registration
+  // order IS the artifact's order, and the scorecard lists these after M7's settlement method. Both are
+  // SERVER-scoped (neither names a thread: the subject is every Claude Code session on this machine, and
+  // the ones they reach are sessions this server never opened). Both STABLE: the mechanism is this
+  // machine's own session registry plus the per-session Unix-socket inbox the CLI already binds, not an
+  // unproven SDK seam. Both publish a `result` (D-M5-19) because each reply carries a contract no params
+  // schema can state — `peer/list`'s `statusReachable` says a peer can never answer, and `peer/send`'s
+  // `delivered` is a literal `false` (the frame was WRITTEN; the CLI tells a sender nothing on success).
+  //
+  // THE INBOUND POLICY'S METHOD IS REGISTERED — and it took a measurement to earn the entry. It was absent
+  // while nothing had established that the CLI re-reads the key off the live flag layer mid-session
+  // (`applyFlagSettings` accepts writes it never validates, so a resolved call is not evidence of effect),
+  // because a method this artifact ADVERTISES and the engine silently ignores is worse than an absent one.
+  // Probes 120/120b then measured it in both directions: the re-read is real, but only when the value gets
+  // STRICTER. So what is registered is a tightening ratchet, and the direction that does not move is
+  // refused `-32602` by the handler rather than published as if it worked (appserver/settings.ts).
+  "peer/list": { params: peerListParams, result: peerListResult },
+  "peer/send": { params: peerSendParams, result: peerSendResult },
+  "thread/crossSessionInbound/set": { params: crossSessionInboundSetParams, result: crossSessionInboundSetResult },
 };

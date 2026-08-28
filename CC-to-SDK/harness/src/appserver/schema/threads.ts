@@ -2,6 +2,7 @@
 import { z } from "zod/v4";
 import { archivedParam, epochCursorParam, listCursorParam, threadIdParams } from "./core.js";
 import { MAX_TOOL_DESCRIPTION_CHARS } from "../dynamicTools.js";
+import { CROSS_SESSION_INBOUND } from "./peer.js";
 
 // M7 — THE DYNAMIC TOOL DECLARATION. A client that declares tools IS their runtime, so this shape is one
 // half of the admission gate and `validateDeclarations` (dynamicTools.ts) is the other. The split is by
@@ -60,10 +61,20 @@ export const dynamicToolSpec = z.discriminatedUnion("type", [
  *  declaration. Optional, and its absence is what every thread before M7 did. */
 const dynamicToolsParam = { dynamicTools: z.array(dynamicToolSpec).optional() };
 
+/** M8 — THE INBOUND POLICY, an ADMISSION param on both spines rather than a runtime setter: the CLI reads
+ *  this key when it builds its flag layer, and nothing has measured that it re-reads it mid-session
+ *  (appserver/peerPolicy.ts's header). Declared BESIDE `config`, never inside it, for the reason
+ *  `dynamicTools` is — the server writes the key into every settings carrier the config can hold, so a
+ *  client spelling it inside `config` too would only be arguing with the sanitizer about one field.
+ *  OPTIONAL, and its omitted reading is `refuse`; that is why `initialize` publishes the `crossSession`
+ *  marker (schema/core.ts), since an older server strips a param it has never heard of in silence. */
+const crossSessionInboundParam = { crossSessionInbound: z.enum(CROSS_SESSION_INBOUND).optional() };
+
 export const threadStartParams = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   unattended: z.enum(["park", "deny"]).default("park"),
   ...dynamicToolsParam,
+  ...crossSessionInboundParam,
 });
 export const threadResumeParams = z.object({
   sessionId: z.string().min(1),
@@ -72,6 +83,9 @@ export const threadResumeParams = z.object({
   // BOTH admission spines take it. A resumed conversation is the one that most needs a tool runtime back:
   // the transcript already contains calls to tools only the client can serve.
   ...dynamicToolsParam,
+  // BOTH admission spines take it, for the same reason both take `dynamicTools`: a resumed thread is as
+  // addressable by a peer as a fresh one, and a policy only one spine applies is not a policy.
+  ...crossSessionInboundParam,
 });
 // Task 13: epoch-qualified cursor (epochCursorParam, not the plain decimal offset it was split from) —
 // see schema/core.ts's comment on why thread/read alone needs this shape.

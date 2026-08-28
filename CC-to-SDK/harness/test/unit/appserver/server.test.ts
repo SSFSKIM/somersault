@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { AppServer, threadView } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import { emptyFlagPerms, threadBusyReason, type ThreadRecord } from "../../../src/appserver/registry.js";
+import { DEFAULT_INBOUND } from "../../../src/appserver/peerPolicy.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 // Every `thread/list` reply below is awaited with `waitReply`, not with the bare `tick` the rest of this
 // file uses: since M5 Task 10 that handler reads the archive marker directory before replying, so its
@@ -253,7 +254,7 @@ describe("M2 error codes", () => {
 
 describe("threadBusyReason (spec D-M2-8) — the ONE busy predicate", () => {
   const baseRecord = (overrides: Partial<ThreadRecord> = {}): ThreadRecord => ({
-    id: "thr_x", origin: "inProcess", session: {} as any, unattended: "park", busy: false, turnSeq: 0,
+    id: "thr_x", origin: "inProcess", crossSessionInbound: DEFAULT_INBOUND, session: {} as any, unattended: "park", busy: false, turnSeq: 0,
     interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
     createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0, ...overrides,
   });
@@ -297,8 +298,11 @@ describe("threadView (parent §5's 14-field Thread projection) + thread/list cur
 
     const idleView = threadView(srv, record);
     expect(Object.keys(idleView).sort()).toEqual(
-      ["cwd", "createdAt", "id", "model", "origin", "permissionMode", "preview", "queueDepth", "sessionId", "status", "tags", "thinking", "title", "updatedAt"].sort()
+      ["crossSessionInbound", "cwd", "createdAt", "id", "model", "origin", "permissionMode", "preview", "queueDepth", "sessionId", "status", "tags", "thinking", "title", "updatedAt"].sort()
     );
+    // M8: always present, and `refuse` unless the admission call said otherwise — the only place a client
+    // can read back what admission decided (there is no setter; see peerPolicy.ts).
+    expect(idleView.crossSessionInbound).toBe("refuse");
     expect(idleView.status).toEqual({ state: "idle" });
     // M2b Task 8: always present, 0 when nothing is queued — never omitted-when-zero (see threadView).
     expect(idleView.queueDepth).toBe(0);
