@@ -579,10 +579,36 @@ Three further rules the existing paths cannot infer:
 
 ### Live and replayed views must agree — one item per arrival, in every outcome
 
-The transcript projection turns every persisted top-level user prompt into a `userMessage` item, with no
-`isMeta`, `origin` or `isReplay` filter available to it — the persisted rows carry no such flags
-(`sessions/rows.ts`, probe 68b). So `thread/read` will show a peer prompt as a `userMessage` whatever the
-live path does, and the live path's only job is to match it.
+**The premise this section opened with was wrong, and the keyed run (2026-08-28) inverted its
+conclusion.** It read: the projection turns every persisted top-level user prompt into a `userMessage`
+item, with no `isMeta`, `origin` or `isReplay` filter available to it, "the persisted rows carry no such
+flags", so `thread/read` will show a peer prompt as a `userMessage` whatever the live path does and the
+live path's only job is to match it.
+
+That conflated two different statements. What `sessions/rows.ts` and probe 68b establish is that the
+rows the READER RETURNS carry no such flags. The rows ON DISK carry both: a peer arrival is persisted as
+a `type:"user"` row with `isMeta: true` and a full `origin`. And the SDK reader behind `thread/read`
+(`getSessionMessages`, a passthrough in `sessions/reader.ts`) DROPS every `isMeta` row outright and
+projects what remains onto a fixed shape — `message, parent_agent_id, parent_tool_use_id, session_id,
+timestamp, type, uuid` — so `origin` cannot survive either. Probe 107 measured exactly this on
+2026-08-12, six weeks before this design was written, on two independent real transcripts; nothing here
+connected that finding to the peer-arrival path until a live leg tried to read one back.
+
+So the conclusion is the opposite of what was written: `thread/read` shows a peer arrival **not as a
+`userMessage`, but not at all**. There was never an item for the live path to match. A client watching
+live sees the arrival, the turn and the model's answer; the same client calling `thread/read` afterwards
+gets the answer with no question in front of it. For a FOLDED arrival it is worse — the keyed run found
+those persisted nowhere at all, against a positive control on the same read — so the
+`thread/peerMessage` notification is the ONLY record of them that will ever exist, live or cold.
+
+**What this does and does not change.** The rule below is unaffected and stays exactly as stated: it is a
+rule about what the LIVE path emits, and the live legs verify it directly. The cold half — the
+`peerArrival` branch Tasks 10c and 10d put into `items/replay.ts` — is correct and currently UNFED: run
+the real rule over the real on-disk row and it reproduces the live item byte for byte, id included, which
+a live leg asserts; it is the reader in between that removes the row. That branch is therefore not dead
+code to delete but a correct decoder one reader away from mattering, and deleting it would mean
+re-deriving the rule the day the reader changes. Making `thread/read` show inbound peer messages needs a
+reader that does not drop `isMeta` rows, which is its own round's work and is not attempted here.
 
 The rule is therefore stated on the arrival, not on the turn: **every peer arrival emits exactly one
 `userMessage` item, id-stable on the replayed frame's uuid — the same `arrivalUuid` the notification
@@ -966,6 +992,59 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   and the practice that keeps catching it is the same one: read conclusions off the dumped frames, never
   off the verdict label, and correct the label in the same pass so the artifact cannot mislead later.
 
+- **The keyed acceptance passed nine legs and returned five findings, two of which are about the
+  product rather than the code.** The legs are in `test/live/appserver-cross-session.test.ts` and each
+  finding is ASSERTED there, so the day the engine's behaviour changes the leg reddens rather than the
+  documentation quietly rotting.
+  1. **`turn/started` precedes `thread/peerMessage`, not the other way round.** The engine emits the
+     message's lifecycle `started` before it replays the `type:"user"` frame, so this server adopts and
+     broadcasts the turn edge before it has anything to announce. Acceptance row 7's arrow chain is
+     wrong in its first hop. Nothing depends on that order — the announcement deliberately carries no
+     `turnId` — so the leg asserts the ordering the design DOES rest on (an arrival's `userMessage` item
+     never precedes the `turn/started` of the turn that owns it) rather than pinning an order the engine
+     never promised.
+  2. **A peer arrival is persisted with `isMeta: true`, and the SDK reader drops every `isMeta` row.**
+     See the rewritten "Live and replayed views must agree" section above: this inverts that section's
+     opening premise, and it means `thread/read` cannot project an inbound peer message at all.
+  3. **A FOLDED arrival is persisted nowhere at all** — no `isMeta` row, no row of any kind, measured
+     against a positive control (the host turn's own rows were present in the same read). It reached the
+     model and it had a lifecycle bracket, but its only durable trace is the `thread/peerMessage`
+     notification. That makes the notification load-bearing rather than a convenience.
+  4. **A batched turn's replay frames all carry the CAUSING message's `origin`.** Three messages produced
+     three replay frames with three distinct uuids but only as many distinct `origin.msg_id` values as
+     there were turns; the other members' attributions never appear, though their text does reach the
+     model. So a client is told about the causing message N times and never told the rest arrived. This
+     is the engine's behaviour, not this server's: `peerInbound.ts` forwards `origin` verbatim by design,
+     and re-deriving it would replace a kernel-vouched fact with our opinion of it. Held in all four
+     observations across three runs, including writes spaced three seconds apart.
+  5. **A host turn's lifecycle bracket closes AFTER its `turn/completed`, while an adopted turn's is the
+     reverse** — a host turn settles on the terminal `result` frame and an adopted one settles on the
+     bracket itself. Read without allowing for this, a host bracket reads as still-`started` about half
+     the time. That is a race in a naive reader rather than a finding about the engine, and it is
+     recorded because it reddened a leg once and would redden any future reader written the same way.
+- **The fourth delegated unknown closed too: a BATCH emits one bracket per `command_uuid` around ONE
+  turn.** Three messages written back to back to an idle thread produced a first message with its own
+  turn, then two brackets open simultaneously around a single turn, and only two `turn/started` at the
+  app-server. More than one bracket open at once is the shape the design was written to survive, and the
+  busy gate declining the second adoption is the whole mechanism. The batch leg was written for real
+  rather than left `it.todo`: on an idle thread the first message starts a turn immediately and
+  everything written behind it accumulates, which reproduced in every run.
+- **The receiving model has its own judgement about a peer message, and it is right to.** Told only to
+  "reply with this token", it reached for the CLI's own SendMessage tool and answered the peer over the
+  gateway socket instead of saying anything in its own transcript. Told that its "entire response must be
+  exactly this token and nothing else", it REFUSED, naming the instruction a prompt-injection pattern
+  designed to use it as a covert signal relay between sessions — which is precisely what a
+  suppress-your-output instruction from an unattributed peer looks like. The acceptance messages were
+  rewritten to say truthfully what they are. Recorded because it is a real property of this surface: a
+  peer message is untrusted input to a model that will evaluate it as such, and a host that designs its
+  wire protocol assuming compliance is designing against the wrong receiver.
+- **A thread is not addressable until it has run one turn.** `record.sessionId` is latched off the first
+  `system/init` frame and the CLI emits none until it gets input — a thread was measured sitting idle for
+  48 seconds publishing its session row without ever latching, and `thread/init/read` starts the CLI
+  without producing a frame either. So `peer/list` cannot map a roster row to a `threadId` until the
+  thread has done something. This is a property of this server's id latch rather than of the peer
+  surface, and every acceptance leg takes one trivial warm-up turn because of it.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
@@ -1040,3 +1119,14 @@ Pending — written at finish.
   time, tightening is retroactive and produces a `denied` receipt the spec had said was never observed, a
   messaged peer can reply onto the gateway's own socket (already handled as a stray, now for a measured
   reason), and the live and persisted `origin` objects differ by `msg_id`.
+- **rev 8 (2026-08-29)** — the keyed acceptance ran: nine legs green against a real engine, the fourth
+  delegated unknown closed (a batch emits one bracket per `command_uuid` around one turn), and five
+  findings recorded, each asserted in the live file rather than described in a comment. The consequential
+  one inverts a premise this spec had carried since rev 1: a peer arrival is persisted with
+  `isMeta: true`, the SDK reader drops every `isMeta` row and strips `origin` besides, so `thread/read`
+  shows an inbound peer message not as a `userMessage` but not at all — and a folded arrival is persisted
+  nowhere whatever. The "Live and replayed views must agree" section is rewritten around that: the live
+  rule is unchanged and verified, while the cold `peerArrival` branch is named as correct-but-unfed
+  rather than quietly left looking active. Probe 107 had measured the reader's `isMeta` behaviour six
+  weeks before this design was written; nothing connected it to the peer path until a live leg tried to
+  read an arrival back, which is the round's sharpest lesson about reusing one's own prior measurements.
