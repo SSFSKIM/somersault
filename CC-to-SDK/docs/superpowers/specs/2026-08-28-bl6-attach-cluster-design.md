@@ -52,12 +52,19 @@ Concretely:
 
 ### 2.2 Integration test (the seam)
 
-A sibling case in `test/integration/host-client.test.ts`: spawn `scripts/fake-host.mjs` over a real
-UDS, write one push word to its stdin **before** connecting a `remoteChatSession`, then connect,
-`whenReady()`, and assert the frame arrives (with `replay: true`). The research agent left a
-deterministic throwaway of exactly this at `$CLAUDE_JOB_DIR/tmp/bl6attach/node-repro.mjs` — red today
-(`no-replay` arm loses the frame 2/2), green with replay. The committed test must be red-green: red
-against unmodified `fake-host.mjs`, green after §2.1.
+A sibling case in `test/integration/host-client.test.ts`, honoring fake-host's REAL process contract
+(plan-review finding 1: the script takes NO positional socket argument): spawn
+`node scripts/fake-host.mjs` with an ISOLATED `CCX_FLEET_ROOT` (fresh mkdtemp), parse the socket path
+from the `SOCKET=` line it prints on stdout, and assert the child stays alive. The script imports
+`../dist/fleet/*.js`, so the case is guarded with the repo's loud-skip pattern
+(`describe.skipIf(!existsSync(<harness>/dist/fleet/paths.js))` with reason "run npm run build
+first") and the task's steps mandate a build so the red-green run is real. Sequence: write one push
+word to fake-host stdin BEFORE any client exists → connect `remoteChatSession` → await the adapter's
+ready seam → THEN subscribe `onSessionEvent` (subscribing after ready exercises the adapter backlog
+exactly as real attach does) → assert the pushed frame arrives with `replay: true`. The research
+agent left a deterministic throwaway of the mechanism at
+`$CLAUDE_JOB_DIR/tmp/bl6attach/node-repro.mjs` — consult for wire shapes, but the committed test goes
+through the repo's real client seam. Red against unmodified `fake-host.mjs`, green after §2.1.
 
 ### 2.3 Driver cleanup (the acceptance)
 
@@ -108,12 +115,27 @@ the run and renders standalone.
    existing collapsed-row fields (`thoughtForMs`, `latestThinkingSummary` — both unchanged; the
    neutral atom's `thinkingSummary` is whitespace-collapsed and cannot serve as the body). ccx's
    *existing* absorption rule (which thinking joins which cluster) is **kept as-is** — this ticket
-   changes what a group remembers and renders, not membership. If plan-time reading shows ccx's
+   changes what a group remembers and renders, not membership. **Two hard sub-requirements
+   (plan-review finding 2):** (i) the body rides the fold INDEPENDENTLY of the live thought-clock —
+   today `segmentRuns`' PRE-RUN `pending` accumulator (`toolFold.ts:452,556`) accrues a leading
+   neutral only when `thoughtForMs > 0`, and replay/attach entries never have a clock, so `pending`
+   must also carry bodies (`{key, messageSequence, body}[]`) whenever the atom bears one, transferred
+   into the run when the first collapsible tool opens it (a breaker still clears `pending` — bodies
+   die with the run exactly as the clock does); (ii) at least one retention test drives the REAL
+   production pipeline (a `TranscriptDocument` through `projectCompact`/`projectPending`) with a
+   leading thinking entry, NO `thoughtMs` map entry, a tool + result, and a breaker — a test that
+   constructs `FoldAtom`s by hand can pass while `buildAnchoredEntries`/`foldAtoms` never carry the
+   body. If plan-time reading shows ccx's
    membership materially diverges from canon's adjacency rule, that is a Surprises entry and a
    follow-up ticket, not silent scope growth.
 2. **Expansion rendering.** `expandedMemberItems` (or a successor seam) interleaves the retained
    thinking rows with the member tool rows **by message sequence** — NOT by `memberIds` order, which
-   reorders as members settle (research §1.6 interleaving note). Thinking row shape per §3.1: `∴`
+   reorders as members settle (research §1.6 interleaving note). The ordering is TOTAL: a member
+   row's key is its `callSequence`, a thinking row's its `messageSequence`, and on EQUAL keys
+   thinking precedes members and members keep extraction order (a deterministic tie-break; measured
+   against the 12 most recent real session transcripts, equal-key collisions cannot currently occur —
+   0 combined `[thinking, tool_use]` entries in 13,781 thinking entries — so this is robustness, not
+   parity; see D12). Thinking row shape per §3.1: `∴`
    gutter + full body as dim markdown, `marginTop:1` spacing, no duration. Reuse ccx's existing
    thinking renderer in its transcript-mode/verbose form if one exists; else a minimal local row.
 3. **No change** to the collapsed row, to the replace-not-append expansion shape (ccx already
@@ -196,6 +218,18 @@ mutation checks, fix waves re-reviewed by the original reviewer, whole-round cod
   arms is rejected by standing discipline. `<task-notification>` absorption is focus-mode-only in
   canon and out of reach entirely.
 - **D8 — T-ATTACH merges before T-CLUSTER.** A4's pty cell relies on sentinel-free first push.
+- **D10 — plan-review finding 1 ACCEPTED.** The T-ATTACH integration test contract was wrong
+  (invented positional socket arg; ignored the `SOCKET=`/`CCX_FLEET_ROOT`/dist contract). §2.2
+  rewritten; red would have been a setup failure, green impossible.
+- **D11 — plan-review finding 2 ACCEPTED.** Clock-independent body retention through the pre-run
+  `pending` accumulator + a mandatory production-pipeline test. Without it every planned fixture
+  passes while a resumed/attached cluster still expands to nothing — the exact tests-pass-wiring-dead
+  failure mode of the two prior rounds.
+- **D12 — plan-review finding 3 PARTIALLY ACCEPTED.** Its premise ("common persisted
+  `[thinking, tool_use]` combined entries") is refuted by measurement (0/13,781 across the 12 most
+  recent real transcripts — Claude Code persists one content block per line). The proposed ordinal
+  machinery is REJECTED; a free deterministic equal-key tie-break (thinking first) is adopted as
+  robustness.
 - **D9 — production follow() replay gap for `rewound`/`decision_settled`/`task` frames: backlog
   ticket, not bl6.** Narrow window (~36 ms), orthogonal to both tickets.
 
@@ -219,3 +253,7 @@ Pending — written at finish.
 ## 9. Revision Notes
 
 - v1 (2026-08-28): authored from research-attach.md + research-cluster.md.
+- v2 (2026-08-28): pre-execution adversarial plan review (gpt-5.6-sol, xhigh) returned 3 high
+  findings; adjudication in D10-D12. §2.2 rewritten (fake-host process contract), §3.2(1) gains the
+  clock-independent pending-state requirement + production-pipeline test, §3.2(2) gains the total
+  ordering with tie-break.

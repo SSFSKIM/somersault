@@ -68,15 +68,29 @@ retained by exactly the run that absorbs the atom today.
     today (the code path around `run.thoughtForMs += ms`, `toolFold.ts:454`) — but keyed on
     `atom.thinkingBody !== undefined`, NOT on the clock. Membership is therefore byte-identical to
     today's: whichever run a thinking-bearing neutral atom lands in retains its body.
+  - **The PRE-RUN case (spec §3.2(1)(i), plan-review finding 2 — do not skip):** a leading thinking
+    atom arrives BEFORE the first collapsible tool. Today `segmentRuns` holds it in the `pending`
+    accumulator (`toolFold.ts:452`) ONLY when `ms > 0` (`:556`) — and replayed/attached entries never
+    have a clock. Extend `pending` to `{ ms: number; summary?: string; bodies: AbsorbedThinking[] }`
+    (or equivalent): bodies accrue whenever `atom.thinkingBody !== undefined` regardless of `ms`,
+    transfer into the run at the existing `pending` hand-off when the first collapsible tool opens it
+    (`:512`), and are cleared wherever `pending` is cleared today (a breaker kills them exactly as it
+    kills the clock — `:458`).
 
-- [ ] **Step 1: failing unit test.** In the fold unit test file, drive `foldAtoms`+`segmentRuns` (use
-  the file's existing fixture builders) with: tool A → thinking message ("First thought line\n\n
-  Second paragraph") → tool B, all one run. Assert the flushed group has
+- [ ] **Step 1: failing unit tests — THREE cells.** Cell 1 (mid-run): tool A → thinking message
+  ("First thought line\n\nSecond paragraph") → tool B, one run; assert the flushed group has
   `absorbedThinking: [{ key: expect.stringContaining(":"), messageSequence: <the thinking entry's
   sequence>, body: "First thought line\n\nSecond paragraph" }]` — the body preserves the newlines
-  (this is the cell that kills a whitespace-collapse regression). Add a second cell: the SAME stream
-  with NO entry in the live thought-clock map still retains the body (`thoughtForMs` absent,
-  `absorbedThinking` present) — the replay/attach case.
+  (kills a whitespace-collapse regression). Cell 2 (no-clock LEADING thinking — the replay/attach
+  case, spec §3.2(1)(i)): thinking → tool A → result, with NO entry in the live thought-clock map;
+  assert `thoughtForMs` absent but `absorbedThinking` present with the body — this cell is RED until
+  the `pending` extension lands and MUST fail if bodies are gated on the clock. Cell 3
+  (production-pipeline, spec §3.2(1)(ii)): drive a real `TranscriptDocument` through
+  `projectCompact`/`projectPending` (mirror how existing tests in the file build documents) with a
+  leading thinking entry, no `thoughtMs`, a Read + result, and a breaker; assert the projected
+  expanded output (or the group it publishes) carries the body — this cell exercises
+  `buildAnchoredEntries` → `foldAtoms` → `segmentRuns` end to end and MUST fail if any link drops the
+  body, even while cells 1-2 pass.
 - [ ] **Step 2: run, RED** (`npx vitest run test/unit/<foldfile> -t absorbedThinking`).
 - [ ] **Step 3: implement** the four touch points above, minimal. In `buildAnchoredEntries`, derive
   the raw body next to the existing `thinkingSummaryOf` call (extract the shared
@@ -99,11 +113,14 @@ retained by exactly the run that absorbs the atom today.
   producer of the `∴` rows the F4 wave shipped and call THROUGH it if its shape fits; a minimal local
   item builder is acceptable only if the existing one is hard-wired to a different seam — record
   which in the report).
-- Produces: `expandedMemberItems` output = one merged list, ascending by sequence, where a member
-  tool row's sort key is the event's `callSequence` (the transcript position of its `tool_use` —
-  canon's `pe` order; NOT `resultSequence`, NOT `memberIds` position) and a thinking row's key is
-  `messageSequence`. Thinking rows carry `foldAnchor: anchorId` and `expanded: true` exactly like
-  member items (so collapse/re-render bookkeeping sees them as cluster content).
+- Produces: `expandedMemberItems` output = one merged list under a TOTAL order (spec §3.2(2)): a
+  member tool row's sort key is the event's `callSequence` (the transcript position of its
+  `tool_use` — canon's `pe` order; NOT `resultSequence`, NOT `memberIds` position), a thinking row's
+  key is `messageSequence`, and on EQUAL keys thinking rows precede member rows while member rows
+  keep extraction order (deterministic tie-break — robustness per spec D12, since equal-key
+  collisions were measured absent in real transcripts). Thinking rows carry `foldAnchor: anchorId`
+  and `expanded: true` exactly like member items (so collapse/re-render bookkeeping sees them as
+  cluster content).
 
 - [ ] **Step 1: failing component test.** Fixture: a cluster of Read(seq 10) → thinking(seq 12,
   body "Alpha\n\nBeta") → Read(seq 14), expanded via `expandedFolds`. Assert the rendered output
