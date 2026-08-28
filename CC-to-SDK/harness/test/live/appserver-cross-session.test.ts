@@ -765,7 +765,7 @@ live("M8 cross-session, against a real engine", () => {
     expect((t4.record.session as any).unmatchedResults, "the adopted turn's result was dropped rather than claimed").toBe(before);
   }, 1_800_000);
 
-  it("LEG 8 — refuse (spec row 11): the same send into a crossSessionInbound:'refuse' thread is silent on both channels", async () => {
+  it("LEG 8 — refuse (spec row 11): the same send into a crossSessionInbound:'refuse' thread runs NOWHERE, and since CLI 2.1.250 the sender is told so — one `expired` receipt carrying a reason", async () => {
     t5 = await openThread("refuse", "refuse");
     // The arrival observer is installed CONDITIONALLY on the policy, so a refusing thread has no
     // `peerInbound` state at all — this server is not even listening for what will not come.
@@ -773,21 +773,52 @@ live("M8 cross-session, against a real engine", () => {
     const token = nonce("M8REFUSE");
     const mark = a.mark();
 
-    // `peer/send` STILL SUCCEEDS: the sender is told nothing either way, which is the contract — the method
-    // reports that the frame was written, never that it was taken in.
+    // `peer/send` STILL REPORTS ONLY THAT THE FRAME WAS WRITTEN: `delivered` is a literal, not a status,
+    // and the method never waits for a receipt. What became of the message is learned on the status
+    // channel afterwards, or not at all.
     const sent = await a.call("peer/send", { target: t5.sessionId, message: askFor(token) }, 30_000);
     expect(sent.delivered).toBe(false);
     expect(sent.msgId).toMatch(UUID_RE);
 
-    // THE OBSERVATION WINDOW. On the accepting threads above the whole arrival→announcement hop completed
-    // in the low seconds; 45s is an order of magnitude of headroom over that, which is what makes this
-    // silence a measurement rather than an impatience.
+    // ── WHAT CHANGED, AND WHAT DID NOT ────────────────────────────────────────────────────────────────
+    // M8 measured (2026-08-28, on CLI 2.1.237) that a refused send was silent on BOTH channels: no turn,
+    // no items, AND no receipt, so a sender had no way whatever to learn its message had been refused.
+    // CLI 2.1.250 closes exactly that half: the refusal now comes back as a `peer/messageStatus`. The
+    // engine did NOT become more permissive — every enforcement assertion below is the one that was here
+    // before, and each still passes — it became TRANSPARENT. This leg therefore asserts both halves, and
+    // the receipt is what makes the second half falsifiable rather than a claim about an absence.
+    //
+    // Correlated by `msgId`, never by method alone: a receipt owed to some other send (a `held` message's
+    // eventual `expired`, a capped entry's `dropped`) must not be able to stand in for this one.
+    const receipt = await a.waitFor("peer/messageStatus for the refused send", 60_000,
+      (n) => n.method === "peer/messageStatus" && n.params.msgId === sent.msgId, mark);
+    // THE STATUS IS PINNED. `expired` is TERMINAL in `ReceiptMap`, so it releases the correlation entry
+    // where `held` deliberately does not — a client's next move differs by exactly this word, and a flip
+    // in either direction is a real contract change that must redden here.
+    expect(receipt.params.status, `the refusal receipt's status was ${JSON.stringify(receipt.params.status)}`).toBe("expired");
+    // THE SHAPE IS PINNED, and it is OURS to pin: this frame is assembled by this server's own receipt
+    // sink, and `reason` is emitted only when the engine supplied one — so the key set is precisely what
+    // says a reason arrived at all, rather than an `undefined` read as a pass.
+    expect(Object.keys(receipt.params).sort(), "the receipt is not the {msgId, status, reason, from, receivedAt} this server documents").toEqual(["from", "msgId", "reason", "receivedAt", "status"]);
+    expect(String(receipt.params.reason).trim().length, "the refusal receipt carried an empty reason — the whole point of the channel is that the sender can be TOLD why").toBeGreaterThan(0);
+    expect(receipt.params.receivedAt, "the receipt carries no unix-seconds stamp").toBeGreaterThan(0);
+    // …and the reason's ENGLISH is deliberately NOT pinned. Upstream wording is not a contract, and a leg
+    // that reddens on somebody's copy-edit teaches the next reader to ignore it. What this leg owes is
+    // that a reason is THERE and non-empty. Recorded rather than asserted, 2.1.250 says: "The recipient
+    // session is not accepting cross-session messages (the feature is off there, or a setting or policy
+    // there refuses them); your message was not delivered to its Claude."
+
+    // THE OBSERVATION WINDOW, unchanged, and still the leg's reason for existing. On the accepting threads
+    // above the whole arrival→announcement hop completed in the low seconds; 45s is an order of magnitude
+    // of headroom over that, which is what makes this silence a measurement rather than an impatience.
     await wait(45_000);
-    const window = a.since(mark).filter((n) => n.params?.threadId === t5!.id || n.method === "peer/messageStatus");
+    const window = a.since(mark).filter((n) => n.params?.threadId === t5!.id);
     expect(window.filter((n) => n.method === "thread/peerMessage"), "a refused message was announced").toEqual([]);
     expect(window.filter((n) => n.method === "turn/started"), "a refused message started a turn").toEqual([]);
     expect(window.filter((n) => n.method === "item/completed"), "a refused message produced an item").toEqual([]);
-    expect(window.filter((n) => n.method === "peer/messageStatus"), "a receipt came back for a refused message").toEqual([]);
+    // ONE receipt, not a stream: a terminal status releases the entry, so nothing further can route to it.
+    expect(a.since(mark).filter((n) => n.method === "peer/messageStatus" && n.params.msgId === sent.msgId).length,
+      "the refused send drew more than one receipt").toBe(1);
 
     // …and at the ENGINE, not only at this server: the refusing CLI never took the message into its
     // transcript at all. Without this the leg would pass merely because the observer was uninstalled.

@@ -1,10 +1,11 @@
 // src/peer/receipts.ts — the msgId -> connection map a `peer/send` leaves behind so a later status frame
 // can be routed back to whoever asked.
 //
-// Its whole difficulty is that the COMMON outcomes are silent. Measured (probe 117b and the receivers'
-// own logs in 117): a delivered message and a refused message produce no receipt at all; only `held` and
-// `expired` do. So nothing about the success path ever signals that an entry may be released, and
-// "release it when the receipt arrives" would grow this map without bound for any long-lived client.
+// Its whole difficulty is that the COMMON outcome is silent. Measured (probe 117b and the receivers' own
+// logs in 117): a DELIVERED message produces no receipt at all. A refused one was silent too until CLI
+// 2.1.250, which now answers it `expired` with a reason (LEG 8 of the cross-session live file; M8 spec
+// rev 9) — but that changes nothing here, because the success path still never signals, and "release it
+// when the receipt arrives" would grow this map without bound for any long-lived client.
 // Hence three rules, none optional: an absolute retention window, drop-on-connection-close, and caps.
 export type ReceiptStatus = "held" | "expired" | "delivered" | "refused" | "denied" | "dropped";
 
