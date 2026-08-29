@@ -28,7 +28,11 @@
 >   allowModels family/exact pinning, a warm-cache forfeiture cap in USD, `decide()` under deny-wins,
 >   `annotate()` briefing the new model, an `onSwitch` observability tap; merged after user hooks in
 >   resolveOptions, so it governs harness, lib Session, and daemon sessions uniformly. Spec/plan
->   `2026-08-30-model-switch-governance`; live 2/2.
+>   `2026-08-30-model-switch-governance`; live 2/2. Closed by a **3-round codex review loop** (12
+>   findings, all verified and fixed across three subagent fix waves — daemon-wide policy + per-task
+>   stop affordance on cold/warm/restart paths alike, five-shape MCP timeout stamping, validation at
+>   both front doors, awaited observers, capped annotations); full unit suite 4178/4178 and live 2/2
+>   re-verified on the post-loop code.
 > - **Wave 4 — knob completion + drift watch** (2026-07-17, spec/plan `2026-07-17-wave4-knob-completion`,
 >   probes 53/53b/54): **the Options long tail closed** — 27 new first-class `HarnessConfig` fields
 >   (sessionId/title/agent/continueSession/abortController/additionalDirectories/skills/toolConfig/
