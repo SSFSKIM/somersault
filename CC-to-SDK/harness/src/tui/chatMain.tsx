@@ -47,7 +47,9 @@ export interface ChatClientOpts {
   // `accountBridge` (F10 T-MAINT item 1): the LATE channel for that same fact — the LIVE, unraced
   // `accountInfo()` promise, so a cold handshake that missed the banner's budget can still reach the
   // auto-mode notice before its own later deadline.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
+  // `initialAdvisorModel` (bl7 T-ADVISOR Task 3, D15) rides the identical spread as `initialModel` — see
+  // `useChat.ts`'s opts doc for the whole chain (`main.ts` → here → `ChatApp.tsx` → `useChat`).
+  hookOpts?: { initialMode?: string; initialModel?: string; initialAdvisorModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;

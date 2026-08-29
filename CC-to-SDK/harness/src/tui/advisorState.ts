@@ -39,9 +39,20 @@ function innerMessageId(message: Record<string, unknown>): string | undefined {
 }
 /** `sle`/`Que` (research-advisor.md A3, 159209622/159209386): declined = `content.stop_reason ===
  *  "refusal"`. Read defensively off whatever `content` a block carries — the only caller passes an
- *  `advisor_tool_result` block's own `content` field (`BetaAdvisorToolResultBlock.content`). */
-function isDeclined(content: unknown): boolean {
+ *  `advisor_tool_result` block's own `content` field (`BetaAdvisorToolResultBlock.content`).
+ *  EXPORTED (bl7 T-ADVISOR Task 3): render.ts's collapsed/expanded row text AND toolRenderer.tsx's §3.4
+ *  clickability predicate both need "is this declined" — sharing the one canon predicate here is what keeps
+ *  the render decision and the click decision from drifting apart. */
+export function isDeclined(content: unknown): boolean {
   return isRecord(content) && content.stop_reason === "refusal";
+}
+/** `V9e` (159209664): the declined REASON, read only off an `advisor_result` shape's own `text` field, and
+ *  only when non-empty — a declined `advisor_redacted_result` (no `text` field at all) never has one.
+ *  EXPORTED for the identical reason `isDeclined` is: `toolRenderer.tsx`'s clickable gate
+ *  (`!declined || reason !== undefined`) must agree with what render.ts actually shows on expand. */
+export function advisorDeclineReason(content: unknown): string | undefined {
+  if (!isDeclined(content)) return undefined;
+  return isRecord(content) && content.type === "advisor_result" && typeof content.text === "string" && content.text.length > 0 ? content.text : undefined;
 }
 function isResultError(content: unknown): boolean {
   return isRecord(content) && content.type === "advisor_tool_result_error";

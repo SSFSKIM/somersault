@@ -278,6 +278,35 @@ describe("useChat: initial prompt", () => {
   });
 });
 
+// bl7 T-ADVISOR Task 3 carry-forward (spec D15): `config.advisorModel` must reach the rendered "Advising
+// using {model}" clause through `projectionContext()` — the REAL closure `useChat.ts` builds (`opts.
+// initialAdvisorModel` → the plain `advisorModel` const → the returned context's `advisorModel` field), not
+// a hand-built `ProjectionOptions.advisorModel` bag the way `advisor-row.test.tsx`/`toolRenderer.test.tsx`
+// exercise render.ts and toolRenderer.tsx directly. This is the one seam those unit cells cannot see: whether
+// `main.ts` → `chatMain.tsx` → `ChatApp.tsx`'s `initialAdvisorModel` spread actually lands in the hook.
+describe("useChat: D15 — a configured advisorModel reaches the rendered row via the real projectionContext", () => {
+  it("initialAdvisorModel renders 'Advising using {model}' on an in-flight advisor consult, absent when omitted", async () => {
+    const advisorInFlight = { kind: "sdk" as const, source: "disk" as const, message: {
+      type: "assistant", parent_tool_use_id: null, uuid: "u-adv", message: { id: "m-adv",
+        content: [{ type: "server_tool_use", id: "srv1", name: "advisor", input: {} }] } } };
+    function AdvisorHost({ makeSession, model }: { makeSession: () => ChatSession; model?: string }) {
+      const c = useChat(makeSession, { initialAdvisorModel: model, initialEntries: [advisorInFlight] });
+      return <Text>{allText(c)}</Text>;
+    }
+    const withModel = render(<AdvisorHost makeSession={() => fakeRemote() as unknown as ChatSession} model="Opus 4.8" />);
+    await waitFor(() => frame(withModel.lastFrame).includes("Advising"));
+    expect(frame(withModel.lastFrame)).toContain("Advising using Opus 4.8");
+    withModel.unmount();
+
+    // D15's other half: absent config means the clause is OMITTED, not a phantom "Advising using undefined".
+    const noModel = render(<AdvisorHost makeSession={() => fakeRemote() as unknown as ChatSession} />);
+    await waitFor(() => frame(noModel.lastFrame).includes("Advising"));
+    expect(frame(noModel.lastFrame)).toContain("Advising");
+    expect(frame(noModel.lastFrame)).not.toContain("using");
+    noModel.unmount();
+  });
+});
+
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
     const { lastFrame } = render(<Host makeSession={() => fakeRemote()} prompt="hi" />);

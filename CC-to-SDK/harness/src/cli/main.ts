@@ -602,7 +602,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
       // second path so the auto-mode notice's variant selector sees it too. `account` is already undefined
       // on a resume/continue launch (the banner race is skipped there), which lands the notice on its
       // documented unknown arm exactly like `ccx attach` does below.
-      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch, accountBridge },
+      // bl7 T-ADVISOR Task 3 (spec D15): `initialAdvisorModel` rides `advisorModel` (declared above, the same
+      // flag-or-saved-pref local `foregroundConfig` already folded in) straight through — no re-resolution,
+      // exactly as `initialModel` rides the already-resolved `model` local two lines up.
+      hookOpts: { initialMode: resolvedPermissionMode(foregroundConfig), initialModel: resolveModelAlias(model) ?? DEFAULTS.model, initialAdvisorModel: advisorModel, initialEffort: foregroundConfig.effort ?? persistedEffort ?? DEFAULTS.effort, ...(parsedThink ? { initialThink: parsedThink.level } : {}), initialTokenSource: account?.tokenSource, promptLatch, accountBridge },
     });
   } finally {
     process.off("SIGHUP", onSignal); process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);

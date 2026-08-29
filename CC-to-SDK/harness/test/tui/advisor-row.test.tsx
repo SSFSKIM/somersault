@@ -95,6 +95,17 @@ describe("render.ts — advisor result rows (advisor_tool_result)", () => {
         segments: [{ text: "Advisor declined to advise on this request", color: warning }, { text: ` ${HINT}`, dim: true }] },
     ]);
   });
+  // Task 3 carry-forward (Task 2 review minor): canon's `Hn = Yn!==void 0&&!Fr ? r(U,{children:[" ",
+  // e(Gc,{})]}) : null` wraps the hint in a fragment whose LEADING SPACE is emitted whenever a reason
+  // exists and the row is collapsed — independent of whether `Gc()` (the hint itself) returns null. So
+  // `clickHintSuppressed` must drop only the hint TEXT, never the trailing space it would have introduced.
+  it("declined with reason, collapsed, hint SUPPRESSED: warning line keeps the trailing space, hint text dropped", () => {
+    const block = resultOf({ type: "advisor_result", text: "not this time", stop_reason: "refusal" });
+    const advisor = { ...noopAdvisor, clickHintSuppressed: true };
+    expect(renderMessage(asst([block]), { advisor })).toEqual([
+      { text: "Advisor declined to advise on this request ", color: warning },
+    ]);
+  });
   it("declined with reason, expanded: warning line (hint dropped) THEN a separate dim reason row", () => {
     const block = resultOf({ type: "advisor_result", text: "not this time", stop_reason: "refusal" });
     const advisor = { ...noopAdvisor, expanded: true };

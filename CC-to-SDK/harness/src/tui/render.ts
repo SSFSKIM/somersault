@@ -42,6 +42,9 @@ import { TICK } from "./figures.js";
 // caller (toolRenderer.tsx) already reads off `opts.expandHint` — reused here rather than re-invented so the
 // advisor result hint can never drift from the chip a rebind moves everywhere else (species.ts, toolRenderer.tsx).
 import { resolveExpandHint } from "./keys/hints.js";
+// bl7 T-ADVISOR Task 3: shared with toolRenderer.tsx's §3.4 clickability predicate — "declined"/"the reason
+// text" is decided in exactly ONE place so the render decision and the click decision can never drift apart.
+import { isDeclined, advisorDeclineReason } from "./advisorState.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -290,11 +293,8 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
         const advisor = advisorContext(opts);
         const content: unknown = b.content;
         const hint = advisor.clickHintSuppressed ? "" : resolveExpandHint(opts.expandHint);
-        const declined = isRecord(content) && content.stop_reason === "refusal";
-        if (declined) {
-          // `V9e` (159209664): the reason is ONLY read off an `advisor_result` shape's own `text` field — a
-          // declined `advisor_redacted_result` (no `text` field at all) never has a reason to reveal.
-          const reason = isRecord(content) && content.type === "advisor_result" && typeof content.text === "string" && content.text.length > 0 ? content.text : undefined;
+        if (isDeclined(content)) {
+          const reason = advisorDeclineReason(content);
           const warningColor = resolveThemeColor(themeTokens().warning);
           const DECLINED_TEXT = "Advisor declined to advise on this request";
           if (advisor.expanded) {
@@ -303,8 +303,15 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
             // its own dim row below — never inline with the warning line.
             out.push({ text: DECLINED_TEXT, color: warningColor });
             if (reason !== undefined) out.push({ text: reason, dim: true });
-          } else if (reason !== undefined && hint !== "") {
-            out.push({ text: `${DECLINED_TEXT} ${hint}`, segments: [{ text: DECLINED_TEXT, color: warningColor }, { text: ` ${hint}`, dim: true }] });
+          } else if (reason !== undefined) {
+            // Task 3 carry-forward (Task 2 review minor): canon's `Hn = Yn!==void 0&&!Fr ? r(U,{children:[" ",
+            // e(Gc,{})]}) : null` wraps the hint in a fragment with a LEADING SPACE that is emitted whenever a
+            // reason exists and the row is collapsed — independent of whether `Gc()` itself then returns null
+            // (`clickHintSuppressed`). So the trailing space survives hint suppression; only the hint TEXT drops.
+            const suffix = hint !== "" ? ` ${hint}` : " ";
+            out.push(hint !== ""
+              ? { text: `${DECLINED_TEXT}${suffix}`, segments: [{ text: DECLINED_TEXT, color: warningColor }, { text: suffix, dim: true }] }
+              : { text: `${DECLINED_TEXT}${suffix}`, color: warningColor });
           } else {
             out.push({ text: DECLINED_TEXT, color: warningColor });
           }

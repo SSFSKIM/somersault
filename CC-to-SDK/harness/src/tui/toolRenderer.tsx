@@ -27,7 +27,7 @@ import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
-import { advisorResolution, type AdvisorResolution } from "./advisorState.js";
+import { advisorResolution, isDeclined, advisorDeclineReason, type AdvisorResolution } from "./advisorState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { osc8Open, OSC8_CLOSE } from "./osc8.js";
@@ -154,7 +154,12 @@ export type { ResultProjection };
  *  or on disk says a result was expanded, so it lives beside it in `useChat`, threaded here as a projection
  *  INPUT, and is cleared at the same two boundaries (a renderer flip, a rebuilt transcript) for the same
  *  reason — a rebuilt document reuses the same tool-use ids, and an expansion left standing would open an
- *  unrelated call on sight. */
+ *  unrelated call on sight.
+ *    bl7 T-ADVISOR Task 3 (spec §3.4/D9/D16) WIDENS THE SAME SET, not a second one: an advisor result item's
+ *  owner is `sdkOwnerKey(base)` (the `sdk:` prefix), which cannot collide with a `tool:`-prefixed owner —
+ *  same field, two disjoint key namespaces. `knobKey` below reads only the `sdk:` subset for its cache key,
+ *  because only advisor rows are consumed INSIDE the anchored-entry cache; `tool:*` owners are read
+ *  downstream of it (`toolEventItems`, never cached) and must not cost it a rebuild. */
 /** `advisorModel` (bl7 T-ADVISOR Task 2, spec D15): the CLIENT'S OWN advisor-model config, threaded down to
  *  the advisor in-flight row's `" using {model}"` clause — NEVER the SDK frame's own `message.model` (the
  *  MAIN model, a different fact). Like `cwd`/`home`, this is session-constant (set at launch, not a live
@@ -819,20 +824,35 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
   content.forEach((block, index) => {
     if (!isRecord(block) || block.type === "tool_use" || block.type === "tool_result") return;
     // bl7 T-ADVISOR Task 2 (spec §3.2/D15): the two advisor block kinds are the only ones that need a render
-    // context render.ts cannot derive from a lone content block. `expanded`/`clickHintSuppressed` read the
-    // same verbose/detail and fullscreen knobs every other folded surface in this file already derives from
-    // — Task 3 replaces `expanded` with the real per-row click-toggle state (`options.expandedItems`) and
-    // narrows `clickHintSuppressed` to the exact clickability predicate; until then this is canon-legal
-    // (§3.2: `Fr = verbose || isTranscriptMode`) and not a placeholder that renders wrong.
+    // context render.ts cannot derive from a lone content block. `clickHintSuppressed` is already the exact
+    // canon `Gj` predicate (fullscreen is where clicks work; the classic renderer keeps the hint).
+    //   Task 3 (spec §3.4/D9): `expanded` is now the REAL per-row click-toggle state, ORed with the same
+    // verbose/detail knob canon's own `Fr = verbose||isTranscriptMode` reads (`options.expandedItems?.has`
+    // stays live even once verbose/detail is what opened the row, so a second click on an already-open row —
+    // opened by either path — still closes it; canon's `Ce` gates the CLICKABLE bit on verbose/detail, never
+    // the expanded-state read itself). `ownerKey` is minted ONCE per entry (shared with every other block this
+    // message renders, exactly as it always was) so `options.expandedItems.has(ownerKey)` asks about the
+    // SAME key a click on this row's OWN hit-row would toggle.
+    const ownerKey = sdkOwnerKey(id);
+    const alreadyExpandedByProjection = options.projection === "detail-all" || options.verbose === true;
     const advisorOpts = block.type === "server_tool_use" || block.type === "advisor_tool_result"
       ? { resolvedIds: advisor?.resolved ?? EMPTY_ADVISOR_IDS, erroredIds: advisor?.errored ?? EMPTY_ADVISOR_IDS,
-          expanded: options.projection === "detail-all" || options.verbose, clickHintSuppressed: options.fullscreen === true,
-          model: options.advisorModel }
+          expanded: alreadyExpandedByProjection || options.expandedItems?.has(ownerKey) === true,
+          clickHintSuppressed: options.fullscreen === true, model: options.advisorModel }
       : undefined;
+    // §3.4's clickable predicate, canon `Ce`'s advisor arm verbatim: `content.type==="advisor_result" &&
+    // (!declined || reason!==undefined)`, AND-ed with `!(verbose||transcriptMode)` — canon's `if(q||X)
+    // return!1` gate, read here off the SAME `alreadyExpandedByProjection` the render context above derives
+    // (a row canon has already opened globally offers nothing new to click open). `advisor_tool_result_error`
+    // and `advisor_redacted_result` never reach this arm's `true` branch — canon's own restriction (A3: only
+    // an `advisor_result` shape is ever clickable) — and neither does a decline with no reason to reveal.
+    const resultContent: unknown = block.type === "advisor_tool_result" ? (block as Record<string, unknown>).content : undefined;
+    const clickableAdvisor = !alreadyExpandedByProjection && isRecord(resultContent) && resultContent.type === "advisor_result"
+      && (!isDeclined(resultContent) || advisorDeclineReason(resultContent) !== undefined);
     for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index], advisor: advisorOpts }).entries())
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
-      items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), ownerKey: sdkOwnerKey(id), line });
+      items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), ownerKey, line, ...(clickableAdvisor ? { clickable: true } : {}) });
   });
   return items;
 }
@@ -1306,8 +1326,19 @@ const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme:
 // FOLD, and the fold runs strictly downstream of this cache (`foldAnchored`/`projectPending`, neither cached).
 // `buildAnchoredEntries` never reads it, so two renderers legitimately share one anchored stream — and the one
 // sentence the flag does move on a cached row, the expand chip, rides in on `expandHint`, which IS keyed.
+// bl7 T-ADVISOR Task 3 (spec D9, amended by D16): `expandedItems` DOES need a key component, unlike
+// `expandedFolds`/`fullscreen` above — an advisor result's `expanded` flag is read INSIDE
+// `projectMessageEntry`, which runs inside this very cache (§3.4), so without a key input a click serves the
+// stale collapsed row out of the `byKnobs` map: a repaint the reader triggered and the screen never shows.
+// ONLY THE `sdk:`-PREFIXED SUBSET, filtered+sorted+joined (D16, plan review M6): `tool:*` owners are read
+// downstream of `anchoredEntries` (`toolEventItems`, never cached — see `ownerKey`'s ACCUMULATION note
+// above), so keying the full set would rebuild every anchored entry — the whole transcript's tool rows — on
+// every ordinary tool-result click, churning the 8-deep LRU for a knob this cache never actually reads.
+// Deterministic serialization (sorted) so insertion order into the `Set` never mints two cache entries for
+// the one logical key.
 const knobKey = (options: ProjectionOptions): string =>
-  `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint === undefined ? "" : `=${options.expandHint}`}`;
+  `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint === undefined ? "" : `=${options.expandHint}`}` +
+  `|x=${[...(options.expandedItems ?? [])].filter((k) => k.startsWith("sdk:")).sort().join(",")}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };

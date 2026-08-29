@@ -244,7 +244,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `initialTokenSource` (T2, F9 T-AUTO §A2): see chatMain.tsx's `ChatClientOpts.hookOpts` for provenance —
   // this component's own contribution to the chain is only to spread `hookOpts` into `useChat` below
   // unmodified, which it already does. `initialCopyOnSelect` (F9 T-MOUSE T7) rides the same spread.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice; accountBridge?: AccountBridge };
+  // `initialAdvisorModel` (bl7 T-ADVISOR Task 3, D15) rides the identical spread — see `useChat.ts`'s opts doc.
+  hookOpts?: { initialMode?: string; initialModel?: string; initialAdvisorModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; rendererChoice?: RendererChoice; accountBridge?: AccountBridge };
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];

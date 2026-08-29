@@ -163,7 +163,15 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
+  opts: { initialMode?: string; initialModel?: string;
+    /** bl7 T-ADVISOR Task 3 (spec D15): the client's OWN `config.advisorModel`, threaded down the SAME
+     *  static-launch-fact path `initialModel` rides (`main.ts`'s `hookOpts` → `chatMain.tsx` →
+     *  `ChatApp.tsx`'s `hookOpts` prop, spread into these `opts`). Session-constant, like `cwd`/`home` —
+     *  never a live `/config` toggle in this ticket's scope — so it is read once below, not through a ref.
+     *  Absent on `ccx attach` (the host it joins may have configured its own, which this client cannot see):
+     *  `projectionContext()` then omits `advisorModel` entirely, which is canon-legal (§3.2: `Tp ? … : null`). */
+    initialAdvisorModel?: string;
+    cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
     /** T2 (F9 T-AUTO §A2): the launch's account token source (`AccountFacts.tokenSource`), threaded
      *  unmodified from `main.ts`'s own `accountInfo()` race all the way through `ChatClientOpts.hookOpts` →
      *  `ChatApp` props → here — the SAME field the welcome banner's billing label already reads, just handed
@@ -261,6 +269,9 @@ export function useChat(
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
+  // bl7 T-ADVISOR Task 3 (D15): a plain const, not a ref — `initialAdvisorModel` is session-constant exactly
+  // as `cwd`/`home` are (see the opts doc above), so it needs no repaint-surviving mutable cell.
+  const advisorModel = opts.initialAdvisorModel;
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const rowsFn = deps.rows ?? (() => process.stdout.rows ?? 24);
@@ -308,7 +319,7 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, ...(advisorModel !== undefined ? { advisorModel } : {}) };
   };
   /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
    *  the run's earliest-issued call).
