@@ -1,8 +1,10 @@
 # M9 — arrival history: making an inbound peer message survive into `thread/read`
 
-**Status:** design, rev 7 — **Stage A shipped; Stages B–D revised through review rounds 4 and 5
-(fourteen findings, all adopted), pending convergence check.** · **Task:** #59 · **Depends on:** M8
-(merged, `06bf3c0e44`)
+**Status:** design, rev 8 — **Stage A shipped; Stages B–D ready for planning.** Three adversarial
+review rounds on the mechanism (twenty-four findings, every one adjudicated in the three round
+tables); the prose loop is closed and the residual findings are properties the implementation
+enforces as tests, the parity law first among them. · **Task:** #59 · **Depends on:** M8 (merged,
+`06bf3c0e44`)
 
 ## Why this exists
 
@@ -211,6 +213,28 @@ composition rather than core mechanism — which is the direction convergence lo
 | 5 | The cap silently deletes from an "append-only" log, and cannot bound the last-resort page anyway | **Adopted.** Eviction writes a durable dropped-count marker first, and `logged` reports the pre-eviction total; the bounds claim is corrected — the cap bounds the arrival contribution only, the page's transcript portion being the pager's pre-existing trade. *Placement*, *When placement fails* |
 | 6 | `arrivalsLogged` is uncheckable (arrival items are unmarked) and terminal-only | **Adopted.** Projected, drained and replayed arrival items all carry `origin` — countable and provenance-complete, converging with task #63 — and `arrivals: { logged, dropped }` rides every reply via one shared helper, with the degraded latch persisted in the marker. *When placement fails* |
 
+### Round 6 — rev 7's findings, and the decision to stop reviewing prose
+
+Seven missing-mechanism findings (five high, two medium) and three explicitly non-blocking ones.
+All real. But the round count — eight, six, seven — stopped narrowing, and the round's sharpest
+finding (the projector pseudocode omitting the direct user-row path) names the reason: **the
+reviewer is running implementation-grade verification against prose, and prose has hit its fidelity
+limit.** A pseudocode block can drift from the code it describes forever; the property test that
+defines it cannot. This round is therefore adjudicated, patched once, and the review loop on this
+spec ends — remaining assurance moves to the implementation's property tests, where these findings
+become executable.
+
+| # | Round 6 finding | Disposition |
+| --- | --- | --- |
+| 1 | The projector pseudocode erases ordinary user prompts (the direct top-level user-row path was omitted) | **Adopted, and the class killed:** transcription corrected, and the projector is now *defined* by the parity law — `project(messages, [])` byte-identical to `itemsFromTranscript(messages)` — enforced as a corpus property test. *Placement* |
+| 2 | `prevUuid` cannot distinguish a duplicate identical in every recorded field | **Stated limit.** For the swap to evade every recorded dimension, the replacement row must be indistinguishable from the original; the fixtures assert rendered-output equivalence rather than pretending occurrence identity exists where the data carries none. Hash construction pinned (SHA-256/16). *The log* |
+| 3 | The seed/buffer cut fails when the buffer holds only filtered arrivals | **Adopted.** Order against seed-only rows is genuinely unknowable; such arrivals persist with the ambiguity recorded, withheld from placement, counted in `logged` — D3 applied at the one place startup makes it unavoidable. Duplicate-uuid overlap resolves the same way. *The observer has to be seeded* |
+| 4 | A window's first row cannot verify `prevUuid` | **Adopted.** One row of left context per bounded fetch, used only for first-row verification, excluded from output, budget, and cursor arithmetic. *Placement* |
+| 5 | The marker cannot support durable completeness claims | **Adopted as scope-narrowing.** Marker-then-victim write order with idempotent recovery makes crashes over-report-safe (the chosen direction: over-reporting reveals, under-reporting certifies falsely); cross-restart and power-loss completeness are explicitly *not claimed*. *When placement fails* |
+| 6 | `(seq, id)` names an entry but not a position inside it | **Adopted.** The resume cursor is discriminated by phase — `row(...)` vs `arrival(rowOffset, seq, id, entry-local charOffset)`; null-anchored entries in an empty transcript are not enumerable as occurrences and the reply's `arrivals` field says so. *Search* |
+| 7 | Search silently claims exhaustion after eviction | **Adopted as scope-narrowing.** Findability is claimed for retained arrivals; the search reply carries `arrivals: { logged, dropped }`, so exhaustion-without-match is never mistaken for proof of absence. A searchable tombstone is rejected — it would retain the text the cap exists to shed. *Search* |
+| 8–10 | (low) telemetry overclaims; entry scan outside `rowsScanned`; hash underspecified | **Adopted.** "Every merge-enabled successful reply"; counts in arrival-frame units; walk-completeness scoped to a finished deduped walk; the entry-scan bound stated separately (`cap × MAX_FRAME_CHARS`); hash pinned. |
+
 ### The log
 
 One entry per `noteArrival` call — that is, exactly one per `thread/peerMessage` notification, so the
@@ -241,8 +265,19 @@ An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, 
   finding 1). `prevUuid` is what pins the position — a rebound duplicate sits after a different
   predecessor. At resolution, all three must agree: `afterUuid` found, its predecessor in the
   reader's output equal to `prevUuid`, and every fingerprint field *recorded at observation* equal
-  on the row (a field the live frame omitted constrains nothing). Any disagreement withholds.
-  Acceptance pins the measured differing-parent collisions and the timestamp-absent projection.
+  on the row (a field the live frame omitted constrains nothing). Any disagreement withholds. The
+  content hash is pinned, not "short": SHA-256 over the UTF-8 bytes of `rawTextOf(message.content)`,
+  first 16 hex characters, one shared function for the live and read sides (round 6, low).
+
+  **The identity's floor, stated as a limit** (round 6, finding 2): a duplicate that is
+  byte-identical in *every* recorded dimension — uuid, predecessor, type, timestamp and content —
+  can still be selected by the reader's last-wins keying in place of the occurrence the observer
+  saw. No recorded field can tell them apart, by construction. What bounds the harm is the same
+  identity: for the swap to go unnoticed the replacement row must be indistinguishable from the
+  original in every dimension the fingerprint covers, so the rendered history differs from the
+  correct one only in which of two identical rows the arrival follows. Acceptance pins the
+  exact-repeated-segment and duplicated-first-row fixtures, asserting rendered-output equivalence
+  rather than pretending occurrence identity exists where the data carries none.
 - **`seq`** — per-session monotonic, ordering entries that share an anchor. **Seeded from the store**:
   at observer install, the session's existing entries are read once (0.12ms at one entry, 2.1ms at a
   hundred, M10) and `seq` continues from their maximum. Rev 5's per-process counter reversed order
@@ -281,13 +316,36 @@ project(rawRows, entries) :=
   mapper := one TurnMapper for the whole window            (exactly as today)
   if the window includes row 0: emit null-anchored entries, by (seq, id)
   for each row in rawRows, in order:
-    emit the completed items mapper.ingest(row) returns     (tagged by this row, the producing row)
-    for each entry whose anchor resolves at this row (afterUuid + prevUuid + fingerprint), by (seq, id):
-      emit userItem(entry.text, entry.id, { origin: entry.origin })   (bypassing rowKind and peerArrival)
+    route the row EXACTLY as itemsFromTranscript routes it (replay.ts):
+      phantom rowKinds are skipped; a top-level non-tool-result user row emits
+      its user item DIRECTLY (peerArrival or flattened content); everything
+      else goes through mapper.ingest, whose completed items emit here
+    then, for each entry whose anchor resolves at this row
+        (afterUuid + prevUuid + fingerprint), by (seq, id):
+      emit userItem(entry.text, entry.id, { origin: entry.origin })   (no rowKind, no peerArrival)
   emit mapper.finalize(false)'s still-open items at the end (exactly as today)
 ```
 
+Round 6 (finding 1) caught rev 7's version of this block omitting the direct user-row path — a
+projector transcribed from memory of the code rather than defined against it, which for a plain
+`[user, assistant]` transcript would have erased the user prompt and recreated the very
+answer-without-question defect this milestone exists to fix. The transcription is corrected above,
+and — more importantly — transcription is demoted from load-bearing to illustrative by the
+**parity law**, which is the projector's actual definition:
+
+> **`project(messages, [])` is byte-identical to `itemsFromTranscript(messages)`, for every
+> transcript.** With no entries, the projector *is* the existing replay. This is enforced as a
+> property test over the transcript corpus, not re-argued in prose — the entire class of
+> transcription drift, present and future, fails that test.
+
 One reducer, invoked identically by the full page mapping and by `boundaryRow`'s prefix predicate.
+
+**A window's first row can verify its predecessor, because every bounded fetch carries one row of
+left context** (round 6, finding 4): a window at `offset > 0` fetches from `offset - 1`, uses the
+extra row only to check the first real row's `prevUuid`, and excludes it from output, from
+`rowsScanned`, and from all cursor arithmetic. Without it, an anchor sitting at a window's left edge
+is unverifiable, and a `limit:1` walk could advance its exclusive cursor past the anchor row with
+the arrival never emitted — a permanent stranding the lookbehind removes for the price of one row.
 An item that *opens* at the anchor row but *completes* later emits at its completion row, after the
 arrival — which is the live stream's order too, so cold and live agree. The raw array is never
 touched: `begin`, `base`, `from` and `cursorRow` all stay in raw-row space, and the emitted cursor
@@ -332,10 +390,25 @@ maps items at all. Stage D therefore adds its own explicit step to that loop: af
 `r`'s text, scan the text of every entry anchored at `r` (same resolution rule), in `(seq, id)`
 order; null-anchored entries scan before row 0. A match inside an arrival publishes its **anchor's**
 `readCursor`, `` `${epoch}:${rowOffset + 1}` `` (for a null-anchored entry: `` `${epoch}:1` `` when
-the session has a first row, `null` otherwise, like nested rows) — the *published* coordinate space
-is untouched. Search's **own** resume cursor, unpublished, gains an entry discriminator `(seq, id)`
-so a `limit:1` resume between two same-anchor matches neither skips nor repeats (round 4, finding 7
-— a real residue rev 5 wrongly claimed dissolved).
+the session has a first row; in an empty transcript the entry is not enumerable as an occurrence at
+all — the public occurrence shape requires a row coordinate an empty transcript cannot supply — and
+the reply's `arrivals` field is what says so) — the *published* coordinate space is untouched.
+
+Search's **own** resume cursor, unpublished, becomes **discriminated by phase** (round 6, finding
+6): a resume point is either `row(rowOffset, charOffset)` — today's shape — or
+`arrival(rowOffset, seq, id, charOffset)`, where `charOffset` is *entry-local*. Round 5's `(seq,
+id)` alone named the entry but not the position inside it, so an arrival holding two matches at
+`limit: 1` would repeat or skip its second match; the entry-local offset completes the coordinate.
+Entry text scanned this way sits outside `rowsScanned`, whose budget counts rows; the entries add at
+most `cap × MAX_FRAME_CHARS` scan work per request, a separate bound stated here rather than
+laundered through a counter that means something else (round 6, low).
+
+**Eviction narrows findability, and the acceptance says so** (round 6, finding 7): search scans
+retained entries, so an evicted arrival's text is not findable — while the raw transcript never had
+the row either. The claim is scoped to retained arrivals, and the search reply carries the same
+`arrivals: { logged, dropped }` object as `thread/read`, so a caller seeing `dropped > 0` knows
+exhaustion-without-match is not proof of absence. A searchable tombstone index is rejected: it would
+retain the text the cap exists to shed.
 
 **Bounds — corrected** (round 5, finding 5). The from===0 last-resort page returns everything not
 yet returned, limit-free — an existing, tested, self-limiting branch (it always ends the walk;
@@ -394,15 +467,29 @@ page speaks. Both halves are fixed structurally:
   countable and provenance-complete. The live path's drained item and Stage A's replayed item gain
   the same field in Stage C, so all three renderings of one arrival agree. (This is also the shape
   task #63 wants for the notification side; the two converge.)
-- **Every reply carries `arrivals: { logged, dropped }`** — built by one response helper used by all
-  five reply paths (cursorless, normal page, last resort, empty-session, no-session), so no path can
-  forget it. `logged` counts every entry ever written, *including* evicted ones: eviction under the
-  cap writes a durable dropped-count marker first (round 5, finding 5 — an append-only log that
-  silently forgets is a contradiction, and a post-eviction count that matched the retained entries
-  would falsely certify completeness). `arrivals: null` means the store is degraded — "I cannot
-  tell you" stated as itself, never as `0` — and the degraded latch is the marker file, so it
-  survives a restart. A client that counts marked items against `logged` knows exactly how many
-  messages history is not showing, on any page of any walk.
+- **Every merge-enabled successful reply carries `arrivals: { logged, dropped }`** — built by one
+  response helper used by all five reply paths (cursorless, normal page, last resort, empty-session,
+  no-session), so no path can forget it; the merge-disabled embedder path omits the field entirely,
+  which is its signal (round 6, low: "every reply" overclaimed). `logged` counts **arrival frames**
+  — the unit the log has; a collapsed batch is one frame carrying several messages, per M8m — and
+  includes evicted entries via the dropped-count marker (round 5, finding 5). The client's
+  completeness check is likewise scoped honestly: the discrepancy `logged − dropped − (deduped
+  marked items)` is exact only after a *completed, id-deduped walk*; on a single page it is a lower
+  bound on what remains, not a verdict.
+
+  **The marker protocol is over-report-safe, and claims no more than that** (round 6, finding 5).
+  Write order is marker-then-victim on eviction — increment `dropped`, fsync the marker, then unlink
+  — and recovery treats a retained entry already counted dropped as dropped (unlink on sight),
+  making the sequence idempotent; a crash between the two steps can only *over*-report, and an
+  over-reported count reveals a gap that isn't there, while an under-reported one would falsely
+  certify completeness — the direction is chosen, not accidental. A write failure that can persist
+  no marker at all (the same fault domain took both) leaves the in-memory degraded latch for this
+  process's lifetime and **loses the latch at restart: stated as a limit.** Likewise power loss
+  before metadata flush can shrink `logged` alongside the entries it counted. Cross-restart and
+  power-loss completeness are therefore *not claimed*: what is claimed is atomic visibility, an
+  over-report-safe count under crashes between syscalls, and a degraded signal at least as durable
+  as the store it describes. `arrivals: null` means degraded — "I cannot tell you" stated as
+  itself, never as `0`.
 
 The shared-trunk case stays a stated limit: a misattributed anchor is not detectable from the
 reader's output at any price, and two engines on one session is unsupported. D3's claim is narrowed
@@ -479,6 +566,18 @@ from its start, so every frame counts exactly once. No overlap grounds on the se
 seed grounds on confirmed-empty. Acceptance pins the four shapes: seed-behind (no overlap),
 seed-ahead (buffer fully contained), partial overlap, and seed-tail-equals-buffer-head.
 
+**And the rule has a floor the cut cannot see through** (round 6, finding 3): a buffered *arrival*
+never appears in the seed result — the reader drops `isMeta` rows — so a buffer holding only
+arrivals establishes no overlap at all, while the seed may hold rows (the arrival's own answer among
+them) the observer never saw live. The order between that arrival and those seed-only rows is
+genuinely unknowable: nothing the process observed relates them. So it is treated as what it is —
+**an arrival whose anchor is ambiguous is persisted with the ambiguity recorded, withheld from
+placement, and counted in `logged`** — D3's rule applied at the one place startup makes it
+unavoidable, bounded to the single seed read's window. Grounding on the seed tail instead would
+render the question after its own answer, which is this milestone's original defect reproduced at
+resume. A uuid appearing in *both* the buffer and the seed at inconsistent positions (the
+duplicate-uuid overlap) resolves the same way: ambiguous, withheld, counted.
+
 The filter-surviving predicate mirrors the reader's own (`isMeta`, `isSidechain`, `teamName` are
 dropped), and that coupling is **dangerous in both directions** — rev 5 claimed drift was safe, and
 the review showed the claim was one-sided. Dropping a frame the reader keeps leaves the anchor
@@ -552,53 +651,68 @@ in here.
 14. **Grounding survives seed/buffer overlap** in all four shapes: seed-behind, seed-ahead, partial
     overlap, and seed-tail-equals-buffer-head. Each frame anchors exactly once; an arrival buffered
     before a row that the seed also returned anchors *before* that row.
-15. **The anchor identity rejects the measured collisions.** Against fixtures reproducing M5's
+15. **An arrival with no relatable order is ambiguous, not placed.** Buffer only arrivals while the
+    seed returns rows never observed live (the arrival's own answer among them): the entry persists
+    with the ambiguity recorded, is withheld from placement, and is counted in `logged` — never
+    anchored after its own answer.
+16. **The anchor identity rejects the measured collisions.** Against fixtures reproducing M5's
     differing-parent duplicate shape, and against a live frame that omitted `timestamp`, resolution
-    withholds on position mismatch and never binds to the wrong occurrence.
-16. **Eviction is never silent.** Fill past the cap: the dropped-count marker exists, and
-    `arrivals.logged` still reports the pre-eviction total, exceeding the items any read can return.
+    withholds on position mismatch and never binds to a distinguishable wrong occurrence. Against
+    the exact-repeated-segment and duplicated-first-row shapes — indistinguishable in every recorded
+    field — the fixture asserts rendered-output equivalence, the strongest true claim.
+17. **Eviction is never silent, and a crash can only over-report.** Fill past the cap: the
+    dropped-count marker exists and `arrivals.logged` reports the pre-eviction total, exceeding what
+    any read returns. Kill between marker and unlink: recovery unlinks the counted victim, and the
+    count never under-reports.
 
-### Stage C — the splice in `thread/read`
+### Stage C — the projector in `thread/read`
 
-17. **The question precedes the answer.** For a keyed cross-session exchange, `thread/read` returns
+18. **The parity law holds over the corpus.** `project(messages, [])` is byte-identical to
+    `itemsFromTranscript(messages)` for every transcript in the property-test corpus — the
+    projector's defining equation, and the gate every other Stage C criterion presupposes.
+19. **The question precedes the answer.** For a keyed cross-session exchange, `thread/read` returns
     the arrival item immediately before the assistant turn it caused — the defect this milestone
     exists to fix, and the inverse of M8's LEG 2, which is written to redden the day it closes.
-18. **The arrival item carries the entry's text verbatim and its `origin`** — for the collapsed
+20. **The arrival item carries the entry's text verbatim and its `origin`** — for the collapsed
     batch, both messages, proving the projector bypassed `peerArrival` (whose fallback would re-lose
     one); and the `origin` field is what lets a client count arrival items at all. Live, replayed and
     projected renderings of one arrival agree on id, text and origin.
-19. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
+21. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
     `^\d+:\d+$` addressing raw rows, and a rewind still invalidates them with the same
     `INVALID_PARAMS` message. No schema file changes in this stage (D1).
-20. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
+22. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
     appears at least once and its id is stable across pages. Not "exactly once": the pager's existing
     contract is no-loss plus dedupe-by-id, because `boundaryRow` returns the smallest prefix holding
     every discarded id and a row straddling that boundary is legitimately re-fetched. An arrival
     inherits that contract rather than being held to a stronger one. Pinned at the named edges: an
     anchor on the window's last row, an anchor row that opened a still-unfinished tool, more
-    same-anchor arrivals than `limit` (which ends in the tested last-resort page), and **round 5's
+    same-anchor arrivals than `limit` (which ends in the tested last-resort page), **round 5's
     exact construction** — a null-anchored entry plus three rows at `limit: 1`, which must return
-    all four items rather than stranding the entry.
-21. **`arrivals: { logged, dropped }` is on every reply**, from every path — cursorless, normal
+    all four items rather than stranding the entry — and **round 6's left edge**: an anchor sitting
+    at a bounded window's first row, which the one-row lookbehind must verify rather than strand.
+23. **`arrivals: { logged, dropped }` is on every merge-enabled reply**, from every path — cursorless, normal
     page, last resort, empty-session and no-session — and `logged` matches the notification count
     for the run.
-22. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, its
+24. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, its
     fingerprint changed, OR its predecessor changed (the rebound-duplicate shape), the arrival does
     not appear, no other item's position moves — and `arrivals.logged` exceeds the marked items
     returned, making the omission visible.
-23. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
+25. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
     clearing and then resuming the prior session id.
-24. **An embedder that overrides `getSessionMessages` without a store gets no merge** (D3, finding 9)
+26. **An embedder that overrides `getSessionMessages` without a store gets no merge** (D3, finding 9)
     and `arrivals` is absent, not `0`.
 
 ### Stage D — the anchored scan in `thread/searchOccurrences`
 
-25. **An arrival's text is findable**, and its `readCursor` lands a `thread/read` window containing
+27. **A retained arrival's text is findable**, and its `readCursor` lands a `thread/read` window containing
     it — including a null-anchored arrival, whose `readCursor` is `epoch:1` when a first row exists
-    and `null` otherwise.
-26. **Two same-anchor arrivals both matching resume correctly at `limit:1`** — the occurrence
-    cursor's `(seq, id)` discriminator names which entry is next, so neither is skipped and neither
-    repeats.
+    (in an empty transcript it is not enumerable, and the reply's `arrivals` field says why).
+    Findability is claimed for retained arrivals only: after eviction, the search reply's
+    `arrivals.dropped > 0` is what distinguishes exhaustion from proof of absence.
+28. **Two same-anchor arrivals both matching resume correctly at `limit:1`** — the occurrence
+    cursor's discriminated `arrival(...)` phase names which entry is next, so neither is skipped
+    and neither repeats — and **two matches inside one arrival** at `limit: 1` resume on the
+    entry-local character offset, neither repeating nor skipping the second.
 
 ## Delegated unknowns
 
@@ -777,3 +891,20 @@ Pending — written at finish.
   corrected; arrival items are marked with `origin` on all three renderings and
   `arrivals: { logged, dropped }` rides every reply through one helper, degraded state persisting
   via the marker. Acceptance grows to 26 criteria.
+- **rev 8 (2026-08-30)** — round 6 returned seven missing-mechanism findings plus three lows, all
+  real, all adjudicated — and the round count (eight, six, seven) stopped narrowing, so this
+  revision also *ends the prose review loop*: the reviewer is doing implementation-grade
+  verification against text, and the sharpest finding (the projector pseudocode omitting the direct
+  user-row path, which would have erased ordinary prompts) is precisely the class prose cannot pin
+  and one property test can. The projector is now defined by the parity law
+  (`project(messages, [])` ≡ `itemsFromTranscript(messages)`, corpus-tested) with the pseudocode
+  demoted to illustration; bounded windows carry a one-row lookbehind for first-row anchor
+  verification; seed-window arrivals with no relatable order persist as ambiguous-withheld-counted;
+  the marker protocol is over-report-safe with idempotent recovery, and cross-restart/power-loss
+  completeness is explicitly not claimed; the exact-indistinguishable-duplicate rebind is a stated
+  limit with rendered-output-equivalence fixtures; the search resume cursor is discriminated by
+  phase with an entry-local offset, findability is scoped to retained arrivals with
+  `arrivals.dropped` on the search reply, the entry-scan bound is stated separately, and the hash is
+  pinned (SHA-256/16 over `rawTextOf` bytes). Acceptance grows to 28 criteria. **Status moves to
+  ready-for-planning: remaining findings are properties the implementation will enforce as tests,
+  not questions the spec can answer better by another rewrite.**
