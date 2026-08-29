@@ -1009,4 +1009,52 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
       { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
     expect(groups(items)[0]!.counts.hookCount).toBe(1);
   });
+
+  // Fix wave 3 H1 (spec D12's causal invariant applies only to a FULLY-SETTLED run): the cap in cell (i)
+  // above only makes sense because B's run has NO open member left — every settled member's result is a real
+  // upper bound on what could still arrive. A run with a still-open member has no such bound: B's own
+  // PreToolUse pair can arrive at any point before ITS eventual (not-yet-known) result, so a settled
+  // sibling's resultSequence must not truncate the window ahead of it.
+  it("(k) settled A(call1/result2) + open B(call3) in one run: an earlier settled member's result never caps the window while B is still open", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3, settled: false })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 250, 3)] });
+    const group = groups(items)[0]!;
+    expect(group.open).toBe(true);
+    expect(group.counts.hookCount).toBe(1);
+    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 250 }]);
+  });
+});
+
+// Fix wave 3 H2 (spec D12's tool-identity invariant): a run's membership does not by itself prove which tool
+// a hook entry belongs to — only a matching tool name does. Without this guard, a Read-only run whose causal
+// window (G1's cap) happens to cover a foreign PreToolUse entry could still claim it.
+describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of the entry's own tool", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+  const FULL = { ...OPTIONS, fullscreen: true };
+
+  it("(l) a Read-only group never claims a foreign PreToolUse:TodoWrite entry, even inside its own causal window", () => {
+    // M(Read2/3), C(TodoWrite4/err5), A(Read1/6): A spans C, so G1's cap alone would let A's window cover
+    // afterSequence 4 — the guard must still refuse it because A holds no TodoWrite member.
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/mid.ts" }, { id: "M", sequence: 2, result: 3 })),
+      atom(tool("TodoWrite", { todos: [] }, { id: "C", sequence: 4, result: 5, settled: "error" })),
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 6 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:TodoWrite", 300, 4)] });
+    for (const group of groups(items)) expect(group.counts.hookCount).toBeUndefined();
+  });
+
+  it("same-tool control: a PreToolUse:Read entry still attributes normally in a Read run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...FULL, hookRuns: [hook("PreToolUse:Read", 200, 1)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  it("a malformed hook name (no tool suffix) matches unconditionally rather than silently dropping", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...FULL, hookRuns: [hook("PreToolUse", 200, 1)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
 });

@@ -738,8 +738,15 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
 // PreToolUse hook can land anywhere across its own open span — including exactly on the failing call's own
 // boundary — and that hook is causally the SPANNING sibling's, never the closing call's. Widening must be
 // refused whenever a spanning sibling exists, independent of whether relocation itself proceeds.
-describe("bl7 re-review G2: a spanning sibling refuses widening without suppressing relocation", () => {
-  it("A(call1/result6) spans C(call4/err5): C still pops out, but the hook is NOT swept into C's group — it resolves to A's, causally, once G1's cap applies", () => {
+//
+// Fix wave 3 H2 (scoped re-review): a spanning sibling's mere existence does not PROVE a hook stamped at the
+// failing call's own callSequence belongs to that sibling — it could just as well be the failing call's own
+// hook. G1's cap alone would let a Read-only spanning sibling's causal window cover a `PreToolUse:TodoWrite`
+// entry that in fact names a different tool entirely. The tool-name guard (spec D12's tool-identity
+// invariant) refuses that cross-tool attribution, so the entry below now goes UNCLAIMED rather than being
+// swept into the spanning sibling's group.
+describe("bl7 re-review G2 / fix wave 3 H2: a spanning sibling refuses widening AND cannot claim a foreign tool's hook", () => {
+  it("A(call1/result6) spans C(call4/err5): C still pops out, but a PreToolUse:TodoWrite entry is NOT swept into A's Read-only group — it goes unclaimed", () => {
     const doc = built(
       call("a-1", "Read", { file_path: "/work/a.ts" }),                      // opens first, stays open (spans everything below)
       call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"), // an ordinary completed sibling, settles before C
@@ -748,21 +755,34 @@ describe("bl7 re-review G2: a spanning sibling refuses widening without suppress
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
     // Stamped at exactly todo-1's own callSequence — the normal-order shape that F3's widening exists to
-    // catch — but here it is A's own pending hook (A is still open at that position), not todo-1's.
+    // catch — but the entry names TodoWrite, and neither surviving group holds a TodoWrite member.
     const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
     // Relocation still proceeds: a spanning sibling is not "interference" in the membership sense, so
     // todo-1 pops out into its own standalone row exactly as the hookless baseline does.
-    // a-1's collapsed row coexists with its own hooks gutter block (spec §2.5 form 2) — that block is the
-    // proof the hook resolved to a-1's group and not todo-1's departed one.
+    // a-1's collapsed row carries NO hooks gutter block (spec §2.5 form 2): the tool-name guard refuses the
+    // entry, so a-1's group never absorbs it and the block never renders.
     const compact = groupRows(projectCompact(doc, options));
-    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row", "group:a-1:row", "group:a-1:hooks"]);
+    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row", "group:a-1:row"]);
     // The hook is not attributed to todo-1's (now-departed) window at all: mid-1's group absorbed nothing.
     const expandedMid = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) }));
     expect(expandedMid.join("\n")).not.toContain("PreToolUse");
-    // It belongs, causally, to A — still open when the hook fired — and G1's cap lets A's own (trailing,
-    // wide-open) window resolve it once the two fixes compose.
+    // Nor is it A's, even though A's (trailing, wide-open) window is causally wide enough to cover it once
+    // G1's cap applies: A holds only a Read member, and the entry names TodoWrite, so the guard refuses it.
     const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
-    expect(expandedA.some((t) => t.includes("PreToolUse:TodoWrite"))).toBe(true);
+    expect(expandedA.join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("same-tool control: a spanning Read sibling DOES claim a PreToolUse:Read entry once G1's cap resolves it there", () => {
+    const doc = built(
+      call("a-1", "Read", { file_path: "/work/a.ts" }),
+      call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"),
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      result("a-1"),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 300, afterSequence: todoSequence }] };
+    const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
+    expect(expandedA.some((t) => t.includes("PreToolUse:Read"))).toBe(true);
   });
 });
 

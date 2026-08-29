@@ -349,9 +349,17 @@ const THOUGHT_CAP_MS = 600000;
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
-  /** Re-review G1: the largest `resultSequence` among this run's SETTLED members so far — `resolveRunHooks`'s
-   *  causal cap (see its doc comment). `undefined` until the run's first member settles. */
+  /** The largest `resultSequence` among this run's SETTLED members so far — `resolveRunHooks`'s causal cap
+   *  (see its doc comment). `undefined` until the run's first member settles. Spec D12 invariant (fix wave 3
+   *  H1): this value is causally meaningless while `open` is true — an OPEN member's own `PreToolUse` pair can
+   *  still arrive at any point up to its own (not-yet-known) result, so no finite `resultSequence` bounds the
+   *  window for as long as any member remains unsettled. Callers must gate its use on `!open`, never read it
+   *  unconditionally. */
   lastResultSequence?: number;
+  /** Spec D12 tool-identity invariant (fix wave 3 H2): every tool name absorbed into this run, visible or
+   *  silent — `resolveRunHooks`'s guard against attributing a hook to a run holding no member of that hook's
+   *  own tool. A run's membership alone never proves which tool a hook belongs to; only a matching name does. */
+  memberToolNames: Set<string>;
   thoughtForMs: number; latestThinkingSummary?: string; absorbedThinking: AbsorbedThinking[];
   bashCount: number; bashCommands: Map<string, string>;
   gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
@@ -359,7 +367,7 @@ interface RunState {
    *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
   visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, thoughtForMs: 0, absorbedThinking: [], bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, memberToolNames: new Set(), thoughtForMs: 0, absorbedThinking: [], bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
 
 /** Canon reads its scrape text off `message.toolUseResult` — a single per-MESSAGE `{ stdout, stderr }` object,
  *  joined as `(stdout ?? "") + "\n" + (stderr ?? "")` (236996–236998). Our equivalent is the P94 structured
@@ -406,11 +414,14 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   // pop-out below (see `segmentRuns`'s invariant note).
   if (run.memberIds.length === 0 || event.callSequence < run.anchorSequence) { run.anchorSequence = event.callSequence; run.anchorId = event.id; }
   run.memberIds.push(event.id);
+  // H2, spec D12: also BEFORE the silent early return — a silently-absorbed member (e.g. TodoWrite) is a real
+  // tool identity this run can legitimately claim a hook for, even though it earns no counter of its own.
+  run.memberToolNames.add(event.name);
   // BEFORE the silent early return, on the same line of reasoning `open` is: canon's in-flight scan reads the
   // cluster's whole tool-use id set (`DBr(e)`, 518464), which a silently absorbed member joins.
   if (event.result === undefined) { run.open = true; run.newestInFlight = event.id; }
-  // Re-review G1: tracked for BOTH visible and silent members (before the silent early return below), since
-  // a silently-absorbed member's own result frame is just as causally binding on `resolveRunHooks`'s cap.
+  // Tracked for BOTH visible and silent members (before the silent early return below), since a
+  // silently-absorbed member's own result frame is just as causally binding on `resolveRunHooks`'s cap.
   else run.lastResultSequence = run.lastResultSequence === undefined ? event.result.resultSequence : Math.max(run.lastResultSequence, event.result.resultSequence);
   const command = stringField(event.input, "command");
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
@@ -492,25 +503,40 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
  *  `hooksAbsorbed` check below, must not claim what it only peeked at).
  *
- *  `lastResultSequence` (re-review G1, spec D12's causal invariant): a PreToolUse pair for a member always
- *  arrives BEFORE that member's own `tool_result` frame — the wire never emits a hook response after the
- *  result it gates — so an entry with `afterSequence >= this run's own last resultSequence` is causally
- *  IMPOSSIBLE for this run no matter what `boundary` or the `consumed` flush-order tiebreak says: it arrived
- *  no earlier than a member's result already did. Capping the window's upper bound at
- *  `min(boundary, lastResultSequence)` removes impossible entries BEFORE the flush-order tiebreak ever sees
- *  them, so a still-open overlapping run downstream is never starved of an entry an earlier, already-closed
- *  run could never have owned (`toolFold.test.ts` cell (i)). Normal order is unaffected: a call's own hook
- *  stamps at `afterSequence === callSequence`, strictly before that same call's `resultSequence`, so
- *  `[anchorSequence, min(boundary, resultSequence))` still contains it. `undefined` means the run has no
- *  settled member yet, so the window is bounded by `boundary` alone. */
+ *  `lastResultSequence` (spec D12's causal invariant): a PreToolUse pair for a member always arrives BEFORE
+ *  that member's own `tool_result` frame — the wire never emits a hook response after the result it gates —
+ *  so an entry with `afterSequence >= this run's own last resultSequence` is causally IMPOSSIBLE for this run
+ *  no matter what `boundary` or the `consumed` flush-order tiebreak says: it arrived no earlier than a
+ *  member's result already did. Capping the window's upper bound at `min(boundary, lastResultSequence)`
+ *  removes impossible entries BEFORE the flush-order tiebreak ever sees them, so a still-open overlapping run
+ *  downstream is never starved of an entry an earlier, already-closed run could never have owned
+ *  (`toolFold.test.ts` cell (i)). Normal order is unaffected: a call's own hook stamps at
+ *  `afterSequence === callSequence`, strictly before that same call's `resultSequence`, so
+ *  `[anchorSequence, min(boundary, resultSequence))` still contains it. `undefined` means EITHER the run has
+ *  no settled member yet OR (fix wave 3 H1) the run still has an OPEN member: an open member's own hook can
+ *  arrive at any point up to its own not-yet-known result, so no settled sibling's `resultSequence` bounds the
+ *  window while that member remains open — the caller passes `undefined` here whenever `RunState.open` is
+ *  true, never the raw `lastResultSequence`, precisely to keep the cap meaningless until the whole run has
+ *  settled (`toolFold.test.ts` cell (k): a settled member's result must never truncate the window ahead of a
+ *  still-open sibling's call). Either way, an `undefined` cap leaves the window bounded by `boundary` alone.
+ *
+ *  `memberToolNames` (fix wave 3 H2, spec D12's tool-identity invariant): an entry named `"PreToolUse:<Tool>"`
+ *  may be claimed only by a run holding a member of that SAME tool. A run's membership proves nothing about a
+ *  hook naming a DIFFERENT tool — a spanning sibling widening this run's causal window (via the cap above)
+ *  does not make a foreign tool's hook this run's own — so the guard refuses cross-tool attribution even when
+ *  the sequence window would otherwise admit the entry (`toolFold.test.ts` cell (l)). A name with no `":"`, or
+ *  an empty tool suffix, is an unrecognised shape and matches unconditionally: a malformed hook name must
+ *  never silently drop a hook that a working guard would have kept. */
 function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined,
-    consumed?: ReadonlySet<HookRunEntry>, lastResultSequence?: number): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
+    memberToolNames: ReadonlySet<string>, consumed?: ReadonlySet<HookRunEntry>, lastResultSequence?: number): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
   if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0, matched: [] };
   const cap = lastResultSequence === undefined ? boundary : Math.min(boundary, lastResultSequence);
   const infos: HookInfo[] = [], matched: HookRunEntry[] = [];
   let totalMs = 0;
   for (const entry of hookRuns) {
     if (entry.afterSequence < anchorSequence || entry.afterSequence >= cap || consumed?.has(entry)) continue;
+    const colon = entry.name.indexOf(":"), toolName = colon === -1 ? "" : entry.name.slice(colon + 1);
+    if (toolName !== "" && !memberToolNames.has(toolName)) continue;
     infos.push({ name: entry.name, durationMs: entry.durationMs });
     matched.push(entry);
     totalMs += entry.durationMs;
@@ -578,7 +604,9 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
     if (run.memberIds.length > 0 && run.visibleMembers > 0) {
-      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, hookClaims, run.lastResultSequence);
+      // H1, spec D12: the causal cap is meaningless while a member is still open (see `lastResultSequence`'s
+      // doc comment on `RunState`) — pass `undefined` rather than the raw field whenever `open` is true.
+      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, run.memberToolNames, hookClaims, run.open ? undefined : run.lastResultSequence);
       for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
       out.push({ kind: "group", group: emit(run, hooks) });
     }
@@ -701,7 +729,9 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           const ownWindowClear = windowIsClear(atom.event, index);
           const safeToWiden = ownWindowClear && !hasSpanningSibling(atom.event, index);
           const hookBoundary = safeToWiden ? atom.event.result!.resultSequence : atom.event.callSequence;
-          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, hookClaims, run.lastResultSequence).infos.length > 0;
+          // H1's `open`-gated cap applies here too (this run has already absorbed the failing call itself, so
+          // `run.lastResultSequence` may already reflect it — meaningless if some OTHER member is still open).
+          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, run.memberToolNames, hookClaims, run.open ? undefined : run.lastResultSequence).infos.length > 0;
           if (!hooksAbsorbed && ownWindowClear) run.memberIds.pop();
           // Boundary = the SAME `hookBoundary` the guard above just resolved against (spec D12): the flush
           // happens because this call's result just settled, and sharing the boundary is what keeps the
