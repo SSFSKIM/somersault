@@ -268,7 +268,9 @@ All commands from `CC-to-SDK/harness/`. Gates: `npm run typecheck`, `npm run tes
 - **A8 (advisor live, gated):** keyed live cell (skips cleanly without credentials): a session with
   `advisorModel` set renders the Advising row then a result row through the real REPL submit chain.
 - **A9 (config):** `--advisor-model` reaches SDK `Settings.advisorModel` (resolveOptions passthrough test);
-  default is absent; `/config` row present; help text pinned by `test/unit/cli-surface.test.ts`.
+  default is absent; help text pinned by `test/unit/cli-surface.test.ts`. (v3: the `/config` row was dropped
+  from scope under D15's full-or-dropped rule — a real row needs the model-catalog picker D7 scopes out;
+  flag + saved preference remain the configuration surfaces.)
 
 ## 6. Test plan
 
@@ -369,3 +371,8 @@ Pending — written at finish.
   The headline catch: the hook-attribution cursor would have dropped hooks in the NORMAL wire order
   because settled atoms reorder by resultSequence, and the planned pty producer would have masked it
   (D12). §2.4's cursor description is superseded by D12; §3.4's full-set knobKey by D16.
+- v3 (2026-08-30): A9's "`/config` row present" clause removed. T-ADVISOR Task 1 dropped the row under
+  D15's full-or-dropped rule (an honest row requires the model-catalog picker D7 bars; display-only is
+  forbidden), and the Task 5 acceptance walk caught that A9's text was never updated to match. The
+  configuration surfaces are `--advisor-model` and the saved preference; a `/config` row is backlog
+  material alongside a future catalog picker.
