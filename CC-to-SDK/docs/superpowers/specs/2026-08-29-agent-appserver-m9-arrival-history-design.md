@@ -578,6 +578,18 @@ render the question after its own answer, which is this milestone's original def
 resume. A uuid appearing in *both* the buffer and the seed at inconsistent positions (the
 duplicate-uuid overlap) resolves the same way: ambiguous, withheld, counted.
 
+**When to seed: at whichever moment the session id is actually known.** A record admitted with a
+session id (attach, resume) seeds at install. A record *without* one — and this covers more than
+fresh threads: fork admission deliberately leaves `record.sessionId` undefined while the fork
+already carries copied history — seeds **at the init frame**, against whatever id init reveals. A
+fresh session's seed returns zero rows and grounds confirmed-empty; a fork's returns its copied
+tail and grounds there. One rule, no fresh-versus-fork discrimination, and grounding
+confirmed-empty "because there is no id yet" — which would have rendered a fork's first arrival at
+the top of history it did not precede — is structurally impossible. One residual: the production
+reader maps read *failures* to `[]`, so an unreadable transcript is indistinguishable from an
+empty one and grounds confirmed-empty; stated as a limit of the injected reader's contract — an
+embedder whose reader distinguishes failure gets the distinction for free.
+
 The filter-surviving predicate mirrors the reader's own (`isMeta`, `isSidechain`, `teamName` are
 dropped), and that coupling is **dangerous in both directions** — rev 5 claimed drift was safe, and
 the review showed the claim was one-sided. Dropping a frame the reader keeps leaves the anchor
@@ -642,12 +654,18 @@ in here.
     notification still goes out and the session latches degraded.
 11. **Order survives a restart.** Two same-anchor arrivals separated by a server restart carry
     increasing `seq` — the store-seeded counter, pinned by a test that restarts between them.
-12. **An arrival racing the seed is neither lost nor misanchored.** Delay the seed read artificially,
-    deliver an arrival immediately at attach: the entry appears after the seed resolves, anchored to
-    the seeded row, never to `null`.
-13. **A write failure degrades loudly and durably.** With the store directory made unwritable, the
-    notification still broadcasts, `thread/read` reports `arrivals: null` from then on — and still
-    does after a restart, because the latch is the on-disk marker.
+12. **An arrival racing the seed is neither lost nor misanchored.** Delay the seed read
+    artificially; deliver an arrival immediately at attach: the entry is persisted only after the
+    seed resolves and is never anchored `null` — anchored to a live-observed frame when one grounds
+    it, `ambiguous` otherwise (criterion 15 is the same state's other half, not a different rule:
+    with no buffered frame, order against seed rows is unknowable, and the answer is ambiguity, not
+    the seed tail).
+13. **A write failure degrades loudly, and durably when the marker can still be written.** With a
+    one-shot entry-write failure (marker writable): the notification still broadcasts,
+    `thread/read` reports `arrivals: null` from then on — including after a restart, because the
+    latch is the on-disk marker. With the store *fully* unwritable, degradation is in-process only,
+    which is the stated limit "a write failure that can persist no marker" already records — the
+    fixture asserts the in-process half and nothing more.
 14. **Grounding survives seed/buffer overlap** in all four shapes: seed-behind, seed-ahead, partial
     overlap, and seed-tail-equals-buffer-head. Each frame anchors exactly once; an arrival buffered
     before a row that the seed also returned anchors *before* that row.
@@ -679,7 +697,9 @@ in here.
     projected renderings of one arrival agree on id, text and origin.
 21. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
     `^\d+:\d+$` addressing raw rows, and a rewind still invalidates them with the same
-    `INVALID_PARAMS` message. No schema file changes in this stage (D1).
+    `INVALID_PARAMS` message. Schema files change only by the two additive optional *response*
+    members (`origin` on user items, `arrivals` on read/search replies); the cursor pattern line in
+    the generated artifact is byte-identical before and after (D1).
 22. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
     appears at least once and its id is stable across pages. Not "exactly once": the pager's existing
     contract is no-loss plus dedupe-by-id, because `boundaryRow` returns the smallest prefix holding
@@ -908,3 +928,13 @@ Pending — written at finish.
   pinned (SHA-256/16 over `rawTextOf` bytes). Acceptance grows to 28 criteria. **Status moves to
   ready-for-planning: remaining findings are properties the implementation will enforce as tests,
   not questions the spec can answer better by another rewrite.**
+- **rev 8.1 (2026-08-30)** — planning was the spec's first hostile read (writing-plans, spec-drift
+  rule), and the plan review surfaced four spec-level corrections, folded in place: criteria 12 and
+  15 contradicted each other on the same fixture (12 now names ambiguity as its no-frame outcome);
+  criterion 13's fixture demanded a marker persist in the very directory whose unwritability caused
+  the failure (split: one-shot failure → durable, fully-unwritable → the in-process limit rev 8
+  already stated); seeding is re-anchored to *when the session id is known* — fork admission leaves
+  `record.sessionId` undefined over copied history, so "no id = fresh = confirmed-empty" would have
+  misplaced a fork's first arrival, and both fresh and fork now seed at init against the revealed
+  id (with the reader's failures-as-`[]` contract recorded as a limit); criterion 21 now permits
+  exactly the two additive optional response members while pinning the cursor pattern byte-for-byte.
