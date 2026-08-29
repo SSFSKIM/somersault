@@ -9,6 +9,8 @@ import { resolveAgents } from "./agents.js";
 import { resolveAutoModel } from "./autoModel.js";
 import { resolveModelAlias } from "./models.js";
 import { createPermissionGate } from "../permissions/gate.js";
+import { mergeHooks } from "../hooks/merge.js";
+import { buildModelSwitchHooks } from "../hooks/modelSwitch.js";
 
 /** The four keys `extraOptions` may NOT overwrite once this function has computed one.
  *
@@ -101,7 +103,10 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.sessionStore) options.sessionStore = config.sessionStore;
   if (config.sessionStoreFlush) options.sessionStoreFlush = config.sessionStoreFlush;
   if (config.sessionStoreLoadTimeoutMs !== undefined) options.loadTimeoutMs = config.sessionStoreLoadTimeoutMs;
-  if (config.hooks) options.hooks = config.hooks;
+  // Model-switch governance (Wave D): the policy's Pre/PostModelSwitch fragment joins the user's own
+  // hooks — user fragments first, policy appended; both run and a deny from either wins at the SDK.
+  if (config.modelSwitchPolicy) options.hooks = mergeHooks(config.hooks ?? {}, buildModelSwitchHooks(config.modelSwitchPolicy));
+  else if (config.hooks) options.hooks = config.hooks;
   // Wave-4 knob sweep — one-line passthroughs (probe verdicts in types.ts jsdoc).
   if (config.sessionId) options.sessionId = config.sessionId;
   if (config.title) options.title = config.title;

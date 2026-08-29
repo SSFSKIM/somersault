@@ -3,6 +3,7 @@ import type {
   SdkBeta, ToolConfig, OnElicitation, OnUserDialog, SpawnOptions, SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { HooksMap } from "../hooks/types.js";
+import type { ModelSwitchPolicy } from "../hooks/modelSwitch.js";
 import type { PermissionBroker } from "../permissions/types.js";
 import type { TelemetryConfig } from "./telemetry.js";
 
@@ -120,6 +121,10 @@ export interface HarnessConfig {
   // Build with the src/hooks builders + mergeHooks. NOTE: SessionStart/SessionEnd do NOT fire via
   // this programmatic path (verified) — no builder exists for them; raw passthrough is the user's choice.
   hooks?: HooksMap;
+  // model-switch governance (Wave D, probe 121): declarative Pre/PostModelSwitch policy —
+  // allowModels families/ids, warm-cache forfeiture cap, decide()/annotate()/onSwitch(). Merged
+  // AFTER `hooks` (both run; deny wins across callbacks). Spec 2026-08-30-model-switch-governance.
+  modelSwitchPolicy?: ModelSwitchPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   // Default per-server tool-call timeout (ms) for MCP servers this config carries — mcpServers,
   // taskTools/swarm's cc-tasks/cc-swarm, and the M7 dynamic overlay — stamped onto each server that
