@@ -553,6 +553,39 @@ describe("T8 (g) / bl7 T-ADVISOR A7: an advisor_tool_result entry is a breaker",
   });
 });
 
+// ── round review F1: an unresolved advisor row gets the SAME withholding a growable tool run gets ──────────
+// Unlike an open tool call (excluded from `projectCompact`'s output by `!event.result`, toolRenderer.tsx
+// :1460) or a still-growing fold run (withheld by `trailingRunCut`), an unresolved advisor consult had
+// NEITHER protection before this fix: `entryAtom` classifies it a `breaker` the moment its render arms make
+// it non-empty (T8 (g) above), regardless of resolution state, so it published into Static the instant its
+// message frame landed and could never self-correct once resolved (Static is append-only; the resolved
+// re-projection shares the SAME item id and is filtered out as already-published). Fixed by tagging the
+// entry `openAdvisor` (`buildAnchoredEntries`) and extending `trailingRunCut`'s growability scan to treat a
+// trailing `openAdvisor` breaker exactly like a growable tool run — withheld from `projectCompact`, drawn
+// live by `projectPending`, and published exactly once the moment `advisor_tool_result` resolves it.
+const advisorConsult = (toolUseId = "srv1") =>
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: "adv-consult", content: [{ type: "server_tool_use", id: toolUseId, name: "advisor", input: {} }] } }) as Record<string, unknown>;
+
+describe("round review F1: an unresolved advisor row is withheld from Static, exactly like a growable tool run", () => {
+  it("compact EXCLUDES the unresolved row entirely — it never enters projectCompact's output while spinning", () => {
+    const doc = built(prose("hi"), advisorConsult());
+    expect(lineTexts(projectCompact(doc, FS)).some((t) => t.includes("Advising"))).toBe(false);
+  });
+
+  it("pending SHOWS it live, exactly where compact withholds it", () => {
+    const doc = built(prose("hi"), advisorConsult());
+    expect(lineTexts(projectPending(doc, FS)).some((t) => t.includes("Advising"))).toBe(true);
+  });
+
+  it("compact carries it EXACTLY ONCE, the moment advisor_tool_result resolves it — and pending drops it", () => {
+    const doc = built(prose("hi"), advisorConsult(), advisorResult("srv1"));
+    const compactTexts = lineTexts(projectCompact(doc, FS));
+    expect(compactTexts.filter((t) => t.includes("Advising")).length).toBe(1);
+    expect(compactTexts.some((t) => t.includes("Advisor has reviewed"))).toBe(true);  // the separate result row
+    expect(lineTexts(projectPending(doc, FS)).some((t) => t.includes("Advising"))).toBe(false);
+  });
+});
+
 // bl7 T-HOOKBLOCK Task 2, spec D13 — the tests-pass-wiring-dead guard, third round running (D13 decision
 // log). This is deliberately NOT built from prebuilt `FoldAtom`s: it goes through a REAL `TranscriptDocument`
 // (`appendSdk`) and the two real production entry points, so a dropped `hookRuns:` forward at ANY of the

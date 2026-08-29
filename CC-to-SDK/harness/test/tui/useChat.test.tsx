@@ -307,6 +307,50 @@ describe("useChat: D15 — a configured advisorModel reaches the rendered row vi
   });
 });
 
+// Round review F1: an unresolved advisor consult must get the same "withheld while open" treatment a
+// growable tool run gets — `reconcile()`'s `rows<=16` (commitCap()===0) path and `publishLiveWindow()`'s
+// dialog-open path are the two production sites the verdict traced as able to force ANY unpublished
+// finalized item straight into append-only `<Static>`, geometry ignored. Both are exercised here at the
+// `useChat` level (not just the pure `projectCompact`/`projectPending` unit level in fold-expand.test.tsx)
+// because the bug the finding reports is specifically about `staticItems` — the one thing Ink can never
+// take back once written.
+describe("round review F1: an unresolved advisor consult is withheld from Static like a growable tool run", () => {
+  const advisorInFlight = { kind: "sdk" as const, source: "disk" as const, message: {
+    type: "assistant", parent_tool_use_id: null, uuid: "u-adv", message: { id: "m-adv",
+      content: [{ type: "server_tool_use", id: "srv1", name: "advisor", input: {} }] } } };
+  type Hook = ReturnType<typeof useChat>;
+  const staticText = (c: Hook): string =>
+    c.state.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("|");
+
+  it("commitCap()===0 (rows<=16) never force-publishes it; publishLiveWindow() (dialog-open) doesn't either; it commits exactly once, once resolved", async () => {
+    const fake = fakeRemote();
+    let api: Hook | undefined;
+    function H() {
+      const c = useChat(() => fake, { initialEntries: [advisorInFlight] }, { rows: () => 16, columns: () => 100, now: () => 0, home: "/home/me", platform: "darwin" });
+      api = c;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    await waitFor(() => allText(api!).includes("Advising"));      // it IS on screen — in the pending region
+    // The rows<=16 / commitCap()===0 path: `selectLiveWindow`'s cap check breaks on its very first iteration
+    // there, which the (pre-fix) verdict trace shows committing the WHOLE unpublished tail — this must not
+    // include the still-spinning consult.
+    expect(staticText(api!)).not.toContain("Advising");
+
+    // The publishLiveWindow() (dialog-open) path — "the whole live window, geometry ignored" — must not
+    // force it in either, for the same reason: it is still unresolved.
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("Advising");
+
+    // Resolve it: the SAME message entry (same id) re-projects resolved and must flow into Static exactly
+    // once — never twice (a stale dim copy plus a corrected one), and never zero (stuck live forever).
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "u-adv-res", message: { id: "m-adv-res",
+      content: [{ type: "advisor_tool_result", tool_use_id: "srv1", content: { type: "advisor_result", text: "looks fine", stop_reason: "end_turn" } }] } } });
+    await waitFor(() => staticText(api!).includes("Advising"));
+    expect(staticText(api!).match(/Advising/g) ?? []).toHaveLength(1);
+  });
+});
+
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
     const { lastFrame } = render(<Host makeSession={() => fakeRemote()} prompt="hi" />);

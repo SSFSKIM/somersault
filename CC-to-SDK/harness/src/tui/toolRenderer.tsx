@@ -1206,7 +1206,9 @@ export function groupItems(group: FoldGroup, form: GroupForm, options: Projectio
  *  `thinkingBody` (bl6 T-CLUSTER retention) is that same block's text `.trim()`ed but NOT whitespace-
  *  collapsed, present iff `thinking` is — the raw multi-line body an expanded cluster later renders,
  *  where `thinking` (whitespace-collapsed) only ever serves the collapsed row's one-line hint. */
-type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string; thinkingBody?: string };
+/** `openAdvisor` (round review F1): true iff this entry rendered an UNRESOLVED advisor consult row — see
+ *  `hasOpenAdvisor` and `trailingRunCut`'s use of the atom-level mirror of this flag. */
+type Anchored = { sequence: number; rank: number; items: readonly RenderItem[]; atom?: "breaker" | "neutral"; event?: ToolEvent; identity?: string; thinking?: string; thinkingBody?: string; openAdvisor?: true };
 /** The sentinels upstream renders in place of a reply: they are chatter, never the "real assistant text" that
  *  ends a run (§1.3). */
 const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
@@ -1236,6 +1238,18 @@ function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "break
     return !(typeof b.text === "string" && SENTINEL_TEXT.has(b.text.trim()));
   });
   return real ? "breaker" : "neutral";
+}
+
+/** Round review F1: does this entry carry an advisor consult (`server_tool_use` named "advisor") still
+ *  unresolved per the SAME `advisor` lookup `projectMessageEntry` renders from? Read directly off the raw
+ *  content blocks — the already-projected `RenderItem`s below carry no advisor identity of their own to ask
+ *  this off. `advisorResolution`'s own tail-only rule (D17, advisorState.ts) means this can only ever be true
+ *  for the document's actual trailing assistant message, which is exactly the scope `trailingRunCut` needs. */
+function hasOpenAdvisor(message: Record<string, unknown>, advisor: AdvisorResolution): boolean {
+  if (message.type !== "assistant") return false;
+  return contentBlocks(message).some((block) =>
+    isRecord(block) && block.type === "server_tool_use" && block.name === "advisor" &&
+    (typeof block.id !== "string" || !advisor.resolved.has(block.id)));
 }
 
 /** The sdk message's OWN identity, `message:<message.id>` — deliberately not `entry.identity`, which
@@ -1319,6 +1333,7 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
     const record: Anchored = {
       sequence: entry.sequence, rank: 0, items, atom: entryAtom(entry, items),
       ...(identity === undefined || thinking === undefined ? {} : { identity, thinking, thinkingBody }),
+      ...(hasOpenAdvisor(entry.message, advisor) ? { openAdvisor: true } : {}),
     };
     anchored.push(record);
     open = run === undefined ? undefined : { name: run.name, count: run.count, record };
@@ -1500,7 +1515,7 @@ export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: Rea
     // `sequence` is the ARRAY back-pointer a `passthrough` replays through (see `foldAnchored`), so it must stay
     // the index; `messageSequence` carries the entry's real transcript sequence alongside it, which is what the
     // pop-out window test compares against a call's `callSequence`/`resultSequence`.
-    if (a.atom === "breaker") return { kind: "breaker", sequence: index, messageSequence: a.sequence };
+    if (a.atom === "breaker") return { kind: "breaker", sequence: index, messageSequence: a.sequence, ...(a.openAdvisor ? { openAdvisor: true } : {}) };
     // The thinking clock's one gate: a thought-bearing message (`a.thinking`) the caller's LIVE map has a
     // duration for. A disk-bootstrapped, replayed or attached entry is never in that map, so it earns no
     // clause without a single replay-side branch.
@@ -1531,13 +1546,27 @@ export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: Rea
  *  is a classification question, so a fullscreen run ending in a non-read Bash is growable only when the flag is
  *  present; asked classically that run reads as settled, Static publishes the group, and `projectPending` — which
  *  folds the same stream under the same widened policy — draws the very same cluster again. Two rows on screen
- *  for one run, and the second is the one that keeps moving. */
+ *  for one run, and the second is the one that keeps moving.
+ *
+ *  Round review F1: an unresolved advisor consult is the OTHER thing that can still change in place — once its
+ *  paired `advisor_tool_result` lands, the SAME message entry (same id) re-projects resolved, and Static's
+ *  append-once bookkeeping (`reconcile`'s `publishedIds`, useChat.ts) would never re-publish it, leaving the
+ *  stale dim row on screen forever above the real outcome. It can never mint a `ToolEvent`, so it has no `tool`
+ *  atom to withhold through `classifyToolEvent` — it rides in as a trailing `breaker` atom instead
+ *  (`buildAnchoredEntries` tags it `openAdvisor` off the SAME `advisor.resolved` lookup `projectMessageEntry`
+ *  renders from), and `advisorResolution`'s own tail-only rule (D17, advisorState.ts) guarantees such a
+ *  breaker can only ever be unresolved while it is genuinely the run's trailing item — the identical
+ *  "last non-neutral atom" scope this function already gives a growable tool run. */
 function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[], policy: FoldPolicy): number {
-  let growing = false;
+  let growing = false, trailingAdvisor = false;
   for (const atom of atoms) {
     if (atom.kind === "neutral") continue;
+    trailingAdvisor = atom.kind === "breaker" && atom.openAdvisor === true;
     growing = atom.kind === "tool" && classifyToolEvent(atom.event, policy).collapsible;
   }
+  // An open advisor breaker maps to exactly ONE passthrough item (no run to fold), so withholding it is
+  // dropping the tail item outright — never a `for`-scan back to a `group`, which only a tool run ever emits.
+  if (trailingAdvisor) return Math.max(0, items.length - 1);
   if (!growing) return items.length;
   for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "group") return i;
   return items.length;
@@ -1658,6 +1687,15 @@ export function projectPending(document: TranscriptDocument, options: Projection
     // A COMPLETED standalone tool is already published (only groups are ever withheld); only an open one has a row here.
     if (!item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
   }
+  // Round review F1: the OTHER thing `trailingRunCut` withholds from Static — an unresolved advisor consult
+  // — has no `ToolEvent` and so never enters the `dynamic` fold above as a `tool`/`group` item; it rides in
+  // as a trailing `breaker` atom instead. `advisorResolution`'s tail-only rule means it can only ever be
+  // withheld while it is genuinely the last entry in `anchored` (the identical scope `trailingRunCut` reads
+  // it under), so re-checking that same tail here — rather than re-deriving `settled`'s cut index — is exact:
+  // this keeps the "Advising…" row live in the dynamic region, re-rendered every reconcile (correctly
+  // colored once `advisor.resolved` catches up) until it flows through the ordinary compact path exactly once.
+  const tail = anchored.at(-1);
+  if (tail?.atom === "breaker" && tail.openAdvisor === true) items.push(...tail.items);
   return items;
 }
 

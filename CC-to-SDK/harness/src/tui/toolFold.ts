@@ -276,7 +276,11 @@ const commandHint = (command: string): string => {
  *  replays from) and means nothing on the transcript's sequence line. `messageSequence` is the real one, carried
  *  separately and optionally so the pop-out window test can see a thought or a breaker land between a silent
  *  call and its error result; an atom that omits it simply cannot close that window. */
-export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string; thinkingBody?: string; thinkingKey?: string };
+/** `openAdvisor` (round review F1): this breaker is an UNRESOLVED advisor consult row — the one other
+ *  "still growing, don't publish yet" shape besides a collapsible tool run, and the only one a breaker atom
+ *  can carry (an advisor consult can never mint a `ToolEvent`, so it has no `tool` atom of its own to be
+ *  withheld through). See `trailingRunCut`'s use of it below. */
+export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number; openAdvisor?: true } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string; thinkingBody?: string; thinkingKey?: string };
 /** One absorbed thinking block's retained shape (bl6 T-CLUSTER): `key` disambiguates same-`message.id` frames
  *  (`FoldAtom.thinkingKey`), `messageSequence` is its transcript position (for later interleave-by-sequence
  *  rendering), `body` is the raw `.trim()`ed — NOT whitespace-collapsed — thinking text. */
