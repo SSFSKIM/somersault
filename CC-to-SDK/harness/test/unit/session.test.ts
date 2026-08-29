@@ -158,6 +158,22 @@ describe("Session", () => {
     expect(r.structuredOutput).toEqual({ verdict: "approve" });
     await s.dispose();
   });
+  it("submit resolves with queuedTurnCount when the SDK result carries queued_turn_count (0.3.251, probe 123, additive)", async () => {
+    const q = ({ prompt }: any) => (async function* () {
+      for await (const t of prompt) yield { ...successFor(t, "did:" + t.message.content, { kind: "human" }), queued_turn_count: 2 };
+    })();
+    const s = new Session({ query: q }, {});
+    const r: any = await s.submit("hi");
+    expect(r.result).toBe("did:hi");
+    expect(r.queuedTurnCount).toBe(2);
+    await s.dispose();
+  });
+  it("submit leaves queuedTurnCount absent when the frame carries none (older CLIs; key must not exist)", async () => {
+    const s = new Session({ query: fakeQuery }, {});
+    const r: any = await s.submit("hello");
+    expect("queuedTurnCount" in r).toBe(false);
+    await s.dispose();
+  });
   it("submit resolves with structuredOutput undefined when the SDK result carries none (existing callers destructuring {result} unaffected)", async () => {
     const s = new Session({ query: fakeQuery }, {});
     const r: any = await s.submit("hello");

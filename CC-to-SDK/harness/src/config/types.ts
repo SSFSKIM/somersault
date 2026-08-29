@@ -105,6 +105,11 @@ export interface HarnessConfig {
   // compaction (Spec B): tune/disable the SDK's native auto-compaction (these are SDK Settings fields)
   autoCompactEnabled?: boolean;            // false disables the native ~167k safety net
   autoCompactWindow?: number;              // tokens of headroom before auto-compaction
+  // prompt-cache TTLs (0.3.251, SDK Settings fields): "5m" | "1h". Unset = automatic (1h on a
+  // subscription within limits, 5m on API key/Bedrock/Vertex/Foundry; subagents 5m). 1h writes bill
+  // at a higher rate but survive long idle gaps — the pair a headless service tunes independently.
+  promptCacheTtl?: "5m" | "1h";            // main conversation + inline helpers
+  subagentPromptCacheTtl?: "5m" | "1h";    // subagents, workflows, background/helper requests
   // task tools (Phase 2 A1): durable Task* MCP server
   taskTools?: boolean | { dir?: string; listId?: string; agentName?: string };
   // swarm / coordinator (Phase 2 A2): peer teammate orchestration over an in-process bus
@@ -116,6 +121,12 @@ export interface HarnessConfig {
   // this programmatic path (verified) — no builder exists for them; raw passthrough is the user's choice.
   hooks?: HooksMap;
   mcpServers?: Record<string, McpServerConfig>;
+  // Default per-server tool-call timeout (ms) for MCP servers this config carries — mcpServers,
+  // taskTools/swarm's cc-tasks/cc-swarm, and the M7 dynamic overlay — stamped onto each server that
+  // does not declare its own `timeout` (a declared one always wins). Probe 124: enforced as a hard
+  // wall clock to the decimal; the SDK IGNORES values <1000. The Session-injected cc-context /
+  // cc-compact introspection tools are exempt by design (sub-ms calls; a cap could never fire).
+  mcpToolTimeoutMs?: number;
   /** M7, and NOT a caller knob: the in-process MCP servers a thread's CLIENT-DECLARED tools are published
    *  under. The app server owns it end to end — it writes this onto the transient config of one engine
    *  build (never onto the record it rebuilds from) and refuses any client that sets it — so the value is

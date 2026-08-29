@@ -151,6 +151,7 @@ export class DaemonServer {
         case "fork": send({ ok: true, ...await this.supervisor.fork(op.id) }); sock.end(); break;
         case "rewind": send({ ok: true, ...await this.supervisor.rewind(op.id, op.messageId, { fork: op.fork }) }); sock.end(); break;
         case "usage": send({ ok: true, usage: await this.supervisor.usage(op.id) }); sock.end(); break;
+        case "stop_task": await this.supervisor.stopTask(op.id, op.taskId); send({ ok: true }); sock.end(); break;
         case "init": send({ ok: true, init: await this.supervisor.initializationResult(op.id) }); sock.end(); break;
         case "apply_flag_settings": await this.supervisor.applyFlagSettings(op.id, op.settings); send({ ok: true }); sock.end(); break;
         case "rename": await this.supervisor.renamePersisted(op.id, op.title, { cwd: op.cwd }); send({ ok: true }); sock.end(); break;

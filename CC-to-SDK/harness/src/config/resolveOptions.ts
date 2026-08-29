@@ -150,7 +150,28 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
     const base = typeof merged.env === "object" && merged.env !== null ? merged.env as Record<string, unknown> : process.env;
     merged.env = { ...base, [MCP_NO_PREFIX_ENV]: "" };
   }
+  // Stamped LAST so it covers whatever `mcpServers` ended up being — the typed field, an
+  // `extraOptions` replacement, or the M7 overlay just merged above. `harness.ts` re-stamps after it
+  // attaches cc-tasks/cc-swarm, which join the map after this function returns.
+  if (config.mcpToolTimeoutMs !== undefined && merged.mcpServers)
+    merged.mcpServers = stampMcpTimeouts(merged.mcpServers as Record<string, unknown>, config.mcpToolTimeoutMs);
   return merged;
+}
+
+/** Stamp `timeout` onto every MCP server config that does not declare its own (a declared value always
+ *  wins). New objects throughout — no caller's map or server config is mutated. Only server shapes the
+ *  SDK declares `timeout` on are touched: `type:"sdk"` instances and stdio configs (explicit
+ *  `type:"stdio"` or the type-less `command` form); http/sse configs pass through untouched rather than
+ *  gaining a field their schema does not declare. */
+export function stampMcpTimeouts(servers: Record<string, unknown>, timeoutMs: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, cfg] of Object.entries(servers)) {
+    const c = cfg as Record<string, unknown> | null;
+    const stampable = c && typeof c === "object" && c.timeout === undefined
+      && (c.type === "sdk" || c.type === "stdio" || (c.type === undefined && typeof c.command === "string"));
+    out[name] = stampable ? { ...c, timeout: timeoutMs } : cfg;
+  }
+  return out;
 }
 
 /** The permission mode the engine will ACTUALLY start in for this config — the host's initial mode

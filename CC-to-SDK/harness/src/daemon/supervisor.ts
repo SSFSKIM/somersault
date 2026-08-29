@@ -217,6 +217,13 @@ export class DaemonSupervisor {
     if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }
     return session.usage();
   }
+  /** Per-task stop (0.3.251 `stop_task` control; probes 126/126b: works headless, and an interrupt
+   *  already SPARES background tasks on this transport — so this op is the only way to end one). */
+  async stopTask(id: string, taskId: string): Promise<void> {
+    const session = this.ensureLive(id);
+    if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }
+    await session.stopTask(taskId);
+  }
   async initializationResult(id: string): Promise<unknown> {
     const session = this.ensureLive(id);
     if (!session || session.isEnded()) { const rec = this.registry.get(id); throw new DaemonError(rec ? `session ${id} is ${rec.status}` : `unknown session ${id}`); }

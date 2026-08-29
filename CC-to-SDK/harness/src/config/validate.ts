@@ -21,6 +21,9 @@ export const harnessConfigSchema = z.looseObject({
   taskBudget: z.object({ total: z.number().int().positive() }).optional(),
   settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
   autoCompactWindow: z.number().int().positive().optional(),
+  promptCacheTtl: z.enum(["5m", "1h"]).optional(),
+  subagentPromptCacheTtl: z.enum(["5m", "1h"]).optional(),
+  mcpToolTimeoutMs: z.number().int().positive().optional(),
   sandbox: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
   telemetry: z.looseObject({ endpoint: z.string().min(1) }).optional(),
 });
