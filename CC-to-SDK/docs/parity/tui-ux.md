@@ -1025,7 +1025,7 @@ prefix-only) in the zero-import `imageDims.ts`; `checkImageBlock` overwrites the
 `stageBlocks` stages the corrected type; the app-server registry's chunk-0 allowlist relaxes to a
 bounded hint (format decided at completion from bytes); and `admitBytes`'s PNG/JPEG-only sniff — a real
 bl4 coverage gap that refused valid GIF/WebP app-server items — widens to four formats. The live
-mislabelled-block cell is committed but SKIPPED-429 (weekly account cap, resets Aug 31). No §-score
+mislabelled-block cell was committed SKIPPED-429 (weekly cap) and PASSED on the 2026-08-30 rerun. No §-score
 movement: both land inside rows already scored (recorded-delta closure). External campaign: pre-execution
 plan review (5 findings, 2 high — the ChatApp-owns-dispatch and link-before-fold catches that would have
 shipped dead/wrong wiring) → whole-round review 3 P2 (press-bound href; popup modifier gate; win32
@@ -1057,6 +1057,26 @@ accepted — the fake-host process contract, the clock-gated pending hole; 1 pre
 measurement, tie-break adopted as robustness) → whole-round review **ZERO findings first pass**.
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
+
+**Deferred-probe wave (2026-08-30, SDK 0.3.237)** — the bl6 §3.3 reachability gates, run when the
+token renewed (a day before the Aug-31 reset). Two verdicts FLIPPED, two held, one residue closed:
+**(1) hook block BUILDABLE** — P116 (`116-hook-frames-0337.ts`): settings-layer command hooks now
+emit `system/hook_started`/`hook_response` pairs headlessly (hook_name/hook_event/stdout/exit_code;
+timing derivable from arrival deltas), staling P85's 0.3.220 "hooks invisible" verdict; in-process
+callback hooks stay frame-less (the harness owns those and can self-instrument); canon's
+`stop_hook_summary` never leaks — the "Ran N PreToolUse hooks (Xms)" block must be synthesized.
+**(2) D8 advisor row BUILDABLE** — P118: with settings `advisorModel`, assistant frames carry
+`server_tool_use` (name `advisor`) then an `advisor_tool_result` block
+(`content:{type:"advisor_result", text}`) — exactly canon's clickable kind (server tool; never in
+init.tools). **(3) memories HOLD DEAD on the wire** — P117/P117b: `autoMemoryEnabled` +
+`autoMemoryDirectory` work headlessly (init.memory_paths.auto acknowledges; facts injected and
+answered, at 2- and 14-file populations), but zero `system/memory_recall` frames ever arrive —
+declared-but-gated; "Recalled {basename}" stays unbuildable. **(4) goal HOLDS DEAD** — P118: no
+`active_goal` frame from plain-text or `<command-name>` dispatch; Wave 2's UI-command-only verdict
+stands on 0.3.237. **(5)** bl5's mislabelled-block live cell now PASSES (with the F9 and GIF/WebP
+cells, 3/3 in `image-submit.e2e.test.ts`) — the SKIPPED-429 note below is closed. Still open from
+the bl6 list: canon's signed-thinking flush carve-out (`xxt` predicate) — binary research, not a
+live probe; queue with the next round's research phase.
 
 ## Recorded additions (ours, outside the parity denominator)
 

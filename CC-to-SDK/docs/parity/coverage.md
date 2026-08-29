@@ -476,6 +476,14 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl6 deferred-probe wave (2026-08-30, SDK 0.3.237)** — the §3.3 reachability gates, run a day
+>   early on token renewal (probes `116`-`118` + bl5 live-cell rerun; full record in `tui-ux.md`).
+>   FLIPPED buildable: the expanded-cluster **hook block** (settings-layer hooks now emit
+>   `hook_started`/`hook_response` pairs headlessly — P85's "invisible" verdict was 0.3.220-stale)
+>   and the **D8 advisor clickable row** (`advisor_tool_result` blocks arrive in assistant frames
+>   with settings `advisorModel`). HELD dead: `system/memory_recall` (injection works, wire mirror
+>   gated — P117/b) and `/goal`→`active_goal` (UI-command-only stands — P118). bl5's mislabelled
+>   image cell rerun PASSED. Natural bl7 seed: T-HOOKBLOCK + T-ADVISOR.
 > - **bl6 round close-out — expanded-cluster absorbed thinking + attach-race premise flip (2026-08-29)** —
 >   spec `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`, ledger
 >   `.doperpowers/sdd/2026-08-28-bl6-round/`. **T-CLUSTER** (merge `6350a6d2cd`): an expanded tool
@@ -501,7 +509,7 @@
 >   `b()` verbatim) instead of trusting the declaration — the API's mismatch-400 is locally unreachable;
 >   `admitBytes`'s PNG/JPEG-only gap (refused valid GIF/WebP app-server items) fixed. Campaign:
 >   plan-review 5 findings (2 high, both would have shipped broken wiring) → whole-round 3 P2 → fix wave →
->   re-review ZERO. Live mislabelled-block cell SKIPPED-429 until the weekly cap resets (Aug 31).
+>   re-review ZERO. Live mislabelled-block cell PASSED on the 2026-08-30 rerun (was SKIPPED-429).
 
 > - **bl4 round close-out — the two F10 owner-deferred follow-ups (2026-08-24)** — spec
 >   `docs/superpowers/specs/2026-08-24-bl4-clickgate-gifwebp-design.md`, ledger
