@@ -69,11 +69,14 @@ Mirror canon's accumulator (segmenter arm @162916448, predicate `jar` @162906900
 - `RunState` gains `hookCount`, `hookTotalMs`, `hookInfos: HookInfo[]` (seeded 0/0/[] in `newRun()`, canon
   `S$e`); `FoldGroup` gains the same trio, spread in `emit()` **only when `hookCount > 0`** (canon `Yar`
   @162911645). `HookInfo = { name: string; durationMs: number }`.
-- During `segmentRuns`, hook entries are consumed in `afterSequence` order: an entry is absorbed into the open
-  run when the run is **non-empty** (has ≥1 tool atom) and `afterSequence` falls at-or-after the run's first
-  member and before the atom that closes the run. Entries arriving with no open run (or before the first
-  member) are **dropped** — canon routes those to its standalone renderer, which we are not building
-  (recorded, §4). `hookTotalMs` += each entry's `durationMs` (sum; canon uses the summary's wall-clock
+- During `segmentRuns`, hook entries are resolved at flush/emit against **call-time positions** (D12): an
+  entry belongs to a run iff `afterSequence >= ` the run's earliest member `callSequence` and `< ` the
+  flushing boundary's sequence. NOT a cursor sweep against atom stream positions — settled atoms are
+  ordered by `resultSequence`, so a sweep drops hooks in the normal tool_use → hooks → tool_result wire
+  order. Entries matching no run (pre-run, post-breaker gaps) are **dropped** — canon routes those to its
+  standalone renderer, which we are not building (recorded, §4). `hookRuns` is forwarded through all three
+  production `segmentRuns` call sites in `toolRenderer.tsx` (D13), and `hook_response` ingestion reconciles
+  immediately (D14). `hookTotalMs` += each entry's `durationMs` (sum; canon uses the summary's wall-clock
   `totalDurationMs` when present and per-info sum otherwise — ccx has only per-pair deltas, so concurrent
   hooks overstate slightly; recorded divergence §4). Note canon's *merge* helper `Uu` takes **`Math.max`** of
   `totalDurationMs`, never a sum — ccx has no merge step (pairs are already granular), but any future merge
@@ -195,14 +198,15 @@ Reuse the **`item:` mechanism with zero mouse-layer edits**: the advisor result 
 collide with `tool:` owner keys). Click key = the row's owner key (canon keys by per-block uuid; same
 stability property).
 
-**Cache decision (D9): add `expandedItems` to the `anchoredEntries` `knobKey`** (`toolRenderer.tsx:1281-1282`)
-— serialized deterministically (sorted, joined). Without this, `projectMessageEntry` runs inside the memo
-whose key omits `expandedItems`, and a click serves the stale collapsed row — **a click that silently does
-nothing, invisible to any test that doesn't drive real SGR bytes**. The downstream-rebuild alternative
-(rendering advisor rows beside `renderToolEvent` after the cache) was rejected as a larger restructure for
-one row kind; the LRU-accumulation cost of the key change is documented at `:1253-1257` and accepted —
-clicks are rare, and each key change is a legitimate full re-projection. The pty/SGR test cell (§6) is the
-guard that proves the click actually repaints.
+**Cache decision (D9 as amended by D16): add the `sdk:`-prefixed SUBSET of `expandedItems` to the
+`anchoredEntries` `knobKey`** (`toolRenderer.tsx:1281-1282`) — filtered, sorted, joined. Without any key
+component, `projectMessageEntry` runs inside the memo whose key omits expansion state, and a click serves
+the stale collapsed row — **a click that silently does nothing, invisible to any test that doesn't drive
+real SGR bytes**. The subset matters (D16): `tool:*` owners are consumed downstream of the cache, and
+keying the full set would rebuild the whole transcript on every ordinary tool-result expansion. Guards:
+the SGR cell proving the advisor click repaints, AND a regression test proving a `tool:*` toggle does NOT
+rebuild anchored entries (build count via the `projectionDeps.buildAnchored` seam). The downstream-rebuild
+alternative was rejected as a larger restructure for one row kind.
 
 ### 3.5 Fold + picker
 
@@ -302,6 +306,41 @@ kills quantified over ≥5 runs when probabilistic. Live: A8 keyed cell in `test
 - **D10** Advisor expanded body is plain dim text, NOT markdown — canon-verbatim (`bm` @176902218). Rejected:
   renderMarkdown (would be a deliberate divergence with no user ask).
 - **D11** Narration flush recorded, not built (fail-closed parity already holds).
+- **D12** (plan review H1, accepted) Hook absorption is keyed to **call-time positions**, resolved at
+  flush/emit — an entry belongs to a run iff `afterSequence >= ` the run's earliest member
+  `callSequence` and `< ` the flushing boundary's sequence. The pre-absorb cursor sweep against atom
+  positions was rejected: settled tool atoms are ordered by `resultSequence`, so the NORMAL wire order
+  (tool_use → hook pair → tool_result) would sweep the hook past an empty run and drop it — single-tool
+  runs would lose every hook, and the planned fake producer (hooks after the first result) would have
+  masked it. Mandatory test orders: tool_use→hooks→tool_result through open AND settled projections;
+  single-tool run; pre-run; post-breaker; between-run.
+- **D13** (plan review H2, accepted) `hookRuns` must be forwarded through ALL THREE production
+  `segmentRuns` call sites in `toolRenderer.tsx` (:1417, :1499, :1504 — the fold-options builders), and
+  the hook plan carries a production-pipeline test that starts from a `TranscriptDocument` + tracker
+  entries through `projectCompact`/`projectPending` — the tests-pass-wiring-dead failure mode, third
+  round running.
+- **D14** (plan review M5, accepted) `hook_response` ingestion triggers a reconcile before returning —
+  hook frames don't mutate the document, so without it a completed hook repaints only on the next
+  unrelated frame. Test: hook_response as the FINAL event must repaint an already-open run.
+- **D15** (plan review H3+H4, adjudicated) The advisor model clause is sourced from the client's own
+  `config.advisorModel`, threaded into `ProjectionOptions`; when the client doesn't know it (attach to a
+  host configured elsewhere), the clause is OMITTED — canon renders the clause conditionally
+  (`Tp ? … : null`), so omission is canon-legal, recorded. Detached spawn adds `--advisor-model` to
+  `spawn.ts`'s `configFlags` allowlist (verified: the allowlist exists and would silently drop it) with a
+  spawn-argv test. The `/config` row ships with the full edit/persist path following the model row, or is
+  dropped from scope — never display-only. Rejected: a new host-status wire field for the model name
+  (cosmetic clause, not worth a protocol surface this round).
+- **D16** (plan review M6, adjudicated narrower than recommended) `knobKey` keys only the
+  **`sdk:`-prefixed subset** of `expandedItems` — advisor rows are the only expansion consumers inside
+  the cache; `tool:*` toggles stay downstream and must NOT rebuild anchored entries (regression test
+  counts builds via the `projectionDeps.buildAnchored` seam). Full-set keying was rejected: every
+  ordinary tool-result expansion would rebuild the whole transcript and churn the 8-deep LRU.
+- **D17** (plan review M7, accepted) "Non-latest" for force-resolving abandoned consults derives from
+  the ACTUAL retained tail (canon `tGt`: `t?.type==="assistant" ? t.message.id : undefined`) — a user
+  tail yields undefined and every unresolved consult is forced red. Tests: user-tail and missing-id
+  orders through projectAll.
+- **D18** (plan review M8, accepted) Promoting `@anthropic-ai/sdk` updates `package-lock.json` in the
+  same task (regenerated at the installed version), so a clean `npm ci` accepts the manifest.
 
 ## 8. Surprises & Discoveries
 
@@ -325,3 +364,8 @@ Pending — written at finish.
 ## 10. Revision Notes
 
 - v1 (2026-08-30): authored from research-hookblock.md + research-advisor.md + probes 116-118b.
+- v2 (2026-08-30): pre-execution adversarial plan review (gpt-5.6-sol, xhigh) returned 4 high + 4
+  medium; ALL verified real against the code and accepted (two with narrower adjudications) — D12-D18.
+  The headline catch: the hook-attribution cursor would have dropped hooks in the NORMAL wire order
+  because settled atoms reorder by resultSequence, and the planned pty producer would have masked it
+  (D12). §2.4's cursor description is superseded by D12; §3.4's full-set knobKey by D16.

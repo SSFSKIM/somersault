@@ -87,42 +87,65 @@ seams §4).
   `stampToolStarts` at `:1570`; `return` after handling so hook frames never fall through to the notice arm.
   Thread `hookRuns: hookTrackerRef.current.entries()` into `projectionContext()` at `:311`; clear the tracker
   at the `:1285` rebuild site (comment: "a rebuilt transcript has no hook source — show none", the thoughtMs
-  precedent). Run both test files → PASS.
+  precedent). **Reconcile on completion (spec D14):** `tracker.response(...)` returns `true` when it completed
+  a PreToolUse pair; on `true`, call the same reconcile/refresh the generic message path uses BEFORE
+  returning — hook frames don't mutate the document, so without this a completed hook repaints only when the
+  next unrelated frame lands. Add a test: with a run already open, a `hook_response` as the FINAL event
+  repaints the projection (the entry is visible without any further frame). Run both test files → PASS.
 - [ ] **Step 5: typecheck + commit** — `npm run typecheck`;
   `git commit -m "bl7 t-hookblock: hook pair tracker + includeHookEvents interactive default"`.
 
-### Task 2: fold absorption
+### Task 2: fold absorption (spec D12/D13 — the plan review's headline catch lives here)
 
 **Files:**
 - Modify: `src/tui/toolFold.ts` (`GroupCounts` ~:293, `FoldGroup` ~:316, `RunState`/`newRun` ~:330-340,
-  `emit` ~:438, `segmentRuns` ~:459)
-- Test: `test/tui/toolFold.test.ts`
+  `emit` ~:438, `segmentRuns` ~:459), `src/tui/toolRenderer.tsx` (the three production `segmentRuns` call
+  sites — :1417, :1499, :1504 — and the fold-options builders that feed them: forward `options.hookRuns`)
+- Test: `test/tui/toolFold.test.ts` + a production-pipeline test (in `test/tui/fold-expand.test.tsx` or a
+  sibling) that starts from a real `TranscriptDocument` + tracker entries through `projectCompact` /
+  `projectPending` — NOT prebuilt atoms
 
 **Interfaces:**
 - Consumes: `HookRunEntry` from Task 1 (`import type { HookRunEntry } from "./hookPairs.js"`).
 - Produces: `GroupCounts.hookCount?: number; hookTotalMs?: number` (present only when > 0);
   `FoldGroup.hookInfos?: readonly { name: string; durationMs: number }[]` (present only non-empty);
-  `segmentRuns(atoms, options)` gains `options.hookRuns?: readonly HookRunEntry[]`.
+  `segmentRuns(atoms, options)` gains `options.hookRuns?: readonly HookRunEntry[]`, forwarded by ALL
+  THREE toolRenderer call sites.
 
-- [ ] **Step 1: failing tests** — in `test/tui/toolFold.test.ts`: (a) two tool atoms with sequences 10, 20
-  and hook entries `afterSequence: 12` and `15` → one group with `hookCount: 2`, `hookTotalMs` = sum,
-  `hookInfos` in order; (b) an entry with `afterSequence` BEFORE the run's first member sequence is dropped
-  (no group field); (c) an entry after the closing breaker's sequence belongs to the NEXT run (or is dropped
-  if none opens); (d) a run with zero hooks emits a group with NO hook fields (spread-when-non-empty); (e)
-  hook fields survive `open: true` (mid-run projection). Run → FAIL.
-- [ ] **Step 2: implement** — `RunState` gains `hookCount: number; hookTotalMs: number; hookInfos: {name: string; durationMs: number}[]`
-  (seeded 0/0/[]). In `segmentRuns`, consume `options.hookRuns` (already `afterSequence`-sorted) with a
-  cursor: when a tool atom is absorbed into the run, advance the cursor over every entry whose
-  `afterSequence < that atom's sequence` — entries passed while the run was EMPTY are dropped (canon's
-  `u.messages.length>0` gate); entries passed while the run had ≥1 member are absorbed
-  (`hookCount++`, `hookTotalMs += durationMs`, push `{name, durationMs}`). At `flush()`, absorb any remaining
-  entries with `afterSequence` ≥ the run's first member sequence and < the flushing atom's sequence (a hook
-  landing between the last member and the breaker still belongs — canon absorbs at arrival into the
-  still-open run). Cite canon: segmenter arm @162916448, `jar` @162906900. `emit()` spreads
-  `...(run.hookCount > 0 ? { } : {})` into counts and `...(run.hookInfos.length > 0 ? { hookInfos } : {})`
-  onto the group. Run → PASS.
-- [ ] **Step 3: gates + commit** — `npm run typecheck && npx vitest run test/tui/toolFold.test.ts test/tui/fold-expand.test.tsx`;
-  `git commit -m "bl7 t-hookblock: fold pipeline absorbs hook pairs by sequence position"`.
+**The attribution model (spec D12 — do NOT build a stream-position cursor).** Settled tool atoms are
+ordered by `resultSequence` (see the `anchorId` doc comment in toolFold.ts), so the NORMAL wire order —
+assistant `tool_use` at document sequence 10, hook pair stamped `afterSequence: 10`, `tool_result` at
+sequence 11 — places the hook BEFORE the settled atom in the stream; a cursor that sweeps entries against
+atom positions drops it while the run is empty. Instead, membership is resolved against **call-time
+positions**: an entry belongs to a run iff
+`entry.afterSequence >= min(callSequence of the run's members)` AND
+`entry.afterSequence < the flushing boundary's sequence` (the breaker/flushing atom's sequence; for the
+final still-open run, +Infinity). `FoldAtom.kind:"tool"` carries the full `ToolEvent`, which has
+`callSequence` — collect the run's minimum as members are absorbed, and resolve the run's hook entries in
+`flush()`/`emit()` from the sorted `options.hookRuns` array. Entries matching no run are dropped (canon
+routes them to its standalone renderer — out of scope, recorded).
+
+- [ ] **Step 1: failing tests** — in `test/tui/toolFold.test.ts`, ALL of spec D12's mandatory orders:
+  (a) **the normal wire order**: one tool atom whose event has `callSequence: 10` (settled — atom stream
+  position is its resultSequence 11), hook entry `afterSequence: 10` → group has `hookCount: 1` (this is
+  the cell that fails under a cursor design); (b) same but the run OPEN (unsettled atom at callSequence
+  position) → still absorbed; (c) single-tool run with the hook pair between call and result → absorbed;
+  (d) entry with `afterSequence` before the run's earliest `callSequence` → dropped; (e) entry after the
+  closing breaker's sequence → belongs to the next run if one opens at/before it, else dropped; (f)
+  between-run gap (after breaker, before next run's first callSequence) → dropped; (g) zero hooks → NO
+  hook fields on the group (spread-when-non-empty); (h) two runs, entries split correctly. Run → FAIL.
+- [ ] **Step 2: implement** per the model above; `emit()` spreads
+  `...(hookCount > 0 ? { hookCount, hookTotalMs } : {})` into counts and
+  `...(hookInfos.length > 0 ? { hookInfos } : {})` onto the group. Cite canon: segmenter arm @162916448,
+  `jar` @162906900, spec D12. Run → PASS.
+- [ ] **Step 3: production wiring (spec D13)** — forward `hookRuns: options.hookRuns` through the fold
+  options at toolRenderer.tsx :1417, :1499, :1504. Failing-first production-pipeline test: build a real
+  `TranscriptDocument` (appendSdk a Read tool_use + its tool_result), hand `projectCompact`/`projectPending`
+  a `ProjectionOptions` with `hookRuns: [{name: "PreToolUse:Read", durationMs: 200, afterSequence: <the
+  tool_use entry's sequence>}]`, and assert the rendered output contains `Ran 1 PreToolUse hook` — this
+  cell fails if any call site drops the option (the tests-pass-wiring-dead guard). Run → PASS.
+- [ ] **Step 4: gates + commit** — `npm run typecheck && npx vitest run test/tui/toolFold.test.ts test/tui/fold-expand.test.tsx`;
+  `git commit -m "bl7 t-hookblock: call-time hook attribution + production segmentRuns wiring"`.
 
 ### Task 3: rendering — expanded block + collapsed clause/line
 
@@ -170,10 +193,12 @@ seams §4).
 
 **Interfaces:**
 - Consumes: the built dist (`npm run build` first — fake-host imports `../dist/fleet/*.js`).
-- Produces: `hookcluster` word → frames: Read tool_use → tool_result →
+- Produces: `hookcluster` word → frames in **the NORMAL wire order the plan review flagged** (spec D12 —
+  the pair sits between a tool_use and ITS result, where real PreToolUse hooks fire): first Read tool_use →
   `{type:"system", subtype:"hook_started", hook_id:"h1", hook_name:"PreToolUse:Read", hook_event:"PreToolUse", uuid:…}` →
-  (~50ms later or immediately) matching `hook_response` (`outcome:"success"`, `exit_code:0`) → second Read
-  tool_use → tool_result. (Hook pair between the two members: absorbed into the open run.)
+  matching `hook_response` (`outcome:"success"`, `exit_code:0`) → first tool_result → second Read
+  tool_use → second tool_result. A producer that placed the pair after the first result would mask the
+  resultSequence-reorder drop this round's review caught — do not "simplify" the order.
 
 - [ ] **Step 1: producer** — add `hookcluster` to `framesFor`; keep uuids distinct per frame.
 - [ ] **Step 2: live cell** — `hookblock-cells.sh` cell 1: start fake-host, launch the REAL ccx binary under

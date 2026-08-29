@@ -45,16 +45,24 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
 ### Task 1: types + config knob
 
 **Files:**
-- Modify: `package.json` (promote `@anthropic-ai/sdk` from transitive to `dependencies`, pin the installed
-  `0.104.x`), `src/config/types.ts` (`HarnessConfig.advisorModel?: string` + DEFAULTS untouched — absent),
+- Modify: `package.json` + **`package-lock.json`** (spec D18 — promote `@anthropic-ai/sdk` from transitive
+  to `dependencies` at the installed `0.104.x`, then `npm install` to regenerate the lock so a clean
+  `npm ci` accepts the manifest; verify with `npm ci --dry-run` or a lockfile grep showing the root dep),
+  `src/config/types.ts` (`HarnessConfig.advisorModel?: string` + DEFAULTS untouched — absent),
   `src/config/validate.ts:8` (`advisorModel: z.string().min(1).optional()`), `src/config/settings.ts:12-17`
   (one line in `mergeAutoCompact`: `if (config.advisorModel !== undefined) base.advisorModel = config.advisorModel;`
   — rename the function only if trivial, else add a comment), `src/cli/args.ts` (`case "--advisor-model"` in
-  the `parseCcx` switch ~:134-195, the `--model` shape at :152), `src/cli/help.ts` (one line),
+  the `parseCcx` switch ~:134-195, the `--model` shape at :152), **`src/cli/spawn.ts:17-25`** (spec D15 —
+  add `["--advisor-model", "advisorModel"]` to the `configFlags` allowlist; the detached child argv is
+  reconstructed from this list and would silently drop the flag), `src/cli/help.ts` (one line),
   `src/tui/prefs.ts` (`advisorModel?: string` + validation ~:90-120), `src/cli/main.ts:441`
-  (`inv.config.advisorModel ?? prefs.advisorModel` merge), `src/tui/settingsRows.ts` (row + id union :15)
+  (`inv.config.advisorModel ?? prefs.advisorModel` merge), `src/tui/settingsRows.ts` (row + id union :15 —
+  **with the full edit/persist path following the model row**: locate how the model row's value is edited
+  and saved through the settings dialog and replicate it; a display-only row is a spec violation, D15)
 - Test: `test/unit/` config surface — extend the files that pin `validate`, `resolveOptions`
-  settings-passthrough, CLI args, and `test/unit/cli-surface.test.ts` (help text)
+  settings-passthrough, CLI args, `test/unit/cli-surface.test.ts` (help text), AND the spawn-argv test:
+  `spawnDetached`-side argv reconstruction carries `--advisor-model x` for explicit flags and the
+  saved-preference merge (find the existing configFlags/spawn test file via `grep -rn configFlags test/`)
 
 **Interfaces:**
 - Produces: `config.advisorModel` → SDK `Settings.advisorModel` via the existing
@@ -64,9 +72,11 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
 
 - [ ] **Step 1: failing tests** — (a) `resolveOptions({ advisorModel: "claude-opus-4-8" })` yields
   `options.settings.advisorModel === "claude-opus-4-8"`; (b) absent by default; (c) `--advisor-model x`
-  parses; (d) help text mentions it (cli-surface pin). Run the touched unit files → FAIL.
+  parses; (d) help text mentions it (cli-surface pin); (e) detached spawn argv carries `--advisor-model x`
+  (explicit flag AND via saved preference); (f) the /config row edits and persists (the model row's test
+  is the template). Run the touched unit files → FAIL.
 - [ ] **Step 2: implement** all files above; `npm ls @anthropic-ai/sdk` to confirm the version, add to
-  `dependencies` at the installed version. Run → PASS.
+  `dependencies` at that version, `npm install` to update the lock. Run → PASS.
 - [ ] **Step 3: gates + commit** — `npm run typecheck && npm run test:unit`;
   `git commit -m "bl7 t-advisor: advisorModel knob (default off) + @anthropic-ai/sdk types"`.
 
@@ -84,10 +94,19 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
   `export type AdvisorResolution = { resolved: ReadonlySet<string>; errored: ReadonlySet<string> }` and
   `export function advisorResolution(entries: readonly {message: Record<string,unknown>}[]): AdvisorResolution`
   — walks retained assistant messages: an `advisor_tool_result` adds its `tool_use_id` to `resolved` (and to
-  `errored` when content is `advisor_tool_result_error` or declined); any `server_tool_use` in a NON-LATEST
-  API message (`message.id` differs from the last assistant's) still unresolved is added to both (canon
-  `eGt`/`uur`/`tGt` @163035026-163035350: abandoned consults go red, never spin). Must NOT create ToolEvents.
+  `errored` when content is `advisor_tool_result_error` or declined); any `server_tool_use` still unresolved
+  in a NON-LATEST API message is added to both. **"Latest" derives from the ACTUAL retained tail (spec
+  D17, canon `tGt`): `tail?.type === "assistant" ? tail.message.id : undefined` — a USER tail (interrupt,
+  new prompt with no assistant frame yet) yields undefined, and EVERY unresolved consult is forced red.**
+  Must NOT create ToolEvents. Tests include the user-tail and missing-id orders.
 - Produces: `RenderMessageOptions.advisor?: { resolvedIds: ReadonlySet<string>; erroredIds: ReadonlySet<string>; expanded: boolean; clickHintSuppressed: boolean; model?: string }`.
+- **The `model` producer (spec D15):** `advisor.model` is the CLIENT'S OWN `config.advisorModel`, threaded
+  from config through `useChat`/`ChatApp` into `ProjectionOptions` (add `advisorModel?: string` there) and
+  down to the render context — the SDK assistant frame does NOT carry it (its `message.model` is the MAIN
+  model; do not use it). When the client doesn't know the value (e.g. `ccx attach` to a host configured
+  elsewhere), the clause is OMITTED — canon renders `" using {model}"` conditionally, so omission is
+  canon-legal; note the divergence in the task report. Test both: model present → clause; absent → bare
+  bold `Advising`.
 - Produces (render.ts): the two arms —
   - `b?.type === "server_tool_use"`: if `b.name !== "advisor"` → nothing; else one row: bullet glyph
     (existing platform constant, `⏺`/`●`) in a 2-char gutter — dim when
@@ -129,10 +148,12 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
 - Consumes: Task 2's render arms and context.
 - Produces: advisor result items carry `ownerKey: sdkOwnerKey(<entry id base>)` (`toolRenderer.tsx:589`
   helper) and `clickable: true` iff `content.type === "advisor_result"` && (`!declined || reason defined`)
-  && the projection is not already verbose/detail; `knobKey` gains a deterministic `expandedItems` component:
-  `` `|x=${[...(options.expandedItems ?? [])].sort().join(",")}` `` (empty set → `|x=`), with a comment
-  citing spec D9 and the LRU note at :1253-1257 (clicks are rare; each change is a legitimate
-  re-projection).
+  && the projection is not already verbose/detail; `knobKey` gains **only the `sdk:`-prefixed SUBSET** of
+  `expandedItems` (spec D16):
+  `` `|x=${[...(options.expandedItems ?? [])].filter((k) => k.startsWith("sdk:")).sort().join(",")}` ``
+  (no sdk: entries → `|x=`), with a comment citing spec D9/D16: `tool:*` owners are consumed downstream of
+  the cache and MUST NOT invalidate it — keying the full set would rebuild the whole transcript on every
+  ordinary tool-result expansion and churn the 8-deep LRU.
 
 - [ ] **Step 1: failing SGR cell** — in `fold-click.test.tsx` (T-CLICKGATE cells at :482+ are the template):
   drive a real `ChatApp` with an advisor result message; send SGR press+release on the result row; assert
@@ -143,10 +164,13 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
 - [ ] **Step 2: implement** — stamp ownerKey/clickable; wire `advisor.expanded =
   options.expandedItems?.has(ownerKey) === true`; `clickHintSuppressed = options.fullscreen === true`;
   extend `knobKey`. Run the cell → PASS.
-- [ ] **Step 3: cache-regression mutation cell** — a test that monkeypatches/regresses is brittle; instead
-  add a direct unit: two `projectAll` calls differing ONLY in `expandedItems` yield different output for the
-  advisor row (this fails if `knobKey` omits the set — the exact D9 failure). Run → PASS; then TEMPORARILY
-  revert the knobKey change and verify this cell + the SGR cell go RED (record in report); restore.
+- [ ] **Step 3: cache-regression cells (both directions of D16)** — (a) two `projectAll` calls differing
+  ONLY in an `sdk:` entry of `expandedItems` yield different output for the advisor row (fails if
+  `knobKey` omits the subset — the D9 failure); (b) a `tool:*`-only `expandedItems` change does NOT
+  rebuild anchored entries — count builds via the `projectionDeps.buildAnchored` DI seam across the two
+  calls (fails if the full set is keyed — the D16 over-invalidation). Run → PASS; then TEMPORARILY revert
+  the knobKey change and verify (a) + the SGR cell go RED while (b) stays green (record in report);
+  restore.
 - [ ] **Step 4: gates + commit** — `npm run typecheck && npm run test:tui` (hover-owner + hitmap suites
   included); `git commit -m "bl7 t-advisor: click-to-expand via item mechanism + expandedItems in knobKey"`.
 
@@ -171,7 +195,8 @@ ccx seams §3; P118b: distinct uuids per frame — plain append, no merge rule).
 - [ ] **Step 3: gated live cell (A8)** — `test/live/advisor.e2e.test.ts`, `describe.skipIf` on missing
   `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` (house pattern in `test/live/image-submit.e2e.test.ts`):
   one session with `advisorModel: "claude-opus-4-8"`, model sonnet, prompt asking to consult the advisor
-  (P118's prompt shape); assert the transcript renders `Advising` and one of the result shapes. Run keyed:
+  (P118's prompt shape); assert the transcript renders `Advising using ` (the model clause — proves the
+  config→projection threading end to end, spec D15) and one of the result shapes. Run keyed:
   `set -a; . ../.env; set +a; npx vitest run test/live/advisor.e2e.test.ts`. Note: consult ≈ $0.39 — run
   once, not in loops.
 - [ ] **Step 4: full gates + commit** — `npm run typecheck && npm run test:unit && npm run test:tui`;
