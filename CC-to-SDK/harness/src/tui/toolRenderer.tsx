@@ -845,7 +845,11 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
     // message renders, exactly as it always was) so `options.expandedItems.has(ownerKey)` asks about the
     // SAME key a click on this row's OWN hit-row would toggle.
     const ownerKey = sdkOwnerKey(id);
-    const alreadyExpandedByProjection = options.projection === "detail-all" || options.verbose === true;
+    // F4 fix wave (round review): same "any detail projection" reading as `showThinking` above and the
+    // compact-summary chip's `transcriptMode` below — `detail-collapsed` is a ccx-only fold state that has
+    // no analogue in canon's advisor rows (binary: one-liner or full verbatim text), so it must expand
+    // exactly like `detail-all`, not fall back to the compact one-liner.
+    const alreadyExpandedByProjection = options.projection !== "compact" || options.verbose === true;
     const advisorOpts = block.type === "server_tool_use" || block.type === "advisor_tool_result"
       ? { resolvedIds: advisor?.resolved ?? EMPTY_ADVISOR_IDS, erroredIds: advisor?.errored ?? EMPTY_ADVISOR_IDS,
           expanded: alreadyExpandedByProjection || options.expandedItems?.has(ownerKey) === true,

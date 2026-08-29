@@ -11,6 +11,8 @@ import { renderMessage } from "../../src/tui/render.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 import { EXPAND_HINT_FALLBACK } from "../../src/tui/keys/hints.js";
 import { advisorResolution, type AdvisorEntry } from "../../src/tui/advisorState.js";
+import { projectCompact, projectDetail, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
 const asst = (content: unknown[]) => ({ type: "assistant", parent_tool_use_id: null, message: { content } });
 const success = resolveThemeColor(themeTokens().success);
@@ -144,6 +146,47 @@ describe("render.ts — advisor result rows (advisor_tool_result)", () => {
   it("no advisor context threaded at all falls back to the honest 'nothing known yet' reading", () => {
     const block = resultOf({ type: "advisor_result", text: "x", stop_reason: "end_turn" });
     expect(renderMessage(asst([block]))).toEqual([{ text: `${TICK} Advisor has reviewed the conversation and will apply the feedback ${HINT}`, dim: true }]);
+  });
+});
+
+// F4 fix wave (round review): `alreadyExpandedByProjection` (toolRenderer.tsx:848) must read the same
+// "any detail projection" predicate as its two same-file precedents (`showThinking`, the compact-summary
+// chip's `transcriptMode`) — `projection !== "compact"`, not `projection === "detail-all"` alone. Drives
+// the predicate through the FULL projection stack (projectCompact/projectDetail), not renderMessage
+// directly, since the bug lives in the caller that derives `expanded`/`clickable` from `options.projection`,
+// not in render.ts itself. Table: compact (collapsed, clickable) / detail-all (expanded, not clickable) /
+// detail-collapsed (same as detail-all — the regression this finding fixes).
+describe("toolRenderer projection — advisor result row across compact/detail-all/detail-collapsed (F4)", () => {
+  const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
+  const BODY = "full verbatim advisor body";
+  const advisorResultDoc = (): TranscriptDocument => {
+    const doc = new TranscriptDocument();
+    doc.appendSdk("host", {
+      type: "assistant", parent_tool_use_id: null,
+      message: { content: [{ type: "advisor_tool_result", tool_use_id: "srv1", content: { type: "advisor_result", text: BODY, stop_reason: "end_turn" } }] },
+    } as Record<string, unknown>);
+    return doc;
+  };
+  const linesOf = (items: readonly RenderItem[]): readonly string[] => items.flatMap((i) => (i.kind === "line" ? [i.line.text] : []));
+  const isClickable = (items: readonly RenderItem[]): boolean => items.some((i) => i.kind === "line" && i.clickable === true);
+
+  it("compact: collapsed one-liner (no verbatim body), clickable", () => {
+    const items = projectCompact(advisorResultDoc(), ctx);
+    expect(linesOf(items).some((t) => t.startsWith(`${TICK} Advisor has reviewed`))).toBe(true);
+    expect(linesOf(items).some((t) => t.includes(BODY))).toBe(false);
+    expect(isClickable(items)).toBe(true);
+  });
+
+  it("detail-all: expanded verbatim body, not clickable", () => {
+    const items = projectDetail(advisorResultDoc(), { ...ctx, projection: "detail-all" });
+    expect(linesOf(items)).toContain(BODY);
+    expect(isClickable(items)).toBe(false);
+  });
+
+  it("detail-collapsed (the F4 fix): expanded verbatim body, not clickable — same as detail-all, NOT compact", () => {
+    const items = projectDetail(advisorResultDoc(), { ...ctx, projection: "detail-collapsed" });
+    expect(linesOf(items)).toContain(BODY);
+    expect(isClickable(items)).toBe(false);
   });
 });
 
