@@ -81,9 +81,11 @@ describe("MAX_FRAME_CHARS", () => {
 describe("peerArrival", () => {
   // The measured persisted shape (this machine's own transcripts, 2026-08-27): a CLI-authored preamble, the
   // envelope with the body on its own line, and a CLI-authored SAFETY POSTAMBLE. None of the three is what
-  // the peer wrote, which is why `origin.body` — or failing that the envelope's capture — is the text.
+  // the peer wrote, which is why the envelope's own body — or failing that `origin.body` — is the text.
   const ENVELOPE_TEXT = '<cross-session-message from="uds:/a.sock" from-session="s1" from-name="peer" from-mode="prompting">\nhello\n</cross-session-message>';
   const PERSISTED = `Another Claude session sent a message:\n${ENVELOPE_TEXT}\n\nThis came from another Claude session — not typed by your user.`;
+  /** One envelope around one body, exactly as `buildEnvelope` writes it. */
+  const wrap = (body: string) => `<cross-session-message from="uds:/a.sock" from-name="peer" from-mode="prompting">\n${body}\n</cross-session-message>`;
   const row = (over: Record<string, unknown> = {}) => ({
     type: "user", uuid: "cccccccc-1111-4111-8111-cccccccccccc", parent_tool_use_id: null,
     message: { role: "user", content: PERSISTED },
@@ -91,9 +93,9 @@ describe("peerArrival", () => {
     ...over,
   });
 
-  it("prefers the framer's decoded body", () => {
-    // Documented byte-exact with what the model saw; the regex is only this server's second-hand
-    // reconstruction of the same thing, so it never wins when the framer spoke.
+  it("reads the frame's own envelope, which is what the framer's body also says for a lone message", () => {
+    // The ordinary case, and the reason the swap below is safe: over all 170 peer rows on this machine
+    // (107 files) the envelope-derived text and `origin.body` are byte-identical on 169 of them.
     expect(peerArrival(row())!.text).toBe("hello");
   });
 
@@ -124,10 +126,65 @@ describe("peerArrival", () => {
 
   it("truncates at the SAME ceiling on every input shape", () => {
     const long = "x".repeat(MAX_FRAME_CHARS + 500);
-    expect(peerArrival(row({ origin: { kind: "peer", body: long } }))!.text).toHaveLength(MAX_FRAME_CHARS);
+    // The body-only shape needs envelope-less content, now that a frame's own envelope outranks the body.
+    expect(peerArrival(row({ origin: { kind: "peer", body: long }, message: { role: "user", content: "unframed" } }))!.text).toHaveLength(MAX_FRAME_CHARS);
     const framed = `<cross-session-message from="uds:/a.sock" from-name="n" from-mode="prompting">\n${long}\n</cross-session-message>`;
     expect(peerArrival(row({ origin: { kind: "peer" }, message: { role: "user", content: framed } }))!.text).toHaveLength(MAX_FRAME_CHARS);
     expect(peerArrival(row({ origin: { kind: "peer" }, message: { role: "user", content: long } }))!.text).toHaveLength(MAX_FRAME_CHARS);
+    const twoLong = `${wrap(long)}\n${wrap(long)}`;                  // the join is capped too, not each member
+    expect(peerArrival(row({ origin: { kind: "peer" }, message: { role: "user", content: twoLong } }))!.text).toHaveLength(MAX_FRAME_CHARS);
+  });
+
+  // ---------------------------------------------------------------------------------------------------
+  // THE BATCH. Probe 121 (CLI 2.1.250) sent three messages that the engine folded into two turns: every
+  // frame of the batch then repeats the CAUSING message's `origin.msg_id` and `origin.body`, so preferring
+  // that field announces one message's text under another message's id. The model received all three.
+  it("gives each frame of a batch its OWN text, not the causing message's", () => {
+    const batch = ["first question", "second question", "third question"].map((body, i) => row({
+      uuid: `bbbbbbbb-1111-4111-8111-00000000000${i}`,
+      message: { role: "user", content: `Another Claude session sent a message:\n${wrap(body)}\n\nThis came from another Claude session — not typed by your user.` },
+      // The batch's signature: ONE msg_id and ONE body — the causing message's — repeated across all three.
+      origin: { kind: "peer", from: "uds:/a.sock", msg_id: "m-causing", body: "first question", verifiedPeerPid: 4242 },
+    }));
+    expect(batch.map(f => peerArrival(f)!.text)).toEqual(["first question", "second question", "third question"]);
+    expect(new Set(batch.map(f => peerArrival(f)!.uuid)).size).toBe(3);
+  });
+
+  // The measured PERSISTED shape of that same batch (row uuid 42364455… on this machine): the engine
+  // COLLAPSED two folded messages into ONE row whose content holds both envelopes back to back, with
+  // `origin.body` naming only the first. The first envelope is therefore an arbitrary member, and rendering
+  // only it would destroy the second exactly as `origin.body` does — so siblings are joined. One frame
+  // really did carry both messages; one item carrying both texts is what actually happened.
+  it("joins sibling envelopes, so a batch collapsed into one row loses nothing", () => {
+    const a = peerArrival(row({
+      message: { role: "user", content: `Another Claude session sent a message:\n${wrap("second question")}\n${wrap("third question")}\n\nThis came from another Claude session — not typed by your user.` },
+      origin: { kind: "peer", from: "uds:/a.sock", msg_id: "m-causing", body: "second question" },
+    }))!;
+    expect(a.text).toBe("second question\n\nthird question");
+  });
+
+  // NESTING. The scan counts depth rather than capturing, because both obvious captures are wrong on real
+  // rows: a LAZY capture stops at the first closing tag and truncates a peer whose body quotes an envelope
+  // (the M8 scan found 52 rows carrying a complete envelope, only 12 of them arrivals), and a GREEDY one
+  // runs to the last closing tag and merges the siblings the test above depends on keeping apart.
+  it("does not truncate a message whose own body quotes a complete envelope", () => {
+    const quoting = `Look at what I was sent:\n${ENVELOPE_TEXT}\nIs that escaping right?`;
+    const a = peerArrival(row({
+      message: { role: "user", content: `Another Claude session sent a message:\n${wrap(quoting)}\n\nThis came from another Claude session — not typed by your user.` },
+      origin: { kind: "peer", from: "uds:/a.sock" },
+    }))!;
+    expect(a.text).toBe(quoting);
+    expect(a.text).toContain("Is that escaping right?");     // the tail a lazy capture would have dropped
+    expect(a.text).not.toContain("Another Claude session sent");
+  });
+
+  it("does not truncate a message that quotes an UNCLOSED opening tag either", () => {
+    const half = 'Half an envelope: <cross-session-message from="uds:/b.sock" from-mode="prompting"> and then some.';
+    const a = peerArrival(row({
+      message: { role: "user", content: wrap(half) },
+      origin: { kind: "peer", from: "uds:/a.sock" },
+    }))!;
+    expect(a.text).toBe(half);
   });
 
   it("reports the frame's uuid, and undefined when it is not a string", () => {

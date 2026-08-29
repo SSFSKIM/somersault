@@ -67,13 +67,16 @@ describe("itemsFromTranscript", () => {
     expect(itemsFromTranscript(withPhantoms)).toEqual(itemsFromTranscript(frames)); // identical to the phantom-free fixture
   });
 
-  // Task 10c: a peer arrival's display text is the FRAMER's decoding (`origin.body`), on this path exactly
-  // as on the live one (peerInbound.ts's `noteArrival`). Task 10b gave both paths the same id — the frame's
+  // Task 10c: a peer arrival's display text is the message the peer wrote — the frame's own envelopes, and
+  // `origin.body` only where there is none (M9: probe 121 measured `origin.body` repeating the CAUSING
+  // message across a collapsed batch) — on this path exactly as on the live one (peerInbound.ts's
+  // `noteArrival`), which for a lone message like this row's is the same text either way.
+  // Task 10b gave both paths the same id — the frame's
   // own uuid — which is what lets a client dedupe the live item against the one `thread/read` returns; same
   // id plus different text is worse than either alone, because the rendered message would then depend on
   // whether anyone happened to be subscribed. Measured on this machine's transcripts (2026-08-27): the raw
   // persisted `content` also carries a CLI-added preamble the sender never wrote, so it is not the message.
-  it("Task 10c: a replayed peer arrival displays the framer's decoded body, not the raw envelope", () => {
+  it("Task 10c: a replayed peer arrival displays the decoded body, not the raw persisted content", () => {
     const rows = [{
       type: "user",
       uuid: "cccccccc-1111-4111-8111-cccccccccccc",

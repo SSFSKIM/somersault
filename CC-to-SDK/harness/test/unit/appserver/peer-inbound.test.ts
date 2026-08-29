@@ -335,14 +335,20 @@ describe("thread/peerMessage", () => {
     expect(items[0].params.item.id).toBe("aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa");
   });
 
-  it("prefers origin.body over re-parsing the envelope", async () => {
+  it("shows the FRAME's own message when origin.body disagrees — the batch case", async () => {
     const e = pushEngine();
     const { lines } = await startAccepting(e.engine);
-    // The body and the envelope text deliberately disagree; the FRAMER's decoding wins.
-    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "decoded by the framer" } }));
+    // The two disagree exactly as they do in a BATCH: probe 121 (CLI 2.1.250) measured `origin.body`
+    // repeating the CAUSING message on every frame of a folded turn, while each frame's own envelopes still
+    // carry the messages that body never names. Preferring the body here announced one message's text under
+    // another's id. NB the `thread/peerMessage` notification still carries `origin` verbatim, repeated body
+    // included — see noteArrival: that is a separate defect in what this channel offers a client.
+    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "the causing message" } }));
     e.push(LIFECYCLE("started", "foreign-b3"));
     await tick();
-    expect(JSON.stringify(notes(lines, "item/completed"))).toContain("decoded by the framer");
+    const items = JSON.stringify(notes(lines, "item/completed"));
+    expect(items).toContain("hello");
+    expect(items).not.toContain("the causing message");
   });
 
   it("falls back to the envelope when the framer supplied no body, but still needs a peer origin", async () => {

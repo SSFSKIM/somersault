@@ -167,6 +167,14 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   const arrival = peerArrival(frame);
   if (!arrival) return false;
   const origin = arrival.origin;
+  // THE ONE CASE THE READER CANNOT SEE, recorded here because THIS is where it would be visible. When
+  // several peer messages batch into one turn, every frame of the batch repeats the CAUSING message's
+  // `origin.msg_id` and `origin.body` (probe 121, CLI 2.1.250). `peerArrival` reads each frame's own
+  // envelopes instead, which is what recovers the messages that repeated body does not name — but a batched
+  // frame carrying NO envelope has its own text nowhere and falls back to that repeated body. A repeated
+  // `msg_id` ACROSS arrivals is the only evidence of a batch, and it lives in this queue rather than in any
+  // one frame, so the reader is structurally unable to see it. No such frame has been observed, nothing here
+  // acts on it, and it is a known limit rather than an oversight.
 
   // The FRAME's own uuid, never a minted one when it has one. This id is what the transcript persists, and
   // `items/replay.ts` gives a replayed user row exactly this id — which is the whole mechanism by which a
@@ -191,6 +199,13 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   // `verifiedPeerPid` is the only field in this exchange the kernel vouches for — `from` is sender-authored
   // and forgeable by any same-user process — so re-deriving the object would replace a verified fact with
   // this server's opinion of it.
+  //
+  // WHICH MEANS THIS NOTIFICATION IS NOT A SECOND COPY OF THE ITEM'S TEXT, and in a batch it disagrees with
+  // it: every member of a batch carries the CAUSING message's `origin.body` and `msg_id` beside its OWN
+  // distinct `arrivalUuid`, so a client that renders `origin.body` from here shows one message N times no
+  // matter what `peerArrival` resolved for the item. That is a defect in what this channel offers a client
+  // rather than in the reader, it is not addressed here, and closing it means deciding what `origin` means
+  // when the engine has collapsed several messages into one frame — not quietly editing a verbatim field.
   //
   // `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
   // the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
