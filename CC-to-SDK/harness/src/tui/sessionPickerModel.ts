@@ -180,7 +180,10 @@ export function isPreviewMessage(m: unknown): boolean {
   }
   if (r?.type === "assistant") {
     const c = r.message?.content;
-    return Array.isArray(c) && c.some((b: any) => b?.type === "text" && typeof b.text === "string" && b.text.trim().length > 0);
+    // bl7 T-ADVISOR Task 4 (spec §3.5, A7): `advisor_tool_result` earns a real row of its own (Task 2's
+    // render arms), so it counts toward the footer exactly as ordinary text does — not the tool_use/
+    // tool_result/thinking-only shapes above, which the picker's own view never draws a message for.
+    return Array.isArray(c) && c.some((b: any) => (b?.type === "text" && typeof b.text === "string" && b.text.trim().length > 0) || b?.type === "advisor_tool_result");
   }
   return false;
 }

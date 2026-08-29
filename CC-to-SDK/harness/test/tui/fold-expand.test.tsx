@@ -518,3 +518,36 @@ describe("T-CLICKGATE Task 3 (j): an item expanded under fullscreen does not sur
     expect(gutterBlockOf(api!).body).toHaveLength(11);    // clipped again — the expansion did not survive
   });
 });
+
+// ── bl7 T-ADVISOR TASK 4 (A7): AN ADVISOR RESULT IS A BREAKER ───────────────────────────────────────────
+// Spec §3.5: once the render arms exist (Task 2), an advisor entry flips from `neutral` (`items.length===0`
+// early-exit) to `breaker` in `entryAtom` — canon's segmenter takes the same disposition (advisor blocks
+// match no absorb/park predicate and take the flush arm). This is a PIN, not a new behavior: Task 2's render
+// arms already made the entry non-empty, so `entryAtom`'s existing "did it render something real" rule
+// already closes a still-open tool cluster the moment an advisor entry follows it — exactly as `prose` does
+// in cell (f) above ("keeps the hand-over to Static on the same anchor once a breaker closes the run").
+// EXPECT GREEN-FIRST: this cell is not expected to fail before the comment/test land; it exists so nobody
+// later "fixes" the breaker into absorption.
+const advisorResult = (toolUseId = "srv1", content: Record<string, unknown> = { type: "advisor_result", text: "looks fine", stop_reason: "end_turn" }) =>
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: "adv-1", content: [{ type: "advisor_tool_result", tool_use_id: toolUseId, content }] } }) as Record<string, unknown>;
+
+describe("T8 (g) / bl7 T-ADVISOR A7: an advisor_tool_result entry is a breaker", () => {
+  it("closes a still-open tool cluster into Static, exactly as prose would", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"),
+      advisorResult());
+    const items = projectCompact(doc, FS);
+    const rows = groupRows(items);
+    expect(rows).toHaveLength(1);                                     // the cluster PUBLISHED — a breaker closed it
+    expect(rows[0]!.id).toBe("group:read-1,bash-1:row");
+    expect(lineTexts(items).some((t) => t.includes("Advisor has reviewed"))).toBe(true);
+  });
+
+  it("control: WITHOUT the advisor entry the same cluster stays unclosed and is withheld from Static (the premise this pin rests on)", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"));
+    expect(groupRows(projectCompact(doc, FS))).toEqual([]);
+  });
+});

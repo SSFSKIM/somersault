@@ -1142,6 +1142,11 @@ const SENTINEL_TEXT = new Set(["(no content)", "No response requested."]);
  *  message breaks it only when it rendered something that is not purely thinking or a sentinel — so the
  *  ubiquitous `[thinking, tool_use]` message is NEUTRAL and stays inside the run it belongs to, and a user
  *  message carrying only a `tool_result` (which renders nothing of its own) is neutral too. */
+// bl7 T-ADVISOR Task 4 (spec §3.5, A7 — pinned in test/tui/fold-expand.test.tsx): advisor blocks
+// (`server_tool_use` name "advisor", `advisor_tool_result`) are intentionally NOT exempted here. Once
+// Task 2's render arms make their entry non-empty, the ordinary "did it render something real" rule below
+// already classifies them `breaker` — which is exactly canon's own segmenter disposition (advisor blocks
+// match no absorb/park predicate and take the flush arm). Do not special-case them into `neutral` later.
 function entryAtom(entry: TranscriptEntry, items: readonly RenderItem[]): "breaker" | "neutral" {
   if (entry.kind === "local-event") return "breaker";
   // The suppressed interrupt sentinel is the one entry whose ATOM and whose ITEMS disagree, and deliberately:

@@ -180,6 +180,15 @@ describe("sessionPickerModel — the resume outcome line and the widen controls 
     expect(isPreviewMessage({ type: "progress" })).toBe(false);
   });
 
+  // bl7 T-ADVISOR Task 4 (spec §3.5, A7): an advisor-only assistant message — Task 2's render arms give it a
+  // real row of its own (the result sentence), so it counts toward the "N messages" footer exactly as an
+  // ordinary text turn would; an assistant message whose ONLY block is `tool_use`/`tool_result` already
+  // does NOT count (line 176 above), and an advisor block is neither of those.
+  it("counts an advisor-only assistant message (advisor_tool_result), matching a real render arm", () => {
+    const advisorOnly = { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "advisor_tool_result", tool_use_id: "srv1", content: { type: "advisor_result", text: "ok", stop_reason: "end_turn" } }] } };
+    expect(isPreviewMessage(advisorOnly)).toBe(true);
+  });
+
   // WAVE 2 T8, RE-TARGETED at T-RESUME T2 onto `transcriptItems` (the picker's ONLY projection now — the
   // in-frame pane and its `previewItems`/`PREVIEW_MESSAGE_WINDOW` windowing are gone). What survives — and is
   // the half that ever mattered (qa4-07 ii) — is that `isPreviewMessage` is the ONLY thing deciding the
