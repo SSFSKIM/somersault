@@ -35,6 +35,15 @@ import type { LineSource } from "./wrapItems.js";
 import { classifyUserText, errorSentinelLines, speciesLines } from "./species.js";
 import type { ResultProjection } from "./outputFold.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
+// bl7 T-ADVISOR Task 2: `TICK()` is canon's `Ge.tick` (research-advisor.md A2(b), `L.tick` table
+// 159147680/159148349) — the advisor result rows' `✔`/`√` glyph, already shared by `banner.ts`/`PlanDialog.tsx`.
+import { TICK } from "./figures.js";
+// `resolveExpandHint` is the SAME `(ctrl+o to expand)` derivation every other folded surface in this file's
+// caller (toolRenderer.tsx) already reads off `opts.expandHint` — reused here rather than re-invented so the
+// advisor result hint can never drift from the chip a rebind moves everywhere else (species.ts, toolRenderer.tsx).
+import { resolveExpandHint } from "./keys/hints.js";
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
 /** Prepend `pad` to a line's leading text — to BOTH the plain fallback and the first segment (if any). */
 function indentLine(l: RenderLine, pad: string): RenderLine {
@@ -197,7 +206,26 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *  threads the right ordinal back in per block; a caller that hands the WHOLE content array in one call (the
  *  direct/live path, and every test below) gets a correct count for free from the fallback counter inside
  *  the loop and never needs to set this. */
-export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string; imageOrdinal?: number }
+/** bl7 T-ADVISOR Task 2 (spec §3.2/§3.3): the render context the assistant loop's two advisor arms need and
+ *  cannot derive from a single content block alone.
+ *  - `resolvedIds`/`erroredIds` are `AdvisorResolution.resolved`/`.errored` (advisorState.ts) — canon's
+ *    `eGt`/`uur`/`tGt` (research-advisor.md 163035026-163035350), computed ONCE per projection by the caller
+ *    (`toolRenderer.tsx`'s `buildAnchoredEntries`), never per block.
+ *  - `expanded` is canon's `Fr` (`verbose || isTranscriptMode`, A1 detail 2) — Task 3 wires the real
+ *    click-toggle state on top of this same field; until then it reads the projection's own verbose/detail knob.
+ *  - `clickHintSuppressed` is canon's `Gj` context (A2, "the affordance replaces the instruction") — Task 3
+ *    owns the exact per-row clickability predicate; this field is what it will set.
+ *  - `model` is D15: the CLIENT'S OWN `config.advisorModel`, never the SDK frame's `message.model` (the MAIN
+ *    model). Printed VERBATIM — ccx has no model catalog reachable from this pure module to prettify it the
+ *    way canon's `cs()` does (a recorded divergence, not a gap: the value is whatever the operator configured). */
+export interface AdvisorRenderContext { resolvedIds: ReadonlySet<string>; erroredIds: ReadonlySet<string>; expanded: boolean; clickHintSuppressed: boolean; model?: string }
+export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string; imageOrdinal?: number; advisor?: AdvisorRenderContext }
+/** Defaults for every field a caller omits — direct `renderMessage` callers outside `projectMessageEntry`
+ *  (every test, and `thinkingRowItems`'s synthetic thinking-only message, which never reaches an advisor
+ *  block anyway) never set `opts.advisor` at all. Unresolved/no-model/collapsed/hint-shown is the honest
+ *  "nothing is known yet" reading, matching `resolveExpandHint`'s own absent-means-fallback rule. */
+const DEFAULT_ADVISOR_CONTEXT: AdvisorRenderContext = Object.freeze({ resolvedIds: new Set<string>(), erroredIds: new Set<string>(), expanded: false, clickHintSuppressed: false });
+const advisorContext = (opts: RenderMessageOptions): AdvisorRenderContext => opts.advisor ?? DEFAULT_ADVISOR_CONTEXT;
 
 /** Map one SDK message to renderable lines — the NON-TOOL species only. `tool_use`/`tool_result` blocks are
  *  deliberately absent since F1 Task 4: every tool row goes through `renderToolEvent` instead, so there is
@@ -231,6 +259,73 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
         if (thinking) out.push(...withThinkingGutter(renderMarkdown(thinking, { width: opts.width, dim: true, cwd: opts.cwd })));
       }
       else if (b?.type === "redacted_thinking" && opts.showThinking === true) out.push({ ...THINKING_PLACEHOLDER });
+      // bl7 T-ADVISOR Task 2 — the IN-FLIGHT row (spec §3.2, canon `bm`'s `server_tool_use` arm,
+      // research-advisor.md A2(a) @176900223). Every OTHER `server_tool_use` name is canon's error-boundary
+      // row (`EU`'s two tool-search names render null, everything else throws); a clone that renders only
+      // `name==="advisor"` and drops the rest silently is the recorded benign divergence (A1 detail 3).
+      else if (b?.type === "server_tool_use") {
+        if (b.name === "advisor") {
+          const advisor = advisorContext(opts);
+          const id = typeof b.id === "string" ? b.id : undefined;
+          // canon `Ua`/`qn` (Eo @176899688): unresolved while NOT in `resolvedIds`; `erroredIds` only ever
+          // holds ids ALSO in `resolvedIds` (advisorState.ts's two passes always add both together), so the
+          // unresolved check must come first.
+          const unresolved = id === undefined || !advisor.resolvedIds.has(id);
+          const errored = id !== undefined && advisor.erroredIds.has(id);
+          // `vr` (154578178): `⏺` darwin / `●` else. Glyph+space is the gutter's own 2-column width — the
+          // same convention `withAssistantBullet`'s gutter above uses; canon's `Box{minWidth:2}` has no
+          // RenderLine equivalent (Task 1's doc), so the space is baked into the text instead.
+          const glyph = `${opts.platform === "darwin" ? "⏺" : "●"} `;
+          const gutter: Gutter = { text: glyph, dim: unresolved, ...(unresolved ? {} : { color: resolveThemeColor(themeTokens()[errored ? "error" : "success"]) }) };
+          const modelClause = advisor.model ? ` using ${advisor.model}` : "";
+          out.push({ text: `Advising${modelClause}`, gutter, segments: [{ text: "Advising", bold: true }, ...(advisor.model ? [{ text: modelClause, dim: true }] : [])] });
+        }
+      }
+      // bl7 T-ADVISOR Task 2 — the RESULT rows (spec §3.2/D10, canon `bm`'s `advisor_tool_result` arm,
+      // research-advisor.md A2(b) @176901301). No gutter, no indent, never through `renderMarkdown` (D10 —
+      // the expanded `advisor_result` body is ONE plain dim Text, byte-verbatim). Order matters: canon checks
+      // "declined" (`sle`/`Que`, A3) BEFORE the content-type switch, so a declined `advisor_result` never
+      // falls into the ordinary advisor_result arm below.
+      else if (b?.type === "advisor_tool_result") {
+        const advisor = advisorContext(opts);
+        const content: unknown = b.content;
+        const hint = advisor.clickHintSuppressed ? "" : resolveExpandHint(opts.expandHint);
+        const declined = isRecord(content) && content.stop_reason === "refusal";
+        if (declined) {
+          // `V9e` (159209664): the reason is ONLY read off an `advisor_result` shape's own `text` field — a
+          // declined `advisor_redacted_result` (no `text` field at all) never has a reason to reveal.
+          const reason = isRecord(content) && content.type === "advisor_result" && typeof content.text === "string" && content.text.length > 0 ? content.text : undefined;
+          const warningColor = resolveThemeColor(themeTokens().warning);
+          const DECLINED_TEXT = "Advisor declined to advise on this request";
+          if (advisor.expanded) {
+            // `Fr&&Yn!==void 0`: expanded drops the hint unconditionally (there is no case where BOTH an
+            // offer to expand and the expansion itself are on screen) and, only with a reason, appends it as
+            // its own dim row below — never inline with the warning line.
+            out.push({ text: DECLINED_TEXT, color: warningColor });
+            if (reason !== undefined) out.push({ text: reason, dim: true });
+          } else if (reason !== undefined && hint !== "") {
+            out.push({ text: `${DECLINED_TEXT} ${hint}`, segments: [{ text: DECLINED_TEXT, color: warningColor }, { text: ` ${hint}`, dim: true }] });
+          } else {
+            out.push({ text: DECLINED_TEXT, color: warningColor });
+          }
+        } else if (isRecord(content) && content.type === "advisor_tool_result_error") {
+          // `z0e` (159209011) narrows an unrecognised code to `"unknown"` server-side; ccx trusts the wire
+          // and falls back the same way rather than re-validating the closed `error_code` union client-side.
+          const code = typeof content.error_code === "string" && content.error_code.length > 0 ? content.error_code : "unknown";
+          out.push({ text: `Advisor unavailable (${code})`, color: resolveThemeColor(themeTokens().error) });
+        } else if (isRecord(content) && content.type === "advisor_result") {
+          if (advisor.expanded) out.push({ text: typeof content.text === "string" ? content.text : "", dim: true });
+          else {
+            const sentence = `${TICK()} Advisor has reviewed the conversation and will apply the feedback `;   // trailing space — canon literal
+            out.push({ text: hint !== "" ? sentence + hint : sentence, dim: true });
+          }
+        } else if (isRecord(content) && content.type === "advisor_redacted_result") {
+          // No trailing space, no hint, identical collapsed/expanded — canon's redacted row is never clickable.
+          out.push({ text: `${TICK()} Advisor has reviewed the conversation and will apply the feedback`, dim: true });
+        }
+        // else: unknown content.type — canon fires a one-shot `tengu_advisor_unknown_content` telemetry event
+        // and renders null. ccx has no telemetry sink on this path; rendering nothing is the whole divergence.
+      }
     }
     return out;
   }

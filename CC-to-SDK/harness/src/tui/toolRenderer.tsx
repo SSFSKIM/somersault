@@ -27,6 +27,7 @@ import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
+import { advisorResolution, type AdvisorResolution } from "./advisorState.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { osc8Open, OSC8_CLOSE } from "./osc8.js";
@@ -154,7 +155,12 @@ export type { ResultProjection };
  *  INPUT, and is cleared at the same two boundaries (a renderer flip, a rebuilt transcript) for the same
  *  reason — a rebuilt document reuses the same tool-use ids, and an expansion left standing would open an
  *  unrelated call on sight. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; }
+/** `advisorModel` (bl7 T-ADVISOR Task 2, spec D15): the CLIENT'S OWN advisor-model config, threaded down to
+ *  the advisor in-flight row's `" using {model}"` clause — NEVER the SDK frame's own `message.model` (the
+ *  MAIN model, a different fact). Like `cwd`/`home`, this is session-constant (set at launch, not a live
+ *  `/config` toggle in this ticket's scope) and deliberately NOT in `knobKey` for the same reason those are
+ *  not: no cached row can outlive a value that never changes for the life of a `useChat`. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; advisorModel?: string; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
@@ -782,8 +788,13 @@ function agentLifecycleItem(event: ToolEvent, normalized: NormalizedToolResult, 
  *  caller, `buildAnchoredEntries`, already holds them. `renderMessage` consumes `width` today; `platform`
  *  and `showThinking` are threaded here so Tasks 8/9 land inside render.ts alone. The DERIVATION: thinking is
  *  hidden only in the default folded view — every detail (ctrl+o) projection and every verbose read shows it,
- *  which is exactly `projection !== "compact" || verbose`. */
-export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions, base?: string): readonly RenderItem[] {
+ *  which is exactly `projection !== "compact" || verbose`.
+ *
+ *  `advisor` (bl7 T-ADVISOR Task 2) is the SAME lookups bundle `buildAnchoredEntries` computes ONCE per
+ *  projection (spec §3.3) — never rebuilt per block, per message, or inside this function, since it depends
+ *  only on document content and the outer `anchoredEntries` cache already invalidates on `revision()`. */
+const EMPTY_ADVISOR_IDS: ReadonlySet<string> = new Set();
+export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions, base?: string, advisor?: AdvisorResolution): readonly RenderItem[] {
   // F4 Task 10b adds `projection` + `expandHint`: `species.ts`'s `bash-output` is a FOLDED body (upstream folds
   // it through the very `p2`/`y_s` a tool result uses), so it needs the same "how much" knob every other body
   // takes, and its overflow marker offers the same live chord.
@@ -807,7 +818,18 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
   const imageOrdinalAt = content.map((block) => (isRecord(block) && block.type === "image" ? ++imageOrdinal : undefined));
   content.forEach((block, index) => {
     if (!isRecord(block) || block.type === "tool_use" || block.type === "tool_result") return;
-    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index] }).entries())
+    // bl7 T-ADVISOR Task 2 (spec §3.2/D15): the two advisor block kinds are the only ones that need a render
+    // context render.ts cannot derive from a lone content block. `expanded`/`clickHintSuppressed` read the
+    // same verbose/detail and fullscreen knobs every other folded surface in this file already derives from
+    // — Task 3 replaces `expanded` with the real per-row click-toggle state (`options.expandedItems`) and
+    // narrows `clickHintSuppressed` to the exact clickability predicate; until then this is canon-legal
+    // (§3.2: `Fr = verbose || isTranscriptMode`) and not a placeholder that renders wrong.
+    const advisorOpts = block.type === "server_tool_use" || block.type === "advisor_tool_result"
+      ? { resolvedIds: advisor?.resolved ?? EMPTY_ADVISOR_IDS, erroredIds: advisor?.errored ?? EMPTY_ADVISOR_IDS,
+          expanded: options.projection === "detail-all" || options.verbose, clickHintSuppressed: options.fullscreen === true,
+          model: options.advisorModel }
+      : undefined;
+    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index], advisor: advisorOpts }).entries())
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
       items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), ownerKey: sdkOwnerKey(id), line });
@@ -1164,7 +1186,13 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
   const anchored: Anchored[] = [];
   const occurrences = new Map<string, number>();
   let open: { name: string; count: number; record: Anchored } | undefined;
-  for (const entry of document.entries()) {
+  const allEntries = document.entries();
+  // bl7 T-ADVISOR Task 2 (spec §3.3): resolution is computed ONCE per projection, over every retained
+  // sdk-message entry in document order — never per block, never per message — because it depends only on
+  // document content, which is exactly what already invalidates the outer `anchoredEntries` cache
+  // (`revision()`, this function's sole caller). `local-event` entries carry no `.message` and are excluded.
+  const advisor = advisorResolution(allEntries.filter((e): e is SdkEntry => e.kind === "sdk-message"));
+  for (const entry of allEntries) {
     // A local visual breaks a fold run because it DRAWS between the two halves. One that projects to nothing
     // in this projection (a transcript-only info notice under compact) draws no such thing, so it is neutral
     // there and the reads around it still fold into one row — the same reasoning as the absorbed teammate
@@ -1187,7 +1215,7 @@ function buildAnchoredEntries(document: TranscriptDocument, options: ProjectionO
       anchored.push({ sequence: entry.sequence, rank: 0, items: [], atom: "neutral" });
       continue;
     }
-    const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`);
+    const items = projectMessageEntry(entry, options, entry.identity ?? `${key}:${occurrence}`, advisor);
     const identity = sdkMessageIdentity(entry.message);
     const thinkingBody = identity === undefined ? undefined : thinkingBodyOf(entry.message);
     const thinking = thinkingBody === undefined ? undefined : thinkingBody.replace(/\s+/g, " ");
