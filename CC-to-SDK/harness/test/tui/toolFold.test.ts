@@ -981,16 +981,32 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
   // issued first (callSequence 1) but settles last (resultSequence 5, trailing/open-ended flush). Windowing
   // each run independently — B's `[2,4)`, A's `[1,∞)` — makes both windows cover `afterSequence: 3`, so a hook
   // stamped there without shared consumption would double-count into both `hookInfos`.
-  it("(i) reordering — B(call2/result3), breaker(4), A(call1/result5): a hook at afterSequence 3 lands in exactly ONE run", () => {
+  //
+  // Re-review G1 (spec D12 causal invariant): a PreToolUse pair for a member always arrives BEFORE that
+  // member's own tool_result frame, so an entry with `afterSequence >= run's own last resultSequence` is
+  // causally impossible for that run no matter what flush order claims it first. B's ONLY member settles at
+  // resultSequence 3, so B's window caps at `min(boundary, 3) = 3` — the hook at `afterSequence: 3` sits ON
+  // that cap's exclusive edge and is causally impossible for B (it arrived no earlier than B's own result).
+  // It is, however, well inside A's still-open window `[1, min(∞, 5)) = [1,5)`, so the cap resolves the
+  // ambiguity in A's favor — the flush-order claim the F2 fix relied on was the wrong tiebreaker here.
+  it("(i) reordering — B(call2/result3), breaker(4), A(call1/result5): a hook at afterSequence 3 is causally impossible for B and lands in A", () => {
     const items = segmentRuns([
       atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
       { kind: "breaker", sequence: 100, messageSequence: 4 },
       atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
     ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
     const [runB, runA] = groups(items);
-    expect(runB!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111 }]);
-    expect(runA!.counts.hookCount).toBeUndefined();   // NOT re-claimed by the still-open trailing run
+    expect(runB!.counts.hookCount).toBeUndefined();   // causally impossible for B: 3 >= B's own resultSequence
+    expect(runA!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111 }]);
     const totalHookCount = groups(items).reduce((n, g) => n + (g.counts.hookCount ?? 0), 0);
     expect(totalHookCount).toBe(1);                   // never more groups claim an entry than entries exist
+  });
+
+  // Re-review G1: the cap is a no-op on the normal, in-order case — `min(boundary, resultSequence)` still
+  // contains the call's own `callSequence`, so nothing here regresses cell (a)/(c)'s coverage above.
+  it("(j) the causal cap never excludes a hook stamped strictly before the run's own result (normal order unaffected)", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
   });
 });

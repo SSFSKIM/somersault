@@ -349,6 +349,9 @@ const THOUGHT_CAP_MS = 600000;
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
+  /** Re-review G1: the largest `resultSequence` among this run's SETTLED members so far — `resolveRunHooks`'s
+   *  causal cap (see its doc comment). `undefined` until the run's first member settles. */
+  lastResultSequence?: number;
   thoughtForMs: number; latestThinkingSummary?: string; absorbedThinking: AbsorbedThinking[];
   bashCount: number; bashCommands: Map<string, string>;
   gitOpBashCount: number; commits: GitCommitOp[]; pushes: GitPushOp[]; branches: GitBranchOp[]; prs: GitPrOp[];
@@ -406,6 +409,9 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   // BEFORE the silent early return, on the same line of reasoning `open` is: canon's in-flight scan reads the
   // cluster's whole tool-use id set (`DBr(e)`, 518464), which a silently absorbed member joins.
   if (event.result === undefined) { run.open = true; run.newestInFlight = event.id; }
+  // Re-review G1: tracked for BOTH visible and silent members (before the silent early return below), since
+  // a silently-absorbed member's own result frame is just as causally binding on `resolveRunHooks`'s cap.
+  else run.lastResultSequence = run.lastResultSequence === undefined ? event.result.resultSequence : Math.max(run.lastResultSequence, event.result.resultSequence);
   const command = stringField(event.input, "command");
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
@@ -484,14 +490,27 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  follows settle order), so the run whose window closes first wins any entry inside an overlap. `matched`
  *  hands the caller exactly the entries this call counted, so the caller can add them to that set — this
  *  function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
- *  `hooksAbsorbed` check below, must not claim what it only peeked at). */
+ *  `hooksAbsorbed` check below, must not claim what it only peeked at).
+ *
+ *  `lastResultSequence` (re-review G1, spec D12's causal invariant): a PreToolUse pair for a member always
+ *  arrives BEFORE that member's own `tool_result` frame — the wire never emits a hook response after the
+ *  result it gates — so an entry with `afterSequence >= this run's own last resultSequence` is causally
+ *  IMPOSSIBLE for this run no matter what `boundary` or the `consumed` flush-order tiebreak says: it arrived
+ *  no earlier than a member's result already did. Capping the window's upper bound at
+ *  `min(boundary, lastResultSequence)` removes impossible entries BEFORE the flush-order tiebreak ever sees
+ *  them, so a still-open overlapping run downstream is never starved of an entry an earlier, already-closed
+ *  run could never have owned (`toolFold.test.ts` cell (i)). Normal order is unaffected: a call's own hook
+ *  stamps at `afterSequence === callSequence`, strictly before that same call's `resultSequence`, so
+ *  `[anchorSequence, min(boundary, resultSequence))` still contains it. `undefined` means the run has no
+ *  settled member yet, so the window is bounded by `boundary` alone. */
 function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined,
-    consumed?: ReadonlySet<HookRunEntry>): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
+    consumed?: ReadonlySet<HookRunEntry>, lastResultSequence?: number): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
   if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0, matched: [] };
+  const cap = lastResultSequence === undefined ? boundary : Math.min(boundary, lastResultSequence);
   const infos: HookInfo[] = [], matched: HookRunEntry[] = [];
   let totalMs = 0;
   for (const entry of hookRuns) {
-    if (entry.afterSequence < anchorSequence || entry.afterSequence >= boundary || consumed?.has(entry)) continue;
+    if (entry.afterSequence < anchorSequence || entry.afterSequence >= cap || consumed?.has(entry)) continue;
     infos.push({ name: entry.name, durationMs: entry.durationMs });
     matched.push(entry);
     totalMs += entry.durationMs;
@@ -559,7 +578,7 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
     if (run.memberIds.length > 0 && run.visibleMembers > 0) {
-      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, hookClaims);
+      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, hookClaims, run.lastResultSequence);
       for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
       out.push({ kind: "group", group: emit(run, hooks) });
     }
@@ -602,6 +621,25 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
       if (candidate.messageSequence !== undefined && inside(candidate.messageSequence)) return false;
     }
     return true;
+  };
+  // Re-review G2 (spec D12 causal invariant): a DIFFERENT question from `windowIsClear` above, asked only at
+  // the hook-widening site below. `windowIsClear`'s strictly-inside test is right for MEMBERSHIP — a sibling
+  // whose own call/result never lands inside `(from, to)` did not interfere with this call's relocation — but
+  // it is blind to a sibling that SPANS the window entirely (issued before `from`, still open past `to`):
+  // neither of ITS endpoints is strictly inside either, yet a PreToolUse pair for THAT sibling can arrive
+  // anywhere across its own open span, including exactly on `from` — the same position a call's OWN hook
+  // stamps at (`afterSequence === callSequence`). Widening the boundary to `to` in that shape sweeps in a hook
+  // that is causally the SPANNING sibling's, never this call's, so widening must be refused whenever one
+  // exists — independent of the membership question `windowIsClear` already answered correctly.
+  const hasSpanningSibling = (event: ToolEvent, self: number): boolean => {
+    const from = event.callSequence, to = event.result!.resultSequence;
+    for (let other = 0; other < atoms.length; other++) {
+      if (other === self) continue;
+      const candidate = atoms[other]!;
+      if (candidate.kind === "tool" && candidate.event.result !== undefined &&
+          candidate.event.callSequence < from && candidate.event.result.resultSequence >= to) return true;
+    }
+    return false;
   };
   for (let index = 0; index < atoms.length; index++) {
     const atom = atoms[index]!;
@@ -647,15 +685,23 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // emitted `hookInfos` — even though canon's own raw-message-stream segmenter has already counted it
           // by the time it evaluates this same pop-out condition (the hook message always precedes the result
           // in the wire order). The fix widens the boundary to this call's `resultSequence` ONLY when
-          // `windowIsClear` already holds: a clear window means no other atom's call/result sequence lies
-          // strictly inside `(callSequence, resultSequence)`, so widening can only pull in `C`'s OWN hook, never
+          // `safeToWiden` holds (re-review G2 narrowed this from `windowIsClear` alone): a clear window means
+          // no other atom's call/result sequence lies strictly inside `(callSequence, resultSequence)`, and no
+          // spanning sibling means no OTHER call's own open span straddles it either, so widening can only
+          // pull in `C`'s OWN hook, never
           // a foreign one. When the window is not clear, relocation is refused regardless, so the boundary stays
           // at `callSequence` and no new misattribution risk opens up. `consumed: hookClaims` (F2) keeps this a
           // pure peek at what earlier flushes haven't already claimed — it reads the shared set but never
           // writes it (see `resolveRunHooks`'s doc); only `flush`'s own resolution below claims for real.
+          // Re-review G2: `ownWindowClear` alone answers the MEMBERSHIP question (does relocation proceed?)
+          // and is deliberately left untouched by a spanning sibling — that sibling interfered with nothing
+          // strictly inside this call's own window, so relocation is not suppressed by it. Widening is a
+          // NARROWER question (`safeToWiden`, above), refused whenever a spanning sibling exists even though
+          // membership itself stays clear (`hasSpanningSibling`'s doc comment).
           const ownWindowClear = windowIsClear(atom.event, index);
-          const hookBoundary = ownWindowClear ? atom.event.result!.resultSequence : atom.event.callSequence;
-          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, hookClaims).infos.length > 0;
+          const safeToWiden = ownWindowClear && !hasSpanningSibling(atom.event, index);
+          const hookBoundary = safeToWiden ? atom.event.result!.resultSequence : atom.event.callSequence;
+          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, hookClaims, run.lastResultSequence).infos.length > 0;
           if (!hooksAbsorbed && ownWindowClear) run.memberIds.pop();
           // Boundary = the SAME `hookBoundary` the guard above just resolved against (spec D12): the flush
           // happens because this call's result just settled, and sharing the boundary is what keeps the

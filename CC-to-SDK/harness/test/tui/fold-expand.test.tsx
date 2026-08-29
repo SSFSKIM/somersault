@@ -730,6 +730,42 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
   });
 });
 
+// Re-review G2 (spec D12 causal invariant): `windowIsClear`'s strictly-inside test only catches a sibling
+// whose OWN call or result lands inside the failing call's `(from, to)` window — it misses a sibling that
+// SPANS the window entirely (issued before `from`, still open past `to`), because neither of ITS endpoints
+// is strictly inside either. Such a spanning sibling is not membership "interference" (nothing of its own
+// landed between the failing call and its result, so relocation must still proceed), but its pending
+// PreToolUse hook can land anywhere across its own open span — including exactly on the failing call's own
+// boundary — and that hook is causally the SPANNING sibling's, never the closing call's. Widening must be
+// refused whenever a spanning sibling exists, independent of whether relocation itself proceeds.
+describe("bl7 re-review G2: a spanning sibling refuses widening without suppressing relocation", () => {
+  it("A(call1/result6) spans C(call4/err5): C still pops out, but the hook is NOT swept into C's group — it resolves to A's, causally, once G1's cap applies", () => {
+    const doc = built(
+      call("a-1", "Read", { file_path: "/work/a.ts" }),                      // opens first, stays open (spans everything below)
+      call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"), // an ordinary completed sibling, settles before C
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      result("a-1"),                                                        // A finally settles AFTER C's error
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    // Stamped at exactly todo-1's own callSequence — the normal-order shape that F3's widening exists to
+    // catch — but here it is A's own pending hook (A is still open at that position), not todo-1's.
+    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    // Relocation still proceeds: a spanning sibling is not "interference" in the membership sense, so
+    // todo-1 pops out into its own standalone row exactly as the hookless baseline does.
+    // a-1's collapsed row coexists with its own hooks gutter block (spec §2.5 form 2) — that block is the
+    // proof the hook resolved to a-1's group and not todo-1's departed one.
+    const compact = groupRows(projectCompact(doc, options));
+    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row", "group:a-1:row", "group:a-1:hooks"]);
+    // The hook is not attributed to todo-1's (now-departed) window at all: mid-1's group absorbed nothing.
+    const expandedMid = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) }));
+    expect(expandedMid.join("\n")).not.toContain("PreToolUse");
+    // It belongs, causally, to A — still open when the hook fired — and G1's cap lets A's own (trailing,
+    // wide-open) window resolve it once the two fixes compose.
+    const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
+    expect(expandedA.some((t) => t.includes("PreToolUse:TodoWrite"))).toBe(true);
+  });
+});
+
 // bl7 T-HOOKBLOCK Task 3, review carry-forward (4): canon @162916xxx —
 // `if(!(u.hookCount>0||(u.relevantMemories?.length??0)>0)&&B.length>0&&…)` — a cluster that absorbed a
 // PreToolUse hook never relocates its errored member out, even when `windowIsClear` would otherwise allow it.
