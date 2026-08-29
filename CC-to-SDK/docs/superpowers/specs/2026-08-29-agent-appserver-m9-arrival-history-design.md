@@ -221,6 +221,13 @@ Two properties make this safe, and the existing pager already requires both of t
   before. `boundaryRow`'s bisection (subscribe.ts:28-61) rests on exactly that predicate, so it keeps
   working unmodified.
 
+**A row carrying several items is not a new case for this pager; it is the case it was built for.**
+Its own header says rows and items are not 1:1 because "one row can complete several items", and its
+guarantee is that no discarded item's opening row is ever excluded from every future window — no
+loss, with duplication across a straddling boundary tolerated and deduped by id. An arrival riding
+its anchor is precisely a row that completes several items, and it carries a stable id (the arrival
+uuid, the same one `thread/peerMessage` announced), so it is deduped by the machinery already there.
+
 **Because an arrival rides a row rather than occupying one, the cursor arithmetic never changes.**
 `boundaryRow` still returns a raw row index, `base` is still a raw row offset, and the emitted cursor
 is still `` `${record.epoch}:${begin}` ``.
@@ -369,7 +376,11 @@ in here.
 12. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
     `^\d+:\d+$` and a rewind still invalidates them with the same `INVALID_PARAMS` message. No
     schema file changes in this stage (D1).
-13. **A `limit:1` walk across a session with arrivals terminates and yields every item exactly once.**
+13. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
+    appears at least once and its id is stable across pages. Not "exactly once": the pager's existing
+    contract is no-loss plus dedupe-by-id, because `boundaryRow` returns the smallest prefix holding
+    every discarded id and a row straddling that boundary is legitimately re-fetched. An arrival
+    inherits that contract rather than being held to a stronger one.
 14. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, the
     arrival does not appear, and no other item's position moves.
 15. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
