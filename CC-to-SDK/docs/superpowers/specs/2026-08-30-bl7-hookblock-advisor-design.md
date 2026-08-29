@@ -358,6 +358,12 @@ kills quantified over ≥5 runs when probabilistic. Live: A8 keyed cell in `test
   instruction.
 - Advisor blocks today die silently in `render.ts` (no default arm) — NOT via a species fallthrough; the gap
   is invisible to live-vs-resume diffing because it is symmetric.
+- The collapsed clause form (hook count as the row's ONLY sentence clause, bold count) is LATENT in ccx: the
+  only runs that could produce it are all-silently-absorbed-tool runs, which `segmentRuns` deliberately drops
+  before rendering (pre-bl7 divergence). Canon routes hooks on such runs to the standalone renderer `Qy` —
+  out of scope this round. Found by the Task 5 walk (no covering test existed); resolved by pinning the
+  branch's contract with a direct unit-level test rather than deleting canon-shaped code, and by logging the
+  hooks-on-silent-run display as backlog alongside the standalone renderer.
 
 ## 9. Outcomes & Retrospective
 
