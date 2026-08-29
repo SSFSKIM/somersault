@@ -5,16 +5,16 @@
 // over-reporting. Each test below is one of those, driven through a real filesystem root because a mocked
 // fs would test the mock's ordering rather than rename's.
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
+import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } from "../../../src/peer/arrivalLog.js";
 
-// The lost-increment race needs a SECOND PROCESS writing this session's marker between our rename and our
-// read-back, which no test can schedule for real. So it is INJECTED at that seam: the hook fires the
-// instant a marker rename lands, and one test below uses it to hand-write the count a competing writer
-// would have left behind. That is a simulation of the race, not the race — what it exercises for real is
-// the store's response to finding a marker that is not the one it just wrote.
+// A second process writing this session's marker INSIDE the store's critical section is not something a
+// test can schedule for real, so it is injected at the seam: the hook below fires the instant a marker
+// rename lands — i.e. mid-section — and the two race tests use it to run a competitor there. That is a
+// simulation of the race, not the race; what it exercises for real is the exclusion, and the store's
+// answer when exclusion is not available.
 const race = vi.hoisted(() => ({ afterMarkerRename: null as (() => void) | null }));
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
@@ -26,6 +26,21 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
+
+/** A competing process's eviction, done the way the store does one and RESPECTING THE LOCK: claim it,
+ *  drop the oldest entry, write the count derived from the base it read before our append began. Same
+ *  base means it writes the same `dropped` WE write — bytes identical to ours, which is why no read-back
+ *  can ever notice this one. Returns whether it got to run: excluded is the correct outcome, and the only
+ *  thing standing between this fixture and a silently short count. */
+const competingEviction = (dir: string, base: { dropped: number; seqHigh: number }): boolean => {
+  let fd: number;
+  try { fd = openSync(join(dir, ".marker.lock"), "wx", 0o600); } catch { return false; }
+  try {
+    unlinkSync(join(dir, readdirSync(dir).filter((f) => f.startsWith("e-")).sort()[0]));
+    writeFileSync(join(dir, "marker.json"), JSON.stringify({ dropped: base.dropped + 1, seqHigh: base.seqHigh }));
+    return true;
+  } finally { closeSync(fd); unlinkSync(join(dir, ".marker.lock")); }
+};
 
 const entry = (n: number, over: Partial<ArrivalEntry> = {}): ArrivalEntry => ({
   v: 1, id: `id-${String(n).padStart(3, "0")}`, sessionId: "s1",
@@ -94,7 +109,36 @@ describe("fsArrivalStore", () => {
     expect(reopened.isDegraded("s1")).toBe(true);
     expect(reopened.counts("s1")).toEqual({ logged: ARRIVAL_LOG_CAP + 1, dropped: 1 });
   });
-  it("a lost dropped increment degrades instead of under-reporting (injected two-writer race)", () => {
+  it("a same-base competitor is excluded from the marker RMW, so the count stays exact", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));   // no eviction yet: no marker file
+    const dir = join(root, "s1");
+    // The competitor's base is the marker as it stood before this append — absent, so `dropped: 0`. It
+    // therefore writes the very value we write, the lost update that leaves no trace to read back.
+    let ran: boolean | null = null;
+    race.afterMarkerRename = () => {
+      race.afterMarkerRename = null;
+      ran = competingEviction(dir, { dropped: 0, seqHigh: -1 });
+    };
+    try { store.append(entry(ARRIVAL_LOG_CAP)); } finally { race.afterMarkerRename = null; }
+    expect(ran).toBe(false);                                            // the lock held it out
+    expect(store.counts("s1")).toEqual({ logged: ARRIVAL_LOG_CAP + 1, dropped: 1 });
+    expect(store.isDegraded("s1")).toBe(false);                         // exact, so nothing to disclaim
+  });
+  it("a lock a live competitor never releases degrades the count but still records the message", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    store.append(entry(0));
+    writeFileSync(join(root, "s1", ".marker.lock"), "");                // fresh mtime: a live holder
+    const started = Date.now();
+    store.append(entry(1));
+    expect(Date.now() - started).toBeLessThan(1000);                    // bounded wait, never a block
+    expect(store.readAll("s1").map((e) => e.seq)).toEqual([0, 1]);      // the message is not lost
+    expect(store.isDegraded("s1")).toBe(true);                          // but the count no longer claims
+    expect(fsArrivalStore(root).isDegraded("s1")).toBe(true);
+  });
+  it("a writer that ignores the lock entirely is still caught by the read-back assertion", () => {
     const root = mkdtempSync(join(tmpdir(), "arr-"));
     const store = fsArrivalStore(root);
     for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
