@@ -4,11 +4,28 @@
 // against, and a crash between "count the victim" and "delete the victim" has to resolve toward
 // over-reporting. Each test below is one of those, driven through a real filesystem root because a mocked
 // fs would test the mock's ordering rather than rename's.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } from "../../../src/peer/arrivalLog.js";
+
+// The lost-increment race needs a SECOND PROCESS writing this session's marker between our rename and our
+// read-back, which no test can schedule for real. So it is INJECTED at that seam: the hook fires the
+// instant a marker rename lands, and one test below uses it to hand-write the count a competing writer
+// would have left behind. That is a simulation of the race, not the race — what it exercises for real is
+// the store's response to finding a marker that is not the one it just wrote.
+const race = vi.hoisted(() => ({ afterMarkerRename: null as (() => void) | null }));
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...real,
+    renameSync: (from: Parameters<typeof real.renameSync>[0], to: Parameters<typeof real.renameSync>[1]) => {
+      real.renameSync(from, to);
+      if (String(to).endsWith("marker.json")) race.afterMarkerRename?.();
+    },
+  };
+});
 
 const entry = (n: number, over: Partial<ArrivalEntry> = {}): ArrivalEntry => ({
   v: 1, id: `id-${String(n).padStart(3, "0")}`, sessionId: "s1",
@@ -76,6 +93,20 @@ describe("fsArrivalStore", () => {
     const reopened = fsArrivalStore(root);
     expect(reopened.isDegraded("s1")).toBe(true);
     expect(reopened.counts("s1")).toEqual({ logged: ARRIVAL_LOG_CAP + 1, dropped: 1 });
+  });
+  it("a lost dropped increment degrades instead of under-reporting (injected two-writer race)", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    // Stand in for the competing process: overwrite the marker inside the store's write/read-back window,
+    // which is what a lost read-modify-write looks like from this side. One shot, then disarm.
+    race.afterMarkerRename = () => {
+      race.afterMarkerRename = null;
+      writeFileSync(join(root, "s1", "marker.json"), JSON.stringify({ dropped: 99, seqHigh: 99 }));
+    };
+    try { store.append(entry(ARRIVAL_LOG_CAP)); } finally { race.afterMarkerRename = null; }
+    expect(store.isDegraded("s1")).toBe(true);
+    expect(fsArrivalStore(root).isDegraded("s1")).toBe(true);   // and the flag reached the disk
   });
   it("an unreadable marker is degraded and UNKNOWN, never silently zero (the power-loss shape)", () => {
     const root = mkdtempSync(join(tmpdir(), "arr-"));

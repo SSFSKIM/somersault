@@ -12,11 +12,18 @@
 // and counted dropped — an over-report by exactly one, which reveals a gap that isn't there; the reverse
 // would falsely certify a complete history. The direction is chosen, and the file is arranged around it.
 //
-// One file per entry, temp-then-rename — not one appended JSONL. Rename gives atomic visibility (no
-// reader ever sees a torn entry, no interleaving between two app-server processes) without a lock. It is
-// NOT a durability claim: power loss before the metadata flush can take the newest entries, and the spec
-// claims exactly atomic visibility, an over-report-safe count, and a degraded signal as durable as the
-// store it describes — nothing more.
+// WHAT CONCURRENCY BUYS AND WHAT IT DOES NOT. Two app-server processes can hold one sessionId — nothing
+// stops two `serve` processes resuming the same session — so the claims here are scoped to what the code
+// delivers against that. For ENTRY FILES: temp-then-rename, so no reader sees a torn entry and no writer
+// clobbers another's (one file per entry, not one appended JSONL, and no lock needed for either). For the
+// COUNT: exact under a single writer, and LOUD rather than wrong under several. `dropped` is a lock-free
+// read-modify-write that concurrent evictions would silently lose, so every marker write is read back and
+// a value that is not the one this process just wrote latches degraded — an honest "I cannot tell you"
+// where the alternative was a number quietly too small.
+//
+// None of it is a durability claim: power loss before the metadata flush can take the newest entries, and
+// the spec claims exactly atomic visibility, an over-report-safe count, and a degraded signal as durable
+// as the store it describes — nothing more.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -136,6 +143,23 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
     writeAtomic(dir, MARKER_FILE, JSON.stringify(body));
   };
 
+  /** Write, then READ BACK. Incrementing `dropped` is a read-modify-write with no lock around it, and two
+   *  processes evicting from one session lose increments the way any lost update does — measured at 12%
+   *  of evictions under a 600+600 append race, with nothing to show for it. A lock is the wrong answer on
+   *  a path that runs inside the read loop; detecting the loss is the cheap one. A marker that does not
+   *  read back as what we just wrote means someone else is writing it, so the count is no longer ours to
+   *  vouch for: latch degraded, adopt THEIR state (never our stale one — that is the clobber that started
+   *  it), and carry the flag forward so the rest of this eviction cannot erase it. */
+  const writeMarkerChecked = (dir: string, sessionId: string, s: MarkerState): MarkerState => {
+    writeMarker(dir, s);
+    const back = readMarker(sessionId);
+    if (back.dropped === s.dropped) return s;
+    degradedLatch.add(sessionId);
+    const merged: MarkerState = { ...back, degraded: true };
+    try { writeMarker(dir, merged); } catch { /* the latch stands; the flag is best-effort as ever */ }
+    return merged;
+  };
+
   /** Every entry file in the directory, in `(seq, id)` order — which `readdirSync().sort()` gives for
    *  free, because the name embeds a zero-padded seq ahead of the id. Nothing here parses a body, and
    *  nothing here judges a seq: what is on disk is retained, full stop. */
@@ -151,12 +175,14 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
   };
 
   /** "Skip unparseable entries" has to cover "parsed, but not an entry" — a stray `[]` or `123` would
-   *  otherwise reach the projector as an item whose every field is undefined (roster.ts's rule). */
+   *  otherwise reach the projector as an item whose every field is undefined (roster.ts's rule). The
+   *  `anchor` KEY has to be present, not merely nullable: a file missing it reads as neither confirmed
+   *  empty nor anchored, collapsing the two states the type above exists to keep apart. */
   const readEntry = (dir: string, file: string): ArrivalEntry | null => {
     let parsed: unknown;
     try { parsed = JSON.parse(readFileSync(join(dir, file), "utf8")); } catch { return null; }
     const e = parsed as ArrivalEntry;
-    const ok = e && typeof e === "object" && e.v === 1
+    const ok = e && typeof e === "object" && e.v === 1 && "anchor" in e
       && typeof e.id === "string" && typeof e.sessionId === "string"
       && typeof e.seq === "number" && typeof e.text === "string";
     return ok ? e : null;
@@ -172,8 +198,7 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
       // landed between counting it and deleting it. Delete it now WITHOUT counting it again.
       if (marker.pending) {
         unlinkIfPresent(join(dir, marker.pending));
-        marker = { ...marker, pending: undefined };
-        writeMarker(dir, marker);
+        marker = writeMarkerChecked(dir, e.sessionId, { ...marker, pending: undefined });
       }
 
       writeAtomic(dir, `e-${String(e.seq).padStart(6, "0")}-${e.id}.json`, JSON.stringify(e));
@@ -184,19 +209,21 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
       if (files.length <= ARRIVAL_LOG_CAP) return;
       while (files.length > ARRIVAL_LOG_CAP) {
         const victim = files[0];
-        marker = {
+        marker = writeMarkerChecked(dir, e.sessionId, {
           ...marker,
           dropped: marker.dropped === null ? null : marker.dropped + 1,
           seqHigh: Math.max(marker.seqHigh, files[files.length - 1].seq),
           pending: victim.file,
-        };
-        writeMarker(dir, marker);
+        });
         unlinkIfPresent(join(dir, victim.file));
         files = files.slice(1);
       }
-      writeMarker(dir, { ...marker, pending: undefined });
+      writeMarkerChecked(dir, e.sessionId, { ...marker, pending: undefined });
     },
 
+    /** The cap is EVENTUALLY at most `ARRIVAL_LOG_CAP`, not always: a crash partway through a multi-victim
+     *  eviction leaves the surplus on disk until the next `append` sheds it. Consumers must not treat the
+     *  returned length as a hard bound. */
     readAll(sessionId: string): ArrivalEntry[] {
       const dir = dirOf(sessionId);
       const out: ArrivalEntry[] = [];
