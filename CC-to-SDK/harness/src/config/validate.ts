@@ -24,6 +24,12 @@ export const harnessConfigSchema = z.looseObject({
   promptCacheTtl: z.enum(["5m", "1h"]).optional(),
   subagentPromptCacheTtl: z.enum(["5m", "1h"]).optional(),
   mcpToolTimeoutMs: z.number().int().positive().optional(),
+  // Only the DATA fields — decide/annotate/onSwitch are functions no JSON boundary can carry, and
+  // looseObject leaves a programmatic caller's callbacks untouched.
+  modelSwitchPolicy: z.looseObject({
+    allowModels: z.array(z.string()).optional(),
+    maxCacheWriteUsd: z.number().nonnegative().optional(),
+  }).optional(),
   sandbox: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
   telemetry: z.looseObject({ endpoint: z.string().min(1) }).optional(),
 });

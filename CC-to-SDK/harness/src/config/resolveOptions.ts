@@ -124,6 +124,7 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.onElicitation) options.onElicitation = config.onElicitation;
   if (config.onUserDialog) options.onUserDialog = config.onUserDialog;
   if (config.supportedDialogKinds) options.supportedDialogKinds = config.supportedDialogKinds;
+  if (config.perTaskStopAffordance !== undefined) options.perTaskStopAffordance = config.perTaskStopAffordance;
   if (config.spawnClaudeCodeProcess) options.spawnClaudeCodeProcess = config.spawnClaudeCodeProcess;
   if (config.pathToClaudeCodeExecutable) options.pathToClaudeCodeExecutable = config.pathToClaudeCodeExecutable;
   if (config.executable) options.executable = config.executable;
@@ -164,16 +165,16 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
 }
 
 /** Stamp `timeout` onto every MCP server config that does not declare its own (a declared value always
- *  wins). New objects throughout — no caller's map or server config is mutated. Only server shapes the
- *  SDK declares `timeout` on are touched: `type:"sdk"` instances and stdio configs (explicit
- *  `type:"stdio"` or the type-less `command` form); http/sse configs pass through untouched rather than
- *  gaining a field their schema does not declare. */
+ *  wins). New objects throughout — no caller's map or server config is mutated. The SDK declares
+ *  `timeout` on all five server shapes, so all five are stamped: `type:"sdk"` instances, stdio configs
+ *  (explicit `type:"stdio"` or the type-less `command` form), and `type:"http"` / `type:"sse"` remotes. */
 export function stampMcpTimeouts(servers: Record<string, unknown>, timeoutMs: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, cfg] of Object.entries(servers)) {
     const c = cfg as Record<string, unknown> | null;
     const stampable = c && typeof c === "object" && c.timeout === undefined
-      && (c.type === "sdk" || c.type === "stdio" || (c.type === undefined && typeof c.command === "string"));
+      && (c.type === "sdk" || c.type === "stdio" || c.type === "http" || c.type === "sse"
+        || (c.type === undefined && typeof c.command === "string"));
     out[name] = stampable ? { ...c, timeout: timeoutMs } : cfg;
   }
   return out;

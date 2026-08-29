@@ -18,6 +18,11 @@ describe("validateHarnessConfig", () => {
     expect(() => validateHarnessConfig({ thinking: { type: "enabled", budgetTokens: -1 } })).toThrow(/thinking|budgetTokens/); // negative budget invalid
     expect(() => validateHarnessConfig({ maxTurns: "five" as any })).toThrow(/maxTurns/);
   });
+  it("checks modelSwitchPolicy's data fields and leaves its callbacks alone", () => {
+    expect(() => validateHarnessConfig({ modelSwitchPolicy: { allowModels: ["sonnet"], maxCacheWriteUsd: 0.5, decide: () => ({}) } })).not.toThrow();
+    expect(() => validateHarnessConfig({ modelSwitchPolicy: { allowModels: "sonnet" } })).toThrow(/modelSwitchPolicy.allowModels/);
+    expect(() => validateHarnessConfig({ modelSwitchPolicy: { maxCacheWriteUsd: -1 } })).toThrow(/maxCacheWriteUsd/);
+  });
 });
 describe("validateDaemonOptions", () => {
   it("accepts valid daemon options and rejects a bad restart / negative bound", () => {

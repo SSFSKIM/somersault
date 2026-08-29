@@ -260,6 +260,20 @@ describe("DaemonSupervisor", () => {
     expect(cap[0].mcpServers).toHaveProperty("probe");
     await sup.shutdown();
   });
+  it("daemon sessions declare perTaskStopAffordance by default; a factory value still wins", async () => {
+    const cap: any[] = [];
+    const sup = new DaemonSupervisor({ query: captureQuery(cap) }, { dir: dir() });
+    sup.spawn();
+    expect(cap[0].perTaskStopAffordance).toBe(true);
+    await sup.shutdown();
+    const cap2: any[] = [];
+    const sup2 = new DaemonSupervisor({ query: captureQuery(cap2) }, {
+      dir: dir(), sessionOptions: () => ({ perTaskStopAffordance: false }),
+    });
+    sup2.spawn();
+    expect(cap2[0].perTaskStopAffordance).toBe(false);
+    await sup2.shutdown();
+  });
   it("a restarted session receives fresh factory options too (compose with D2)", async () => {
     const cap: any[] = [];
     let calls = 0;

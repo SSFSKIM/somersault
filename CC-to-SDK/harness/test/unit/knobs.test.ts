@@ -26,6 +26,7 @@ const TABLE: [keyof HarnessConfig, unknown, string, unknown?][] = [
   ["onElicitation", noop, "onElicitation"],
   ["onUserDialog", noop, "onUserDialog"],
   ["supportedDialogKinds", ["refusal_fallback_prompt"], "supportedDialogKinds"],
+  ["perTaskStopAffordance", true, "perTaskStopAffordance"],
   ["spawnClaudeCodeProcess", spawn, "spawnClaudeCodeProcess"],
   ["pathToClaudeCodeExecutable", "/opt/claude/cli.js", "pathToClaudeCodeExecutable"],
   ["executable", "node", "executable"],
@@ -75,7 +76,7 @@ describe("0.3.251 knobs (Wave C)", () => {
     expect(resolveOptions({})).not.toHaveProperty("settings");
   });
 
-  it("mcpToolTimeoutMs stamps sdk- and stdio-shaped servers that declare no timeout of their own", () => {
+  it("mcpToolTimeoutMs stamps every server shape that declares no timeout of its own", () => {
     const opts = resolveOptions({
       mcpToolTimeoutMs: 30_000,
       mcpServers: {
@@ -83,12 +84,14 @@ describe("0.3.251 knobs (Wave C)", () => {
         piped: { command: "server-bin" } as any,             // type-less stdio form
         declared: { type: "sdk", name: "declared", timeout: 5_000 } as any,
         remote: { type: "http", url: "https://mcp.example" } as any,
+        streamed: { type: "sse", url: "https://sse.example" } as any,
       },
     }) as any;
     expect(opts.mcpServers.inproc.timeout).toBe(30_000);
     expect(opts.mcpServers.piped.timeout).toBe(30_000);
     expect(opts.mcpServers.declared.timeout).toBe(5_000);    // a server's own timeout always wins
-    expect(opts.mcpServers.remote).not.toHaveProperty("timeout"); // http schema declares no timeout
+    expect(opts.mcpServers.remote.timeout).toBe(30_000);     // http declares `timeout` too
+    expect(opts.mcpServers.streamed.timeout).toBe(30_000);
   });
 
   it("mcpToolTimeoutMs does not mutate the caller's server configs", () => {

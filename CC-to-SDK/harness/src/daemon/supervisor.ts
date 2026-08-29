@@ -411,6 +411,9 @@ export class DaemonSupervisor {
     const extra = this.sessionOptions?.(id);                 // fresh servers + tool posture for THIS session
     const options = extra ? { ...base, ...extra } : base;    // factory keys win (unchanged contract)
     options.canUseTool = createPermissionGate(this.pending.brokerFor(id)); // daemon broker wins — set LAST
+    // The daemon DOES render a per-task stop control (its `stop_task` op → Session.stopTask), so it
+    // declares the affordance; an explicit value from the sessionOptions factory still wins.
+    if (options.perTaskStopAffordance === undefined) options.perTaskStopAffordance = true;
     // W3.2 warm path — ONLY when the pool's frozen options are exactly what this session would run
     // with: default model/mode, no resume/rewind (baked into Options), and nothing that mutates
     // Options per-session (sessionOptions factory, contextTool/compactTool MCP wrapping). Anything

@@ -160,6 +160,10 @@ export interface HarnessConfig {
   onElicitation?: OnElicitation;           // MCP elicitation handler (probe 43b ✅ stdio round-trip)
   onUserDialog?: OnUserDialog;             // request_user_dialog handler (probe 43: wireable, NO deterministic headless trigger)
   supportedDialogKinds?: string[];         // dialog kinds onUserDialog actually renders — CLI fails closed on absence
+  /** Declared = this consumer renders a per-task stop control, so an interrupt SPARES running background
+   *  tasks and each is stopped individually instead. Probes 126/126b measured that sparing already holding
+   *  on this transport; setting it pins the documented contract rather than relying on the observation. */
+  perTaskStopAffordance?: boolean;
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // custom CLI child placement (probe 50 ✅ end-to-end)
   // process plumbing
   pathToClaudeCodeExecutable?: string;

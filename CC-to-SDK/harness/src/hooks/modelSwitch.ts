@@ -22,7 +22,7 @@ export interface ModelSwitchPolicy {
   annotate?: (input: PostModelSwitchHookInput) => string | null | undefined | Promise<string | null | undefined>;
   /** Observability tap, both phases ("pre" carries the composed denial reason). Errors swallowed —
    *  an observer must never break a switch (the `observe` builder's rule). */
-  onSwitch?: (phase: "pre" | "post", input: PreModelSwitchHookInput | PostModelSwitchHookInput, denied?: string) => void;
+  onSwitch?: (phase: "pre" | "post", input: PreModelSwitchHookInput | PostModelSwitchHookInput, denied?: string) => void | Promise<void>;
 }
 
 const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
@@ -57,13 +57,13 @@ export function buildModelSwitchHooks(policy: ModelSwitchPolicy): HooksMap {
       const d = await policy.decide(input);
       if (!reason && d && "block" in d && d.block) reason = d.reason ?? "blocked by decide()";
     }
-    try { policy.onSwitch?.("pre", input, reason ? `${REASON_PREFIX}: ${reason}` : undefined); } catch { /* tap must not break the switch */ }
+    try { await policy.onSwitch?.("pre", input, reason ? `${REASON_PREFIX}: ${reason}` : undefined); } catch { /* tap must not break the switch */ }
     if (!reason) return {}; // no opinion — an interactive host's cache-miss confirm stays intact (spec decision 2)
     return { hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision: "deny", permissionDecisionReason: `${REASON_PREFIX}: ${reason}` } } as never;
   };
   const post: HookCallback = async (raw) => {
     const input = raw as PostModelSwitchHookInput;
-    try { policy.onSwitch?.("post", input); } catch { /* tap must not break the switch */ }
+    try { await policy.onSwitch?.("post", input); } catch { /* tap must not break the switch */ }
     const text = policy.annotate ? await policy.annotate(input) : undefined;
     if (text == null || text === "") return {};
     return { hookSpecificOutput: { hookEventName: "PostModelSwitch", additionalContext: text } } as never;

@@ -70,6 +70,12 @@ describe("model-switch policy (Wave D, probe 121)", () => {
     expect(denyReason(await firePre({ allowModels: ["haiku"], onSwitch: () => { throw new Error("tap boom"); } }))).toBeDefined();
   });
 
+  it("an ASYNC throwing tap is swallowed on both phases (its rejection is awaited, not left unhandled)", async () => {
+    const onSwitch = async () => { throw new Error("async tap boom"); };
+    expect(denyReason(await firePre({ allowModels: ["haiku"], onSwitch }))).toBeDefined();
+    expect(await firePost({ onSwitch })).toEqual({});
+  });
+
   it("resolveOptions mounts the policy's hooks and merges them AFTER a user fragment", () => {
     const userCb = async () => ({});
     const opts = resolveOptions({
