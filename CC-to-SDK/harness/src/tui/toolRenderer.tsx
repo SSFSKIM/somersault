@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, hookHeaderText, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, hookHeaderText, hookSeconds, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -44,6 +44,12 @@ export { TOOL_RESULT_GUTTER };
 /** The ACTIVE group row's own hint gutter (R4.6, `X8o = 5`): 2 spaces, the connector, 2 PLAIN spaces. Upstream
  *  keeps it distinct from the tool-result gutter above (which ends in the NBSP); both are exactly five columns. */
 export const GROUP_HINT_GUTTER = "  \u23bf  " as const;
+/** bl7 T-HOOKBLOCK Task 3: the expanded block's PER-HOOK gutter, canon @177046924 verbatim \u2014
+ *  `"     \u23bf "`, FIVE spaces, the connector, ONE space. Deliberately a DIFFERENT width from
+ *  `GROUP_HINT_GUTTER` above (that one is the block's own HEADER gutter, which reuses the identical 5-column
+ *  string) \u2014 canon paints both gutters as plain text inside one `<Text dimColor>`, never through a separate
+ *  connector column, so neither needs to fit `gutter-block`'s fixed-width constants. */
+const HOOK_LINE_GUTTER = "     \u23bf " as const;
 /** Upstream `PAH` (L428157): the thinking summary's hint body is clamped to this many rendered lines. */
 const HINT_MAX_LINES = 10;
 /** `wrap` is set ONLY by the tool header (LT10: upstream's `wrap:"truncate-end"` — an MCP-length name must
@@ -590,7 +596,7 @@ export const toolItemId = (toolUseId: string, resultSequence: number | "pending"
 /** A fold group's identity is its MEMBERSHIP, with no sequence component: the member tool-use ids are already
  *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
  *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
-export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row" | "hooks"): string => `group:${memberIds.join(",")}:${part}`;
+export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row" | "hooks" | "expanded-hooks-header" | `expanded-hook-${number}`): string => `group:${memberIds.join(",")}:${part}`;
 /** F3 Task 8, on exactly the same principle: an agent batch's identity is its MEMBERSHIP — the joined
  *  member tool-use ids — with the sequence left out, so two replay dividers cannot re-key a settled unit.
  *  Membership here never grows (a batch is one assistant message, complete the moment it is parsed), so the
@@ -1069,7 +1075,31 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
   }
   for (const thought of group.absorbedThinking ?? []) entries.push({ key: thought.messageSequence, rank: 0, items: thinkingRowItems(thought, anchorId, options) });
   entries.sort((a, b) => a.key - b.key || a.rank - b.rank);
-  return entries.flatMap((entry) => entry.items);
+  const memberItems = entries.flatMap((entry) => entry.items);
+  // bl7 T-HOOKBLOCK Task 3, spec §2.5 "Expanded block" — canon @177046924, appended AFTER the sorted
+  // member/thinking interleave above and taking NO part in its sort: canon's fixed order is
+  // task-notifications → (thinking ∥ members) → hook block → memories (expansion branch @177046212). Both
+  // line kinds are `kind: "line"`, never `gutter-block`: canon paints each as one bare `<Text dimColor>`
+  // wrapping an `aria-hidden` gutter child — a single flat dim run, not a separate five-column connector
+  // column — and the per-hook gutter (`HOOK_LINE_GUTTER`, 7 chars) isn't one of that kind's two fixed-width
+  // constants anyway. No leading blank line and no `marginTop` (unlike `thinkingRowItems` above): canon's own
+  // fragment butts directly against the last member row. GATE IS `hookInfos.length > 0` — deliberately NOT
+  // `hookTotalMs > 0`, which is what the two COLLAPSED forms gate on instead (`groupRowLine`/`groupItems`
+  // above): a batch of all-zero-duration hooks still gets this block even though it would print nothing in a
+  // collapsed row (spec §2.5's closing line, "the three presentations are not gated identically").
+  if (group.hookInfos === undefined || group.hookInfos.length === 0) return memberItems;
+  const grey = resolveThemeColor(themeTokens().inactive);
+  const hookHeader: RenderItem = {
+    kind: "line", id: toolGroupItemId(group.memberIds, "expanded-hooks-header"), ownerKey: groupOwnerKey(group.memberIds),
+    line: { text: `${GROUP_HINT_GUTTER}${hookHeaderText(group.counts.hookCount ?? group.hookInfos.length, group.counts.hookTotalMs ?? 0)}`, dim: true, color: grey },
+    foldAnchor: anchorId, expanded: true,
+  };
+  const hookLines: RenderItem[] = group.hookInfos.map((hook, index) => ({
+    kind: "line", id: toolGroupItemId(group.memberIds, `expanded-hook-${index}`), ownerKey: groupOwnerKey(group.memberIds),
+    line: { text: `${HOOK_LINE_GUTTER}${hook.name} (${hookSeconds(hook.durationMs)})`, dim: true, color: grey },
+    foldAnchor: anchorId, expanded: true,
+  }));
+  return [...memberItems, hookHeader, ...hookLines];
 }
 
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */

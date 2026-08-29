@@ -584,3 +584,115 @@ describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the r
     expect(allText(items)).not.toContain("PreToolUse");
   });
 });
+
+// bl7 T-HOOKBLOCK Task 3, spec §2.5 "Expanded block" — canon @177046924, appended AFTER the sorted
+// member/thinking interleave `expandedMemberItems` above already builds, taking NO part in its sort. Values
+// chosen (200ms/200ms) so `toFixed(1)` has no float-edge ambiguity (0.35 would format as "0.3", not "0.4").
+describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook block", () => {
+  const oneRead = () => built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+  const readSequence = (doc: TranscriptDocument) => doc.toolEvents()[0]!.callSequence;
+
+  it("(a) header + two per-hook lines, exact gutters, dim, AFTER the member row", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const hookRuns = [
+      { name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence },
+      { name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence },
+    ];
+    const items = projectCompact(doc, { ...FS, hookRuns, expandedFolds: new Set(["read-1"]) });
+    const texts = lineTexts(items);
+    const iMember = texts.findIndex((t) => t.includes("Read(a.ts)"));
+    const iHeader = texts.indexOf("  ⎿  Ran 2 PreToolUse hooks (0.4s)");
+    const iHook1 = texts.indexOf("     ⎿ PreToolUse:Read (0.2s)");
+    const iHook2 = texts.lastIndexOf("     ⎿ PreToolUse:Read (0.2s)");
+    expect(iMember).toBeGreaterThanOrEqual(0);
+    expect(iHeader).toBeGreaterThan(iMember);
+    expect(iHook1).toBeGreaterThan(iHeader);
+    expect(iHook2).toBeGreaterThan(iHook1);
+    // Both lines are `kind: "line"`, dim — never `gutter-block` (the per-hook gutter is 7 chars, not one of
+    // that kind's two fixed five-column constants), and tagged like every other expanded-cluster row.
+    const header = items.find((i) => i.kind === "line" && unlink((i as { line: RenderLine }).line.text) === "  ⎿  Ran 2 PreToolUse hooks (0.4s)")!;
+    expect((header as { line: RenderLine }).line.dim).toBe(true);
+    expect(header.foldAnchor).toBe("read-1");
+    expect(header.expanded).toBe(true);
+  });
+
+  it("(b) hookCount 1 renders singular 'hook'", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }], expandedFolds: new Set(["read-1"]) });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.2s)");
+  });
+
+  it("(c) zero hooks: the block strings are ABSENT from the expanded output (feature-kill guard)", () => {
+    const doc = oneRead();
+    const items = projectCompact(doc, { ...FS, expandedFolds: new Set(["read-1"]) }); // no hookRuns at all
+    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("(d) gates on hookInfos non-empty, NOT on hookTotalMs > 0 (a zero-duration hook still gets the block)", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 0, afterSequence: callSequence }], expandedFolds: new Set(["read-1"]) });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.0s)");
+    expect(lineTexts(items)).toContain("     ⎿ PreToolUse:Read (0.0s)");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 3, review carry-forward (2): pins that the RARE flush paths — the errored
+// `popsOutOnError` pop-out (line ~611) and the non-collapsible standalone close (line ~622) — use the
+// FLUSHING CALL'S OWN `callSequence` as the hook-attribution boundary (spec D12), never its `resultSequence`
+// (always later) and never `Infinity`. A hook stamped AT exactly that boundary sits on the exclusive edge and
+// must be excluded from the run being closed; Task 2's implementation already does this (`flush(atom.event
+// .callSequence)` at both sites), so these are expected GREEN on first run — pinning, not driving, the
+// behavior (reviewer note: report this rather than manufacturing an artificial red).
+describe("bl7 T-HOOKBLOCK Task 3, carry-forward: the rare flush paths close on the flushing call's own callSequence", () => {
+  it("popsOutOnError pop-out flush: a hook stamped at the failing call's OWN callSequence is excluded from the run it closes", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const items = projectCompact(doc, {
+      ...FS, expandedFolds: new Set(["read-1"]),
+      hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }],
+    });
+    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence is excluded from the run it closes", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("web-1", "WebFetch", { url: "https://example.com" }), result("web-1", "body"));
+    const webSequence = doc.toolEvents().find((e) => e.id === "web-1")!.callSequence;
+    const items = projectCompact(doc, {
+      ...FS, expandedFolds: new Set(["read-1"]),
+      hookRuns: [{ name: "PreToolUse:WebFetch", durationMs: 300, afterSequence: webSequence }],
+    });
+    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 3, review carry-forward (4): canon @162916xxx —
+// `if(!(u.hookCount>0||(u.relevantMemories?.length??0)>0)&&B.length>0&&…)` — a cluster that absorbed a
+// PreToolUse hook never relocates its errored member out, even when `windowIsClear` would otherwise allow it.
+// ccx has no `relevantMemories` counter (unreachable, spec §4), so the OR narrows to the one operand we can
+// build: hooks resolved for the run's window up to the failing call's own `callSequence` (the same boundary
+// its flush closes on).
+describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocated out of a run that absorbed a hook (canon @162916xxx)", () => {
+  const doc = () => built(
+    call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+    call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+    prose("done"));
+
+  it("baseline: pops out normally when the window is clear and NO hooks were absorbed", () => {
+    const items = groupRows(projectCompact(doc(), FS));
+    expect(items[0]!.id).toBe("group:read-1:row");
+  });
+
+  it("does NOT pop out when the run already absorbed a PreToolUse hook, even though the window is otherwise clear", () => {
+    const readSequence = doc().toolEvents().find((e) => e.id === "read-1")!.callSequence;
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence }] }));
+    expect(items[0]!.id).toBe("group:read-1,todo-1:row");
+  });
+});

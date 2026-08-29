@@ -460,7 +460,15 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  end-of-stream still absorbs). An entry in a pre-run or between-run gap matches no run's window and is
  *  silently dropped — canon routes those to its standalone renderer, out of scope (spec §2.6). No early-exit on
  *  `hookRuns`'s documented afterSequence ordering (Task 1's invariant): this scan doesn't need it and the
- *  reviewer note says not to lean on sortedness beyond what the model requires. */
+ *  reviewer note says not to lean on sortedness beyond what the model requires.
+ *  Ports canon's own accumulation, 2.1.251 offsets: the segmenter arm at @162916448 —
+ *  `else if(u.messages.length>0&&jar(x)) u.hookCount+=x.hookCount, u.hookTotalMs+=x.totalDurationMs??x
+ *  .hookInfos.reduce((U,B)=>U+(B.durationMs??0),0), u.hookInfos.push(...x.hookInfos)` — gated by the predicate
+ *  `jar` at @162906900: `function jar(e){return e.type==="system"&&e.subtype==="stop_hook_summary"&&e
+ *  .hookLabel==="PreToolUse"}`. Canon absorbs a whole `stop_hook_summary` MESSAGE per match; ccx has no such
+ *  message (the wire has no `tool_use_id` either — spec D2), so this function is the call-time equivalent
+ *  built over per-pair `HookRunEntry`s instead — hence `anchorSequence <= afterSequence < boundary` in place
+ *  of `u.messages.length>0`. */
 function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined): { infos: HookInfo[]; totalMs: number } {
   if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0 };
   const infos: HookInfo[] = [];
@@ -605,7 +613,14 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // standalone must be SKIPPED there or the failure renders twice. Canon has no such problem — it keeps
           // the `tool_use` in the cluster and pushes the `tool_result` standalone, two halves of one call; our
           // atoms carry both halves together and cannot be split that way.
-          if (windowIsClear(atom.event, index)) run.memberIds.pop();
+          // bl7 T-HOOKBLOCK Task 3, canon @162916xxx verbatim: `if(!(u.hookCount>0||(u.relevantMemories
+          // ?.length??0)>0)&&B.length>0&&…)` — a run that absorbed a PreToolUse hook (or, in canon,
+          // `relevantMemories`; unreachable here, spec §4) never relocates its errored member out, even when
+          // `windowIsClear` would otherwise allow it. Resolved against the SAME boundary the flush just below
+          // closes on (this call's own `callSequence`, never its `resultSequence`), because that is exactly
+          // the window whose hooks would render alongside the member being considered for relocation.
+          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, atom.event.callSequence, options.hookRuns).infos.length > 0;
+          if (!hooksAbsorbed && windowIsClear(atom.event, index)) run.memberIds.pop();
           // Boundary = this call's own call-time position (spec D12): the flush happens because ITS result
           // just settled, and the call-time attribution model never reasons from a result sequence.
           flush(atom.event.callSequence);
