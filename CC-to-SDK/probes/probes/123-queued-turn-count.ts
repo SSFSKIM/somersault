@@ -65,6 +65,7 @@ const q = query({
 });
 
 let pushed = false;
+let bcPushed = false;
 let results = 0;
 for await (const m of q as AsyncIterable<Record<string, unknown>>) {
   if (m.type === "assistant" && !pushed) {
@@ -73,6 +74,7 @@ for await (const m of q as AsyncIterable<Record<string, unknown>>) {
     setTimeout(() => {
       push("Reply with exactly: DONE-B", uuids.b);
       push("Reply with exactly: DONE-C", uuids.c);
+      bcPushed = true;
       log("pushed B and C while turn 1 runs");
     }, 1_000);
   }
@@ -83,6 +85,12 @@ for await (const m of q as AsyncIterable<Record<string, unknown>>) {
     if (results >= 3 || (results >= 2 && echo === "C")) end();
     // Give a possible trailing result a moment, then close regardless.
     if (results >= 2) setTimeout(end, 20_000);
+    // FOLD OUTCOME: B and C were already queued, yet result #1 counts nothing outstanding — the sends
+    // were absorbed into turn 1, so no further result is coming and nothing else would ever call end().
+    if (results === 1 && bcPushed && m.queued_turn_count === 0) {
+      log("fold outcome detected (queued_turn_count 0 with B+C already pushed) — closing after a 15s grace");
+      setTimeout(end, 15_000);
+    }
   }
 }
 log("stream closed after", results, "results");

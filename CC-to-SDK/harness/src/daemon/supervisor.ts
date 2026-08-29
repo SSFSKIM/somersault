@@ -5,6 +5,7 @@ import type { UserTurnInput } from "../session/turnInput.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
+import type { ModelSwitchPolicy } from "../hooks/modelSwitch.js";
 import { createWarmPool } from "../warm/pool.js";
 import type { WarmPool } from "../warm/pool.js";
 import { PendingPermissions } from "../permissions/pending.js";
@@ -73,6 +74,7 @@ export class DaemonSupervisor {
   private contextTool: boolean;
   private compactTool: boolean;
   private telemetry?: TelemetryConfig;                    // daemon-wide OTel env gates (W3.1)
+  private modelSwitchPolicy?: ModelSwitchPolicy;          // daemon-wide model-switch governance (Wave D)
   private warmPool?: WarmPool;                            // pre-warmed default-config subprocesses (W3.2)
   private warmIds = new Set<string>();                    // sessions born from a warm slot (registry flag)
   private pending: PendingPermissions;
@@ -91,8 +93,9 @@ export class DaemonSupervisor {
     this.contextTool = opts.contextTool ?? false;
     this.compactTool = opts.compactTool ?? false;
     this.telemetry = opts.telemetry;
+    this.modelSwitchPolicy = opts.modelSwitchPolicy;
     if (opts.warmPool) this.warmPool = createWarmPool(
-      { ...(opts.telemetry ? { telemetry: opts.telemetry } : {}) },       // = a default spawn's resolveOptions input
+      { perTaskStopAffordance: true, ...(opts.telemetry ? { telemetry: opts.telemetry } : {}), ...(opts.modelSwitchPolicy ? { modelSwitchPolicy: opts.modelSwitchPolicy } : {}) }, // = a default spawn's resolveOptions input
       { size: opts.warmPool.size, ...(deps.startup ? { deps: { startup: deps.startup } } : {}) },
     );
     this.pending = new PendingPermissions({ expireAfterMs: opts.permissionTimeoutMs ?? 30_000, now: this.now });
@@ -403,6 +406,10 @@ export class DaemonSupervisor {
       model: cfg.model,                                      // already opus-4-8-defaulted by spawn(); resolveOptions is idempotent
       permissionMode: cfg.permissionMode as PermissionMode | undefined,
       ...(this.telemetry ? { telemetry: this.telemetry } : {}),  // daemon-wide OTel export (W3.1)
+      ...(this.modelSwitchPolicy ? { modelSwitchPolicy: this.modelSwitchPolicy } : {}), // daemon-wide switch governance (Wave D)
+      // The daemon DOES render a per-task stop control (its `stop_task` op → Session.stopTask), so it
+      // declares the affordance; an explicit value from the sessionOptions factory still wins (`extra` spreads over `base`).
+      perTaskStopAffordance: true,
       ...(resume ? { resume } : {}),
       // Rewind anchor (cleared after the branch's first submit). Idempotent if re-applied before then:
       // truncating at an anchor that is already the transcript tail is a no-op (probes 37/37b).
@@ -411,9 +418,6 @@ export class DaemonSupervisor {
     const extra = this.sessionOptions?.(id);                 // fresh servers + tool posture for THIS session
     const options = extra ? { ...base, ...extra } : base;    // factory keys win (unchanged contract)
     options.canUseTool = createPermissionGate(this.pending.brokerFor(id)); // daemon broker wins — set LAST
-    // The daemon DOES render a per-task stop control (its `stop_task` op → Session.stopTask), so it
-    // declares the affordance; an explicit value from the sessionOptions factory still wins.
-    if (options.perTaskStopAffordance === undefined) options.perTaskStopAffordance = true;
     // W3.2 warm path — ONLY when the pool's frozen options are exactly what this session would run
     // with: default model/mode, no resume/rewind (baked into Options), and nothing that mutates
     // Options per-session (sessionOptions factory, contextTool/compactTool MCP wrapping). Anything

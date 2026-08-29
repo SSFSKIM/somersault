@@ -33,6 +33,7 @@ function inAllowList(list: string[], input: PreModelSwitchHookInput): boolean {
   const requested = norm(input.requested_model);
   return list.some((entry) => {
     const e = norm(entry);
+    if (!e) return false;                 // a blank entry would exact-match a null requested_model (both norm to "")
     if (/^[a-z]+$/.test(e)) return to.startsWith(`claude-${e}-`) || requested === e;
     return to === e || requested === e;
   });

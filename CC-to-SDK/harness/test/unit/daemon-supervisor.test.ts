@@ -274,6 +274,16 @@ describe("DaemonSupervisor", () => {
     expect(cap2[0].perTaskStopAffordance).toBe(false);
     await sup2.shutdown();
   });
+  it("a daemon-wide modelSwitchPolicy governs every session's setModel (mounted as hooks)", async () => {
+    const cap: any[] = [];
+    const sup = new DaemonSupervisor({ query: captureQuery(cap) }, {
+      dir: dir(), modelSwitchPolicy: { allowModels: ["sonnet"] },
+    });
+    sup.spawn();
+    expect(cap[0].hooks.PreModelSwitch).toHaveLength(1);
+    expect(cap[0].hooks.PostModelSwitch).toHaveLength(1);
+    await sup.shutdown();
+  });
   it("a restarted session receives fresh factory options too (compose with D2)", async () => {
     const cap: any[] = [];
     let calls = 0;

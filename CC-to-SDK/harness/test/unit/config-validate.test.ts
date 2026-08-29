@@ -18,6 +18,11 @@ describe("validateHarnessConfig", () => {
     expect(() => validateHarnessConfig({ thinking: { type: "enabled", budgetTokens: -1 } })).toThrow(/thinking|budgetTokens/); // negative budget invalid
     expect(() => validateHarnessConfig({ maxTurns: "five" as any })).toThrow(/maxTurns/);
   });
+  it("rejects an mcpToolTimeoutMs the SDK would silently ignore (< 1000ms)", () => {
+    expect(() => validateHarnessConfig({ mcpToolTimeoutMs: 500 })).toThrow(HarnessConfigError);
+    expect(() => validateHarnessConfig({ mcpToolTimeoutMs: 500 })).toThrow(/1000/);
+    expect(() => validateHarnessConfig({ mcpToolTimeoutMs: 1000 })).not.toThrow();
+  });
   it("checks modelSwitchPolicy's data fields and leaves its callbacks alone", () => {
     expect(() => validateHarnessConfig({ modelSwitchPolicy: { allowModels: ["sonnet"], maxCacheWriteUsd: 0.5, decide: () => ({}) } })).not.toThrow();
     expect(() => validateHarnessConfig({ modelSwitchPolicy: { allowModels: "sonnet" } })).toThrow(/modelSwitchPolicy.allowModels/);

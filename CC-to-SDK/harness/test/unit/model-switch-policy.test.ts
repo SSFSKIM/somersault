@@ -40,6 +40,11 @@ describe("model-switch policy (Wave D, probe 121)", () => {
     expect(denyReason(await firePre({ allowModels: ["claude-sonnet-5"] }))).toBeUndefined();
     expect(denyReason(await firePre({ allowModels: ["claude-sonnet-4-5"] }))).toBeDefined();
   });
+  it("allowModels: a BLANK entry never matches — not even a null requested_model (both normalize to \"\")", async () => {
+    const defaultReset = preInput({ to_model: "claude-sonnet-5", requested_model: null as never });
+    expect(denyReason(await firePre({ allowModels: [""] }, defaultReset))).toBeDefined();
+    expect(denyReason(await firePre({ allowModels: ["  "] }, defaultReset))).toBeDefined();
+  });
 
   it("maxCacheWriteUsd: denies only a WARM-cache forfeiture over the cap", async () => {
     expect(denyReason(await firePre({ maxCacheWriteUsd: 0.01 }))).toContain("forfeit a warm prompt cache");

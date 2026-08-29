@@ -23,7 +23,7 @@ export const harnessConfigSchema = z.looseObject({
   autoCompactWindow: z.number().int().positive().optional(),
   promptCacheTtl: z.enum(["5m", "1h"]).optional(),
   subagentPromptCacheTtl: z.enum(["5m", "1h"]).optional(),
-  mcpToolTimeoutMs: z.number().int().positive().optional(),
+  mcpToolTimeoutMs: z.number().int().min(1000, "the SDK ignores MCP timeouts below 1000ms").optional(),
   // Only the DATA fields — decide/annotate/onSwitch are functions no JSON boundary can carry, and
   // looseObject leaves a programmatic caller's callbacks untouched.
   modelSwitchPolicy: z.looseObject({
