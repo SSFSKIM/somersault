@@ -1,244 +1,310 @@
 # M9 — arrival history: making an inbound peer message survive into `thread/read`
 
-**Status:** design, rev 2 · **Task:** #59 · **Depends on:** M8 (merged, `06bf3c0e44`)
+**Status:** design, rev 3 · **Task:** #59 · **Depends on:** M8 (merged, `06bf3c0e44`)
 
 ## Why this exists
 
 M8 gave the app-server cross-session messaging in both directions. A thread admitted with
 `crossSessionInbound: "accept"` turns an arriving peer message into a fully visible turn: subscribers
-get `thread/peerMessage` carrying the sender's identity, then the model's answer through the ordinary
-mapper, then a terminal state.
+get `thread/peerMessage` carrying the sender's identity, then the model's answer, then a terminal
+state.
 
 That is true only while you are watching. Call `thread/read` afterwards and the inbound message is
 absent while the assistant's answer to it is present — **history shows an answer with no question.**
-A client that reconnects, or that renders a thread it did not subscribe to, cannot reconstruct why
-the model said what it said.
 
 The purpose is not "un-filter a row". It is that **a thread's readable history should contain
 everything the thread actually received**, so the record a client reads back matches the conversation
-that happened.
+that happened — without the client having to know that cross-session messaging exists.
 
-## The measurements this design stands on
+## Measurements
 
-Measured against 1,076,891 rows across 7,131 real transcripts. Where rev 1 got a number wrong, the
-correction is kept in place rather than quietly replaced — see `## Surprises & Discoveries`.
+Against 1,076,891 rows in 7,131 real transcripts, plus one keyed probe. Where an earlier revision got
+a number wrong, the correction stays visible — see `## Surprises & Discoveries`.
 
-**M1 — the drop is unconditional and no SDK option reaches it.** `getSessionMessages` filters with
-`if (e.isMeta) return false` after routing on type; `includeSystemMessages` gates only
-`type: "system"` and never reaches `isMeta`. The projection that follows is a fixed field literal
-with no `origin`. **Byte-identical in 0.3.237 and 0.3.250**, checked against both bundles — the
-task #60 bump does not close this and there is no option to ask for.
+**M1 — the drop is unconditional and no SDK option reaches it.** `getSessionMessages` filters
+`if (e.isMeta) return false`; `includeSystemMessages` gates only `type:"system"`. The projection is a
+fixed field literal with no `origin`. **Byte-identical in 0.3.237 and 0.3.250** — the task #60 bump
+did not close this, and there is no option to ask for.
 
-**M2 — `origin` is a clean structural discriminator.** `isMeta` rows are 0.28% of all rows. They
-split with no overlap: those carrying an `origin` object are genuine inbound messages; those without
-are CLI bookkeeping (local-command caveats, skill injections, loop ticks, image placeholders, system
-reminders). So the blanket drop exists for a real reason, and `origin` — not text matching — is the
-discriminator. M8 removed a text-recognition rule from this codebase after counting showed it never
-fired correctly; this design does not reintroduce that pattern.
+**M2 — `origin` is a clean structural discriminator.** `isMeta` rows are 0.28% of all rows and split
+with no overlap: those carrying an `origin` object are genuine inbound messages; those without are
+CLI bookkeeping (caveats, skill injections, loop ticks, image placeholders, system reminders).
 
-**M3 — in the corpus this reader actually opens, the hidden population is peer messages and nothing
-else.** Separating main transcripts from `subagents/`:
+**M3 — in the corpus this reader opens, the hidden population is peer messages and nothing else.**
 
-| corpus | files | rows | hidden `isMeta`+`origin` rows |
+| corpus | files | rows | hidden `isMeta`+`origin` |
 | --- | --- | --- | --- |
 | **main** (what `getSessionMessages` reads) | 3,856 | 567,273 | **`peer` 69, `auto-continuation` 2** |
-| `subagents/` (read only by `getSubagentMessages`) | 3,281 | 511,923 | `coordinator` 573, `task-notification` 94, `peer` 61, `human` 6 |
+| `subagents/` (only `getSubagentMessages`) | 3,281 | 511,923 | `coordinator` 573, `task-notification` 94, `peer` 61, `human` 6 |
 
-Every subagent row is `isSidechain` (511,876 of 511,923). **Coordinator history is not reachable
-through this reader at all**, so rev 1's proposal to surface non-peer origin rows addressed a
-population that does not exist in scope. The in-scope gap is peer messages.
+Every subagent row is `isSidechain`. Coordinator history is unreachable through this reader.
 
-**M4 — peer rows carry two provenances, and only one is verified.** 112 rows carry
-`{body, from, kind, name, senderTaskId}` (the coordinator SendMessage path); 18 carry
-`verifiedPeerPid` and `fromMode` (the M8 gateway path). `verifiedPeerPid` is the only field the
-kernel vouches for; `from` is sender-authored and forgeable by any same-user process.
+**M4 — two provenances, one verified.** 112 rows carry `{body, from, kind, name, senderTaskId}`; 18
+carry `verifiedPeerPid`. Only `verifiedPeerPid` is kernel-vouched; `from` is sender-authored and
+forgeable by any same-user process.
 
-**M5 — the transcript is not a safe source to splice.** In main transcripts: **1,562 duplicate uuid
-occurrences** across 2 files, **31 of which disagree with the first occurrence on `parentUuid`**, and
-**335 dangling `parentUuid` references** naming rows absent from the file. A uuid-keyed map over raw
-rows is therefore last-write-wins over an ambiguous graph, in cases that occur in the wild.
+**M5 — the engine's transcript is not a safe graph to splice.** Main transcripts hold 1,562 duplicate
+uuid occurrences (31 disagreeing on `parentUuid`) and 335 dangling `parentUuid` references.
 
-**M6 — the SDK's read window is post-compaction only.** In the largest transcript examined the last
-compaction summary is at line 18,064 and the SDK's first returned row is line 18,063. This applies to
-every message type, ordinary user prompts included; it is the SDK's window, not our gap.
+**M6 — the SDK's read window is post-compaction only**, for every message type.
 
-**M7 — a folded arrival persists nothing.** No row of any kind, measured against a positive control
-on the same transcript. No reader of the engine's transcript can recover it.
+**M7 — a folded arrival persists nothing.** No row of any kind, against a positive control.
+
+**M8m — a batched arrival's own text survives per frame, in the field we do not read.** Probe 121
+(`probes/121-batch-arrival-attribution.ts`), keyed, CLI 2.1.250, three messages into two turns:
+
+```
+LIVE      origin.msg_id    distinct 2/3   nonces recoverable 0/3
+LIVE      origin.body      distinct 2/3   nonces recoverable 2/3
+LIVE      message.content  distinct 3/3   nonces recoverable 3/3
+PERSISTED message.content  distinct 3/3   nonces recoverable 3/3
+```
+
+`origin.body` and `origin.msg_id` repeat the CAUSING message's values across a batch; each frame's own
+`message.content` carries its own message. **`peerArrival` prefers `origin.body`, so it returns the
+wrong text for a batch's other members — a shipped, live defect, not merely a history problem.**
+
+**M9m — swapping that preference is safe where an envelope exists.** Across 170 peer rows in 107
+files: all 170 carry `origin.body`; 20 carry a parsable envelope; where both exist they are
+**identical in all 20**; 150 carry no envelope and still need the `origin.body` fallback.
 
 ## Design
 
-### The pivot, stated plainly
-
-Rev 1 proposed recovering arrivals from the engine's transcript: use the SDK reader's output as an
-ordering spine and splice back the rows it dropped, using raw `parentUuid` links. An adversarial
-review broke that approach in six independent places, and checking its claims against the corpus
-confirmed them. The approach is abandoned. **This server persists its own record of the arrivals it
-handled, and merges that record into `thread/read`.**
-
-The reasoning is not that the splice was unfixable — it is that every one of its problems came from
-the same root, and the alternative does not have that root. The splice reads a file **another process
-owns and writes**, and then tries to reconstruct **that process's private ordering decisions** from
-it. Hence: two unsynchronised reads that can straddle a rewind; a graph with duplicate and dangling
-nodes we must mirror the engine's normalisation of; and attribution metadata any same-user process
-can forge, rendered as a user's words. The arrival log has none of those because the server writes
-what it already saw, on the live path, from the engine's own frame.
-
-It is also strictly more capable: it is the only approach that can give a **folded** arrival any
-history at all (M7), which is the gap M8 called its largest.
-
 ### Shape
 
-On the live path, `peerInbound.ts` already recognises an arrival, mints its id, and broadcasts
-`thread/peerMessage`. It gains one more step: append the arrival to a durable per-thread **arrival
-log** — the id it announced, the text `peerArrival` resolved, the origin as received, and the epoch
-it belongs to.
-
-`thread/read` composes: the SDK reader's output, unchanged and still through
-`srv.deps.getSessionMessages`, merged with this thread's logged arrivals.
+The server persists its own record of the arrivals it handled and merges that record into
+`thread/read`. It does not read, re-order, or trust the engine's transcript beyond what
+`srv.deps.getSessionMessages` already returns.
 
 ```
-live:   engine frame ──► peerArrival ──► thread/peerMessage broadcast
-                                    └──► arrival log  (append: id, text, origin, epoch, position)
+live:   engine frame ─► peerArrival ─► arrival log APPEND (seq, uuid, text, origin)   [linearization point]
+                                   └─► thread/peerMessage broadcast
+        turn settles  ─────────────► arrival log FINALIZE (anchor = the turn's first visible row)
 
 read:   srv.deps.getSessionMessages()  ─┐
-                                        ├─► merge by position ──► itemsFromTranscript ──► items
-        arrival log for this thread    ─┘
+                                        ├─► merge, one snapshot ─► itemsFromTranscript ─► items
+        arrival store, same snapshot   ─┘
 ```
 
-The `peerArrival` branch in `items/replay.ts` — correct, tested, and unfed since it landed — is what
-renders a merged arrival, so the replayed item is produced by the **same rule** as the live one and
-carries the same id. That is what makes a client dedupe them rather than double-render, and it is
-preserved from rev 1 because it was the one part of that design nothing attacked.
+`items/replay.ts`'s `peerArrival` branch — correct and unfed since it landed — renders a merged
+arrival, so a replayed item is produced by the **same rule** as its live twin and carries the same id.
+That is what makes a client dedupe rather than double-render.
 
-### Why the record is trustworthy, where the transcript was not
+### Why a log and not a transcript read
 
-The log is written by this server, on the live path, from the frame the engine handed it — the same
-frame `thread/peerMessage` is built from. Nothing else writes it. So `thread/read` and
-`thread/peerMessage` report the same thing by construction, and a same-user process that can write
-files cannot inject a forged "user question" into a thread's rendered history. Persisted `origin` in
-the engine's transcript stays what it is: another process's unauthenticated assertion, which this
-design no longer reads.
+Rev 1 spliced dropped rows back into the SDK reader's output using raw `parentUuid` links. Six review
+findings killed it, all confirmed against the corpus. They shared one root: **reading a file another
+process owns and re-deriving that process's private ordering from it.** The log has no such root, and
+is additionally the only approach that can serve a folded arrival (M7).
 
-`verifiedPeerPid` is logged when the arrival carried one and omitted when it did not (M4). A replayed
-item asserts exactly what its arrival asserted, and manufactures nothing to look uniform.
+### The batch defect is fixed at its source, not designed around
 
-### Position, and the coordinate system
+M8m is upstream of any history feature: today's live announcement is already wrong for a batch's
+non-causing members. `peerArrival` changes to prefer the frame's own envelope (per-frame by
+construction; identical to `origin.body` in all 20 measured cases where both exist), falling back to
+`origin.body` for the 150 envelope-less rows. That ships as **Stage A**, independently of everything
+below, because it is a correctness fix to shipped behaviour.
 
-This is the design's hardest remaining problem, and rev 1 wrongly deferred it as an unknown. It is a
-deterministic contract question that must be settled **before** implementation:
+Residual and stated plainly: **an envelope-less arrival that batches has no per-message text
+anywhere.** `peerArrival` is pure and per-frame and cannot detect that from one frame. It keeps
+returning `origin.body`; the limit is documented rather than guessed at.
 
-`thread/read` pages by row offset within an epoch, and `thread/searchOccurrences` publishes a
-`readCursor` built from a *filtered* row offset for direct use by `thread/read`. If read merges rows
-that search does not, the two coordinate systems diverge and a search jump lands on the wrong row.
+### History lineage is its own generation, not `record.epoch`
 
-So the merge defines **one canonical coordinate space**, and every producer of a `thread/read` cursor
-uses it. An arrival is logged with the anchor it precedes — durable and uuid-based, never a numeric
-offset, because offsets are exactly what shifts. Paging and search-jump translation both resolve
-through that anchor.
+`record.epoch` cannot represent history lineage, verified in the code: `Registry.mint()` starts every
+admission at zero, `rewind.ts:210` and `fleet.ts:306` bump it, and `thread/reopen` bumps it while
+preserving the conversation. Equality-scoping a durable log to it is wrong in both directions — a
+rewind would erase arrivals that survived it, a reopen would orphan the lot, and a restart would alias
+a fresh epoch zero against stale zero entries.
 
-### Epoch, rewind, and clear
+So the store carries a **persisted `historyGeneration`**, distinct from `record.epoch`:
 
-The log is epoch-scoped. `thread/clear` bumps the epoch and the log's earlier entries stop
-participating; a rewind that invalidates outstanding cursors invalidates the log's view the same way.
-This is the one place the arrival log takes on a consistency obligation the splice did not have, and
-it is a tractable one: it reuses the epoch mechanism `thread/read` already relies on, rather than
-inventing a second notion of "which history is current".
+- `thread/clear` → a new, empty generation.
+- **rewind** → transactional rebase: entries whose anchor survives the truncation are carried forward,
+  the rest dropped. A partial rewind therefore has a coherent answer, which epoch equality did not
+  give it.
+- `thread/reopen` / engine swap → generation preserved (epoch moves, lineage does not).
+- restart / re-admission → generation reloaded from the store, never reset.
 
-### What this does not fix
+### The store is a contract, keyed by session
 
-- **Arrivals this server never handled** — a thread's history from before this feature, or handled by
-  a different process, has no log entries. Those arrivals were never visible to this server's clients
-  either, so the boundary is honest rather than convenient: the server reports what it received.
-- **Pre-compaction history** stays outside the read window (M6), as it does for every message type.
-- **Coordinator and task-notification history** is subagent history (M3), reachable only through
-  `getSubagentMessages`. Out of scope, and named so it is not rediscovered.
+A thread id is `"thr_" + randomBytes(6)` in an in-memory `Map` (verified) — minted per admission and
+useless as a durable key. The durable key is `sessionId`.
+
+`AppServerDeps` gains an injectable `ArrivalStore`: `append`, `finalize`, `read`, `rebase`, `clear`,
+`forkFrom`, `delete`. Injectable for the same reason `getSessionMessages` is: an embedder pointing at
+its own session store must be able to point this at the same place, and a filesystem default behind
+an overridden reader would hand that embedder foreign history.
+
+Lifecycle mutations move with their session: `thread/fork` copies the prefix up to the fork point (a
+fork with answers and no inherited questions is the same defect one level down); `thread/delete`
+removes the log rather than orphaning it.
+
+**Concurrency:** a second app-server process serving the same session is a state the admission code
+cannot see today. The store is therefore **append-only with globally unique entry ids**, which makes
+two writers' concurrent appends a union rather than a conflict. Rebase and clear are the mutating
+operations and need an exclusive lease; that lease, not a general lock, is the scope.
+
+### Position: a sequence at append, an anchor at settle
+
+The anchor cannot be recorded at append time — the visible row an arrival precedes is a future event,
+and a folded or terminal-tail arrival may never produce one. So placement is **two-phase**:
+
+- **append** (arrival): a monotonic `seq`, the arrival uuid, the resolved text, the origin, and a null
+  anchor.
+- **finalize** (turn settle): the anchor — the first visible row of the turn the arrival caused or
+  folded into — written idempotently by entry id.
+
+At read time an entry is placed before its anchor; several entries sharing one anchor order among
+themselves by `seq`; an entry never finalized (a crash between the two phases, or a turn that never
+settled) is placed by `seq` relative to its neighbours and never silently dropped.
+
+### The cursor is one canonical space
+
+`thread/read` pages by `<epoch>:<rawRowOffset>` and feeds that offset straight to
+`getSessionMessages`; `thread/searchOccurrences` publishes a `readCursor` computed in that same
+unmerged space. Merging rows into read without changing the cursor is a deterministic break, not a
+deferrable unknown: with `[prompt, arrival, assistantHit]` search emits an offset the merged read
+resolves to the arrival, and the hit is missed.
+
+So `thread/read`'s cursor becomes **opaque**, carrying the reader-spine boundary, the per-anchor
+arrival `seq`, the log watermark, and the `historyGeneration`. Search composes and resolves through
+the same helper, so the two cannot diverge. A per-anchor `seq` is what makes `limit: 1` across a
+batch's siblings terminate correctly, where a bare row uuid would repeat or skip.
+
+### One snapshot per read
+
+Both sources are independently mutable. `thread/read` takes one snapshot —
+`{recordId, sessionId, epoch, historyGeneration, logWatermark}` — reads both against it, and rechecks
+after every await, answering the existing invalidated-cursor error on drift rather than shipping a
+page that mixes generations. `search.ts` already does exactly this for its own windows (one epoch read
+per request, generation re-derived per window); this follows that precedent rather than inventing one.
+
+### Resource bounds
+
+Arrival text is attacker-influenced and the live path already caps its queue at 32 with an announced
+drop. The durable log inherits bounds of the same kind: `MAX_FRAME_CHARS` per entry, a per-session
+retained count and byte quota, oldest-first eviction that is announced rather than silent, and reads
+that page rather than loading the whole log.
+
+### The trust claim, narrowed
+
+An earlier revision claimed the log creates a trust boundary against a same-user attacker. **That was
+an overclaim and is withdrawn.** A process that can write the engine's transcript can equally write an
+ordinary sidecar; "only this server writes it" is a convention, not an enforcement.
+
+What the log actually buys is narrower and still worth having: the server renders a field **it wrote
+itself from the frame it saw**, so `thread/read` and `thread/peerMessage` cannot disagree, and
+accidental contamination — a transcript row the engine wrote for other purposes being read as a user's
+question — is structurally impossible. Real integrity against a same-user attacker needs authenticated
+storage whose key is outside that attacker's reach, and is out of scope. Stated, not implied.
+
+### Search
+
+A message visible in history that cannot be found by searching its own text is a bug users will hit,
+so logged arrivals join the searchable corpus, bound to the same generation and ordering as the read
+path. This is **Stage D** and is the one piece a reader could argue for deferring.
+
+## Staging
+
+Each stage is independently valuable and independently reviewable.
+
+- **Stage A — the batch text fix.** `peerArrival` prefers the frame's own envelope. Fixes shipped
+  live behaviour; depends on nothing here. *(In flight.)*
+- **Stage B — the store.** `ArrivalStore` on `AppServerDeps`, two-phase append/finalize, the
+  `historyGeneration`, lifecycle (clear, rebase, fork, delete), bounds. No read-side change: nothing
+  user-visible ships, and the stage is verifiable on its own terms — the log is correct and durable.
+- **Stage C — the merged read.** The opaque cursor, the snapshot, the merge, the shared resolver with
+  search. This is where `thread/read` changes and where the acceptance below is met.
+- **Stage D — search.** Logged arrivals in the searchable corpus.
 
 ## Acceptance
 
-Phrased as observable behaviour. Keyed legs run against a real engine.
+Observable behaviour. Keyed legs run against a real engine.
 
-1. **A peer message answered by a thread appears in that thread's history.** Send to an accepting
-   thread, let the turn complete, call `thread/read`: the arrival is present, before the assistant's
-   answer, carrying the sender's text — not the CLI's envelope preamble.
-2. **The replayed item and the live item are one item.** The id `thread/read` returns equals the
-   `arrivalUuid` `thread/peerMessage` announced, so a client that dedupes by id renders it once.
-3. **A folded arrival has history too** — the case no transcript reader can serve (M7).
-4. **Ordinary history is unchanged.** For a thread that never received a peer message, `thread/read`
-   is byte-identical before and after.
-5. **Paging and search jumps stay consistent.** A `readCursor` from `thread/searchOccurrences` lands
-   on the row it names, with an arrival on either side of the boundary; a full paged walk returns
-   every row exactly once, with no gap or repeat.
-6. **A refused or held arrival produces no history**, because it produced no turn.
-7. **`thread/clear` drops the thread's arrival history with the rest of it.**
-8. **A forged `origin` on disk changes nothing.** Writing a row with a fabricated peer `origin` into
-   a thread's transcript does not make it appear in `thread/read`.
-9. **The M8 live legs that assert the gap go red and are rewritten**, not weakened — their reddening
-   is the signal this landed.
+1. **A peer message answered by a thread appears in that thread's history**, before the assistant's
+   answer, carrying the sender's own text and not the CLI's envelope preamble.
+2. **The replayed item and the live item are one item** — the id equals the announced `arrivalUuid`,
+   so a client that dedupes by id renders it once.
+3. **Each member of a BATCH carries its own text**, live and in history (the M8m defect, asserted
+   rather than described).
+4. **A folded arrival has history too** — the case no transcript reader can serve.
+5. **Ordinary history is unchanged** — byte-identical for a thread that never received a peer message.
+6. **Paging and search jumps stay consistent**: a `readCursor` from `thread/searchOccurrences` lands
+   on the row it names with an arrival on either side of the boundary; a full paged walk at `limit: 1`
+   across a batch's siblings returns every row exactly once.
+7. **A rewind past an arrival removes it from history; a rewind after it keeps it** — the case epoch
+   equality could not express.
+8. **`thread/clear` drops the thread's arrival history with the rest of it**; `thread/fork` inherits
+   the prefix; `thread/delete` leaves no orphan log.
+9. **A read that races a rewind fails its cursor rather than mixing generations.**
+10. **An append failure is observable** — never a live notification with silently absent history.
+11. **The M8 live legs that assert the gap go red and are rewritten**, not weakened.
 
 ## Delegated unknowns
 
-Empirical, to be closed during implementation:
-
-- **U1 — where the log lives.** It must survive process restart, be per-thread, and be cheap to read
-  on every `thread/read`. Whether that is a sidecar file beside the transcript, a row in an existing
-  store, or in-memory with a durable backing is an implementation question with a measurable answer
-  (restart survival, read cost at realistic history sizes).
-- **U2 — anchor resolution when the anchor is gone.** An arrival's anchor row can fall outside the
-  SDK's post-compaction window (M6). Decide, by measurement, whether such an arrival is dropped with
-  its anchor or surfaces at the window's head.
-- **U3 — does `rowKind` change verdict on any merged row?** `sessions/rows.ts` opens by asserting
-  "The rows carry NO meta flags (probe 68b)". True of its input, false of the rows on disk, and
-  written as though it were a fact about the rows. Confirm no classifier branch changes, and correct
-  that comment either way.
+- **U1 — where the default store lives.** Restart survival, per-session keying, and read cost at
+  realistic history sizes are measurable; the shape is a Stage B decision made against those numbers.
+- **U2 — anchor outside the window.** An anchor row can fall outside the SDK's post-compaction window
+  (M6). Whether such an entry is dropped with its anchor or surfaces at the window's head is decided
+  by measurement in Stage C.
+- **U3 — does `rowKind` change verdict on any merged row?** `sessions/rows.ts` opens by asserting "The
+  rows carry NO meta flags (probe 68b)" — true of its input, false of the rows on disk, and written as
+  a fact about the rows. Confirm and correct that comment either way.
+- **U4 — do envelope-less (coordinator-path) arrivals batch at all?** If they never do, M8m's residual
+  limit is empty in practice. Probe 121's machinery answers this for the cost of one run.
 
 ## Decision Log
 
 - **The server logs arrivals; it does not reconstruct them from the engine's transcript.** Rejected:
-  the rev 1 splice. Six independent review findings, all confirmed against the corpus: unsynchronised
-  two-source reads that can straddle a rewind; raw parent links that are not the graph the SDK orders
-  (M5 — 1,562 duplicate uuids, 31 disagreeing on parent, 335 dangling refs); a cursor namespace
-  incompatible with search's published `readCursor`; a target population that is subagent history
-  (M3); forgeable `origin` rendered as a user's words; and a bypass of the public
-  `AppServerDeps.getSessionMessages` seam that embedders override. The alternative removes the root
-  those share and additionally serves folded arrivals.
-- **`thread/read` keeps calling `srv.deps.getSessionMessages`.** Rejected: a filesystem reader behind
-  the dep. That dep is the documented seam an embedder overrides to point at its own session store;
-  bypassing it hands such an embedder empty or foreign history from the local disk.
-- **Scope is peer arrivals.** Rejected: rev 1's proposal to surface every origin-bearing row. M3
-  shows that population is subagent history this reader never opens — the call rev 1 flagged as its
-  most arguable was answered by measurement rather than argument.
-- **Anchors are uuid-based, never numeric offsets.** Rejected: recording an insertion index. Offsets
-  are precisely what merging shifts, and search publishes a cursor computed in the unmerged space.
-- **Persisted `origin` is untrusted and unread.** Rejected: validating it and rendering it when it
-  looks well-formed. Validation reduces the forgery surface; it does not remove it, and there is no
-  need to accept any of it once the server has its own record.
-- **A folded arrival is logged, not synthesised from nothing.** Its log entry records a real event the
-  server observed. Still rejected: minting a placeholder for an arrival the server never saw.
+  rev 1's splice. Six confirmed findings sharing one root (M5, M3, the cursor namespace, the embedder
+  seam, the trust boundary). The log also serves folded arrivals, which no transcript reader can.
+- **The batch defect is fixed in `peerArrival`, not compensated for in the log.** Rejected: logging
+  ambiguous batch entries and marking them. Probe 121 showed the correct text is present per frame, so
+  marking it unknown would discard information we hold — and would leave the shipped live path wrong.
+- **Merge into `thread/read` rather than expose a separate `thread/arrivals`.** The separate endpoint
+  is genuinely simpler: no cursor change, no search change, no merge race. Rejected because it makes
+  correct history opt-in — every client must learn about peer messaging to get a history that is not
+  misleading, and the default stays wrong. The cost is Stage C's cursor work, taken deliberately.
+- **`historyGeneration` is separate from `record.epoch`.** Rejected: epoch equality. Verified wrong in
+  both directions against `registry.ts`, `rewind.ts:210`, `fleet.ts:306`.
+- **The store is keyed by `sessionId` and injectable.** Rejected: a thread-keyed sidecar (thread ids
+  are minted per admission) and a hardcoded filesystem path (it bypasses the embedder's session store).
+- **Append is the linearization point, before the broadcast, and never throws into the frame
+  listener.** `Session.readLoop` swallows listener exceptions, so a throwing append would silently
+  suppress the announcement without stopping the engine. The engine runs the turn whatever we do, so
+  the broadcast always goes out and an append failure surfaces as an observable warning.
+- **Append-only with unique entry ids; a lease only for rebase and clear.** Rejected: a general
+  exclusive-writer lock. Concurrent appends from two processes are a union, which is the correct
+  answer; only the mutating operations genuinely conflict.
+- **The trust claim is withdrawn, not defended.** Rejected: validating persisted `origin` against a
+  schema and calling it trusted — validation shrinks the forgery surface without closing it.
+- **Scope is peer arrivals.** M3 answers the question rev 1 left open: the other origin kinds are
+  subagent history this reader never opens.
 
 ## Surprises & Discoveries
 
+- **Probe 121 found a shipped bug while answering a design question.** It was written to decide
+  whether a batched arrival's text is recoverable from disk. It answered that (yes, from the frame's
+  own content) and in doing so showed the LIVE path is already wrong — `thread/peerMessage` announces
+  one message's text under another's id today. The design question was downstream of a defect nobody
+  had looked for.
+- **LEG 5's own finding was half right.** It pinned "N arrivals, ONE `msg_id`, ONE `body`" and
+  attributed the loss to the engine. True of `origin.*`; false of the frame's content, which it did
+  not examine. An assertion that pins the wrong field passes for the wrong reason.
 - **Rev 1's central population number was wrong, and the refuting data was already in hand.** It
-  reported a hidden population spanning five origin kinds and recommended surfacing all of them. Once
-  main transcripts were separated from `subagents/`, the in-scope population was `peer` 69 and
-  `auto-continuation` 2 — and rev 1's own splice script had already excluded `subagents/`, printing a
-  peer count of 68 against a census of 130 without that discrepancy being chased. The aggregate was
-  read; the disagreement between two of my own numbers was not.
-- **A number stated in-round and disproved in-round.** Rev 1 claimed the gap was "six times larger
-  than the task says". Breaking the aggregate down per kind disproved it the same day. Recorded
-  rather than dropped.
-- **45 of 70 arrivals appearing unreachable looked like a coverage ceiling and was compaction** —
-  shared with every message type. One concrete example refuted a conclusion that a working session's
-  reasoning had already accepted.
-- **The review found more than it was asked to.** It was pointed at the splice, cursors, and the
-  trust boundary; it also found that the target population was subagent history and that the design
-  bypassed a public embedder seam. Two of six findings were outside the questions posed, which is the
-  argument for adversarial review over a checklist.
-- **An SDK bump is an engine change.** During this round, task #60's bump moved the bundled CLI from
-  2.1.237 to 2.1.250 (each SDK package's `manifest.json` names its CLI), and a cross-session contract
-  changed with it: a `peer/send` into a `refuse` thread, previously silent, now returns a
-  `peer/messageStatus` of `expired` with an explicit reason. Established by controlled experiment —
-  the same single leg passes on 0.3.237 and fails on 0.3.250, minutes apart on one machine. The
-  refusal is still enforced (no turn, no items); only the sender's visibility improved.
+  counted five origin kinds across a corpus mixing main and subagent transcripts. Its own splice script
+  had already excluded `subagents/` and printed a peer count that disagreed with its census; the
+  discrepancy was not chased.
+- **45 of 70 arrivals appearing unreachable was compaction**, shared with every message type — one
+  concrete example refuted a conclusion a whole session's reasoning had accepted.
+- **An SDK bump is an engine change.** Task #60 moved the bundled CLI 2.1.237 → 2.1.250 and a
+  cross-session contract moved with it: a send into a `refuse` thread, previously silent, now returns
+  an `expired` receipt with a reason. Established by controlled experiment. The refusal is still
+  enforced; only the sender's visibility improved.
+- **Two designs died before one survived.** Both were internally coherent and both were broken by an
+  adversarial reader in one pass. The cost of each was a day of measurement; the cost of shipping
+  either would have been a wrong history nobody could see was wrong.
 
 ## Outcomes & Retrospective
 
@@ -246,12 +312,14 @@ Pending — written at finish.
 
 ## Revision Notes
 
-- **rev 1 (2026-08-29)** — first draft, from measurement rather than from the M8 spec's prose about
-  this reader.
-- **rev 2 (2026-08-29)** — design pivot after adversarial review. Six findings, all confirmed against
-  the corpus; two refuted rev 1's own claims. Transcript splicing is abandoned for a server-side
-  arrival log: it removes the shared root of every finding (reading and re-deriving another process's
-  private ordering from a file it owns), keeps `thread/read` on the public reader seam, and is the
-  only approach that can serve a folded arrival. Scope narrowed from all origin kinds to peer
-  arrivals on the evidence of M3. The cursor question moved from a delegated unknown to a settled
-  part of the design, because it is a deterministic contract break rather than something to discover.
+- **rev 1 (2026-08-29)** — transcript splice, from measurement rather than from the M8 spec's prose.
+- **rev 2 (2026-08-29)** — pivot to a server-side arrival log after six confirmed findings against the
+  splice.
+- **rev 3 (2026-08-30)** — eight findings against rev 2, three verified independently in the code
+  (epoch is not lineage; thread ids are not durable; the batch defect is real and pinned by our own
+  live test). Probe 121 resolves the severest one upstream rather than in the design: the per-message
+  text exists, `peerArrival` reads the wrong field, and that is now Stage A. The rest of rev 2's gaps
+  are closed rather than deferred — a persisted `historyGeneration`, an injectable session-keyed
+  store, two-phase append/finalize, an opaque cursor shared with search, one snapshot per read, real
+  bounds — and the overclaimed trust boundary is withdrawn. Work is staged A–D so each piece is
+  independently valuable.
