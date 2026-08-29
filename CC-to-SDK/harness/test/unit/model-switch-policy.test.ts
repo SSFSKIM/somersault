@@ -64,6 +64,13 @@ describe("model-switch policy (Wave D, probe 121)", () => {
     expect(await firePost({})).toEqual({});
   });
 
+  it("annotate: a runaway annotation is capped at 2000 chars; a short one is untouched", async () => {
+    const long = await firePost({ annotate: () => "x".repeat(10_000) });
+    expect(long.hookSpecificOutput.additionalContext).toHaveLength(2000);
+    const short = await firePost({ annotate: () => "brief" });
+    expect(short.hookSpecificOutput.additionalContext).toBe("brief");
+  });
+
   it("onSwitch tap: fires on both phases, carries the composed denial, and a throwing tap is swallowed", async () => {
     const seen: Array<[string, string | undefined]> = [];
     const policy = { allowModels: ["haiku"], onSwitch: (phase: string, _i: unknown, denied?: string) => { seen.push([phase, denied]); } };

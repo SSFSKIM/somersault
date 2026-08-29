@@ -3,6 +3,11 @@ import { z } from "zod/v4";
 /** Thrown at the public front doors on a malformed config — mirrors DaemonError / SwarmError / TaskError. */
 export class HarnessConfigError extends Error {}
 
+const modelSwitchPolicySchema = z.looseObject({
+  allowModels: z.array(z.string()).optional(),
+  maxCacheWriteUsd: z.number().nonnegative().optional(),
+}).optional();
+
 // Validates ONLY the fields with invalidate-able constraints; z.looseObject() leaves every other field
 // (incl. escape hatches extraOptions/settings/managedSettings/customHeaders) untouched.
 export const harnessConfigSchema = z.looseObject({
@@ -26,10 +31,7 @@ export const harnessConfigSchema = z.looseObject({
   mcpToolTimeoutMs: z.number().int().min(1000, "the SDK ignores MCP timeouts below 1000ms").optional(),
   // Only the DATA fields — decide/annotate/onSwitch are functions no JSON boundary can carry, and
   // looseObject leaves a programmatic caller's callbacks untouched.
-  modelSwitchPolicy: z.looseObject({
-    allowModels: z.array(z.string()).optional(),
-    maxCacheWriteUsd: z.number().nonnegative().optional(),
-  }).optional(),
+  modelSwitchPolicy: modelSwitchPolicySchema,
   sandbox: z.union([z.boolean(), z.record(z.string(), z.unknown())]).optional(),
   telemetry: z.looseObject({ endpoint: z.string().min(1) }).optional(),
 });
@@ -40,6 +42,7 @@ export const daemonOptionsSchema = z.looseObject({
   maxSessions: z.number().int().positive().optional(),
   idleTimeoutMs: z.number().int().nonnegative().optional(),
   maxRestarts: z.number().int().nonnegative().optional(),
+  modelSwitchPolicy: modelSwitchPolicySchema,   // daemon-wide governance — same data fields as the harness config's
 });
 
 function check(schema: z.ZodType, value: unknown): void {

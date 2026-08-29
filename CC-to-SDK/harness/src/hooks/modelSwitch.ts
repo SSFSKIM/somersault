@@ -18,7 +18,8 @@ export interface ModelSwitchPolicy {
   /** Escape hatch, guardTool's HookDecision vocabulary: `{ block, reason? }` denies; anything else is
    *  no opinion. Runs ALONGSIDE the declarative checks (deny-wins), never instead of them. */
   decide?: (input: PreModelSwitchHookInput) => HookDecision | Promise<HookDecision>;
-  /** PostModelSwitch → additionalContext on the new model's first request. null/undefined/"" = none. */
+  /** PostModelSwitch → additionalContext on the new model's first request. null/undefined/"" = none;
+   *  a longer return is TRUNCATED to ANNOTATION_MAX_CHARS (2000). */
   annotate?: (input: PostModelSwitchHookInput) => string | null | undefined | Promise<string | null | undefined>;
   /** Observability tap, both phases ("pre" carries the composed denial reason). Errors swallowed —
    *  an observer must never break a switch (the `observe` builder's rule). */
@@ -40,6 +41,8 @@ function inAllowList(list: string[], input: PreModelSwitchHookInput): boolean {
 }
 
 const REASON_PREFIX = "cc-harness modelSwitchPolicy";
+// Mirrors the CLI's own cap on the comparable host-asserted channel — classifierContext is capped at 2000 UTF-16 units.
+const ANNOTATION_MAX_CHARS = 2000;
 
 /** Build the policy's HooksMap. Compose with user hooks via mergeHooks (resolveOptions does this for
  *  the `modelSwitchPolicy` config knob); usable directly for bespoke setups. */
@@ -67,7 +70,8 @@ export function buildModelSwitchHooks(policy: ModelSwitchPolicy): HooksMap {
     try { await policy.onSwitch?.("post", input); } catch { /* tap must not break the switch */ }
     const text = policy.annotate ? await policy.annotate(input) : undefined;
     if (text == null || text === "") return {};
-    return { hookSpecificOutput: { hookEventName: "PostModelSwitch", additionalContext: text } } as never;
+    const capped = text.length > ANNOTATION_MAX_CHARS ? text.slice(0, ANNOTATION_MAX_CHARS) : text;
+    return { hookSpecificOutput: { hookEventName: "PostModelSwitch", additionalContext: capped } } as never;
   };
   return { PreModelSwitch: [{ hooks: [pre] }], PostModelSwitch: [{ hooks: [post] }] };
 }

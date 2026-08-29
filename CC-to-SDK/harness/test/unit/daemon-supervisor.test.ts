@@ -579,6 +579,26 @@ describe("DaemonSupervisor", () => {
     expect(seen[0].hooks).toBe(hooks);   // factory's hooks reached the query options
     await sup.shutdown();
   });
+  it("a factory's own hooks cannot silently switch off the daemon-wide modelSwitchPolicy", async () => {
+    const seen: any[] = [];
+    const userCb = async () => ({});
+    const sup = new DaemonSupervisor({ query: captureQuery(seen) }, {
+      dir: dir(), modelSwitchPolicy: { allowModels: ["sonnet"] },
+      sessionOptions: () => ({ hooks: { PreToolUse: [{ hooks: [userCb] }] } }),
+    });
+    sup.spawn();
+    expect(seen[0].hooks.PreToolUse[0].hooks[0]).toBe(userCb);   // factory's own event survives
+    expect(seen[0].hooks.PreModelSwitch).toHaveLength(1);        // …and governance is re-merged back on
+    expect(seen[0].hooks.PostModelSwitch).toHaveLength(1);
+    await sup.shutdown();
+    const noHooks: any[] = [];
+    const sup2 = new DaemonSupervisor({ query: captureQuery(noHooks) }, {
+      dir: dir(), modelSwitchPolicy: { allowModels: ["sonnet"] }, sessionOptions: () => ({ mcpServers: {} }),
+    });
+    sup2.spawn();
+    expect(noHooks[0].hooks.PreModelSwitch).toHaveLength(1);     // a hookless factory must NOT double-mount
+    await sup2.shutdown();
+  });
 
   // ---- boot-rehydration (lazy, opt-in) ----
   it("rehydrate:true boot claims orphaned records (configs + seq advance) WITHOUT spawning", async () => {

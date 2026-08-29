@@ -5,7 +5,10 @@ import type { UserTurnInput } from "../session/turnInput.js";
 import { DaemonError } from "./types.js";
 import type { DaemonOptions, RestartPolicy, SessionRecord } from "./types.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
+import { buildModelSwitchHooks } from "../hooks/modelSwitch.js";
 import type { ModelSwitchPolicy } from "../hooks/modelSwitch.js";
+import { mergeHooks } from "../hooks/merge.js";
+import type { HooksMap } from "../hooks/types.js";
 import { createWarmPool } from "../warm/pool.js";
 import type { WarmPool } from "../warm/pool.js";
 import { PendingPermissions } from "../permissions/pending.js";
@@ -417,6 +420,10 @@ export class DaemonSupervisor {
     });   // no cwd: the daemon runs from the project dir, so settingSources resolves against process.cwd()
     const extra = this.sessionOptions?.(id);                 // fresh servers + tool posture for THIS session
     const options = extra ? { ...base, ...extra } : base;    // factory keys win (unchanged contract)
+    // …except `hooks`, the one key that is a MERGE, not a choice: factory-keys-win must not silently
+    // switch off daemon-wide governance (resolveOptions' SERVER_OWNED lesson, one actor overwriting another).
+    if (this.modelSwitchPolicy && extra && "hooks" in extra)
+      options.hooks = mergeHooks(extra.hooks as HooksMap, buildModelSwitchHooks(this.modelSwitchPolicy));
     options.canUseTool = createPermissionGate(this.pending.brokerFor(id)); // daemon broker wins — set LAST
     // W3.2 warm path — ONLY when the pool's frozen options are exactly what this session would run
     // with: default model/mode, no resume/rewind (baked into Options), and nothing that mutates

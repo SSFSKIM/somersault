@@ -35,4 +35,10 @@ describe("validateDaemonOptions", () => {
     expect(() => validateDaemonOptions({ restart: "sometimes" })).toThrow(HarnessConfigError);
     expect(() => validateDaemonOptions({ maxSessions: -1 })).toThrow(/maxSessions/);
   });
+  it("checks the daemon-wide modelSwitchPolicy's data fields too (same schema as the harness config)", () => {
+    expect(() => validateDaemonOptions({ modelSwitchPolicy: { allowModels: ["sonnet"], maxCacheWriteUsd: 0.5, decide: () => ({}) } })).not.toThrow();
+    expect(() => validateDaemonOptions({ modelSwitchPolicy: { allowModels: "sonnet" } })).toThrow(HarnessConfigError);
+    expect(() => validateDaemonOptions({ modelSwitchPolicy: { allowModels: "sonnet" } })).toThrow(/modelSwitchPolicy.allowModels/);
+    expect(() => validateDaemonOptions({ modelSwitchPolicy: { maxCacheWriteUsd: -1 } })).toThrow(/maxCacheWriteUsd/);
+  });
 });
