@@ -5,7 +5,7 @@
 // over-reporting. Each test below is one of those, driven through a real filesystem root because a mocked
 // fs would test the mock's ordering rather than rename's.
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } from "../../../src/peer/arrivalLog.js";
@@ -43,11 +43,14 @@ describe("fsArrivalStore", () => {
     // Simulate the crash window: bump the marker as append would, but leave the victim file on disk.
     store.append(entry(ARRIVAL_LOG_CAP));               // normal eviction of seq 0
     const dir = join(root, "s1");
-    // hand-write a marker claiming one MORE drop than files reflect
+    // hand-write a marker claiming one MORE drop than files reflect, naming the victim it never unlinked
+    // — which is exactly what a crash between the marker write and the unlink leaves behind.
     const marker = JSON.parse(readFileSync(join(dir, "marker.json"), "utf8"));
-    writeFileSync(join(dir, "marker.json"), JSON.stringify({ ...marker, dropped: marker.dropped + 1 }));
+    const victim = readdirSync(dir).filter((f) => f.startsWith("e-")).sort()[0];
+    writeFileSync(join(dir, "marker.json"), JSON.stringify({ ...marker, dropped: marker.dropped + 1, pending: victim }));
     const reopened = fsArrivalStore(root);
     reopened.append(entry(ARRIVAL_LOG_CAP + 1));
+    expect(readdirSync(dir)).not.toContain(victim);      // paid for once, deleted for real
     const counts = reopened.counts("s1");
     expect(counts.dropped).toBeGreaterThanOrEqual(2);    // never under-reports
     expect(reopened.readAll("s1").length + counts.dropped).toBe(counts.logged);
@@ -60,6 +63,30 @@ describe("fsArrivalStore", () => {
     try { expect(() => store.append(entry(1))).toThrow(); } finally { chmodSync(join(root, "s1"), 0o700); }
     store.markDegraded("s1");
     expect(fsArrivalStore(root).isDegraded("s1")).toBe(true);
+  });
+  it("a session that has never been written is not degraded", () => {
+    expect(fsArrivalStore(mkdtempSync(join(tmpdir(), "arr-"))).isDegraded("s1")).toBe(false);
+  });
+  it("markDegraded preserves the dropped count it found, and never rewrites it as zero", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i <= ARRIVAL_LOG_CAP; i++) store.append(entry(i));   // one eviction
+    expect(store.counts("s1").dropped).toBe(1);
+    store.markDegraded("s1");
+    const reopened = fsArrivalStore(root);
+    expect(reopened.isDegraded("s1")).toBe(true);
+    expect(reopened.counts("s1")).toEqual({ logged: ARRIVAL_LOG_CAP + 1, dropped: 1 });
+  });
+  it("an unreadable marker is degraded and UNKNOWN, never silently zero (the power-loss shape)", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i <= ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    writeFileSync(join(root, "s1", "marker.json"), "");                  // truncated, not deleted
+    const reopened = fsArrivalStore(root);
+    expect(reopened.isDegraded("s1")).toBe(true);
+    reopened.markDegraded("s1");
+    // The lost count is not fabricated back as a 0 that would under-report: the flag goes out alone.
+    expect(JSON.parse(readFileSync(join(root, "s1", "marker.json"), "utf8"))).toEqual({ degraded: true });
   });
   it("contentHash16 is stable and 16 hex chars", () => {
     expect(contentHash16("hello")).toMatch(/^[0-9a-f]{16}$/);
