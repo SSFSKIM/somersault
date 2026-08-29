@@ -12,12 +12,14 @@
 // adoption supplies a runner and inherits the rest; `turn/interrupt` reaches an adopted turn for free,
 // because it raises the same `record.interruptRequested` latch `beginTurn`'s own success path reads.
 import { randomUUID } from "node:crypto";
-import { peerArrival } from "../peer/address.js";
+import { peerArrival, rawTextOf } from "../peer/address.js";
+import { contentHash16, fsArrivalStore, type ArrivalAnchor, type ArrivalEntry, type ArrivalFingerprint, type ArrivalStore } from "../peer/arrivalLog.js";
+import { getSessionMessages as defaultGetSessionMessages } from "../sessions/index.js";
 import { TurnMapper, userItem } from "./items/mapper.js";
 import { turnFailureOf } from "../session/turnResult.js";
 import { beginTurn, emitItems, type TurnOutcome, type TurnStopped } from "./turns.js";
 import type { ThreadRecord } from "./registry.js";
-import type { AppServer } from "./server.js";
+import type { AppServer, AppServerDeps } from "./server.js";
 
 /** How many un-adopted arrivals one thread holds. Attacker-influenced — any local process that can write
  *  this session's socket can produce them — so it is capped and oldest-first evicted, never grown. */
@@ -50,6 +52,16 @@ interface AdoptedTurn {
   terminated: boolean;
 }
 
+/** What one buffered arrival needs to become an entry once the seed grounds the chain. `afterFrames` — how
+ *  many buffered frames had been observed when it landed — is the only thing that keeps OBSERVATION ORDER
+ *  across the two arrays, and it is what lets the replay interleave them again. Frames and arrivals are
+ *  held apart rather than in one event list because the overlap search only ever reads the frames. */
+interface PendingArrival { arrivalUuid: string; text: string; origin: Record<string, unknown>; observedAt: string; afterFrames: number }
+/** A buffered frame, digested to exactly what an anchor needs. Holding the raw frame would keep whole
+ *  message bodies alive for the length of a read that may be stalling on a network filesystem. */
+interface SeedFrame { uuid: string; fp: ArrivalFingerprint }
+interface Seeding { frames: SeedFrame[]; arrivals: PendingArrival[] }
+
 export interface PeerInboundState {
   off?: () => void;
   offResult?: () => void;
@@ -58,7 +70,60 @@ export interface PeerInboundState {
    *  Per-record (it dies with the thread) and deleted at each terminal (it does not grow with turns). */
   ourUuids: Set<string>;
   adopted?: AdoptedTurn;
+  /** The last filter-surviving frame this thread observed, as an entry records it. `null` is CONFIRMED
+   *  EMPTY (the seed saw zero rows); `undefined` is NOT YET KNOWN, and no entry is ever written while it
+   *  holds — which is what makes `null` unambiguous on disk. */
+  anchor: ArrivalAnchor | null | undefined;
+  /** Non-null exactly while a seed read is in flight: frames and arrivals landing inside that window are
+   *  held here rather than acted on. */
+  seeding: Seeding | null;
+  /** This thread's mirror of the store's own latch — a write failed, so the counts are not to be trusted. */
+  degraded: boolean;
 }
+
+/** The one shared filesystem store, built on first use. One process, one store: the degraded latch and the
+ *  seq counter are per-session state that would be split by a per-thread instance. */
+let sharedFsStore: ArrivalStore | undefined;
+
+/** THE STRUCTURAL RULE (spec: Store injection), and the one place it is decided — Stage C's reader and
+ *  Stage D's search resolve their store through this same function, so the write side and the read side
+ *  cannot come to different answers about whether merging is on. The filesystem store is the default only
+ *  when the transcript reader is also the default: an embedder that overrode the reader has a transcript
+ *  this machine does not own, and merging this machine's arrivals into it would be worse than not merging.
+ *  Supplying a store explicitly is the way to say "merge anyway", and it is what every test does. */
+export function effectiveArrivalStore(deps: AppServerDeps): ArrivalStore | undefined {
+  return deps.arrivalStore ?? (deps.getSessionMessages ? undefined : (sharedFsStore ??= fsArrivalStore()));
+}
+
+/** Whether a frame would survive the transcript reader's own filter, and therefore whether it can be named
+ *  by an anchor at all. It MIRRORS the reader (`isMeta`, `isSidechain`, `teamName` are dropped; M1 measured
+ *  the `isMeta` drop as unconditional with no SDK option reaching it), and that coupling is dangerous in
+ *  both directions — dropping a frame the reader keeps leaves an anchor stale but resolvable, which is a
+ *  MISPLACEMENT rather than a withholding. So it is one exported predicate with a contract test over a
+ *  corpus of real frame shapes behind it, and the SDK bump that introduces drift reddens that test rather
+ *  than silently moving arrivals. */
+export function readerVisible(frame: any): boolean {
+  const type = frame?.type;
+  if (type !== "user" && type !== "assistant" && type !== "system") return false;
+  if (typeof frame.uuid !== "string" || !frame.uuid) return false;   // a row with no uuid is not addressable
+  return !frame.isMeta && !frame.isSidechain && !frame.teamName;
+}
+
+/** The anchor's content identity. A uuid alone is not a row identity (M5: 1,562 duplicate uuid occurrences,
+ *  31 disagreeing on their parent), so the fingerprint travels beside it — and `timestamp` is recorded only
+ *  when the frame carried one, because live `timestamp` is declared optional and a field absent at
+ *  observation must constrain nothing at resolution. */
+const fingerprintOf = (row: any): ArrivalFingerprint => ({
+  type: String(row.type),
+  hash: contentHash16(rawTextOf(row.message?.content)),
+  ...(typeof row.timestamp === "string" ? { timestamp: row.timestamp } : {}),
+});
+const uuidOf = (row: any): string | null => (typeof row?.uuid === "string" ? row.uuid : null);
+/** `prevUuid` is what pins POSITION: a duplicate uuid rebound by the reader's last-wins keying sits after a
+ *  different predecessor, and that is the disagreement the read side withholds on. */
+const advanceAnchor = (state: PeerInboundState, f: SeedFrame): void => {
+  state.anchor = { afterUuid: f.uuid, prevUuid: state.anchor?.afterUuid ?? null, fp: f.fp };
+};
 
 /** Record a uuid this server is about to submit under, so its own lifecycle bracket is recognised.
  *  Called from turns.ts's `submitRunner` beside the `randomUUID()` that mints it. */
@@ -96,11 +161,27 @@ const isDeadAdoption = (record: ThreadRecord, a: AdoptedTurn): boolean => !a.res
 
 export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
   if (record.crossSessionInbound === "refuse") return;   // nothing is coming; observe nothing
-  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set() };
+  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set(), anchor: undefined, seeding: null, degraded: false };
   record.peerInbound = state;
+  // Resolved ONCE, here: whether this thread logs at all is a property of the server's deps rather than of
+  // any frame, and re-deciding it per frame is how a write side and a read side come to disagree.
+  const store = effectiveArrivalStore(srv.deps);
+  // A record admitted WITH a session id (attach, resume) seeds AT INSTALL — the read is fired here and
+  // resolves later, so the admission contract stays same-tick and no frame can land before the window is
+  // open. A record without one seeds at the frame that reveals the id (below), which covers the FORK shape
+  // as much as the fresh one: fork admission deliberately leaves `record.sessionId` undefined over copied
+  // history, and grounding confirmed-empty "because there is no id yet" would render a fork's first arrival
+  // at the top of a history it did not precede.
+  if (store && record.sessionId) beginSeeding(srv, record, state, store, record.sessionId);
 
   const onFrame = (frame: any): void => {
     if (!frame || typeof frame !== "object") return;
+    // Seeding runs at whichever moment the session id is actually known (spec rev 8.1). `routeInit`
+    // latches it from the init frame and its subscription was installed first (server.ts's admission
+    // spines, rewind's swap), so by the time this observer sees that frame the id is already on the record.
+    if (store && !state.seeding && state.anchor === undefined && record.sessionId) {
+      beginSeeding(srv, record, state, store, record.sessionId);
+    }
 
     if (frame.type === "command_lifecycle") {
       let adopted = state.adopted;
@@ -139,7 +220,13 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // possible fates and no way to predict which.
     // No `frame.type === "user"` pre-check: `peerArrival` already owns that, and a second copy of any part
     // of the recognition rule here is the exact drift this task removed.
-    if (noteArrival(srv, record, state, frame)) drainArrivals(srv, record, state);
+    if (noteArrival(srv, record, state, store, frame)) drainArrivals(srv, record, state);
+
+    // AFTER the arrival, so an arrival never anchors on its own frame: an anchor is the last
+    // filter-surviving frame observed BEFORE the message it positions. A peer row is `isMeta` and does not
+    // survive the reader's filter anyway (measured, M1/M2), so this only decides the unmeasured shape — and
+    // it decides it the way that keeps the anchor a strict predecessor.
+    if (store && readerVisible(frame)) observeVisible(state, frame);
   };
 
   state.off = record.session.onFrame(onFrame);
@@ -163,10 +250,9 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
  *  rule: two files agreeing by construction is not the same as one rule, and every place the two copies
  *  drifted produced two different texts under ONE id. What stays here is what is genuinely live-only:
  *  queueing, eviction, the minted-uuid fallback, and the broadcast. */
-function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundState, frame: any): boolean {
+function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore | undefined, frame: any): boolean {
   const arrival = peerArrival(frame);
   if (!arrival) return false;
-  const origin = arrival.origin;
   // THE ONE CASE THE READER CANNOT SEE, recorded here because THIS is where it would be visible. When
   // several peer messages batch into one turn, every frame of the batch repeats the CAUSING message's
   // `origin.msg_id` and `origin.body` (probe 121, CLI 2.1.250). `peerArrival` reads each frame's own
@@ -190,28 +276,185 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
     console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
   }
 
-  // ANNOUNCED HERE, at arrival, and with NO turnId — at this moment the message's fate is genuinely
-  // undecided (it may fold into a running turn, batch with others, or cause a turn whose id does not exist
-  // yet), so the field could only be fabricated, delayed, or null. A client correlates through
-  // `arrivalUuid`, which is also the id of the item this arrival eventually produces.
-  //
-  // `origin` travels VERBATIM, and is always present now that it is what MAKES this an arrival.
-  // `verifiedPeerPid` is the only field in this exchange the kernel vouches for — `from` is sender-authored
-  // and forgeable by any same-user process — so re-deriving the object would replace a verified fact with
-  // this server's opinion of it.
-  //
-  // WHICH MEANS THIS NOTIFICATION IS NOT A SECOND COPY OF THE ITEM'S TEXT, and in a batch it disagrees with
-  // it: every member of a batch carries the CAUSING message's `origin.body` and `msg_id` beside its OWN
-  // distinct `arrivalUuid`, so a client that renders `origin.body` from here shows one message N times no
-  // matter what `peerArrival` resolved for the item. That is a defect in what this channel offers a client
-  // rather than in the reader, it is not addressed here, and closing it means deciding what `origin` means
-  // when the engine has collapsed several messages into one frame — not quietly editing a verbatim field.
-  //
-  // `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
-  // the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
-  // (fanout.ts). It is the same call `emitItems` makes for the item this arrival becomes.
-  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid, origin });
+  const pending: PendingArrival = {
+    arrivalUuid, text: arrival.text, origin: arrival.origin,
+    observedAt: new Date().toISOString(),
+    afterFrames: state.seeding?.frames.length ?? 0,
+  };
+
+  // INSIDE THE SEED WINDOW an arrival is HELD — neither persisted nor announced. Persisting it would mean
+  // inventing an anchor the seed has not grounded yet (and `null`, the only anchor available before then,
+  // means confirmed-empty: the top of history); announcing it would put a message on the wire that history
+  // is about to be unable to place. The window is one read long, and nothing durable is wrong inside it, so
+  // there is nothing to repair on the far side.
+  if (state.seeding) {
+    const buffer = state.seeding.arrivals;
+    buffer.push(pending);
+    // Bounded for the same reason the live queue above is, and announced for the same reason: a held
+    // arrival that is dropped is never logged AND never announced, which is the one silent loss here.
+    while (buffer.length > MAX_ARRIVALS) {
+      buffer.shift();
+      console.warn(`[peer] seed buffer full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest unlogged arrival`);
+    }
+    return true;
+  }
+
+  // `state.anchor !== undefined` is "the seed has grounded", and `record.sessionId` is the scope it
+  // grounded against — the two are one condition, because every write of `record.sessionId` is either
+  // guarded by "it is currently unset" (router.ts's init latch) or bracketed by an uninstall/install pair
+  // (rewind's swap, thread/clear's fresh engine), so a grounded anchor and the id it was grounded against
+  // cannot come apart under a live observer.
+  //   BEFORE the seed opens there is no scope to write into, and the arrival takes M8's path unchanged:
+  // announced, not logged. That is the pre-init window the spec already bounds by the length of engine
+  // startup and already declares lossy ("a crash in that window loses it"); this widens the loss from a
+  // crash to every time, and buys the guarantee that an unseeded thread behaves exactly as it did before
+  // this milestone. The window holds no arrival in practice: an arrival IS an engine frame, and the engine
+  // emits system/init — which is where the id is latched — before any user frame of the turn it starts.
+  if (store && record.sessionId && state.anchor !== undefined) {
+    logArrival(srv, record, state, store, record.sessionId, pending, store.nextSeq(record.sessionId), false);
+  } else {
+    announceArrival(srv, record, pending);
+  }
   return true;
+}
+
+/** Write the entry, THEN announce it. Killing the process between the two leaves an entry with no
+ *  notification, never the reverse — and the one exception is here, in the catch: a write that throws is
+ *  caught (an escaped exception would hit `readLoop`'s discard and vanish), the session latches degraded so
+ *  every later `thread/read` reports `arrivals: null` rather than a count that might be short, and the
+ *  notification still goes out — the live channel reports what the ENGINE did, and the engine delivered the
+ *  message whether or not our sidecar could record it. */
+function logArrival(
+  srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore,
+  sessionId: string, pending: PendingArrival, seq: number, ambiguous: boolean,
+): void {
+  const entry: ArrivalEntry = {
+    v: 1, id: pending.arrivalUuid, sessionId,
+    anchor: state.anchor ?? null,
+    ...(ambiguous ? { ambiguous: true as const } : {}),
+    seq, observedAt: pending.observedAt, origin: pending.origin, text: pending.text,
+  };
+  try {
+    store.append(entry);
+  } catch {
+    store.markDegraded(sessionId);
+    state.degraded = true;
+  }
+  announceArrival(srv, record, pending);
+}
+
+/** The announcement, unchanged since M8 and still the only thing this file says on the wire about an
+ *  arrival. Its own function now because TWO paths reach it — an ordinary arrival and a held one flushed
+ *  after the seed — and a second copy of this payload is a second answer to what a client receives.
+ *
+ *  ANNOUNCED at arrival, and with NO turnId — at this moment the message's fate is genuinely undecided (it
+ *  may fold into a running turn, batch with others, or cause a turn whose id does not exist yet), so the
+ *  field could only be fabricated, delayed, or null. A client correlates through `arrivalUuid`, which is
+ *  also the id of the item this arrival eventually produces.
+ *
+ *  `origin` travels VERBATIM, and is always present now that it is what MAKES this an arrival.
+ *  `verifiedPeerPid` is the only field in this exchange the kernel vouches for — `from` is sender-authored
+ *  and forgeable by any same-user process — so re-deriving the object would replace a verified fact with
+ *  this server's opinion of it.
+ *
+ *  WHICH MEANS THIS NOTIFICATION IS NOT A SECOND COPY OF THE ITEM'S TEXT, and in a batch it disagrees with
+ *  it: every member of a batch carries the CAUSING message's `origin.body` and `msg_id` beside its OWN
+ *  distinct `arrivalUuid`, so a client that renders `origin.body` from here shows one message N times no
+ *  matter what `peerArrival` resolved for the item. That is a defect in what this channel offers a client
+ *  rather than in the reader, it is not addressed here, and closing it means deciding what `origin` means
+ *  when the engine has collapsed several messages into one frame — not quietly editing a verbatim field.
+ *
+ *  `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
+ *  the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
+ *  (fanout.ts). It is the same call `emitItems` makes for the item this arrival becomes. */
+function announceArrival(srv: AppServer, record: ThreadRecord, pending: PendingArrival): void {
+  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid: pending.arrivalUuid, origin: pending.origin });
+}
+
+/** One observed filter-surviving frame: it advances the anchor, or — inside the seed window — waits in the
+ *  buffer to advance it once the chain is grounded. */
+function observeVisible(state: PeerInboundState, frame: any): void {
+  const f: SeedFrame = { uuid: String(frame.uuid), fp: fingerprintOf(frame) };
+  const seeding = state.seeding;
+  if (!seeding) { advanceAnchor(state, f); return; }
+  seeding.frames.push(f);
+  if (seeding.frames.length <= MAX_CAPTURED) return;
+  // The same posture MAX_CAPTURED already takes: a window that overruns loses its earliest frames rather
+  // than the process. Every buffered arrival's index moves with the shift, so observation order survives.
+  seeding.frames.shift();
+  for (const a of seeding.arrivals) a.afterFrames = Math.max(0, a.afterFrames - 1);
+}
+
+/** Open the seed window and fire the read that closes it. SYNCHRONOUS up to the read itself, because the
+ *  window has to be open before any frame can land in it — install the observer first and seed later and an
+ *  immediate arrival is persisted with a `null` anchor (confirmed-empty: the top of history); seed first and
+ *  every frame landing during the read is missed. Seeding is therefore an explicit state rather than an
+ *  ordering hope. */
+function beginSeeding(srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore, sessionId: string): void {
+  const seeding: Seeding = { frames: [], arrivals: [] };
+  state.seeding = seeding;
+  state.anchor = undefined;
+  const epoch = record.epoch;
+  const read = srv.deps.getSessionMessages ?? ((id: string) => defaultGetSessionMessages(id) as Promise<unknown[]>);
+  const ground = (rows: unknown[]): void => groundSeed(srv, record, state, store, { seeding, sessionId, epoch }, rows as any[]);
+  let pending: Promise<unknown[]>;
+  // A read FAILURE reads as `[]`: that is what the production reader does (sessions/reader.ts), and the
+  // spec records the resulting inability to tell an unreadable transcript from an empty one as a limit of
+  // the injected reader's contract rather than something to be distinguished here.
+  try { pending = Promise.resolve(read(sessionId)); } catch { pending = Promise.resolve([]); }
+  void pending
+    .then((rows) => ground(Array.isArray(rows) ? rows : []), () => ground([]))
+    .catch(() => { /* backstop: this resolve runs detached from the read loop, which discards rejections */ });
+}
+
+/** The seed resolved: ground the chain, then replay the window in observation order — each buffered frame
+ *  advancing the anchor, each buffered arrival persisted and announced at the anchor it actually had. */
+function groundSeed(
+  srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore,
+  ctx: { seeding: Seeding; sessionId: string; epoch: number }, rows: any[],
+): void {
+  const { seeding, sessionId, epoch } = ctx;
+  // The window belonged to a conversation that may since have been swapped or torn down; its buffer went
+  // with it (`uninstallPeerInbound`), and flushing into the replacement would key entries to a session this
+  // thread no longer has and anchor them to a chain the new engine never had.
+  if (state.seeding !== seeding || record.epoch !== epoch) return;
+  state.seeding = null;
+
+  // THE OVERLAP RULE. The seed is NOT a snapshot — the engine persists as it emits — so a frame observed
+  // live inside the window can also appear in the read's result, and grounding on the seed's tail would
+  // then anchor a buffered arrival AFTER a row that arrived after it. Instead: the earliest buffered frame
+  // that occurs anywhere in the seed grounds the chain on the row BEFORE that occurrence, and the buffer
+  // replays from its start — so every frame is counted exactly once.
+  let at = rows.length;                  // no overlap at all: ground on the seed's tail
+  let unrelatable = rows.length > 0;     // …and on rows never seen live, which is what an arrival cannot be ordered against
+  for (const f of seeding.frames) {
+    const found = rows.findIndex((r) => uuidOf(r) === f.uuid);
+    if (found < 0) continue;
+    at = found;
+    unrelatable = false;
+    break;
+  }
+  const groundRow = rows[at - 1];
+  state.anchor = groundRow ? { afterUuid: String(groundRow.uuid), prevUuid: uuidOf(rows[at - 2]), fp: fingerprintOf(groundRow) } : null;
+
+  // Re-read rather than carried from install: another process on this session may have appended in the
+  // meantime, and a stale base is how two entries come to share a seq.
+  let seq = store.nextSeq(sessionId);
+  const { arrivals, frames } = seeding;
+  let next = 0;
+  for (let i = 0; i <= frames.length; i++) {
+    while (next < arrivals.length && arrivals[next].afterFrames <= i) {
+      const pending = arrivals[next++];
+      // AMBIGUOUS, and only here: an arrival with no buffered frame before it, grounded on a seed holding
+      // rows this process never saw. The reader drops arrivals, so such a buffer establishes no overlap at
+      // all and nothing observed relates the two — the order is genuinely unknowable. Persisted and counted
+      // (it is a real message), never placed; grounding it on the seed tail instead would render the
+      // question after its own answer, which is this milestone's original defect reproduced at resume.
+      logArrival(srv, record, state, store, sessionId, pending, seq++, unrelatable && pending.afterFrames === 0);
+    }
+    if (i < frames.length) advanceAnchor(state, frames[i]);
+  }
+  arrivals.length = 0;
 }
 
 /** The arrivals this thread is carrying become user items of whichever turn is actually running them —
@@ -275,4 +518,12 @@ export function uninstallPeerInbound(record: ThreadRecord): void {
   // The arrivals belonged to the conversation that is being discarded; carrying them into a replacement
   // engine would emit them as items of a turn in a transcript they were never part of.
   state.arrivals.length = 0;
+  // The seed window belonged to it too, and goes the same way — an arrival held in it is dropped rather
+  // than flushed into the replacement, for the reason above and one more: its anchor names a chain the new
+  // engine does not have. The in-flight read's own resolve is declined by `groundSeed`'s identity check.
+  // The anchor returns to NOT YET KNOWN, so the next install seeds again against whatever id the record now
+  // carries — which is exactly what `thread/clear` needs (a new conversation, a new id at its init frame,
+  // an arrival scope that starts empty) and what a rewind swap needs (the retained id, re-read).
+  state.seeding = null;
+  state.anchor = undefined;
 }

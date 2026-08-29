@@ -98,7 +98,11 @@ function envelopeBodies(raw: string): string[] {
 /** The text a frame carries, before any envelope is considered. A block array is joined on its text blocks
  *  rather than JSON-stringified: stringifying turns a real newline into the two characters `\` and `n`, so
  *  the envelope's own line breaks would survive into what a user reads. */
-const rawTextOf = (content: unknown): string =>
+/** EXPORTED for M9's anchor fingerprint (peer/arrivalLog.ts's `contentHash16` hashes exactly this): the
+ *  live observer hashes a FRAME's content and the read side hashes a ROW's, and the two must be the same
+ *  bytes or every anchor withholds. One function is what makes that true by construction rather than by
+ *  two transcriptions agreeing. */
+export const rawTextOf = (content: unknown): string =>
   typeof content === "string" ? content
     : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("\n")
       : JSON.stringify(content ?? "");
