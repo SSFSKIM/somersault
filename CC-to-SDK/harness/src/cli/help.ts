@@ -98,6 +98,7 @@ export interface CcxOption {
  *  in args.ts because both consumers are printers; `test/unit/cli-surface.test.ts` guards the drift by
  *  feeding every long flag here back through parseCcx. */
 export const CCX_OPTIONS: CcxOption[] = [
+  { longs: ["--advisor-model"], value: "<model>", description: "Model id for the advisor consult (off by default)" },
   { longs: ["--all"], description: "Include sessions from every project" },
   { longs: ["--allow-origin"], value: "<origin>", description: "Allow a browser origin to reach serve (repeatable)" },
   { longs: ["--bg", "--background"], description: "Run the session detached in the background" },

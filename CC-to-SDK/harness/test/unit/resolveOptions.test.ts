@@ -48,6 +48,15 @@ describe("resolveOptions", () => {
     expect(o.cwd).toBe("/tmp");
     expect(o.maxTurns).toBe(5);
   });
+  // bl7 T-ADVISOR task 1 — advisorModel reaches the SDK through the EXISTING settings passthrough
+  // (resolveOptions.ts's `if (settings.settings) options.settings = settings.settings;`), the same seam
+  // autoCompactEnabled/autoCompactWindow already ride. Default OFF: absent from config means no
+  // `options.settings` at all, not a phantom `{advisorModel: undefined}`.
+  it("threads advisorModel into options.settings via the settings passthrough, absent by default", () => {
+    const o: any = resolveOptions({ advisorModel: "claude-opus-4-8" });
+    expect(o.settings).toEqual({ advisorModel: "claude-opus-4-8" });
+    expect(resolveOptions({}) as any).not.toHaveProperty("settings");
+  });
   it("disableProjectContext clears sources and excludes dynamic sections", () => {
     const o: any = resolveOptions({ disableProjectContext: true });
     expect(o.settingSources).toEqual([]);

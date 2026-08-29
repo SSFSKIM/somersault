@@ -72,7 +72,11 @@ import { isEffortLevel, type EffortLevel } from "./modelPickerModel.js";
  *  shape: a plain boolean, no closed-set validation below (read only as a truthy/falsy gate in ChatApp's
  *  auto-copy latch, never indexed or `.trim()`-called, so a hand-edited non-boolean has no crash to guard
  *  against). Read live, never captured once — the same reason `terminalProgressBarEnabled` is. */
-export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; terminalProgressBarEnabled?: boolean; effort?: EffortLevel; copyOnSelect?: boolean }
+/** `advisorModel` is bl7 T-ADVISOR task 1's saved default for `--advisor-model`, riding `model`'s exact
+ *  flag-or-saved-pref precedent (`cli/main.ts`'s merge). DEFAULT OFF (absent) — there is no engine
+ *  round-trip that reads this back mid-session; a foreground/`--detachable` launch's flag-or-saved-pref
+ *  merge is the one reader, same seam `model` already uses. */
+export interface CcxPrefs { theme?: ThemeId; outputStyle?: string; model?: string; advisorModel?: string; showExpandedTodos?: boolean; queuedUpHintSessions?: number; exampleFiles?: { files: string[]; at: number }; hasSeenAutoModeEntryWarning?: boolean; skipDangerousModePermissionPrompt?: boolean; showTurnDuration?: boolean; promptSuggestionEnabled?: boolean; tui?: "fullscreen" | "default"; prefersReducedMotion?: boolean; preferredNotifChannel?: NotifChannel; notifEvents?: NotifEvent[]; terminalProgressBarEnabled?: boolean; effort?: EffortLevel; copyOnSelect?: boolean }
 
 function prefsPath(env?: NodeJS.ProcessEnv): string { return join(fleetRoot(env), "prefs.json"); }
 
@@ -97,6 +101,10 @@ export function loadPrefs(env?: NodeJS.ProcessEnv): CcxPrefs {
     // no throw, but ACCENT and every token silently become undefined and the UI loses its colors.
     if (prefs.theme !== undefined && !Object.prototype.hasOwnProperty.call(THEMES, prefs.theme)) delete prefs.theme;
     if (prefs.model !== undefined && (typeof prefs.model !== "string" || prefs.model.trim() === "")) delete prefs.model;
+    // bl7 T-ADVISOR task 1: `advisorModel` gets the SAME treatment as `model`, for the same reason — it
+    // reaches resolveOptions.ts unvalidated (no client-side catalog, D7) and downstream code does no
+    // lookup on it, but a non-string is still worth dropping rather than shipping to the SDK as-is.
+    if (prefs.advisorModel !== undefined && (typeof prefs.advisorModel !== "string" || prefs.advisorModel.trim() === "")) delete prefs.advisorModel;
     // FSW T5: `tui` is a CLOSED set, like `theme` — a hand-edited `"alt-screen"` must not reach
     // `selectRenderer` as a third value its ladder has no rung for. Dropping it means the settings rung says
     // nothing and the decision falls through to the shipped default, which is the honest reading of a value

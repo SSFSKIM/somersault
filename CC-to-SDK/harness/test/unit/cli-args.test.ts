@@ -55,6 +55,12 @@ describe("parseCcx", () => {
     expect(a.config.effort).toBe("xhigh");
     expect(() => parseCcx(["--bg", "--effort", "extreme", "x"])).toThrow(/extreme/);
   });
+  // bl7 T-ADVISOR task 1 — --advisor-model rides --model's exact shape (val(t), no domain check: no
+  // client-side model-catalog validation, D7).
+  it("parses --advisor-model into config.advisorModel", () => {
+    const a = parseCcx(["--bg", "--advisor-model", "claude-opus-4-8", "x"]);
+    expect(a.config.advisorModel).toBe("claude-opus-4-8");
+  });
   it("parses --idle-timeout into idleTimeoutSec — grammar only, no --detachable requirement here", () => {
     // The "only with --detachable" policy lives in main.ts's switch (Task 8), not the parser: the
     // detached child re-parses its OWN argv without --detachable but WITH this forwarded flag, so a

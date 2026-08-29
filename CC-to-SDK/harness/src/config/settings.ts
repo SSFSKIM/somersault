@@ -7,12 +7,15 @@ export interface ResolvedSettings {
   systemPromptExcludeDynamic: boolean;
 }
 
-/** Fold the typed autocompact fields into the inline settings object (they are SDK Settings).
- *  Typed fields win on key collision; returns undefined when nothing is set (preserves prior behavior). */
-function mergeAutoCompact(config: HarnessConfig): Record<string, unknown> | undefined {
+/** Fold the typed SDK-`Settings` fields into the inline settings object (autocompact, plus bl7 T-ADVISOR's
+ *  advisorModel). Typed fields win on key collision; returns undefined when nothing is set (preserves
+ *  prior behavior). Renamed from `mergeAutoCompact` — its one call site is right below, so the rename is
+ *  mechanical. */
+function mergeSettings(config: HarnessConfig): Record<string, unknown> | undefined {
   const base: Record<string, unknown> = config.settings ? { ...config.settings } : {};
   if (config.autoCompactEnabled !== undefined) base.autoCompactEnabled = config.autoCompactEnabled;
   if (config.autoCompactWindow !== undefined) base.autoCompactWindow = config.autoCompactWindow;
+  if (config.advisorModel !== undefined) base.advisorModel = config.advisorModel;
   return Object.keys(base).length ? base : undefined;
 }
 
@@ -24,7 +27,7 @@ export function resolveSettings(config: HarnessConfig): ResolvedSettings {
     config.excludeDynamicSections ?? config.disableProjectContext ?? false;
   return {
     settingSources,
-    settings: mergeAutoCompact(config),
+    settings: mergeSettings(config),
     managedSettings: config.managedSettings,
     systemPromptExcludeDynamic,
   };

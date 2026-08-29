@@ -9,6 +9,15 @@ describe("validateHarnessConfig", () => {
     expect(() => validateHarnessConfig({})).not.toThrow();
     expect(harnessConfigSchema.parse({ extraOptions: { x: 1 }, settings: { y: true } })).toMatchObject({ extraOptions: { x: 1 }, settings: { y: true } });
   });
+  // bl7 T-ADVISOR task 1 — advisorModel rides model's exact zod shape (z.string().min(1).optional()):
+  // no client-side model-catalog validation (D7), just the same non-empty-string-or-absent check.
+  it("accepts advisorModel as a non-empty string, optional", () => {
+    expect(() => validateHarnessConfig({ advisorModel: "claude-opus-4-8" })).not.toThrow();
+    expect(() => validateHarnessConfig({})).not.toThrow();
+  });
+  it("rejects an empty-string advisorModel", () => {
+    expect(() => validateHarnessConfig({ advisorModel: "" })).toThrow(/advisorModel/);
+  });
   it("rejects bad enums / numerics / shapes with HarnessConfigError naming the path", () => {
     expect(() => validateHarnessConfig({ permissionMode: "bogus" })).toThrow(HarnessConfigError);
     expect(() => validateHarnessConfig({ maxTurns: 0 })).toThrow(/maxTurns/);

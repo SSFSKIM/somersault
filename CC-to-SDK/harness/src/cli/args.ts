@@ -150,6 +150,8 @@ export function parseCcx(argv: string[]): CcxInvocation {
         a.idleTimeoutSec = v; break;
       }
       case "--model": a.config.model = val(t); break;
+      // bl7 T-ADVISOR task 1 (D7): rides --model's exact shape — no domain check, no client-side catalog.
+      case "--advisor-model": a.config.advisorModel = val(t); break;
       case "--effort": a.config.effort = oneOf("--effort", val(t), EFFORT_LEVELS); break;
       case "-r": case "--resume": a.config.resume = val(t); break;
       // Upstream's own flag and letter (`-c, --continue`, L563626). Valueless; it resolves at launch to

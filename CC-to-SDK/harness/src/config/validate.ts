@@ -8,6 +8,9 @@ export class HarnessConfigError extends Error {}
 export const harnessConfigSchema = z.looseObject({
   model: z.string().min(1).optional(),
   fallbackModel: z.string().min(1).optional(),
+  // bl7 T-ADVISOR task 1 (D7): rides model's exact shape — no client-side model-catalog check, just
+  // non-empty-string-or-absent.
+  advisorModel: z.string().min(1).optional(),
   maxTurns: z.number().int().positive().optional(),
   maxBudgetUsd: z.number().nonnegative().optional(),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),

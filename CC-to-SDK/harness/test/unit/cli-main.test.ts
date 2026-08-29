@@ -444,6 +444,40 @@ describe("main — run: foreground (Task 7)", () => {
     expect(hostCalls[0].config.model).toBe("sonnet");
     expect(clientCalls[0].hookOpts.initialModel).not.toContain("opus");
   });
+  // bl7 T-ADVISOR task 1 — advisorModel rides model's exact flag-or-saved-pref merge (main.ts:441),
+  // default OFF: absent config.advisorModel and no saved pref means the field never reaches host.config.
+  it("a saved prefs advisorModel becomes the launch config when no --advisor-model was typed", async () => {
+    const hostCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ advisorModel: "claude-opus-4-8" }),
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async () => {},
+    })));
+    expect(hostCalls[0].config.advisorModel).toBe("claude-opus-4-8");
+  });
+  it("--advisor-model WINS over the saved default", async () => {
+    const hostCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["--advisor-model", "claude-sonnet-4-8", "task"], deps({
+      isTTY: () => true,
+      loadPrefs: () => ({ advisorModel: "claude-opus-4-8" }),
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async () => {},
+    })));
+    expect(hostCalls[0].config.advisorModel).toBe("claude-sonnet-4-8");
+  });
+  it("with no saved default and no --advisor-model, the config carries no advisorModel at all (default OFF)", async () => {
+    const hostCalls: any[] = [];
+    const fakeHost = { start: async () => {}, stop: async () => {} } as any;
+    await captureLog(() => main(["task"], deps({
+      isTTY: () => true,
+      makeHost: (o) => { hostCalls.push(o); return fakeHost; },
+      runChatClient: async () => {},
+    })));
+    expect(hostCalls[0].config.advisorModel).toBeUndefined();
+  });
   it("with no saved default and no --model, the config carries no model at all (resolveOptions decides)", async () => {
     const hostCalls: any[] = [];
     const fakeHost = { start: async () => {}, stop: async () => {} } as any;
@@ -1314,6 +1348,31 @@ describe("main — --detachable + --idle-timeout validation and auto-attach (Tas
       runChatClient: async () => {},
     })));
     expect(spawnCalls[0].config.model).toBe("opus");                // forwarded as typed — the CHILD alias-resolves it
+  });
+  // bl7 T-ADVISOR task 1 — advisorModel rides model's exact materialize-before-spawn shape: hostMain.ts
+  // loads no prefs of its own, so a saved advisorModel preference has to be merged into inv.config HERE,
+  // before spawnDetached, or a --detachable child would silently launch with no advisor consult at all.
+  it("a saved advisorModel with no --advisor-model flag: --detachable forwards it", async () => {
+    const spawnCalls: any[] = [];
+    await captureLog(() => main(["--detachable", "task"], deps({
+      loadPrefs: () => ({ advisorModel: "claude-opus-4-8" }),
+      spawnDetached: (inv) => { spawnCalls.push(inv); return { short: "12345678", banner: "backgrounded · 12345678" }; },
+      prepareAttach: async () => prep({ short: "12345678" }),
+      probeSocket: async () => {},
+      runChatClient: async () => {},
+    })));
+    expect(spawnCalls[0].config.advisorModel).toBe("claude-opus-4-8");
+  });
+  it("--advisor-model WINS over a saved advisorModel default for --detachable", async () => {
+    const spawnCalls: any[] = [];
+    await captureLog(() => main(["--detachable", "--advisor-model", "claude-sonnet-4-8", "task"], deps({
+      loadPrefs: () => ({ advisorModel: "claude-opus-4-8" }),
+      spawnDetached: (inv) => { spawnCalls.push(inv); return { short: "12345678", banner: "backgrounded · 12345678" }; },
+      prepareAttach: async () => prep({ short: "12345678" }),
+      probeSocket: async () => {},
+      runChatClient: async () => {},
+    })));
+    expect(spawnCalls[0].config.advisorModel).toBe("claude-sonnet-4-8");
   });
 });
 

@@ -12,6 +12,12 @@ export interface HarnessConfig {
   cwd?: string;
   model?: string;
   fallbackModel?: string;
+  // bl7 T-ADVISOR task 1 (D6/D7): the server-side advisor tool's model, folded into `settings` at
+  // settings.ts (lands on the SDK's Settings.advisorModel). DEFAULT OFF — absent means no advisor consult
+  // at all, the `promptSuggestionEnabled` polarity for a paid secondary-model feature (~$0.39/consult).
+  // No client-side model-catalog validation and no client-side cost/frequency limiter (ccx has no catalog;
+  // a bad pairing surfaces as the server's own `model_not_found`).
+  advisorModel?: string;
   maxTurns?: number;
   // turn controls (verified live 2026-06-18; specs/2026-06-18-sdk-capability-closeout-design.md)
   effort?: EffortLevel;                    // 'low'|'medium'|'high'|'xhigh'|'max' — reasoning effort

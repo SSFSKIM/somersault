@@ -319,8 +319,15 @@ export async function main(argv: string[], rawDeps: MainDeps = defaults): Promis
         // before the spawn — without it, a saved model would arrive at the child as undefined, fall back
         // to DEFAULTS.model (auto-capable) and launch `auto` while a foreground run on the same saved
         // model launched `default`: the split-brain EP-T1 was written to prevent, on the model axis.
-        const model = inv.config.model ?? deps.loadPrefs().model;
-        const { short, banner } = deps.spawnDetached({ ...inv, prompt: undefined, config: { ...inv.config, ...(model ? { model } : {}) } });
+        // bl7 T-ADVISOR task 1: advisorModel rides the SAME materialize-before-spawn rule as model, off
+        // ONE loadPrefs() call (F10 T-MAINT item 2's read-count discipline) — hostMain.ts loads no prefs
+        // of its own, so a saved advisorModel must be merged in here too, or a --detachable child would
+        // silently launch with no advisor consult at all (default OFF means "no consult", so a silent
+        // drop here is invisible rather than a loud misconfiguration).
+        const detachedPrefs = deps.loadPrefs();
+        const model = inv.config.model ?? detachedPrefs.model;
+        const advisorModel = inv.config.advisorModel ?? detachedPrefs.advisorModel;
+        const { short, banner } = deps.spawnDetached({ ...inv, prompt: undefined, config: { ...inv.config, ...(model ? { model } : {}), ...(advisorModel ? { advisorModel } : {}) } });
         console.log(banner);
         return await attachToImpl(short, { ...(inv.prompt ? { initialPrompt: inv.prompt } : {}), fromSpawn: true }, deps);
       }
@@ -439,6 +446,10 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // model), and `-p`/`--bg` deliberately do not: a headless run takes its model from its invocation.
   const prefs = deps.loadPrefs();
   const model = inv.config.model ?? prefs.model;
+  // bl7 T-ADVISOR task 1 — advisorModel rides the SAME flag-or-saved-pref rule, off the SAME `prefs` read
+  // (no second loadPrefs() call). Default OFF: absent config.advisorModel and no saved pref means the
+  // field stays out of foregroundConfig entirely, not a phantom `advisorModel: undefined`.
+  const advisorModel = inv.config.advisorModel ?? prefs.advisorModel;
   // T-EFFORT — the model precedent's exact twin, one line down: `--effort` still wins over a saved default,
   // and the saved default is re-filtered through the SAME persistable-level gate the write side uses
   // (`isPersistableEffortLevel`, canon's `Qdt` on read, R2 §2.5) — a hand-edited `"max"` in prefs.json is
@@ -468,6 +479,7 @@ export async function runForegroundImpl(inv: CcxInvocation, deps: MainDeps): Pro
   // `config.hooks` keeps its own `UserPromptSubmit` entries.
   const promptLatch = createPromptLatch();
   const foregroundConfig = { ...hostConfig, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}),
+    ...(advisorModel ? { advisorModel } : {}),
     permissionMode: launch.mode,
     hooks: mergeHooks(hostConfig.hooks ?? {}, promptLatch.hooks()) };
   const host = deps.makeHost({

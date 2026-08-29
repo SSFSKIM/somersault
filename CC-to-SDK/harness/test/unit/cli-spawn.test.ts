@@ -71,6 +71,20 @@ describe("spawnDetached", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(args[args.indexOf("--model") + 1]).toBe("m1");
   });
+  // bl7 T-ADVISOR task 1 (D15) — --advisor-model rides --model's exact configFlags shape. Without the
+  // allowlist entry, spawn.ts's configFlags silently drops it and a --bg/--detachable child launches with
+  // no advisor consult at all, no error.
+  it("forwards --advisor-model to the child, so a --bg worker doesn't silently lose the advisor consult", () => {
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "--advisor-model", "claude-opus-4-8", "-n", "w1", "task"]), { spawn: s.spawn, rand: () => 0 });
+    const args: string[] = s.calls[0].args;
+    expect(args[args.indexOf("--advisor-model") + 1]).toBe("claude-opus-4-8");
+  });
+  it("omits --advisor-model entirely when it was not given", () => {
+    const s = fakeSpawner();
+    spawnDetached(parseCcx(["--bg", "task"]), { spawn: s.spawn, rand: () => 0 });
+    expect((s.calls[0].args as string[])).not.toContain("--advisor-model");
+  });
   it("forwards --idle-timeout to the child so a --detachable spawn's reaper survives the re-parse", () => {
     // The child re-parses its OWN argv, with no --detachable of its own to gate on — only this forwarded
     // flag tells its host to arm an idle reaper at all.
