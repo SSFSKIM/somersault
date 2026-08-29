@@ -104,6 +104,11 @@ export async function runServe(inv: CcxInvocation): Promise<void> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const { token, tokenFile } = loadOrMintToken(inv.tokenFile, dir);
   const server = new AppServer({ token });
+  // M8: this server's own reply address in the peer namespace, bound BEFORE the listener accepts anything
+  // so no client can see a gateway that is neither absent nor present yet. Never throws and never blocks
+  // the serve: a machine where the socket directory is unwritable serves every non-peer method and answers
+  // `peer/send` -33008 (see AppServer.bindGateway). Torn down inside server.shutdown(), below.
+  await server.bindGateway();
   const { port, close } = await listenWs(server, { host: inv.listen.host, port: inv.listen.port, allowOrigins: inv.allowOrigins, token });
   // Hosts are stored unbracketed (args.ts strips IPv6 brackets so the bind and the loopback check agree);
   // a URL needs them back or `ws://::1:9001` is unparseable.

@@ -27,7 +27,8 @@ import { connectFleetEngine } from "./fleetEngine.js";
 import type { AnswerReceipt, FleetEngineSession } from "./fleetEngine.js";
 import { ERR } from "./rpc.js";
 import type { RequestId } from "./rpc.js";
-import { emptyFlagPerms, fleetTurnId, threadStatus } from "./registry.js";
+import { emptyFlagPerms, fleetTurnId, settingsChangedPayload, threadStatus } from "./registry.js";
+import { DEFAULT_INBOUND } from "./peerPolicy.js";
 import type { ThreadRecord } from "./registry.js";
 import { TurnMapper } from "./items/mapper.js";
 import { emitItems, requestInterrupt, snapshot } from "./turns.js";
@@ -287,7 +288,11 @@ export function installFleetEvents(srv: AppServer, record: ThreadRecord, engine:
       if (s.model !== undefined) record.settings.model = s.model;
       if (s.thinkingTokens !== undefined) record.settings.thinkingTokens = s.thinkingTokens;
       record.updatedAt = nowSec();
-      srv.broadcast(record.id, "thread/settings/changed", { threadId: record.id, source: "engine", model: record.settings.model, permissionMode: record.settings.permissionMode, thinkingTokens: record.settings.thinkingTokens });
+      // The shared builder (registry.ts), like the other three producers — its `crossSessionInbound`
+      // included, which for a fleet record is the `DEFAULT_INBOUND` seed this record was admitted with and
+      // that `thread/get` already publishes for it. Dropping the key here would make the wire shape depend
+      // on the thread's ORIGIN.
+      srv.broadcast(record.id, "thread/settings/changed", settingsChangedPayload(record, "engine"));
     }
     // The host's own busy/waitingFor is NOT mirrored onto `record.busy`: the turn events above own that,
     // and a `state` frame arrives for reasons that are not turn edges (a park, a setter, a swap).
@@ -408,6 +413,10 @@ async function admitFleet(srv: AppServer, row: RosterRow): Promise<ThreadRecord>
     if (st.short !== undefined && st.short !== row.short) throw new Error(`roster row ${row.short} is stale — the socket at pid ${row.pid} belongs to session ${st.short}`);
     const record: ThreadRecord = {
       id: srv.registry.mint(), origin: "fleet", session: engine, unattended: "park",
+      // A fleet thread's engine is the HOST's: this server neither builds it nor can inject a settings
+      // layer into it, so `DEFAULT_INBOUND` is the honest seed — "this server has not enabled inbound
+      // here" — rather than a claim about what the host's own config happens to say.
+      crossSessionInbound: DEFAULT_INBOUND,
       busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [],
       subscribers: new Set(), chain: Promise.resolve(),
       // The read substrate IS the persisted transcript: `thread/read` on a fleet thread is disk-only

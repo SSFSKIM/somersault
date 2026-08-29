@@ -23,12 +23,13 @@ import { ImageStageRegistry, IMAGE_STAGE_SWEEP_INTERVAL_MS } from "./imageStage.
 import { imageStageParams } from "./schema/images.js";
 import { flushQueue } from "./queue.js";
 import { threadSubscribe, threadUnsubscribe, threadRead } from "./subscribe.js";
-import { modelSet, permissionModeSet, thinkingSet, settingsApply } from "./settings.js";
+import { modelSet, permissionModeSet, thinkingSet, settingsApply, crossSessionInboundSet } from "./settings.js";
 import { capabilitiesRead, contextUsageRead, usageRead, initRead, accountRead } from "./introspect.js";
 import { threadCompactStart, threadReinitialize } from "./lifecycle.js";
 import { threadList, threadFork, threadNameSet, threadTagSet, threadDelete } from "./sessionLib.js";
 import { armPlanUpgrade } from "./planUpgrade.js";
 import { installRouter } from "./router.js";
+import { installPeerInbound, settleAdopted, uninstallPeerInbound } from "./peerInbound.js";
 import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout.js";
 import { rewindAnchors, rewindDryRun, threadRewind, threadReopen } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
@@ -41,6 +42,11 @@ import { reviewStart } from "./review.js";
 import { configRead, configValueWrite, configBatchWrite } from "./configDomain.js";
 import { threadSearch, threadSearchOccurrences } from "./search.js";
 import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js";
+import { peerList, peerSend } from "./peerDomain.js";
+import { applyPeerPolicy, DEFAULT_INBOUND, type CrossSessionInbound } from "./peerPolicy.js";
+import { ReceiptMap } from "../peer/receipts.js";
+import { readPeerRows as realReadPeerRows, type PeerRow } from "../peer/roster.js";
+import { PeerGateway } from "../peer/gateway.js";
 import { listArchived, removeArchiveMarker } from "./archive.js";
 import { initializeParams, threadIdParams } from "./schema/core.js";
 import { threadStopParams } from "./schema/fleet.js";
@@ -104,6 +110,14 @@ export interface AppServerDeps {
   // injectable so a test can wrap its `validate` with a spy (the "no second decode" contract must be
   // provable end to end, not just at the registry's own unit level) without reaching into a private field.
   imageStages?: ImageStageRegistry;
+  // M8 (§peer): the bound gateway, or `null` to declare it deliberately absent (a test, and a server that
+  // could not bind). Undefined means "not wired yet" and is treated the same as null — `peer/send` answers
+  // -33008 either way, since a sender with no reply address of its own can never be told what happened.
+  // `readPeerRows`/`peerEnv` are the roster's two seams, defaulted at their accessors (peerRows/peerEnv)
+  // to the real reader and `process.env`, so a suite lists a fixture roster without a home directory.
+  peerGateway?: PeerGateway | null;
+  readPeerRows?: (env?: NodeJS.ProcessEnv) => Promise<PeerRow[]>;
+  peerEnv?: NodeJS.ProcessEnv;
 }
 export interface ConnCtx {
   peer: Peer;
@@ -154,6 +168,12 @@ export function threadView(srv: AppServer, r: ThreadRecord): Record<string, unkn
     status: threadStatus(r, srv.threadWaiter(r.id)),
     queueDepth: r.queue.length,
     origin: r.origin,
+    // M8: the inbound policy, ALWAYS present — this is the only place a client can read back what
+    // admission decided, and there is no setter to re-ask (peerPolicy.ts). It rides the thread row for the
+    // reason `reviewOf` does: it is a property of the thread, so one appearance on the view every client
+    // already reads (`thread/started`, `thread/list`, `thread/attach`, `thread/search`) is what lets any
+    // of them tell an addressable thread from a closed one — including one another client raised.
+    crossSessionInbound: r.crossSessionInbound,
     ...(r.reviewOf ? { reviewOf: r.reviewOf } : {}),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -456,6 +476,10 @@ export class AppServer {
   // its own — the same reason `spawn.ts`'s detached child is unref'd. Public (not private) so a test can
   // assert `hasRef() === false` directly rather than reaching into a private field.
   readonly imageStageSweepTimer: NodeJS.Timeout;
+  /** M8: the `msgId -> connection` map every `peer/send` leaves behind, so a receipt arriving minutes
+   *  later over the gateway reaches the connection that asked. Public for the reason `imageStages` is —
+   *  the gateway's own receipt route (Task 7) and a test both hand frames to it from outside. */
+  readonly receipts: ReceiptMap<ConnCtx>;
   private conns = new Map<number, ConnCtx>();
   private decisions = new Map<string, ThreadDecisions>();
   /** M7: one dynamic-tool-call registry per thread, minted and released exactly beside `decisions` — the
@@ -530,7 +554,7 @@ export class AppServer {
       const resumeTarget = typeof cfg?.resume === "string" ? cfg.resume : undefined;
       const resuming = resumeTarget !== undefined && !forksSession(cfg) ? resumeTarget : undefined;
       const register = (): void => {
-        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools });
+        const record = srv.createThread({ config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools, crossSessionInbound: parsed.data.crossSessionInbound });
         // Stamped EAGERLY, before the reply and before any await, for the reason startThread's own stamp is:
         // a real engine's `sessionId` getter stays undefined until the first turn's init frame (router.ts's
         // routeInit), so without this the record is invisible to `findLiveBySessionId` from here until the
@@ -557,7 +581,7 @@ export class AppServer {
       // D-M5-21 shelf read), which is the property the reservation's placement depends on.
       const sessionId = parsed.data.sessionId;
       await admitResume(srv, ctx, id, { sessionId, admits: !forksSession(parsed.data.config) },
-        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools }));
+        () => srv.startThread(ctx, id, { resume: sessionId, config: parsed.data.config, unattended: parsed.data.unattended, dynamicTools: parsed.data.dynamicTools, crossSessionInbound: parsed.data.crossSessionInbound }));
     },
     "thread/list": threadList,
     "thread/fork": threadFork,
@@ -712,6 +736,16 @@ export class AppServer {
     // those gates exist for.
     "fleet/list": fleetList,
     "thread/attach": threadAttach,
+    // M8 (§ peer domain): server-scoped like their fleet neighbours — no threadId, so neither passes the
+    // -33005 or origin gates. `peer/send`'s `fromThreadId` is ATTRIBUTION, read inside the handler, and
+    // never the request's subject: the subject is another process's inbox on this machine.
+    "peer/list": peerList,
+    "peer/send": peerSend,
+    // …and the policy's own setter, which IS thread-scoped (unlike the two above) and therefore does pass
+    // the -33005 gate. It lives with the other settings setters in settings.ts, on the same
+    // `thread/settings/changed` spine, and refuses a fleet thread in its own body — see its header on why
+    // the refusal is not in FLEET_UNSUPPORTED.
+    "thread/crossSessionInbound/set": crossSessionInboundSet,
     // M3 Task 9 (§1e): ONE method, origin-appropriate meaning. On an inProcess thread this IS
     // `thread/close` — our engine, our call to end it. On a fleet thread the two diverge completely:
     // closing only detaches (the host lives on), so ending the SESSION needs its own op and its own
@@ -828,6 +862,40 @@ export class AppServer {
     this.imageStages = deps.imageStages ?? new ImageStageRegistry();
     this.imageStageSweepTimer = setInterval(() => this.imageStages.sweep(), IMAGE_STAGE_SWEEP_INTERVAL_MS);
     this.imageStageSweepTimer.unref(); // never keeps the process alive on its own (see the field's own note)
+    this.receipts = new ReceiptMap<ConnCtx>({
+      deliver: (conn, msgId, status, reason, from) => {
+        try { conn.peer.notify("peer/messageStatus", { msgId, status, ...(reason ? { reason } : {}), from, receivedAt: Math.floor(Date.now() / 1000) }); } catch { /* the connection went away mid-notify */ }
+      },
+    });
+  }
+
+  /** The bound gateway, or undefined when none is. `null` in deps means the same thing and is how a test
+   *  or a failed bind says so explicitly. */
+  gateway(): PeerGateway | undefined { return this.deps.peerGateway ?? undefined; }
+
+  peerEnv(): NodeJS.ProcessEnv { return this.deps.peerEnv ?? process.env; }
+  peerRows(): Promise<PeerRow[]> { return (this.deps.readPeerRows ?? realReadPeerRows)(this.peerEnv()); }
+
+  /** Bind the peer gateway, once, before the listener starts accepting — so no connection can ever see a
+   *  half-decided gateway (an unbound one that is about to bind answers -33008 for a request that would
+   *  have worked a millisecond later).
+   *
+   *  NEVER throws, and a failed bind is NOT fatal: `PeerGateway.bind` already answers `undefined` for an
+   *  unwritable socket directory or a taken address, and this records that as an explicit `null`. A
+   *  machine that cannot host a reply address still serves every non-peer method, and `peer/send` answers
+   *  -33008 — which is the honest answer anyway, since a sender with no reply address of its own could
+   *  never be told what became of the message. `undefined` in deps means "not wired yet"; anything else —
+   *  an injected gateway, or a `null` that says "deliberately absent" — is already an answer and is left
+   *  alone, which is what makes this idempotent and keyless in tests. */
+  async bindGateway(): Promise<void> {
+    if (this.deps.peerGateway !== undefined) return;
+    const gw = await PeerGateway.bind({
+      onReceipt: (frame) => { this.receipts.route(frame); },
+      // The gateway is a reply address, not a session. A frame that assumes otherwise goes to stderr
+      // rather than to the clients: no connection asked for it, and it is attributable to none of them.
+      onStrayFrame: (kind) => console.error(`cc-harness appserver: ignored a ${kind} frame on the peer gateway — it is a reply address, not a session`),
+    }, { env: this.peerEnv() });
+    this.deps.peerGateway = gw ?? null;
   }
 
   /** The FRESH-thread creation spine, extracted verbatim from the `thread/start` handler so M4's
@@ -841,12 +909,18 @@ export class AppServer {
    *  Throws whatever the session factory throws (an invalid config); dispatch's own catch answers for it.
    *  The `resume` sibling below is a separate spine on purpose: it admits a thread onto an EXISTING store
    *  id, which brings the delete/resume reservation race with it — nothing this one can encounter. */
-  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): ThreadRecord {
+  createThread(opts: { config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[]; crossSessionInbound?: CrossSessionInbound }): ThreadRecord {
     const specs = opts.dynamicTools ?? [];
     admitDeclarations(opts.config, specs); // both spines, before either mints anything (see the helper)
+    // M8's policy, resolved ONCE and used twice — into the config below (which every replacement engine
+    // is rebuilt from) and onto the record's own mirror. `applyPeerPolicy` throws `RpcRefusal` for a
+    // settings carrier it cannot sanitize, and it runs HERE, beside the declaration gate, so that refusal
+    // also lands before anything is minted.
+    const inbound = opts.crossSessionInbound ?? DEFAULT_INBOUND;
+    const policed = applyPeerPolicy(opts.config, inbound);
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
+    const config = buildConfig({ config: policed, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId));
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     // THE OVERLAY IS TRANSIENT (M7): the declared tools become MCP servers on the config THIS build
     // receives, and `record.config` below stays the clean base every later engine is rebuilt from.
@@ -856,9 +930,17 @@ export class AppServer {
     this.decisions.set(threadId, dec);
     this.dynamicCalls.set(threadId, this.makeDynamicCalls(threadId));
     const nowS = nowSec();
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
+    // `crossSessionInbound` beside the `config` it mirrors, in ONE literal — peerPolicy.ts's rule that the
+    // two are never written apart, enforced by there being no second statement to forget.
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: session.sessionId, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // the snapshot above is undefined until the first turn's init frame (router.ts's routeInit)
+    // M8, beside the router and for the same reason it sits here rather than anywhere later: this whole
+    // spine is synchronous from `factory(...)` to this line, and a real engine's read loop cannot dispatch
+    // its first frame before a microtask — so nothing the engine says can be missed, and an arrival that
+    // lands in the very next tick is observed. Stated by BOTH admission spines, so the two engines are
+    // observed by one rule (peerInbound.ts).
+    installPeerInbound(this, record);
     return record;
   }
 
@@ -883,16 +965,22 @@ export class AppServer {
    *  That is the intended shape, and the capture-site comment in the resume handler is the argument for
    *  it — the reservation fences the window before REGISTRATION, and `findLiveBySessionId` covers the
    *  rest. */
-  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[] }): Promise<void> {
+  async startThread(ctx: ConnCtx, id: RequestId, opts: { resume: string; config?: Record<string, unknown>; unattended: "park" | "deny"; dynamicTools?: DynamicToolSpec[]; crossSessionInbound?: CrossSessionInbound }): Promise<void> {
     if (this.shuttingDown) { ctx.peer.replyError(id, ERR.SHUTTING_DOWN, "Server is shutting down"); return; } // see shutdown()
     const specs = opts.dynamicTools ?? [];
     admitDeclarations(opts.config, specs); // stated by BOTH spines, before either mints anything (see the helper)
+    // M8's policy, stated by BOTH spines for the same reason the declaration gate is — a policy only
+    // `thread/start` applied would leave every resumed thread on the CLI's own default. The refusal
+    // `applyPeerPolicy` throws travels out of this async function, through `admitResume`'s `await
+    // register()`, to dispatch's catch, which answers -32602 with the message intact.
+    const inbound = opts.crossSessionInbound ?? DEFAULT_INBOUND;
+    const policed = applyPeerPolicy(opts.config, inbound);
     // BUSY, not a new code: "you may not resume this right now" is exactly what the busy family means on
     // the wire (same reasoning thread/delete's own live-refusal uses). See `deletingSessions`.
     if (this.deletingSessions.has(opts.resume)) { ctx.peer.replyError(id, ERR.BUSY, "Session is being deleted"); return; }
     const threadId = this.registry.mint();
     const dec = this.makeDecisions(threadId, opts.unattended);
-    const config = { ...buildConfig({ config: opts.config, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
+    const config = { ...buildConfig({ config: policed, unattended: opts.unattended }, dec.broker(threadId), makeOnElicitation(this, threadId)), resume: opts.resume };
     const factory = this.deps.sessionFactory ?? ((c: Record<string, unknown>) => openSession(c as OpenSessionConfig));
     // Transient exactly as in `createThread`, and for the same reason — `record.config` below is what every
     // later engine of this thread is rebuilt from, and it must not carry a mounted server instance.
@@ -915,9 +1003,10 @@ export class AppServer {
     // dropped by every later swap too (registry.ts's field doc), and anything the overlay added would be
     // re-mounted by every later engine instead of rebuilt (dynamicServers.ts's carrier note).
     const admits = !forksSession(opts.config);
-    const record: ThreadRecord = { id: threadId, origin: "inProcess", session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
+    const record: ThreadRecord = { id: threadId, origin: "inProcess", crossSessionInbound: inbound, session, unattended: opts.unattended, busy: false, turnSeq: 0, interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(), sessionId: admits ? opts.resume : undefined, config: config as Record<string, unknown>, createdAt: nowS, updatedAt: nowS, cwd: opts.config?.cwd as string | undefined, settings: seedSettings(opts.config), flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, ...(specs.length ? { dynamicTools: specs } : {}), epoch: 0 };
     this.registry.add(record);
     installRouter(this, record); // a no-op init route for an ordinary resume (the id is already stamped) and the ONLY id source for a fork — one rule for both entry points
+    installPeerInbound(this, record); // …and the arrival observer, beside it — see createThread's note on why here
     ctx.peer.reply(id, { thread: threadView(this, record) });
     this.broadcastServer("thread/started", { thread: threadView(this, record) });
     // LAST, once admission has fully succeeded and no step after it can fail: unarchiving a session whose
@@ -1035,6 +1124,13 @@ export class AppServer {
     // for the same circular-wait reason the decisions are: the engine's read loop cannot end while a turn
     // sits blocked on one of these promises, and this is the only thing that settles them.
     this.dynamicCalls.get(record.id)?.teardown("thread closed");
+    // M8, and the ORDER is the whole of it: the turn edge goes out FIRST, while the record is still
+    // registered and the dispose has not begun. A `thread/closed` published with an adopted turn still
+    // open leaves every subscriber holding a turn id that never terminates. `settleAdopted` resolves the
+    // runner's promise, so `beginTurn`'s own success path broadcasts `turn/completed{status:"cancelled"}`
+    // — the same word the close flush gives the queued turns beside it (queue.ts).
+    settleAdopted(this, record, "cancelled");
+    uninstallPeerInbound(record);
     record.routerOff?.(); // stop routing frames from an engine we are about to dispose (Task 8a)
     record.fleetOff?.();  // …and, for a fleet thread, the event layer installed alongside it (M3 Task 9:
                           // the two are installed as a pair and are released as one, so no subscription
@@ -1071,6 +1167,14 @@ export class AppServer {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     clearInterval(this.imageStageSweepTimer); // unref'd already, but a shut-down server owes it no more ticks
+    // M8: the peer half, BEFORE the threads are awaited and therefore while every connection is still
+    // open. A tracked message whose status can now never be routed (the gateway is about to stop
+    // listening) is told so — the common cross-session outcomes are silent, so a client left holding a
+    // correlation the server has forgotten would wait for a notification that can no longer exist. The
+    // gateway closes after that sweep: unlinking the socket and the key file is what stops a peer from
+    // writing a receipt into an address nothing is reading.
+    this.receipts.sweep(0);
+    await this.deps.peerGateway?.close();
     await Promise.all(this.registry.list().map((r) => {
       // The same latch+flush pair thread/close raises, per record, BEFORE anything is awaited (M2b Wave 4):
       // the server-wide `shuttingDown` flag above refuses new THREADS, but a turn/start on a thread that
@@ -1273,8 +1377,10 @@ export class AppServer {
     // tab closing sweeps every record, not just whichever thread it last touched). F10 T-IMGREACH Task 10
     // (I3d): nor may it leave that connection's staged images behind — `dropConnection` releases their
     // bytes and purges any reservation opened on this connection (fix 81a2fd8ac8), so a socket dying
-    // mid-stage cannot hold memory the client will never come back to claim.
-    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); this.imageStages.dropConnection(connId); sink.end(); };
+    // mid-stage cannot hold memory the client will never come back to claim. M8 adds the receipt map for
+    // the same reason: a `peer/send` correlation whose asker is gone can never be routed anywhere, and the
+    // common cross-session outcomes are SILENT, so nothing later would ever release it.
+    const close = () => { this.conns.delete(connId); for (const record of this.registry.list()) record.subscribers.delete(peer); this.imageStages.dropConnection(connId); this.receipts.dropConnection(connId); sink.end(); };
     return { peer, feed, close };
   }
 
@@ -1308,7 +1414,12 @@ export class AppServer {
     // a client cannot otherwise tell this server from one too old to know the param — an older `z.object`
     // strips the declaration silently and starts the thread toolless. Answered here, in the reply every
     // client already reads, before anything can be declared.
-    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true });
+    // `crossSession: true` (M8) is the same marker for the same reason: `thread/start`'s
+    // `crossSessionInbound` is an OPTIONAL param, so an older server strips it and starts the thread with
+    // mode parity still in force, silently. The marker is emitted the moment the schema publishes it —
+    // a published result a reply does not satisfy would make the contract a lie in the one direction a
+    // client cannot check.
+    ctx.peer.reply(id, { userAgent: USER_AGENT, version: pkgVersion, platformOs: process.platform, dynamicTools: true, crossSession: true });
     ctx.peer.notify("initialized", {}); // spec §7: identical to Codex — reply first, notification second, no fields specified
   }
 

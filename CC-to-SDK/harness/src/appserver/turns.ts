@@ -16,6 +16,7 @@ import { refuseFleetContent } from "./fleetEngine.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import type { RequestId } from "./rpc.js";
 import { applyPlanUpgrade } from "./planUpgrade.js";
+import { notePeerTurnUuid } from "./peerInbound.js";
 import { asQueuedInput, cancelQueued, enqueueTurn, flushQueue, isQueuedItems, queuedNotification, takeNext, MAX_QUEUED_BYTES, MAX_QUEUED_ENTRY_BYTES, MAX_QUEUED_TURNS, type QueuedInput, type QueuedTurn } from "./queue.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams, turnSteerContentParams } from "./schema/turns.js";
 import { resolveInputItems, type InputItem } from "./turnItems.js";
@@ -25,10 +26,10 @@ const BUFFER_CAP = 500; // Task 9 replays this bound — a bounded PER-TURN buff
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors server.ts/settings.ts — registry.ts's `updatedAt` is unix seconds, not ms
 
 /** The terminal status a turn reports when it never reached an engine at all. */
-type TurnStopped = "cancelled" | "interrupted";
+export type TurnStopped = "cancelled" | "interrupted";
 /** What a runner hands back to `beginTurn`: the engine's own outcome (Wave T t14's additive `error` tag
  *  rides on it), `stopped` when it refused to call the engine at all, or nothing (compact). */
-type TurnOutcome = { error?: { message: string }; stopped?: TurnStopped } | void;
+export type TurnOutcome = { error?: { message: string }; stopped?: TurnStopped } | void;
 
 /** THE TWO LATCHES, spelled once and read at every point a turn is about to touch an engine. `closing`
  *  wins when both hold, matching threadBusyReason's precedence (registry.ts).
@@ -452,6 +453,11 @@ export function submitRunner(srv: AppServer, record: ThreadRecord, input: Queued
       // the replay buffer (emitItems below) under the normal id-dedup stitch instead of being live-only.
       // Stays inside the runner (not beginTurn): compact has no user prompt to echo.
       const userUuid = randomUUID();
+      // M8, beside the mint and nowhere else: this is the uuid the engine's own `command_lifecycle`
+      // bracket for THIS turn will carry, and the arrival observer (peerInbound.ts) needs it to tell our
+      // own turn from a peer's. Noted before the engine call below, because the bracket can be on the wire
+      // in the very next frame. A no-op on a thread with no observer installed.
+      notePeerTurnUuid(record, userUuid);
       // ONE display string for both forms (`flattenForDisplay`), so a live user item and its replayed twin
       // are one function's output — and so an image reads as its `[Image #N]` placeholder rather than as
       // the base64 that carried it, describing what the model was actually handed, degrade notes and all.

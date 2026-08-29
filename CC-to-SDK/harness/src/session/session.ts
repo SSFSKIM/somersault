@@ -86,6 +86,7 @@ export class Session implements ControllableSession {
   private _mirrorErrors: MirrorErrorInfo[] = []; // EVENT log: appended per mirror_error frame (bounded, last 50)
   private _unmatchedResults = 0;           // COUNTER: result frames no waiter claimed (see the getter)
   private frameCbs = new Set<(m: unknown) => void>();
+  private unclaimedCbs = new Set<(result: unknown) => boolean>();
 
   constructor(deps: SessionDeps, options: Record<string, unknown>, sessionOpts: SessionOpts = {}) {
     this.now = sessionOpts.now ?? Date.now;
@@ -119,7 +120,9 @@ export class Session implements ControllableSession {
    *  The known open question this exists to make visible: `steer()` pushes a user message with its own
    *  uuid, and probe 103b never captured which uuid a steered turn's result carries — if the engine
    *  correlates it to the STEER's, this counter is what says so instead of the appserver just hanging.
-   *  Settled by the M2b Task 9 live acceptance run; until then, a nonzero value is the flag. */
+   *  Settled by the M2b Task 9 live acceptance run; until then, a nonzero value is the flag.
+   *  A result an `onUnclaimedResult` subscriber CLAIMS is not counted: it found an owner, just not a
+   *  waiter, so counting it would blunt exactly the leak this number exists to expose. */
   get unmatchedResults(): number { return this._unmatchedResults; }
 
   /** Queue a turn + its waiter. Every turn keeps its fixed input provenance so its result cannot settle a
@@ -308,6 +311,12 @@ export class Session implements ControllableSession {
    *  does not starve another. */
   onFrame(cb: (m: unknown) => void): () => void { this.frameCbs.add(cb); return () => { this.frameCbs.delete(cb); }; }
 
+  /** A result frame that matched NO waiter — which is precisely what a peer-initiated turn's result is,
+   *  in every shape probes 118/118b measured. The callback returns whether it CLAIMED the result: a claim
+   *  supplies an adopted turn's outcome and suppresses the counter, and anything unclaimed increments it
+   *  exactly as before, so `unmatchedResults` keeps its job as the tripwire for results nobody owns. */
+  onUnclaimedResult(cb: (result: unknown) => boolean): () => void { this.unclaimedCbs.add(cb); return () => { this.unclaimedCbs.delete(cb); }; }
+
   async getContextUsage(): Promise<unknown> { this.assertRunning(); return this.callQValue("getContextUsage"); }
   async accountInfo(): Promise<unknown> { this.assertRunning(); return this.callQValue("accountInfo"); }
 
@@ -389,8 +398,11 @@ export class Session implements ControllableSession {
           const failure = turnFailureOf(mm);   // is_error / api_error_status — never subtype (probe 96)
           waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output, ...(failure ? { error: failure } : {}) });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.enqueueCompact("auto-continuation", () => {}).catch(() => {}); }
-        } else if (mm.type === "result") this._unmatchedResults++; // dropped, but no longer traceless (see the getter)
-        else this.waiters[0]?.onMessage(m);
+        } else if (mm.type === "result") {                   // no waiter owns it — offer it, then trace what nobody took
+          let claimed = false;
+          for (const cb of [...this.unclaimedCbs]) { try { if (cb(m)) claimed = true; } catch { /* one subscriber's failure is not another's */ } }
+          if (!claimed) this._unmatchedResults++;             // dropped, but no longer traceless (see the getter)
+        } else this.waiters[0]?.onMessage(m);
       }
     } finally {
       this.ended = true;

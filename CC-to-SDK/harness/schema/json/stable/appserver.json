@@ -159,6 +159,14 @@
               }
             ]
           }
+        },
+        "crossSessionInbound": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "hold",
+            "refuse"
+          ]
         }
       },
       "additionalProperties": false
@@ -287,6 +295,14 @@
               }
             ]
           }
+        },
+        "crossSessionInbound": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "hold",
+            "refuse"
+          ]
         }
       },
       "required": [
@@ -1984,6 +2000,67 @@
         "success"
       ],
       "additionalProperties": false
+    },
+    "peer/list": {
+      "type": "object",
+      "properties": {
+        "aliveOnly": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "peer/send": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "now",
+            "next",
+            "later"
+          ]
+        },
+        "fromThreadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "target",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "thread/crossSessionInbound/set": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "hold",
+            "refuse"
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "value"
+      ],
+      "additionalProperties": false
     }
   },
   "results": {
@@ -2002,13 +2079,18 @@
         "dynamicTools": {
           "type": "boolean",
           "const": true
+        },
+        "crossSession": {
+          "type": "boolean",
+          "const": true
         }
       },
       "required": [
         "userAgent",
         "version",
         "platformOs",
-        "dynamicTools"
+        "dynamicTools",
+        "crossSession"
       ],
       "additionalProperties": false
     },
@@ -2463,6 +2545,121 @@
     "tool/callResult": {
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "peer/list": {
+      "type": "object",
+      "properties": {
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "pid": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "entrypoint": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "peerProtocol": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "peerFeatures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "alive": {
+                "type": "boolean"
+              },
+              "inboxBound": {
+                "type": "boolean"
+              },
+              "threadId": {
+                "type": "string"
+              },
+              "statusReachable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "address",
+              "pid",
+              "alive",
+              "inboxBound",
+              "statusReachable"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "peers"
+      ],
+      "additionalProperties": false
+    },
+    "peer/send": {
+      "type": "object",
+      "properties": {
+        "msgId": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "targetSessionId": {
+          "type": "string"
+        },
+        "delivered": {
+          "type": "boolean",
+          "const": false
+        },
+        "statusReachable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "msgId",
+        "address",
+        "delivered",
+        "statusReachable"
+      ],
+      "additionalProperties": false
+    },
+    "thread/crossSessionInbound/set": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
       "additionalProperties": false
     }
   }

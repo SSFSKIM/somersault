@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { installRouter } from "../../../src/appserver/router.js";
 import { emptyFlagPerms, type ThreadRecord, type EngineSession } from "../../../src/appserver/registry.js";
+import { DEFAULT_INBOUND } from "../../../src/appserver/peerPolicy.js";
 import type { AppServer } from "../../../src/appserver/server.js";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -31,7 +32,7 @@ function fakeSession(overrides: Partial<EngineSession> = {}): { session: EngineS
 
 function mkRecord(session: EngineSession, extra: Partial<ThreadRecord> = {}): ThreadRecord {
   return {
-    id: "t1", origin: "inProcess", session, unattended: "park", busy: false, turnSeq: 0,
+    id: "t1", origin: "inProcess", crossSessionInbound: DEFAULT_INBOUND, session, unattended: "park", busy: false, turnSeq: 0,
     interruptRequested: false, buffer: [], queue: [], subscribers: new Set(), chain: Promise.resolve(),
     createdAt: 0, updatedAt: 0, settings: {}, flagPerms: emptyFlagPerms(), mcpToggles: {}, mcpOverrides: {}, epoch: 0,
     ...extra,
@@ -202,7 +203,10 @@ describe("frame router routes (spec Wave 1, D-M2-6)", () => {
 
     expect(record.settings.permissionMode).toBe("plan");
     const evt = calls.find((c) => c.method === "thread/settings/changed");
-    expect(evt?.params).toEqual({ threadId: "t1", source: "engine", model: undefined, permissionMode: "plan", thinkingTokens: undefined });
+    // M8's knob rides the ENGINE leg too, read off the record (no status frame carries it) — the two legs
+    // are one payload shape, so a key present on only one of them would be a client branch on which leg it
+    // happened to receive. `DEFAULT_INBOUND` here, since mkRecord admits nothing else.
+    expect(evt?.params).toEqual({ threadId: "t1", source: "engine", model: undefined, permissionMode: "plan", thinkingTokens: undefined, crossSessionInbound: "refuse" });
   });
 
   it("a status frame echoing the mirror's value broadcasts NOTHING (echo-dedup)", () => {

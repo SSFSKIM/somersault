@@ -204,11 +204,14 @@ describe("emit-appserver-schema", () => {
     const ack = stable.results["tool/callResult"] as { type: string; properties: Record<string, unknown>; additionalProperties: boolean };
     expect(ack.type).toBe("object");
     expect(ack.additionalProperties).toBe(false); // a closed `{}`: the settlement's whole reply
-    const init = stable.results["initialize"] as { required: string[]; properties: { dynamicTools: { const?: unknown; enum?: unknown[] } } };
-    expect(init.required.sort()).toEqual(["dynamicTools", "platformOs", "userAgent", "version"]);
-    // The marker is pinned to `true`, not to `boolean`: a server that cannot host dynamic tools omits the
-    // field, and publishing `boolean` would tell a client to write a `false` branch that never runs.
+    type Marker = { const?: unknown; enum?: unknown[] };
+    const init = stable.results["initialize"] as { required: string[]; properties: { dynamicTools: Marker; crossSession: Marker } };
+    expect(init.required.sort()).toEqual(["crossSession", "dynamicTools", "platformOs", "userAgent", "version"]);
+    // Each marker is pinned to `true`, not to `boolean`: a server that cannot host dynamic tools — or
+    // cannot enforce M8's inbound policy — omits the field, and publishing `boolean` would tell a client
+    // to write a `false` branch that never runs.
     expect(init.properties.dynamicTools.const ?? init.properties.dynamicTools.enum).toEqual(true);
+    expect(init.properties.crossSession.const ?? init.properties.crossSession.enum).toEqual(true);
   });
 
   it("the thread-status shape stays internal — no artifact carries waitingOn", () => {
