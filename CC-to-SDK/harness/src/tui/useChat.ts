@@ -40,6 +40,7 @@ import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState, stampToolStarts } from "./foldPendingState.js";
+import { HookPairTracker } from "./hookPairs.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
@@ -319,7 +320,7 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, ...(advisorModel !== undefined ? { advisorModel } : {}) };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, hookRuns: hookTrackerRef.current!.entries(), ...(advisorModel !== undefined ? { advisorModel } : {}) };
   };
   /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
    *  the run's earliest-issued call).
@@ -386,6 +387,12 @@ export function useChat(
   // a document swap (rewind/resume/clear) — which IS P82's replay rule: durations exist nowhere on the
   // wire or on disk, so a rebuilt transcript must show no clause rather than a fabricated one.
   const thoughtMsRef = useRef<Map<string, number>>(new Map());
+  // bl7 T-HOOKBLOCK Task 1: the same live-only rule as `thoughtMsRef` above, for hook timing instead of
+  // thinking duration — P116 found the wire carries no duration and no tool_use_id, so pairing/stamping
+  // happens here at arrival and a rebuilt transcript (resume/rewind/attach) has no source to recover it
+  // from. Lazily constructed for the same reason `pendingStateRef` below is.
+  const hookTrackerRef = useRef<HookPairTracker | null>(null);
+  if (hookTrackerRef.current === null) hookTrackerRef.current = new HookPairTracker();
   // F3 Task 7: the Agent totals ladder's non-document inputs — the `system/task_*` sidechannel (P83: keyed
   // by the Agent `tool_use_id`, and the ONLY totals source for a parallel dispatch) plus the local
   // dispatch/result arrival stamps its derived rung measures against. Same lifetime rule as the thinking
@@ -1295,6 +1302,7 @@ export function useChat(
     publishedIds.current = new Set();
     thoughtMsRef.current = new Map();   // P82: a rebuilt transcript has no duration source — show none
     agentMetaRef.current = new Map();   // P83, same rule: the task sidechannel is live-only and its stamps are arrivals
+    hookTrackerRef.current!.clear();    // bl7 T-HOOKBLOCK: a rebuilt transcript has no hook source — show none
     // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
@@ -1541,6 +1549,26 @@ export function useChat(
             data: { species: COMPACT_SUMMARY_SPECIES },
           };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
+        }
+        // bl7 T-HOOKBLOCK Task 1 (spec D2/D14). A hook frame never enters the document (`appendSdk` rejects
+        // every system frame already) and never paints as a notice — canon absorbs it into the tool-cluster's
+        // own expanded block (a later task), not a standalone line. `return`s unconditionally, BEFORE the
+        // system-notice arm below: `systemNoticeLines` has no branch for these subtypes anyway, but falling
+        // through would also skip this arm's own reconcile and instead rely on the generic message path's
+        // `reconcile()` at the bottom of this handler — which never runs for a hook frame, since nothing here
+        // mutates the document for it to react to. `!ev.replay`-guarded on the SAME rule as `stampToolStarts`
+        // below: a replayed hook's arrival is the moment this client attached, not the moment it ran, so a
+        // replay reports no timing rather than a fabricated one, and never re-pairs a hook the tracker cannot
+        // have seen before (a fresh tracker on a fresh mount).
+        if (data?.type === "system" && (data.subtype === "hook_started" || data.subtype === "hook_response")) {
+          if (!ev.replay) {
+            if (data.subtype === "hook_started") hookTrackerRef.current!.started(data, nowFn());
+            // D14: `response()` returns true only when it just completed a retained PreToolUse pair — that is
+            // the one moment a hook's arrival can change what an already-open run's expanded block would show,
+            // and nothing else here will ever re-project for it, so this reconcile is the whole of the fix.
+            else if (hookTrackerRef.current!.response(data, nowFn(), documentRef.current!.lastSequence())) reconcile();
+          }
+          return;
         }
         // Task 10b: `dVo` (L428358). A `system` frame carrying a renderable string `content` is a notice the
         // transcript shows; everything else — every structured frame, every `level:"info"` line outside

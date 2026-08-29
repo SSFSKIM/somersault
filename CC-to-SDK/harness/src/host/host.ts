@@ -545,7 +545,13 @@ export class SessionHost {
    *  workers' (and every library caller's) wire volume untouched. An explicit config value still wins in
    *  both directions: this is a default, not an override. */
   private engineConfig(extra: Partial<HarnessConfig> = {}): HarnessConfig {
-    const partials = this.opts.kind === "interactive" ? { includePartialMessages: this.opts.config.includePartialMessages ?? true } : {};
+    // bl7 T-HOOKBLOCK D1: same seam, same shape as `includePartialMessages` above — P116 (2026-08-30, SDK
+    // 0.3.237) found settings-layer hooks now emit `hook_started`/`hook_response` on the wire, so this is
+    // the config value that actually turns them on for a production LiveTurn. Config-overridable in both
+    // directions, exactly like the partial-message flag beside it.
+    const partials = this.opts.kind === "interactive"
+      ? { includePartialMessages: this.opts.config.includePartialMessages ?? true, includeHookEvents: this.opts.config.includeHookEvents ?? true }
+      : {};
     return { ...this.opts.config, ...partials, ...extra, permissionBroker: this.broker() };
   }
 

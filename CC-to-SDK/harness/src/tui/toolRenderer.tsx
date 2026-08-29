@@ -28,6 +28,7 @@ import { summaryLines } from "./toolSummaries.js";
 import { agentBatches, agentBatchHeader, agentBatchTotalsText, agentBatchView, agentChildren, agentDoneText, agentMetaGeneration, agentSubagentType, agentTotals, AGENT_BATCH_DONE, AGENT_INITIALIZING, AGENT_MANAGE_HINT, AGENT_PROGRESS_ROWS, hiddenToolUsesLine, indentRenderLine, isAgentTool, type AgentBatch, type AgentBatchMember, type AgentMeta } from "./agentProgress.js";
 import type { FoldPendingHooks } from "./foldPendingState.js";
 import { advisorResolution, isDeclined, advisorDeclineReason, type AdvisorResolution } from "./advisorState.js";
+import type { HookRunEntry } from "./hookPairs.js";
 import { composeFoldRun, stripSgr } from "./sgrFoldRow.js";
 import { HoverContext } from "./mouse/hoverContext.js";
 import { osc8Open, OSC8_CLOSE } from "./osc8.js";
@@ -160,12 +161,16 @@ export type { ResultProjection };
  *  same field, two disjoint key namespaces. `knobKey` below reads only the `sdk:` subset for its cache key,
  *  because only advisor rows are consumed INSIDE the anchored-entry cache; `tool:*` owners are read
  *  downstream of it (`toolEventItems`, never cached) and must not cost it a rebuild. */
+/** `hookRuns` (bl7 T-HOOKBLOCK Task 1) is completed PreToolUse hook pairs, sorted by `afterSequence` — the
+ *  `HookPairTracker` output a later task folds into a tool-cluster's expanded block. Like `thoughtMs` it is
+ *  a projection INPUT rather than document state: hook frames never enter `TranscriptDocument` (spec D2),
+ *  so a rewound/resumed/attached document has no source for them and must show none. */
 /** `advisorModel` (bl7 T-ADVISOR Task 2, spec D15): the CLIENT'S OWN advisor-model config, threaded down to
  *  the advisor in-flight row's `" using {model}"` clause — NEVER the SDK frame's own `message.model` (the
  *  MAIN model, a different fact). Like `cwd`/`home`, this is session-constant (set at launch, not a live
  *  `/config` toggle in this ticket's scope) and deliberately NOT in `knobKey` for the same reason those are
  *  not: no cached row can outlive a value that never changes for the life of a `useChat`. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; advisorModel?: string; }
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; hookRuns?: readonly HookRunEntry[]; advisorModel?: string; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one

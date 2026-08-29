@@ -170,7 +170,7 @@ export interface HarnessConfig {
   debug?: boolean;                         // CLI debug logging (pairs with stderr/debugFile)
   debugFile?: string;
   // dead/partial knobs — wired for completeness, DO NOT rely on them headless:
-  includeHookEvents?: boolean;             // 🚫 DEAD headless (probes 53/53b: no hook frames, programmatic hooks, haiku+sonnet)
+  includeHookEvents?: boolean;             // settings-layer hooks emit frames as of SDK 0.3.237 (P116, 2026-08-30); in-process `options.hooks` callbacks still emit none
   promptSuggestions?: boolean;             // 🚫 DEAD headless (probes 53/53b: no prompt_suggestion frame after result)
   agentProgressSummaries?: boolean;        // 🟡 PARTIAL (probe 54: task_progress fires; summary never populated in a 45s subagent)
   // escape hatches

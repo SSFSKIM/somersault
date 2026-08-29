@@ -3787,3 +3787,56 @@ describe("Tool-stream T5: useChat pairs the fullscreen flag with the blank expan
     expect(await boundary(false)).toContain("Compact summary (ctrl+o to expand)");   // …and the classic control
   });
 });
+
+// bl7 T-HOOKBLOCK Task 1, spec D14 (plan review M5). Hook frames never mutate the document (a hook_response
+// enters no tool_use_id, no result — nothing `appendSdk` or the fold would react to), so without an explicit
+// reconcile a completed hook's timing would sit invisible in the tracker until some UNRELATED later frame
+// happened to trigger the next repaint. This pins the fix at the ingest seam: with a run already open (a
+// tool_use with no result yet, so it lives in the transient pending region) and a hook_response as the FINAL
+// event delivered, the pending projection is re-derived on its own — no further frame required. Task 2/3
+// still owe the actual rendering of the hook block; this only proves the repaint fires.
+describe("useChat: hook_response reconciliation (bl7 T-HOOKBLOCK D14)", () => {
+  // The 600 ms pending-region ticker (`scheduleRepaint`) re-projects on its own on every tick and would
+  // otherwise mask exactly what this suite pins — a `waitFor` with a 2 s default timeout would happily pass
+  // off the NEXT tick rather than off this arm's own reconcile. Disabled here for the same reason the F3
+  // final-review suite disables it (`noRepaint` above): the only thing left that can move `pendingItems` is
+  // an explicit `reconcile()` call.
+  const noRepaint = { scheduleRepaint: () => () => {} };
+
+  it("a hook_response as the final event repaints an already-open run with no further frame", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_response", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", output: "", stdout: "", stderr: "", outcome: "success", uuid: "hr1", session_id: "s1" } });
+    await waitFor(() => snap.pendingItems !== before);
+    expect(snap.pendingItems).not.toBe(before);   // a fresh projection ran off the hook_response alone — the ticker is disabled, so nothing else could have
+  });
+
+  // Reference identity, not a render count: EVERY message frame (hook or not) already triggers a render via
+  // the unconditional `setTasks(taskListRef.current.snapshot())` upstream of this arm (a fresh array every
+  // call), so counting renders cannot distinguish "reconciled" from "some unrelated state changed". Whether
+  // THIS reconcile ran is exactly what `pendingItems`' own reference answers: only `reconcile()` (and its
+  // siblings) call `setPendingItems`, so an untouched reference means it never fired.
+  it("a replayed hook_response never pairs (no timing to fabricate) and never reconciles", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "hook_response", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", output: "", stdout: "", stderr: "", outcome: "success", uuid: "hr1", session_id: "s1" } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(snap.pendingItems).toBe(before);   // no started() stamp was ever recorded for h1 under the replay guard, so the response is dropped, not reconciled
+  });
+});
