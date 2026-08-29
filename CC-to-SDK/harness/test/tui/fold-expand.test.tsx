@@ -640,28 +640,51 @@ describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook blo
   });
 });
 
-// bl7 T-HOOKBLOCK Task 3, review carry-forward (2): pins that the RARE flush paths — the errored
-// `popsOutOnError` pop-out (line ~611) and the non-collapsible standalone close (line ~622) — use the
-// FLUSHING CALL'S OWN `callSequence` as the hook-attribution boundary (spec D12), never its `resultSequence`
-// (always later) and never `Infinity`. A hook stamped AT exactly that boundary sits on the exclusive edge and
-// must be excluded from the run being closed; Task 2's implementation already does this (`flush(atom.event
-// .callSequence)` at both sites), so these are expected GREEN on first run — pinning, not driving, the
-// behavior (reviewer note: report this rather than manufacturing an artificial red).
-describe("bl7 T-HOOKBLOCK Task 3, carry-forward: the rare flush paths close on the flushing call's own callSequence", () => {
-  it("popsOutOnError pop-out flush: a hook stamped at the failing call's OWN callSequence is excluded from the run it closes", () => {
+// bl7 T-HOOKBLOCK Task 3, review carry-forward (2), AMENDED by the round review (F3): the two rare flush
+// paths do NOT share one rule after all. The non-collapsible standalone close (line ~637, e.g. WebFetch)
+// still closes on the flushing call's own `callSequence` — that call is never a hook-attribution candidate
+// of its own, so nothing changes there. The errored `popsOutOnError` pop-out (line ~622) is different: THIS
+// call's own `PreToolUse` pair is stamped `afterSequence === callSequence` (the normal wire order — the hook
+// fires between `tool_use` and `tool_result`), which sits exactly on a flat `callSequence` boundary's
+// exclusive edge. Canon's raw-message-stream segmenter has already counted that hook by the time it
+// evaluates this same pop-out condition (the hook message always precedes the result in wire order), so
+// excluding it was the divergence, not the rule. The fix widens the pop-out site's boundary to the closing
+// call's `resultSequence` — but ONLY when `windowIsClear` already holds, since a clear window guarantees no
+// OTHER atom's call/result sequence can occupy that widened slot (only `C`'s own hook can).
+describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): the pop-out site's widened boundary", () => {
+  it("popsOutOnError pop-out flush, window CLEAR: a hook stamped at the failing call's OWN callSequence now counts — no pop-out, hook lands in the surviving run", () => {
     const doc = built(
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
       call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const items = projectCompact(doc, {
-      ...FS, expandedFolds: new Set(["read-1"]),
-      hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }],
-    });
-    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    // Collapsed form (no `expandedFolds`): membership alone proves no relocation happened.
+    expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,todo-1:row");
+    // Expanded form: the absorbed hook actually renders in the group's own block.
+    const expanded = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) }));
+    expect(expanded).toContain("  ⎿  Ran 1 PreToolUse hook (0.3s)");
+    expect(expanded).toContain("     ⎿ PreToolUse:TodoWrite (0.3s)");
   });
 
-  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence is excluded from the run it closes", () => {
+  it("window NOT CLEAR (sibling interference present): a hook on the closing call stays excluded — the fallback boundary is unchanged", () => {
+    // Same shape as T8 (b2)'s fixture: read-2's call AND result both land strictly inside
+    // `(todo-1.callSequence, todo-1.resultSequence)`, so `windowIsClear` refuses and the boundary must stay
+    // at `callSequence` — widening here would risk pulling in a sibling's hook, not just this call's own.
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("todo-1", "TodoWrite", { todos: [] }),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"),
+      result("todo-1", "board is locked", true),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,read-2,todo-1:row");  // stayed a member regardless (sibling interference)
+    const expanded = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) }));
+    expect(expanded.join("\n")).not.toContain("PreToolUse");                 // boundary NOT widened: no new misattribution
+  });
+
+  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence is still excluded (unchanged by F3)", () => {
     const doc = built(
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
       call("web-1", "WebFetch", { url: "https://example.com" }), result("web-1", "body"));
@@ -694,6 +717,15 @@ describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocate
   it("does NOT pop out when the run already absorbed a PreToolUse hook, even though the window is otherwise clear", () => {
     const readSequence = doc().toolEvents().find((e) => e.id === "read-1")!.callSequence;
     const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence }] }));
+    expect(items[0]!.id).toBe("group:read-1,todo-1:row");
+  });
+
+  // Round review F3: the sibling of the case above, on the call actually BEING considered for relocation
+  // (not an earlier member) — the specific edge the finding raised, with no passing-for-the-right-reason
+  // coverage before this fix (a hook on an earlier member never touched the widened-boundary code path).
+  it("also does NOT pop out when the hook belongs to the CLOSING call itself, not an earlier member", () => {
+    const todoSequence = doc().toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: todoSequence }] }));
     expect(items[0]!.id).toBe("group:read-1,todo-1:row");
   });
 });

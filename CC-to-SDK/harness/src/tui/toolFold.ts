@@ -468,17 +468,31 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  .hookLabel==="PreToolUse"}`. Canon absorbs a whole `stop_hook_summary` MESSAGE per match; ccx has no such
  *  message (the wire has no `tool_use_id` either — spec D2), so this function is the call-time equivalent
  *  built over per-pair `HookRunEntry`s instead — hence `anchorSequence <= afterSequence < boundary` in place
- *  of `u.messages.length>0`. */
-function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined): { infos: HookInfo[]; totalMs: number } {
-  if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0 };
-  const infos: HookInfo[] = [];
+ *  of `u.messages.length>0`.
+ *
+ *  `consumed` (round review F2, the overlapping-window catch): `segmentRuns` does NOT walk atoms in raw call
+ *  order — the anchored stream orders a settled atom by `resultSequence`, so a run of overlapping calls whose
+ *  later-started member finishes first REORDERS as its members settle (see the `anchorId` doc comment above).
+ *  Windowing purely on `[anchorSequence, boundary)` therefore lets two DIFFERENT runs' windows overlap — an
+ *  early-settling run's `[2,4)` and a still-open trailing run's `[1,∞)` both cover `afterSequence: 3` — and
+ *  the same hook entry would be attributed to both. `consumed` is the caller's running set of entries an
+ *  EARLIER flush already claimed; skipping them here makes attribution first-come by flush order (which
+ *  follows settle order), so the run whose window closes first wins any entry inside an overlap. `matched`
+ *  hands the caller exactly the entries this call counted, so the caller can add them to that set — this
+ *  function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
+ *  `hooksAbsorbed` check below, must not claim what it only peeked at). */
+function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined,
+    consumed?: ReadonlySet<HookRunEntry>): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
+  if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0, matched: [] };
+  const infos: HookInfo[] = [], matched: HookRunEntry[] = [];
   let totalMs = 0;
   for (const entry of hookRuns) {
-    if (entry.afterSequence < anchorSequence || entry.afterSequence >= boundary) continue;
+    if (entry.afterSequence < anchorSequence || entry.afterSequence >= boundary || consumed?.has(entry)) continue;
     infos.push({ name: entry.name, durationMs: entry.durationMs });
+    matched.push(entry);
     totalMs += entry.durationMs;
   }
-  return { infos, totalMs };
+  return { infos, totalMs, matched };
 }
 
 /** Upstream `ke_` (L302122–302156) copies both thinking fields onto the collapsed message, and BOTH only
@@ -511,6 +525,10 @@ const emit = (run: RunState, hooks: { infos: readonly HookInfo[]; totalMs: numbe
  *  — with ONE fullscreen exception, canon's `popsOutOnError` path (2.1.234:237198–237210), handled below. */
 export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean; hookRuns?: readonly HookRunEntry[] }): readonly FoldItem[] {
   const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
+  // Round review F2: ONE claim set for the whole call, shared by every `resolveRunHooks` call site below —
+  // see that function's `consumed` doc. Only `flush`'s real emission adds to it; the `hooksAbsorbed` probe
+  // inside the pop-out branch reads it but must stay non-mutating (it is a "what if" check, not a commit).
+  const hookClaims = new Set<HookRunEntry>();
   // The PENDING-THOUGHT buffer (F3 Task 3; `bodies` added bl6 T-CLUSTER). Upstream pushes the thinking
   // message straight into the open accumulator, so the thought belongs to the run being accumulated and is
   // lost at its next flush. Our groups are tool runs and cannot exist without a member, so a thought that
@@ -537,7 +555,8 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
     if (run.memberIds.length > 0 && run.visibleMembers > 0) {
-      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns);
+      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, hookClaims);
+      for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
       out.push({ kind: "group", group: emit(run, hooks) });
     }
     out.push(...deferred); deferred = []; run = newRun();
@@ -617,13 +636,27 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // ?.length??0)>0)&&B.length>0&&…)` — a run that absorbed a PreToolUse hook (or, in canon,
           // `relevantMemories`; unreachable here, spec §4) never relocates its errored member out, even when
           // `windowIsClear` would otherwise allow it. Resolved against the SAME boundary the flush just below
-          // closes on (this call's own `callSequence`, never its `resultSequence`), because that is exactly
-          // the window whose hooks would render alongside the member being considered for relocation.
-          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, atom.event.callSequence, options.hookRuns).infos.length > 0;
-          if (!hooksAbsorbed && windowIsClear(atom.event, index)) run.memberIds.pop();
-          // Boundary = this call's own call-time position (spec D12): the flush happens because ITS result
-          // just settled, and the call-time attribution model never reasons from a result sequence.
-          flush(atom.event.callSequence);
+          // closes on — which is NOT flatly "this call's own `callSequence`" (round review F3): a `PreToolUse`
+          // pair for THIS call is stamped `afterSequence === callSequence` (`hookPairs.ts`'s response-arrival
+          // rule, `toolFold.ts` D12 doc above), sitting exactly on that boundary's exclusive edge, so a flat
+          // `callSequence` boundary excludes the closing call's own hook from BOTH this guard and the group's
+          // emitted `hookInfos` — even though canon's own raw-message-stream segmenter has already counted it
+          // by the time it evaluates this same pop-out condition (the hook message always precedes the result
+          // in the wire order). The fix widens the boundary to this call's `resultSequence` ONLY when
+          // `windowIsClear` already holds: a clear window means no other atom's call/result sequence lies
+          // strictly inside `(callSequence, resultSequence)`, so widening can only pull in `C`'s OWN hook, never
+          // a foreign one. When the window is not clear, relocation is refused regardless, so the boundary stays
+          // at `callSequence` and no new misattribution risk opens up. `consumed: hookClaims` (F2) keeps this a
+          // pure peek at what earlier flushes haven't already claimed — it reads the shared set but never
+          // writes it (see `resolveRunHooks`'s doc); only `flush`'s own resolution below claims for real.
+          const ownWindowClear = windowIsClear(atom.event, index);
+          const hookBoundary = ownWindowClear ? atom.event.result!.resultSequence : atom.event.callSequence;
+          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, hookClaims).infos.length > 0;
+          if (!hooksAbsorbed && ownWindowClear) run.memberIds.pop();
+          // Boundary = the SAME `hookBoundary` the guard above just resolved against (spec D12): the flush
+          // happens because this call's result just settled, and sharing the boundary is what keeps the
+          // group's own emitted `hookInfos` in sync with the guard that decided whether to relocate it.
+          flush(hookBoundary);
           // TAGGED, because "standalone" is not self-evidently visible: TaskCreate/TaskUpdate are also on the
           // renderer's suppressed list and project to no items, so the tag is what lets `toolRenderer` give this
           // one its generic header row instead of the nothing every other call by those names gets.

@@ -973,4 +973,24 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
     expect(group.counts).toMatchObject({ hookCount: 2, hookTotalMs: 350 });
     expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100 }, { name: "PreToolUse:Read", durationMs: 250 }]);
   });
+
+  // Round review F2: `segmentRuns` walks the ANCHORED stream, not raw call order — a settled atom is ordered by
+  // its `resultSequence` (see the `anchorId` doc comment in toolFold.ts), so a run of overlapping calls whose
+  // LATER-issued member finishes FIRST reorders ahead of the earlier one in the atom stream this function sees.
+  // B is issued second (callSequence 2) but settles first (resultSequence 3, before the breaker at 4); A is
+  // issued first (callSequence 1) but settles last (resultSequence 5, trailing/open-ended flush). Windowing
+  // each run independently — B's `[2,4)`, A's `[1,∞)` — makes both windows cover `afterSequence: 3`, so a hook
+  // stamped there without shared consumption would double-count into both `hookInfos`.
+  it("(i) reordering — B(call2/result3), breaker(4), A(call1/result5): a hook at afterSequence 3 lands in exactly ONE run", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    const [runB, runA] = groups(items);
+    expect(runB!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111 }]);
+    expect(runA!.counts.hookCount).toBeUndefined();   // NOT re-claimed by the still-open trailing run
+    const totalHookCount = groups(items).reduce((n, g) => n + (g.counts.hookCount ?? 0), 0);
+    expect(totalHookCount).toBe(1);                   // never more groups claim an entry than entries exist
+  });
 });
