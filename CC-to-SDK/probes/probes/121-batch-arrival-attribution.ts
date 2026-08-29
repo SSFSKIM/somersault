@@ -16,13 +16,34 @@
 //   B  persisted rows repeat the causing message's `origin.body`, but each row's own `message.content`
 //      envelope differs — recoverable, but only from the raw envelope, and NOT from `origin.body`, which
 //      is what `peerArrival` (src/peer/address.ts) prefers over the envelope by design.
-//   C  both repeat — each message's own text is genuinely unrecoverable after the fact, and a history
-//      feature must MARK batched arrivals ambiguous rather than render them.
+//   C  neither field attributes per frame — no reader can say which message an arrival uuid names, and a
+//      history feature must MARK batched arrivals ambiguous rather than render them.
 //
-// The verdict is read off NONCE COVERAGE, not off a uuid->message mapping: nothing outside the engine
-// knows which arrival uuid "is" which sent message, so the honest question is how many of the N sent
-// nonces are recoverable from a given field across the whole batch. Distinctness counts are reported
-// beside it as the independent second reading.
+// MEASURED, 2026-08-30, CLI 2.1.250: **C**. Three messages sent, two peer-caused turns, three live
+// arrival uuids — and TWO persisted rows:
+//
+//     row a2a99619  msg_id=c58aadc8  1 envelope   content: M1      origin.body: M1
+//     row 42364455  msg_id=4bc39d4d  2 envelopes  content: M2,M3   origin.body: M2
+//     (live uuid 541d1e23 has no persisted row at all)
+//
+// A batch is COLLAPSED. Several messages land in ONE frame under ONE uuid; `origin.body` names one of
+// them and the rest are readable only as text inside a frame that claims to be a different message. So
+// switching `peerArrival` to prefer the envelope does NOT fix batch attribution — the first envelope in
+// a multi-envelope frame is just a different arbitrary member — and the per-message identity a history
+// feature would want does not exist in the data at all.
+//
+// THE VERDICT NEEDS TWO READINGS, AND THE FIRST RUN OF THIS PROBE ONLY HAD ONE. Nonce COVERAGE asks
+// whether each sent text is present somewhere across the batch. That is worth knowing, but it does NOT
+// license reading a message off a frame, and the first run's verdict logic treated it as if it did:
+// it scored 3/3 coverage and reported outcome B ("each frame carries its own text"). Re-reading the
+// transcript that run left behind showed three sent messages had produced TWO persisted rows, one of
+// which carried TWO envelopes (M2 and M3) while its origin.body named only M2 — and a third live
+// arrival uuid had no row at all.
+//
+// So the verdict now also requires a BIJECTION: every frame carrying exactly one message and every
+// message landing in exactly one frame. A and B assert per-frame attribution and are gated on it; C is
+// what a collapsed batch actually produces. The lesson generalises past this probe — an aggregate over
+// a set answers a question about the set, never about its members.
 //
 // Machinery is probe 120b's and 118's, unchanged where it was already right:
 //   * `--replay-user-messages` is what makes an inbound peer message visible on the stream AT ALL (120's
@@ -228,8 +249,30 @@ async function deliver(target: Sess, ourAddr: string, sent: Sent[], mode: "seque
 const prefix = (s: string | undefined, n = 64): string =>
   s === undefined ? "(absent)" : JSON.stringify(s.replace(/\s+/g, " ").slice(0, n));
 const distinct = (xs: (string | undefined)[]): number => new Set(xs.map(x => (x === undefined ? " absent" : x))).size;
+// AGGREGATE coverage: is each nonce present SOMEWHERE across the batch? This answers "was the text
+// retained at all", and it is the weaker of the two readings below.
 const coverage = (nonces: string[], fields: (string | undefined)[]): string[] =>
   nonces.filter(nc => fields.some(f => typeof f === "string" && f.includes(nc)));
+
+// PER-FRAME attribution: does each frame carry exactly ONE message, and each message land in exactly
+// one frame? This is the reading that licenses "read the text off the frame", and it is NOT implied by
+// coverage — this probe's first run scored 3/3 coverage on a batch the engine had COLLAPSED into two
+// rows, one of which held two envelopes. Reporting that coverage as attribution is the error this
+// helper exists to make impossible: the bijection is asserted, never inferred from a total.
+const ENVELOPE_OPEN = /<cross-session-message\s/g;
+const envelopeCount = (s: string | undefined): number =>
+  typeof s === "string" ? (s.match(ENVELOPE_OPEN) ?? []).length : 0;
+interface Bijection { ok: boolean; perFrame: number[]; multi: number; unclaimed: string[]; shared: string[]; }
+const bijection = (nonces: string[], fields: (string | undefined)[]): Bijection => {
+  const perFrame = fields.map(f => nonces.filter(nc => typeof f === "string" && f.includes(nc)).length);
+  const claims = (nc: string) => fields.filter(f => typeof f === "string" && f.includes(nc)).length;
+  const unclaimed = nonces.filter(nc => claims(nc) === 0);
+  const shared = nonces.filter(nc => claims(nc) > 1);
+  return {
+    ok: fields.length === nonces.length && perFrame.every(n => n === 1) && !unclaimed.length && !shared.length,
+    perFrame, multi: perFrame.filter(n => n > 1).length, unclaimed, shared,
+  };
+};
 
 interface Attempt {
   tag: string; sessionId: string; sent: Sent[]; live: LiveArrival[]; peerTurns: number;
@@ -349,12 +392,30 @@ function verdict(A: Attempt): void {
   console.log(`LEG 5's live finding reproduces: ${liveBodyCov === 1 && distinct(A.live.map(a => a.msgId)) === A.peerTurns ? "YES" : "NO"}`
     + `  (live origin.body recovers ${liveBodyCov}/${N} nonces; live message.content recovers ${liveContentCov}/${N}; distinct live msg_ids=${distinct(A.live.map(a => a.msgId))}, turns=${A.peerTurns})`);
 
-  const which = bodyCov === N ? "A" : contentCov === N ? "B" : "C";
+  // THE GATE. A and B both mean "read the text off this field, per frame", so both REQUIRE a bijection
+  // between frames and messages. Coverage alone cannot license either: a single frame holding every
+  // envelope scores full coverage while attributing nothing. Measured on the first run — two persisted
+  // rows for three sent messages, one row carrying two envelopes — so this is a corrected verdict, not
+  // a hypothetical guard.
+  const bodyBij = bijection(nonces, persistedBodies);
+  const contentBij = bijection(nonces, persistedContents);
+  const envPerRow = A.live.map(a => envelopeCount(A.persisted.get(a.uuid) ? contentText(A.persisted.get(a.uuid).message?.content) : undefined));
+  console.log(`\nPER-FRAME ATTRIBUTION (what A and B actually require):`);
+  console.log(`  persisted rows for ${A.live.length} live arrival(s): ${A.persisted.size}`);
+  console.log(`  envelope open tags per persisted row: [${envPerRow.join(", ")}]   (>1 means one frame carries several messages)`);
+  console.log(`  origin.body      bijection=${bodyBij.ok}  frames carrying >1 message=${bodyBij.multi}  unclaimed=${bodyBij.unclaimed.length}  shared=${bodyBij.shared.length}`);
+  console.log(`  message.content  bijection=${contentBij.ok}  frames carrying >1 message=${contentBij.multi}  unclaimed=${contentBij.unclaimed.length}  shared=${contentBij.shared.length}`);
+
+  const which = (bodyCov === N && bodyBij.ok) ? "A" : (contentCov === N && contentBij.ok) ? "B" : "C";
   console.log(`\nOUTCOME ${which}: ` + (which === "A"
     ? `persisted rows carry PER-MESSAGE origin.body — all ${N} nonces are recoverable from origin.body alone, so disk is faithful where the live frame is not and a history feature may read origin.body.`
     : which === "B"
       ? `persisted origin.body recovers only ${bodyCov}/${N} nonces, but each row's own message.content recovers ${contentCov}/${N} — the text survives ONLY in the raw envelope, which is NOT what peerArrival prefers.`
-      : `BOTH repeat: origin.body recovers ${bodyCov}/${N} and message.content recovers ${contentCov}/${N}. Each message's own text is unrecoverable after the fact; a history feature must MARK batched arrivals ambiguous rather than render them.`));
+      : `NO per-frame attribution survives. Aggregate coverage is origin.body ${bodyCov}/${N} and message.content ${contentCov}/${N}, but the bijection fails`
+        + `${contentBij.multi ? ` — ${contentBij.multi} frame(s) carry more than one message` : ""}`
+        + `${A.persisted.size < A.live.length ? `, and ${A.live.length - A.persisted.size} live arrival(s) have no persisted row at all` : ""}`
+        + `. A batch is COLLAPSED: several messages land in one frame under one uuid, so no reader can say which message an arrival uuid names. `
+        + `A history feature must MARK batched arrivals ambiguous rather than render them, and switching peerArrival to prefer the envelope would not help — the first envelope in a multi-envelope frame is just a different arbitrary member.`));
 
   console.log(`\nWHAT WOULD FALSIFY THIS:`);
   console.log(`  * a batch of a different SHAPE. This is one burst of ${N} on one idle receiver at one priority`);
@@ -379,7 +440,7 @@ function verdict(A: Attempt): void {
   const receipts: string[] = [];
   const srv = createServer(c => {
     c.setEncoding("utf8");
-    c.on("data", d => { for (const l of d.split("\n")) if (l.trim()) receipts.push(l.trim()); });
+    c.on("data", d => { for (const l of String(d).split("\n")) if (l.trim()) receipts.push(l.trim()); });
     c.on("error", () => { /* peer hung up */ });
   });
   await new Promise<void>(r => srv.listen(ourSock, () => r()));
