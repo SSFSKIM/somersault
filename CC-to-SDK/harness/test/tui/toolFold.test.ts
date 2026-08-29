@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
 import { recognizeGitOps } from "../../src/tui/gitOps.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
+import type { HookRunEntry } from "../../src/tui/hookPairs.js";
 
 const OPTIONS = { cwd: "/repo", home: "/home/u" };
 let nextSequence = 0;
@@ -863,5 +864,94 @@ describe("TS fullscreen fold clauses (canon ZIl 518574–518626)", () => {
     expect(joined(foldClauses(counts(over), false))).toBe("Read 1 file");
     expect(joined(foldClauses(counts(over), false, {}))).toBe("Read 1 file");
     expect(joined(foldClauses(counts(over), false, { fullscreen: false }))).toBe("Read 1 file");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 2 (spec D12, plan review H1 — the round's headline catch). Every letter below is one of
+// the brief's mandatory orders. Cell (a) is the one a stream-position cursor gets wrong: the settled atom's
+// `resultSequence` (11) sits AFTER the hook's `afterSequence` (10) in stream order, so a design that sweeps
+// entries against atom positions would pass the hook before the run exists and drop it. The call-time model
+// resolves against `callSequence` instead and gets it right.
+describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+
+  it("(a) normal wire order — tool_use(10) → hook(afterSequence:10) → tool_result(11): absorbed", () => {
+    // Under a stream-position sweep this is the cell that goes RED: the settled atom's stream position is its
+    // resultSequence (11), strictly AFTER the hook's afterSequence (10), so a cursor walking atoms in that
+    // order would already be past 10 with an empty run and drop the entry.
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(groups(items)[0]!.counts).toMatchObject({ hookCount: 1, hookTotalMs: 200 });
+    expect(groups(items)[0]!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200 }]);
+  });
+
+  it("(b) same order but the run OPEN (no result yet) at end of stream: still absorbed", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, settled: false }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 150, 10)] });
+    const group = groups(items)[0]!;
+    expect(group.open).toBe(true);
+    expect(group.counts.hookCount).toBe(1);
+  });
+
+  it("(c) single-tool run, hook pair stamped strictly between call and result: absorbed", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 15 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 300, 12)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  it("(d) entry stamped before the run's earliest callSequence: dropped", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 5)] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+  });
+
+  it("(e) entry after the closing breaker's sequence belongs to the NEXT run when one opens at/before it", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 9 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 400, 8)] });        // afterSequence(8) === run2's own anchorSequence — "opens at it"
+    const [run1, run2] = groups(items);
+    expect(run1!.counts.hookCount).toBeUndefined();                        // 8 >= boundary(5): excluded from run1
+    expect(run2!.counts.hookCount).toBe(1);                                // 8 >= anchorSequence(8): included in run2
+  });
+
+  it("(f) between-run gap — after the breaker, before the next run opens: dropped from both", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 9 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 400, 6)] });        // 5 <= 6 < 8: in the dead gap
+    const [run1, run2] = groups(items);
+    expect(run1!.counts.hookCount).toBeUndefined();
+    expect(run2!.counts.hookCount).toBeUndefined();
+  });
+
+  it("(g) zero hooks: NO hook fields on the group at all (spread-when-non-empty)", () => {
+    const group = groups(segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))], OPTIONS))[0]!;
+    expect(group.counts.hookCount).toBeUndefined();
+    expect(group.counts.hookTotalMs).toBeUndefined();
+    expect(group.hookInfos).toBeUndefined();
+  });
+
+  it("(h) two runs, three entries split correctly across the boundary and the gap", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 20 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 999, 6), hook("PreToolUse:Read", 200, 8)] });
+    const [run1, run2] = groups(items);
+    expect(run1!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100 }]);
+    expect(run2!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200 }]);
+    expect(run2!.counts.hookTotalMs).toBe(200);
+  });
+
+  it("sums hookTotalMs across more than one absorbed entry in the same run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 250, 3)] });
+    const group = groups(items)[0]!;
+    expect(group.counts).toMatchObject({ hookCount: 2, hookTotalMs: 350 });
+    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100 }, { name: "PreToolUse:Read", durationMs: 250 }]);
   });
 });

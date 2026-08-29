@@ -551,3 +551,36 @@ describe("T8 (g) / bl7 T-ADVISOR A7: an advisor_tool_result entry is a breaker",
     expect(groupRows(projectCompact(doc, FS))).toEqual([]);
   });
 });
+
+// bl7 T-HOOKBLOCK Task 2, spec D13 — the tests-pass-wiring-dead guard, third round running (D13 decision
+// log). This is deliberately NOT built from prebuilt `FoldAtom`s: it goes through a REAL `TranscriptDocument`
+// (`appendSdk`) and the two real production entry points, so a dropped `hookRuns:` forward at ANY of the
+// three `segmentRuns` call sites in `toolRenderer.tsx` (`foldAnchored`, and `projectPending`'s `settled`/
+// `dynamic` folds, which share one options object) shows up here as a silently-missing hook line rather than
+// a green unit suite hiding a dead wire.
+describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the real production pipeline (spec D13)", () => {
+  const allText = (items: readonly RenderItem[]) => [...lineTexts(items), ...bodies(items).flat()].join("\n");
+
+  it("projectCompact (foldAnchored's segmentRuns call site): a settled, breaker-closed run shows the hook line", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }] });
+    expect(allText(items)).toContain("Ran 1 PreToolUse hook");
+  });
+
+  it("projectPending (the settled+dynamic segmentRuns call sites): a still-growing run shows the hook line too", () => {
+    // No breaker: the lone Read call is the TRAILING run `trailingRunCut` withholds from Static, so this
+    // exercises the OTHER two production call sites — the ones `projectCompact` above never reaches.
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectPending(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }] });
+    expect(allText(items)).toContain("Ran 1 PreToolUse hook");
+  });
+
+  it("drops a hook stamped before the call and shows none (the fold's own attribution, exercised end to end)", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence - 1 }] });
+    expect(allText(items)).not.toContain("PreToolUse");
+  });
+});

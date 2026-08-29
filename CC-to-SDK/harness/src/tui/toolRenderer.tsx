@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, hookHeaderText, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -590,7 +590,7 @@ export const toolItemId = (toolUseId: string, resultSequence: number | "pending"
 /** A fold group's identity is its MEMBERSHIP, with no sequence component: the member tool-use ids are already
  *  unique and stable, and a document that gains two replay dividers (which shift every later sequence) must
  *  still project the very same group id — that is what lets Static publish a settled group exactly once. */
-export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row"): string => `group:${memberIds.join(",")}:${part}`;
+export const toolGroupItemId = (memberIds: readonly string[], part: "row" | "pending-row" | "pending-hint" | "unclosed-row" | "hooks"): string => `group:${memberIds.join(",")}:${part}`;
 /** F3 Task 8, on exactly the same principle: an agent batch's identity is its MEMBERSHIP — the joined
  *  member tool-use ids — with the sequence left out, so two replay dividers cannot re-key a settled unit.
  *  Membership here never grows (a batch is one assistant message, complete the moment it is parsed), so the
@@ -956,7 +956,14 @@ function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionO
   const leader: Segment[] = active
     ? [{ text: Math.floor(options.now / 600) % 2 === 0 ? (options.platform === "darwin" ? "⏺" : "●") : " ", dim: true, color: grey }, { text: " ", dim: true }]
     : [{ text: "  " }];
-  const run = composeFoldRun(foldClauses(counts, active, foldPolicy(options)), active ? "active" : "settled", { ellipsis: active, ...(elapsed === undefined ? {} : { elapsed }) });
+  const otherClauses = foldClauses(counts, active, foldPolicy(options));
+  // bl7 T-HOOKBLOCK, spec §2.5 collapsed-row form 1: the hook clause is EITHER/OR with the ordinary clause
+  // chain, never a member of it — when a run's hooks are the only thing it has to say, they take over the
+  // whole sentence (bold count) instead of leaving `otherClauses` (and therefore the row) empty. Form 2 (hooks
+  // alongside another clause) is a SEPARATE dim line `groupItems` appends below this row, not built here.
+  const clauses = otherClauses.length === 0 && counts.hookTotalMs !== undefined && counts.hookTotalMs > 0
+    ? [hookSentenceClause(counts.hookCount ?? 0, counts.hookTotalMs)] : otherClauses;
+  const run = composeFoldRun(clauses, active ? "active" : "settled", { ellipsis: active, ...(elapsed === undefined ? {} : { elapsed }) });
   const hint = resolveExpandHint(options.expandHint);
   const segments: Segment[] = [...leader, { text: run, preStyled: true }, ...(hint === "" ? [] : [dimmed(" "), { text: hint, dim: true, color: grey } as Segment])];
   // `run` is the ONE segment whose `text` carries SGR bytes, so the line's plain text is stripped rather
@@ -1083,7 +1090,12 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   // answers on screen: has this run anything to say? It must be asked under the same policy, because the
   // fullscreen-only shell clause is the only thing a run of nothing but non-read Bash calls can say. Asked
   // classically, the answer is `[]` and the run does not render wrong — it does not render at all.
-  if (foldClauses(counts, active, foldPolicy(options)).length === 0) return [];
+  // bl7 T-HOOKBLOCK: computed once and reused below (the hook-line gate) rather than re-asked — a run of
+  // nothing but a hook-bearing member DOES have something to say (spec §2.5 form 1) even when this is empty,
+  // since the hook-only sentence `groupRowLine` builds is a THIRD, independent `foldClauses` call site.
+  const otherClauses = foldClauses(counts, active, foldPolicy(options));
+  const hasHookSummary = counts.hookTotalMs !== undefined && counts.hookTotalMs > 0;
+  if (otherClauses.length === 0 && !hasHookSummary) return [];
   // T8, AFTER the ratchet and after R3.1, both deliberately. The latch above must run whether the cluster is
   // open or closed, or collapsing it again would show counts that had stopped being maintained; and a run
   // with nothing to say has no row to click, so it has nothing to open either.
@@ -1110,6 +1122,20 @@ function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOption
   const running = anchorMs === undefined ? undefined : options.now - anchorMs;
   const elapsed = running !== undefined && running >= ELAPSED_TICKER_MIN_MS ? ` · ${formatDuration(running)}` : undefined;
   const items: RenderItem[] = [{ kind: "line", id, ownerKey: groupOwnerKey(group.memberIds), line: groupRowLine(counts, active, options, elapsed), ...tag }];
+  // bl7 T-HOOKBLOCK, spec §2.5 form 2: hooks coexist with another clause, so `groupRowLine` left the ordinary
+  // sentence alone (form 1 above only fires when `foldClauses` is empty) — the hook summary instead gets its
+  // OWN dim `⎿` line under the row, count NOT bold, reusing the SAME 5-column gutter constant the active hint
+  // block below uses (canon paints the identical string here and on the expanded block's own header —
+  // `hookHeaderText`). Present regardless of `active`/`published`/`unclosed` form — unlike the hint block,
+  // this is not an active-only affordance.
+  if (hasHookSummary && otherClauses.length > 0) {
+    const grey = resolveThemeColor(themeTokens().inactive);
+    items.push({
+      kind: "gutter-block", id: toolGroupItemId(group.memberIds, "hooks"), ownerKey: groupOwnerKey(group.memberIds),
+      gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
+      body: [{ text: hookHeaderText(counts.hookCount ?? 0, counts.hookTotalMs!), dim: true, color: grey }], ...tag,
+    });
+  }
   // R3.7: the hint gutter is ACTIVE-ONLY — `latestDisplayHint` rides on the settled message but never renders.
   if (active) {
     const hint = pending === undefined
@@ -1483,7 +1509,10 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   const policy = foldPolicy(options);
   const atoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy });
   const standalone = new Map<ToolEvent, readonly RenderItem[]>(anchored.flatMap((a) => (a.event ? [[a.event, a.items] as const] : [])));
-  const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home, ...policy });
+  // Spec D13: `hookRuns` must reach every production `segmentRuns` call site (this is one of three) or the
+  // fold silently sees none and the whole hook block goes dark downstream of a correct ingest — the
+  // tests-pass-wiring-dead failure mode.
+  const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home, ...policy, hookRuns: options.hookRuns });
   const visible = folded.slice(0, trailingRunCut(atoms, folded, policy));
   // T8's de-dup input (see `expandedMemberItems`): every call THIS stream gives a row of its own. Here that
   // is every `tool` item without exception — a non-collapsible tool renders its items, and the one that
@@ -1561,7 +1590,9 @@ export function projectPending(document: TranscriptDocument, options: Projection
   // holds, and what the dynamic region owes — so a flag on one and not the other is exactly the disagreement
   // that puts one cluster on screen twice.
   const policy = foldPolicy(options);
-  const fold = { cwd: options.cwd, home: options.home, ...policy };
+  // Spec D13: shared by BOTH `segmentRuns` calls below (the settled fold and the dynamic fold) — the other
+  // two of the three production call sites `hookRuns` must reach.
+  const fold = { cwd: options.cwd, home: options.home, ...policy, hookRuns: options.hookRuns };
   // What Static already holds: the same fold the compact projection runs (open calls and withheld batches
   // inert there, exactly as `projectAll` omits them), minus the trailing run it withholds.
   const settledAtoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => !event.result || withheld.has(event) });

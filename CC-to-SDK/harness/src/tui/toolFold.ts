@@ -26,6 +26,9 @@ import { formatDuration } from "./format.js";
 // TS Task 4: the `vFr` recognition table lives in its own module — this one already carries two command parsers.
 import { recognizeGitOps, type GitBranchOp, type GitCommitKind, type GitCommitOp, type GitPrAction, type GitPrOp, type GitPushOp } from "./gitOps.js";
 import type { ToolEvent } from "./transcriptModel.js";
+// bl7 T-HOOKBLOCK Task 2: `HookRunEntry` is Task 1's completed-pair output (`hookPairs.ts`), threaded in as
+// `segmentRuns`'s `options.hookRuns` and resolved into each flushed run's `hookInfos` below (spec D12).
+import type { HookRunEntry } from "./hookPairs.js";
 
 /** Upstream `jr_`/`Wr_`/`qr_`/`Vr_` verbatim (L306395). `Vr_` decides nothing: a command of only ignored words is
  *  not a read at all, so `Bash("echo hi")` renders standalone. */
@@ -278,6 +281,12 @@ export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; s
  *  (`FoldAtom.thinkingKey`), `messageSequence` is its transcript position (for later interleave-by-sequence
  *  rendering), `body` is the raw `.trim()`ed — NOT whitespace-collapsed — thinking text. */
 export type AbsorbedThinking = { key: string; messageSequence: number; body: string };
+/** One resolved PreToolUse hook run attributed to this cluster (bl7 T-HOOKBLOCK Task 2, spec D12/D5): `name`
+ *  is the wire's `hook_name` verbatim (Task 3 renders it as-is; ccx cannot recover canon's definition-derived
+ *  command text from the wire — D5, recorded divergence), `durationMs` its own started→response arrival delta
+ *  (`HookRunEntry.durationMs`, spec D2). Order matches `options.hookRuns` encounter order (arrival/afterSequence
+ *  order per Task 1's invariant) — never re-sorted here (reviewer note: the invariant holds, don't defend it). */
+export type HookInfo = { name: string; durationMs: number };
 /** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
  *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
  *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
@@ -288,10 +297,16 @@ export type AbsorbedThinking = { key: string; messageSequence: number; body: str
  *  is the only ordering that lets the shell clause legitimately fall to zero mid-turn (518466–518467).
  *  The four op arrays are append-only with no dedup, exactly as canon's are (addendum §B.5); the push clause
  *  dedups at render. */
+/** `hookCount`/`hookTotalMs` (bl7 T-HOOKBLOCK Task 2, spec D12) are the resolved PreToolUse hook attribution
+ *  for this run — present only when the run absorbed at least one hook entry, the same spread-when-non-empty
+ *  style as `bashCount`/`absorbedThinking`. `hookTotalMs` is a per-pair SUM (canon's `Uu` merge takes
+ *  `Math.max` of a batch's wall-clock durations instead — D8 — but ccx has only per-pair arrival deltas and no
+ *  merge step here, so summing is the only number this shape can produce; recorded overstatement, spec §2.4). */
 export type GroupCounts = {
   readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[];
   thoughtForMs?: number; bashCount?: number; gitOpBashCount?: number;
   commits?: readonly GitCommitOp[]; pushes?: readonly GitPushOp[]; branches?: readonly GitBranchOp[]; prs?: readonly GitPrOp[];
+  hookCount?: number; hookTotalMs?: number;
 };
 /** `bashCommands` (tool-use id → command string) is the git scraper's INPUT, recorded here and consumed by T4;
  *  fullscreen-only, and omitted entirely when the run absorbed no BASH-KIND call (a read-ish shell call is not
@@ -313,7 +328,7 @@ export type GroupCounts = {
 /** `absorbedThinking` (bl6 T-CLUSTER) is present only when non-empty — the same style as `thoughtForMs`/
  *  `latestThinkingSummary` above — and holds every thinking block this run absorbed, in absorption order,
  *  for a later expansion to interleave with the member rows by `messageSequence`. */
-export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string>; absorbedThinking?: readonly AbsorbedThinking[] }
+export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: readonly string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlightId?: string; latestThinkingSummary?: string; bashCommands?: ReadonlyMap<string, string>; absorbedThinking?: readonly AbsorbedThinking[]; hookInfos?: readonly HookInfo[] }
 /** `poppedOnError` marks the one standalone tool this module emits for a reason of its own rather than because
  *  the policy called it non-collapsible: an errored `popsOutOnError` call, pushed out so the failure is never
  *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
@@ -432,10 +447,38 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   if (path !== undefined) { run.readFilePaths.add(path); run.hint = displayPath(path, options.cwd, options.home); return; }
   run.readOperationCount++; if (command !== undefined) run.hint = commandHint(command);
 }
+/** Spec D12 (plan review H1, the round's headline catch): resolves which of the caller's completed PreToolUse
+ *  hook entries belong to a run being flushed, AT FLUSH TIME — never a cursor swept against atom STREAM
+ *  positions. Settled tool atoms are ordered by `resultSequence` (see the `anchorId` doc comment above), so the
+ *  NORMAL wire order — `tool_use` at sequence 10, a hook pair stamped `afterSequence: 10`, `tool_result` at
+ *  sequence 11 — places the hook BEFORE the settled atom in that ordering; a sweep walking atoms in stream
+ *  order would pass the hook while the run is still empty and drop it. Instead, membership is a CALL-TIME
+ *  window: an entry belongs iff `anchorSequence <= entry.afterSequence < boundary`, where `anchorSequence` is
+ *  the run's earliest member `callSequence` (`RunState.anchorSequence`, already tracked by `absorb` — see its
+ *  first line) and `boundary` is the sequence of whatever flushed the run (a breaker's real transcript
+ *  position, or another atom's `callSequence`; `Infinity` for the trailing/final flush, so a still-open run at
+ *  end-of-stream still absorbs). An entry in a pre-run or between-run gap matches no run's window and is
+ *  silently dropped — canon routes those to its standalone renderer, out of scope (spec §2.6). No early-exit on
+ *  `hookRuns`'s documented afterSequence ordering (Task 1's invariant): this scan doesn't need it and the
+ *  reviewer note says not to lean on sortedness beyond what the model requires. */
+function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined): { infos: HookInfo[]; totalMs: number } {
+  if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0 };
+  const infos: HookInfo[] = [];
+  let totalMs = 0;
+  for (const entry of hookRuns) {
+    if (entry.afterSequence < anchorSequence || entry.afterSequence >= boundary) continue;
+    infos.push({ name: entry.name, durationMs: entry.durationMs });
+    totalMs += entry.durationMs;
+  }
+  return { infos, totalMs };
+}
+
 /** Upstream `ke_` (L302122–302156) copies both thinking fields onto the collapsed message, and BOTH only
  *  when they are populated (`if (e.thoughtForMs > 0)`, `if (e.latestThinkingSummary !== void 0)`) — which
- *  is what keeps `foldClauses` from emitting a `Thought for 0s` clause on an ordinary run. */
-const emit = (run: RunState): FoldGroup => ({
+ *  is what keeps `foldClauses` from emitting a `Thought for 0s` clause on an ordinary run.
+ *  `hooks` is `resolveRunHooks`'s output for THIS flush's boundary (spec D12) — resolved by the caller, not
+ *  recomputed here, so `emit` stays a pure projection of both its arguments with no boundary of its own. */
+const emit = (run: RunState, hooks: { infos: readonly HookInfo[]; totalMs: number }): FoldGroup => ({
   counts: {
     readCount: run.readFilePaths.size > 0 ? run.readFilePaths.size : run.readOperationCount, searchCount: run.searchCount, listCount: run.listCount,
     mcpCallCount: run.mcpCallCount, mcpServerNames: run.mcpServerNames, ...(run.thoughtForMs > 0 ? { thoughtForMs: run.thoughtForMs } : {}),
@@ -444,19 +487,21 @@ const emit = (run: RunState): FoldGroup => ({
     ...(run.bashCount > 0 ? { bashCount: run.bashCount, gitOpBashCount: run.gitOpBashCount } : {}),
     ...(run.commits.length > 0 ? { commits: run.commits } : {}), ...(run.pushes.length > 0 ? { pushes: run.pushes } : {}),
     ...(run.branches.length > 0 ? { branches: run.branches } : {}), ...(run.prs.length > 0 ? { prs: run.prs } : {}),
+    ...(hooks.infos.length > 0 ? { hookCount: hooks.infos.length, hookTotalMs: hooks.totalMs } : {}),
   },
   ...(run.hint === undefined ? {} : { hint: run.hint }), memberIds: run.memberIds, anchorId: run.anchorId, anchorSequence: run.anchorSequence, open: run.open,
   ...(run.newestInFlight === undefined ? {} : { newestInFlightId: run.newestInFlight }),
   ...(run.latestThinkingSummary === undefined ? {} : { latestThinkingSummary: run.latestThinkingSummary }),
   ...(run.absorbedThinking.length === 0 ? {} : { absorbedThinking: run.absorbedThinking }),
   ...(run.bashCommands.size === 0 ? {} : { bashCommands: run.bashCommands }),
+  ...(hooks.infos.length === 0 ? {} : { hookInfos: hooks.infos }),
 });
 
 /** Upstream `PMd` (L302172–302284). `atoms` must already be in transcript order. A group is emitted at the position
  *  of its FIRST member; anything neutral that interrupted the run is replayed straight after it, exactly like
  *  upstream's deferred buffer `i` (L302273–302277). An error is not a boundary and not a counter adjustment (R5.2)
  *  — with ONE fullscreen exception, canon's `popsOutOnError` path (2.1.234:237198–237210), handled below. */
-export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean }): readonly FoldItem[] {
+export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean; hookRuns?: readonly HookRunEntry[] }): readonly FoldItem[] {
   const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
   // The PENDING-THOUGHT buffer (F3 Task 3; `bodies` added bl6 T-CLUSTER). Upstream pushes the thinking
   // message straight into the open accumulator, so the thought belongs to the run being accumulated and is
@@ -470,7 +515,11 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     run.thoughtForMs += ms;
     if (summary !== undefined) run.latestThinkingSummary = summary;
   };
-  const flush = () => {
+  // `boundary` is the CALL-TIME position that closes this run's hook-attribution window (spec D12,
+  // `resolveRunHooks` above) — the flushing atom's own sequence, or `Infinity` for the trailing/final flush.
+  // Every call site below passes the boundary its own atom or the stream's end actually represents; `flush`
+  // never guesses one, so a caller that forgets is a type error, not a silently wrong window.
+  const flush = (boundary: number) => {
     pending = undefined;
     // A run whose every member was absorbed silently has every counter at zero, and canon renders it as a
     // zero-height row it still reports clickable (518513, 549764). We emit NO item for it — a DELIBERATE
@@ -479,7 +528,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // with it, the same way a thought held for a run that never opens is dropped today.
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
-    if (run.memberIds.length > 0 && run.visibleMembers > 0) out.push({ kind: "group", group: emit(run) });
+    if (run.memberIds.length > 0 && run.visibleMembers > 0) {
+      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns);
+      out.push({ kind: "group", group: emit(run, hooks) });
+    }
     out.push(...deferred); deferred = []; run = newRun();
   };
   // Canon decides between "relocate the errored call out of the cluster" and "leave it inside, just close the
@@ -554,7 +606,9 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // the `tool_use` in the cluster and pushes the `tool_result` standalone, two halves of one call; our
           // atoms carry both halves together and cannot be split that way.
           if (windowIsClear(atom.event, index)) run.memberIds.pop();
-          flush();
+          // Boundary = this call's own call-time position (spec D12): the flush happens because ITS result
+          // just settled, and the call-time attribution model never reasons from a result sequence.
+          flush(atom.event.callSequence);
           // TAGGED, because "standalone" is not self-evidently visible: TaskCreate/TaskUpdate are also on the
           // renderer's suppressed list and project to no items, so the tag is what lets `toolRenderer` give this
           // one its generic header row instead of the nothing every other call by those names gets.
@@ -562,7 +616,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
         }
         continue;
       }
-      flush(); out.push({ kind: "tool", event: atom.event }); continue;
+      // A non-collapsible call closes the run at ITS OWN call-time position — the point a call this policy
+      // will never absorb enters the stream (spec D12; never the call's `resultSequence`, which the call-time
+      // model deliberately never reasons from).
+      flush(atom.event.callSequence); out.push({ kind: "tool", event: atom.event }); continue;
     }
     if (atom.kind === "neutral") {
       const ms = atom.thoughtForMs === undefined ? 0 : Math.min(atom.thoughtForMs, THOUGHT_CAP_MS);
@@ -584,9 +641,14 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
       }
       (run.memberIds.length > 0 ? deferred : out).push({ kind: "passthrough", sequence: atom.sequence }); continue;
     }
-    flush(); out.push({ kind: "passthrough", sequence: atom.sequence });
+    // A breaker's `messageSequence` is its REAL transcript position (`sequence` is only the caller's own
+    // back-pointer, see the `FoldAtom` doc comment) — the boundary a hook-attribution window closes on.
+    flush(atom.messageSequence ?? atom.sequence); out.push({ kind: "passthrough", sequence: atom.sequence });
   }
-  flush(); return out;
+  // The trailing flush: no further atom bounds the run, so its hook window stays open to `Infinity` — the one
+  // case spec D12 calls out by name, and exactly what lets test order (b) (an OPEN run at end-of-stream) still
+  // absorb an entry stamped at its anchor's own `callSequence`.
+  flush(Infinity); return out;
 }
 
 /** One clause of the summary sentence. `boldRanges` are half-open `[start, end)` offsets into `text` — the count
@@ -628,6 +690,24 @@ function clause(verb: string, first: boolean, parts: readonly ClausePart[]): Fol
   };
 }
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** Canon `ECe` @155015278 verbatim — the hook block's OWN duration formatter, one-decimal seconds always
+ *  (`0.4s`, never `400ms`/`4m`), deliberately never `formatDuration`'s general unit ladder (spec §2.5). Shared
+ *  by both collapsed forms below and by the expanded per-hook lines (a later task's `expandedMemberItems`). */
+export const hookSeconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+/** The literal text canon paints in TWO positions with the SAME words (@177052130 collapsed-row form 2,
+ *  @177046924 the expanded block's own header) — count NOT bold in either. The bold-count SENTENCE form
+ *  (collapsed row, hooks are the only clause) does not use this string: it builds its own `clause()` spans
+ *  instead (see `hookSentenceClause`), but says the same words. */
+export const hookHeaderText = (count: number, totalMs: number): string => `Ran ${count} PreToolUse ${plural(count, "hook", "hooks")} (${hookSeconds(totalMs)})`;
+/** Spec §2.5 form 1: when a run's hooks are the ONLY thing it has to say, the hook clause takes over the
+ *  WHOLE sentence rather than joining `foldClauses`' chain as one more entry — canon's hook block is
+ *  either/or with the ordinary clause chain, never a member of it (there is no fixed "position" for it among
+ *  search/read/list/mcp — @177052130/@177053233 branch on "any other clause at all", not on order). `first`
+ *  is always `true`: this form only exists precisely when nothing else opened the sentence. */
+export function hookSentenceClause(count: number, totalMs: number): FoldClause {
+  return clause("ran", true, [" ", { bold: String(count) }, " PreToolUse ", plural(count, "hook", "hooks"), " (", hookSeconds(totalMs), ")"]);
+}
 
 /** Canon buckets `commits` by kind in this FIXED order with these labels (518575–518581) — note none of the git
  *  verbs has a present-participle form, so an active run says "Committed abc123f", not "Committing". */
