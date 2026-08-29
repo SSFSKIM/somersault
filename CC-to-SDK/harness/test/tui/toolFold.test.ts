@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
+import { classifyToolEvent, foldClauses, hookSentenceClause, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
 import { recognizeGitOps } from "../../src/tui/gitOps.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 import type { HookRunEntry } from "../../src/tui/hookPairs.js";
@@ -590,6 +590,25 @@ describe("F1 fold clauses (R3.8 + §3.4)", () => {
     expect(foldClauses(counts({ thoughtForMs: 0, readCount: 1 }), false)).toEqual([{ text: "Read 1 file", boldRanges: [[5, 6]] }]);
   });
   it("emits nothing for all-zero counts", () => expect(foldClauses(counts(), false)).toEqual([]));
+});
+
+// bl7 T-HOOKBLOCK Task 5 fix, spec §2.5 collapsed-row form 1 — the PURE half of the branch `groupRowLine`
+// (toolRenderer.tsx:918-929) builds when a run's hooks are its ONLY thing to say: `otherClauses` from the
+// case right above ("emits nothing for all-zero counts") plus this sentence, in place of `otherClauses`. The
+// combination is LATENT in production today — `segmentRuns` never yields a run whose members contribute zero
+// counters yet still carry a resolved hook (see the fixture-layer test in fold-expand.test.tsx and
+// task-5-fix-report.md) — so this pins the clause builder's own contract independent of that reachability gap.
+describe("bl7 T-HOOKBLOCK Task 5 fix: hookSentenceClause, the clause half of collapsed-row form 1", () => {
+  it("always opens the sentence (capitalized 'Ran'), with the count as the ONLY bold span", () => {
+    expect(hookSentenceClause(1, 200)).toEqual({ text: "Ran 1 PreToolUse hook (0.2s)", boldRanges: [[4, 5]] });
+  });
+  it("pluralizes 'hooks' for any count other than one, and scales the bold range with the digit count", () => {
+    expect(hookSentenceClause(3, 450)).toEqual({ text: "Ran 3 PreToolUse hooks (0.5s)", boldRanges: [[4, 5]] });
+    expect(hookSentenceClause(12, 1000)).toEqual({ text: "Ran 12 PreToolUse hooks (1.0s)", boldRanges: [[4, 6]] });
+  });
+  it("uses hookSeconds' one-decimal formatter, never formatDuration's unit ladder", () => {
+    expect(hookSentenceClause(1, 65000).text).toContain("(65.0s)"); // NOT "1m 5s" — spec §2.5, shared with hookHeaderText
+  });
 });
 
 // ── TS Task 4 ────────────────────────────────────────────────────────────────────────────────────────────────

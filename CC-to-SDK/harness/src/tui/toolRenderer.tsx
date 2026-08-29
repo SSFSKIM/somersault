@@ -967,6 +967,10 @@ function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionO
   // chain, never a member of it — when a run's hooks are the only thing it has to say, they take over the
   // whole sentence (bold count) instead of leaving `otherClauses` (and therefore the row) empty. Form 2 (hooks
   // alongside another clause) is a SEPARATE dim line `groupItems` appends below this row, not built here.
+  // LATENT TODAY (Task 5 fix): unreachable through `segmentRuns`, which drops an all-silent run — the one
+  // case with zero `otherClauses` — before `emit()` ever runs (toolFold.ts:532-539, deliberate divergence).
+  // Canon routes hooks on such a run to the standalone renderer instead (out of scope, backlog); pinned here
+  // via a `groupItems`/`FoldGroup` fixture built directly (test/tui/toolFold.test.ts "form 1").
   const clauses = otherClauses.length === 0 && counts.hookTotalMs !== undefined && counts.hookTotalMs > 0
     ? [hookSentenceClause(counts.hookCount ?? 0, counts.hookTotalMs)] : otherClauses;
   const run = composeFoldRun(clauses, active ? "active" : "settled", { ellipsis: active, ...(elapsed === undefined ? {} : { elapsed }) });
@@ -984,7 +988,10 @@ const ELAPSED_TICKER_MIN_MS = 2000;
  *  settled (geometrically identical to `published`) once they have all completed but no breaker has closed the
  *  run. `unclosed` therefore carries its own id part: the dynamic copy and the eventual published copy are the
  *  same text, and a shared id would collide in Static's append-once bookkeeping the moment the run closes. */
-type GroupForm = "published" | "active" | "unclosed";
+// Exported (bl7 T-HOOKBLOCK Task 5 fix) so a test can hand `groupItems` a `FoldGroup` fixture built directly
+// rather than through `segmentRuns` — the only way to exercise `groupRowLine`'s form-1 branch, which the real
+// segmenter cannot produce today (see that branch's own comment above).
+export type GroupForm = "published" | "active" | "unclosed";
 const GROUP_PART = { published: "row", active: "pending-row", unclosed: "unclosed-row" } as const;
 /** Upstream `OAH` (L428105–428120), the thinking summary's own clamp. Below the limit it returns the text
  *  UNTOUCHED — the `<Text>` that renders it wraps it — and only an over-long one is folded into a single
@@ -1103,7 +1110,7 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
 }
 
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
-function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions, emitted?: ReadonlySet<string>): readonly RenderItem[] {
+export function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions, emitted?: ReadonlySet<string>): readonly RenderItem[] {
   const active = form === "active";
   // R3.2's ratchet: the DYNAMIC forms latch (write the max), and the PUBLISHED form PEEKS the same maximum
   // without writing — upstream's ratchet assignment is unconditional across renders of the mounted row

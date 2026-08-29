@@ -20,9 +20,10 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
-import { projectCompact, projectPending, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { groupItems, projectCompact, projectPending, toolOwnerKey, TOOL_RESULT_GUTTER, type GroupForm, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { wrapItem } from "../../src/tui/wrapItems.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import type { FoldGroup } from "../../src/tui/toolFold.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import type { RendererChoice } from "../../src/tui/renderer.js";
 
@@ -694,5 +695,47 @@ describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocate
     const readSequence = doc().toolEvents().find((e) => e.id === "read-1")!.callSequence;
     const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence }] }));
     expect(items[0]!.id).toBe("group:read-1,todo-1:row");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 5 fix, spec §2.5 collapsed-row form 1 (toolRenderer.tsx:918-929, "form 1" in
+// task-5-fix-report.md). `segmentRuns` cannot produce this fixture through the real pipeline TODAY: the one
+// case with zero `otherClauses` is an all-silent run, and `segmentRuns`'s flush gate drops it before `emit()`
+// ever runs (toolFold.ts:532-539, a deliberate, documented divergence — canon instead routes hooks on such a
+// run to the standalone hook renderer, out of scope this round). This is acceptable and expected: the fixture
+// below is a `FoldGroup` built DIRECTLY, bypassing `segmentRuns` entirely, and pins `groupItems`'/`groupRowLine`'s
+// own contract for the day a real member class makes "zero other clauses, nonzero hooks" reachable.
+describe("bl7 T-HOOKBLOCK Task 5 fix: collapsed-row form 1 — hooks are the run's ONLY clause (LATENT, pinned at the FoldGroup layer)", () => {
+  // Zeroed exactly like `toolFold.test.ts`'s `counts()` helper — every base counter at its empty value, so
+  // `foldClauses` returns `[]` (pinned there as "emits nothing for all-zero counts") and the ONLY thing this
+  // run has to say is its hooks.
+  const hookOnlyGroup = (): FoldGroup => ({
+    counts: { readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], hookCount: 3, hookTotalMs: 450 },
+    memberIds: ["hook-only-1"], anchorId: "hook-only-1", anchorSequence: 1, open: false,
+  });
+  const opts = { ...FS, projection: "compact" as const, verbose: false };
+
+  it("takes over the WHOLE sentence with a bold count, and emits NO separate dim hook line", () => {
+    const items = groupItems(hookOnlyGroup(), "published", opts);
+    // Form 2's shape (hooks alongside another clause) is a second `gutter-block` item — its total absence
+    // here is the form-1/form-2 discriminator: exactly one `line` item, nothing else.
+    expect(items).toHaveLength(1);
+    expect(items[0]!.kind).toBe("line");
+    expect(items.some((i) => i.kind === "gutter-block")).toBe(false);
+    expect(items[0]!.id).toBe("group:hook-only-1:row");
+    const line = (items[0] as { line: RenderLine }).line;
+    // The plain (SGR-stripped) sentence: the hook clause IS the whole row, verbatim `hookSentenceClause`
+    // wording/punctuation — no ordinary clause, no "and", no trailing hook line.
+    expect(unlink(line.text)).toBe("  Ran 3 PreToolUse hooks (0.5s)");
+    // The count carries its own `\x1b[1m…\x1b[22m` span with no dim re-open after it — the same bold-count
+    // byte pattern `toolRenderer.test.tsx`'s settled-read row pins, here over the hook sentence instead.
+    const run = line.segments?.find((s) => "preStyled" in s && s.preStyled === true) as { text: string } | undefined;
+    expect(run?.text).toBe("\x1b[38;2;153;153;153m\x1b[2mRan \x1b[1m3\x1b[22m PreToolUse hooks (0.5s)\x1b[22m\x1b[39m");
+  });
+
+  it("active form uses the SAME branch (no otherClauses to distinguish it) and still emits one line only", () => {
+    const items = groupItems(hookOnlyGroup(), "active", opts);
+    expect(items.filter((i) => i.kind === "line" || i.kind === "gutter-block")).toHaveLength(1);
+    expect(unlink((items[0] as { line: RenderLine }).line.text)).toContain("Ran 3 PreToolUse hooks (0.5s)");
   });
 });
