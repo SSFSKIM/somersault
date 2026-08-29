@@ -1,7 +1,8 @@
 # M9 — arrival history: making an inbound peer message survive into `thread/read`
 
-**Status:** design, rev 5 — **Stage A shipped; Stages B–D have mechanism, pending review.** ·
-**Task:** #59 · **Depends on:** M8 (merged, `06bf3c0e44`)
+**Status:** design, rev 6 — **Stage A shipped; Stages B–D revised per review round 4 (eight
+findings, all adopted), pending convergence check.** · **Task:** #59 · **Depends on:** M8 (merged,
+`06bf3c0e44`)
 
 ## Why this exists
 
@@ -109,7 +110,7 @@ Reading a whole log back: 0.12ms at one entry, 2.1ms at a hundred, 17ms at a tho
 corpus-wide arrival count of 69. This is what lets Stage B skip an asynchronous persistence pipeline,
 measured rather than asserted.
 
-**M11 — `rowKind` does not discard a peer row, so a spliced arrival survives to `peerArrival`.**
+**M11 — `rowKind` does not discard a real peer row on the replay path.**
 `itemsFromTranscript` drops `PHANTOM_ROW_KINDS` before consulting `peerArrival` (replay.ts:27).
 Running the real `rowKind` over all 170 peer rows on this machine: 170 classify `prompt`, 0 are
 phantom. **This answers U2**, and it is structural rather than lucky — all four phantom classifiers
@@ -165,7 +166,7 @@ this table can be checked against the review that produced them rather than agai
 
 | # | Rev 3's finding | Disposition |
 | --- | --- | --- |
-| 1 | No durable ordering primitive — `readLoop` calls `onFrame` synchronously and neither awaits nor catches rejection | **Answered.** Content fixes position, so write order is irrelevant; only durability remains, and a measured synchronous write covers it (M10). *Durability and ordering* |
+| 1 | No durable ordering primitive — `readLoop` calls `onFrame` synchronously and neither awaits nor catches rejection | **Answered.** Content fixes position (given the store-seeded `seq` — round 4 tightened this); only durability remains, and a measured synchronous write covers it (M10). *Durability and ordering* |
 | 2 | Two-phase placement cannot locate a folded or unfinalized arrival | **Dissolved** by Move 1 — the coordinate is a row, not a turn, so there is no second phase to fail. *Placement* |
 | 3 | The cursor snapshot does not freeze finalize or eviction | **Dissolved** — entries are immutable and placement is derived, so there is no snapshot and nothing to freeze. *Placement* |
 | 4 | Rebase has no transaction boundary matching the real rewind | **Dissolved** by Move 2 — append-only, so a rewind needs no rebase and a refused rewind needs no compensation. *When placement fails* |
@@ -176,14 +177,32 @@ this table can be checked against the review that produced them rather than agai
 | 9 | The injectable store has no compatibility rule | **Answered** — a structural default rule readable off the deps object. *Store injection* |
 
 Two gaps are carried forward rather than closed, and are named as such where they arise: the
-shared-trunk case under finding 5, and the absence of a withheld count.
+shared-trunk case under finding 5, and the absence of a *withheld* count (the *logged* count is
+published — see "When placement fails").
+
+### Round 4 — rev 5's eight findings, and where each one goes
+
+Rev 5 went back to the same reviewer with the code open. Eight findings, six high — every one real,
+none dismissed. The architecture (the three moves) survived untouched; what failed was mechanism
+detail, and each fix below is a refinement inside the rev 5 frame rather than a withdrawal of it.
+
+| # | Round 4 finding | Disposition |
+| --- | --- | --- |
+| 1 | Silent omission is not the "explicit refusal" D3 promises | **Adopted, narrowed.** The terminal page publishes `arrivalsLogged`, so incompleteness is always visible; failing the RPC is rejected because a post-compaction anchor is normal, and a permanently poisoned read is worse than a detectable gap. *When placement fails* |
+| 2 | Per-process `seq` reverses same-anchor order across an ordinary restart | **Adopted.** `seq` is seeded from the store's max at observer install; refutes rev 5's "write order is irrelevant" as stated, which is now conditional on the seeding. *The log* |
+| 3 | A bare uuid anchor can be rebound by a duplicate (M5's own 1,562) | **Adopted.** The anchor carries a fingerprint; mismatch withholds. The strongest finding of the round — it refuted rev 5 with this spec's own measurement. *The log* |
+| 4 | Seeding has no race-free mechanism; Stage B can certify a bad anchor | **Adopted.** Explicit buffering state: install synchronously, hold arrivals, ground the chain when the seed resolves, then persist and broadcast in observation order. `null` becomes unrepresentable except as confirmed-empty. Also corrects rev 5's one-sided "drift is safe" claim. *The observer has to be seeded* |
+| 5 | M10 measured happy-path latency, not failure semantics | **Adopted in substance.** Caught write failures, a degraded latch surfaced as `arrivalsLogged: null`, crash semantics honestly stated as atomic visibility rather than durability. Network-filesystem stalls documented, not engineered: the store lives beside the transcripts, which already carry that exposure. *Durability and ordering* |
+| 6 | M11 measured raw rows, but Stage C replays entries that are not rows — and a synthetic row would re-lose the batch through `peerArrival`'s fallback | **Adopted fully.** The splice becomes an item-level projector injecting `userItem(entry.text, entry.id)` directly, bypassing `rowKind` and `peerArrival`. Simpler than what it replaces; M11 is re-scoped to Stage A. *Placement* |
+| 7 | The search cursor cannot resume between same-anchor arrivals at `limit:1` | **Adopted.** The occurrence cursor (ours, unpublished) gains a `(seq, id)` discriminator; the published `readCursor` is untouched. Rev 5's "finding 7 dissolves" is corrected to "half dissolves". *Placement* |
+| 8 | The splice cannot leave `boundaryRow` untouched under either naive reading; the last-resort page is unbounded | **Adopted.** Same projector closes the coordinate hazard (independently found here before the review returned); a per-session log cap bounds the last-resort page, whose self-limiting behaviour is already tested. *Placement*, *Bounds* |
 
 ### The log
 
 One entry per `noteArrival` call — that is, exactly one per `thread/peerMessage` notification, so the
 announcement channel and history cannot disagree about how many messages arrived.
 
-An entry is immutable and carries `{ v, id, sessionId, afterUuid, seq, observedAt, origin, text }`.
+An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, origin, text }`.
 
 - **`id`** — the frame's own uuid, or `noteArrival`'s minted fallback (peerInbound.ts:181). This is
   the same id `items/replay.ts` gives a replayed row, which is the mechanism by which a client
@@ -193,10 +212,21 @@ An entry is immutable and carries `{ v, id, sessionId, afterUuid, seq, observedA
 - **`origin`** — verbatim, for the reason `thread/peerMessage` carries it verbatim: `verifiedPeerPid`
   is the only kernel-vouched field in the exchange and re-deriving it would replace a verified fact
   with this server's opinion of it.
-- **`afterUuid`** — the uuid of the last frame this thread observed that would survive the reader's
-  filter; `null` when there was none.
-- **`seq`** — per-process monotonic, ordering entries that share an anchor. Cross-process ties break
-  on `id`.
+- **`anchor`** — `{ afterUuid, fingerprint }`: the uuid of the last frame this thread observed that
+  would survive the reader's filter, plus a fingerprint of that frame (`type` and `timestamp`,
+  recorded at observation). `null` means **confirmed empty** — the seed read completed and reported
+  zero rows — never "not yet known". The fingerprint exists because a uuid alone is not a row
+  identity: M5 counted 1,562 duplicate uuid occurrences (31 disagreeing on `parentUuid`), and the
+  reader's last-wins keying means a later duplicate would silently *rebind* a uuid-only anchor to a
+  different row — a misplacement, the one failure class this design must not produce. At resolution,
+  uuid and fingerprint must both match; a mismatch withholds. This was a review catch (round 4,
+  finding 3), refuting rev 5 with the spec's own measurement.
+- **`seq`** — per-session monotonic, ordering entries that share an anchor. **Seeded from the store**:
+  at observer install, the session's existing entries are read once (0.12ms at one entry, 2.1ms at a
+  hundred, M10) and `seq` continues from their maximum. Rev 5's per-process counter reversed order
+  across an ordinary restart — arrival A at seq 47, restart, arrival B at seq 1 sorts B first — which
+  is sequential single-engine operation, not the concurrent-engine limit (round 4, finding 2).
+  Cross-process ties still break on `id`.
 
 **Keyed by session id**, which is D2's mechanism in full. `thread/clear` sets
 `record.sessionId = undefined` and lets the replacement engine mint a new id at its init frame
@@ -205,21 +235,41 @@ thread's arrival scope starts empty, the old session's entries stay on disk, and
 transcript shows them again. **Detach, not delete, requires no code beyond the choice of key.**
 
 An arrival observed before the thread has a session id is held in memory and flushed at the init
-frame. A crash in that window loses it — a stated limit, and the only one durability does not cover.
+frame. A crash in that window loses it — a stated limit, bounded by the length of engine startup.
 
-### Placement — arrivals ride their anchor row
+### Placement — arrivals are injected as items, never as rows
 
-`thread/read` fetches raw rows and maps them with `itemsFromTranscript` (subscribe.ts:77). The splice
-goes between those two steps: for each fetched row, append the entries whose `afterUuid` is that
-row's uuid, ordered by `(seq, id)`. An entry anchored `null` splices before the first row, and only
-when the page reaches the start of the file.
+Rev 5 said "splice arrival rows into the array before `itemsFromTranscript`", and the review
+(round 4, findings 6 and 8) showed both available readings of that sentence are broken. A stored
+entry `{id, origin, text}` is not a transcript row — fed to `itemsFromTranscript` it emits nothing.
+Reconstructing a synthetic user row does not fix it: the synthetic row would route through
+`peerArrival`, whose envelope scan finds nothing in the already-joined `text`, falls back to
+`origin.body`, and **re-loses the very message Stage A recovered**. And mutating the array that
+`boundaryRow` indexes shifts every raw-row coordinate the cursor publishes.
+
+So the splice lives one level up, as an **item-level projector** that both mapping call sites use
+identically:
+
+```
+project(rawRows) :=
+  for each row in rawRows, in order:
+    emit itemsFromTranscript's items for that row        (unchanged machinery)
+    for each entry anchored to row (uuid AND fingerprint match), by (seq, id):
+      emit userItem(entry.text, entry.id)                 (bypassing rowKind and peerArrival)
+  entries anchored null (confirmed-empty) emit before the first row,
+  and only when the window reaches the start of the file
+```
+
+The raw array is never touched: `boundaryRow` bisects raw prefixes with `project` as its id-set
+function, `begin`, `base`, `from` and `cursorRow` all stay in raw-row space, and the emitted cursor
+is still `` `${record.epoch}:${begin}` `` over rows that really exist.
 
 Two properties make this safe, and the existing pager already requires both of them:
 
-- **Pure** — the spliced array is a function of the row window alone.
-- **Monotone** — an entry appears in `splice(rows[0,w))` for every `w` past its anchor and never
-  before. `boundaryRow`'s bisection (subscribe.ts:28-61) rests on exactly that predicate, so it keeps
-  working unmodified.
+- **Pure** — `project`'s output is a function of the row window and the (immutable) entry set alone.
+- **Monotone** — an entry's id appears in `project(rows[0,w))` for every `w` past its anchor row and
+  never before, exactly the predicate `boundaryRow`'s bisection (subscribe.ts:28-61) already rests
+  on for tool items, so it keeps working unmodified.
 
 **A row carrying several items is not a new case for this pager; it is the case it was built for.**
 Its own header says rows and items are not 1:1 because "one row can complete several items", and its
@@ -238,24 +288,33 @@ keeping the cursor inside its published `^\d+:\d+$` shape, and that decision is 
 than the read-snapshot id it selected: once entries are immutable and placement is derived rather
 than stored, there is no sequence left that needs freezing, so finding 3 goes with it.
 
-The same splice serves `thread/searchOccurrences`, which scans windows through the same reader
-contract (search.ts:122-126). A match inside an arrival publishes its **anchor's** coordinate,
-`` `${epoch}:${rowOffset + 1}` `` — a cursor that already lands a window ending at the row the
-arrival rides. Finding 7 dissolves with the same move rather than needing an occurrence coordinate of
-its own.
+The same projector serves `thread/searchOccurrences`, which scans windows through the same reader
+contract (search.ts:122-126). A match inside an arrival publishes its **anchor's** `readCursor`,
+`` `${epoch}:${rowOffset + 1}` `` — a jump that already lands a window ending at the row the arrival
+rides — so the *published* coordinate space is untouched. What does change is search's **own**
+resume cursor, which is this server's and unpublished: two arrivals sharing an anchor can each match,
+and a `limit:1` resume that names only the raw row cannot say which of them is next (round 4,
+finding 7 — a real residue rev 5 wrongly claimed dissolved). The occurrence cursor therefore gains an
+entry discriminator, `(seq, id)`, used only when the resume point is inside an arrival. Finding 7 is
+thus split honestly: the *readCursor* half dissolves with the anchor move; the *resume* half needs
+one field on a cursor that was never schema-pinned.
+
+**Bounds.** The from===0 last-resort page returns everything not yet returned, limit-free — an
+existing, tested, self-limiting branch (it always ends the walk; subscribe.test.ts test (j)) that
+arrivals make more reachable, since an anchor's entries cannot be split across pages. What keeps it
+bounded is a **per-session log cap** mirroring the live queue's posture (`MAX_ARRIVALS`, oldest
+dropped, drop announced): the log can never hand that page more entries than the cap.
 
 **Dedupe guard.** Skip any entry whose `id` already appears among the fetched rows. Today it never
 fires, because `getSessionMessages` drops every `isMeta` row (M1); it is what keeps this design
 correct on the day a future SDK stops dropping them. It is monotone too, so the bisection is safe.
 
-**`rowKind` does not interfere.** `itemsFromTranscript` discards `PHANTOM_ROW_KINDS` before
-`peerArrival` is ever consulted (replay.ts:27), so a spliced row that classified as a phantom would
-vanish. Measured by running the real `rowKind` over all 170 peer rows on this machine: every one
-classifies `prompt`, none is a phantom kind. **This answers U2.** The four classifiers are all
-anchored at the start of the text and a peer frame opens with a CLI-authored preamble, so the result
-is structural rather than lucky — but the comment in `sessions/rows.ts` that asserts "the rows carry
-NO meta flags" is true of the reader's output and false of the rows on disk, and is corrected to say
-which.
+**`rowKind` is no longer on the path.** The projector injects items directly, so no synthetic row
+ever meets `PHANTOM_ROW_KINDS` — rev 5 needed M11 to prove spliced rows survive classification, and
+the projector makes that load-bearing role moot. M11 stands as a true measurement (all 170 peer rows
+classify `prompt`; U2 answered) and keeps one consumer: Stage A's *replay* path, where real peer
+rows do route through `rowKind` before `peerArrival` (replay.ts:27). The corrected comment in
+`sessions/rows.ts` stands on its own merits.
 
 ### When placement fails
 
@@ -279,42 +338,91 @@ the *shared trunk*, it will render in the surviving branch's history. Branches a
 from `getSessionMessages`' output. Two engines on one session is unsupported; this records what the
 design does there rather than promising what it guarantees.
 
-**No withheld-count field.** D3 asks that a hard case refuse rather than answer plausibly and wrongly.
-Omission is not a wrong answer about position — it is the status quo, where every arrival is omitted —
-and reporting a truthful count would need whole-history knowledge the pager deliberately never
-gathers. Deferred as a real gap rather than faked with a number computed from one window.
+**Omission is made detectable, which is what "explicit" costs here.** Rev 5 argued omission was the
+status quo and left it silent; the review rightly refused that reading of D3 (round 4, finding 1) —
+`thread/read` would return an apparently complete success over incomplete history. What is *not*
+adopted is failing the RPC: an arrival whose anchor predates compaction is the *normal* aftermath of
+M6, and a poisoned read forever is worse than an incomplete one. Instead the terminal page (the one
+replying `nextCursor: null`) carries **`arrivalsLogged`** — the count of entries in the session's
+log, one readdir on a directory the read already opened, in an optional response field only new
+clients see. A count of withheld entries would need whole-history knowledge the pager never gathers;
+the *logged* count needs none, and a client comparing it against the arrival items it received knows
+exactly how many are unplaced. `arrivalsLogged: null` means the store is degraded (below) — "I
+cannot tell you" stated as itself, never as `0`.
+
+The shared-trunk case stays a stated limit: a misattributed anchor is not detectable from the
+reader's output at any price, and two engines on one session is unsupported. D3's claim is narrowed
+to what the mechanism actually delivers — **incompleteness is always visible; misattribution is
+excluded only by the supported topology.**
 
 ### Durability and ordering (finding 1)
 
 `Session.readLoop` calls `onFrame` synchronously and neither awaits nor catches rejection. Rev 3
 needed an ordered asynchronous pipeline because it assigned placement *later*. Here it does not:
-`afterUuid` and `seq` are both computed synchronously at observation, so **the entry's content fixes
-its position and write order is irrelevant.** Only durability remains, and a synchronous write
-answers it.
+the anchor and `seq` are both computed synchronously at observation, so **the entry's content fixes
+its position** — *given* the store-seeded `seq` above; rev 5's per-process counter made this claim
+false across a restart, and the seeding is what makes it true. Only durability remains, and a
+synchronous write answers it.
 
 Measured on the real `~/.claude` filesystem, write-plus-rename: p50 0.143ms, p95 0.201ms, p99
 0.896ms, max 6.497ms over 500 writes; a 16KB body costs the same as a 400B one, because the cost is
 the syscall pair rather than the bytes. That is the bounded synchronous write finding 1 explicitly
 permits, on a path already doing IO, and it removes the entire pipeline. It is written **before** the
-broadcast, so there is no window in which a client has been told about a message history does not
-have.
+broadcast, so a client is never told about a message history does not have — with exactly one
+exception, the caught write failure below, where the broadcast proceeds *because* the degraded latch
+makes the store's gap visible on every subsequent read.
+
+**What M10 does not cover is failure, and the review was right that rev 5 had no answer** (round 4,
+finding 5). The semantics are now stated:
+
+- **A write that throws** (ENOSPC, EACCES, a failed rename) is caught in the observer — an escaped
+  exception would hit `readLoop`'s discard and vanish. The notification is still broadcast: the live
+  channel reports what the engine *did*, and the engine delivered the message whether or not our
+  sidecar could record it. The session latches **degraded**, and every subsequent `thread/read`
+  reports `arrivalsLogged: null` — history's incompleteness is undetectable from a count that might
+  be short, so the count honestly abstains.
+- **Crash semantics are atomic visibility, not fsync durability.** Temp-then-rename guarantees no
+  reader ever sees a torn entry; it does not guarantee an entry survives power loss before the
+  metadata flushes. For a history sidecar that is the right trade — losing the newest entry to a
+  machine crash is an absence the count reveals, while a torn entry would be a corruption — and it is
+  claimed as exactly that, not as "durable".
+- **A network-filesystem home directory** can stall a synchronous write without bound, on the read
+  loop. Documented, not engineered around: this store lives where the CLI's own transcripts live, and
+  a deployment that puts `~/.claude` on NFS has accepted that class of stall for every transcript
+  write the engine itself makes.
 
 One file per entry with a temp-then-rename, rather than one appended JSONL: no partially written
 trailing line for a concurrent reader, and no interleaving between two app-server processes, without
 needing a lock. Reading a whole log costs 0.12ms at one entry and 2.1ms at a hundred; the corpus-wide
-arrival count is 69.
+arrival count is 69, and the per-session cap above bounds it structurally.
 
 ### The observer has to be seeded
 
-`afterUuid` is "the last filter-surviving frame this thread has observed", and on attach or resume the
-observer has seen none. It seeds from the last row `getSessionMessages` returns for the session.
-Without that seed the first arrival after a resume anchors `null` and renders at the top of history —
-the one placement error this design can produce, and it is a startup ordering requirement rather than
-a runtime one.
+The anchor is "the last filter-surviving frame this thread has observed", and on attach or resume the
+observer has seen none. The seed read (`getSessionMessages`, last row) is asynchronous while frames
+and arrivals land synchronously — so a bare "seed at startup" has a race on both sides: install the
+observer first and an immediate arrival is persisted with a `null` anchor, which means
+confirmed-empty and renders at the *top* of history (a misplacement); seed first and frames landing
+during the read are missed (round 4, finding 4 — and independently caught here before the review
+returned).
+
+So seeding is an explicit state, not an ordering hope. The observer installs synchronously —
+same-tick, as the admission contract requires — and opens **buffering**: frames advance a provisional
+anchor chain in arrival order, and arrivals are held, neither persisted nor broadcast. When the seed
+read resolves, the provisional chain is grounded on the seed row (or on confirmed-empty), buffered
+arrivals get their anchors computed in observation order, and each is then persisted and broadcast in
+that order. The window is one read long — milliseconds — and inside it nothing is durably wrong yet,
+so there is nothing to repair afterwards. `anchor: null` can now *only* mean confirmed-empty, because
+an unknown anchor is unrepresentable in the store: entries are written only after the seed resolves.
 
 The filter-surviving predicate mirrors the reader's own (`isMeta`, `isSidechain`, `teamName` are
-dropped). That is a coupling to SDK behaviour and earns its own test. If it drifts, arrivals anchor to
-rows the reader discards and are withheld — the safe direction.
+dropped), and that coupling is **dangerous in both directions** — rev 5 claimed drift was safe, and
+the review showed the claim was one-sided. Dropping a frame the reader keeps leaves the anchor
+*stale but resolvable*: the arrival renders after an older row, before rows that actually preceded
+it — a misplacement, not a withholding. The predicate therefore gets a contract test that runs both
+predicates over a corpus of real frame shapes and fails on any disagreement, which turns silent
+drift into a red test at the SDK bump that introduces it — the same posture the drift ritual already
+takes for settings keys.
 
 ### Store injection (finding 9)
 
@@ -360,43 +468,64 @@ in here.
 6. **One entry per announcement.** For any keyed run, the number of log entries equals the number of
    `thread/peerMessage` notifications, and their ids are equal as sets.
 7. **Every non-null anchor names a row that exists** in what `getSessionMessages` returns at the time
-   of writing.
+   of writing, and carries a fingerprint matching that row.
 8. **A folded arrival is logged**, against M7's positive control — the case no transcript reader can
    ever recover.
-9. **Nothing is read.** `thread/read`'s output is byte-identical to today with the store populated,
-   which is what makes Stage B verifiable on its own.
-10. **An arrival is durable before it is announced.** Killing the process between the two leaves an
-    entry with no notification, never the reverse.
+9. **No merge is performed.** `thread/read`'s items are byte-identical to today with the store
+   populated, which is what makes Stage B verifiable on its own. (The observer does read: the seed
+   row and the session's max `seq` — its own store's write path, not a read-side merge.)
+10. **An arrival is persisted before it is announced.** Killing the process between the two leaves an
+    entry with no notification, never the reverse — except a caught write failure, where the
+    notification still goes out and the session latches degraded.
+11. **Order survives a restart.** Two same-anchor arrivals separated by a server restart carry
+    increasing `seq` — the store-seeded counter, pinned by a test that restarts between them.
+12. **An arrival racing the seed is neither lost nor misanchored.** Delay the seed read artificially,
+    deliver an arrival immediately at attach: the entry appears after the seed resolves, anchored to
+    the seeded row, never to `null`.
+13. **A write failure degrades loudly.** With the store directory made unwritable, the notification
+    still broadcasts, and `thread/read` reports `arrivalsLogged: null` from then on.
 
 ### Stage C — the splice in `thread/read`
 
-11. **The question precedes the answer.** For a keyed cross-session exchange, `thread/read` returns
+14. **The question precedes the answer.** For a keyed cross-session exchange, `thread/read` returns
     the arrival item immediately before the assistant turn it caused — the defect this milestone
     exists to fix, and the inverse of M8's LEG 2, which is written to redden the day it closes.
-12. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
-    `^\d+:\d+$` and a rewind still invalidates them with the same `INVALID_PARAMS` message. No
-    schema file changes in this stage (D1).
-13. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
+15. **The arrival item carries the entry's text verbatim** — for the collapsed batch, both messages,
+    proving the projector bypassed `peerArrival` (whose fallback would re-lose one).
+16. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
+    `^\d+:\d+$` addressing raw rows, and a rewind still invalidates them with the same
+    `INVALID_PARAMS` message. No schema file changes in this stage (D1).
+17. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
     appears at least once and its id is stable across pages. Not "exactly once": the pager's existing
     contract is no-loss plus dedupe-by-id, because `boundaryRow` returns the smallest prefix holding
     every discarded id and a row straddling that boundary is legitimately re-fetched. An arrival
-    inherits that contract rather than being held to a stronger one.
-14. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, the
-    arrival does not appear, and no other item's position moves.
-15. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
+    inherits that contract rather than being held to a stronger one. Pinned at the named edges: an
+    anchor on the window's last row, an anchor row that opened a still-unfinished tool, and more
+    same-anchor arrivals than `limit` (which ends in the tested last-resort page, capped by the log
+    cap).
+18. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed OR its
+    fingerprint changed, the arrival does not appear, no other item's position moves — and the
+    terminal page's `arrivalsLogged` exceeds the arrival items returned, making the omission visible.
+19. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
     clearing and then resuming the prior session id.
-16. **An embedder that overrides `getSessionMessages` without a store gets no merge** (D3, finding 9).
+20. **An embedder that overrides `getSessionMessages` without a store gets no merge** (D3, finding 9)
+    and `arrivalsLogged` is absent, not `0`.
 
 ### Stage D — the splice in `thread/searchOccurrences`
 
-17. **An arrival's text is findable**, and its `readCursor` lands a `thread/read` window containing it.
+21. **An arrival's text is findable**, and its `readCursor` lands a `thread/read` window containing it.
+22. **Two same-anchor arrivals both matching resume correctly at `limit:1`** — the occurrence
+    cursor's `(seq, id)` discriminator names which entry is next, so neither is skipped and neither
+    repeats.
 
 ## Delegated unknowns
 
 - **U1 — do envelope-less (coordinator-path) arrivals batch at all?** If never, Stage A's residual
   limit is empty in practice. Probe 121's machinery answers it for one run. **Still open.**
-- **U2 — does `rowKind` change verdict on any widened row?** **Answered (M11): no.** All 170 peer
-  rows classify `prompt` and none is a phantom kind, so a spliced arrival reaches `peerArrival`. The
+- **U2 — does `rowKind` change verdict on any widened row?** **Answered (M11): no**, and then made
+  moot for the splice path: all 170 peer rows classify `prompt` and none is a phantom kind, but the
+  rev 6 projector injects items without ever constructing a row, so `rowKind` no longer sits between
+  an entry and its rendering. M11's remaining consumer is Stage A's replay of real peer rows. The
   comment in `sessions/rows.ts` asserting "The rows carry NO meta flags (probe 68b)" is true of the
   reader's output and false of the rows on disk, and is corrected to say which.
 
@@ -444,6 +573,21 @@ in here.
 - **The store is keyed by session id.** This is D2's entire implementation: `thread/clear` already
   detaches by dropping `record.sessionId` and letting the replacement engine mint a new one, so
   keying by session gives "detach, not delete" with no code that knows about clearing.
+- **Items, not rows (rev 6).** The projector injects arrival items directly rather than
+  materialising synthetic transcript rows. Rejected: synthetic rows — they either corrupt the raw
+  cursor (if spliced into the indexed array) or re-lose the collapsed batch (if routed through
+  `peerArrival`, whose envelope scan finds nothing in the joined text and falls back to
+  `origin.body`). The rejected alternative was not merely inferior; both of its readings were broken.
+- **Publish the logged count, not a withheld count (rev 6).** Rejected in rev 5 as unknowable;
+  the review forced a better distinction: the *withheld* count needs whole-history knowledge, the
+  *logged* count is one readdir, and a client holding both the count and the items can compute the
+  discrepancy itself. Rejected: failing the RPC on any unresolvable anchor — compaction makes that
+  the common case and would poison every read of an ordinary long session.
+- **Degrade loudly, and let the notification outlive the store (rev 6).** A caught write failure
+  still broadcasts `thread/peerMessage` — the live channel reports what the engine did, and the
+  engine delivered the message regardless — while `arrivalsLogged: null` marks history untrustworthy.
+  Rejected: suppressing the notification on write failure, which would convert a sidecar fault into
+  a lie about the engine's behaviour.
 - **The trust claim is withdrawn.** A same-user process that can write the transcript can write a
   sidecar. What a log buys is that `thread/read` and `thread/peerMessage` cannot disagree, and that
   accidental contamination is structurally impossible. Real integrity needs authenticated storage out
@@ -515,3 +659,14 @@ Pending — written at finish.
   answered by measurement (M11). Acceptance is written for B, C and D. A separate M8 live-path defect
   is recorded: `drainArrivals` attributes an arrival to whatever adoption is current, which can be a
   turn it did not cause.
+- **rev 6 (2026-08-30)** — round 4 of review: eight findings, all real, all adopted, none requiring
+  the architecture to move. The splice becomes an item-level projector (no synthetic rows — both
+  readings of rev 5's row splice were broken, one corrupting the cursor and one re-losing the batch);
+  the anchor gains a fingerprint against uuid rebinding (refuted by M5's own duplicate count); `seq`
+  is seeded from the store so order survives a restart; seeding becomes an explicit buffering state
+  and `anchor: null` becomes unrepresentable except as confirmed-empty; write failure latches a
+  degraded state surfaced as `arrivalsLogged: null`; the terminal page publishes `arrivalsLogged` so
+  omission is detectable, which is the narrowed, honest form of D3's "explicit"; the occurrence
+  cursor gains a `(seq, id)` discriminator; a per-session log cap bounds the last-resort page.
+  Crash semantics are stated as atomic visibility, not durability. Rev 5's "drift is safe" and
+  "write order is irrelevant" claims are both corrected as one-sided or conditional.
