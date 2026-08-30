@@ -1143,7 +1143,10 @@ function labeledHookItems(item: { label: string; entries: readonly HookInfo[] },
     kind: "line", id: key, ownerKey: key,
     line: { text: `${GROUP_HINT_GUTTER}Ran ${count} ${item.label} ${count === 1 ? "hook" : "hooks"}`, dim: true, color: grey },
   }];
-  if (options.projection !== "compact" || options.verbose) {
+  // bl9 D10 (R2): canon gates these extras on the transcript surface STRICTLY — its `verbose`
+  // setting unfolds clusters and never reaches this predicate. If ccx ever ships an inline verbose
+  // toggle separate from the detail projection, it feeds the fold/unfold decision, NEVER this gate.
+  if (options.projection !== "compact") {
     item.entries.forEach((entry, index) => rows.push({
       kind: "line", id: `${key}:cmd-${index}`, ownerKey: key,
       line: { text: `${HOOK_LINE_GUTTER}${entry.name} (${hookSeconds(entry.durationMs)})`, dim: true, color: grey },
@@ -1204,7 +1207,10 @@ export function hookLiveItems(hookLive: ReadonlyMap<string, number> | undefined,
   for (const [event, count] of hookLive) {
     if (count <= 0) continue;
     const isPrePost = event === "PreToolUse" || event === "PostToolUse";
-    if (isPrePost && !(options.projection !== "compact" || options.verbose)) continue;
+    // bl9 D10 (R2): canon gates these extras on the transcript surface STRICTLY — its `verbose`
+    // setting unfolds clusters and never reaches this predicate. If ccx ever ships an inline verbose
+    // toggle separate from the detail projection, it feeds the fold/unfold decision, NEVER this gate.
+    if (isPrePost && options.projection === "compact") continue;
     rows.push(hookLiveRow(event, count, isPrePost));
   }
   return rows;
