@@ -301,6 +301,30 @@ describe("thread/peerMessage", () => {
     expect(note[0].params.turnId).toBeUndefined();
   });
 
+  it("announces the arrival's own TEXT beside that verbatim origin", async () => {
+    // #63: an announcement that named a message without saying what it SAID left a client rendering
+    // `origin.body` — the field that repeats across a batch. `text` is the SAME string the item carries,
+    // so the announcement and the item agree under one `arrivalUuid` and neither has to be reconstructed
+    // from the other.
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    e.push(LIFECYCLE("started", "foreign-b0"));
+    await tick();
+    const note = notes(lines, "thread/peerMessage");
+    expect(note).toHaveLength(1);
+    const item = notes(lines, "item/completed").map((m) => m.params.item)
+      .find((i: { type?: string; id?: string }) => i?.type === "userMessage" && i.id === note[0].params.arrivalUuid);
+    expect(item, "no userMessage item carried the announced arrivalUuid").toBeTruthy();
+    expect(note[0].params.text).toBe(item.text);
+    expect(note[0].params.text).toBe("hello");
+    // The addition leaves `origin` exactly as it was: the engine's verbatim delivery provenance.
+    expect(note[0].params.origin).toEqual({
+      kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer",
+      fromSession: "s1", body: "hello", verifiedPeerPid: 4242,
+    });
+  });
+
   it("fires exactly once per message, even when a turn adopts it", async () => {
     const e = pushEngine();
     const { lines } = await startAccepting(e.engine);
@@ -353,6 +377,27 @@ describe("thread/peerMessage", () => {
       .filter((i: { type?: string }) => i?.type === "userMessage").map((i: { text: string }) => i.text);
     expect(texts).toContain("hello");
     expect(texts.join("\n")).not.toContain("the causing message");
+  });
+
+  it("announces the FRAME's own text while origin still names the CAUSING message — the batch case", async () => {
+    // The two fields deliberately DISAGREE here, and the disagreement is the decided contract rather than
+    // a gap left open: `origin` is the engine's verbatim delivery provenance — in a collapsed batch its
+    // `body`/`msg_id` name the CAUSING message — while `text` is what THIS arrival says. Reconciling them
+    // would invent an attribution the data does not contain (probe 121, verdict C: per-message identity in
+    // a batch is non-bijective, and text coverage is the whole claim).
+    const e = pushEngine();
+    const { lines } = await startAccepting(e.engine);
+    e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "the causing message" } }));
+    e.push(LIFECYCLE("started", "foreign-b4"));
+    await tick();
+    const note = notes(lines, "thread/peerMessage");
+    expect(note).toHaveLength(1);
+    const item = notes(lines, "item/completed").map((m) => m.params.item)
+      .find((i: { type?: string; id?: string }) => i?.type === "userMessage" && i.id === note[0].params.arrivalUuid);
+    expect(item, "no userMessage item carried the announced arrivalUuid").toBeTruthy();
+    expect(item.text).toBe("hello");
+    expect(note[0].params.text, "the announcement did not say what THIS arrival says").toBe(item.text);
+    expect(note[0].params.origin.body, "origin stopped travelling verbatim").toBe("the causing message");
   });
 
   it("falls back to the envelope when the framer supplied no body, but still needs a peer origin", async () => {

@@ -71,12 +71,17 @@
 //        back to back produce three replay frames with three distinct uuids — and only as many distinct
 //        `origin.msg_id`/`origin.body` values as there were TURNS. The other members' attributions never
 //        appear, though their TEXT does reach the model (all three check codes come back). So
-//        `thread/peerMessage` announces the causing message N times and never announces the rest. This
-//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it.
+//        `thread/peerMessage`'s `origin` names the causing message N times and never names the rest. This
+//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it. What
+//        BL7 (#63) changed is not that field but what travels beside it: the announcement also carries
+//        `text`, the frame's OWN resolved text, so the repeated attribution no longer costs a client the
+//        message's content.
 //
 // ── WHAT THE LEGS MAY AND MAY NOT ASSERT ───────────────────────────────────────────────────────────
-//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin }` and NOTHING else. There is no
-//     `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided.
+//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin, text }` and NOTHING else. There is
+//     no `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided. `origin`
+//     is the engine's verbatim delivery provenance and `text` is what THIS arrival says; the two
+//     deliberately disagree in a batch and neither is reconciled to the other.
 //   · an arrival's id is the FRAME's own uuid, never a minted one.
 //   · an adopted turn goes THROUGH `beginTurn`, so its `turn/started` payload is the ordinary
 //     `{ threadId, turn }` and carries NO origin field.
@@ -368,7 +373,7 @@ live("M8 cross-session, against a real engine", () => {
   let t4: Thread | undefined;
   let t5: Thread | undefined;
   /** What LEG 1 observed, read by LEGs 2 and 3. */
-  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string } | undefined;
+  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string; announcedText: unknown } | undefined;
   /** What LEG 5 SENT, read by LEG 10. Recorded as soon as the sends land rather than at the end of that
    *  leg, and deliberately: LEG 5 pins the LIVE shape of a batch (one announcement per queued message) and
    *  LEG 10 measures the READ side of the same exchange. A run on which the engine collapses the batch
@@ -396,7 +401,7 @@ live("M8 cross-session, against a real engine", () => {
     // (1) THE ARRIVAL — the one premise no unit test can establish.
     const announced = await a.waitFor("thread/peerMessage", 180_000,
       (n) => n.method === "thread/peerMessage" && n.params.threadId === t1!.id, mark);
-    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin}").toEqual(["arrivalUuid", "origin", "threadId"]);
+    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin, text}").toEqual(["arrivalUuid", "origin", "text", "threadId"]);
     const arrivalUuid = String(announced.params.arrivalUuid);
     expect(arrivalUuid, "the arrival's id is not the frame's own uuid").toMatch(UUID_RE);
     const origin = announced.params.origin;
@@ -431,7 +436,7 @@ live("M8 cross-session, against a real engine", () => {
     expect((t1.record.session as any).unmatchedResults, "the adopted turn's result was not claimed by the unclaimed-result hook").toBe(before);
     expect(a.since(mark).filter((n) => n.method === "peer/messageStatus").length, "a receipt arrived on the success path").toBe(0);
 
-    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId };
+    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId, announcedText: announced.params.text };
   }, 900_000);
 
   it("LEG 2 — the live item and the persisted one are ONE row at the STORE, and (M9) history returns the arrival itself: marked, in position, and counted", async () => {
@@ -443,6 +448,11 @@ live("M8 cross-session, against a real engine", () => {
     const liveItem = itemsOf(mark, t1!.id).find((i: any) => i?.type === "userMessage" && i.id === arrivalUuid);
     expect(liveItem, `no live userMessage item carried the arrivalUuid ${arrivalUuid}`).toBeTruthy();
     expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body, origin: expect.objectContaining({ kind: "peer" }) });
+    // #63: the ANNOUNCEMENT LEG 1 captured says what this arrival says, and says it identically — one
+    // string under one `arrivalUuid` across the notification and the item, so a client that renders the
+    // announcement and a client that renders the item show the same message rather than `origin.body`,
+    // which in a batch names the CAUSING one.
+    expect(idle!.announcedText, "thread/peerMessage's text is not the arrival item's own text").toBe(liveItem.text);
 
     // (2) THE PERSISTED ROW, read raw off disk. It IS there, it IS a `type:"user"` row, and it carries the
     // very origin the live path recognised — so running the ONE reader (`peerArrival`) over it reproduces

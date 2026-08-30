@@ -440,9 +440,9 @@ function writeEntry(
   }
 }
 
-/** The announcement, unchanged since M8 and still the only thing this file says on the wire about an
- *  arrival. Its own function now because TWO paths reach it — an ordinary arrival and a held one flushed
- *  after the seed — and a second copy of this payload is a second answer to what a client receives.
+/** The announcement, and still the only thing this file says on the wire about an arrival. Its own
+ *  function because TWO paths reach it — an ordinary arrival and a held one flushed after the seed — and a
+ *  second copy of this payload is a second answer to what a client receives.
  *
  *  ANNOUNCED at arrival, and with NO turnId — at this moment the message's fate is genuinely undecided (it
  *  may fold into a running turn, batch with others, or cause a turn whose id does not exist yet), so the
@@ -454,18 +454,21 @@ function writeEntry(
  *  and forgeable by any same-user process — so re-deriving the object would replace a verified fact with
  *  this server's opinion of it.
  *
- *  WHICH MEANS THIS NOTIFICATION IS NOT A SECOND COPY OF THE ITEM'S TEXT, and in a batch it disagrees with
- *  it: every member of a batch carries the CAUSING message's `origin.body` and `msg_id` beside its OWN
- *  distinct `arrivalUuid`, so a client that renders `origin.body` from here shows one message N times no
- *  matter what `peerArrival` resolved for the item. That is a defect in what this channel offers a client
- *  rather than in the reader, it is not addressed here, and closing it means deciding what `origin` means
- *  when the engine has collapsed several messages into one frame — not quietly editing a verbatim field.
+ *  WHICH IS WHY `text` TRAVELS BESIDE IT, and what each of the two means is decided here once, for every
+ *  channel an arrival reaches a client on. `origin` is the ENGINE'S VERBATIM DELIVERY PROVENANCE: in a
+ *  collapsed batch its `body` and `msg_id` name the CAUSING message rather than this arrival. `text` is
+ *  WHAT THIS ARRIVAL SAYS — the frame's own resolved text as `peerArrival` read it, identical under the
+ *  same `arrivalUuid` on the announcement, the live item, the projected row and the replayed row. The two
+ *  are deliberately NOT reconciled: reconciling would invent an attribution the data does not contain
+ *  (probe 121, verdict C — per-message identity inside a batch is non-bijective, and text coverage is the
+ *  claim). So a client renders `text` and attributes by `origin`, and neither field has to stand in for
+ *  the other.
  *
  *  `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
  *  the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
  *  (fanout.ts). It is the same call `emitItems` makes for the item this arrival becomes. */
 function announceArrival(srv: AppServer, record: ThreadRecord, pending: PendingArrival): void {
-  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid: pending.arrivalUuid, origin: pending.origin });
+  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid: pending.arrivalUuid, origin: pending.origin, text: pending.text });
 }
 
 /** One observed filter-surviving frame: it advances the anchor, or — inside the seed window — waits in the
