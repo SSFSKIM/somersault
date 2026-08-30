@@ -71,9 +71,14 @@ export interface PeerInboundState {
   ourUuids: Set<string>;
   adopted?: AdoptedTurn;
   /** The last filter-surviving frame this thread observed, as an entry records it. `null` is CONFIRMED
-   *  EMPTY (the seed saw zero rows); `undefined` is NOT YET KNOWN, and no entry is ever written while it
-   *  holds — which is what makes `null` unambiguous on disk. */
+   *  EMPTY — the seed saw zero rows — and nothing else; `undefined` is "no frame has advanced it yet".
+   *  It is NOT the record of whether this thread has been seeded: `seeded` is, and conflating the two let
+   *  a single frame observed before the id was known both disable the seed forever and ground the chain at
+   *  the top of a transcript it had never read. */
   anchor: ArrivalAnchor | null | undefined;
+  /** Whether the seed read has completed and grounded the chain. No entry is ever written while it is
+   *  false, which is what keeps `anchor: null` on disk meaning confirmed-empty and nothing else. */
+  seeded: boolean;
   /** Non-null exactly while a seed read is in flight: frames and arrivals landing inside that window are
    *  held here rather than acted on. */
   seeding: Seeding | null;
@@ -101,10 +106,17 @@ export function effectiveArrivalStore(deps: AppServerDeps): ArrivalStore | undef
  *  both directions — dropping a frame the reader keeps leaves an anchor stale but resolvable, which is a
  *  MISPLACEMENT rather than a withholding. So it is one exported predicate with a contract test over a
  *  corpus of real frame shapes behind it, and the SDK bump that introduces drift reddens that test rather
- *  than silently moving arrivals. */
+ *  than silently moving arrivals.
+ *
+ *  IT MIRRORS THE READER AS CALLED, not the reader in principle, which is why `system` is NOT here.
+ *  `getSessionMessages` gates `type: "system"` behind `includeSystemMessages`, which defaults false — and
+ *  neither caller that matters passes it: this file's own seed read, and `thread/read`'s pager
+ *  (subscribe.ts). A system frame admitted as an anchor would therefore name a row the reader never
+ *  returns, and every arrival behind it would be withheld forever; `system/init` — which arrives on every
+ *  turn — would have been the most common anchor of all. */
 export function readerVisible(frame: any): boolean {
   const type = frame?.type;
-  if (type !== "user" && type !== "assistant" && type !== "system") return false;
+  if (type !== "user" && type !== "assistant") return false;
   if (typeof frame.uuid !== "string" || !frame.uuid) return false;   // a row with no uuid is not addressable
   return !frame.isMeta && !frame.isSidechain && !frame.teamName;
 }
@@ -118,7 +130,16 @@ const fingerprintOf = (row: any): ArrivalFingerprint => ({
   hash: contentHash16(rawTextOf(row.message?.content)),
   ...(typeof row.timestamp === "string" ? { timestamp: row.timestamp } : {}),
 });
-const uuidOf = (row: any): string | null => (typeof row?.uuid === "string" ? row.uuid : null);
+const uuidOf = (row: any): string | null => (typeof row?.uuid === "string" && row.uuid ? row.uuid : null);
+/** Does a row still look like the frame a fingerprint was taken from? Only the RECORDED fields are
+ *  compared — a `timestamp` the live frame omitted constrains nothing, which is the same rule Task 4's
+ *  `anchorMatchesRow` applies at resolution; this is that rule's fingerprint half, used here to confirm a
+ *  seed occurrence before it is allowed to ground the chain. */
+const fpMatchesRow = (fp: ArrivalFingerprint, row: any): boolean => {
+  const row_fp = fingerprintOf(row);
+  return row_fp.type === fp.type && row_fp.hash === fp.hash
+    && (fp.timestamp === undefined || row_fp.timestamp === fp.timestamp);
+};
 /** `prevUuid` is what pins POSITION: a duplicate uuid rebound by the reader's last-wins keying sits after a
  *  different predecessor, and that is the disagreement the read side withholds on. */
 const advanceAnchor = (state: PeerInboundState, f: SeedFrame): void => {
@@ -161,7 +182,7 @@ const isDeadAdoption = (record: ThreadRecord, a: AdoptedTurn): boolean => !a.res
 
 export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
   if (record.crossSessionInbound === "refuse") return;   // nothing is coming; observe nothing
-  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set(), anchor: undefined, seeding: null, degraded: false };
+  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set(), anchor: undefined, seeded: false, seeding: null, degraded: false };
   record.peerInbound = state;
   // Resolved ONCE, here: whether this thread logs at all is a property of the server's deps rather than of
   // any frame, and re-deciding it per frame is how a write side and a read side come to disagree.
@@ -179,7 +200,11 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // Seeding runs at whichever moment the session id is actually known (spec rev 8.1). `routeInit`
     // latches it from the init frame and its subscription was installed first (server.ts's admission
     // spines, rewind's swap), so by the time this observer sees that frame the id is already on the record.
-    if (store && !state.seeding && state.anchor === undefined && record.sessionId) {
+    // `seeded`, never `anchor === undefined`: an anchor that has moved is not evidence that a seed ever
+    // ran, and reading it as such let one frame observed before the id was known cancel the seed for the
+    // life of the thread — after which every arrival was logged against a chain grounded on `prevUuid:
+    // null`, which is the top of a transcript this observer had never read.
+    if (store && !state.seeding && !state.seeded && record.sessionId) {
       beginSeeding(srv, record, state, store, record.sessionId);
     }
 
@@ -290,17 +315,20 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   if (state.seeding) {
     const buffer = state.seeding.arrivals;
     buffer.push(pending);
-    // Bounded for the same reason the live queue above is, and announced for the same reason: a held
-    // arrival that is dropped is never logged AND never announced, which is the one silent loss here.
+    // Bounded for the same reason the live queue above is — and an evicted one is still ANNOUNCED, because
+    // M8's guarantee is that no message the engine delivered goes unmentioned. Losing its history entry is
+    // the cost of the cap; losing its notification too would make a real message indistinguishable from
+    // silence, which is the exact case `thread/peerMessage` exists for.
     while (buffer.length > MAX_ARRIVALS) {
-      buffer.shift();
-      console.warn(`[peer] seed buffer full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest unlogged arrival`);
+      const evicted = buffer.shift()!;
+      console.warn(`[peer] seed buffer full on thread ${record.id} (cap ${MAX_ARRIVALS}); announcing the oldest without logging it`);
+      announceArrival(srv, record, evicted);
     }
     return true;
   }
 
-  // `state.anchor !== undefined` is "the seed has grounded", and `record.sessionId` is the scope it
-  // grounded against — the two are one condition, because every write of `record.sessionId` is either
+  // `state.seeded` is "the seed has grounded", and `record.sessionId` is the scope it grounded against —
+  // the two are one condition, because every write of `record.sessionId` is either
   // guarded by "it is currently unset" (router.ts's init latch) or bracketed by an uninstall/install pair
   // (rewind's swap, thread/clear's fresh engine), so a grounded anchor and the id it was grounded against
   // cannot come apart under a live observer.
@@ -310,7 +338,7 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   // crash to every time, and buys the guarantee that an unseeded thread behaves exactly as it did before
   // this milestone. The window holds no arrival in practice: an arrival IS an engine frame, and the engine
   // emits system/init — which is where the id is latched — before any user frame of the turn it starts.
-  if (store && record.sessionId && state.anchor !== undefined) {
+  if (store && record.sessionId && state.seeded) {
     logArrival(srv, record, state, store, record.sessionId, pending, store.nextSeq(record.sessionId), false);
   } else {
     announceArrival(srv, record, pending);
@@ -336,7 +364,11 @@ function logArrival(
   };
   try {
     store.append(entry);
-  } catch {
+  } catch (err) {
+    // Said out loud, once per failure: the durable signal is the marker `markDegraded` writes, but an
+    // operator reading logs is the one who can act on WHY (ENOSPC, EACCES, a home directory that went
+    // away), and the error object is the only place that reason exists.
+    console.warn(`[peer] arrival log write failed on session ${sessionId}; the session is now degraded —`, err);
     store.markDegraded(sessionId);
     state.degraded = true;
   }
@@ -372,10 +404,16 @@ function announceArrival(srv: AppServer, record: ThreadRecord, pending: PendingA
 }
 
 /** One observed filter-surviving frame: it advances the anchor, or — inside the seed window — waits in the
- *  buffer to advance it once the chain is grounded. */
+ *  buffer to advance it once the chain is grounded.
+ *
+ *  BEFORE THE WINDOW HAS EVER OPENED it does neither, and that is the point: with no seed there is no
+ *  chain to advance, so advancing anyway would mint an anchor whose `prevUuid: null` claims to be the top
+ *  of a transcript nothing has read. The frame is not lost — the seed read that runs when the id arrives
+ *  returns it, since the engine persists what it emits. */
 function observeVisible(state: PeerInboundState, frame: any): void {
-  const f: SeedFrame = { uuid: String(frame.uuid), fp: fingerprintOf(frame) };
   const seeding = state.seeding;
+  if (!seeding && !state.seeded) return;
+  const f: SeedFrame = { uuid: String(frame.uuid), fp: fingerprintOf(frame) };
   if (!seeding) { advanceAnchor(state, f); return; }
   seeding.frames.push(f);
   if (seeding.frames.length <= MAX_CAPTURED) return;
@@ -419,23 +457,45 @@ function groundSeed(
   // thread no longer has and anchor them to a chain the new engine never had.
   if (state.seeding !== seeding || record.epoch !== epoch) return;
   state.seeding = null;
+  state.seeded = true;
 
   // THE OVERLAP RULE. The seed is NOT a snapshot — the engine persists as it emits — so a frame observed
   // live inside the window can also appear in the read's result, and grounding on the seed's tail would
   // then anchor a buffered arrival AFTER a row that arrived after it. Instead: the earliest buffered frame
   // that occurs anywhere in the seed grounds the chain on the row BEFORE that occurrence, and the buffer
   // replays from its start — so every frame is counted exactly once.
+  //
+  // AN OCCURRENCE IS CONFIRMED, NEVER ASSUMED. A uuid is not a row identity (M5: 1,562 duplicate uuid
+  // occurrences), so the first buffered frame whose uuid appears in the seed decides the grounding — and
+  // then has to earn it: exactly one occurrence of that uuid, and that occurrence's fingerprint equal to
+  // what was recorded live. Two occurrences, or one that disagrees, is the spec's duplicate-uuid overlap:
+  // the frame relates the buffer to the seed at inconsistent positions, so it relates them not at all.
+  // That case falls through to the tail with `unrelatable` set, which sends the leading arrivals to
+  // ambiguous — persisted, counted, never placed. Taking the first occurrence instead is how a buffered
+  // frame matching row 0 of `[X, r-2, X]` grounded on `rows[-1]`, i.e. `null`, i.e. confirmed-empty over a
+  // seed that plainly held rows: an unflagged placement at the top of a history it did not precede.
   let at = rows.length;                  // no overlap at all: ground on the seed's tail
   let unrelatable = rows.length > 0;     // …and on rows never seen live, which is what an arrival cannot be ordered against
   for (const f of seeding.frames) {
-    const found = rows.findIndex((r) => uuidOf(r) === f.uuid);
-    if (found < 0) continue;
-    at = found;
-    unrelatable = false;
-    break;
+    const occurrences: number[] = [];
+    for (let i = 0; i < rows.length; i++) if (uuidOf(rows[i]) === f.uuid) occurrences.push(i);
+    if (occurrences.length === 0) continue;                 // this frame simply is not in the seed yet
+    if (occurrences.length === 1 && fpMatchesRow(f.fp, rows[occurrences[0]])) {
+      at = occurrences[0];
+      unrelatable = false;
+    }
+    break;                                                  // decided either way — by the EARLIEST such frame
   }
-  const groundRow = rows[at - 1];
-  state.anchor = groundRow ? { afterUuid: String(groundRow.uuid), prevUuid: uuidOf(rows[at - 2]), fp: fingerprintOf(groundRow) } : null;
+  // A row the reader returned WITHOUT a uuid cannot be named by an anchor — `String(row.uuid)` would mint
+  // the literal `"undefined"` and every resolution against it would fail silently. Walk back to the nearest
+  // nameable row instead, and say so: skipping one means the ground is no longer the exact position, which
+  // is `unrelatable`'s meaning. Unreachable against the production reader (its projection always carries a
+  // uuid), and cheap insurance against an embedder's that does not.
+  let g = at - 1;
+  while (g >= 0 && !uuidOf(rows[g])) g--;
+  if (g !== at - 1) unrelatable = true;
+  const groundUuid = g >= 0 ? uuidOf(rows[g]) : null;
+  state.anchor = groundUuid ? { afterUuid: groundUuid, prevUuid: uuidOf(rows[g - 1]), fp: fingerprintOf(rows[g]) } : null;
 
   // Re-read rather than carried from install: another process on this session may have appended in the
   // meantime, and a stale base is how two entries come to share a seq.
@@ -525,5 +585,6 @@ export function uninstallPeerInbound(record: ThreadRecord): void {
   // carries — which is exactly what `thread/clear` needs (a new conversation, a new id at its init frame,
   // an arrival scope that starts empty) and what a rewind swap needs (the retained id, re-read).
   state.seeding = null;
+  state.seeded = false;
   state.anchor = undefined;
 }

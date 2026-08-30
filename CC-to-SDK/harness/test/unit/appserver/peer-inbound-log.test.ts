@@ -10,7 +10,7 @@
 // explicitly: a reader whose promise the test resolves by hand, frames and arrivals pushed inside it, and
 // an assertion about what the entry ended up SAYING. A test that let the seed resolve first would prove
 // none of it.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -182,6 +182,65 @@ describe("the structural rule", () => {
     expect(record.peerInbound!.seeding).toBeNull();
     expect(read).toBe(0);
   });
+
+  it("a store with no session id yet announces and writes nothing — the accepted pre-init limit", async () => {
+    // The deviation, pinned so it cannot drift into something else: before an id exists there is no scope
+    // to key an entry by, so the arrival takes M8's path exactly. What must NOT happen is a durable entry
+    // guessing at a scope, or silence.
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("pre-init"));
+    const { lines, record } = await open(e.engine, { getSessionMessages: async () => [ROW("r-1", "history")], arrivalStore: store });
+    e.push(PEER("a-1", "arrived before the engine said who it was"));
+    await tick();
+
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(record.peerInbound!.seeded).toBe(false);
+    expect(store.readAll("anything")).toHaveLength(0);
+  });
+
+  it("a filter-surviving frame seen before the id NEVER becomes the anchor, and the seed still runs at init", async () => {
+    // The bug this pins: a pre-init frame that advanced the anchor also made the observer believe it had
+    // seeded, so the seed never ran and every later arrival was logged at `prevUuid: null` — the top of a
+    // transcript with a hundred rows in it.
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("pre-init-frame"));
+    const rows = [ROW("r-1", "one"), ROW("r-2", "two")];
+    const { record } = await open(e.engine, { getSessionMessages: async () => rows.slice(), arrivalStore: store });
+
+    e.push(ROW("early", "observed before the id was known"));
+    await tick();
+    expect(record.peerInbound!.anchor).toBeUndefined();      // it advanced NOTHING
+
+    e.push(INIT("late-session"));
+    await tick();
+    e.push(PEER("a-1", "after the seed finally ran"));
+    await tick();
+
+    const [entry] = store.readAll("late-session");
+    expect(entry.anchor).toEqual({ afterUuid: "r-2", prevUuid: "r-1", fp: { type: "user", hash: contentHash16("two"), timestamp: TS } });
+  });
+
+  it("an arrival on the SAME frame batch that reveals the id is buffered, then logged", async () => {
+    // No `tick` between the two: the seed read is in flight when the arrival lands, which is the ordinary
+    // shape rather than an exotic one — the id is revealed by a frame, and the next frame can be an arrival.
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("same-batch"));
+    const { lines } = await open(e.engine, { getSessionMessages: async () => [ROW("r-1", "copied")], arrivalStore: store });
+
+    e.push(INIT("same-batch-session"));
+    e.push(PEER("a-1", "no tick in between"));
+    expect(store.readAll("same-batch-session")).toHaveLength(0);   // still held — the read has not resolved
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+    await tick();
+
+    const [entry] = store.readAll("same-batch-session");
+    expect(entry.id).toBe("a-1");
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    // Nothing observed relates it to the row the seed returned, so it is withheld rather than placed —
+    // and it is never anchored `null`, which would claim it preceded that row.
+    expect(entry.ambiguous).toBe(true);
+    expect(entry.anchor).not.toBeNull();
+  });
 });
 
 describe("durability", () => {
@@ -205,6 +264,7 @@ describe("durability", () => {
     let thrown = false;
     const store: ArrivalStore = { ...inner, append(entry) { if (!thrown) { thrown = true; throw new Error("ENOSPC"); } inner.append(entry); } };
     const { lines, record } = await open(e.engine, { getSessionMessages: async () => [], arrivalStore: store }, "s10b");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     e.push(PEER("a-1", "the write that failed"));
     await tick();
@@ -220,6 +280,12 @@ describe("durability", () => {
     await tick();
     expect(store.readAll("s10b").map((entry) => entry.id)).toEqual(["a-2"]);
     expect(store.isDegraded("s10b")).toBe(true);
+    // The marker is the durable signal; this is the one an operator reads, and it has to name the session
+    // and carry the reason (ENOSPC, EACCES) the marker cannot hold.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("s10b");
+    expect(String(warn.mock.calls[0][1])).toContain("ENOSPC");
+    warn.mockRestore();
   });
 
   it("(11) seq keeps counting across a restart, so two same-anchor arrivals stay ordered", async () => {
@@ -378,6 +444,36 @@ describe("grounding survives seed/buffer overlap", () => {
     expect(entries[0].ambiguous).toBeUndefined();
     expect(entries[0].anchor).toEqual({ afterUuid: "r-1", prevUuid: null, fp: { type: "user", hash: contentHash16("one"), timestamp: TS } });
     expect(entries[1].anchor!.afterUuid).toBe("f-3");
+  });
+
+  it("a uuid occurring TWICE in the seed establishes no overlap — never a ground before its first copy", async () => {
+    // The duplicate-uuid overlap. Taking the first occurrence of `[X, r-2, X]` grounds on `rows[-1]`, i.e.
+    // `null`, i.e. confirmed-empty over a seed that plainly held rows — an unflagged placement at the top
+    // of history. Two occurrences mean the frame relates buffer to seed at inconsistent positions, so it
+    // relates them not at all: fall through to the tail, and let the leading arrival be ambiguous.
+    const entries = await overlap("dup1", [ROW("X", "first occurrence"), ROW("r-2", "between"), ROW("X", "second occurrence")], [ROW("X", "second occurrence")], true);
+    expect(entries.map((entry) => entry.id)).toEqual(["a-0", "a-1"]);
+    expect(entries[0].ambiguous).toBe(true);                  // withheld, counted, never placed
+    expect(entries[0].anchor).not.toBeNull();                 // and never confirmed-empty over a non-empty seed
+    expect(entries[0].anchor!.prevUuid).toBe("r-2");          // the TAIL, not the row before the first copy
+  });
+
+  it("…and the same holds when neither copy is the seed's first row", async () => {
+    const entries = await overlap("dup2", [ROW("r-1", "one"), ROW("X", "first"), ROW("r-3", "three"), ROW("X", "second")], [ROW("X", "second")], true);
+    expect(entries[0].ambiguous).toBe(true);
+    expect(entries[0].anchor!.afterUuid).toBe("X");
+    expect(entries[0].anchor!.prevUuid).toBe("r-3");          // grounded on the tail, not on `r-1` before the first copy
+  });
+
+  it("a single occurrence whose CONTENT disagrees is not the frame we saw, so it grounds nothing", async () => {
+    // A row rebound by the reader's last-wins keying carries the buffered frame's uuid at a position it
+    // never held. The fingerprint recorded live is what catches it, and the answer is the same: no usable
+    // overlap, ground on the tail, leading arrivals ambiguous.
+    const entries = await overlap("dup3", [ROW("r-1", "one"), ROW("X", "rewritten content")], [ROW("X", "what we actually observed")], true);
+    expect(entries[0].ambiguous).toBe(true);
+    expect(entries[0].anchor!.afterUuid).toBe("X");           // the tail…
+    expect(entries[0].anchor!.prevUuid).toBe("r-1");          // …rather than a ground before it
+    expect(entries[0].anchor!.fp.hash).toBe(contentHash16("rewritten content"));
   });
 
   it("(14) an empty seed grounds confirmed-empty, which is the ONLY thing a null anchor means", async () => {
