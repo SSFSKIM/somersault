@@ -155,6 +155,22 @@ function framesFor(word) {
       { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-hookcluster-done", content: [{ type: "text", text: "hookcluster done" }] } } },
     ];
   }
+  // bl8 T-QY task 4 (cell S1) — the pty acceptance producer for the STANDALONE hook row: one Read call, its
+  // OWN result, THEN a `hook_started`/`hook_response` PostToolUse pair — after the result, unlike
+  // `hookcluster`'s PreToolUse pair above, because a real PostToolUse hook fires once the tool has already
+  // finished. `jar` (canon's cluster-absorption predicate, ported to `resolveRunHooks`) tests
+  // `hookLabel==="PreToolUse"` only, so this entry is never claimed by the Read cluster no matter where it
+  // lands — it is `weaveStandaloneHooks`' (Task 2) to park and `hooksItemRows`' (Task 3) to render, as its
+  // own row ("Ran 1 PostToolUse hook") placed after the cluster's "Read 1 file" row.
+  if (name === "posthook") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-post-read-1", content: [{ type: "tool_use", id: "post-read-1", name: "Read", input: { file_path: "/work/gamma.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-post-read-1", message: { content: [{ type: "tool_result", tool_use_id: "post-read-1", content: "gamma file body", is_error: false }] } } },
+      { kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h2", hook_name: "PostToolUse:Read", hook_event: "PostToolUse", uuid: "u-posthook-started-1" } },
+      { kind: "message", data: { type: "system", subtype: "hook_response", hook_id: "h2", hook_name: "PostToolUse:Read", hook_event: "PostToolUse", outcome: "success", exit_code: 0, stdout: "post-hook\n", uuid: "u-posthook-response-1" } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-posthook-done", content: [{ type: "text", text: "posthook done" }] } } },
+    ];
+  }
   return [];
 }
 

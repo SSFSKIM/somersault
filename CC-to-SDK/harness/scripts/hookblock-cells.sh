@@ -25,6 +25,23 @@
 #   deliberately: a resumed/attached session has no way to recover a hook's timing after the fact, so it
 #   shows none rather than a fabricated one. If this cell ever shows "PreToolUse" in the replay path, that
 #   is a real regression in the `!ev.replay` guard to investigate, not something to relax the assertion for.
+#
+# bl8 T-QY task 4 adds two more cells against the same real binary:
+#
+#   Cell S1 (standalone): a NEW `posthook` fake-host word — one Read call, its result, THEN a
+#   `hook_started`/`hook_response` PostToolUse pair (after the result, unlike `hookcluster`'s PreToolUse pair
+#   above — a real PostToolUse hook fires once the tool has already finished). `jar` only absorbs
+#   `hookLabel==="PreToolUse"`, so this entry is never claimed by the Read cluster; it is Task 2's
+#   `weaveStandaloneHooks` drain that parks it and Task 3's `hooksItemRows` that renders it, standalone,
+#   after the cluster's own row.
+#
+#   Cell S2 (feature-kill): bl7's own Step 4 precedent (`.doperpowers/sdd/2026-08-30-bl7-round/
+#   t-hookblock-pty-evidence.txt`) did this mutation BY HAND, outside the script, as a one-off verification.
+#   This cell automates the same idea as a standing negative control: back up `toolFold.ts`, bypass the
+#   drain's call site with a source patch, rebuild, rerun S1's own scenario and require its assertion to now
+#   FAIL (S2 itself "passes" when the kill is confirmed), then restore the file byte-for-byte and rebuild
+#   the real binary again before this script's own summary/exit — `git diff --quiet` on the restored file is
+#   the check that the restore left no trace.
 set -uo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,7 +68,20 @@ pass_count=0; fail_count=0; failed_cells=""
 SESSIONS=""
 RUN_ID="$$"
 ROOT=$(mktemp -d /tmp/hookblock-cells-XXXXXX)
+# bl8 T-QY task 4, cell S2's mutation target + backup. `KILL_BACKUP` existing on disk is this script's OWN
+# signal that a mutation is currently in flight (S2 writes it right before patching, deletes it right after
+# a successful restore) — `cleanup`'s trap below checks for it so an interrupted run (Ctrl-C mid-mutation,
+# or S2's own early-return paths) never leaves the real binary built from patched source.
+KILL_TARGET="$HARNESS_DIR/src/tui/toolFold.ts"
+KILL_BACKUP="$ROOT/toolFold.ts.orig"
+restore_kill_mutation() {
+  [ -f "$KILL_BACKUP" ] || return 0
+  cp "$KILL_BACKUP" "$KILL_TARGET"
+  rm -f "$KILL_BACKUP"
+  ( cd "$HARNESS_DIR" && npm run build >/dev/null 2>&1 )
+}
 cleanup() {
+  restore_kill_mutation
   for s in $SESSIONS; do tmux -L "$TM" kill-session -t "$s" 2>/dev/null; done   # BY NAME, never -a
   # `kill-server` here targets ONLY this run's own PRIVATE socket (`-L "$TM"`, minted from `$$` above and
   # touched by nothing but this run) — never the default socket, never a shared one — so it is the allowed
@@ -157,6 +187,20 @@ launch_attach() {                             # launch_attach <session> <home-di
     sleep 0.25; i=$((i+1))
   done
   return 1
+}
+
+# bl8 T-QY task 4 — shared by cells S1 and S2, which push the SAME `posthook` word against two different
+# binaries (the real one, then the drain-bypassed one) and diverge only in what they expect `$CAP` to hold
+# afterward. Registers `fh` in `SESSIONS` itself (same `launch_fake_host` subshell caveat as cell 1 above).
+run_posthook_burst() {                        # run_posthook_burst <fh-session> <attach-session> <home-dir> <label> → writes $CAP, returns 0/1
+  local fh="$1" s="$2" home="$3" label="$4" short=""
+  SESSIONS="$SESSIONS $fh"
+  short=$(launch_fake_host "$fh" "$home") || { echo "      FAIL $label: fake-host.mjs never printed its short id"; return 1; }
+  launch_attach "$s" "$home" "$short" || { echo "      FAIL $label: ccx attach never reached the ready frame"; return 1; }
+  wait_for_follow "$fh" || { echo "      FAIL $label: fake-host.mjs never printed FOLLOWED — the attach client's own follow op never landed"; return 1; }
+  push "$fh" "posthook"
+  wait_for_capture "$s" "posthook done" || { echo "      FAIL $label: the posthook frame burst never rendered"; return 1; }
+  return 0
 }
 
 # ═══ Cell 1 — LIVE path: expanded cluster shows the hook-count header + per-hook line, after member rows ═══
@@ -302,9 +346,105 @@ run_hookblock_replay_cell() {
   record hookblock-replay "$rc"
 }
 
-echo "bl7 T-HOOKBLOCK task 4 — pty acceptance (socket -L $TM)"
+# ═══ Cell S1 — STANDALONE: a PostToolUse hook with no owning cluster renders its own row, after the run ═══
+run_hookblock_standalone_cell() {
+  echo "  cell hookblock-standalone: a PostToolUse hook fired AFTER the tool result (never absorbed — jar tests PreToolUse only) renders its own standalone row after the Read cluster (bl8 T-QY Task 3 shape 1)"
+  local fh="hbs-fh-$RUN_ID" s="hbs-$RUN_ID" home="$ROOT/hbs-home" rc=0
+  run_posthook_burst "$fh" "$s" "$home" "hookblock-standalone" || { record hookblock-standalone 1; kill_cell "$s"; kill_cell "$fh"; return; }
+
+  if ! grep -qF "Read 1 file" "$CAP"; then
+    echo "      FAIL hookblock-standalone: the Read cluster's own collapsed row is missing"; rc=1
+  fi
+  if ! grep -qF "Ran 1 PostToolUse hook" "$CAP"; then
+    echo "      FAIL hookblock-standalone: the standalone PostToolUse row never rendered"; rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    local out line_cluster line_hook
+    out=$(cat "$CAP")
+    line_cluster=$(printf '%s\n' "$out" | grep -nF "Read 1 file" | head -1 | cut -d: -f1)
+    line_hook=$(printf '%s\n' "$out" | grep -nF "Ran 1 PostToolUse hook" | head -1 | cut -d: -f1)
+    if [ "$line_cluster" -lt "$line_hook" ]; then
+      echo "      ok   hookblock-standalone: cluster row [line $line_cluster] precedes the standalone PostToolUse row [line $line_hook]"
+    else
+      echo "      FAIL hookblock-standalone: wrong order — cluster [line $line_cluster], hook row [line $line_hook]"
+      printf '%s\n' "$out" | sed 's/^/      | /'
+      rc=1
+    fi
+  fi
+
+  kill_cell "$s"; kill_cell "$fh"
+  record hookblock-standalone "$rc"
+}
+
+# ═══ Cell S2 — FEATURE-KILL: bypass the Task 2 drain, rebuild, and require S1's own assertion to fail ═════
+# Same idea bl7's Step 4 ran BY HAND (`.doperpowers/sdd/2026-08-30-bl7-round/t-hookblock-pty-evidence.txt`),
+# automated here as a standing negative control. `KILL_LINE` is `segmentRuns`'s own return statement — the
+# ONE call site that drains unclaimed hook entries into standalone `{kind:"hooks"}` items (toolFold.ts's own
+# doc comment calls it "the drain"); replacing it with a bare `return out;` makes that drain a no-op without
+# touching anything else `segmentRuns` does, so a REGRESSION in this cell means the mutation stopped
+# targeting the drain, not that the feature broke some other way.
+KILL_LINE='  return weaveStandaloneHooks(out, slots, options.hookRuns, hookClaims);'
+KILL_REPLACEMENT='  return out; // bl8 T-QY S2 feature-kill mutation cell — restored before this script exits'
+run_hookblock_standalone_kill_cell() {
+  echo "  cell hookblock-standalone-kill: bypassing the drain (weaveStandaloneHooks) and rebuilding must make cell S1's own assertion FAIL — proving S1 actually tests the feature"
+  local rc=0
+  local hits; hits=$(grep -cF "$KILL_LINE" "$KILL_TARGET")
+  if [ "$hits" -ne 1 ]; then
+    echo "      FAIL hookblock-standalone-kill: expected the drain call site verbatim ONCE in toolFold.ts, found $hits — update KILL_LINE in this script"
+    record hookblock-standalone-kill 1; return
+  fi
+  cp "$KILL_TARGET" "$KILL_BACKUP"              # cleanup's trap now guards this file until restore_kill_mutation below
+  if ! python3 - "$KILL_TARGET" "$KILL_LINE" "$KILL_REPLACEMENT" <<'PY'
+import sys
+path, old, new = sys.argv[1:4]
+text = open(path).read()
+assert text.count(old) == 1
+open(path, "w").write(text.replace(old, new, 1))
+PY
+  then
+    echo "      FAIL hookblock-standalone-kill: the source mutation script failed"
+    restore_kill_mutation; record hookblock-standalone-kill 1; return
+  fi
+
+  echo "      rebuilding with the drain bypassed…"
+  if ! ( cd "$HARNESS_DIR" && npm run build >/dev/null 2>"$ROOT/kill-build.log" ); then
+    echo "      FAIL hookblock-standalone-kill: the mutated build failed to compile"
+    sed 's/^/      | /' "$ROOT/kill-build.log"
+    restore_kill_mutation; record hookblock-standalone-kill 1; return
+  fi
+
+  local fh="hbk-fh-$RUN_ID" s="hbk-$RUN_ID" home="$ROOT/hbk-home"
+  if ! run_posthook_burst "$fh" "$s" "$home" "hookblock-standalone-kill"; then
+    echo "      FAIL hookblock-standalone-kill: the posthook scenario didn't even reach its settle point under the mutated binary"
+    kill_cell "$s"; kill_cell "$fh"; restore_kill_mutation; record hookblock-standalone-kill 1; return
+  fi
+
+  if grep -qF "Ran 1 PostToolUse hook" "$CAP"; then
+    echo "      FAIL hookblock-standalone-kill: the standalone PostToolUse row STILL rendered with the drain bypassed — this cell is not exercising the feature"
+    rc=1
+  else
+    echo "      ok   hookblock-standalone-kill: the standalone PostToolUse row is GONE with the drain bypassed — S1 genuinely tests the feature"
+  fi
+  kill_cell "$s"; kill_cell "$fh"
+
+  echo "      restoring toolFold.ts and rebuilding the real binary…"
+  restore_kill_mutation
+  if ! git -C "$HARNESS_DIR" diff --quiet -- src/tui/toolFold.ts; then
+    echo "      FAIL hookblock-standalone-kill: toolFold.ts is NOT byte-identical to HEAD after restore"
+    git -C "$HARNESS_DIR" diff -- src/tui/toolFold.ts | sed 's/^/      | /'
+    rc=1
+  else
+    echo "      ok   hookblock-standalone-kill: toolFold.ts restored clean (git diff empty)"
+  fi
+
+  record hookblock-standalone-kill "$rc"
+}
+
+echo "bl7/bl8 T-HOOKBLOCK/T-QY — pty acceptance (socket -L $TM)"
 run_hookblock_live_cell
 run_hookblock_replay_cell
+run_hookblock_standalone_cell
+run_hookblock_standalone_kill_cell         # LAST: mutates + rebuilds twice: bypass → verify kill → restore
 
 echo "── $pass_count passed, $fail_count failed ──"
 [ "$fail_count" -eq 0 ] || { echo "failed:$failed_cells"; exit 1; }
