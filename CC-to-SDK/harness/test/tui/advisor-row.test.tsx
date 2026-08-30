@@ -11,6 +11,7 @@ import { renderMessage } from "../../src/tui/render.js";
 import { resolveThemeColor, themeTokens } from "../../src/tui/theme.js";
 import { EXPAND_HINT_FALLBACK } from "../../src/tui/keys/hints.js";
 import { advisorResolution, type AdvisorEntry } from "../../src/tui/advisorState.js";
+import { advisorDisplayName } from "../../src/tui/advisorModel.js";
 import { projectCompact, projectDetail, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
@@ -37,11 +38,19 @@ describe("render.ts — advisor in-flight row (server_tool_use)", () => {
       { text: "Advising", gutter: { text: "⏺ ", dim: true }, segments: [{ text: "Advising", bold: true }] },
     ]);
   });
-  it("unresolved, model known (D15): dim glyph, bold Advising, dim ' using {model}'", () => {
-    const advisor = { ...noopAdvisor, model: "Opus 4.8" };
+  it("unresolved, model known: dim glyph, bold Advising, dim ' using {catalog display name}' (D15 retired, bl9)", () => {
+    const name = advisorDisplayName("claude-opus-5");
+    const advisor = { ...noopAdvisor, model: "claude-opus-5" };
     expect(renderMessage(asst([inFlight()]), { platform: "darwin", advisor })).toEqual([
-      { text: "Advising using Opus 4.8", gutter: { text: "⏺ ", dim: true },
-        segments: [{ text: "Advising", bold: true }, { text: " using Opus 4.8", dim: true }] },
+      { text: `Advising using ${name}`, gutter: { text: "⏺ ", dim: true },
+        segments: [{ text: "Advising", bold: true }, { text: ` using ${name}`, dim: true }] },
+    ]);
+  });
+  it("unresolved, unknown model id: verbatim passthrough — canon's cs() fallback (bl9)", () => {
+    const advisor = { ...noopAdvisor, model: "my-custom-model" };
+    expect(renderMessage(asst([inFlight()]), { platform: "darwin", advisor })).toEqual([
+      { text: "Advising using my-custom-model", gutter: { text: "⏺ ", dim: true },
+        segments: [{ text: "Advising", bold: true }, { text: " using my-custom-model", dim: true }] },
     ]);
   });
   // (2) resolved → solid success glyph; errored → solid error glyph.

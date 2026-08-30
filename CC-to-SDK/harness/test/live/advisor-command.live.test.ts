@@ -90,7 +90,7 @@ live("bl8 T-ADVCMD Task 5 (A11) — /advisor sonnet mid-session, through the rea
       const projected = projectCompact(doc, ctx);
       const texts = projected.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.kind === "gutter-block" ? i.body.map((l) => l.text) : []));
       if (texts.some((t) => t.includes("Advising using "))) {
-        expect(texts.some((t) => t.includes(`Advising using ${SONNET}`))).toBe(true); // D15: verbatim id
+        expect(texts.some((t) => t.includes(`Advising using ${advisorDisplayName(SONNET)}`))).toBe(true); // D15 retired (bl9): catalog display name
       }
     } finally {
       adapter.detach();
