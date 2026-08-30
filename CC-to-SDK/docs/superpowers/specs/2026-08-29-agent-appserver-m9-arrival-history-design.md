@@ -398,6 +398,19 @@ An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, 
 thread's arrival scope starts empty, the old session's entries stay on disk, and resuming that
 transcript shows them again. **Detach, not delete, requires no code beyond the choice of key.**
 
+**`thread/delete` DESTROYS, and that half is NOT free** (rev 9, round 2, finding 4). The same key that
+gives detach for nothing gives deletion nothing at all: `thread/delete` removes the transcript and
+leaves the sidecar holding the full text of every peer message that session received — indefinitely,
+and re-attachable to that id if it is ever restored. So the store carries a delete operation, and the
+handler invokes it **after** the transcript delete succeeds: removing the entries first would erase
+the history of a session the store then refused to delete. The two lifecycles are stated together
+because each is the other's boundary — **clear detaches; delete destroys** — and neither is inferable
+from the key alone. A sidecar that cannot be removed is a RESIDUE rather than a failed delete: the
+transcript is already gone, so the deletion is still announced server-wide, and the reply carries the
+handler's own `INTERNAL` error naming what is left rather than an `{ok: true}` for a deletion that
+was not complete. Deletion also clears the session's degraded latch, which was a statement about a
+history that no longer exists.
+
 An arrival observed before the thread has a session id takes M8's live-only path — announced, not
 logged (rev 8.2, from implementation contact). Holding and flushing it, as earlier revisions said,
 is not better: an arrival is an engine frame, and `system/init` — where the id is latched — precedes
@@ -670,6 +683,22 @@ finding 5). The semantics are now stated:
   metadata flushes. For a history sidecar that is the right trade — losing the newest entry to a
   machine crash is an absence the count reveals, while a torn entry would be a corruption — and it is
   claimed as exactly that, not as "durable".
+- **A READ that fails is degraded too, and only `ENOENT` is empty** (rev 9, round 2, finding 2). The
+  degrade contract above is written from the write side, and the read side owes the same answer: a
+  session directory that exists but cannot be listed — a mode changed to `0300`, a transient `EACCES`,
+  an `EIO` on a network mount — is an inability to read something that *is* there, and answering it
+  with zero entries publishes `{logged: 0, dropped: 0}` beside `isDegraded() === false`, which is a
+  complete history certified by a store that could not see one. Absence is the one honest empty. Every
+  other errno latches degraded through the same path a write failure takes, so the reply says
+  `arrivals: null`. (`sessions/storeAudit.ts` draws this line for the transcript store; D-M5-8 forbids
+  the other reading in as many words.)
+- **The store root is the CONFIGURED config directory, not the literal `~/.claude`** (rev 9, round 2,
+  finding 1). `CLAUDE_CONFIG_DIR` replaces that path outright, this harness's own tenant preset exports
+  it per tenant (`config/tenantPreset.ts`), and an entry holds the full text of a peer message and
+  annotates one transcript — so a sidecar rooted at the host user's home stores one tenant's message
+  bodies outside the namespace it serves and annotates transcripts it cannot see. The root is
+  `<claudeConfigDir()>/cc-harness/arrivals`, resolved through the one function the fleet registry and
+  the config domain already share, so the sidecar cannot drift from the transcripts it describes.
 - **A network-filesystem home directory** can stall a synchronous write without bound, on the read
   loop. Documented, not engineered around: this store lives where the CLI's own transcripts live, and
   a deployment that puts `~/.claude` on NFS has accepted that class of stall for every transcript
@@ -833,9 +862,19 @@ in here.
 9. **No merge is performed.** `thread/read`'s items are byte-identical to today with the store
    populated, which is what makes Stage B verifiable on its own. (The observer does read: the seed
    row and the session's max `seq` — its own store's write path, not a read-side merge.)
-10. **An arrival is persisted before it is announced.** Killing the process between the two leaves an
-    entry with no notification, never the reverse — except a caught write failure, where the
-    notification still goes out and the session latches degraded.
+10. **An arrival is persisted before it is announced, and before it is emitted as an item.** Killing
+    the process at any point leaves a prefix of that order — an entry with no notification, never
+    the reverse, and never a live item for a message history does not have. The exception is a
+    caught write failure, where the notification and the item both still go out and the session
+    latches degraded: the gap is disclosed rather than hidden, which is what makes withholding the
+    live item pointless there.
+    **The guarantee holds ACROSS THE SEED WINDOW, which is where it was reachable but unmet** (rev 9,
+    round 2, finding 3). A held arrival has deliberately not been written yet, so it must not be
+    drainable either: an arrival made eligible for the live drain on sight was emitted as
+    `item/completed` by a turn adopted during the window, ahead of the entry the seed had yet to
+    write. An arrival therefore joins the drainable queue only where its durable fate is settled —
+    at the logging path, or at the announce-only pre-init path that has no scope to write into —
+    and the held ones flush in the replay's own interleaved order once grounding has written them.
 11. **Order survives a restart.** Two same-anchor arrivals separated by a server restart carry
     increasing `seq` — the store-seeded counter, pinned by a test that restarts between them.
 12. **An arrival racing the seed is neither lost nor misanchored.** Delay the seed read
@@ -910,7 +949,12 @@ in here.
     for the run. The one legitimate excess is criterion 17a's teardown case, which persists without
     announcing; the deficit direction stays forbidden. The counts and the entries a reply renders
     are ONE snapshot, entries sampled first: an arrival landing during the transcript read may be
-    counted-and-not-rendered, never rendered-and-not-counted.
+    counted-and-not-rendered, never rendered-and-not-counted. **The counts and the verdict on whether
+    they may be published are one snapshot too** (rev 9, round 2, finding 5): asking "are you
+    degraded?" and then "what are your counts?" is two marker reads, and the second app-server process
+    on this session degrades the store inside that window — after which the reply publishes numbers
+    taken from a marker that had already stopped standing behind them. One store operation answers
+    both from one read, and `null` is the whole of its "I cannot tell you".
 24. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, its
     fingerprint changed, OR its predecessor changed (the rebound-duplicate shape), the arrival does
     not appear, no other item's position moves — and `arrivals.logged` exceeds the marked items
@@ -1353,3 +1397,42 @@ gate reports the same 110 rows over 73 registered methods it did before the mile
 
   Nothing here changed a decision. Every fix is an existing rule reaching a case the implementation
   had not carried it to — which is what the review was for.
+
+- **rev 9.1 (2026-08-30) — the second external review round: six findings, and the store learns where it
+  lives.** One wave, and again no decision moved. Five of the six are an existing rule reaching a case the
+  implementation had not carried it to; the sixth is a doc path.
+
+  **Isolation** (finding 1). The sidecar rooted itself at the literal `~/.claude` while everything it
+  annotates follows `CLAUDE_CONFIG_DIR` — which this harness's own tenant preset exports per tenant — so one
+  tenant's peer message bodies were written outside the namespace serving them. The root is now
+  `<claudeConfigDir()>/cc-harness/arrivals`, the one spelling the fleet registry and the config domain
+  already resolve through.
+
+  **The degrade contract's read side** (finding 2). It was written from the write side only, so a session
+  directory that existed but could not be listed took the same branch as one that was absent: zero entries,
+  no degraded flag, and a complete history certified by a store that could not see it. Only `ENOENT` is
+  empty now; every other errno latches degraded, and the reply says `arrivals: null`.
+
+  **Persist-before-broadcast across the seed window** (finding 3). The guarantee held everywhere except the
+  one window where the entry is deliberately deferred: an arrival held by an unresolved seed was queued for
+  the live drain on sight, so a turn adopted inside that window emitted its item before the seed wrote the
+  entry. An arrival now becomes drainable only where its durable fate is settled, and the held ones flush in
+  the replay's own interleaved order after grounding has written them. Criterion 10 says so.
+
+  **Delete destroys** (finding 4). Keying by session id gave `thread/clear`'s detach for free and gave
+  `thread/delete` nothing: the transcript went and the full text of every peer message stayed, re-attachable
+  to that id. The store gains a delete operation, invoked after the transcript delete succeeds; a residue it
+  cannot remove is reported as the handler's own error rather than hidden under `{ok: true}`, and the
+  deletion is announced either way because the transcript really is gone. Clear detaches, delete destroys —
+  stated together, because neither follows from the key.
+
+  **One snapshot for the counts AND the verdict** (finding 5). `isDegraded` then `counts` is two marker
+  reads, and the second process on a shared session degrades the store between them. One operation now
+  answers both from one read.
+
+  **The plan's drift-check path** (finding 6, P2). That gate runs from `CC-to-SDK/`, not `harness/`.
+
+  Deferred with its reasoning: a peer body containing a literal `</cross-session-message>` still truncates
+  that sender's own remaining text at decode, because nothing in the CLI's grammar distinguishes a payload
+  tag from the real terminator. It is self-inflicted-only and bounded, and it is logged in
+  `CC-to-SDK/docs/tech-debt-tracker.md` rather than engineered around.
