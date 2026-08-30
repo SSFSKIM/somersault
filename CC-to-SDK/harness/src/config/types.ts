@@ -144,6 +144,16 @@ export interface HarnessConfig {
   onElicitation?: OnElicitation;           // MCP elicitation handler (probe 43b ✅ stdio round-trip)
   onUserDialog?: OnUserDialog;             // request_user_dialog handler (probe 43: wireable, NO deterministic headless trigger)
   supportedDialogKinds?: string[];         // dialog kinds onUserDialog actually renders — CLI fails closed on absence
+  /** Declares that this consumer renders a per-task stop control wired to the `stop_task` control request
+   *  (0.3.250). Structural, not behavioural-on-our-side: the CLI reads it off the `initialize` request and,
+   *  when declared, an interrupt on an open-input session aborts only the turn and leaves running background
+   *  agents/workflows alive to be stopped one at a time. ABSENCE FAILS CLOSED — an interrupt kills them —
+   *  so this is the difference between our Stop killing background work and sparing it. Truthful for the
+   *  bundled TUI, whose Background panel stops a single row (`BgTasksPanel onStop` → `stopBgTask` →
+   *  `session.stopTask`); a library caller that ships no such control must leave it unset. First-attached-
+   *  client wins on multi-client sessions, and a closed-input one-shot run (`-p`) kills hold-back tasks
+   *  regardless. */
+  perTaskStopAffordance?: boolean;
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // custom CLI child placement (probe 50 ✅ end-to-end)
   // process plumbing
   pathToClaudeCodeExecutable?: string;

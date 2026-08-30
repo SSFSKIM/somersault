@@ -295,7 +295,9 @@ runtime detection and degradation are the design's baseline, not its error path.
 **The correlation map needs its own lifecycle, because the success path never signals.** A `peer/send`
 records `msgId -> sending connection` so a later receipt can be routed. Delivered and refused messages
 produce no receipt at all, so the common outcomes leave no cleanup signal, and a long-lived client would
-grow the map without bound. Retention cannot be derived from this process's environment: the hold deadline belongs to the RECEIVER,
+grow the map without bound. *(As measured at CLI 2.1.237. A refused message now returns an `expired`
+receipt — see rev 9 — which releases its own entry; a DELIVERED one is still silent, so every rule below
+still has its subject.)* Retention cannot be derived from this process's environment: the hold deadline belongs to the RECEIVER,
 which may run with its own `CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`, so a TTL computed from ours could expire
 before a status this server was still owed. The bound is therefore an **absolute protocol-level retention window of 30 minutes** — six times the
 CLI's 5-minute default hold deadline, fixed here rather than computed from a local value so a client can
@@ -756,6 +758,8 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
    completion carrying the model's answer to both prompts.
 11. The negative leg: the same send into a `crossSessionInbound: "refuse"` thread produces no
    `thread/peerMessage`, no turn, and no receipt — silence on both channels is the measured contract.
+   *(The receipt half was superseded at CLI 2.1.250 — see rev 9. The refusal is unchanged and still
+   measured; the sender is now told of it, and LEG 8 asserts both halves.)*
 
 ## Decision Log
 
@@ -870,6 +874,8 @@ Keyed (gated live, `test/live/appserver-cross-session.test.ts`):
   probe 110's "not addressable", which was a malformed address rather than an unreachable target.
 - **Silence is the success path.** Delivered and refused messages produce no receipt at all; only `held`
   and `expired` do. A design that treated "no news" as a failure would have been backwards.
+  *(Measured on CLI 2.1.237. Still true of a DELIVERED message; no longer true of a refused one, which
+  since CLI 2.1.250 comes back as an `expired` receipt carrying a reason — see rev 9.)*
 - **`hold` on a headless session is a delayed refuse** — the CLI says so in its own words (`no approval
   surface`). The feature that looked like the richest half of the receive story has no subject on a
   hosted thread.
@@ -1185,3 +1191,23 @@ outstanding gap and is written down rather than smoothed over.
   rather than quietly left looking active. Probe 107 had measured the reader's `isMeta` behaviour six
   weeks before this design was written; nothing connected it to the peer path until a live leg tried to
   read an arrival back, which is the round's sharpest lesson about reusing one's own prior measurements.
+- **rev 9 (2026-08-29)** — the engine moved under a shipped premise, and this is the note that says so
+  rather than a rewrite that hides it. The harness bumped `@anthropic-ai/claude-agent-sdk` 0.3.237 →
+  0.3.250, and the SDK bundles the CLI (0.3.237 ships CLI 2.1.237, 0.3.250 ships CLI 2.1.250), so an SDK
+  bump is an engine change. **At CLI 2.1.250 a refused send is no longer silent.** A `peer/send` into a
+  thread whose `crossSessionInbound` is `refuse` now returns one `peer/messageStatus` to the sending
+  connection with `status: "expired"` and a human-readable `reason` naming the recipient's policy. Causation
+  was established by a controlled experiment, not inferred: the same single leg, same machine, minutes
+  apart — LEG 8 passes on 0.3.237 and fails on 0.3.250 on the receipt assertion alone. **Nothing loosened.**
+  The assertions that a refused message produces no `thread/peerMessage`, no `turn/started`, no
+  `item/completed` and no row in the receiver's own transcript all still pass unchanged; the engine became
+  transparent, not permissive, and it closed the one real gap this milestone shipped with — a sender had no
+  way whatever to learn its message had been refused. LEG 8 is rewritten to assert the contract that now
+  exists: one receipt, correlated by the `msgId` `peer/send` minted, `status: "expired"` (pinned, because
+  `expired` is terminal in `ReceiptMap` and releases the correlation entry where `held` would not), the
+  documented `{msgId, status, reason, from, receivedAt}` key set, and a non-empty `reason` — with the
+  reason's ENGLISH deliberately left unpinned, since upstream wording is not a contract and a leg that
+  reddens on a copy-edit teaches its next reader to ignore it. Three earlier statements are marked in place
+  rather than deleted (the gateway-retention rationale, acceptance row 11, and the "Silence is the success
+  path" surprise): each was true when measured on 2.1.237, each remains true of a DELIVERED message, and
+  each now points here. The scorecard row in `docs/parity/appserver.md` carries the same correction.

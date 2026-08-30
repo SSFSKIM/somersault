@@ -74,7 +74,10 @@ describe("resume/delete TOCTOU across the PID probe (final review R13)", () => {
     const { srv, lines, c } = boot({ deleteSession: async () => { await new Promise<void>((r) => { releaseDelete = r; }); } });
 
     c.feed(JSON.stringify({ id: 2, method: "thread/delete", params: { threadId: "sess-y" } }) + "\n");
-    await tickN(2);   // the delete is now parked inside deps.deleteSession, holding its reservation
+    // The delete reaches deps.deleteSession only AFTER its own real `liveInFleet` probe (a `ps` subprocess,
+    // since a roster candidate for "sess-y" exists) resolves — not bounded by a fixed tick count under
+    // load, so wait on the actual condition: the release handle existing.
+    await vi_waitFor(() => expect(releaseDelete).toBeDefined());
     c.feed(JSON.stringify({ id: 3, method: "thread/resume", params: { sessionId: "sess-y" } }) + "\n");
     await tickN(2);
 

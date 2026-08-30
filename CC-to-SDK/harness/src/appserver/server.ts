@@ -45,6 +45,7 @@ import { storeRefusal, threadArchive, threadUnarchive } from "./archiveDomain.js
 import { peerList, peerSend } from "./peerDomain.js";
 import { applyPeerPolicy, DEFAULT_INBOUND, type CrossSessionInbound } from "./peerPolicy.js";
 import { ReceiptMap } from "../peer/receipts.js";
+import type { ArrivalStore } from "../peer/arrivalLog.js";
 import { readPeerRows as realReadPeerRows, type PeerRow } from "../peer/roster.js";
 import { PeerGateway } from "../peer/gateway.js";
 import { listArchived, removeArchiveMarker } from "./archive.js";
@@ -118,6 +119,14 @@ export interface AppServerDeps {
   peerGateway?: PeerGateway | null;
   readPeerRows?: (env?: NodeJS.ProcessEnv) => Promise<PeerRow[]>;
   peerEnv?: NodeJS.ProcessEnv;
+  // M9 (spec: Store injection): the arrival log the observer writes and `thread/read` merges from. It sits
+  // beside `getSessionMessages` deliberately, because the two are ONE decision: the filesystem store is the
+  // default only when the reader is also the default, so an embedder that overrides the reader but not the
+  // store gets merging disabled rather than this machine's arrivals merged into a transcript it does not
+  // own. Both being fields on one object is what makes that checkable at startup instead of a convention —
+  // `effectiveArrivalStore` (peerInbound.ts) is the one place it is decided, for the write side and the
+  // read side alike.
+  arrivalStore?: ArrivalStore;
 }
 export interface ConnCtx {
   peer: Peer;

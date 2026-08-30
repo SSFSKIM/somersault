@@ -122,7 +122,28 @@ export function fingerprint(parts: readonly (string | number | boolean | null | 
  *  replaces — its `null` meant "unqualified, resume anyway", and three of the four ways a cursor addressed
  *  a generation it was not minted against went through that one value. */
 export interface SearchCursor { v: number | null; s: string; r: number; q: string; g: string }
-export interface OccCursor { s: string; r: number; c: number; q: string; g: string }
+
+/** THE OCCURRENCE CURSOR NAMES A POSITION IN ONE OF TWO PHASES (M9 Stage D), because the scan now visits
+ *  two kinds of text at each row: the row's own, and the text of every logged arrival anchored to it.
+ *
+ *  ROW phase — `{s,r,c,q,g}`, the shape this codec has always minted: `r` is a transcript row offset and
+ *  `c` an offset into that row's LOWERED text.
+ *
+ *  ARRIVAL phase — the same fields plus `a`, which names WHICH entry of the row's group is next in the
+ *  store's `(seq, id)` order. `r` is still the ANCHOR's row offset (`0` for the null-anchored group, which
+ *  scans before row 0), and `c` is then ENTRY-LOCAL: an offset into that entry's own text, not into the
+ *  row's. The two offsets share one field because they are one quantity — where in the string being scanned
+ *  the next match may start — measured in whichever string the phase names; a second field would let a
+ *  resume read one where it meant the other. `(seq, id)` alone named the entry but not the position inside
+ *  it, so an arrival holding two matches at `limit: 1` would have repeated or skipped its second.
+ *
+ *  THE PHASE IS THE PRESENCE OF `a`, and that is what makes a PRE-M9 cursor decode CORRECTLY rather than
+ *  merely decode: a client holding one across the upgrade is mid-walk, and "no `a`" is exactly the row
+ *  phase it was minted in. A version tag would have refused it instead, and refusing a cursor whose meaning
+ *  did not change restarts a walk for nothing. It costs nothing in the other direction either —
+ *  `JSON.stringify` omits an undefined member, so a row-phase mint is byte-identical to M5's. */
+export interface OccArrivalPhase { seq: number; id: string }
+export interface OccCursor { s: string; r: number; c: number; q: string; g: string; a?: OccArrivalPhase }
 
 export function encodeSearchCursor(c: SearchCursor): string { return b64(c); }
 export function decodeSearchCursor(s: string): SearchCursor | null {
@@ -133,10 +154,19 @@ export function decodeSearchCursor(s: string): SearchCursor | null {
 }
 export function encodeOccCursor(c: OccCursor): string { return b64(c); }
 export function decodeOccCursor(s: string): OccCursor | null {
-  const p = unb64(s) as { s?: unknown; r?: unknown; c?: unknown; v?: unknown; q?: unknown; g?: unknown } | null;
+  const p = unb64(s) as { s?: unknown; r?: unknown; c?: unknown; v?: unknown; q?: unknown; g?: unknown; a?: unknown } | null;
   if (!p || typeof p.s !== "string" || !offset(p.r) || !offset(p.c)) return null;
   if (typeof p.q !== "string" || typeof p.g !== "string" || "v" in p) return null;
-  return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g };
+  // NO `a` IS THE ROW PHASE — the legacy-decode rule, stated as one branch rather than as a version check.
+  if (!("a" in p)) return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g };
+  // A phase that is PRESENT and malformed is refused rather than repaired, exactly as an out-of-range row
+  // offset is (see `offset` above): the cursor is server-minted and opaque, so there is no client intent to
+  // be generous toward, and a repaired phase would resume the scan inside an entry nothing named. `seq` is
+  // a non-negative safe integer because the store's is; `id` is non-empty because an empty one matches no
+  // entry, and a resume point that matches nothing would silently swallow the group behind it.
+  const a = p.a as { seq?: unknown; id?: unknown } | null;
+  if (!a || typeof a !== "object" || !offset(a.seq) || typeof a.id !== "string" || !a.id) return null;
+  return { s: p.s, r: p.r, c: p.c, q: p.q, g: p.g, a: { seq: a.seq, id: a.id } };
 }
 
 /** `thread/list`'s keyset (M6): the SORT POSITION of the last row a page delivered — nothing more, because

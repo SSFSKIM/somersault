@@ -2,7 +2,7 @@
 // record: a shipped method missing here is a build failure, so wire and artifact cannot drift (spec §9).
 import type { z } from "zod/v4";
 import { threadIdParams, initializeParams, initializeResult, okResult, serverStatusParams } from "./core.js";
-import { threadStartParams, threadResumeParams, threadReadParams, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
+import { threadStartParams, threadResumeParams, threadReadParams, threadReadResult, threadListParams, threadCompactStartParams, threadReinitializeParams, threadForkParams, threadNameSetParams, threadTagSetParams, threadDeleteParams } from "./threads.js";
 import { turnStartParams, turnInterruptParams, turnSteerParams, turnStartContentParams, turnSteerContentParams } from "./turns.js";
 import { imageStageParams } from "./images.js";
 import { decisionRespondParams, decisionListParams } from "./decisions.js";
@@ -43,7 +43,12 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/close": { params: threadIdParams },
   "thread/subscribe": { params: threadIdParams },
   "thread/unsubscribe": { params: threadIdParams },
-  "thread/read": { params: threadReadParams },
+  // M9 (spec Stage C): the first `result` this method has ever published, and it waited for a reason —
+  // the reply gained `arrivals`, whose ABSENCE says "this server merges no arrival log" and whose `null`
+  // says "the store cannot vouch for its count". Neither is statable in prose a client can validate
+  // against, which is the same argument that filled `thread/capabilities/read`'s slot ahead of the
+  // retrofit D-M5-19 deferred.
+  "thread/read": { params: threadReadParams, result: threadReadResult },
   "turn/start": { params: turnStartParams },
   "turn/interrupt": { params: turnInterruptParams },
   "decision/list": { params: decisionListParams },

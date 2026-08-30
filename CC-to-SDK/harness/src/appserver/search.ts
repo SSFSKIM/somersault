@@ -18,6 +18,10 @@ import { inArchivedPartition, listArchived } from "./archive.js";
 import { SessionStoreError, storeRefusal, stripPaths } from "./archiveDomain.js";
 import { SEARCH_CAPS, compareTuple, foldCase, decodeOccCursor, decodeSearchCursor, encodeOccCursor, encodeSearchCursor, fingerprint, makeSnippet, originalSpan, rowSearchText, sortForSearch, sortValueOf } from "./searchScan.js";
 import { threadSearchOccurrencesParams, threadSearchParams } from "./schema/search.js";
+import { anchorMatchesRow, arrivalsField } from "./arrivalsReply.js";
+import { effectiveArrivalStore } from "./peerInbound.js";
+import { ARRIVAL_LOG_CAP, type ArrivalEntry } from "../peer/arrivalLog.js";
+import { MAX_FRAME_CHARS } from "../peer/address.js";
 import { listSessions as realListSessions, getSessionMessages as realGetSessionMessages } from "../sessions/index.js";
 import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 
@@ -418,7 +422,17 @@ const rowIsNested = (m: unknown): boolean => Boolean((m as { parent_tool_use_id?
  *
  *  What it deliberately does NOT do is search metadata. The store-wide search reports a session because its
  *  title matches; there is no ROW to anchor such a hit to, and an occurrence whose `rowOffset` named nothing
- *  would be a jump target that cannot be jumped to. */
+ *  would be a jump target that cannot be jumped to.
+ *
+ *  M9 STAGE D adds a fourth: it scans the RETAINED ARRIVALS at their anchors. A cross-session message is
+ *  history this session received and never wrote to its transcript, so before this the text was findable
+ *  nowhere — `thread/read` would render it and search would deny it existed. After scanning row `r`'s own
+ *  text the loop scans the text of every logged entry anchored to `r` (through the SAME `anchorMatchesRow`
+ *  the pager resolves with), and an occurrence inside one publishes its ANCHOR's coordinates, because an
+ *  arrival rides a row rather than occupying one. Findability is scoped to what the log still holds: the
+ *  cap sheds the oldest, and `arrivals.dropped > 0` on the reply is what tells a caller that an exhausted
+ *  search is not proof of absence. `thread/search`, the store-wide sibling, is untouched — it reports
+ *  SESSIONS, and a session whose arrival matched is a session whose transcript did not. */
 export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => {
   const parsed = threadSearchOccurrencesParams.safeParse(params);
   if (!parsed.success) { ctx.peer.replyError(id, ERR.INVALID_PARAMS, "Invalid params"); return; }
@@ -496,10 +510,115 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
       // refuse them, where the fresh epoch would silently address post-truncation rows at pre-truncation
       // offsets. `null` here is exactly `!live` (a live record always has a numeric epoch, from registration).
       const epoch = live ? live.epoch : null;
+      // M9 Stage D — the arrival log, read ONCE per request so every position on this page resolves against
+      // ONE snapshot; a page that saw one log at row 3 and another at row 4 could report an entry twice or
+      // not at all. `ambiguous` entries are dropped here and nowhere else: an arrival whose position is
+      // genuinely unknowable has no anchor to scan at, and `arrivalsField` counts it anyway — the asymmetry
+      // that makes an omission visible instead of silent (arrivalsReply.ts states it in full).
+      const store = effectiveArrivalStore(srv.deps);
+      const entries = store ? store.readAll(sessionId).filter((e) => !e.ambiguous) : [];
+      const counts = arrivalsField(store, sessionId);
+      // The two positions an entry can occupy. `atStart` is the `anchor: null` sentinel — the arrival
+      // PRECEDES every row the seed returned — and it scans before row 0, the only place it can honestly
+      // go. Everything else is indexed by the uuid its anchor names, so a row costs one map lookup rather
+      // than a walk of the whole log.
+      const atStart = entries.filter((e) => e.anchor === null);
+      const byAnchor = new Map<string, ArrivalEntry[]>();
+      for (const e of entries) {
+        if (!e.anchor) continue;
+        const at = byAnchor.get(e.anchor.afterUuid);
+        if (at) at.push(e); else byAnchor.set(e.anchor.afterUuid, [e]);
+      }
       const data: Occurrence[] = [];
       let rowsScanned = 0, skipped = 0;
       let nextCursor: string | null = null;
-      let row = cursor ? cursor.r : 0;
+      const startRow = cursor ? cursor.r : 0;
+      let row = startRow;
+      // THE RESUME POINT INSIDE A POSITION. The entry the arrival phase names is looked up ONCE, and the
+      // entry's own `anchor` is what says which group holds it — so the phase needs no extra field to
+      // separate the two that collide at `r === 0` (before row 0, versus anchored AT row 0).
+      //   `undefined` is an entry the log EVICTED between the two pages. It then narrows NOTHING: both
+      // groups re-scan from the top and row `r`'s own text is scanned again. That repeats occurrences the
+      // previous page already delivered and skips none — the direction this file chooses everywhere — and
+      // the walk still progresses, because an eviction cannot un-happen.
+      const resume = cursor?.a;
+      const resumeEntry = resume ? entries.find((e) => e.seq === resume.seq && e.id === resume.id) : undefined;
+      const resumeInAnchored = resumeEntry !== undefined && resumeEntry.anchor !== null;
+      // Owed where the scan really begins BEFORE row 0: a fresh walk, a cursor still inside that group, or
+      // a resume point the log no longer holds. A ROW-phase cursor at `r === 0` is already past them, since
+      // the group is scanned before row 0's text and a position inside that text is therefore behind it.
+      let atStartOwed = startRow === 0 && (cursor === null || resumeEntry?.anchor === null || (resume !== undefined && resumeEntry === undefined));
+      // An arrival-phase cursor anchored to a row names a point PAST that row's own text — the text is
+      // scanned before the entries anchored to it. `-1` is "no such row": the atStart phase still owes row
+      // 0's text, and a row-phase cursor resumes INSIDE the text rather than after it.
+      const textAlreadyScanned = resumeInAnchored ? startRow : -1;
+      // The character offset the resume point carries is ENTRY-LOCAL, and it is spent on exactly one entry.
+      let pending: { seq: number; id: string; c: number } | null =
+        cursor && cursor.a && resumeEntry ? { seq: cursor.a.seq, id: cursor.a.id, c: cursor.c } : null;
+      // ARRIVAL SCAN WORK IS BOUNDED SEPARATELY from `rowsScanned`, which counts ROWS and has to keep
+      // meaning that — it is the budget `readWindow` spends at the storage boundary, and folding a
+      // character count into it would make both numbers lies. A request scans at most
+      // `ARRIVAL_LOG_CAP × MAX_FRAME_CHARS` characters of arrival text: the most a conforming log can hold,
+      // enforced here rather than merely derived from those two constants, because `readAll`'s cap is
+      // EVENTUAL (a crash mid-eviction leaves the surplus until the next append) and the store is an
+      // injectable dep. An entry that does not fit is DISCLOSED through `skipped`, exactly as an over-long
+      // row is, never silently dropped (D-M5-8).
+      let entryChars = ARRIVAL_LOG_CAP * MAX_FRAME_CHARS;
+      /** ONE position's entries, scanned in the store's `(seq, id)` order — the order `readAll` returns and
+       *  the order `thread/read` renders them in. Returns `true` when the page filled, which is the caller's
+       *  `break scan`, so both mints of this handler stay one screen apart.
+       *
+       *  `here` says THIS group holds the resume point: entries before it are already delivered, the entry
+       *  at it resumes on its own character offset, and everything after starts at 0. Compared by TUPLE and
+       *  never by identity, the rule the session keyset already resumes on (D-M5-15) — an entry evicted from
+       *  the middle of a group simply is not there, and the ones behind it still scan. */
+      const scanEntries = (group: ArrivalEntry[], rowOffset: number, here: boolean): boolean => {
+        for (const entry of group) {
+          let from = 0;
+          if (here && pending) {
+            if (entry.seq < pending.seq || (entry.seq === pending.seq && entry.id < pending.id)) continue;
+            if (entry.seq === pending.seq && entry.id === pending.id) from = pending.c;
+          }
+          if (entry.text.length > entryChars) { skipped++; continue; }
+          entryChars -= entry.text.length;
+          const lc = foldCase(entry.text);
+          // `at + 1` for the reason the row scan uses it: overlapping occurrences are real occurrences, and
+          // the mint below carries the same +1, so a boundary inside ONE arrival neither skips nor repeats.
+          for (let at = lc.indexOf(termLc, from); at >= 0; at = lc.indexOf(termLc, at + 1)) {
+            const span = originalSpan(entry.text, lc, at, termLc.length);
+            const { snippet, snippetMatchRange } = makeSnippet(entry.text, span.at, span.len);
+            data.push({
+              rowOffset, uuid: entry.id, snippet, snippetMatchRange,
+              // THE ANCHOR'S JUMP, not the entry's: an arrival rides a row rather than occupying one, so
+              // the page that holds it is the page that holds the row it landed after — the same
+              // `${epoch}:${rowOffset + 1}` exclusive bound the row scan publishes, and `${epoch}:1` for a
+              // null-anchored entry, whose `rowOffset` is row 0's. `null` for a cold session, exactly as
+              // above. NOT withheld for a nested anchor row, and that is the one place this differs from
+              // the row scan: `rowIsNested` withholds because the pager renders no ITEM for such a row,
+              // while the projector emits an arrival at its row INDEX whether or not the row itself
+              // produced anything (items/project.ts) — so this jump really does land.
+              readCursor: epoch === null ? null : `${epoch}:${rowOffset + 1}`,
+            });
+            if (data.length >= limit) {
+              nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, q, g: gen, a: { seq: entry.seq, id: entry.id } });
+              return true;
+            }
+          }
+        }
+        if (here) pending = null;   // spent at its own group, never carried into the next
+        return false;
+      };
+      // ONE ROW OF LEFT CONTEXT for a resumed scan (`thread/read`'s own rule, M9 round 6): the first row of
+      // this page has a predecessor the page never reads, and `anchorMatchesRow` withholds on a predecessor
+      // it cannot verify — so an arrival anchored exactly there would be findable on a cursorless walk and
+      // invisible on the resumed one, which is a stranding rather than a deferral. Every later row's
+      // predecessor is the row before it, already in hand. Skipped outright when the log is empty, which is
+      // what keeps a merge-disabled server's call log identical to its pre-M9 one.
+      let prev: unknown | null | "unknown" = row === 0 ? null : "unknown";
+      if (row > 0 && entries.length > 0) {
+        const back = await storeRead(() => getMessages(sessionId, { offset: row - 1, limit: 1 }));
+        if (back.length > 0) prev = back[0];
+      }
       scan: for (;;) {
         const w = await readWindow(getMessages, sessionId, row, rowsScanned);
         // The mid-scan check (D-M5-26), after the await so the LAST window is covered too. A rewind runs on
@@ -519,44 +638,75 @@ export const threadSearchOccurrences: Handler = async (srv, ctx, id, params) => 
         for (const message of w.win) {
           const rowOffset = row;
           rowsScanned++; row++;
-          const text = rowSearchText(message);
-          if (text === null) continue;
-          // Too big to search — DISCLOSED, never silently dropped (D-M5-8's disclosure half).
-          if (text.length > SEARCH_CAPS.maxRowUnits) { skipped++; continue; }
-          const lc = foldCase(text);
-          // `c` is an offset into the LOWERED row (it is `indexOf`'s own return, plus one) and applies ONLY
-          // to the row the cursor names; every later row starts at 0. Applying it to all of them would skip
-          // the first `c` units of every subsequent row, losing a hit that sits at the head of one.
-          const fromChar = cursor && cursor.r === rowOffset ? cursor.c : 0;
-          // Read ONCE per row, beside the row's other identity, because the jump is a property of the ROW
-          // and not of the occurrence: every hit in a nested row is equally unreachable.
-          const nested = rowIsNested(message);
-          // `at + 1`, not `at + termLc.length`: overlapping occurrences are real occurrences ("aa" sits at
-          // three offsets in "aaaa"), and the mint below carries the same +1, so a page boundary inside a
-          // row can neither skip one nor repeat one. This `at >= 0` guard also owns `originalSpan`'s
-          // documented `atLowered >= 0` precondition — handed a miss's -1 the primitive maps it through.
-          for (let at = lc.indexOf(termLc, fromChar); at >= 0; at = lc.indexOf(termLc, at + 1)) {
-            // ONE spelling of this arithmetic in this file: the match is located in `lc`, the snippet is cut
-            // from `text`, and the published range is the SAME span the cut used — so a case fold that
-            // changes UTF-16 length cannot make the range describe a stretch the snippet does not hold.
-            const span = originalSpan(text, lc, at, termLc.length);
-            const { snippet, snippetMatchRange } = makeSnippet(text, span.at, span.len);
-            data.push({
-              rowOffset, uuid: rowUuid(message), snippet, snippetMatchRange,
-              // The jump (D-M5-7): the pager's cursor is `"<epoch>:<rowOffset>"` with an EXCLUSIVE upper
-              // bound, so `+1` is what makes the window it returns END at the hit row. `null` is "no jump
-              // available", and TWO row states earn it: a cold session has no epoch and `thread/read`
-              // refuses an unqualified cursor, and a NESTED row (`rowIsNested` above) sits in no window the
-              // pager can produce. Both would otherwise publish a string the client cannot land.
-              readCursor: epoch === null || nested ? null : `${epoch}:${rowOffset + 1}`,
-            });
-            if (data.length >= limit) { nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, q, g: gen }); break scan; }
+          // The `anchor: null` sentinel, before row 0 and nowhere else — and only once a first row is known
+          // to EXIST, which reaching this line is the proof of. An empty transcript has no row coordinate to
+          // publish and the occurrence shape requires one, so such an entry is not enumerable at all; the
+          // reply's `arrivals` counts are what say it is there.
+          if (atStartOwed) {
+            atStartOwed = false;
+            if (scanEntries(atStart, rowOffset, resumeEntry?.anchor === null)) break scan;
           }
+          rowText: {
+            // Already delivered on the page that minted an arrival-phase cursor for THIS row: the row's
+            // text is scanned before the entries anchored to it, so a position inside those entries is past
+            // it. Every other resume shape still owes it.
+            if (rowOffset === textAlreadyScanned) break rowText;
+            const text = rowSearchText(message);
+            if (text === null) break rowText;
+            // Too big to search — DISCLOSED, never silently dropped (D-M5-8's disclosure half).
+            if (text.length > SEARCH_CAPS.maxRowUnits) { skipped++; break rowText; }
+            const lc = foldCase(text);
+            // `c` is an offset into the LOWERED row (it is `indexOf`'s own return, plus one) and applies ONLY
+            // to the row the cursor names, and only in the ROW phase — an arrival-phase `c` is entry-local
+            // and means nothing here. Every later row starts at 0; applying it to all of them would skip the
+            // first `c` units of every subsequent row, losing a hit that sits at the head of one.
+            const fromChar = cursor && !cursor.a && cursor.r === rowOffset ? cursor.c : 0;
+            // Read ONCE per row, beside the row's other identity, because the jump is a property of the ROW
+            // and not of the occurrence: every hit in a nested row is equally unreachable.
+            const nested = rowIsNested(message);
+            // `at + 1`, not `at + termLc.length`: overlapping occurrences are real occurrences ("aa" sits at
+            // three offsets in "aaaa"), and the mint below carries the same +1, so a page boundary inside a
+            // row can neither skip one nor repeat one. This `at >= 0` guard also owns `originalSpan`'s
+            // documented `atLowered >= 0` precondition — handed a miss's -1 the primitive maps it through.
+            for (let at = lc.indexOf(termLc, fromChar); at >= 0; at = lc.indexOf(termLc, at + 1)) {
+              // ONE spelling of this arithmetic in this file: the match is located in `lc`, the snippet is cut
+              // from `text`, and the published range is the SAME span the cut used — so a case fold that
+              // changes UTF-16 length cannot make the range describe a stretch the snippet does not hold.
+              const span = originalSpan(text, lc, at, termLc.length);
+              const { snippet, snippetMatchRange } = makeSnippet(text, span.at, span.len);
+              data.push({
+                rowOffset, uuid: rowUuid(message), snippet, snippetMatchRange,
+                // The jump (D-M5-7): the pager's cursor is `"<epoch>:<rowOffset>"` with an EXCLUSIVE upper
+                // bound, so `+1` is what makes the window it returns END at the hit row. `null` is "no jump
+                // available", and TWO row states earn it: a cold session has no epoch and `thread/read`
+                // refuses an unqualified cursor, and a NESTED row (`rowIsNested` above) sits in no window the
+                // pager can produce. Both would otherwise publish a string the client cannot land.
+                readCursor: epoch === null || nested ? null : `${epoch}:${rowOffset + 1}`,
+              });
+              if (data.length >= limit) { nextCursor = encodeOccCursor({ s: sessionId, r: rowOffset, c: at + 1, q, g: gen }); break scan; }
+            }
+          }
+          // THE ARRIVAL PHASE, and it runs for EVERY row — deliberately OUTSIDE the two exits above. A row
+          // with no searchable text of its own (a tool result, a still-open tool call) is a perfectly good
+          // anchor: the observer names whatever row it last saw, not whatever row is in the corpus. Skipping
+          // one with its text would strand every arrival that happened to land after it.
+          //   `anchorMatchesRow` is arrivalsReply.ts's, called and never re-implemented — two transcriptions
+          // of this rule would eventually put one arrival in two places depending on which method asked.
+          // `prev` is the row before this one, which the peel above supplies for the page's first row.
+          //   Where an anchor resolves at TWO rows (the rebound-duplicate shape, M5's 1,562 measured
+          // duplicate uuids) this reports the arrival at both, where the projector's first-match-wins picks
+          // one. That is not a drift: the projector composes ONE ordered history and has to choose a place,
+          // while an occurrence is a claim about a position — and both positions are equally true of what
+          // was recorded. Each jump still lands, because the pager resolves within the window it renders.
+          const uuid = rowUuid(message);
+          const here = uuid === null ? [] : (byAnchor.get(uuid) ?? []).filter((e) => e.anchor !== null && anchorMatchesRow(e.anchor, message, prev));
+          prev = message;
+          if (here.length > 0 && scanEntries(here, rowOffset, resumeInAnchored && rowOffset === startRow)) break scan;
         }
         if (w.win.length < w.want) break scan; // short window = this transcript is exhausted
       }
       await auditAfterScan(srv, ["getSessionMessages", "getSessionInfo"]);
-      ctx.peer.reply(id, { data, nextCursor, ...(skipped ? { skipped } : {}) });
+      ctx.peer.reply(id, { data, nextCursor, ...(skipped ? { skipped } : {}), ...counts });
     });
   } catch (e) {
     // D-M5-8 again, and for the same reason: a failed read is an ERROR, never an empty page and never the

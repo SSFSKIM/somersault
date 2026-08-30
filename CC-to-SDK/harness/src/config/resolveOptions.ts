@@ -119,6 +119,7 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.onElicitation) options.onElicitation = config.onElicitation;
   if (config.onUserDialog) options.onUserDialog = config.onUserDialog;
   if (config.supportedDialogKinds) options.supportedDialogKinds = config.supportedDialogKinds;
+  if (config.perTaskStopAffordance !== undefined) options.perTaskStopAffordance = config.perTaskStopAffordance;
   if (config.spawnClaudeCodeProcess) options.spawnClaudeCodeProcess = config.spawnClaudeCodeProcess;
   if (config.pathToClaudeCodeExecutable) options.pathToClaudeCodeExecutable = config.pathToClaudeCodeExecutable;
   if (config.executable) options.executable = config.executable;
