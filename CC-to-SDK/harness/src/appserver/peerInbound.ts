@@ -59,11 +59,21 @@ interface AdoptedTurn {
  *  many buffered frames had been observed when it landed — is the only thing that keeps OBSERVATION ORDER
  *  across the two arrays, and it is what lets the replay interleave them again. Frames and arrivals are
  *  held apart rather than in one event list because the overlap search only ever reads the frames. */
-interface PendingArrival { arrivalUuid: string; text: string; origin: Record<string, unknown>; observedAt: string; afterFrames: number }
+interface PendingArrival {
+  arrivalUuid: string; text: string; origin: Record<string, unknown>; observedAt: string; afterFrames: number;
+  /** Set the moment this arrival's position stops being knowable — the buffered frame it was ordered
+   *  against was shed by the cap. It travels to the ENTRY's own `ambiguous`: counted, never placed. */
+  ambiguous?: true;
+}
 /** A buffered frame, digested to exactly what an anchor needs. Holding the raw frame would keep whole
  *  message bodies alive for the length of a read that may be stalling on a network filesystem. */
 interface SeedFrame { uuid: string; fp: ArrivalFingerprint }
-interface Seeding { frames: SeedFrame[]; arrivals: PendingArrival[] }
+/** The window carries the SCOPE it opened against, rather than re-reading `record.sessionId` at each use:
+ *  a window can outlive the record's id (a clear mints a new one, a teardown drops it), and every entry it
+ *  still owes belongs to the transcript the arrival actually landed in — which is D2's rule, not a
+ *  convenience. It carries the store for the same reason: whether this thread logs at all was decided once,
+ *  at install. */
+interface Seeding { sessionId: string; store: ArrivalStore; frames: SeedFrame[]; arrivals: PendingArrival[] }
 
 export interface PeerInboundState {
   off?: () => void;
@@ -329,19 +339,26 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   // INSIDE THE SEED WINDOW an arrival is HELD — neither persisted nor announced. Persisting it would mean
   // inventing an anchor the seed has not grounded yet (and `null`, the only anchor available before then,
   // means confirmed-empty: the top of history); announcing it would put a message on the wire that history
-  // is about to be unable to place. The window is one read long, and nothing durable is wrong inside it, so
-  // there is nothing to repair on the far side.
+  // is about to be unable to place. The window is one read long, so the hold is milliseconds.
+  //
+  // HELD IS NOT LOST, though, and the two places this window can end WITHOUT grounding are the eviction
+  // below and `uninstallPeerInbound`. Both write the arrival out as `ambiguous` — a real message, counted,
+  // with no position to claim — rather than letting it fall between the announcement channel and history.
   if (state.seeding) {
-    const buffer = state.seeding.arrivals;
+    const seeding = state.seeding;
+    const buffer = seeding.arrivals;
     buffer.push(pending);
     // Bounded for the same reason the live queue above is — and an evicted one is still ANNOUNCED, because
-    // M8's guarantee is that no message the engine delivered goes unmentioned. Losing its history entry is
-    // the cost of the cap; losing its notification too would make a real message indistinguishable from
-    // silence, which is the exact case `thread/peerMessage` exists for.
+    // M8's guarantee is that no message the engine delivered goes unmentioned. What it is NOT is unlogged:
+    // announcing without recording makes `logged` smaller than the notification count, and a count short of
+    // the announcements is a history certifying itself complete while it is missing a message. So the
+    // eviction takes the ordinary path — persisted, then announced — as AMBIGUOUS: the window has not
+    // grounded, so this arrival has no position to claim, and counted-but-unplaced is exactly the answer
+    // the spec designates for a position that cannot be known.
     while (buffer.length > MAX_ARRIVALS) {
       const evicted = buffer.shift()!;
-      console.warn(`[peer] seed buffer full on thread ${record.id} (cap ${MAX_ARRIVALS}); announcing the oldest without logging it`);
-      announceArrival(srv, record, evicted);
+      console.warn(`[peer] seed buffer full on thread ${record.id} (cap ${MAX_ARRIVALS}); logging the oldest ambiguous`);
+      logArrival(srv, record, state, seeding.store, seeding.sessionId, evicted, seeding.store.nextSeq(seeding.sessionId), true);
     }
     return true;
   }
@@ -375,6 +392,17 @@ function logArrival(
   srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore,
   sessionId: string, pending: PendingArrival, seq: number, ambiguous: boolean,
 ): void {
+  writeEntry(state, store, sessionId, pending, seq, ambiguous);
+  announceArrival(srv, record, pending);
+}
+
+/** The durable half on its own, because one caller has no notification to make: `uninstallPeerInbound`
+ *  persists what a torn-down seed window was still holding, and the live channel it would have announced on
+ *  belongs to the conversation being discarded. */
+function writeEntry(
+  state: PeerInboundState, store: ArrivalStore,
+  sessionId: string, pending: PendingArrival, seq: number, ambiguous: boolean,
+): void {
   const entry: ArrivalEntry = {
     v: 1, id: pending.arrivalUuid, sessionId,
     anchor: state.anchor ?? null,
@@ -391,7 +419,6 @@ function logArrival(
     store.markDegraded(sessionId);
     state.degraded = true;
   }
-  announceArrival(srv, record, pending);
 }
 
 /** The announcement, unchanged since M8 and still the only thing this file says on the wire about an
@@ -437,9 +464,19 @@ function observeVisible(state: PeerInboundState, frame: any): void {
   seeding.frames.push(f);
   if (seeding.frames.length <= MAX_CAPTURED) return;
   // The same posture MAX_CAPTURED already takes: a window that overruns loses its earliest frames rather
-  // than the process. Every buffered arrival's index moves with the shift, so observation order survives.
+  // than the process. An arrival that followed a RETAINED frame keeps its exact anchor — the shift moves
+  // its index and the frame it names by one, together.
+  //
+  // AN ARRIVAL POSITIONED BY THE FRAME BEING SHED DOES NOT. Its index would clamp to the window's new
+  // start, which is not where it was observed: `groundSeed` recomputes the ground from the frames that
+  // REMAIN, so the arrival would anchor before the retained head's occurrence in the seed — potentially
+  // hundreds of rows after the frame it actually preceded, and unflagged. That is the misplacement class
+  // this milestone forbids, so the position is surrendered instead: ambiguous, counted, never placed.
   seeding.frames.shift();
-  for (const a of seeding.arrivals) a.afterFrames = Math.max(0, a.afterFrames - 1);
+  for (const a of seeding.arrivals) {
+    if (a.afterFrames <= 1) a.ambiguous = true;
+    if (a.afterFrames > 0) a.afterFrames -= 1;
+  }
 }
 
 /** Open the seed window and fire the read that closes it. SYNCHRONOUS up to the read itself, because the
@@ -448,7 +485,7 @@ function observeVisible(state: PeerInboundState, frame: any): void {
  *  every frame landing during the read is missed. Seeding is therefore an explicit state rather than an
  *  ordering hope. */
 function beginSeeding(srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore, sessionId: string): void {
-  const seeding: Seeding = { frames: [], arrivals: [] };
+  const seeding: Seeding = { sessionId, store, frames: [], arrivals: [] };
   state.seeding = seeding;
   // Both halves of "not yet grounded", reset together: `anchor` is WHERE the chain is and `seeded` is
   // WHETHER it is grounded, and a re-seed that cleared only the first would leave a thread claiming a
@@ -533,7 +570,7 @@ function groundSeed(
       // all and nothing observed relates the two — the order is genuinely unknowable. Persisted and counted
       // (it is a real message), never placed; grounding it on the seed tail instead would render the
       // question after its own answer, which is this milestone's original defect reproduced at resume.
-      logArrival(srv, record, state, store, sessionId, pending, seq++, unrelatable && pending.afterFrames === 0);
+      logArrival(srv, record, state, store, sessionId, pending, seq++, pending.ambiguous === true || (unrelatable && pending.afterFrames === 0));
     }
     if (i < frames.length) advanceAnchor(state, frames[i]);
   }
@@ -601,9 +638,26 @@ export function uninstallPeerInbound(record: ThreadRecord): void {
   // The arrivals belonged to the conversation that is being discarded; carrying them into a replacement
   // engine would emit them as items of a turn in a transcript they were never part of.
   state.arrivals.length = 0;
-  // The seed window belonged to it too, and goes the same way — an arrival held in it is dropped rather
-  // than flushed into the replacement, for the reason above and one more: its anchor names a chain the new
-  // engine does not have. The in-flight read's own resolve is declined by `groundSeed`'s identity check.
+  // The seed window belonged to it too — but what it was HOLDING does not go with it. An arrival buffered
+  // inside the window has been neither persisted nor announced, so discarding the buffer loses an
+  // engine-delivered message from the live channel and from the old session's count at once. It is
+  // therefore persisted here, into the session the window opened against (D2: arrivals stay with the
+  // transcript they landed in), and AMBIGUOUS: the seed never resolved, so nothing relates this arrival to
+  // any row, and counted-but-unplaced is the designed answer for a position that cannot be known.
+  //   Not announced: the notification is thread-scoped and this conversation is being discarded — a client
+  // told about a peer message on a thread whose history no longer contains it is worse than a count that
+  // exceeds the announcements by what the teardown saved, which is the safe direction (over-report reveals
+  // a gap that isn't there; the reverse falsely certifies completeness).
+  //   A thread torn down BEFORE its window ever opened has nothing here, which is the pre-init limit the
+  // spec already states rather than a case this misses: with no session id there is no scope to write into,
+  // and such an arrival took M8's announce-only path when it landed.
+  const seeding = state.seeding;
+  if (seeding && seeding.arrivals.length > 0) {
+    let seq = seeding.store.nextSeq(seeding.sessionId);
+    for (const pending of seeding.arrivals) writeEntry(state, seeding.store, seeding.sessionId, pending, seq++, true);
+    seeding.arrivals.length = 0;
+  }
+  // The in-flight read's own resolve is declined by `groundSeed`'s identity check.
   // The anchor returns to NOT YET KNOWN, so the next install seeds again against whatever id the record now
   // carries — which is exactly what `thread/clear` needs (a new conversation, a new id at its init frame,
   // an arrival scope that starts empty) and what a rewind swap needs (the retained id, re-read).

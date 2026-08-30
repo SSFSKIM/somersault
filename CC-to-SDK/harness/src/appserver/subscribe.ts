@@ -8,6 +8,7 @@ import { queuedNotification } from "./queue.js";
 import { projectItems, type ResolvedArrivals } from "./items/project.js";
 import { arrivalsField, resolveArrivals, restrictTo } from "./arrivalsReply.js";
 import { effectiveArrivalStore } from "./peerInbound.js";
+import type { ArrivalEntry } from "../peer/arrivalLog.js";
 import type { Item } from "./items/types.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { activeTurnId, threadStatus } from "./registry.js";
@@ -217,19 +218,27 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   const getMessages = srv.deps.getSessionMessages ?? defaultGetSessionMessages;
   // The counts come from the STORE, never from what rendered — an arrival whose anchor no longer resolves
   // is withheld from the page and still counted here, and that asymmetry is what makes the omission
-  // visible to a client instead of silent. Read once and spread onto every reply below.
+  // visible to a client instead of silent. Spread onto every reply below.
   const sessionId = record.sessionId;   // narrowed above, and captured so the closure below keeps it
-  const counts = arrivalsField(store, sessionId);
-  // Read per PATH rather than once up front: the exhausted-cursor reply below renders nothing at all, and
-  // a walk's terminal page should not pay the store a directory scan to say so.
-  const readEntries = () => (store ? store.readAll(sessionId) : []);
+  // ONE SNAPSHOT, entries first and counts after — never counts sampled up front and entries after an
+  // await. The handler awaits the reader while the observer appends synchronously on the engine's read
+  // loop, so an arrival really can land between the two samples; taken in this order it is at worst
+  // counted-but-not-rendered, which is the visible omission `logged` exists to expose, and never
+  // rendered-but-not-counted, which breaks the client's completeness check in the direction that hides a
+  // gap. Read per PATH rather than once up front: the exhausted-cursor reply below renders nothing at all,
+  // and a walk's terminal page should not pay the store a directory scan to say so.
+  const snapshot = (): { entries: ArrivalEntry[]; counts: ReturnType<typeof arrivalsField> } => {
+    const entries = store ? store.readAll(sessionId) : [];
+    return { entries, counts: arrivalsField(store, sessionId) };
+  };
   const requested = parsed.data.limit;
   const limit = Math.min(requested ?? DEFAULT_LIMIT, MAX_LIMIT);
   if (requested !== undefined && requested > MAX_LIMIT) srv.warn(ctx.peer, "limitClamped", "thread/read limit clamped to 500");
 
   if (!parsed.data.cursor) {
     const messages = await getMessages(record.sessionId);
-    const resolved = resolveArrivals(readEntries(), messages, undefined, true);
+    const { entries, counts } = snapshot();
+    const resolved = resolveArrivals(entries, messages, undefined, true);
     const { data, begin } = pageFromWindow(messages, limit, 0, resolved, true);
     ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null, ...counts });
     return;
@@ -239,7 +248,7 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   // The counts ride the terminal page of a walk too, and `record.sessionId` is what they are read for:
   // this branch is reached only once a session exists, and it is precisely where hiding them would hide
   // an omission from a client that has just been told it has read everything.
-  if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null, ...counts }); return; }
+  if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null, ...arrivalsField(store, sessionId) }); return; }
 
   // The `4*limit` lookahead is a guess, and a guess can undershoot: two (or more) tools can be open
   // at once, and the window's blind start can land AFTER one of them opened but still include a row
@@ -263,7 +272,7 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   // rather than by the lookahead window, so the `O(window)` mapping-cost guarantee this task exists
   // to deliver degrades to `O(rows not yet returned)` for that single page — a real, bounded,
   // self-limiting cost, not a correctness bug.
-  const entries = readEntries();
+  const { entries, counts } = snapshot();
   let multiplier = LOOKAHEAD_MULTIPLIER;
   for (;;) {
     const from = Math.max(0, cursorRow - multiplier * limit);

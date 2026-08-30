@@ -400,6 +400,81 @@ describe("the seed window", () => {
   });
 });
 
+describe("the seed window's bounds — what a window that overruns, or is torn down, still owes", () => {
+  // Three ways the window can end without grounding, and one answer to all of them: the message is a real
+  // message, so it is PERSISTED and COUNTED; its order against the seed is unknowable, so it is `ambiguous`
+  // and never placed. Counted-but-unplaced is the spec's designed cost (D3); announced-but-uncounted and
+  // re-anchored-somewhere-plausible are the two failures it exists to rule out.
+
+  it("a seed-buffer eviction is logged before it is announced, so `logged` still equals the announcements", async () => {
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("f2"));
+    const { reader, resolve } = heldReader();
+    const { lines } = await open(e.engine, { getSessionMessages: reader, arrivalStore: store }, "sf2");
+
+    for (let i = 0; i <= 32; i++) e.push(PEER(`a-${i}`, `msg ${i}`));   // one past the buffer's cap
+    await tick();
+    // The oldest is shed and announced HERE, mid-window. Announcing it without recording it is what made
+    // `logged` smaller than the notification count — a history certifying itself complete while short.
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    const [evicted] = store.readAll("sf2");
+    expect(evicted.id).toBe("a-0");
+    expect(evicted.ambiguous).toBe(true);        // the window never grounded, so it has no position to claim
+
+    resolve([ROW("r-1", "a row the observer never saw")]);
+    await tick();
+    const announced = notes(lines, "thread/peerMessage").map((m) => m.params.arrivalUuid);
+    expect(announced).toHaveLength(33);
+    expect(store.counts("sf2").logged).toBe(announced.length);   // criterion 23's equality, kept honest
+  });
+
+  it("an arrival whose buffered frame is evicted becomes ambiguous rather than re-anchored", async () => {
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("f6"));
+    const { reader, resolve } = heldReader();
+    await open(e.engine, { getSessionMessages: reader, arrivalStore: store }, "sf6");
+
+    e.push(PEER("a-1", "observed before every buffered frame"));
+    for (let i = 0; i <= 512; i++) e.push(ROW(`f-${i}`, `frame ${i}`));   // one past MAX_CAPTURED
+    await tick();
+    // The RETAINED head overlaps the seed, so there is a row to ground on — and grounding this arrival
+    // there would place it after `s-0`, when what it actually preceded was the frame that has just been
+    // shifted out. Withheld beats moved: an unplaced arrival is visible in the count, a misplaced one is
+    // indistinguishable from history.
+    resolve([ROW("s-0", "a row the observer never saw"), ROW("f-1", "frame 1")]);
+    await tick();
+
+    const [entry] = store.readAll("sf6");
+    expect(entry.id).toBe("a-1");
+    expect(entry.ambiguous).toBe(true);
+    expect(store.counts("sf6").logged).toBe(1);
+  });
+
+  it("tearing the thread down mid-seed persists what the window was holding, ambiguous rather than lost", async () => {
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("f1"));
+    const { reader, resolve } = heldReader();
+    const { c, threadId } = await open(e.engine, { getSessionMessages: reader, arrivalStore: store }, "sf1");
+
+    e.push(PEER("a-1", "arrived while the seed was in flight"));
+    await tick();
+    expect(store.readAll("sf1")).toHaveLength(0);        // held: nothing durable is wrong yet
+
+    // `thread/close` discards the conversation the window belonged to. The buffer went with it, and the
+    // engine-delivered message vanished from the live channel AND from the old session's count.
+    send(c, { id: 99, method: "thread/close", params: { threadId } });
+    await tick();
+    resolve([ROW("r-1", "the read the teardown outran")]);
+    await tick();
+
+    const [entry] = store.readAll("sf1");
+    expect(entry.id).toBe("a-1");
+    expect(entry.ambiguous).toBe(true);
+    expect(entry.sessionId).toBe("sf1");                  // it belongs to the transcript it landed in (D2)
+    expect(store.counts("sf1").logged).toBe(1);
+  });
+});
+
 describe("grounding survives seed/buffer overlap", () => {
   /** One shape per call: buffer `frames` and one trailing arrival inside the seed window, resolve the seed
    *  with `seed`, and report what the entries ended up saying. */

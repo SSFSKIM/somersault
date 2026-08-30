@@ -20,14 +20,16 @@
 // cannot. Bumping `dropped` is a read-modify-write, and the losing half of a lost update leaves bytes
 // identical to the winner's — measured: 22 of 25 ordinary two-process runs ended with a count too small
 // and nothing to show for it. No read-back can see that, so the marker's RMW is serialised by a lock
-// instead (`markerLock` below); a writer that cannot take it inside a bounded wait declines to guess and
-// latches degraded, which is the honest "I cannot tell you" that a silent under-report was not.
+// instead (`acquireMarkerLock` below, which is `withFileLock`'s directory-and-nonce shape rather than a
+// smaller one — see its header for why the smaller one reproduced M5's own defect); a writer that cannot
+// take it inside a bounded wait declines to guess and latches degraded, which is the honest "I cannot tell
+// you" that a silent under-report was not. Degradation is a LATCH: no writer may clear one it did not set.
 //
 // None of it is a durability claim: power loss before the metadata flush can take the newest entries, and
 // the spec claims exactly atomic visibility, an over-report-safe count, and a degraded signal as durable
 // as the store it describes — nothing more.
-import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -40,8 +42,14 @@ export interface ArrivalEntry {
    *  full of rows records the same sentinel. It is never "unknown": an unknowable position is `ambiguous`,
    *  and the two must not collapse. */
   anchor: ArrivalAnchor | null;
-  /** Seed-window arrivals, whose order against the first observed frame cannot be known. Persisted and
-   *  counted (they are real messages) but never placed. */
+  /** An arrival whose order cannot be known: the seed established no overlap, the buffered frame it was
+   *  ordered against was shed by the cap, or the window was torn down before it ever resolved. Persisted
+   *  and counted (they are real messages) but never placed.
+   *
+   *  IT OVERRIDES `anchor`, which is why the two do not collide. A window that never grounded has no ground
+   *  to record, so those entries carry `anchor: null` — and the read side checks this flag first and skips,
+   *  so that `null` is never read as the statement it would otherwise be. `anchor: null` means
+   *  "precedes every row the seed returned" only on an entry this flag is absent from. */
   ambiguous?: true;
   seq: number; observedAt: string;
   origin: Record<string, unknown>; text: string;
@@ -78,7 +86,11 @@ interface MarkerState { dropped: number | null; seqHigh: number; pending?: strin
 const PRISTINE: MarkerState = { dropped: 0, seqHigh: -1, degraded: false };
 const UNREADABLE: MarkerState = { dropped: null, seqHigh: -1, degraded: true };
 
-const ENTRY_FILE = /^e-(\d{6})-(.+)\.json$/;
+/** ARBITRARY WIDTH, and the padding is a compatibility detail rather than a format. Names are still written
+ *  six wide, but a session that reaches seq 1,000,000 writes a seventh digit — and a pattern fixed at six
+ *  stopped recognising its own entries there: `readAll`, `counts` and `nextSeq` would all skip every entry
+ *  past the cliff, freezing the reported count and leaving eviction with nothing to bound. */
+const ENTRY_FILE = /^e-(\d+)-(.+)\.json$/;
 const MARKER_FILE = "marker.json";
 
 function defaultRoot(): string {
@@ -103,22 +115,44 @@ function unlinkIfPresent(path: string): void {
 }
 
 /** The canonical lock in this codebase is `withFileLock` (appserver/configWrite.ts, M5's lock wave), and
- *  its doctrine is what the two rules below borrow: an exclusive CREATE is the claim, and a lease is what
- *  makes a dead holder's leftover recoverable rather than permanent. It is not consumed here because it
- *  is async and `append` is synchronous by contract — the observer calls it on the read loop. So this is
- *  the minimal sync sibling, and deliberately much weaker: no nonce, no republished lease, no fencing,
- *  because the section it guards is microseconds of marker read-modify-write rather than a config commit,
- *  and the failure it must prevent (a lost `dropped` increment) is answered by exclusion alone. Where
- *  withFileLock BLOCKS and then breaks a stale claim, this one gives up quickly and reports: see `append`. */
-const LOCK_FILE = ".marker.lock";
+ *  this is its SHAPE ported to a synchronous caller — not a smaller idea. It is not consumed directly
+ *  because it is async while `append` is synchronous by contract (the observer calls it on the read loop),
+ *  and what it does with that budget is different too: withFileLock BLOCKS out a lease, this one gives up
+ *  in milliseconds and reports (see `append`). What is NOT different is D-M5-24, and the first version of
+ *  this file learning that the hard way is why it is restated here:
+ *
+ *  A LOCK IS A NON-EMPTY DIRECTORY holding exactly one marker file whose NAME is `<nonce>.<lease>` — who
+ *  holds the claim and when they published it — and the claim is assembled in a staging directory beside
+ *  the target and RENAMED into place. Three properties fall out, each closing a defect measured on the
+ *  `open(wx)` + pathname `unlink` lock this replaces:
+ *
+ *  1. **The claim is published atomically, already naming its owner.** `rename` onto a NON-EMPTY directory
+ *     fails, so a live claim cannot be clobbered, and there is no instant in which a lock exists without
+ *     saying whose it is.
+ *  2. **Every delete is content-conditional, which POSIX gives no way to make an `unlink` be.** Stale
+ *     recovery can only ever spell the marker name it just judged, so a successor's claim — a different
+ *     name — is untouched; and removing the directory afterwards is `rmdir`, whose emptiness precondition
+ *     IS the atomic "no successor has claimed this yet" test. Under the old lock, two writers meeting one
+ *     corpse could both delete and both create: measured across processes at ~1 lost `dropped` increment
+ *     per 60–200 trials with 8–24 contenders, silent every time, because the loser of a marker
+ *     read-modify-write writes bytes identical to the winner's (test/unit/peer/arrival-log-race.test.ts).
+ *  3. **The lease rides the NAME, not the mtime.** A breaker can then only delete the exact claim whose age
+ *     it read; a claim republished after that judgment is unspellable by it.
+ *
+ *  Nothing here reads the lock's bytes, so a umask that masks the owner-read bit cannot wedge a session. */
+const LOCK_DIR = ".marker.lock";
 /** A holder is microseconds; anything this old is a corpse, and its leftover would otherwise wedge every
- *  later append on the session. withFileLock's lease, minus the republishing. */
+ *  later append on the session. */
 const LOCK_STALE_MS = 5_000;
 /** A WALL-CLOCK budget, not an attempt count: `sleepSync(2)` really sleeps ~15ms at the platform's timer
  *  granularity, so counting attempts bought an 8x longer stall than it looked like it did. The hold window
  *  is microseconds, so anything still held after this is a peer we should not wait on. */
 const LOCK_WAIT_MS = 40;
 const LOCK_RETRY_MS = 1;
+/** A name THIS lock's own format could have written, and the reason the break path cannot delete a
+ *  stranger's file: `<pid>-<hex>.<lease>`. Anything else in there was put there by something that is not
+ *  this store, and removing it is not a thing this code gets to ask for. */
+const LOCK_MARKER = /^\d+-[0-9a-f]+\.(\d+)$/;
 
 /** Blocking the read loop is the one thing this file will not do, so the wait is bounded and tiny — and
  *  `Atomics.wait` rather than a spin, so waiting costs no CPU. */
@@ -126,26 +160,65 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** The fd on success, `null` when a live holder outlasted the bounded wait. Contention never throws; a
- *  real filesystem failure (EACCES on the directory, say) still propagates, which is `append`'s existing
- *  contract. */
-function acquireMarkerLock(dir: string): number | null {
-  const path = join(dir, LOCK_FILE);
+/** Whether a CORPSE's claim was removed — the only thing that earns an immediate retry. Every other
+ *  outcome (a live holder, a stranger's file at the path, a successor that claimed the emptied directory
+ *  first) falls through to the caller's deadline, because treating them as progress is an unbounded spin. */
+function breakDeadLock(lockPath: string): boolean {
+  let names: string[];
+  try { names = readdirSync(lockPath); } catch { return false; }   // gone, or not one of our directories
+  if (names.length !== 1) return false;
+  const lease = LOCK_MARKER.exec(names[0]);
+  if (!lease || Date.now() - Number(lease[1]) <= LOCK_STALE_MS) return false;
+  try { unlinkSync(join(lockPath, names[0])); } catch { return false; }   // someone else broke it first
+  // ENOTEMPTY here means a successor published into the directory we had just emptied — which is exactly
+  // the claim this rmdir must not destroy, and the reason the emptiness precondition is the whole test.
+  try { rmdirSync(lockPath); return true; } catch { return false; }
+}
+
+/** Our marker's NAME on success — the token every later delete is conditional on — or `null` when a live
+ *  holder outlasted the bounded wait. Contention never throws; a real filesystem failure (EACCES on the
+ *  directory, say) still propagates, which is `append`'s existing contract. */
+function acquireMarkerLock(dir: string): string | null {
+  const lockPath = join(dir, LOCK_DIR);
+  const nonce = `${process.pid}-${randomBytes(6).toString("hex")}`;
+  const stage = `${lockPath}.stage-${nonce}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try { return openSync(path, "wx", 0o600); } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  mkdirSync(stage, { mode: 0o700 });
+  let name = `${nonce}.${Date.now()}`;
+  writeFileSync(join(stage, name), `${nonce}\n`, { mode: 0o600 });
+  try {
+    for (;;) {
+      try { renameSync(stage, lockPath); return name; } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        // ENOTEMPTY/EEXIST: someone's claim is there. ENOTDIR/EISDIR: something that is not one of our
+        // directories is. Anything else is a real filesystem failure and is not ours to absorb.
+        if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "ENOTDIR" && code !== "EISDIR") throw err;
+      }
+      if (breakDeadLock(lockPath)) continue;
+      if (Date.now() >= deadline) return null;
+      sleepSync(LOCK_RETRY_MS);
+      // The lease starts when the claim LANDS, not when it was assembled: a waiter publishing an already
+      // old lease would be broken by the next contender within milliseconds of acquiring.
+      const born = `${nonce}.${Date.now()}`;
+      try { renameSync(join(stage, name), join(stage, born)); name = born; } catch { /* keep the old one */ }
     }
-    // Break a corpse's claim, and only a corpse's: a live holder's file is younger than the lease.
-    try { if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) unlinkSync(path); } catch { /* raced */ }
-    if (Date.now() >= deadline) return null;
-    sleepSync(LOCK_RETRY_MS);
+  } finally {
+    // On the success path the staging directory was RENAMED away and both of these are ENOENT no-ops. On
+    // every other exit they are what stops an abandoned claim-in-waiting from accumulating.
+    unlinkIfPresent(join(stage, name));
+    try { rmdirSync(stage); } catch { /* gone with the rename */ }
   }
 }
 
-function releaseMarkerLock(dir: string, fd: number): void {
-  try { closeSync(fd); } catch { /* the unlink below is what actually releases it */ }
-  unlinkIfPresent(join(dir, LOCK_FILE));
+/** Releases, and answers whether the claim released was still OURS. A `false` is the fence this lock would
+ *  otherwise lack: a holder whose section outlived the lease was evicted and ran beside its successor, so
+ *  whatever it computed from a marker it read before that is no longer something to vouch for. */
+function releaseMarkerLock(dir: string, name: string): boolean {
+  const lockPath = join(dir, LOCK_DIR);
+  let held = true;
+  try { unlinkSync(join(lockPath, name)); } catch { held = false; }
+  try { rmdirSync(lockPath); } catch { /* a successor's claim already stands there; not ours to remove */ }
+  return held;
 }
 
 export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
@@ -182,7 +255,17 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
     };
   };
 
-  const writeMarker = (dir: string, s: MarkerState): void => {
+  /** DEGRADATION IS A LATCH, and this is where nothing gets to clear it. The write that SETS it is
+   *  deliberately unlocked — a writer that could not take the lock still has to say so, because loud beats
+   *  blocked — which means it lands inside somebody else's critical section, and that somebody would
+   *  otherwise write its own pre-read state over the top and re-certify a count nobody vouches for. So
+   *  every writer re-reads immediately before it writes and carries forward a flag it did not set. The
+   *  residual is named rather than implied: a degrade landing between this read and this write is still
+   *  lost, which is one syscall pair rather than a whole section, and the in-memory latch below covers the
+   *  process that set it either way. */
+  const writeMarker = (dir: string, sessionId: string, s: MarkerState): void => {
+    const concurrent = readMarker(sessionId).degraded || degradedLatch.has(sessionId);
+    if (concurrent) s = { ...s, degraded: true };
     const body = s.dropped === null
       ? { degraded: true as const, ...(s.pending ? { pending: s.pending } : {}) }
       : {
@@ -201,26 +284,28 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
    *  for: latch degraded, adopt THEIR state rather than our stale one, and carry the flag forward so the
    *  rest of this eviction cannot erase it. */
   const writeMarkerChecked = (dir: string, sessionId: string, s: MarkerState): MarkerState => {
-    writeMarker(dir, s);
+    writeMarker(dir, sessionId, s);
     const back = readMarker(sessionId);
     if (back.dropped === s.dropped) return s;
     degradedLatch.add(sessionId);
     const merged: MarkerState = { ...back, degraded: true };
-    try { writeMarker(dir, merged); } catch { /* the latch stands; the flag is best-effort as ever */ }
+    try { writeMarker(dir, sessionId, merged); } catch { /* the latch stands; the flag is best-effort as ever */ }
     return merged;
   };
 
-  /** Every entry file in the directory, in `(seq, id)` order — which `readdirSync().sort()` gives for
-   *  free, because the name embeds a zero-padded seq ahead of the id. Nothing here parses a body, and
-   *  nothing here judges a seq: what is on disk is retained, full stop. */
+  /** Every entry file in the directory, in `(seq, id)` order — sorted on the PARSED seq, never on the
+   *  name. The padding makes the two agree for the first million entries and then stops: `e-1000000-` sorts
+   *  lexically ahead of `e-999999-`, which would silently reverse the order eviction and `readAll` both
+   *  depend on. Nothing here parses a body, and nothing here judges a seq: what is on disk is retained. */
   const listFiles = (dir: string): Array<{ file: string; seq: number }> => {
     let names: string[];
     try { names = readdirSync(dir); } catch { return []; }
-    const out: Array<{ file: string; seq: number }> = [];
-    for (const file of names.sort()) {
+    const out: Array<{ file: string; seq: number; id: string }> = [];
+    for (const file of names) {
       const m = ENTRY_FILE.exec(file);
-      if (m) out.push({ file, seq: Number(m[1]) });
+      if (m) out.push({ file, seq: Number(m[1]), id: m[2] });
     }
+    out.sort((a, b) => a.seq - b.seq || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     return out;
   };
 
@@ -247,7 +332,7 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
     const dir = dirOf(sessionId);
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      writeMarker(dir, { ...readMarker(sessionId), degraded: true });
+      writeMarker(dir, sessionId, { ...readMarker(sessionId), degraded: true });
     } catch { /* the latch above is the fallback, and the spec states it dies with the process */ }
   };
 
@@ -270,12 +355,16 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
         return;
       }
 
+      // Whether this append computed anything FROM the marker. A holder evicted mid-section that never
+      // touched it lost nothing, and degrading such a session would be a false alarm rather than a latch.
+      let counted = false;
       try {
         let marker = readMarker(e.sessionId);   // read UNDER the lock: an unlocked base is not a base
 
         // Recovery, before anything else and idempotent: the marker still names a victim, so the crash
         // landed between counting it and deleting it. Delete it now WITHOUT counting it again.
         if (marker.pending) {
+          counted = true;
           unlinkIfPresent(join(dir, marker.pending));
           marker = writeMarkerChecked(dir, e.sessionId, { ...marker, pending: undefined });
         }
@@ -286,6 +375,7 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
         // the entry that proved it is gone; `pending` is cleared once, after the last unlink.
         let files = listFiles(dir);
         if (files.length <= ARRIVAL_LOG_CAP) return;
+        counted = true;
         while (files.length > ARRIVAL_LOG_CAP) {
           const victim = files[0];
           marker = writeMarkerChecked(dir, e.sessionId, {
@@ -299,7 +389,11 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
         }
         writeMarkerChecked(dir, e.sessionId, { ...marker, pending: undefined });
       } finally {
-        releaseMarkerLock(dir, lock);
+        // THE FENCE. A section that outlived the lease ran beside the successor that broke it, and the
+        // count it derived from a base read before that is exactly the lost update the lock exists to
+        // prevent — invisible to the read-back, because both writers computed it from the same base. It
+        // cannot be undone here, so it is disclosed: loud beats wrong.
+        if (!releaseMarkerLock(dir, lock) && counted) degrade(e.sessionId);
       }
     },
 

@@ -611,6 +611,28 @@ page speaks. Both halves are fixed structurally:
   as the store it describes. `arrivals: null` means degraded — "I cannot tell you" stated as
   itself, never as `0`.
 
+  **The `dropped` read-modify-write is serialised by a lock, and the lock is `withFileLock`'s shape
+  rather than a smaller one** (rev 9, external review finding 3). The losing half of a lost update
+  writes bytes identical to the winner's, so no read-back can see it — which is why the marker's RMW
+  needs exclusion rather than detection. The first implementation used an exclusive-create lockfile
+  broken by mtime, and that reproduced M5's own measured defect exactly: two writers meeting one
+  crashed holder's leftover both judge it stale, and the second's pathname `unlink` destroys the
+  first's fresh claim, putting both inside the section. So the sync store adopts **D-M5-24** whole —
+  a lock is a non-empty *directory* published by `rename`, holding one marker file whose name is
+  `<owner nonce>.<lease>`, so every delete is content-conditional and `rmdir`'s emptiness
+  precondition is the atomic "no successor has claimed this" test. A holder whose section outlived
+  the lease finds its own marker gone at release and degrades rather than vouching for a count it
+  computed beside a successor.
+
+  **Degradation is a LATCH, and no writer may clear one it did not set** (rev 9, external review
+  finding 5). The write that *sets* it is deliberately unlocked — a writer that could not take the
+  lock still has to say so, because loud beats blocked — so it lands inside another writer's
+  critical section, and that writer would otherwise put its own pre-read state over the top and
+  silently re-certify the count. Every marker write therefore re-reads immediately before writing
+  and carries forward a `degraded` it finds there. The residual is named rather than implied: a
+  degrade landing between that read and that write is still lost, which is one syscall pair wide
+  instead of a whole section, and the in-process latch covers the writer that set it either way.
+
 The shared-trunk case stays a stated limit: a misattributed anchor is not detectable from the
 reader's output at any price, and two engines on one session is unsupported. D3's claim is narrowed
 to what the mechanism actually delivers — **incompleteness is always visible; misattribution is
@@ -673,9 +695,31 @@ same-tick, as the admission contract requires — and opens **buffering**: frame
 anchor chain in arrival order, and arrivals are held, neither persisted nor broadcast. When the seed
 read resolves, the chain is grounded, buffered arrivals get their anchors computed in observation
 order, and each is then persisted and broadcast in that order. The window is one read long —
-milliseconds — and inside it nothing is durably wrong yet, so there is nothing to repair afterwards.
-`anchor: null` can now *only* mean confirmed-empty, because an unknown anchor is unrepresentable in
-the store: entries are written only after the seed resolves.
+milliseconds — and inside it nothing is durably wrong yet.
+
+**But the window does not always end by grounding, and each way it can end otherwise owes the same
+answer** (rev 9, external review findings 1, 2 and 6). Rev 8 said there was "nothing to repair
+afterwards", which was true only of the window that resolves; three do not. Its **arrival buffer**
+can overrun its cap, and rev 8 shed the oldest *announced but never logged* — which makes `logged`
+smaller than the notification count and lets a short history certify itself complete. Its **frame
+buffer** can overrun its own, and shifting a frame out re-anchored any arrival positioned by that
+frame onto whatever the *remaining* head grounds against — potentially hundreds of rows after where
+it was observed, unflagged: the misplacement class D3 forbids. And the whole window can be **torn
+down mid-read** (`thread/close`, `thread/clear`, a rewind swap), which discarded an engine-delivered
+message from the live channel and from the old session's count at once.
+
+All three resolve as the same thing, and it is the one the design already names for a position that
+cannot be known: **persisted, counted, withheld from placement** — `ambiguous`. An unplaced arrival
+is visible in `logged`; a misplaced one is indistinguishable from history, and an unrecorded one is
+indistinguishable from silence. `anchor: null` still means confirmed-empty on every entry the seed
+grounded; on an `ambiguous` entry, which the read side skips before it ever reads the anchor, it is
+not a statement at all — the window that wrote it had no ground to record. The teardown case is also
+the one place `logged` may legitimately exceed the notification count: the entry is persisted into
+the session the arrival landed in (D2) and deliberately *not* announced, because a notification is
+thread-scoped and that conversation is being discarded. Over-report is the safe direction — it
+reveals a gap that isn't there, where the reverse would falsely certify completeness. A thread torn
+down before its window ever opened has nothing buffered to save; that is the pre-init limit already
+stated below, not a further case.
 
 **Grounding has an overlap rule, because the seed is not a snapshot** (round 5, finding 2). A frame
 observed live during the read can also appear in the read's result — the engine persists as it
@@ -799,7 +843,8 @@ in here.
     seed resolves and is never anchored `null` — anchored to a live-observed frame when one grounds
     it, `ambiguous` otherwise (criterion 15 is the same state's other half, not a different rule:
     with no buffered frame, order against seed rows is unknowable, and the answer is ambiguity, not
-    the seed tail).
+    the seed tail). Scoped to the window that *grounds*: an entry a window writes before it resolves
+    (criterion 17a) is `ambiguous`, and its `anchor` is not read at all.
 13. **A write failure degrades loudly, and durably when the marker can still be written.** With a
     one-shot entry-write failure (marker writable): the notification still broadcasts,
     `thread/read` reports `arrivals: null` from then on — including after a restart, because the
@@ -821,7 +866,17 @@ in here.
 17. **Eviction is never silent, and a crash can only over-report.** Fill past the cap: the
     dropped-count marker exists and `arrivals.logged` reports the pre-eviction total, exceeding what
     any read returns. Kill between marker and unlink: recovery unlinks the counted victim, and the
-    count never under-reports.
+    count never under-reports. A sequence past six digits is still an entry, and entries order by
+    the parsed number rather than by the padded name.
+17a. **A window that ends without grounding still owes an entry per arrival** (rev 9). Each of the
+    three ways it can: overrun the arrival buffer, overrun the frame buffer, and tear the thread
+    down mid-read. In every one the arrival is persisted `ambiguous`, counted in `logged`, and
+    withheld from placement — never announced-without-logging, and never re-anchored onto a row the
+    remaining buffer happens to ground against.
+17b. **The count survives contention between real processes** (rev 9). Several `node` processes
+    appending against one crashed holder's leftover lock leave every session either exact or
+    degraded — never short with nothing to show for it. Measured across processes rather than
+    through a seam, because the interleave that loses an increment is invisible to one.
 
 ### Stage C — the projector in `thread/read`
 
@@ -852,7 +907,10 @@ in here.
     at a bounded window's first row, which the one-row lookbehind must verify rather than strand.
 23. **`arrivals: { logged, dropped }` is on every merge-enabled reply**, from every path — cursorless, normal
     page, last resort, empty-session and no-session — and `logged` matches the notification count
-    for the run.
+    for the run. The one legitimate excess is criterion 17a's teardown case, which persists without
+    announcing; the deficit direction stays forbidden. The counts and the entries a reply renders
+    are ONE snapshot, entries sampled first: an arrival landing during the transcript read may be
+    counted-and-not-rendered, never rendered-and-not-counted.
 24. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, its
     fingerprint changed, OR its predecessor changed (the rebound-duplicate shape), the arrival does
     not appear, no other item's position moves — and `arrivals.logged` exceeds the marked items
@@ -1260,3 +1318,38 @@ gate reports the same 110 rows over 73 registered methods it did before the mile
   Cell (9c) adds the seed-window twin of (9b): a batch buffered during grounding, replayed by
   `groundSeed`. It was reviewed as holding "by construction" — it does, but it fails independently
   against the pre-fix observer, so the argument is now a test.
+
+- **Rev 9 (2026-08-30, branch review fix wave).** Seven confirmed findings from an external review of
+  the assembled branch, and they fall into two families that the document had each stated *correctly*
+  while the code stated something weaker.
+
+  **The seed window's edges** (findings 1, 2, 6). The spec said the window holds arrivals and then
+  grounds them, and that "inside it nothing is durably wrong yet, so there is nothing to repair
+  afterwards" — true of a window that resolves, and rev 8 built only for that one. Three windows do
+  not resolve: the arrival buffer overruns (rev 8 shed the oldest *announced but never logged*, which
+  makes `logged` smaller than the notification count and lets a short history certify itself
+  complete), the frame buffer overruns (rev 8 clamped the shifted arrival's index, re-anchoring it
+  against whatever the remaining head grounds on — a misplacement, the one class D3 forbids), and the
+  thread is torn down mid-read (rev 8 discarded the buffer, losing an engine-delivered message from
+  the live channel and the old session's count at once). All three now take the answer the design
+  already had for an unknowable position: **persisted, counted, `ambiguous`, never placed.** The one
+  behavioural addition is that `logged` may exceed the notification count by what a teardown saved —
+  over-report, the direction that reveals a gap that isn't there.
+
+  **The count's own machinery** (findings 3, 4, 5, 7). The marker lock was an exclusive-create
+  lockfile broken by mtime, which reproduced M5's own measured defect: two writers meeting one
+  crashed holder's leftover both judge it stale and the second's pathname `unlink` destroys the
+  first's fresh claim. Rewritten as D-M5-24 — a directory lock published by `rename`, a
+  nonce-and-lease marker name, content-conditional deletes, `rmdir` as the successor test — plus a
+  release-time fence that degrades a holder evicted mid-section. Measured with real processes
+  before and after (`test/unit/peer/arrival-log-race.test.ts`). The entry-filename pattern was fixed
+  at six digits, so a session reaching seq 1,000,000 stopped recognising its own entries; it now
+  parses arbitrary width and orders by the parsed number, since the padded name sorts a seven-digit
+  seq *ahead* of a six-digit one. Degradation is now a latch nothing may clear: every marker write
+  re-reads and carries forward a flag another writer set, which is what makes the deliberately
+  unlocked degrade write unlosable. And `thread/read` samples the counts with the entry snapshot it
+  renders rather than before the transcript await, so a reply can no longer show a marked arrival
+  the number beside it predates.
+
+  Nothing here changed a decision. Every fix is an existing rule reaching a case the implementation
+  had not carried it to — which is what the review was for.

@@ -5,7 +5,7 @@
 // over-reporting. Each test below is one of those, driven through a real filesystem root because a mocked
 // fs would test the mock's ordering rather than rename's.
 import { describe, expect, it, vi } from "vitest";
-import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } from "../../../src/peer/arrivalLog.js";
@@ -15,7 +15,10 @@ import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } fro
 // rename lands — i.e. mid-section — and the two race tests use it to run a competitor there. That is a
 // simulation of the race, not the race; what it exercises for real is the exclusion, and the store's
 // answer when exclusion is not available.
-const race = vi.hoisted(() => ({ afterMarkerRename: null as (() => void) | null }));
+const race = vi.hoisted(() => ({
+  afterMarkerRename: null as (() => void) | null,
+  afterLockUnlink: null as ((path: string) => void) | null,
+}));
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
   return {
@@ -24,8 +27,18 @@ vi.mock("node:fs", async (importOriginal) => {
       real.renameSync(from, to);
       if (String(to).endsWith("marker.json")) race.afterMarkerRename?.();
     },
+    // The other half of the same instrument: the instant a delete lands inside a lock, which is where a
+    // successor's claim would race a breaker's judgment.
+    unlinkSync: (path: Parameters<typeof real.unlinkSync>[0]) => {
+      real.unlinkSync(path);
+      if (String(path).includes(LOCK_DIR)) race.afterLockUnlink?.(String(path));
+    },
   };
 });
+const LOCK_DIR = ".marker.lock";
+/** A claim in the format the lock's own break path screens for: `<pid>-<hex>.<lease>`. `staleMs` back puts
+ *  it past the 5s lease; `0` makes it a live holder's. */
+const claimName = (agedMs: number) => `${process.pid}-abcdef123456.${Date.now() - agedMs}`;
 
 /** A competing process's eviction, done the way the store does one and RESPECTING THE LOCK: claim it,
  *  drop the oldest entry, write the count derived from the base it read before our append began. Same
@@ -162,6 +175,63 @@ describe("fsArrivalStore", () => {
     reopened.markDegraded("s1");
     // The lost count is not fabricated back as a 0 that would under-report: the flag goes out alone.
     expect(JSON.parse(readFileSync(join(root, "s1", "marker.json"), "utf8"))).toEqual({ degraded: true });
+  });
+  it("a sequence past six digits is still an entry, and the order is the NUMBER rather than the name", () => {
+    // The padding is six wide, so seq 1,000,000 writes `e-1000000-…` and lexical order puts it BEFORE
+    // `e-999999-…`. Both halves are asserted here because either alone would pass a half-fix: a widened
+    // pattern that still sorted names would return these three backwards.
+    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "arr-")));
+    for (const n of [1_000_001, 999_999, 1_000_000]) store.append(entry(n));
+    expect(store.readAll("s1").map((e) => e.seq)).toEqual([999_999, 1_000_000, 1_000_001]);
+    expect(store.counts("s1")).toEqual({ logged: 3, dropped: 0 });
+    expect(store.nextSeq("s1")).toBe(1_000_002);
+  });
+  it("degradation is a LATCH: a marker write cannot clear a flag another writer set meanwhile", () => {
+    // The unlocked degrade write is deliberate (loud beats blocked) and therefore lands INSIDE another
+    // writer's critical section. The seam runs it there: a second store instance — a second process, with
+    // its own in-memory latch — degrades the session between the holder's two marker writes. The holder's
+    // second write must not carry its own stale `degraded: false` over the top.
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    const other = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    race.afterMarkerRename = () => { race.afterMarkerRename = null; other.markDegraded("s1"); };
+    try { store.append(entry(ARRIVAL_LOG_CAP)); } finally { race.afterMarkerRename = null; }
+    // A THIRD instance reads only what reached the disk, which is the whole question: an in-memory latch
+    // this process happens to hold says nothing to the next `thread/read` in another one.
+    expect(fsArrivalStore(root).isDegraded("s1")).toBe(true);
+    expect(store.counts("s1").dropped).toBe(1);            // …and the count it was protecting is intact
+  });
+  it("a corpse's claim is broken, and the count that follows is exact", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    // A holder that died mid-section: the claim it published, with a lease older than the lock's own.
+    const lock = join(root, "s1", LOCK_DIR);
+    mkdirSync(lock, { mode: 0o700 });
+    writeFileSync(join(lock, claimName(60_000)), "");
+    store.append(entry(ARRIVAL_LOG_CAP));
+    expect(store.counts("s1")).toEqual({ logged: ARRIVAL_LOG_CAP + 1, dropped: 1 });
+    expect(store.isDegraded("s1")).toBe(false);     // recovered, not merely survived
+    expect(existsSync(lock)).toBe(false);
+  });
+  it("a breaker NEVER removes the claim a successor published into the directory it just emptied", () => {
+    // The defect this lock shape exists for, driven deterministically: our breaker judges a corpse and
+    // deletes it, and in that instant another writer claims the emptied directory. Under a pathname-only
+    // delete both would proceed; here the removal is `rmdir`, whose emptiness precondition IS the test.
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    store.append(entry(0));
+    const lock = join(root, "s1", LOCK_DIR);
+    mkdirSync(lock, { mode: 0o700 });
+    writeFileSync(join(lock, claimName(60_000)), "");
+    const successor = join(lock, claimName(0));
+    race.afterLockUnlink = () => { race.afterLockUnlink = null; writeFileSync(successor, ""); };
+    try { store.append(entry(1)); } finally { race.afterLockUnlink = null; }
+
+    expect(existsSync(successor)).toBe(true);       // the live claim stands
+    expect(store.readAll("s1").map((e) => e.seq)).toEqual([0, 1]);   // the message is still recorded
+    expect(store.isDegraded("s1")).toBe(true);      // …and the count declines to claim, rather than guessing
   });
   it("contentHash16 is stable and 16 hex chars", () => {
     expect(contentHash16("hello")).toMatch(/^[0-9a-f]{16}$/);

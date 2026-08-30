@@ -406,3 +406,38 @@ describe("the no-arrivals regression guard", () => {
     for (const page of merged) expect(page.arrivals).toEqual({ logged: 0, dropped: 0 });
   });
 });
+
+describe("the counts and the rendered entries are ONE snapshot", () => {
+  it("an arrival landing during the transcript read is never rendered while the count still predates it", async () => {
+    // The handler is async; the observer that appends entries is synchronous on the engine's read loop, so
+    // the ONE place a new arrival can land inside a single reply is the `getSessionMessages` await. Sampling
+    // the counts before that await and the entries after it is what let a reply render a marked item the
+    // number beside it did not know about — and `logged >=` the marked items returned is the whole basis on
+    // which a client decides its history is complete.
+    const rows = [USER("r-0", "first"), USER("r-1", "second")];
+    const entries = [ENTRY("arr-1", "the question", anchorOf(rows[0], null))];
+    const late = ENTRY("arr-2", "landed during the read", anchorOf(rows[1], rows[0]));
+    // `readAll` and `counts` both read the live array, as the real store re-reads the live directory.
+    const store = fakeStore(entries);
+    let armed = true;
+    const getSessionMessages = async (_sid: string, opts?: { limit?: number; offset?: number }) => {
+      if (armed) { armed = false; entries.push(late); }
+      if (!opts) return rows;
+      const { offset = 0, limit } = opts;
+      return rows.slice(offset, limit === undefined ? undefined : offset + limit);
+    };
+    const srv = new AppServer({}, { sessionFactory: (() => fakeSession(SESSION)) as never, getSessionMessages, arrivalStore: store });
+    const { lines, sink } = mkSink();
+    const conn = srv.connect(sink);
+    send(conn, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
+    send(conn, { id: 2, method: "thread/start", params: {} });
+    await tick();
+    const threadId = parsed(lines).find((f) => f.id === 2).result.thread.id;
+    send(conn, { id: 3, method: "thread/read", params: { threadId } });
+    await tick();
+    const page = parsed(lines).find((f) => f.id === 3).result as ReadPage;
+
+    expect(marked([page])).toEqual(new Set(["arr-1", "arr-2"]));
+    expect(page.arrivals!.logged).toBeGreaterThanOrEqual(marked([page]).size);
+  });
+});
