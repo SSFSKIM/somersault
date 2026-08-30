@@ -747,10 +747,15 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
     expect(expanded).toContain("     ⎿ PreToolUse:TodoWrite (0.3s)");
   });
 
-  it("window NOT CLEAR (sibling interference present): a hook on the closing call stays excluded — the fallback boundary is unchanged", () => {
+  it("window NOT CLEAR (sibling interference present): a hook on the closing call stays excluded from the CLUSTER — and surfaces standalone instead (the bl7 'Qy seam', built by bl8)", () => {
     // Same shape as T8 (b2)'s fixture: read-2's call AND result both land strictly inside
     // `(todo-1.callSequence, todo-1.resultSequence)`, so `windowIsClear` refuses and the boundary must stay
     // at `callSequence` — widening here would risk pulling in a sibling's hook, not just this call's own.
+    //   bl8 round-review F2 narrowed THIS test's assertion: it used to demand total absence, which held only
+    // because the unclaimed entry fell to the document's end and was withheld there (the F2 positioning bug).
+    // The invariant this cell guards is ATTRIBUTION (not absorbed into the cluster's block — the absorbed
+    // header carries a duration, the standalone header never does); visibility-as-standalone is bl8's whole
+    // point (spec §2.2: unclaimed entries drain into standalone items).
     const doc = built(
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
       call("todo-1", "TodoWrite", { todos: [] }),
@@ -760,8 +765,10 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
     const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,read-2,todo-1:row");  // stayed a member regardless (sibling interference)
-    const expanded = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) }));
-    expect(expanded.join("\n")).not.toContain("PreToolUse");                 // boundary NOT widened: no new misattribution
+    const joined = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) })).join("\n");
+    expect(joined).not.toContain("Ran 1 PreToolUse hook (0.3s)");   // NOT absorbed: the cluster block's duration-bearing header is absent
+    expect(joined).not.toContain("     ⎿ PreToolUse:TodoWrite");    // and no per-hook member line inside the block
+    expect(joined).toContain("  ⎿  Ran 1 PreToolUse hook");         // the refused entry renders STANDALONE (no duration) at its position
   });
 
   it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence is still excluded (unchanged by F3)", () => {
