@@ -72,6 +72,35 @@ describe("bl8 T-QY Task 3, shape 1 (canon Qy labeled form): standalone non-Stop 
   });
 });
 
+// Task-3 review CRITICAL: `trailingRunCut`'s second `while` loop (meant to also withhold a hooks item that
+// is NOT at the tail but whose label still shows a same-label straggler in `hookLive`) was dead code — after
+// the first loop, `items[cut-1]` can never be `"hooks"` again, so the second loop's own first condition
+// always breaks on its first iteration. A BOUNDED item (closed by a later breaker, per `closedDoc()` above —
+// no second tool call needed, since a single call/result/breaker already produces a non-trailing position,
+// see the shape-1 cell above) published to Static as `Ran 1` even while its label was still live; once the
+// straggler resolved and the SAME render id (`entries[0]`'s id) grew to `Ran 2`, `useChat.ts`'s
+// `publishedIds` filter had already latched the stale `Ran 1` row and would never emit the correction.
+describe("bl8 T-QY Task 3 review Critical: a BOUNDED hooks item withholds while its label is still live", () => {
+  it("closed/bounded item stays off the finalized projection while hookLive shows the same label in flight, then finalizes as 'Ran 2' once it clears", () => {
+    const doc = closedDoc(), seq = callSeq(doc);
+    const h1 = { id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: seq, event: "PostToolUse" };
+    const h2 = { id: "h2", name: "PostToolUse:Read", durationMs: 300, afterSequence: seq, event: "PostToolUse" };
+
+    // Only h1 has completed; a same-label straggler (h2) is still in flight (hookLive: PostToolUse -> 1).
+    // The item is genuinely BOUNDED (closedDoc's breaker already fixes its position, per shape-1 above) —
+    // not the unbounded-trailing case the first `while` loop already covers unconditionally.
+    const live = projectCompact(doc, { ...context, hookRuns: [h1], hookLive: new Map([["PostToolUse", 1]]) });
+    const liveTexts = lineTexts(live);
+    expect(liveTexts.some((t) => t.includes("PostToolUse hook"))).toBe(false);   // withheld, not "Ran 1 ... hook(s)"
+
+    // The straggler resolves: hookLive clears, and the SAME item now carries both entries.
+    const resolved = projectCompact(doc, { ...context, hookRuns: [h1, h2], hookLive: new Map() });
+    const resolvedTexts = lineTexts(resolved);
+    expect(resolvedTexts).toContain("  ⎿  Ran 2 PostToolUse hooks");
+    expect(resolvedTexts.filter((t) => /Ran \d+ PostToolUse hooks?/.test(t))).toHaveLength(1);   // never a frozen "Ran 1" alongside it
+  });
+});
+
 describe("bl8 T-QY Task 3, shape 2 (canon Qy Stop form, scoped to ccx's wire): errors-only standalone rows", () => {
   it("every entry exitCode:0 renders NOTHING — canon's own early exit", () => {
     const doc = closedDoc(), seq = callSeq(doc);

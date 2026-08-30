@@ -1670,16 +1670,20 @@ function trailingRunCut(atoms: readonly FoldAtom[], items: readonly FoldItem[], 
   // can still coalesce another same-label pair into it. Multiple different labels can share that one
   // unbounded position (consecutive `kind:"hooks"` items at the very tail), so this walks back past every
   // one found there; a hooks item ANYWHERE ELSE in `items` already has a later atom fixing its content for
-  // good and is safe to publish.
+  // good and is safe to publish — UNLESS `hookLive` says otherwise, below.
   while (cut > 0 && items[cut - 1]!.kind === "hooks") cut--;
-  // A hooks item sitting right at the (possibly still items.length) frontier whose label `hookLive` still
-  // shows in flight joins the withheld region too: that in-flight pair could still resolve into a position
-  // this exact item will never see again once something bounds it, and publishing the item first is the
-  // "frozen Ran 1 plus a duplicate" bug Global Constraints forbids — it publishes once its label goes idle.
-  while (cut > 0) {
-    const item = items[cut - 1]!;
-    if (item.kind !== "hooks" || (hookLive?.get(item.label) ?? 0) === 0) break;
-    cut--;
+  // Task-3 review CRITICAL fix: a hooks item can be BOUNDED (a later breaker/tool already fixed its position)
+  // and still be unsafe to publish, because its label has a same-label straggler in flight — that pair can
+  // still resolve into THIS item (same render id, `weaveStandaloneHooks` coalesces by position+label), and
+  // publishing it first is the exact "frozen Ran 1 plus an unseen Ran 2" bug Global Constraints forbids. So
+  // this scans the WHOLE surviving prefix — not just the trailing run above — for the EARLIEST such
+  // vulnerable item and clamps the cut there; everything from that index on is then conservatively withheld
+  // too (correct: those items simply publish on the next reconcile once the straggler resolves).
+  if (hookLive !== undefined) {
+    for (let i = 0; i < cut; i++) {
+      const item = items[i]!;
+      if (item.kind === "hooks" && (hookLive.get(item.label) ?? 0) > 0) { cut = i; break; }
+    }
   }
   // An open advisor breaker maps to exactly ONE passthrough item (no run to fold), so withholding it is
   // dropping that one tail item outright — never a `for`-scan back to a `group`, which only a tool run ever
