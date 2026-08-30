@@ -1035,15 +1035,24 @@ describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of
   const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
   const FULL = { ...OPTIONS, fullscreen: true };
 
-  it("(l) a Read-only group never claims a foreign PreToolUse:TodoWrite entry, even inside its own causal window", () => {
-    // M(Read2/3), C(TodoWrite4/err5), A(Read1/6): A spans C, so G1's cap alone would let A's window cover
-    // afterSequence 4 — the guard must still refuse it because A holds no TodoWrite member.
+  // Fix wave 4 (finding J2) supersedes this cell's original expectation: wave 3's `hasSpanningSibling` was
+  // tool-BLIND, so A (Read) being ANY spanning sibling — regardless of tool — was enough to refuse widening
+  // C's own boundary, and C's own PreToolUse:TodoWrite hook went unclaimed as collateral damage. Under the
+  // unified rule, `hasSpanningSibling` is scoped to siblings of C's OWN tool (TodoWrite) — A is a different
+  // tool and no longer disqualifies widening, which is safe regardless: `resolveRunHooks`'s per-tool cap
+  // already refuses to let A's Read-only run claim a TodoWrite-named entry, widened boundary or not. C is
+  // this run's only TodoWrite member, so its own hook is retained and relocation is suppressed.
+  it("(l) fix wave 4: a cross-tool spanning sibling no longer blocks a run's own tool from claiming its own hook", () => {
+    // M(Read2/3), C(TodoWrite4/err5), A(Read1/6): A spans C but is a DIFFERENT tool.
     const items = segmentRuns([
       atom(tool("Read", { file_path: "/repo/mid.ts" }, { id: "M", sequence: 2, result: 3 })),
       atom(tool("TodoWrite", { todos: [] }, { id: "C", sequence: 4, result: 5, settled: "error" })),
       atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 6 })),
     ], { ...FULL, hookRuns: [hook("PreToolUse:TodoWrite", 300, 4)] });
-    for (const group of groups(items)) expect(group.counts.hookCount).toBeUndefined();
+    const [mc, a] = groups(items);
+    expect(mc!.memberIds).toEqual(["M", "C"]);
+    expect(mc!.counts.hookCount).toBe(1);
+    expect(a!.counts.hookCount).toBeUndefined();
   });
 
   it("same-tool control: a PreToolUse:Read entry still attributes normally in a Read run", () => {
@@ -1056,5 +1065,34 @@ describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
       { ...FULL, hookRuns: [hook("PreToolUse", 200, 1)] });
     expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+});
+
+// Fix wave 4 (finding J1, spec D12's unified rule): wave 3 H1's cap was `run.open`-GATED for the whole run —
+// disabled entirely (`undefined`) the moment ANY member was open, regardless of which tool that open member
+// was. That is too coarse: a run can hold a SETTLED member of one tool and an OPEN member of another, and
+// the settled tool's own hook window must still close at ITS OWN last result even though a different tool's
+// member is still in flight. Scoping the cap to `capForTool(run, entry's own tool)` — unbounded only when
+// THAT tool has an open member — fixes the regression without reintroducing wave 2's coarser run-wide cap.
+describe("bl7 fix wave 4 (finding J1, unifies waves 2-3): the causal cap is scoped to the entry's OWN tool, not the whole run", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+  const FULL = { ...OPTIONS, fullscreen: true };
+
+  it("Bash(call2/result3) + Read(call4/open), breaker(5), Bash(call1/result6): the first run's SETTLED Bash cap (3) still excludes a hook at 4, even though its own Read member is open", () => {
+    const items = segmentRuns([
+      atom(tool("Bash", { command: "npm run one" }, { id: "B1", sequence: 2, result: 3 })),
+      atom(tool("Read", { file_path: "/repo/x.ts" }, { id: "R", sequence: 4, settled: false })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Bash", { command: "npm run two" }, { id: "B2", sequence: 1, result: 6 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:Bash", 300, 4)] });
+    const [run1, run2] = groups(items);
+    // The first run (B1 settled + R still open) must NOT claim the hook: B1's own Bash window closed at its
+    // resultSequence (3), and R being a different, still-open tool (Read) does not reopen it.
+    expect(run1!.memberIds).toEqual(["B1", "R"]);
+    expect(run1!.counts.hookCount).toBeUndefined();
+    // The later, correct Bash(1/6) group claims it instead — its own window [1, 6) causally contains it.
+    expect(run2!.memberIds).toEqual(["B2"]);
+    expect(run2!.counts.hookCount).toBe(1);
   });
 });

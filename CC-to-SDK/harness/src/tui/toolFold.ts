@@ -349,13 +349,26 @@ const THOUGHT_CAP_MS = 600000;
 interface RunState {
   readFilePaths: Set<string>; readOperationCount: number; searchCount: number; listCount: number;
   mcpCallCount: number; mcpServerNames: string[]; memberIds: string[]; anchorId: string; anchorSequence: number; open: boolean; newestInFlight?: string; hint?: string;
-  /** The largest `resultSequence` among this run's SETTLED members so far — `resolveRunHooks`'s causal cap
-   *  (see its doc comment). `undefined` until the run's first member settles. Spec D12 invariant (fix wave 3
-   *  H1): this value is causally meaningless while `open` is true — an OPEN member's own `PreToolUse` pair can
-   *  still arrive at any point up to its own (not-yet-known) result, so no finite `resultSequence` bounds the
-   *  window for as long as any member remains unsettled. Callers must gate its use on `!open`, never read it
-   *  unconditionally. */
+  /** The largest `resultSequence` among this run's SETTLED members so far, ACROSS every tool — used only as
+   *  `resolveRunHooks`'s run-wide fallback bound for a MALFORMED hook name (no recognisable tool suffix, spec
+   *  D12's fail-open case), never for a well-formed `"PreToolUse:<Tool>"` entry (see `resultSequenceByTool`
+   *  below for that). `undefined` until the run's first member settles. */
   lastResultSequence?: number;
+  /** Spec D12's unified per-entry attribution rule (bl7 fix wave 4, superseding waves 2–3's run-wide cap):
+   *  an entry naming tool `T` is bounded by `capForTool(R, T)` — UNBOUNDED while `T` has an open member
+   *  (`openToolNames`), otherwise the max `resultSequence` over `T`'s SETTLED members alone
+   *  (`resultSequenceByTool`). Scoping the cap to the entry's own tool (rather than the run as a whole, wave
+   *  3 H1's `open`-gated `lastResultSequence`) is what fixes the regression re-review found: a settled tool's
+   *  own hook window must close at that tool's own last result even while a DIFFERENT tool's member is still
+   *  open in the same run (`toolFold.test.ts`'s wave-4 J1 cell) — the old rule disabled the cap for the WHOLE
+   *  run the moment any member was open, letting an unrelated tool's settled result-sequence bound get skipped
+   *  entirely. */
+  openToolNames: Set<string>;
+  /** Companion to `openToolNames` — see its doc comment. Every tool name here is guaranteed either open (in
+   *  `openToolNames`) or represented here (or both, if the run holds more than one member of that tool with
+   *  one settled and one still open); `resolveRunHooks` checks `openToolNames` first, exactly per
+   *  `capForTool`'s UNBOUNDED-first rule above. */
+  resultSequenceByTool: Map<string, number>;
   /** Spec D12 tool-identity invariant (fix wave 3 H2): every tool name absorbed into this run, visible or
    *  silent — `resolveRunHooks`'s guard against attributing a hook to a run holding no member of that hook's
    *  own tool. A run's membership alone never proves which tool a hook belongs to; only a matching name does. */
@@ -367,7 +380,7 @@ interface RunState {
    *  emits NO group (see `flush`), so this is the one thing that decides whether the run is sayable at all. */
   visibleMembers: number;
 }
-const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, memberToolNames: new Set(), thoughtForMs: 0, absorbedThinking: [], bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
+const newRun = (): RunState => ({ readFilePaths: new Set(), readOperationCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], memberIds: [], anchorId: "", anchorSequence: 0, open: false, openToolNames: new Set(), resultSequenceByTool: new Map(), memberToolNames: new Set(), thoughtForMs: 0, absorbedThinking: [], bashCount: 0, bashCommands: new Map(), gitOpBashCount: 0, commits: [], pushes: [], branches: [], prs: [], visibleMembers: 0 });
 
 /** Canon reads its scrape text off `message.toolUseResult` — a single per-MESSAGE `{ stdout, stderr }` object,
  *  joined as `(stdout ?? "") + "\n" + (stderr ?? "")` (236996–236998). Our equivalent is the P94 structured
@@ -419,10 +432,15 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
   run.memberToolNames.add(event.name);
   // BEFORE the silent early return, on the same line of reasoning `open` is: canon's in-flight scan reads the
   // cluster's whole tool-use id set (`DBr(e)`, 518464), which a silently absorbed member joins.
-  if (event.result === undefined) { run.open = true; run.newestInFlight = event.id; }
+  if (event.result === undefined) { run.open = true; run.newestInFlight = event.id; run.openToolNames.add(event.name); }
   // Tracked for BOTH visible and silent members (before the silent early return below), since a
-  // silently-absorbed member's own result frame is just as causally binding on `resolveRunHooks`'s cap.
-  else run.lastResultSequence = run.lastResultSequence === undefined ? event.result.resultSequence : Math.max(run.lastResultSequence, event.result.resultSequence);
+  // silently-absorbed member's own result frame is just as causally binding on `resolveRunHooks`'s cap —
+  // both the run-wide fallback (`lastResultSequence`) and the per-tool one (`resultSequenceByTool`).
+  else {
+    run.lastResultSequence = run.lastResultSequence === undefined ? event.result.resultSequence : Math.max(run.lastResultSequence, event.result.resultSequence);
+    const priorForTool = run.resultSequenceByTool.get(event.name);
+    run.resultSequenceByTool.set(event.name, priorForTool === undefined ? event.result.resultSequence : Math.max(priorForTool, event.result.resultSequence));
+  }
   const command = stringField(event.input, "command");
   // The silently-absorbed branch (237140–237146): the message joins `o.messages` and its id joins `o.toolUseIds`,
   // so it is a member and can be the anchor, but it touches no counter and no display hint.
@@ -503,40 +521,63 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
  *  `hooksAbsorbed` check below, must not claim what it only peeked at).
  *
- *  `lastResultSequence` (spec D12's causal invariant): a PreToolUse pair for a member always arrives BEFORE
- *  that member's own `tool_result` frame — the wire never emits a hook response after the result it gates —
- *  so an entry with `afterSequence >= this run's own last resultSequence` is causally IMPOSSIBLE for this run
- *  no matter what `boundary` or the `consumed` flush-order tiebreak says: it arrived no earlier than a
- *  member's result already did. Capping the window's upper bound at `min(boundary, lastResultSequence)`
- *  removes impossible entries BEFORE the flush-order tiebreak ever sees them, so a still-open overlapping run
- *  downstream is never starved of an entry an earlier, already-closed run could never have owned
- *  (`toolFold.test.ts` cell (i)). Normal order is unaffected: a call's own hook stamps at
- *  `afterSequence === callSequence`, strictly before that same call's `resultSequence`, so
- *  `[anchorSequence, min(boundary, resultSequence))` still contains it. `undefined` means EITHER the run has
- *  no settled member yet OR (fix wave 3 H1) the run still has an OPEN member: an open member's own hook can
- *  arrive at any point up to its own not-yet-known result, so no settled sibling's `resultSequence` bounds the
- *  window while that member remains open — the caller passes `undefined` here whenever `RunState.open` is
- *  true, never the raw `lastResultSequence`, precisely to keep the cap meaningless until the whole run has
- *  settled (`toolFold.test.ts` cell (k): a settled member's result must never truncate the window ahead of a
- *  still-open sibling's call). Either way, an `undefined` cap leaves the window bounded by `boundary` alone.
+ *  UNIFIED per-entry attribution rule (bl7 fix wave 4, spec D12; supersedes the run-wide cap of waves 2–3):
+ *  an entry named `"PreToolUse:<Tool>"` may be claimed by this run iff (1) the run holds at least one member
+ *  of tool `<Tool>` (`memberToolNames`, fix wave 3 H2's tool-identity invariant — a run's membership alone
+ *  never proves which tool a hook belongs to, only a matching name does) AND (2) `anchorSequence <=
+ *  entry.afterSequence < min(boundary, capForTool(run, Tool))`. `capForTool` is UNBOUNDED (`Infinity`) if the
+ *  run has an OPEN member of that tool (`RunState.openToolNames`) — an open member's own `PreToolUse` pair
+ *  can arrive at any point up to its own not-yet-known result, so no bound is safe yet — and otherwise the
+ *  max `resultSequence` over that tool's SETTLED members alone (`RunState.resultSequenceByTool`): a
+ *  `PreToolUse:T` pair for a member always arrives BEFORE that member's own `tool_result` frame (the wire
+ *  never emits a hook response after the result it gates), so an entry stamped at or after tool `T`'s own
+ *  last settled result is causally IMPOSSIBLE for `T`, no matter what a DIFFERENT tool in the same run is
+ *  doing. This is the fix for wave 3 H1's regression (`toolFold.test.ts` wave-4 cell, finding J1): scoping
+ *  the cap to the entry's OWN tool rather than disabling it for the whole run whenever ANY member is open
+ *  means a settled tool's window still closes correctly even while a sibling of a DIFFERENT tool remains
+ *  open in the same run — wave 3's `run.open`-gated `undefined` cap let an open sibling of tool A blow open
+ *  the window for an already-closed tool B's hook, misattributing it away from the later run that actually
+ *  owned it. Normal single-tool order is unaffected either way: a call's own hook stamps at
+ *  `afterSequence === callSequence`, strictly before that same call's `resultSequence`
+ *  (`toolFold.test.ts` cells (a)/(c)/(j)); a fully-settled run with only one tool degenerates to the same
+ *  `min(boundary, resultSequence)` cap wave 2's G1 introduced (cell (i)); an entirely-open run reduces to no
+ *  cap at all (cell (k)).
  *
- *  `memberToolNames` (fix wave 3 H2, spec D12's tool-identity invariant): an entry named `"PreToolUse:<Tool>"`
- *  may be claimed only by a run holding a member of that SAME tool. A run's membership proves nothing about a
- *  hook naming a DIFFERENT tool — a spanning sibling widening this run's causal window (via the cap above)
- *  does not make a foreign tool's hook this run's own — so the guard refuses cross-tool attribution even when
- *  the sequence window would otherwise admit the entry (`toolFold.test.ts` cell (l)). A name with no `":"`, or
- *  an empty tool suffix, is an unrecognised shape and matches unconditionally: a malformed hook name must
- *  never silently drop a hook that a working guard would have kept. */
+ *  A name with no `":"`, or an empty tool suffix, is an unrecognised shape and fails OPEN (fix wave 3 H2):
+ *  it matches unconditionally rather than silently dropping a hook a working guard would have kept, bounded
+ *  instead by the run's WIDE bounds (`RunState.open`/`lastResultSequence`, unscoped by tool — there is no
+ *  tool to scope by) exactly as before this wave.
+ *
+ *  `consumed` (round review F2, the overlapping-window catch): `segmentRuns` does NOT walk atoms in raw call
+ *  order — the anchored stream orders a settled atom by `resultSequence` (see the `anchorId` doc comment
+ *  above), so a run of overlapping calls whose later-started member finishes first REORDERS ahead of the
+ *  earlier one. Windowing purely on `[anchorSequence, boundary)` therefore lets two DIFFERENT runs' windows
+ *  overlap, and the same hook entry would be attributed to both. `consumed` is the caller's running set of
+ *  entries an EARLIER flush already claimed; skipping them here makes attribution first-come by flush order.
+ *  `matched` hands the caller exactly the entries this call counted, so the caller can add them to that set —
+ *  this function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
+ *  `hooksAbsorbed` check below, must not claim what it only peeked at). */
 function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined,
-    memberToolNames: ReadonlySet<string>, consumed?: ReadonlySet<HookRunEntry>, lastResultSequence?: number): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
+    run: { readonly memberToolNames: ReadonlySet<string>; readonly openToolNames: ReadonlySet<string>; readonly resultSequenceByTool: ReadonlyMap<string, number>; readonly open: boolean; readonly lastResultSequence?: number },
+    consumed?: ReadonlySet<HookRunEntry>): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
   if (hookRuns === undefined || hookRuns.length === 0) return { infos: [], totalMs: 0, matched: [] };
-  const cap = lastResultSequence === undefined ? boundary : Math.min(boundary, lastResultSequence);
   const infos: HookInfo[] = [], matched: HookRunEntry[] = [];
   let totalMs = 0;
   for (const entry of hookRuns) {
-    if (entry.afterSequence < anchorSequence || entry.afterSequence >= cap || consumed?.has(entry)) continue;
+    if (entry.afterSequence < anchorSequence || consumed?.has(entry)) continue;
     const colon = entry.name.indexOf(":"), toolName = colon === -1 ? "" : entry.name.slice(colon + 1);
-    if (toolName !== "" && !memberToolNames.has(toolName)) continue;
+    let cap: number;
+    if (toolName === "") {
+      // Malformed shape: no tool to scope by, so fall back to the run's own WIDE bounds (fail-open, fix wave 3 H2).
+      cap = run.open ? boundary : Math.min(boundary, run.lastResultSequence ?? boundary);
+    } else {
+      if (!run.memberToolNames.has(toolName)) continue;
+      // `memberToolNames.has(toolName)` guarantees `toolName` is in `openToolNames` or `resultSequenceByTool`
+      // (or both) — every absorbed member of a tool lands in exactly one of those two on absorption.
+      const capForTool = run.openToolNames.has(toolName) ? Infinity : run.resultSequenceByTool.get(toolName)!;
+      cap = Math.min(boundary, capForTool);
+    }
+    if (entry.afterSequence >= cap) continue;
     infos.push({ name: entry.name, durationMs: entry.durationMs });
     matched.push(entry);
     totalMs += entry.durationMs;
@@ -604,9 +645,9 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
     if (run.memberIds.length > 0 && run.visibleMembers > 0) {
-      // H1, spec D12: the causal cap is meaningless while a member is still open (see `lastResultSequence`'s
-      // doc comment on `RunState`) — pass `undefined` rather than the raw field whenever `open` is true.
-      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, run.memberToolNames, hookClaims, run.open ? undefined : run.lastResultSequence);
+      // Spec D12's unified per-entry rule (fix wave 4): `resolveRunHooks` itself derives each entry's cap
+      // from ITS OWN tool's open/settled state on `run` — see that function's doc comment.
+      const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, run, hookClaims);
       for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
       out.push({ kind: "group", group: emit(run, hooks) });
     }
@@ -656,15 +697,19 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   // it is blind to a sibling that SPANS the window entirely (issued before `from`, still open past `to`):
   // neither of ITS endpoints is strictly inside either, yet a PreToolUse pair for THAT sibling can arrive
   // anywhere across its own open span, including exactly on `from` — the same position a call's OWN hook
-  // stamps at (`afterSequence === callSequence`). Widening the boundary to `to` in that shape sweeps in a hook
-  // that is causally the SPANNING sibling's, never this call's, so widening must be refused whenever one
-  // exists — independent of the membership question `windowIsClear` already answered correctly.
+  // stamps at (`afterSequence === callSequence`).
+  // Fix wave 4 (finding J2, scoped by the unified rule): the check is TOOL-AWARE, considering only siblings
+  // of `event`'s OWN tool `Tc`. A cross-tool spanning sibling is no longer disqualifying — `resolveRunHooks`'s
+  // per-tool `capForTool` (see its doc comment) already refuses to let ANY run claim a `PreToolUse:Tc` entry
+  // without a member of tool `Tc`, so a foreign-tool spanning sibling can never absorb it regardless of how
+  // far the boundary widens; only a SAME-tool spanning sibling can still be causally confused for `event`
+  // itself, since both would satisfy `capForTool`'s tool-name check identically.
   const hasSpanningSibling = (event: ToolEvent, self: number): boolean => {
     const from = event.callSequence, to = event.result!.resultSequence;
     for (let other = 0; other < atoms.length; other++) {
       if (other === self) continue;
       const candidate = atoms[other]!;
-      if (candidate.kind === "tool" && candidate.event.result !== undefined &&
+      if (candidate.kind === "tool" && candidate.event.name === event.name && candidate.event.result !== undefined &&
           candidate.event.callSequence < from && candidate.event.result.resultSequence >= to) return true;
     }
     return false;
@@ -729,9 +774,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           const ownWindowClear = windowIsClear(atom.event, index);
           const safeToWiden = ownWindowClear && !hasSpanningSibling(atom.event, index);
           const hookBoundary = safeToWiden ? atom.event.result!.resultSequence : atom.event.callSequence;
-          // H1's `open`-gated cap applies here too (this run has already absorbed the failing call itself, so
-          // `run.lastResultSequence` may already reflect it — meaningless if some OTHER member is still open).
-          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, run.memberToolNames, hookClaims, run.open ? undefined : run.lastResultSequence).infos.length > 0;
+          // Spec D12's unified per-entry rule applies here too: `resolveRunHooks` derives the failing call's
+          // OWN tool cap from `run` directly (this run has already absorbed the failing call itself, per-tool
+          // settled/open state and all — see that function's doc comment).
+          const hooksAbsorbed = resolveRunHooks(run.anchorSequence, hookBoundary, options.hookRuns, run, hookClaims).infos.length > 0;
           if (!hooksAbsorbed && ownWindowClear) run.memberIds.pop();
           // Boundary = the SAME `hookBoundary` the guard above just resolved against (spec D12): the flush
           // happens because this call's result just settled, and sharing the boundary is what keeps the
