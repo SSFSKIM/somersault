@@ -235,9 +235,29 @@ entry stays with that recorded attempt.
   reviewable change": the plan already lands each stream as its own reviewed task in the recommended
   order; the split is its own commit with a zero-assertion-change gate.
 
+- **D-BL7-9** (Task 2 execution) `notePeerTurnUuid` CLAIMS waiting arrivals for the own turn but never
+  drains; emission waits for the next frame's drain. An own turn that ends without one further observed
+  frame therefore drops its claimed arrival (loudly; announcement and log entry unaffected — attr-4 pins
+  this). *Rejected:* draining at claim time — it would emit the arrival item ahead of the turn's own
+  prompt echo, a mis-ordering in the common case traded for a drop in a near-unreachable one (an engine
+  call that emits zero frames); evidence-ordering wins, per the round's own rule.
+
 ## Surprises & Discoveries
 
-(living — append during execution)
+- (Task 3) The `tick()` fixed-drain waits in `arrivals-clear-degraded.test.ts` were accidentally covering
+  a seeding race: the subscribe reply returns before the seed read grounds the chain, so a `vi.waitFor` on
+  the reply alone let pushed arrivals race the grounding. The converted waits poll
+  `record.peerInbound?.seeded` explicitly — the drains had been hiding a real ordering dependency.
+- (Task 5) The imageCodec flake's tracker suspicion was wrong twice: the suite sets
+  `fileParallelism: false` (it never ran in parallel), and the file is faster inside the full suite than
+  alone. The real cause was `reencodeImage`'s own unstubbed 2000 ms `Date.now` deadline spanning decode
+  plus every ladder rung — 1697 ms consumed idle by the floor cell. Reproduced deterministically at 2x CPU
+  oversubscription; fixed with a frozen clock at the call level. The same race exists in
+  `clipboardImage-codec.test.ts` (needs a production clock seam) — recorded as a new tracker entry.
+- (Task 2) `bindingNow` had to check `activeTurnId(record) === ownTurn.turnId` rather than trusting
+  `ownTurn` bare: `ownTurn` is only cleared by drains, so with no intervening frame an arrival landing
+  after the own turn ended would bind to the dead bracket and be dropped, where `next` (claimed by the
+  following bracket) is the faithful answer — the spec's "open exactly while" wording, taken literally.
 
 ## Outcomes & Retrospective
 
