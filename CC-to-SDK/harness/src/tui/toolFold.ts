@@ -564,6 +564,7 @@ function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: rea
   const infos: HookInfo[] = [], matched: HookRunEntry[] = [];
   let totalMs = 0;
   for (const entry of hookRuns) {
+    if (entry.event !== "PreToolUse") continue;   // bl8 spec D1: cluster absorption stays PreToolUse-only; other events render standalone (a later task)
     if (entry.afterSequence < anchorSequence || consumed?.has(entry)) continue;
     const colon = entry.name.indexOf(":"), toolName = colon === -1 ? "" : entry.name.slice(colon + 1);
     let cap: number;

@@ -893,7 +893,7 @@ describe("TS fullscreen fold clauses (canon ZIl 518574–518626)", () => {
 // resolves against `callSequence` instead and gets it right.
 describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => {
   const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
-  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
 
   it("(a) normal wire order — tool_use(10) → hook(afterSequence:10) → tool_result(11): absorbed", () => {
     // Under a stream-position sweep this is the cell that goes RED: the settled atom's stream position is its
@@ -1032,7 +1032,7 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
 // window (G1's cap) happens to cover a foreign PreToolUse entry could still claim it.
 describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of the entry's own tool", () => {
   const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
-  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
   const FULL = { ...OPTIONS, fullscreen: true };
 
   // Fix wave 4 (finding J2) supersedes this cell's original expectation: wave 3's `hasSpanningSibling` was
@@ -1076,7 +1076,7 @@ describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of
 // THAT tool has an open member — fixes the regression without reintroducing wave 2's coarser run-wide cap.
 describe("bl7 fix wave 4 (finding J1, unifies waves 2-3): the causal cap is scoped to the entry's OWN tool, not the whole run", () => {
   const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
-  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ name, durationMs, afterSequence });
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
   const FULL = { ...OPTIONS, fullscreen: true };
 
   it("Bash(call2/result3) + Read(call4/open), breaker(5), Bash(call1/result6): the first run's SETTLED Bash cap (3) still excludes a hook at 4, even though its own Read member is open", () => {

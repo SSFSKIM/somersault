@@ -1597,13 +1597,19 @@ export function useChat(
         // below: a replayed hook's arrival is the moment this client attached, not the moment it ran, so a
         // replay reports no timing rather than a fabricated one, and never re-pairs a hook the tracker cannot
         // have seen before (a fresh tracker on a fresh mount).
-        if (data?.type === "system" && (data.subtype === "hook_started" || data.subtype === "hook_response")) {
+        // bl8 T-QY Task 1: `hook_progress` joins this arm (P119 — alive, liveness-only) alongside the pair.
+        if (data?.type === "system" && (data.subtype === "hook_started" || data.subtype === "hook_response" || data.subtype === "hook_progress")) {
           if (!ev.replay) {
-            if (data.subtype === "hook_started") hookTrackerRef.current!.started(data, nowFn());
-            // D14: `response()` returns true only when it just completed a retained PreToolUse pair — that is
-            // the one moment a hook's arrival can change what an already-open run's expanded block would show,
-            // and nothing else here will ever re-project for it, so this reconcile is the whole of the fix.
-            else if (hookTrackerRef.current!.response(data, nowFn(), documentRef.current!.lastSequence())) reconcile();
+            // bl8 plan-review F5: `started()` always returns true now (every event is retained, not just
+            // PreToolUse) — reconcile so the live in-flight counter's row paints the moment a hook opens,
+            // since the only other repaint trigger is the response that closes it.
+            if (data.subtype === "hook_started") { if (hookTrackerRef.current!.started(data, nowFn())) reconcile(); }
+            // D14, widened: `response()` now returns true for EVERY completed pair (the PreToolUse filter
+            // moved to `resolveRunHooks`), so this reconcile fires for all five reachable events, not just
+            // PreToolUse — each one can close a live counter row or, in a later task, paint a standalone one.
+            else if (data.subtype === "hook_response") { if (hookTrackerRef.current!.response(data, nowFn(), documentRef.current!.lastSequence())) reconcile(); }
+            // `hook_progress` is liveness-only (P119 §2/§6): no timing, no rendered count changes, so no reconcile.
+            else hookTrackerRef.current!.progress(data);
           }
           return;
         }

@@ -598,7 +598,7 @@ describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the r
   it("projectCompact (foldAnchored's segmentRuns call site): a settled, breaker-closed run shows the hook line", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
     const callSequence = doc.toolEvents()[0]!.callSequence;
-    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }] });
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }] });
     expect(allText(items)).toContain("Ran 1 PreToolUse hook");
   });
 
@@ -607,14 +607,14 @@ describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the r
     // exercises the OTHER two production call sites — the ones `projectCompact` above never reaches.
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
     const callSequence = doc.toolEvents()[0]!.callSequence;
-    const items = projectPending(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }] });
+    const items = projectPending(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }] });
     expect(allText(items)).toContain("Ran 1 PreToolUse hook");
   });
 
   it("drops a hook stamped before the call and shows none (the fold's own attribution, exercised end to end)", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
     const callSequence = doc.toolEvents()[0]!.callSequence;
-    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence - 1 }] });
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence - 1, event: "PreToolUse" }] });
     expect(allText(items)).not.toContain("PreToolUse");
   });
 });
@@ -630,8 +630,8 @@ describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook blo
     const doc = oneRead();
     const callSequence = readSequence(doc);
     const hookRuns = [
-      { name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence },
-      { name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence },
+      { id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" },
+      { id: "h2", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" },
     ];
     const items = projectCompact(doc, { ...FS, hookRuns, expandedFolds: new Set(["read-1"]) });
     const texts = lineTexts(items);
@@ -654,7 +654,7 @@ describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook blo
   it("(b) hookCount 1 renders singular 'hook'", () => {
     const doc = oneRead();
     const callSequence = readSequence(doc);
-    const items = projectCompact(doc, { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence }], expandedFolds: new Set(["read-1"]) });
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }], expandedFolds: new Set(["read-1"]) });
     expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.2s)");
   });
 
@@ -667,7 +667,7 @@ describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook blo
   it("(d) gates on hookInfos non-empty, NOT on hookTotalMs > 0 (a zero-duration hook still gets the block)", () => {
     const doc = oneRead();
     const callSequence = readSequence(doc);
-    const items = projectCompact(doc, { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 0, afterSequence: callSequence }], expandedFolds: new Set(["read-1"]) });
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 0, afterSequence: callSequence, event: "PreToolUse" }], expandedFolds: new Set(["read-1"]) });
     expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.0s)");
     expect(lineTexts(items)).toContain("     ⎿ PreToolUse:Read (0.0s)");
   });
@@ -691,7 +691,7 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
       call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     // Collapsed form (no `expandedFolds`): membership alone proves no relocation happened.
     expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,todo-1:row");
     // Expanded form: the absorbed hook actually renders in the group's own block.
@@ -711,7 +711,7 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
       result("todo-1", "board is locked", true),
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,read-2,todo-1:row");  // stayed a member regardless (sibling interference)
     const expanded = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) }));
     expect(expanded.join("\n")).not.toContain("PreToolUse");                 // boundary NOT widened: no new misattribution
@@ -724,7 +724,7 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
     const webSequence = doc.toolEvents().find((e) => e.id === "web-1")!.callSequence;
     const items = projectCompact(doc, {
       ...FS, expandedFolds: new Set(["read-1"]),
-      hookRuns: [{ name: "PreToolUse:WebFetch", durationMs: 300, afterSequence: webSequence }],
+      hookRuns: [{ id: "h1", name: "PreToolUse:WebFetch", durationMs: 300, afterSequence: webSequence, event: "PreToolUse" }],
     });
     expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
   });
@@ -759,7 +759,7 @@ describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling w
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
     // Stamped at exactly todo-1's own callSequence — the normal-order shape F3's widening exists to catch.
-    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     // Relocation is now SUPPRESSED: todo-1's own hook is retained (see below), so it stays a member of
     // mid-1's run rather than popping out into a standalone row — canon's own "a run that absorbed a hook
     // never relocates its errored member" rule (Task 3, carry-forward (4)), now reachable via a WIDENED
@@ -789,7 +789,7 @@ describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling w
       result("d-1"),
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const options = { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence }] };
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     // Widening is refused, so the boundary stays at todo-1's own callSequence and the entry (stamped exactly
     // there) is excluded from mid-1's group just as it would be with no hooks at all — todo-1 still pops out.
     const compact = groupRows(projectCompact(doc, options));
@@ -806,7 +806,7 @@ describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling w
       result("a-1"),
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const options = { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 300, afterSequence: todoSequence }] };
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
     const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
     expect(expandedA.some((t) => t.includes("PreToolUse:Read"))).toBe(true);
   });
@@ -831,7 +831,7 @@ describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocate
 
   it("does NOT pop out when the run already absorbed a PreToolUse hook, even though the window is otherwise clear", () => {
     const readSequence = doc().toolEvents().find((e) => e.id === "read-1")!.callSequence;
-    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence }] }));
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence, event: "PreToolUse" }] }));
     expect(items[0]!.id).toBe("group:read-1,todo-1:row");
   });
 
@@ -840,7 +840,7 @@ describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocate
   // coverage before this fix (a hook on an earlier member never touched the widened-boundary code path).
   it("also does NOT pop out when the hook belongs to the CLOSING call itself, not an earlier member", () => {
     const todoSequence = doc().toolEvents().find((e) => e.id === "todo-1")!.callSequence;
-    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: todoSequence }] }));
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: todoSequence, event: "PreToolUse" }] }));
     expect(items[0]!.id).toBe("group:read-1,todo-1:row");
   });
 });

@@ -3883,4 +3883,23 @@ describe("useChat: hook_response reconciliation (bl7 T-HOOKBLOCK D14)", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(snap.pendingItems).toBe(before);   // no started() stamp was ever recorded for h1 under the replay guard, so the response is dropped, not reconciled
   });
+
+  // bl8 T-QY Task 1 (plan-review F5): `started()` now returns true unconditionally (every event is retained,
+  // not just PreToolUse), so this arm reconciles on the OPEN too. Without it the live in-flight counter's row
+  // would never paint for a slow hook — the only other repaint trigger is the response that closes it, and a
+  // hook that never gets there (or is still running) would sit invisible until an unrelated frame arrived.
+  it("a hook_started as the final ingested event repaints on its own (the live row is observable with no further frame)", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    await waitFor(() => snap.pendingItems !== before);
+    expect(snap.pendingItems).not.toBe(before);   // reconciled off the started() call alone — no response frame followed
+  });
 });
