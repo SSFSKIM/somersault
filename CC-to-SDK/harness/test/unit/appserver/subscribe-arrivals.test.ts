@@ -217,9 +217,12 @@ describe("criterion 22 — a limit:1 walk terminates and strands nothing", () =>
     const entry = ENTRY("arr-start", "peer got there first", null);
     const pages = await (await openThread(rows, [entry])).walk(1);
 
-    expect(seen(pages)).toEqual(new Set(["m0#0", "m1#0", "m2#0", "arr-start"]));
-    // It rides past `limit` rather than being discarded, and only on windows that reach row 0.
-    for (const page of pages) expect(ids(page)[0]).toBe("arr-start");
+    expect(seen(pages)).toEqual(new Set(["m0#0", "m1#0", "m2#0", "arr-start"]));   // no loss over the walk
+    // It arrives on the TERMINAL page and on no other (spec rev 8.3): every earlier page discards, so its
+    // oldest rendered item is not the top of history, and a head there would be a misplacement rather than
+    // an early delivery. It rides past `limit` on the page that does qualify.
+    expect(pages.slice(0, -1).flatMap(ids)).not.toContain("arr-start");
+    expect(ids(pages[pages.length - 1])).toEqual(["arr-start", "m0#0"]);
     expect(pages[pages.length - 1].nextCursor).toBeNull();
   });
 
@@ -247,6 +250,28 @@ describe("criterion 22 — a limit:1 walk terminates and strands nothing", () =>
     const wrong = ENTRY("arr-edge", "peer says hi", anchorOf(rows[4], rows[2]));
     const other = await openThread(rows, [wrong]);
     expect(ids(await other.read({ limit: 1, cursor: "0:8" }))).toEqual(["u4"]);
+  });
+});
+
+describe("the null sentinel's page gate (spec rev 8.3)", () => {
+  it("a transcript longer than `limit`: no head on the cursorless first page, the head on the terminal page, once over the walk", async () => {
+    // THE REGRESSION THIS PINS. Under the earlier window gate, the cursorless read fetches the whole file,
+    // so `windowIncludesRowZero` was true on a page that is actually the NEWEST `limit` items — and the
+    // precedes-everything arrival was prepended to them. A client that dedupes by first-seen id then
+    // assembles it beside the newest turns, which is misplacement, not early delivery.
+    const rows = Array.from({ length: 5 }, (_, i) => ASSISTANT(`r${i}`, `m${i}`, `t${i}`));
+    const entry = ENTRY("arr-top", "peer got there first", null);
+    const { read, walk } = await openThread(rows, [entry]);
+
+    const first = await read({ limit: 2 });
+    expect(ids(first)).toEqual(["m3#0", "m4#0"]);
+    expect(first.data.filter((i) => i.origin)).toEqual([]);
+    expect(first.nextCursor).toBe("0:3");                 // it discarded, so the walk continues — nothing is stranded
+
+    const pages = await walk(2);
+    expect(ids(pages[pages.length - 1])).toEqual(["arr-top", "m0#0"]);
+    expect(pages.flatMap(ids).filter((i) => i === "arr-top")).toHaveLength(1);
+    expect(seen(pages)).toEqual(new Set([...rows.map((_, i) => `m${i}#0`), "arr-top"]));
   });
 });
 

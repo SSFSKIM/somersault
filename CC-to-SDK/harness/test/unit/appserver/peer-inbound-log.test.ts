@@ -568,6 +568,9 @@ describe("Stage C reads back exactly what Stage B wrote", () => {
       ["a-2", "and another", "userMessage"],
     ]);
     for (const item of after.data.slice(before.data.length)) expect(item.origin).toMatchObject({ kind: "peer", verifiedPeerPid: 4242 });
+    // The cursor is untouched: an arrival rides a row, so the coordinate space the client pages through
+    // is the one it already had.
+    expect(after.nextCursor).toBe(before.nextCursor);
     // The counts come off the store, and they agree with what rendered here because every anchor resolved.
     expect(before.arrivals).toEqual({ logged: 0, dropped: 0 });
     expect(after.arrivals).toEqual({ logged: 2, dropped: 0 });
