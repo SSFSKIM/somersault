@@ -921,11 +921,15 @@ export function useChat(
   // `resumeInto`'s same-session APPEND arm still bumps it locally too — appending disk rows in place is not a
   // `replaceDocument` swap, so it is not covered by the centralized bump and stays a deliberate exception.
   const diskGenRef = useRef(0);
-  // bl9 F1: sole hand-off point between the post-follow reconcile effect and the turn-lifecycle event
-  // effect below — set when the reconcile finds a mismatch while a turn is open (disk has no row for it
-  // yet, so rebuilding now would discard already-rendered live content) and consumed once by the turn's own
-  // `turn:end`, whose completion is what writes the turn to disk.
-  const pendingReconcileRef = useRef<(() => void) | null>(null);
+  // bl9 wave 3 (invariant replacement): the post-follow reconcile below is a MOUNT-TIME correction only — it
+  // may rebuild the document exclusively while it is still virgin, i.e. exactly the attach-time mount seed,
+  // untouched. This flag is one of its three virgin signals: set true, forever, the moment a real turn opens
+  // (the turn-start ingest arm below, the same line that mints `liveTurnRef`'s `LiveTurn`) — never reset,
+  // because once a turn has run the document is no longer provably the mount seed and no later state can
+  // undo that. The other two signals live beside the reconcile itself: `diskGenRef` (any document swap) and
+  // the mount-time entry count captured at the reconcile's own setup (any row — local or disk-appended —
+  // added since). Sole reader: the reconcile effect's own `attemptReconcile`.
+  const turnStartedSinceMountRef = useRef(false);
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1516,6 +1520,7 @@ export function useChat(
         // that one feeds `TurnSpinner`'s wall-clock render loop and has to match it; this one is measured and
         // then FORMATTED into a permanent transcript row, so a test has to be able to place both ends of it.
         turnStartRef.current = nowFn(); turnDisqualifiedRef.current = false; turnEndNotifiedRef.current = false;
+        turnStartedSinceMountRef.current = true;   // bl9 wave 3: a real turn ran — the post-follow reconcile's document is no longer virgin, ever again
         liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnMeter(IDLE_METER); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
@@ -1715,10 +1720,6 @@ export function useChat(
       else if (ev.kind === "turn" && ev.phase === "end") {
         mergeThoughtMs();                            // the LAST read of this turn's clock — it is dropped on the next line
         const l = liveTurnRef.current; liveTurnRef.current = null;
-        // bl9 F1: this turn just closed — disk now has its rows. If the post-follow reconcile deferred a
-        // mismatch rebuild because this very turn was open, re-run it now (`liveTurnRef` is already null
-        // above, so its own guard will not defer again unless a NEW turn has already started).
-        if (pendingReconcileRef.current) { const run = pendingReconcileRef.current; pendingReconcileRef.current = null; void run(); }
         if (l?.model) setModel(l.model);
         // The turn's own failure is retained history, not a transient line: the live region dies with the
         // turn, so an error has to enter the document to survive into Static and a later Ctrl-O.
@@ -1814,56 +1815,57 @@ export function useChat(
     if (ranInitialPrompt.current || !opts.initialPrompt) return; ranInitialPrompt.current = true;
     submit(opts.initialPrompt);
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  // bl9 D14 — THE POST-FOLLOW ATTACH RECONCILE. `ccx attach` reads disk before it follows (cli/attach.ts's
-  // `prepareAttach` → the dynamic Ink import → mount → connect → follow), so a concurrent in-place rewind
-  // can truncate/replace the transcript in that gap and nothing else ever corrects it (research-follow-
-  // replay.md §2.1: the session id survives an in-place rewind, so a joiner comparing ids sees nothing).
-  // One post-follow re-read closes the window: once the session reports ready (the remote adapter's
-  // `whenReady()` — RemoteChat only; a lib/loopback session has none, hence the typeof guard), compare the
-  // fresh stamp against `diskStampRef.current` — NOT the frozen `opts.initialDiskStamp` this effect closed
-  // over at mount — read AT FIRE TIME, after the disk read resolves. `diskStampRef` is kept live by every
-  // OTHER disk-driven rebuild (`resumeInto`, `rebuildAfterRewind`, `replaceFromDisk`), so if a real rewind's
-  // rebuild lands while this reconcile's own read is in flight, the live ref already reflects it — comparing
-  // against the stale mount-time `stamp` would then see a mismatch that no longer exists and re-wipe a
-  // transcript that is already current (worst case: clobbering it with THIS read's now-staler rows). Absent
-  // stamp (a fresh launch, a --resume/--continue launch, a session with no `whenReady`) means no read, ever
-  // (A5) — this effect exists ONLY to close attach's own window. A match no-ops (A1b); a mismatch runs the
-  // SAME narrow document rebuild `rebuildAfterRewind` uses (`replaceFromDisk`), labeled "resynced" (not the
-  // default "resumed" — the likely cause is another client's rewind, not a resume) and D16 is the reason it
-  // is narrow: the follow drain's `tasks_changed`/in-flight-turn state is live truth this reconcile must
-  // never clear, unlike a real rewind's taskListRef/bgHarvest resets.
+  // bl9 D14, invariant REPLACED wave 3 — THE POST-FOLLOW ATTACH RECONCILE. `ccx attach` reads disk before it
+  // follows (cli/attach.ts's `prepareAttach` → the dynamic Ink import → mount → connect → follow), so a
+  // concurrent in-place rewind can truncate/replace the transcript in that gap and nothing else ever
+  // corrects it (research-follow-replay.md §2.1: the session id survives an in-place rewind, so a joiner
+  // comparing ids sees nothing). One post-follow re-read closes the window: once the session reports ready
+  // (the remote adapter's `whenReady()` — RemoteChat only; a lib/loopback session has none, hence the
+  // `typeof` guard), re-read disk and compare its stamp against `diskStampRef.current` (read AT FIRE TIME,
+  // not the frozen `opts.initialDiskStamp` this effect closed over at mount).
+  //
+  // THE GOVERNING RULE (wave 3 — waves 1/2 each patched a symptom of NOT having this rule stated): this
+  // reconcile may replace the document ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed,
+  // untouched by anything since. It aborts SILENTLY AND FINALLY (no retry, no re-arm) the moment ANY of
+  // three virgin conditions fails by the time its disk read resolves:
+  //   1. `diskGenRef` moved (any document swap since mount: a live rewind, `/clear`, a resume) — the
+  //      pre-existing generation guard (bl9 F2), which turns out to BE virgin-condition 1 as-is.
+  //   2. `turnStartedSinceMountRef` is true (a turn ran, in full or in part, since mount) — a turn's own
+  //      local chrome (a duration row, a connection-loss notice) and its disk-arriving content both live
+  //      outside what a document-only rebuild can safely reconstruct.
+  //   3. the document's entry count grew past `seedEntryCount` (captured synchronously below, at this
+  //      effect's own setup — i.e. at mount, before any follow event can possibly have landed): any local
+  //      visual or any live-appended SDK row means the document is no longer provably the mount seed.
+  // A virgin document, by construction, holds ONLY disk rows: `cli/attach.ts` seeds `initialEntries` (and
+  // therefore `diskStamp`) from ONE `getSessionMessages` read with no local rows mixed in — the one path
+  // that DOES inject a local row (`no persisted history yet`) never sets `diskStamp`, so the reconcile's own
+  // `!opts.initialDiskStamp` guard already excludes it (A5). So a virgin mismatch rebuild has nothing local
+  // to carry forward — the SIMPLE wholesale rebuild (`replaceFromDisk`, no carry-over) is the correct one,
+  // and there is no title fetch to invalidate because no turn has run to have started one.
+  // A match no-ops (A1b); a virgin mismatch runs the SAME narrow document rebuild `rebuildAfterRewind` uses
+  // (`replaceFromDisk`), labeled "resynced" (not the default "resumed" — the likely cause is another
+  // client's rewind, not a resume). D16 stays the reason `replaceFromDisk` itself is narrow: even a virgin
+  // rebuild must never touch `taskListRef`/`bgHarvest`/the composer prefill — those are rewind-specific
+  // resets, not this reconcile's business.
   useEffect(() => {
     const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
     if (!opts.initialDiskStamp || typeof ready !== "function") return;
     let cancelled = false;
-    // bl9 F1/F2: one attempt, re-armed by `turn:end` (below) rather than re-run inline, so both guards —
-    // "never rebuild while a turn is open" and "a stale-arriving read must never win" — apply identically
-    // whether this is the first attempt or a deferred retry.
+    const seedEntryCount = documentRef.current!.entries().length;   // virgin condition 3, captured AT MOUNT
     const attemptReconcile = async () => {
       if (cancelled || disposed.current) return;
       const id = session.sessionId;
       if (!id) return;
-      const gen = diskGenRef.current;                        // F2: captured AT READ-ISSUE
+      const gen = diskGenRef.current;                        // virgin condition 1: captured AT READ-ISSUE
       const rows = await getSessionMessages(id).catch(() => null);
       if (cancelled || disposed.current || rows === null) return;
-      if (diskGenRef.current !== gen) return;                 // F2: a newer disk-backed rebuild raced ahead — this read is stale regardless of what it says
+      if (diskGenRef.current !== gen) return;                                    // condition 1: a swap already landed
+      if (turnStartedSinceMountRef.current) return;                              // condition 2: a turn ran
+      if (documentRef.current!.entries().length !== seedEntryCount) return;      // condition 3: a row was appended
       const fresh = diskStampOf(rows);
       const live = diskStampRef.current;
       if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
-      // F1: a turn is event-owned — disk has no row for it yet (it lands at turn end), so rebuilding now
-      // would silently drop content already rendered off the live stream. Re-arm for that turn's OWN end
-      // instead of firing mid-turn: its completion is what writes it to disk, so the deferred re-read (this
-      // same function, invoked again below) catches everything then.
-      if (liveTurnRef.current !== null) { pendingReconcileRef.current = attemptReconcile; return; }
-      // W2 F1 (rereview1): `carryLocalRows` is what makes this call safe against the race with `turn:end` —
-      // see `replaceFromDisk`'s own doc. The re-trigger right after is the title's half of the same fix:
-      // `replaceDocument` (inside the call above) unconditionally resets `aiTitleFetched`/bumps `titleGen`
-      // (its own "same boundary, same class" rule), so an `adoptAiTitle()` already in flight from THIS turn's
-      // `turn:end` is silently dropped when it resolves. Re-issuing it here — the latch is already open, so
-      // this is a real fetch, not a no-op — lands the title now instead of making the tab wait for a second
-      // turn to re-trigger it naturally.
-      replaceFromDisk(rows, id, { label: "resynced", carryLocalRows: true });
-      void adoptAiTitle();
+      replaceFromDisk(rows, id, { label: "resynced" });
     };
     // F3: a dead host during the readiness window is a real, expected failure — `whenReady()` mints a fresh
     // promise per call, so it needs its own rejection handler rather than relying on `chatAdapter.ts`'s
@@ -3092,31 +3094,19 @@ export function useChat(
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeRewindPicker() { if (!disposed.current) setRewindPicker({ open: false, anchors: [] }); }
-  /** bl9 D14/D16: the document-only core shared by `rebuildAfterRewind`'s non-empty branch and the
-   *  post-follow reconcile effect above. Deliberately NARROW — clear, replay, reseed /copy, update the
-   *  stamp ref, nothing else — because the reconcile must never touch taskListRef/setTasks, bgHarvest, or
-   *  the composer prefill (D16: those are rewind-specific resets a document-only reconcile has no business
+  /** bl9 D14/D16, simplified wave 3: the document-only core shared by `rebuildAfterRewind`'s non-empty
+   *  branch and the post-follow reconcile effect above. Deliberately NARROW — clear, replay, reseed /copy,
+   *  update the stamp ref, nothing else — because neither caller may touch taskListRef/setTasks, bgHarvest,
+   *  or the composer prefill (D16: those are rewind-specific resets a document-only rebuild has no business
    *  running). `rebuildAfterRewind` layers its own polling, anchor cut, empty-document arm and those three
-   *  resets ON TOP of this. The generation bump (bl9 F2) is now `replaceDocument`'s own job (W2 F2).
+   *  resets ON TOP of this. The generation bump (bl9 F2) is `replaceDocument`'s own job (W2 F2).
    *
-   *  `carryLocalRows` (W2 F1, rereview1): the reconcile's OWN caller sets this — a rewind never does, and
-   *  must not (`rebuildAfterRewind`'s own doc comment: "a rewind is a deliberate session transition"; only
-   *  the persisted rows survive it). The reconcile is different: it races the very turn-end handler that can
-   *  re-arm it, so a mismatch rebuild resolving after that handler already appended LOCAL-ONLY rows (a
-   *  duration row, a connection-loss notice) would erase them outright — reordering cannot fix this, because
-   *  those rows never reach disk for ANY rebuild to recover. Carries every local row forward EXCEPT
-   *  `user-echo`: that one's content already gets a disk-sourced twin once the turn that produced it is
-   *  written (which is exactly what triggered this rebuild), so keeping the echo too would double the prompt.
-   *  Trailing-order (appended after the disk replay, not re-interleaved by original position) — the local
-   *  rows this carries are turn-boundary chrome, not conversation content whose position matters relative to
-   *  a specific disk row, so the cost of exact interleaving buys nothing a reader would notice. */
-  function replaceFromDisk(rows: any[], id?: string, options: { label?: string; carryLocalRows?: boolean } = {}): void {
+   *  No local-row carry-over (wave 3 removed it): the reconcile's own caller now only ever invokes this
+   *  while the document is still VIRGIN (the mount seed, untouched — see the reconcile effect's own doc),
+   *  and a virgin document holds nothing local to carry — `cli/attach.ts` seeds it from disk rows alone. */
+  function replaceFromDisk(rows: any[], id?: string, options: { label?: string } = {}): void {
     clearScreen();
-    const carried = options.carryLocalRows
-      ? documentRef.current!.entries().filter((e) => e.kind === "local-event" && e.event.kind !== "user-echo")
-      : [];
     const next = replayDocument(rows, { id, label: options.label, width: columnsFn() });
-    for (const e of carried) if (e.kind === "local-event") next.appendLocal(e.event, e.identity);
     replaceDocument(next);
     lastAssistant.current = recentAssistantTexts(rows);
     diskStampRef.current = diskStampOf(rows);
