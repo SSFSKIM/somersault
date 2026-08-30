@@ -43,7 +43,7 @@ live("bl8 T-ADVCMD Task 5 (A11) — /advisor sonnet mid-session, through the rea
     const env = { ...process.env, CCX_FLEET_ROOT: fleetRoot } as NodeJS.ProcessEnv;
     // "open a session WITHOUT advisorModel" (Task 5 brief) — advisorModel is absent from config entirely.
     const host = new SessionHost(
-      { short: "b18adv001", name: "bl8-advcmd-live", cwd, kind: "interactive", detached: false,
+      { short: "b18adc01", name: "bl8-advcmd-live", cwd, kind: "interactive", detached: false,
         config: { cwd, model: SONNET, permissionMode: "bypassPermissions", settingSources: [], maxTurns: 4 } as never,
         env },
     );
