@@ -251,13 +251,25 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // possible fates and no way to predict which.
     // No `frame.type === "user"` pre-check: `peerArrival` already owns that, and a second copy of any part
     // of the recognition rule here is the exact drift this task removed.
-    if (noteArrival(srv, record, state, store, frame)) drainArrivals(srv, record, state);
+    const arrived = noteArrival(srv, record, state, store, frame);
+    if (arrived) drainArrivals(srv, record, state);
 
-    // AFTER the arrival, so an arrival never anchors on its own frame: an anchor is the last
-    // filter-surviving frame observed BEFORE the message it positions. A peer row is `isMeta` and does not
-    // survive the reader's filter anyway (measured, M1/M2), so this only decides the unmeasured shape — and
-    // it decides it the way that keeps the anchor a strict predecessor.
-    if (store && readerVisible(frame)) observeVisible(state, frame);
+    // AN ARRIVAL'S OWN FRAME IS NEVER AN ANCHOR — not for itself, and not for the arrival behind it.
+    //
+    // This used to run `readerVisible` on every frame, on the reasoning that a peer row is `isMeta` and so
+    // fails that predicate anyway. That is true of the row the CLI PERSISTS and was assumed of the frame it
+    // STREAMS; the live frame need not carry the flag, and when it does not, an arrival advanced the anchor
+    // onto itself. The next arrival of a batch was then anchored to a peer row — which the reader drops
+    // unconditionally and will never return — so its anchor could not resolve in any window and criterion
+    // 24 withheld it from history forever. Measured twice on LEG 10 of the live suite (three arrivals
+    // announced, exactly one in history) and reproduced offline in peer-inbound-log.test.ts (9b).
+    //
+    // The rule is structural rather than a flag check, which is why it is stated on the ARRIVAL and not on
+    // `readerVisible`: whatever a live frame's flags say, an arrival persists as a row the reader does not
+    // return, so an anchor naming one is unresolvable by construction. `readerVisible` stays a faithful
+    // mirror of the reader over ROWS (its contract test says so); it is simply not asked about a frame this
+    // file has already recognised as something the reader will drop.
+    else if (store && readerVisible(frame)) observeVisible(state, frame);
   };
 
   state.off = record.session.onFrame(onFrame);

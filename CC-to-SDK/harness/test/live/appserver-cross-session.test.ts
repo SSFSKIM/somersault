@@ -107,6 +107,7 @@ import { listenWs } from "../../src/appserver/transport/ws.js";
 import { claudeConfigDir } from "../../src/config/claudeHome.js";
 import { peerArrival } from "../../src/peer/address.js";
 import { arrivalItem } from "../../src/appserver/items/mapper.js";
+import { effectiveArrivalStore } from "../../src/appserver/peerInbound.js";
 
 const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
@@ -941,8 +942,33 @@ live("M8 cross-session, against a real engine", () => {
     const marked = data.filter((i: any) => i?.type === "userMessage" && i.origin);
     expect(marked.length, "thread/read returned no marked arrival item at all for a thread that took three peer messages").toBeGreaterThanOrEqual(1);
     const markedText = marked.map((i: any) => String(i.text ?? "")).join("\n");
+    // A FAILURE HERE PRINTS ITS OWN EVIDENCE. Twice this leg went red on a batch and said only that a token
+    // was missing — which is true of three different defects (a text resolved from the wrong field, an entry
+    // never logged, an entry logged and then withheld at read), and telling them apart cost a keyed run
+    // each. The three channels that can disagree are the announcements, the log, and the page, so all three
+    // are read here and interpolated into the message: computed every run, shown only when an assertion
+    // fails. Bodies never appear — token membership and a 64-character window from the first token, which
+    // is probe 121's hygiene and also just more legible, since every message shares its first ~180
+    // characters.
+    const held = (s: unknown): string => { const t = String(s ?? ""); const found = tokens.filter((k) => t.includes(k)); return found.length ? found.join("+") : "none"; };
+    const win = (s: unknown): string => {
+      const t = String(s ?? "").replace(/\s+/g, " ");
+      const at = tokens.map((k) => t.indexOf(k)).filter((i) => i >= 0);
+      return t === "" ? "(empty)" : at.length ? JSON.stringify(t.slice(Math.min(...at), Math.min(...at) + 64)) : `(no token) ${JSON.stringify(t.slice(0, 64))}`;
+    };
+    const entries = (() => {
+      try { return effectiveArrivalStore((server as any).deps)?.readAll(t3!.sessionId) ?? []; } catch { return []; }
+    })();
+    // From 0, not from a mark: LEG 5 announced these five legs ago, and its window is gone.
+    const announcements = a.since(0).filter((n) => n.method === "thread/peerMessage" && n.params.threadId === t3!.id);
+    const evidence = [
+      `\n  ANNOUNCED (${announcements.length}): ` + announcements.map((n) => `${String(n.params.arrivalUuid).slice(0, 8)} msg_id=${String(n.params.origin?.msg_id ?? "-").slice(0, 8)}`).join(" | "),
+      `  LOGGED (${entries.length}): ` + entries.map((e: any) => `${String(e.id).slice(0, 8)} seq=${e.seq} anchor=${e.anchor === null ? "null(atStart)" : String(e.anchor?.afterUuid ?? "?").slice(0, 8)}${e.ambiguous ? " AMBIGUOUS" : ""} holds=${held(e.text)} ${win(e.text)}`).join("\n            "),
+      `  PAGE arrivals=${JSON.stringify(page.arrivals)} items=${data.length}, of which marked=${marked.length}:`,
+      ...data.map((i: any) => `    ${String(i.id).slice(0, 8)} ${i.type}${i.origin ? " [origin]" : ""} holds=${held(i.text)}`),
+    ].join("\n");
     for (const t of tokens) {
-      expect(markedText, `no marked arrival item carries ${t}: a message the model demonstrably answered is missing from history. The shape to check first is peerArrival's documented limit — a batched frame carrying NO envelope falls back to origin.body, which in a batch names another message.`).toContain(t);
+      expect(markedText, `no marked arrival item carries ${t}: a message the model demonstrably answered is missing from history. Read the three channels below against each other — announced but not logged is the observer, logged but not on the page is an anchor that did not resolve, and on the page with the wrong text is peerArrival.${evidence}`).toContain(t);
     }
     for (const item of marked) {
       expect(item.origin.kind, "an arrival item rendered without the attribution that lets a client recognise it AS an arrival").toBe("peer");

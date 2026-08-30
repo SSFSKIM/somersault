@@ -199,9 +199,20 @@ const contentShape = (content: unknown): string =>
     : Array.isArray(content) ? `blocks[${content.length}]:${content.map((b: any) => String(b?.type ?? "?")).join("/")}`
       : content === undefined ? "(absent)" : typeof content;
 
+/** THE FLAGS A READER FILTERS ON, read off the frame as the LIVE stream delivered it — and the reason this
+ *  column exists is a defect, not curiosity. The harness's arrival log positions each arrival after the last
+ *  frame that survives the transcript reader's filter, and it decided "survives" with the reader's own rule:
+ *  drop `isMeta`, `isSidechain`, `teamName`. A peer row carries `isMeta` ON DISK (measured, this file's own
+ *  persisted rows), and the live frame was ASSUMED to carry it too. If it does not, an arrival advances the
+ *  anchor onto itself and the next arrival of a batch is anchored to a row the reader will never return —
+ *  which withholds it from history permanently. Printing the flags is what turns that assumption into a
+ *  measurement. */
+const readerFlags = (m: any): string =>
+  ["isMeta", "isSidechain", "teamName"].map(k => `${k}=${m?.[k] === undefined ? "(absent)" : JSON.stringify(m[k])}`).join(" ");
+
 /** One peer frame as the LIVE stream delivered it. `raw` and `shape` are how the harness would read it;
  *  `content` is this file's older join, kept because the verdict above is stated in terms of it. */
-interface LiveArrival { order: number; uuid: string; msgId: string; body: string | undefined; content: string; raw: string; shape: string }
+interface LiveArrival { order: number; uuid: string; msgId: string; body: string | undefined; content: string; raw: string; shape: string; flags: string }
 
 type Sess = { q: any; init?: any; sessionId: string; arrivals: LiveArrival[]; results: any[]; text: string[] };
 
@@ -237,6 +248,7 @@ function start(tag: string): Sess {
           content: contentText(m.message?.content),
           raw: rawTextOfLocal(m.message?.content),
           shape: contentShape(m.message?.content),
+          flags: readerFlags(m),
         });
         log(`[${tag}] PEER FRAME #${s.arrivals.length} uuid=${String(m.uuid).slice(0, 8)} msg_id=${m.origin?.msg_id}`);
       }
@@ -481,6 +493,7 @@ function frameShape(A: Attempt): void {
   for (const a of A.live) {
     console.log(`\n  LIVE arrival #${a.order}  uuid=${a.uuid.slice(0, 8)}  origin.msg_id=${a.msgId.slice(0, 8)} -> causer ${causerOf(a.msgId)}   positional own: M${a.order}`);
     console.log(`      content carried as: ${a.shape}${a.raw === a.content ? "" : `   (the two joins DISAGREE: rawTextOf len=${a.raw.length}, contentText len=${a.content.length})`}`);
+    console.log(`      reader flags LIVE:  ${a.flags}`);
     dumpField("      ", "message.content", a.raw, nonces);
     dumpField("      ", "origin.body", a.body, nonces);
     const w = wouldRender(a.raw, a.body);
@@ -499,7 +512,8 @@ function frameShape(A: Attempt): void {
     const body = typeof r?.origin?.body === "string" ? r.origin.body : undefined;
     const msgId = r?.origin?.msg_id === undefined ? undefined : String(r.origin.msg_id);
     console.log(`\n  PERSISTED row #${i + 1}  uuid=${uuid.slice(0, 8)}  ${liveUuids.has(uuid) ? "(a live arrival announced this uuid)" : "(no live arrival carried this uuid)"}`);
-    console.log(`      origin.msg_id=${(msgId ?? "(none)").slice(0, 8)} -> causer ${causerOf(msgId)}  isMeta=${Boolean(r?.isMeta)}  content carried as: ${contentShape(r?.message?.content)}`);
+    console.log(`      origin.msg_id=${(msgId ?? "(none)").slice(0, 8)} -> causer ${causerOf(msgId)}  content carried as: ${contentShape(r?.message?.content)}`);
+    console.log(`      reader flags DISK:  ${readerFlags(r)}   (compare with the LIVE line above: a disagreement is the anchor defect's cause)`);
     dumpField("      ", "message.content", content, nonces);
     dumpField("      ", "origin.body", body, nonces);
     const w = wouldRender(content, body);

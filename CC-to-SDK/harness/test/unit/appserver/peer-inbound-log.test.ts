@@ -575,4 +575,49 @@ describe("Stage C reads back exactly what Stage B wrote", () => {
     expect(before.arrivals).toEqual({ logged: 0, dropped: 0 });
     expect(after.arrivals).toEqual({ logged: 2, dropped: 0 });
   });
+
+  // THE SAME ROUND TRIP, ON THE SHAPE THE ENGINE STREAMS RATHER THAN THE ONE IT PERSISTS. Every fixture
+  // above pushes peer frames carrying `isMeta: true` — which is how the CLI writes an arrival to DISK. A
+  // live replay frame need not carry the flag, and everything downstream turns on whether it does: without
+  // it the frame survives `readerVisible` and ADVANCES THE ANCHOR onto itself, so the next arrival of a
+  // batch is anchored to a peer row — a row the reader drops unconditionally and will therefore never
+  // return. Its anchor can never resolve in any window, and criterion 24 withholds it, correctly, forever.
+  //
+  // That is what reddened LEG 10 of the live suite twice on identical shapes: three arrivals announced,
+  // exactly ONE — the first, the only one anchored to a real row — reaching history. The batch is
+  // essential to the failure and is why no single-arrival leg ever caught it: the first arrival is always
+  // fine, and it is the SECOND that inherits the poisoned anchor.
+  it("(9b) a BATCH of live frames — which need not carry isMeta — all reach history, anchored on the last real row", async () => {
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("c9b"));
+    /** The live shape under test: a peer frame with no `isMeta`. Derived from `PEER` rather than restated,
+     *  so the two fixtures cannot drift into proving different things about different messages. */
+    const LIVE_PEER = (uuid: string, body: string) => { const { isMeta, ...live } = PEER(uuid, body) as any; return live; };
+    const rows = [
+      ROW("r-1", "a question"),
+      ROW("r-2", "an answer", { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "an answer" }] } }),
+    ];
+    const { c, lines, threadId } = await open(e.engine, { getSessionMessages: async () => rows.slice(), arrivalStore: store }, "s9b");
+
+    for (const [uuid, body] of [["a-1", "M1"], ["a-2", "M2"], ["a-3", "M3"]]) e.push(LIVE_PEER(uuid, body));
+    await tick();
+
+    // Every anchor names a row the READER returns. A peer row is not one — on disk it is `isMeta` — so an
+    // anchor naming an arrival is unresolvable by construction, whatever the live frame's flags say.
+    const entries = store.readAll("s9b");
+    expect(entries.map((entry) => entry.id)).toEqual(["a-1", "a-2", "a-3"]);
+    const readerReturns = new Set(rows.map((r: any) => r.uuid));
+    for (const entry of entries) {
+      expect(readerReturns.has(String(entry.anchor?.afterUuid)), `arrival ${entry.id} anchored on ${entry.anchor?.afterUuid}, which the reader never returns`).toBe(true);
+    }
+
+    // …and criterion 20's claim end to end: every message is in history, in a marked item, with its OWN
+    // text. This is LEG 10's assertion at unit scale, on the shape the live run actually delivers.
+    send(c, { id: 22, method: "thread/read", params: { threadId } });
+    await tick();
+    const page = parsed(lines).find((m) => m.id === 22)!.result;
+    const marked = page.data.filter((i: any) => i.type === "userMessage" && i.origin);
+    expect(marked.map((i: any) => [i.id, i.text])).toEqual([["a-1", "M1"], ["a-2", "M2"], ["a-3", "M3"]]);
+    expect(page.arrivals).toEqual({ logged: 3, dropped: 0 });
+  });
 });

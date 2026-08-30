@@ -148,6 +148,30 @@ red on criterion 20:
    both rules over the corpus: with both grammars decoded, the new order renders text **identical to
    today on all 103 rows**, and the new decoder's first envelope equals `origin.body` on all 103.
 
+**M13 — the LEG 10 red was never a text defect. A batch's arrivals were anchoring on each other.**
+M12's fix landed and LEG 10 came back red *identically*, which is itself the finding: two runs failing
+the same way is not the engine's run-to-run batch variance. The decisive detail was in the assertion's
+own output — the reported text is ONE 296-character body, not three joined copies, so `thread/read`
+returned exactly **one** marked item for three announced arrivals. That relocates the defect from what
+an item *says* to which items *exist*, and only three things can drop an arrival between announcement
+and page: it was never logged, it was logged `ambiguous`, or its anchor did not resolve. LEG 5 proves
+all three were announced (so all three were logged, under one store and one `seeded` state), and
+`ambiguous` is set only on the seed-overlap path, which had long since closed.
+
+The remaining cause is the anchor, and it reproduces offline and deterministically
+(`test/unit/appserver/peer-inbound-log.test.ts` (9b), which fails before the fix with *"arrival a-2
+anchored on a-1, which the reader never returns"*): the observer advanced its anchor onto an arrival's
+own frame, so arrival *n+1* was anchored to arrival *n*'s peer row — a row `getSessionMessages` drops
+unconditionally. Every arrival of a batch except the first was therefore withheld from every page,
+permanently. The load-bearing assumption was that a live peer frame carries `isMeta` because the
+persisted row does; every unit fixture in that file encodes it (`PEER(...)` sets `isMeta: true`), which
+is why a suite of 4,283 green tests never saw it. Probe 121 now prints the live and on-disk reader
+flags side by side, so the assumption is measured rather than inherited.
+
+It also explains the shape of both reds exactly: the one surviving item is the *first* arrival, whose
+anchor is a real assistant row — and its text is the first message's body, which is why the failure
+looked like `origin.body` winning a preference contest it was not in.
+
 ## Stage A — ready, and independently valuable
 
 The shipped live path loses text. For the collapsed row above, `peerArrival` returns `origin.body`
@@ -669,6 +693,18 @@ predicates over a corpus of real frame shapes and fails on any disagreement, whi
 drift into a red test at the SDK bump that introduces it — the same posture the drift ritual already
 takes for settings keys.
 
+**And an ARRIVAL's own frame is never an anchor, whatever the predicate says about it** (rev 8.5,
+M13). This was originally left to the predicate on the reasoning that a peer row carries `isMeta` and
+so fails it anyway — true of the row the CLI *persists*, and assumed of the frame it *streams*. The
+live frame need not carry the flag; when it does not, the predicate admits it, the arrival advances
+the anchor onto itself, and the next arrival of a batch is anchored to a peer row. The reader drops
+that row unconditionally, so the anchor can never resolve in any window and the arrival is withheld
+from history permanently — criterion 24 operating correctly on an anchor that was poisoned upstream.
+The rule is therefore stated on the arrival and not on the predicate: an arrival persists as a row
+the reader does not return, so an anchor naming one is unresolvable *by construction*, and no flag
+check can be the thing that saves it. `readerVisible` stays a faithful mirror of the reader over
+rows; it is simply not consulted about a frame this server has already recognised as an arrival.
+
 ### Store injection (finding 9)
 
 `getSessionMessages` is optional on `AppServerDeps` (server.ts:68) with a default resolved at each of
@@ -1057,3 +1093,14 @@ Pending — written at finish.
   the shape that was broken. Depth is now counted per tag name so the grammars cannot close each
   other. Identity is untouched and still impossible: this is a rule about text only, and the rowless
   arrival means cold replay can never render that batch member at all.
+
+- **Rev 8.5 (2026-08-30, Task 7 second red).** Rev 8.4 shipped and LEG 10 failed *identically*, which
+  was the evidence: the reported text is one body, not three, so exactly one marked item existed for
+  three announced arrivals and the defect was never in the text at all (M13). A batch's arrivals were
+  anchoring on **each other** — the observer let an arrival's own frame advance the anchor, so every
+  member after the first named a peer row the reader drops and was withheld from every page forever.
+  Fixed by stating the rule on the arrival rather than on the visibility predicate: a frame this server
+  has recognised as an arrival never advances the anchor. Reproduced offline first — the unit fixtures
+  had encoded the persisted shape (`isMeta: true`) as the live one, which is exactly why 4,283 green
+  tests never caught it — and LEG 10 now prints its own three-channel evidence (announced / logged /
+  paged) on failure, so the next disagreement between those channels costs a read rather than a run.
