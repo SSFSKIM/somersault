@@ -632,7 +632,13 @@ const emit = (run: RunState, hooks: { infos: readonly HookInfo[]; totalMs: numbe
  *  upstream's deferred buffer `i` (L302273–302277). An error is not a boundary and not a counter adjustment (R5.2)
  *  — with ONE fullscreen exception, canon's `popsOutOnError` path (2.1.234:237198–237210), handled below. */
 export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; home: string; fullscreen?: boolean; hookRuns?: readonly HookRunEntry[] }): readonly FoldItem[] {
-  const out: FoldItem[] = []; let run = newRun(), deferred: FoldItem[] = [];
+  const out: FoldItem[] = []; let run = newRun();
+  // Fix-wave 3 (unified invariant): each deferred row carries its OWN governing sequence alongside it —
+  // `messageSequence ?? sequence`, the same real-position value a direct (non-deferred) passthrough push
+  // already slots on below — so `flush` can give it a real `HookSlot` of its own once it lands in `out`,
+  // instead of the row being invisible to `positionOf` and only implicitly bound to its run's slot (the bug
+  // this wave fixes: see `positionOf`'s doc comment for the ordering corner that invisibility caused).
+  let deferred: { item: FoldItem; sequence: number }[] = [];
   // Round review F2: ONE claim set for the whole call, shared by every `resolveRunHooks` call site below —
   // see that function's `consumed` doc. Only `flush`'s real emission adds to it; the `hooksAbsorbed` probe
   // inside the pop-out branch reads it but must stay non-mutating (it is a "what if" check, not a commit).
@@ -683,7 +689,12 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
         out.push({ kind: "group", group: emit(run, hooks) });
       }
     }
-    out.push(...deferred); deferred = []; run = newRun();
+    // Fix-wave 3: a POINT slot per deferred row (`anchor === boundary === its own governing sequence`) — the
+    // same shape every other non-group `out`-push already gets (see `HookSlot`'s doc comment) — so a leftover
+    // hook stamped between two deferred rows, or between a deferred row and the run's own close, lands where
+    // it actually happened instead of being invisible to `positionOf` and swept to right after the group.
+    for (const { item, sequence } of deferred) { slots.push({ index: out.length, anchor: sequence, boundary: sequence }); out.push(item); }
+    deferred = []; run = newRun();
   };
   // Canon decides between "relocate the errored call out of the cluster" and "leave it inside, just close the
   // run" on `o.messages.at(-1)` — whether any other message was absorbed between the call's own message and the
@@ -854,10 +865,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           bodies: body === undefined ? (pending?.bodies ?? []) : [...(pending?.bodies ?? []), body],
         };
       }
-      // bl8 F2 fix: a point slot ONLY when this passthrough actually reaches `out` — one deferred into an
-      // already-open run replays right after that run's own group and stays implicitly bound to ITS slot
-      // (F2 verdict's scope note: no distinct real sequence of its own in `FoldItem` today).
-      if (run.memberIds.length > 0) { deferred.push({ kind: "passthrough", sequence: atom.sequence }); continue; }
+      // Fix-wave 3: a deferred passthrough now carries its OWN governing sequence (`messageSequence ??
+      // sequence`) into the buffer, so `flush` can give it a real point slot once it lands in `out` — it is
+      // no longer merely "implicitly bound" to its run's slot (the F2-era scope note this superseded).
+      if (run.memberIds.length > 0) { deferred.push({ item: { kind: "passthrough", sequence: atom.sequence }, sequence: atom.messageSequence ?? atom.sequence }); continue; }
       slots.push({ index: out.length, anchor: atom.messageSequence ?? atom.sequence, boundary: atom.messageSequence ?? atom.sequence });
       out.push({ kind: "passthrough", sequence: atom.sequence }); continue;
     }
@@ -877,29 +888,41 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   return weaveStandaloneHooks(out, slots, options.hookRuns, hookClaims);
 }
 
-/** One emitted group's placement, recorded by `flush` (pass 1) for `weaveStandaloneHooks` (pass 2) to weave
- *  leftover hook entries around: `index` is the group's own position in `out` (BEFORE pass 2 inserts
- *  anything), `anchor` its `anchorSequence`, `boundary` the flush boundary that closed its causal window
- *  (the same value `resolveRunHooks` capped against — NOT the tighter per-tool cap that may have excluded an
- *  entry from the group itself; a `hookClaims`-rejected entry can still fall inside `[anchor, boundary)` and
- *  park right after the group it was rejected by, spec D12's "park-after-cluster" rule). */
+/** One `out`-push's placement, recorded by `flush` (pass 1) for `weaveStandaloneHooks` (pass 2) to weave
+ *  leftover hook entries around. `index` is the push's own position in `out` (BEFORE pass 2 inserts anything)
+ *  and `anchor` its governing sequence — a group's `anchorSequence`, or (fix-wave 3) the real chronological
+ *  position of ANY other row `segmentRuns` pushes: a standalone tool's `callSequence`, a passthrough's
+ *  `messageSequence ?? sequence`, deferred or not. A GROUP slot additionally carries a real window,
+ *  `boundary` strictly greater than `anchor` — the flush boundary that closed its causal window (the same
+ *  value `resolveRunHooks` capped against — NOT the tighter per-tool cap that may have excluded an entry from
+ *  the group itself; a `hookClaims`-rejected entry can still fall inside `[anchor, boundary)` and park
+ *  somewhere after the group it was rejected by, spec D12's "park-after-cluster" rule). Every OTHER push is a
+ *  POINT slot, `anchor === boundary`, which can never contain anything (see `positionOf`). */
 export type HookSlot = { index: number; anchor: number; boundary: number };
 
 /** bl8 T-QY Task 2 pass 2 (plan-review F1 — a per-flush drain is FORBIDDEN): weaves every hook entry pass 1
- *  left unclaimed into `out`, by the canon placement rule — CONTAINMENT FIRST: AFTER the LAST slot `g` (in
- *  `out`'s own order) with `g.anchor <= entry.afterSequence < g.boundary` (canon's park-after-cluster); only
- *  when NO slot contains it, BEFORE the FIRST slot `g` with `entry.afterSequence < g.anchor` (canon's
- *  empty-run straight-to-output); else at the END. `slots` is already in `out`-position order (pass 1 pushes
- *  it in the same order it pushes groups and point slots), so a forward scan finds "first" and "last"
- *  correctly without re-sorting — but containment must be checked BEFORE the "first later anchor" scan, not
- *  after: `out`-position order and anchor order can diverge (a run whose LATER-started member settles first
- *  is flushed — and its slot pushed — before an earlier-started, still-open sibling; see the WHY-NOT-PER-FLUSH
- *  doc below), so an `out`-earlier slot can have a LARGER anchor than an `out`-later slot that actually
- *  contains the entry. Scanning "first later anchor" before containment would then return the wrong (earlier,
- *  non-containing) slot's position instead of parking after the true containing group (fix-wave round 2, P2:
- *  the reordering shape in cell (i) below, `test (i)`'s B/A runs, is exactly this divergence — point slots
- *  never trigger it themselves, since a point slot's window is empty (`anchor === boundary`), but they DO sit
- *  in the `out`-order scan the "first later anchor" fallback walks, so the same precedence bug reaches them).
+ *  left unclaimed into `out`. Fix-wave 3's UNIFIED placement rule (replacing three waves of ad hoc precedence
+ *  patches — point slots vs. group windows, containment vs. "first later anchor", now this): every entry is
+ *  placed by ONE pure sequence-ordered scan over `slots` (already in `out`-position order — pass 1 pushes a
+ *  slot for every push, group or point, in the exact order it pushes to `out`) — before the first slot whose
+ *  `anchor` exceeds the entry's `afterSequence` — with EXACTLY ONE precedence override: an entry whose
+ *  `afterSequence` falls inside a group's window (`anchor <= afterSequence < boundary`) may never be placed
+ *  before that group's own row, so the scan's starting point clamps to just after the LAST such containing
+ *  slot (in `out`-position order) before the sequence-ordered walk begins. Point slots never trigger the
+ *  clamp themselves (`anchor === boundary`, an empty window), but the walk passes through them exactly like
+ *  any other slot once the clamp has been applied.
+ *
+ *  This is what makes a DEFERRED row (fix-wave 3: a neutral passthrough parked while its run was open, now
+ *  slotted by `flush` the same as everything else) correctly separate a group from a hook entry stamped
+ *  AFTER that row but still inside the group's window — clamping to "right after the group" is a floor, not
+ *  a jump: the walk then continues past every deferred row whose OWN sequence still precedes the entry,
+ *  landing between the deferred row and whatever comes next rather than between the group and its own
+ *  deferred row (the ordering corner this wave fixes). It is also why containment must still be found before
+ *  the walk starts at all, rather than scanning from index 0 unconditionally: `out`-position order and anchor
+ *  order can diverge — a run whose LATER-started member settles first is flushed, and its slot pushed, before
+ *  an earlier-started, still-open sibling (see the bl7 F1 regression cell below) — so an `out`-earlier slot
+ *  can carry a LARGER anchor than an `out`-later slot that actually contains the entry; an unconditional
+ *  scan-from-zero would stop at that earlier, non-containing slot and never reach the true containing group.
  *
  *  WHY NOT per-flush: `segmentRuns` walks the ANCHORED stream, not raw call order, so a run of overlapping
  *  calls whose later-started member finishes first is FLUSHED before an earlier-started, still-open sibling
@@ -929,10 +952,13 @@ export function weaveStandaloneHooks(out: readonly FoldItem[], slots: readonly H
   const leftovers = hookRuns.filter((entry) => !hookClaims.has(entry));
   if (leftovers.length === 0) return out;
   const positionOf = (afterSequence: number): number => {
-    let after = -1;
-    for (const slot of slots) if (slot.anchor <= afterSequence && afterSequence < slot.boundary) after = slot.index;
-    if (after !== -1) return after + 1;
-    for (const slot of slots) if (afterSequence < slot.anchor) return slot.index;
+    // The clamp: the LAST containing group's slot (in `out`-position order — see the doc comment above for
+    // why containment must be found before, not during, the sequence-ordered walk), one past its own index.
+    let start = 0;
+    for (const slot of slots) if (slot.anchor <= afterSequence && afterSequence < slot.boundary) start = slot.index + 1;
+    // The walk: pure sequence order from the clamp onward, through every slot — group or point, deferred row
+    // or not — stopping at the first whose own governing sequence has passed this entry's.
+    for (const slot of slots) if (slot.index >= start && afterSequence < slot.anchor) return slot.index;
     return out.length;
   };
   // position → (label → its coalesced entries), both maps insertion-ordered so emission replays arrival order.

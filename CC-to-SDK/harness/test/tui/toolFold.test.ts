@@ -1246,6 +1246,26 @@ describe("bl8 F2: standalone hook placement around non-group out-pushes (point s
   });
 });
 
+// bl8 fix-wave 3 (unified invariant): a hook entry parked in the SAME deferred buffer as a neutral passthrough
+// that interrupted an open run must still respect that passthrough's own chronological position — containment
+// inside the group's window only clamps the entry to AFTER the group's row, it must never jump it ahead of a
+// deferred row that arrived earlier than it (bl7 research §A5: canon parks the standalone hook in the SAME
+// buffer `d` as every other parked row, in arrival order — containment-first must not skip that ordering).
+describe("bl8 fix-wave 3: a leftover hook stamped between a deferred passthrough and the run's own close keeps its true chronological slot", () => {
+  const kinds = (items: readonly FoldItem[]) => items.map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("group, passthrough@3, hooks@4: the deferred passthrough (parked while the run was open) stays BEFORE the hook, not after", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "neutral", sequence: 999, messageSequence: 3 },
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+    ], { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 90, 4, "PostToolUse")] });
+    expect(kinds(items)).toEqual(["group", "passthrough", "hooks", "passthrough"]);
+  });
+});
+
 describe("bl8 T-QY Task 2: weaveStandaloneHooks (pass 2), direct", () => {
   const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
     ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
