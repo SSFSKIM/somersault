@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ERR } from "./rpc.js";
 import type { AppServer, Handler } from "./server.js";
 import { peerListParams, peerSendParams } from "./schema/peer.js";
-import { buildEnvelope, MAX_FRAME_CHARS, parseAddress, sameNamespace, UNSAFE_ATTR_CHARS } from "../peer/address.js";
+import { buildEnvelope, envelopeBodies, MAX_FRAME_CHARS, parseAddress, sameNamespace, UNSAFE_ATTR_CHARS } from "../peer/address.js";
 import { peerTokenFor, type PeerRow } from "../peer/roster.js";
 
 /** Rows plus the two things only this server can add: which of them it holds, and whether a status could
@@ -75,6 +75,22 @@ export const peerSend: Handler = async (srv, ctx, id, params) => {
   const body = buildEnvelope({ from: gw.address, ...(fromSession ? { fromSession } : {}), ...(fromName ? { fromName } : {}) })(message);
   if (body.length > MAX_FRAME_CHARS) {
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, `message too large for cross-session delivery: ${body.length} characters, limit ${MAX_FRAME_CHARS}`);
+    return;
+  }
+
+  // The sender's own decoder is the honest oracle for "will this body survive its wrapper": a message
+  // carrying an unbalanced wrapper tag decodes back truncated, and refusing is recoverable where a silent
+  // truncation is not (tracker 2026-08-30; the foreign-sender half of that entry has no fix we control).
+  // The question is asked of a PAIR as well as of one envelope, because one envelope does not ask all of it:
+  // a body holding an unclosed `<cross-session-message …>` opener decodes back intact ALONE (the decoder's
+  // last-closing-tag salvage terminates it at the real terminator) and then swallows a neighbour's opening
+  // tag once the receiver collapses two arrivals into one frame — the two-envelope row probe 121 measured,
+  // where the merge destroys both bodies rather than one. A second copy is the cheapest frame that puts this
+  // body beside a sibling it does not control. Balanced quotes of either grammar round-trip in both, so the
+  // 52 measured envelope-quoting rows are untouched.
+  const intact = (raw: string, count: number) => { const d = envelopeBodies(raw); return d.length === count && d.every((b) => b === message); };
+  if (!intact(body, 1) || !intact(`${body}\n${body}`, 2)) {
+    ctx.peer.replyError(id, ERR.INVALID_PARAMS, "message contains an unbalanced <cross-session-message> tag and would be truncated in delivery; balance or remove it");
     return;
   }
 

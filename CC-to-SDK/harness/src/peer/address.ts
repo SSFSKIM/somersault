@@ -97,8 +97,12 @@ const unwrapBody = (s: string): string => s.replace(/^\n/, "").replace(/\n$/, ""
  *  other's tags — a peer forwarding what a subagent sent it, which is ordinary traffic — must not have its
  *  host closed by a tag that never opened it, and two siblings of different grammars in one collapsed frame
  *  must still read as two. Tracking the name of the OUTERMOST open tag and ignoring every tag that is not
- *  that name gives both, and is what a single shared depth counter would get wrong in opposite directions. */
-function envelopeBodies(raw: string): string[] {
+ *  that name gives both, and is what a single shared depth counter would get wrong in opposite directions.
+ *
+ *  EXPORTED for the SENDER's round-trip refusal (`appserver/peerDomain.ts`): the decoder is the authority on
+ *  what a receiver reads back, so `peer/send` asks this function — not a second opinion about tags — whether
+ *  the body it is about to wrap comes back apart as itself. */
+export function envelopeBodies(raw: string): string[] {
   const tag = new RegExp(ENVELOPE_TAG.source, "g");                // fresh: a shared /g regex carries lastIndex
   const bodies: string[] = [];
   let depth = 0, start = -1, lastClose = -1, name = "";

@@ -3,7 +3,7 @@
 // function, which is exactly why the envelope's fixed attribute order is testable at all.
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { parseAddress, sameNamespace, keyFileName, escapeAttr, buildEnvelope, peerArrival, MAX_FRAME_CHARS, UNSAFE_ATTR_CHARS } from "../../../src/peer/address.js";
+import { parseAddress, sameNamespace, keyFileName, escapeAttr, buildEnvelope, envelopeBodies, peerArrival, MAX_FRAME_CHARS, UNSAFE_ATTR_CHARS } from "../../../src/peer/address.js";
 
 describe("parseAddress", () => {
   it("accepts uds: and returns the path", () => {
@@ -63,6 +63,33 @@ describe("buildEnvelope", () => {
   it("escapes a hostile name so the attribute stays well-formed", () => {
     const out = buildEnvelope({ from: "uds:/s.sock", fromName: 'ev"il' })("hi");
     expect(out).toContain('from-name="ev&quot;il"');
+  });
+});
+
+// `envelopeBodies` is exported for ONE caller: `peer/send`, which wraps a body and asks this function
+// whether the wrap comes back apart into exactly that body. These cells pin the four answers that refusal
+// rests on, at the level where the reason is visible — the RPC surface only sees "sent" or "refused".
+describe("envelopeBodies as the sender's oracle", () => {
+  const wrap = buildEnvelope({ from: "uds:/s.sock" });
+  it("returns a quoted complete envelope inside its host's body, not truncated at the inner tag", () => {
+    const body = `see:\n<cross-session-message from="uds:/x" from-mode="prompting">\ninner\n</cross-session-message>\nend`;
+    expect(envelopeBodies(wrap(body))).toEqual([body]);
+  });
+  it("is blind to the other grammar's tags, balanced or not — depth is per tag name", () => {
+    for (const body of [`a <agent-message from="s"> b`, "a </agent-message> b", `a <agent-message from="s">c</agent-message> b`]) {
+      expect(envelopeBodies(wrap(body))).toEqual([body]);
+    }
+  });
+  it("stops at a bare closing tag of OUR grammar, which is the truncation the sender must refuse", () => {
+    expect(envelopeBodies(wrap("before </cross-session-message> after"))).toEqual(["before "]);
+  });
+  it("reads an unclosed opener back intact ALONE and merges it with a sibling — why the oracle asks about a pair", () => {
+    const body = `before <cross-session-message from="uds:/x"> after`;
+    expect(envelopeBodies(wrap(body))).toEqual([body]);                      // alone: the last-closing-tag salvage
+    expect(envelopeBodies(`${wrap(body)}\n${wrap("second")}`)).not.toEqual([body, "second"]);
+  });
+  it("reads two well-formed siblings as two bodies", () => {
+    expect(envelopeBodies(`${wrap("one")}\n${wrap("two")}`)).toEqual(["one", "two"]);
   });
 });
 

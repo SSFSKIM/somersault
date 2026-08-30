@@ -57,22 +57,29 @@ this reds in a real gate; compare against the 2x/4x measurements above rather th
 
 ---
 
-## 2026-08-30 — a literal closing tag in a peer body truncates that sender's own text
+## 2026-08-31 — a FOREIGN sender's literal closing tag truncates that sender's own text
 
-**Source:** M9 branch external review, round 2 (P2) · `src/peer/address.ts` (the depth-counting envelope
-scan, `envelopeBodies`).
+**Source:** M9 branch external review, round 2 (P2); re-adjudicated in BL7 (D-BL7-4), where the half this
+server controls was paid · `src/peer/address.ts` (the depth-counting envelope scan, `envelopeBodies`).
 
-**What:** a peer message whose body contains a literal `</cross-session-message>` or `</agent-message>`
-matching its own wrapper is read as ending there. `before </cross-session-message> after` decodes as
-`before `, and the rest of that message is dropped from the item, the log entry and history alike.
+**What:** an arriving peer message whose body contains a literal `</cross-session-message>` or
+`</agent-message>` matching its own wrapper is read as ending there. `before </cross-session-message> after`
+decodes as `before `, and the rest of that message is dropped from the item, the log entry and history alike.
 
-**Cost:** one sender loses the tail of one message it wrote. It cannot reach any other session's text: the
-truncation is confined to the frame the sender itself produced.
+**What is no longer in scope of this entry:** our own outbound path. `peer/send` now wraps the body, asks
+this same decoder to read it back — alone and beside a sibling copy, which is the collapsed two-envelope
+frame probe 121 measured — and refuses with INVALID_PARAMS naming the unbalanced tag unless both come back as
+exactly the message. Nothing this server writes can truncate itself any more; what remains is arrivals from
+senders that are not us.
 
-**Why deferred:** the CLI's wrapper grammar carries no escaping and no length prefix, so nothing in the
-frame distinguishes a payload tag from the real terminator — a fix means either inventing framing this
-server does not control, or failing the whole message closed, which loses more than the truncation does.
-Self-inflicted-only and bounded; not worth either trade until a real sender hits it.
+**Cost:** a foreign sender loses the tail of one message it wrote. It cannot reach any other session's text:
+the truncation is confined to the frame that sender itself produced.
+
+**Why still deferred:** the CLI's wrapper grammar carries no escaping and no length prefix, so nothing in the
+frame distinguishes a payload tag from the real terminator, and **no framing exists that this server
+controls** on the inbound path — a fix means either inventing framing we do not own, or failing the whole
+message closed, which loses more than the truncation does. The send side was fixable precisely because it is
+ours; the receive side is not, and stays bounded and self-inflicted-per-sender until a real sender hits it.
 
 ---
 
