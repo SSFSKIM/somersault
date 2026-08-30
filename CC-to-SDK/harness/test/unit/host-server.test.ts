@@ -18,6 +18,7 @@ const stub = { busy: () => false, pending: () => [], answer: () => ({ ok: true }
   rewindAnchors: async () => [], rewindDryRun: async () => ({ canRewind: false }), rewind: async () => {},
   getSettings: async () => ({}), listDirs: () => [], addDir: async () => {}, removeDir: async () => {},
   setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {}, setEffort: async () => {},
+  setAdvisorModel: async () => {},
   // F9 T-IMAGE Task 5 (I3b): this file exercises status/stop framing only, so a fixed stub reply is enough.
   stageImage: () => ({ path: "/fake/staged/path" }) };
 

@@ -329,6 +329,7 @@ describe("client/remote.ts — the flat/structured answer split", () => {
       rewindAnchors: async () => [], rewindDryRun: async () => ({}) as never, rewind: async () => {},
       getSettings: async () => ({}), listDirs: () => [], addDir: async () => {}, removeDir: async () => {},
       setOutputStyle: async () => {}, addRule: async () => {}, removeRule: async () => {}, setEffort: async () => {},
+      setAdvisorModel: async () => {},
     } as unknown as HostHandlers;
     const server = new HostServer(handlers, p);
     await server.listen();

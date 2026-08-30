@@ -99,6 +99,15 @@ export interface SettingsOps {
    *  replayed. The level is already validated when it arrives (`tui/modelPickerModel.ts`'s `isEffortLevel`);
    *  the wire schema closes the domain again because `applyFlagSettings` itself validates nothing. */
   setEffort(level: EffortLevel): Promise<void>;
+  /** Task 2 (bl8 T-ADVCMD): mirrors `setEffort` exactly and for the same reason — not a control-channel
+   *  setter (no SDK `setAdvisorModel`; the host writes the same dynamic flag layer via
+   *  `applyFlagSettings({advisorModel})`, verified live mid-session by P119 case 4). No validation at
+   *  this layer: the dialog already validated the choice, and the wire schema documents the domain again
+   *  because `applyFlagSettings` itself validates nothing. `null` is a first-class value, not "no
+   *  argument" — it is canon's off path (`{advisorModel: null}`), and the host's tri-state accumulator
+   *  needs it distinct from "never touched" so a resumed engine does not resurrect a launch-config
+   *  advisor the user just turned off. */
+  setAdvisorModel(model: string | null): Promise<void>;
 }
 
 export function hasDecisionFeed(s: ChatSession): s is ChatSession & DecisionFeed {

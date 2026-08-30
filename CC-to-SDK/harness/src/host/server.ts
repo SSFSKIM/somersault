@@ -69,6 +69,9 @@ export interface HostHandlers {
   // WAVE C TASK 11 (EP-C6): the effort flip. Same flag-layer group, same no-busy-gate rule — it touches the
   // dynamic settings layer, never the engine conversation, so it is safe mid-turn.
   setEffort(level: "low" | "medium" | "high" | "xhigh" | "max"): Promise<void>;
+  // Task 2 (bl8 T-ADVCMD): same never-busy-gated flag-layer group as setEffort above. `null` clears the
+  // advisor (canon's off path) — a first-class value, not "no argument".
+  setAdvisorModel(model: string | null): Promise<void>;
   // F9 T-IMAGE Task 5 (I3b): mint a staging file. Synchronous by contract (`ImageStaging.stage` is a
   // cheap mkdir+empty-write, never busy-gated — like the flag-layer ops above, it touches only the
   // staging directory, not the engine conversation) — never awaited by dispatch, so this can never be the
@@ -251,6 +254,7 @@ export class HostServer {
       case "remove_dir": await this.handlers.removeDir(op.data.path); return { ok: true };
       case "set_output_style": await this.handlers.setOutputStyle(op.data.style); return { ok: true };
       case "set_effort": await this.handlers.setEffort(op.data.level); return { ok: true };
+      case "set_advisor_model": await this.handlers.setAdvisorModel(op.data.model); return { ok: true };
       case "add_rule": await this.handlers.addRule(op.data.behavior, op.data.rule); return { ok: true };
       case "remove_rule": await this.handlers.removeRule(op.data.behavior, op.data.rule); return { ok: true };
     }

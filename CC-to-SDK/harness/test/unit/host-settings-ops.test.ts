@@ -102,6 +102,17 @@ describe("host settings ops", () => {
     await host.stop();
   });
 
+  // Task 2 (bl8 T-ADVCMD). Probe 102's sibling for the advisor: no SDK `setAdvisorModel`, the host answers
+  // with `applyFlagSettings({advisorModel})` — verified live mid-session by P119 case 4.
+  it("set_advisor_model applies {advisorModel} and records it", async () => {
+    const { calls, fake } = fakeSession();
+    const host = hostFor(fake);
+    await host.start();
+    await host.setAdvisorModel("claude-opus-5");
+    expect(calls).toEqual([{ advisorModel: "claude-opus-5" }]);
+    await host.stop();
+  });
+
   it("REPLAYS accumulated flag state after resumeSession", async () => {
     // Same fake session instance is reused across both opens (swapEngine's openSession call), so its
     // `calls` array observes the replay's own applyFlagSettings sends once cleared of the pre-resume ones.
@@ -111,6 +122,7 @@ describe("host settings ops", () => {
     await host.addDir("/a");
     await host.setOutputStyle("concise");
     await host.setEffort("low");
+    await host.setAdvisorModel("claude-opus-5");
     calls.length = 0;
     await host.resumeSession("resume-1");
     expect(calls).toContainEqual({ permissions: { ...emptyPerms, additionalDirectories: ["/a"] } });
@@ -118,7 +130,53 @@ describe("host settings ops", () => {
     // A resumed session is a NEW CLI process with an EMPTY flag layer, so the effort the user set has to be
     // re-sent with the rest or the engine silently reverts to the launch level.
     expect(calls).toContainEqual({ effortLevel: "low" });
+    // Same reason, third member: the advisor set mid-session has to survive the swap too (plan-review F3).
+    expect(calls).toContainEqual({ advisorModel: "claude-opus-5" });
     await host.stop();
+  });
+
+  // Task 2 (bl8 T-ADVCMD), plan-review F3: the three swap cases the tri-state accumulator exists for.
+  describe("advisor tri-state accumulator survives engine swaps (F3)", () => {
+    it("(a) enable-from-none then a swap → the new engine receives {advisorModel: <id>}", async () => {
+      const { calls, fake } = fakeSession();
+      const host = hostFor(fake);
+      await host.start();
+      await host.setAdvisorModel("claude-opus-5");
+      calls.length = 0;
+      await host.resumeSession("resume-1");
+      expect(calls).toContainEqual({ advisorModel: "claude-opus-5" });
+      await host.stop();
+    });
+
+    it("(b) an explicit off (null) is replayed too — a launch-config advisor is NOT resurrected", async () => {
+      // `flagAdvisorModel` starts `undefined` (launch config governs, nothing to replay) regardless of
+      // what the launch config names — engineConfig spreads it into every swap unconditionally. Setting
+      // the accumulator to `null` (an explicit `/advisor off`) must override that on the NEXT swap, which
+      // is exactly the case a truthy check (`if (this.flagAdvisorModel)`, like the other two members use)
+      // would get wrong: `null` is falsy and would silently replay nothing.
+      const { calls, fake } = fakeSession();
+      const host = hostFor(fake, undefined, { advisorModel: "claude-fable-5" });
+      await host.start();
+      await host.setAdvisorModel(null);
+      calls.length = 0;
+      await host.resumeSession("resume-1");
+      expect(calls).toContainEqual({ advisorModel: null });
+      await host.stop();
+    });
+
+    it("(c) a rejected apply leaves the accumulator untouched — a later swap replays nothing", async () => {
+      const { calls, fake } = fakeSession({ applyFlagSettings: vi.fn(async () => { throw new Error("rejected"); }) });
+      const host = hostFor(fake);
+      await host.start();
+      await expect(host.setAdvisorModel("claude-opus-5")).rejects.toThrow("rejected");
+      // Swap onto a session whose applyFlagSettings no longer throws, so a spurious replay would be
+      // observable — the accumulator must still be `undefined` and send nothing at all.
+      fake.applyFlagSettings = vi.fn(async (s: Record<string, unknown>) => { calls.push(s); });
+      calls.length = 0;
+      await host.resumeSession("resume-1");
+      expect(calls.some((c) => typeof c === "object" && c !== null && "advisorModel" in c)).toBe(false);
+      await host.stop();
+    });
   });
 
   it("REPLAYS accumulated flag state after rewind too", async () => {
