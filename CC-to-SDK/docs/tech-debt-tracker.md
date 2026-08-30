@@ -33,6 +33,30 @@ spec beside the definition of `arrivals.logged` so the next reviewer reads it ra
 
 ---
 
+## 2026-08-31 — `clipboardImage-codec.test.ts`'s oversized-PNG cells race the codec's 2 s belt
+
+**Source:** BL7 Task 5, which diagnosed and paid off the `imageCodec-encode.test.ts` entry that stood here
+and found this one sharing its mechanism · `test/unit/clipboardImage-codec.test.ts` with
+`src/tui/clipboardImage.ts`.
+
+**What:** `reencodeImage` BUILDS its own deadline (`Date.now` against the 2 s `PROCESSING_BUDGET_MS`)
+spanning the decode and every rung of the retry ladder; when it trips, the ladder returns
+`budget-exceeded` instead of finishing. The encode test's cells were fixed by handing `reencodeImage` a
+frozen clock, but these two cells reach the ladder through `pasteClipboardImage`, which takes no clock —
+`ClipboardDeps` has no seam for one. Measured on a 10-core machine: at 2x CPU oversubscription both cells
+pass, spending ~1.7 s of the 2 s budget; at 4x, both red with `expected 'image-failed' to be 'image'`.
+
+**Cost:** on a heavily loaded host, two reds that are not regressions — the same re-run-and-judge tax the
+encode entry used to carry, at a higher load threshold.
+
+**Why deferred:** the fix is a production seam (a clock, or a codec injection point, on `ClipboardDeps`)
+added purely for a test's benefit, and the measured trigger is 4x oversubscription — well past a gate run
+sharing a machine with normal work (five full-suite runs and a 2x-load run were green). The belt itself is
+a deliberate cooperative guard, not a defect, so there is nothing to fix on the product side. Revisit if
+this reds in a real gate; compare against the 2x/4x measurements above rather than re-deriving them.
+
+---
+
 ## 2026-08-30 — a literal closing tag in a peer body truncates that sender's own text
 
 **Source:** M9 branch external review, round 2 (P2) · `src/peer/address.ts` (the depth-counting envelope
@@ -126,22 +150,6 @@ flake rather than as a statement about behavior.
 
 **Why deferred:** the suite is deterministic today (the engine fake is push-driven, and the reads it waits
 on are injected), and converting it is mechanical work with no current failure to motivate it.
-
----
-
-## 2026-08-30 — `imageCodec-encode.test.ts` retry ladder reds intermittently under full-suite load
-
-**Source:** M9 gate runs (carried) · `test/unit/imageCodec-encode.test.ts`.
-
-**What:** the encode retry-ladder assertions fail occasionally when the whole unit suite runs in parallel,
-and pass when the file runs alone.
-
-**Cost:** a red that is not a regression, which costs whoever is running the gate a re-run and a judgement
-call each time.
-
-**Why deferred:** the suspicion is memory pressure from parallel workers changing where the ladder stops,
-which means the fix is either a resource bound on the test or a rewrite of what it asserts — and neither is
-worth doing on a suspicion. Isolate and record when it reds; do not accept a red that reproduces alone.
 
 ---
 

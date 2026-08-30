@@ -37,6 +37,15 @@ function syntheticPng(width: number, height: number): Buffer {
 function gradientPng(width: number, height: number): Buffer {
   return buildPng({ width, height, colorType: 2, filterMode: 0, deflateLevel: 0 });
 }
+/** A FROZEN clock, handed to every `reencodeImage` call below. Unlike `encodePng`/`decodePng`, which take
+ *  an injected `Deadline` (and get `NEVER_EXPIRES` here), `reencodeImage` BUILDS its own from `Date.now`
+ *  and `PROCESSING_BUDGET_MS` — one 2 s belt spanning the decode and every rung of the ladder. Nothing in
+ *  this file is about that belt, but without a stub these cells raced it: measured idle, the 2000x2000
+ *  floor cell spent 1697 ms of the 2000 ms budget, and under CPU contention it returned `budget-exceeded`
+ *  where it asserts `encode-floor` (BL7 Task 5 — that is the whole of this file's "flakes under load").
+ *  A clock that never advances is the `reencodeImage`-level `NEVER_EXPIRES`. The belt itself is proven
+ *  where it can be proven deterministically — `imageCodec-decode.test.ts`, on an injected deadline. */
+const FROZEN = { now: () => 0 };
 
 // The byte-budget boundary matrix needs the EXACT size this module's own adaptive `encodePng`
 // produces for a real fixture's pixel content at full resolution — not formula-derivable (deflate
@@ -51,7 +60,7 @@ const EXACT_ENCODE_BYTES = (encodePng(exactFixturePixels, NEVER_EXPIRES) as { ok
 describe("I5b(a) downscale — box average", () => {
   it("an oversized-DIMENSION image comes back SMALLER IN PIXELS, not merely in bytes", () => {
     const src = syntheticPng(3200, 1800); // > maxDimension on the long side
-    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000 });
+    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000, ...FROZEN });
     expect(r.ok).toBe(true);
     const dims = (r as any).value.dimensions;
     expect(dims.width).toBeLessThanOrEqual(2000);
@@ -78,7 +87,7 @@ describe("I5b(a) downscale — box average", () => {
 describe("I5b(b) byte-only recompression and the adaptive-filter sabotage guard", () => {
   it("an in-dimension but oversized-BYTES image recompresses under budget at FULL resolution", () => {
     const src = gradientPng(1200, 900); // large on disk, inside maxDimension
-    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000 });
+    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000, ...FROZEN });
     expect(r.ok).toBe(true);
     expect((r as any).value.data.length).toBeLessThanOrEqual(512_000);
     expect((r as any).value.dimensions).toEqual({ width: 1200, height: 900 }); // dimensions UNCHANGED
@@ -103,7 +112,7 @@ describe("I5b(b) byte-only recompression and the adaptive-filter sabotage guard"
     // uncompressed level-0 encoding of a 2000x2000 image would itself exceed `MAX_SOURCE_BYTES`
     // before the ladder is ever reached — a decode-side concern, not what this cell tests.
     const r = reencodeImage({ data: syntheticPng(2000, 2000), mediaType: "image/png" },
-                            { maxDimension: 2000, byteBudget: 100 });
+                            { maxDimension: 2000, byteBudget: 100, ...FROZEN });
     expect(r).toMatchObject({ ok: false, code: "encode-floor" });
     expect((r as any).reason).toContain(String(RETRY_FLOOR_DIMENSION));
   });
@@ -115,7 +124,7 @@ describe("I5b(b) byte-only recompression and the adaptive-filter sabotage guard"
   it("the ladder always tries the floor itself before giving up — a halving step never jumps past it", () => {
     const seen: number[] = [];
     const r = reencodeImage({ data: syntheticPng(400, 400), mediaType: "image/png" },
-                            { maxDimension: 400, byteBudget: 1, onRung: (w: number) => seen.push(w) });
+                            { maxDimension: 400, byteBudget: 1, ...FROZEN, onRung: (w: number) => seen.push(w) });
     expect(r).toMatchObject({ ok: false, code: "encode-floor" });
     expect(seen).toContain(RETRY_FLOOR_DIMENSION);           // the floor itself was one of the tried rungs
     expect(Math.min(...seen)).toBe(RETRY_FLOOR_DIMENSION);   // and nothing tried ever went BELOW it
@@ -126,19 +135,19 @@ describe("I5b(b) byte-only recompression and the adaptive-filter sabotage guard"
 describe("I5b(c) the decode union, consumed exhaustively", () => {
   it("a palette PNG under budget passes through UNCHANGED — same bytes out", () => {
     const src = fixture("palette-64x48.png");
-    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000 });
+    const r = reencodeImage({ data: src, mediaType: "image/png" }, { maxDimension: 2000, byteBudget: 512_000, ...FROZEN });
     expect((r as any).value.data).toEqual(src);
     expect((r as any).value.dimensions).toEqual({ width: 64, height: 48 });
   });
 
   it("a passthrough variant that needs resizing fails `unsupported-variant`, never silently ships oversized", () => {
     const r = reencodeImage({ data: fixture("interlaced-64x48.png"), mediaType: "image/png" },
-                            { maxDimension: 32, byteBudget: 512_000 });
+                            { maxDimension: 32, byteBudget: 512_000, ...FROZEN });
     expect(r).toMatchObject({ ok: false, code: "unsupported-variant" });
   });
 
   it("decode failures propagate their CODE through the ladder unchanged", () => {
-    expect(reencodeImage({ data: fixture("bomb.png"), mediaType: "image/png" }))
+    expect(reencodeImage({ data: fixture("bomb.png"), mediaType: "image/png" }, FROZEN))
       .toMatchObject({ ok: false, code: "inflate-overrun" });
   });
 });
@@ -147,7 +156,7 @@ describe("I5b(c) the decode union, consumed exhaustively", () => {
 describe("I5b boundary matrix", () => {
   it.each(triple(2000))("maxDimension $label on the long side", ({ at, passes }) => {
     const r = reencodeImage({ data: syntheticPng(at, 100), mediaType: "image/png" },
-                            { maxDimension: 2000, byteBudget: 5_000_000 });
+                            { maxDimension: 2000, byteBudget: 5_000_000, ...FROZEN });
     expect((r as any).value.dimensions.width).toBe(passes ? at : 2000); // at/below: untouched; above: clamped
   });
 
@@ -164,7 +173,7 @@ describe("I5b boundary matrix", () => {
     const budget = EXACT_ENCODE_BYTES + budgetOffset;
     const seen: number[] = [];
     const r = reencodeImage({ data: fixture("exactly-512000.png"), mediaType: "image/png" },
-                            { maxDimension: 4000, byteBudget: budget, onRung: (w: number) => seen.push(w) });
+                            { maxDimension: 4000, byteBudget: budget, ...FROZEN, onRung: (w: number) => seen.push(w) });
     expect(r.ok).toBe(true);
     expect(seen).toHaveLength(rungs);
     expect((r as any).value.data.length).toBeLessThanOrEqual(budget);
