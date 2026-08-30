@@ -53,9 +53,13 @@
 //        still pinning `isMeta`, because the day the reader stops dropping the row the merge would
 //        double-render it and `resolveArrivals`'s dedupe guard is what has to be re-verified.
 //        AND ITS SHARPER HALF: a FOLDED arrival is persisted NOWHERE — no `isMeta` row, no row at all
-//        (LEG 4, read against a positive control on the same transcript). So a folded message has no live
-//        item, no cold row, and exactly one durable trace: its `thread/peerMessage` announcement. The
-//        announcement is therefore load-bearing rather than a convenience.
+//        (LEG 4, read against a positive control on the same transcript). So a folded message's only
+//        DURABLE trace is its `thread/peerMessage` announcement, which is what makes the announcement
+//        load-bearing rather than a convenience.
+//        BL7 (#64) gives it a live trace too, and only inside the bracket that earned it: the folded
+//        arrival is emitted as a user item of the HOST turn the engine folded it into — exactly one, on
+//        that turn's id and no later one (LEG 4's (2b) and its successor re-check). The cold half is
+//        unchanged; a live item is not a row.
 //
 // ── THE FOUR DELEGATED UNKNOWNS, AND HOW EACH IS CLOSED ────────────────────────────────────────────
 //   U1 · the healthy terminal state's NAME → `completed` (M1). LEG 1 + LEG 6.
@@ -609,9 +613,20 @@ live("M8 cross-session, against a real engine", () => {
     expect(at(arrivalUuid, "started"), "the fold's bracket opened before the host turn's").toBeGreaterThan(at(String(hostUuid), "started"));
     expect(at(arrivalUuid, "completed"), "the fold's bracket did not close inside the host turn's — the two were not nested").toBeLessThan(at(String(hostUuid), "completed"));
 
-    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the only surviving vehicle for a
-    // folded message's text: it produces no live item (there is no adopted turn to own one) and, as the
-    // block below measures, no persisted row either.
+    // (2b) THE FOLD'S OWN LIVE ITEM, AND WHOSE TURN IT IS (BL7 #64). The engine folded this message into
+    // the turn that was already running — the nested bracket above is that fold, measured — so the running
+    // turn is the only honest home for its item. EXACTLY ONE, on the HOST turn's id: before the binding
+    // this arrival was held unattributed and then emitted into whichever turn drained next, which for this
+    // very leg is the successor turn started in (4) below. The successor assertion after it is therefore
+    // not belt-and-braces; it is the defect's own signature.
+    const foldItems = (): Notif[] => a.since(mark).filter((n) =>
+      n.method === "item/completed" && n.params.threadId === t2!.id && n.params.item?.id === arrivalUuid);
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival did not become exactly one item of the host turn").toEqual([hostTurnId]);
+
+    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the second vehicle for a folded
+    // message's text: it now also produces a live item on the host turn (2b), and, as the block below
+    // measures, still no persisted row.
     const text = agentText(mark, t2.id);
     expect(text, "the folded turn's completion does not carry the host prompt's answer").toContain("OMEGA");
     expect(text, "the folded turn's completion does not carry the peer message's token").toContain(token);
@@ -642,6 +657,11 @@ live("M8 cross-session, against a real engine", () => {
     expect(after.turn.status, "a following local turn was not accepted — the fold left an adoption holding busy").toBe("inProgress");
     await a.waitFor("the following local turn to complete", 300_000,
       (n) => n.method === "turn/completed" && n.params.threadId === t2!.id && n.params.turn?.id === String(after.turn.id), mark);
+    // …and the successor turn, now run to completion, carries NO item for the folded arrival. This is the
+    // #64 defect's exact live signature: an arrival held past its own bracket surfaced as a user item of
+    // the next turn to drain the queue — a message the client would have read as having been sent now.
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival was re-emitted into a turn it did not belong to").toEqual([hostTurnId]);
   }, 1_500_000);
 
   it("LEG 5 — batch (closes U3): a batched turn carries ONE bracket per queued message, and the engine attributes every one of them to the message that CAUSED the turn", async () => {
