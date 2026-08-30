@@ -18,6 +18,7 @@ import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } fro
 const race = vi.hoisted(() => ({
   afterMarkerRename: null as (() => void) | null,
   afterLockUnlink: null as ((path: string) => void) | null,
+  beforeListing: null as ((path: string) => void) | null,
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
@@ -33,6 +34,14 @@ vi.mock("node:fs", async (importOriginal) => {
       real.unlinkSync(path);
       if (String(path).includes(LOCK_DIR)) race.afterLockUnlink?.(String(path));
     },
+    // The THIRD seam, and the one that schedules a competitor BETWEEN a snapshot's two reads rather than
+    // inside a critical section: it fires immediately before a session directory is listed. Whichever of
+    // the two reads a snapshot does first, the competitor lands between them — which is what makes the
+    // read ORDER, and only the read order, decide the answer.
+    readdirSync: ((path: Parameters<typeof real.readdirSync>[0], opts?: never) => {
+      if (!String(path).includes(LOCK_DIR)) race.beforeListing?.(String(path));
+      return real.readdirSync(path, opts);
+    }) as typeof real.readdirSync,
   };
 });
 const LOCK_DIR = ".marker.lock";
@@ -327,6 +336,64 @@ describe("countsSnapshot — one marker read answers both questions", () => {
     for (let i = 0; i <= ARRIVAL_LOG_CAP; i++) store.append(entry(i));
     writeFileSync(join(root, "s1", "marker.json"), "");                  // truncated: the count is lost
     expect(fsArrivalStore(root).countsSnapshot("s1")).toBeNull();
+  });
+});
+
+describe("a count is sampled FILES FIRST, so a concurrent eviction can only over-report", () => {
+  // The count is two reads of two things that move together — the entry files and the `dropped` marker —
+  // and an eviction between them changes both. Which read goes first therefore decides the DIRECTION of the
+  // error, and only one direction is permitted (this file's header: a count must never come out short).
+  //
+  //   marker first: `dropped` is sampled at 0, the eviction lands, the listing sees the post-eviction 32 —
+  //   32 reported for 33 arrivals, an UNDER-report that certifies a history as complete while it is missing
+  //   a message. Forbidden.
+  //   files first: the listing is sampled, then `dropped` — which only ever grows, so the sum is at least
+  //   the true count at the instant of the listing, and at worst counts the victim twice. Over-report, the
+  //   direction that reveals a gap that isn't there.
+  //
+  // `beforeListing` runs the competitor immediately before the directory is listed, which puts it AFTER the
+  // marker read under the old order and BEFORE it under the new one — one fixture, both orders, no timing.
+  const evictingCompetitor = (root: string) => () => {
+    race.beforeListing = null;                       // one-shot: the competitor's own append lists too
+    fsArrivalStore(root).append(entry(ARRIVAL_LOG_CAP));
+  };
+
+  it("countsSnapshot never reports fewer arrivals than the session received", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));   // at the cap, and no marker yet
+    race.beforeListing = evictingCompetitor(root);
+    let snap: { logged: number; dropped: number } | null;
+    try { snap = store.countsSnapshot("s1"); } finally { race.beforeListing = null; }
+
+    // 33 arrivals exist. The reply may say 33, or 34 if it counted the victim on both sides — never 32.
+    expect(snap).not.toBeNull();
+    expect(snap!.logged).toBeGreaterThanOrEqual(ARRIVAL_LOG_CAP + 1);
+    expect(store.readAll("s1").length + store.countsSnapshot("s1")!.dropped).toBe(ARRIVAL_LOG_CAP + 1);
+  });
+
+  it("counts() takes the same order, because the same pair moves the same way", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    race.beforeListing = evictingCompetitor(root);
+    let counts: { logged: number; dropped: number };
+    try { counts = store.counts("s1"); } finally { race.beforeListing = null; }
+    expect(counts.logged).toBeGreaterThanOrEqual(ARRIVAL_LOG_CAP + 1);
+  });
+
+  it("nextSeq keeps the OPPOSITE order deliberately, and a competitor's append cannot lower it", () => {
+    // The asymmetry is not an oversight. `nextSeq` wants the LARGEST value it can justify — a seq below
+    // another writer's collides — and `seqHigh` only moves on eviction while the listing sees every append,
+    // so the freshest read must be the LISTING. Reading files last is what makes a concurrent append raise
+    // this answer instead of being missed by it.
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i < ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    race.beforeListing = evictingCompetitor(root);
+    let next: number;
+    try { next = store.nextSeq("s1"); } finally { race.beforeListing = null; }
+    expect(next).toBeGreaterThan(ARRIVAL_LOG_CAP);   // past the competitor's own entry, never back onto it
   });
 });
 

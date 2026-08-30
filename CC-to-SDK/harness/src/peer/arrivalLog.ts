@@ -444,23 +444,55 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
     /** `logged` is the PRE-eviction total: what the session actually received, which is the only number a
      *  client can check its own completeness against. An unknown `dropped` reads as 0 here, which would
      *  under-report — hence the contract above: this pair is void while `isDegraded` is true, and a reply
-     *  path must ask `countsSnapshot` instead, which cannot be separated from that verdict. */
+     *  path must ask `countsSnapshot` instead, which cannot be separated from that verdict.
+     *
+     *  FILES FIRST — see `countsSnapshot`, whose header carries the whole argument. */
     counts(sessionId: string): ArrivalCounts {
-      const marker = readMarker(sessionId);
-      const dropped = marker.dropped ?? 0;
-      return { logged: listFiles(sessionId).length + dropped, dropped };
+      const files = listFiles(sessionId);
+      const dropped = readMarker(sessionId).dropped ?? 0;
+      return { logged: files.length + dropped, dropped };
     },
 
-    /** ONE marker read decides both the numbers and whether they may be published. The listing runs before
-     *  the verdict deliberately: an unlistable directory degrades the session (see `listFiles`), and a
-     *  verdict read before that failure would certify a count taken from a directory we could not read. */
+    /** ONE marker read decides both the numbers and whether they may be published — and it comes SECOND.
+     *
+     *  THE READ ORDER IS THE COUNT'S CORRECTNESS, because `logged` is a sum over two things that move
+     *  TOGETHER: an eviction in another process adds one to `dropped` and removes one file, in that order.
+     *  Sampling either side across that eviction therefore misses a half, and which half decides the
+     *  direction of the error — of which exactly one is permitted (module header: the count must never come
+     *  out SHORT).
+     *
+     *    MARKER FIRST is the forbidden direction. `dropped` is sampled at 0, the 33rd append and its
+     *    eviction land, the listing sees the post-eviction 32 — and 32 goes out for a session that received
+     *    33, which is a history certifying itself complete while it is missing a message. Measured
+     *    deterministically in `arrival-log.test.ts` ("a count is sampled FILES FIRST"); it was this file's
+     *    order until the review found it, and the comment here already claimed the other one.
+     *    FILES FIRST is safe by MONOTONICITY, not by luck: `dropped` never decreases, so
+     *    `files(t0) + dropped(t1) >= files(t0) + dropped(t0)`, which is the true total at the instant of the
+     *    listing. The worst case is the victim counted on both sides — an over-report by one, which reveals
+     *    a gap that isn't there.
+     *
+     *  Rejected: taking the marker lock to snapshot both. It is a WRITE-side lock with a bounded wait that
+     *  degrades the session when it cannot be taken (see `append`), so putting it on every `thread/read`
+     *  would trade a permitted one-off over-report for a stall and a spurious `arrivals: null`. The cheap
+     *  order gives the permitted direction with no lock at all.
+     *
+     *  The listing also runs before the VERDICT, and separately so: an unlistable directory degrades the
+     *  session (see `listFiles`), and a verdict read before that failure would certify a count taken from a
+     *  directory we could not read. */
     countsSnapshot(sessionId: string): ArrivalCounts | null {
-      const marker = readMarker(sessionId);
       const files = listFiles(sessionId);
+      const marker = readMarker(sessionId);
       if (marker.dropped === null || marker.degraded || degradedLatch.has(sessionId)) return null;
       return { logged: files.length + marker.dropped, dropped: marker.dropped };
     },
 
+    /** THE OPPOSITE ORDER, DELIBERATELY — marker first, listing last, and it is not a stale copy of what
+     *  `countsSnapshot` used to do. This answer wants the LARGEST value it can justify (a seq below another
+     *  writer's collides, where an over-large one merely skips a number), and the two sources age
+     *  differently: `seqHigh` only moves when an eviction writes it, while the listing sees every append.
+     *  So the FRESHEST read has to be the listing, which is what makes a concurrent append raise this
+     *  answer rather than be missed by it. Eviction cannot undercut it either — it removes the oldest entry,
+     *  never the newest, and records `seqHigh` on the way past. */
     nextSeq(sessionId: string): number {
       const marker = readMarker(sessionId);
       const files = listFiles(sessionId);
