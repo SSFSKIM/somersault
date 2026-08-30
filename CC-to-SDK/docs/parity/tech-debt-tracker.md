@@ -19,6 +19,13 @@ the commit) or when a round's scope absorbs them.
 - **`suggest-popup.test.tsx` "/revi opens the popup" uses a fixed `setTimeout(20)`** (recorded F6, restated
   here so it has a tracker row). Races the provider's passive stdin subscription under parallel load;
   convert to `waitFor` when the file is next touched.
+- **Malformed hook names bypass the tool-scoped spanning guard** (found bl7 closing review, 2026-08-30;
+  `toolFold.ts` ~712). A hook entry whose `hook_name` lacks a `:<Tool>` suffix falls back to match-any
+  (deliberate fail-open), but the pop-out widening's spanning-sibling check is now tool-scoped, so such an
+  entry from a cross-tool spanning sibling could be swept into the widened window (bogus hook line +
+  suppressed relocation). Unreachable on the observed wire (P116: hook_name is always well-formed) and needs
+  an already-exotic interleaving on top. Fix direction if it ever matters: refuse widening when any candidate
+  entry in the window is malformed. Logged per the bl7 convergence rule after four fix waves.
 - **Pre-existing real-subprocess codec flakes in `test:unit`** (observed bl7 fix-wave gates, 2026-08-30).
   Image/clipboard codec tests that shell out can each fail ~once per full-suite run under load and pass in
   isolation. Bound them (retry or serialize) when they next block a gate read.
