@@ -198,10 +198,13 @@ restricting to the catalog is the recorded divergence).
 
 ### 3.4 Startup notification
 
-When `advisorModel` resolves at launch and pairing passes: post `Advisor Tool (experimental) is on and
-may use more tokens · /advisor` (medium priority) on the notification queue; when pairing fails, canon's
-sibling text (`Advisor will not activate on the main model (advisor is less capable); subagents may still
-use it and may use more tokens · /advisor`). One-shot per session.
+When `advisorModel` resolves at launch: three states, canon's `jxe` @178890000 verbatim — (i) main
+model has NO advisor rank (`!supportsAdvisor(main)`, canon `!M8(j)`): post NOTHING; (ii) ranked and
+pairing passes: `Advisor Tool (experimental) is on and may use more tokens · /advisor` (medium
+priority); (iii) ranked but pairing fails: the sibling text (`Advisor will not activate on the main
+model (advisor is less capable); subagents may still use it and may use more tokens · /advisor`).
+One-shot per session. [v3: was drafted binary on pairing; the Task 4 implementer surfaced canon's
+unranked-main silent gate — amended to three-state at invocation.]
 
 ## 4. Out of scope (recorded)
 
