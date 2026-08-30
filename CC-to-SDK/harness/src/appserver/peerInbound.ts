@@ -285,13 +285,14 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   const arrival = peerArrival(frame);
   if (!arrival) return false;
   // THE ONE CASE THE READER CANNOT SEE, recorded here because THIS is where it would be visible. When
-  // several peer messages batch into one turn, every frame of the batch repeats the CAUSING message's
-  // `origin.msg_id` and `origin.body` (probe 121, CLI 2.1.250). `peerArrival` reads each frame's own
-  // envelopes instead, which is what recovers the messages that repeated body does not name — but a batched
-  // frame carrying NO envelope has its own text nowhere and falls back to that repeated body. A repeated
-  // `msg_id` ACROSS arrivals is the only evidence of a batch, and it lives in this queue rather than in any
-  // one frame, so the reader is structurally unable to see it. No such frame has been observed, nothing here
-  // acts on it, and it is a known limit rather than an oversight.
+  // several peer messages batch into one turn, every frame of the batch can repeat the CAUSING message's
+  // `origin.msg_id` and `origin.body` (probe 121, CLI 2.1.250). A repeated `msg_id` ACROSS arrivals is the
+  // only evidence of a batch, and it lives in this queue rather than in any one frame, so the reader is
+  // structurally unable to see it — and still does not need to. `peerArrival` renders what each frame
+  // ITSELF carries (its envelopes, else its own text), and consults that repeated body only for a frame
+  // carrying no text at all, so the batch never decides what a message says. What a batch still decides is
+  // `origin`, which is forwarded verbatim: in a batch it names the causing message, and no arrival uuid can
+  // be said to name any particular message (M9 spec, verdict C).
 
   // The FRAME's own uuid, never a minted one when it has one. This id is what the transcript persists, and
   // `items/replay.ts` gives a replayed user row exactly this id — which is the whole mechanism by which a

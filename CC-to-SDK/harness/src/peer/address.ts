@@ -60,10 +60,19 @@ export function buildEnvelope(a: { from: string; fromSession?: string; fromName?
   return (body: string) => `${open}\n${body}\n</cross-session-message>`;
 }
 
-/** The envelope's two tags in the INBOUND direction — `buildEnvelope`'s mirror, and deliberately its
- *  neighbour so the grammar cannot drift between two files that would otherwise each hold half of it. It is
- *  a DECODER and never a RECOGNISER: see `peerArrival` on why that distinction is the whole point. */
-const ENVELOPE_TAG = /<cross-session-message\s[^>]*>|<\/cross-session-message>/g;
+/** The envelope tags in the INBOUND direction — `buildEnvelope`'s mirror, and deliberately its neighbour so
+ *  the grammar cannot drift between two files that would otherwise each hold half of it. It is a DECODER and
+ *  never a RECOGNISER: see `peerArrival` on why that distinction is the whole point.
+ *
+ *  THERE ARE TWO GRAMMARS, and only one of them is ours. A scan of every peer row on this machine
+ *  (2026-08-30, 5,676 transcripts, 103 rows with `origin.kind === "peer"`) found 79 wrapped in
+ *  `<agent-message from="…">` rather than the `<cross-session-message …>` this file writes — the CLI's own
+ *  wrapper for an AGENT peer, where ours is the wrapper for a SESSION peer. A decoder that knew only the tag
+ *  it writes was blind to three quarters of the real corpus. It rendered them correctly anyway by falling
+ *  through to `origin.body`, which is precisely why the gap stayed invisible until that fallback had to
+ *  narrow (see `peerArrival`): a fallback can hide a missing grammar for as long as it is the wrong answer
+ *  in no measured case, and not one moment longer. */
+const ENVELOPE_TAG = /<(cross-session-message|agent-message)\s[^>]*>|<\/(cross-session-message|agent-message)>/g;
 
 /** `buildEnvelope` writes the body as `\n${body}\n`. Undoing exactly that one wrapping pair — never more —
  *  is what makes a row read as the body the framer would have decoded. */
@@ -82,14 +91,27 @@ const unwrapBody = (s: string): string => s.replace(/^\n/, "").replace(/\n$/, ""
  *
  *  Counting depth is the only rule that reads both correctly: a quoted envelope stays inside its host's
  *  body verbatim, and siblings stay separate. An opening tag the text never closes is terminated at the
- *  last closing tag inside it, which keeps an unbalanced quote from truncating its host as well. */
+ *  last closing tag inside it, which keeps an unbalanced quote from truncating its host as well.
+ *
+ *  Depth is counted PER TAG NAME, now that there are two grammars. An envelope of one grammar quoting the
+ *  other's tags — a peer forwarding what a subagent sent it, which is ordinary traffic — must not have its
+ *  host closed by a tag that never opened it, and two siblings of different grammars in one collapsed frame
+ *  must still read as two. Tracking the name of the OUTERMOST open tag and ignoring every tag that is not
+ *  that name gives both, and is what a single shared depth counter would get wrong in opposite directions. */
 function envelopeBodies(raw: string): string[] {
   const tag = new RegExp(ENVELOPE_TAG.source, "g");                // fresh: a shared /g regex carries lastIndex
   const bodies: string[] = [];
-  let depth = 0, start = -1, lastClose = -1;
+  let depth = 0, start = -1, lastClose = -1, name = "";
   for (let m = tag.exec(raw); m; m = tag.exec(raw)) {
-    if (m[0][1] !== "/") { if (depth === 0) { start = tag.lastIndex; lastClose = -1; } depth++; }
-    else if (depth > 0) { lastClose = m.index; if (--depth === 0) bodies.push(unwrapBody(raw.slice(start, m.index))); }
+    const opening = m[1] !== undefined;
+    const tagName = m[1] ?? m[2];
+    if (opening) {
+      if (depth === 0) { name = tagName; start = tag.lastIndex; lastClose = -1; depth = 1; }
+      else if (tagName === name) depth++;
+    } else if (depth > 0 && tagName === name) {
+      lastClose = m.index;
+      if (--depth === 0) bodies.push(unwrapBody(raw.slice(start, m.index)));
+    }
   }
   if (depth > 0 && lastClose > start) bodies.push(unwrapBody(raw.slice(start, lastClose)));
   return bodies;
@@ -136,38 +158,61 @@ export interface PeerArrival {
  *  message; falsely recognising one silently destroys a message nobody sent. The envelope below is read only
  *  AFTER this gate has said "peer", to learn what an arrival SAYS — never to decide that it is one.
  *
- *  THE TEXT IS THE FRAME'S OWN ENVELOPES, and `origin.body` only when the frame carries none. That is a
- *  DELIBERATE DEVIATION from the SDK's guidance, which says to render `origin.body` "instead of re-parsing
- *  the message text" — right for a single message, and measurably wrong for a BATCH. Probe 121
- *  (probes/probes/121-batch-arrival-attribution.ts, CLI 2.1.250) sent three messages that the engine folded
- *  into two turns, and the engine COLLAPSES such a batch: three sent messages left two rows, one of them
- *  carrying TWO envelopes (M2 and M3) under one uuid while its `origin.body` named only M2. So M3's text
- *  exists in no `origin.body` anywhere, and preferring that field renders one message's text under another
- *  message's id while the other message is destroyed — the model was given all three.
+ *  THE TEXT IS WHAT THE FRAME ITSELF CARRIES: its own envelopes, else its own raw text, and `origin.body`
+ *  ONLY when the frame carries no text at all. That is a DELIBERATE DEVIATION from the SDK's guidance, which
+ *  says to render `origin.body` "instead of re-parsing the message text" — right for a single message, and
+ *  measurably wrong for a BATCH, where `origin.body` is the CAUSING message's text repeated across every
+ *  frame of the batch. Two measurements say so, and they are different failures:
  *
- *  Preferring the envelope is safe because it is not a different answer anywhere it is not the batch: over
- *  all 170 peer rows on this machine (107 files) this rule returns byte-identical text on 169 and differs on
- *  exactly one — probe 121's own batch row, where it recovers the message that was otherwise unrecoverable.
- *  150 of those rows carry `origin.body` and NO envelope, which is why the fallback stays.
+ *   1  COLLAPSE. Probe 121 (probes/probes/121-batch-arrival-attribution.ts, CLI 2.1.250) sent three messages
+ *      the engine folded into two turns. Three sent messages left two rows, one carrying TWO envelopes (M2
+ *      and M3) under one uuid while its `origin.body` named only M2 — so M3's text exists in no
+ *      `origin.body` anywhere, and preferring that field renders one message under another's id while
+ *      destroying the other, though the model was given all three.
+ *   2  THE ENVELOPE-LESS BATCH MEMBER. LEG 10 of test/live/appserver-cross-session.test.ts went red on
+ *      2026-08-30 (CLI 2.1.250): all three of a batch's arrival items rendered byte-for-byte the FIRST
+ *      message's 355-character `origin.body`, so two messages the model demonstrably answered were absent
+ *      from history. Under this file's rules that is only reachable through the envelope-less arm — the
+ *      shape the old comment named as an open limit and declined to guess at. It is intermittent: probe
+ *      121's keyed re-run the same day produced no envelope-less frame at all (three frames, envelope counts
+ *      1/1/2), and LEG 5's original "one msg_id for the whole batch" finding did not reproduce either (two
+ *      msg_ids for two turns). The engine's batch shape varies run to run, so both arms are live.
+ *
+ *  PREFERRING THE FRAME'S OWN TEXT IS ONLY SAFE BECAUSE THE GRAMMAR ABOVE IS COMPLETE. Every peer row on
+ *  this machine (2026-08-30, 5,676 transcripts, 103 peer rows) carries the CLI's wrapper — a preamble, the
+ *  envelope, and a 560-character safety postamble the peer did not write — and 79 of them use
+ *  `<agent-message …>`, which this decoder did not know until now. Preferring raw text under the old
+ *  one-grammar decoder would have rendered that boilerplate as the peer's message on three quarters of the
+ *  corpus. With both grammars decoded, the new rule renders text IDENTICAL to the old one on all 103 rows
+ *  (measured by replaying both rules over the corpus), and differs only where the frame carries text in a
+ *  grammar nobody has seen — where a visibly over-rendered message is the honest outcome and a silently
+ *  substituted one is not.
  *
  *  Sibling envelopes are JOINED rather than reduced to the first: the first is an arbitrary member of a
  *  collapsed batch, so picking it would destroy the rest exactly as `origin.body` does. One frame really did
  *  carry both messages, so one item carrying both texts is the faithful rendering — splitting them would
  *  need a second id the announcement never used and nothing could dedupe against.
  *
- *  THE LIMIT THIS DOES NOT CLOSE: an arrival that batches and carries NO envelope. Such a frame falls back
- *  to `origin.body`, which in a batch is the CAUSING message's text — and `peerArrival` cannot detect the
- *  case, because it is pure and sees ONE frame while the evidence for a batch is a repeated `msg_id` ACROSS
- *  frames, which only the caller can see. No frame in the measured corpus is both envelope-less and batched;
- *  this is a documented limit rather than an oversight, and guessing would be worse than naming it. */
+ *  WHAT THIS STILL DOES NOT CLAIM: which message an arrival uuid NAMES. Identity remains non-bijective —
+ *  probe 121's verdict C, re-confirmed on 2026-08-30: one frame carried two messages and one announced
+ *  arrival persisted no row at all. This rule is about TEXT ONLY: what is rendered is what that frame
+ *  carried. `origin` is forwarded verbatim beside it and says what the engine claims, which in a batch is
+ *  the causing message — the two are deliberately not reconciled here, because reconciling them would mean
+ *  inventing an attribution the data does not contain. */
 export function peerArrival(frame: unknown): PeerArrival | undefined {
   const f = frame as any;
   if (f?.type !== "user") return undefined;
   const origin = f.origin && typeof f.origin === "object" ? (f.origin as Record<string, unknown>) : undefined;
   if (origin?.kind !== "peer") return undefined;
-  const raw = rawTextOf(f.message?.content);
+  const content = f.message?.content;
+  const raw = rawTextOf(content);
   const envelopes = envelopeBodies(raw);
-  const body = envelopes.length ? envelopes.join("\n\n") : typeof origin.body === "string" ? origin.body : raw;
+  // A frame with NO content carries no text, whatever `rawTextOf` returns for it: that path JSON-stringifies
+  // and yields the two-character string `""`, which must never outrank a body the framer did supply.
+  const own = content === undefined || content === null ? "" : raw;
+  const body = envelopes.length ? envelopes.join("\n\n")
+    : own.trim() !== "" ? own
+      : typeof origin.body === "string" ? origin.body : raw;
   return {
     // ONE ceiling, applied on every input shape. The body is written by a process this server does not
     // control, and a cap enforced on one path only is a cap that changes what a message says depending on

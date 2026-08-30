@@ -103,7 +103,10 @@ the engine's replayed frames and never receives inbound messages directly.
 **M9m — but no text need be lost.** Across all 170 peer rows on this machine (107 files), rendering
 *every* top-level envelope in a frame rather than `origin.body` returns byte-identical text on 169
 rows and differs on exactly one — the collapsed batch row, where it recovers the message that
-`origin.body` drops. 150 rows carry `origin.body` and no envelope, so the fallback stays.
+`origin.body` drops. 150 rows carry `origin.body` and no envelope, so the fallback stays. *(Corrected
+by M12.3: on the 2026-08-30 corpus those envelope-less rows are overwhelmingly the `<agent-message …>`
+grammar the decoder did not yet know — the fallback was standing in for a missing grammar, not for an
+absent envelope. It stays, but only for a frame carrying no text at all.)*
 
 **M10 — a synchronous durable write is cheap enough to sit in the observation path.** Write-plus-
 rename on the real `~/.claude` filesystem, 500 iterations: p50 0.143ms, p95 0.201ms, p99 0.896ms, max
@@ -118,6 +121,33 @@ Running the real `rowKind` over all 170 peer rows on this machine: 170 classify 
 phantom. **This answers U2**, and it is structural rather than lucky — all four phantom classifiers
 anchor at the start of the text, and a peer frame opens with a CLI-authored preamble.
 
+**M12 — the envelope-less batched frame is real, intermittent, and there are TWO envelope grammars.**
+Three measurements, taken 2026-08-30 after LEG 10 of `test/live/appserver-cross-session.test.ts` went
+red on criterion 20:
+
+1. **The red itself (CLI 2.1.250, keyed).** All three arrival items of one batch rendered
+   byte-for-byte the *first* message's 355-character `origin.body`; two messages the model
+   demonstrably answered were absent from history. Under Stage A's rules that is reachable only
+   through the envelope-less arm — the very shape the residual limit below named and declined to
+   guess at. LEG 5 passed on the same run, so all three arrivals were announced and logged; the loss
+   was in the text, not in the count.
+2. **It does not reproduce on demand (probe 121, keyed re-run, same CLI).** The same three-message
+   burst produced three frames with envelope counts 1 / 1 / 2 and zero envelope-less frames; the
+   middle frame was a *bare* envelope with neither the CLI's preamble nor its postamble; coverage was
+   3/3 under both the old and the new preference order. LEG 5's original "one `msg_id` for the whole
+   batch" finding did not reproduce either — two `msg_id`s for two turns. **The engine's batch shape
+   varies from run to run**, so both arms are live and neither can be designed away. Verdict C is
+   otherwise re-confirmed: one frame carried two messages, and one announced arrival persisted no row
+   at all.
+3. **The corpus says why preferring the frame's own text is only safe with a complete grammar**
+   (5,676 transcripts, 103 rows with `origin.kind === "peer"`). Every peer row carries a CLI-authored
+   wrapper — preamble, envelope, and a 560-character safety postamble the peer did not write — and
+   **79 of the 103 use `<agent-message from="…">`**, the CLI's wrapper for an *agent* peer, not the
+   `<cross-session-message …>` this codebase writes for a *session* peer. Those 79 were invisible to
+   the one-grammar decoder and rendered correctly only by falling through to `origin.body`. Replaying
+   both rules over the corpus: with both grammars decoded, the new order renders text **identical to
+   today on all 103 rows**, and the new decoder's first envelope equals `origin.body` on all 103.
+
 ## Stage A — ready, and independently valuable
 
 The shipped live path loses text. For the collapsed row above, `peerArrival` returns `origin.body`
@@ -125,11 +155,13 @@ The shipped live path loses text. For the collapsed row above, `peerArrival` ret
 both.
 
 `peerArrival` changes to read **every top-level envelope** in the frame and join them, falling back
-to `origin.body` when the frame carries none. Extraction is a depth-counting scan, not a regex
-capture, because both obvious captures are measurably wrong on this machine's transcripts: a lazy
-capture truncates at the first closing tag when a peer's body quotes an envelope (52 rows here carry
-a complete envelope, only 12 are arrivals), and a greedy capture merges sibling envelopes with their
-tags intact.
+to the frame's **own raw text** when it carries no envelope, and to `origin.body` only when the frame
+carries no text at all. Extraction is a depth-counting scan, not a regex capture, because both
+obvious captures are measurably wrong on this machine's transcripts: a lazy capture truncates at the
+first closing tag when a peer's body quotes an envelope (52 rows here carry a complete envelope, only
+12 are arrivals), and a greedy capture merges sibling envelopes with their tags intact. Depth is
+counted **per tag name**, because there are two grammars (M12.3) and an envelope of one must not be
+closed by a quoted tag of the other.
 
 This is a **deliberate deviation** from the SDK's guidance to render `origin.body` "instead of
 re-parsing the message text" — right for a single message, measurably wrong for a batch.
@@ -138,10 +170,26 @@ It does not restore per-message identity, which M8m shows is gone. It guarantees
 silently dropped**: one item under one uuid carrying everything that frame delivered, which is a
 faithful rendering of what the engine actually produced.
 
-**The limit it does not close:** a frame that is both envelope-less and batched still returns the
-causing message's text. `peerArrival` is pure and sees one frame, while the evidence of a batch is a
-repeated `msg_id` *across* frames. No shape in the measured corpus is both, and guessing would be
-worse than a documented limit.
+**The limit that WAS open, and is now closed (rev 8.4, M12).** A frame that is both envelope-less and
+batched used to return the causing message's text; LEG 10 caught exactly that, live. It is closed by
+preferring the frame's own text over `origin.body`, which is a change of *ordering* and not of
+mechanism: `peerArrival` is still pure and still sees one frame, and it still cannot tell a batch from
+a single message. It no longer needs to. `origin.body` is a claim about a message *some* frame
+carried; the frame's own text is a fact about *this* frame. Preferring the fact needs no knowledge of
+the batch, and the fallback survives for the one case where there is no fact to prefer — a frame
+carrying no text at all.
+
+Two things make that ordering safe rather than merely better on one failing run, and both are
+measured (M12.3): the decoder now knows **both** wrapper grammars, without which the new order would
+render 630 characters of CLI safety boilerplate as the peer's own message on three quarters of the
+real corpus; and with both known, the new order renders text identical to the old on every peer row
+that exists on this machine. The change is a no-op everywhere except the shape that was broken.
+
+**What is still not claimed: identity.** Nothing here says which message an arrival uuid *names* —
+M8m's impossibility stands, re-confirmed by M12.2. This rule is about text only: what is rendered is
+what that frame carried. `origin` travels verbatim beside it and says what the engine claims, which in
+a batch is the causing message. The two are deliberately left unreconciled, because reconciling them
+would mean inventing an attribution the data does not contain.
 
 ## Stages B–D — the mechanism
 
@@ -308,9 +356,11 @@ the crash-window limit it replaces.
 Rev 5 said "splice arrival rows into the array before `itemsFromTranscript`", and the review
 (round 4, findings 6 and 8) showed both available readings of that sentence are broken. A stored
 entry `{id, origin, text}` is not a transcript row — fed to `itemsFromTranscript` it emits nothing.
-Reconstructing a synthetic user row does not fix it: the synthetic row would route through
-`peerArrival`, whose envelope scan finds nothing in the already-joined `text`, falls back to
-`origin.body`, and **re-loses the very message Stage A recovered**. And mutating the array that
+Reconstructing a synthetic user row does not fix it: the synthetic row would route back through
+`peerArrival`, re-deciding a text this server had already decided — under rev 8.4's order it now
+returns the joined text unchanged, and under the order that shipped at the time it fell through to
+`origin.body` and **re-lost the very message Stage A recovered**. Either way a stored entry is not
+improved by being read a second time by the function that produced it. And mutating the array that
 `boundaryRow` indexes shifts every raw-row coordinate the cursor publishes.
 
 So the splice lives one level up, as an **item-level projector**. Round 5 (finding 3) caught the
@@ -655,7 +705,10 @@ in here.
 2. **Every non-batched arrival is byte-identical to today** — 169 of the 170 measured rows.
 3. **A quoted or forwarded envelope inside a body is not truncated**, and sibling envelopes are not
    merged with their tags.
-4. **An envelope-less frame still resolves through `origin.body`.**
+4. **An envelope-less frame resolves through its OWN text**, and through `origin.body` only when it
+   carries no text at all (rev 8.4) — so a batched member whose `origin.body` names the causing
+   message renders its own message instead of a second copy of another. Both wrapper grammars are
+   decoded, so "envelope-less" now means what it says.
 5. **The live item and its cold replay agree**, because one function serves both paths.
 
 ### Stage B — store and observer
@@ -756,8 +809,15 @@ in here.
 
 ## Delegated unknowns
 
-- **U1 — do envelope-less (coordinator-path) arrivals batch at all?** If never, Stage A's residual
-  limit is empty in practice. Probe 121's machinery answers it for one run. **Still open.**
+- **U1 — do envelope-less (coordinator-path) arrivals batch at all?** **Answered (M12): yes, but
+  intermittently.** LEG 10 caught one live — three arrival items all rendering the causing message's
+  `origin.body` — while probe 121's keyed re-run of the same burst on the same CLI produced no
+  envelope-less frame at all. So Stage A's residual limit was not empty in practice, and it is now
+  closed by ordering rather than by detection (Stage A). The answer carries two riders: per-message
+  *identity* in a batch remains impossible (verdict C re-confirmed — one frame carried two messages,
+  one announced arrival persisted no row, so cold replay can never render that member); and what
+  looked like an envelope-less *corpus* was largely a missing grammar — 79 of 103 peer rows use
+  `<agent-message …>`, and only 24 use the tag this codebase writes.
 - **U2 — does `rowKind` change verdict on any widened row?** **Answered (M11): no**, and then made
   moot for the splice path: all 170 peer rows classify `prompt` and none is a phantom kind, but the
   rev 6 projector injects items without ever constructing a row, so `rowKind` no longer sits between
@@ -811,9 +871,12 @@ in here.
   keying by session gives "detach, not delete" with no code that knows about clearing.
 - **Items, not rows (rev 6).** The projector injects arrival items directly rather than
   materialising synthetic transcript rows. Rejected: synthetic rows — they either corrupt the raw
-  cursor (if spliced into the indexed array) or re-lose the collapsed batch (if routed through
-  `peerArrival`, whose envelope scan finds nothing in the joined text and falls back to
-  `origin.body`). The rejected alternative was not merely inferior; both of its readings were broken.
+  cursor (if spliced into the indexed array) or re-decide a settled text by routing it back through
+  `peerArrival`, which under the then-shipping order fell through to `origin.body` and re-lost the
+  collapsed batch. The rejected alternative was not merely inferior; both of its readings were broken.
+  Rev 8.4's ordering removes the second breakage without reviving the alternative: an entry's text is
+  decided once, at observation, and re-deriving it later would still be a second answer to a settled
+  question.
 - **Publish the logged count, not a withheld count (rev 6).** Rejected in rev 5 as unknowable;
   the review forced a better distinction: the *withheld* count needs whole-history knowledge, the
   *logged* count is one readdir, and a client holding both the count and the items can compute the
@@ -979,3 +1042,18 @@ Pending — written at finish.
   reading order puts it anyway. Found by Task 4's reviewer walking the assembled-client view;
   adjudicated under D3 (withhold, never misplace) without a new owner decision — the page gate is
   the decided principle applied, not a new rule.
+
+- **Rev 8.4 (2026-08-30, Task 7 fix).** LEG 10's keyed red closes U1 and Stage A's residual limit.
+  The envelope-less batched frame is real — its three arrival items each rendered the causing
+  message's `origin.body` — and it is intermittent: probe 121's keyed re-run of the same burst
+  produced no such frame (M12.1, M12.2). The fix is an ordering change in `peerArrival`: the frame's
+  own text now outranks `origin.body`, which is consulted only for a frame carrying no text at all.
+  What made the fix safe was a finding nobody was looking for — **there are two envelope grammars**,
+  and the decoder knew one. 79 of this machine's 103 peer rows are wrapped in `<agent-message …>` and
+  had been rendering correctly only by falling through to the very field this change demotes; without
+  the second grammar, the new order would have rendered the CLI's 560-character safety postamble as
+  the peer's own message on three quarters of the corpus (M12.3). With both grammars decoded, the new
+  order renders identically to the old on all 103 rows, so the change is a no-op everywhere except
+  the shape that was broken. Depth is now counted per tag name so the grammars cannot close each
+  other. Identity is untouched and still impossible: this is a rule about text only, and the rowless
+  arrival means cold replay can never render that batch member at all.

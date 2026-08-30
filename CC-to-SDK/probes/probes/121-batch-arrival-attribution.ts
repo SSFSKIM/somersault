@@ -45,6 +45,11 @@
 // what a collapsed batch actually produces. The lesson generalises past this probe — an aggregate over
 // a set answers a question about the set, never about its members.
 //
+// A SECOND QUESTION was added after LEG 10 of the harness's app-server suite went red on a batch whose
+// LIVE frames carried no envelope: what does an envelope-less batched frame's OWN `message.content` hold,
+// and would preferring it over `origin.body` cover the messages that repeated body does not name? See the
+// "M9 TASK 7" section below `report` — it prints the per-frame reading the verdict above does not.
+//
 // Machinery is probe 120b's and 118's, unchanged where it was already right:
 //   * `--replay-user-messages` is what makes an inbound peer message visible on the stream AT ALL (120's
 //     recorded correction: without it, 120 saw zero peer frames for messages it had proved were routed).
@@ -83,6 +88,11 @@ function loadKey(): void {
   console.log("[env] keyed:", Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN));
 }
 loadKey();
+// Unkeyed there is nothing here to measure — every reading below comes off a live receiver session — so it
+// says so and exits 0, rather than spending three minutes waiting for an `init` that cannot arrive and then
+// failing in a way that reads like a finding. `loadKey` has already dropped ANTHROPIC_API_KEY, so the OAuth
+// token is the only credential that can carry this run.
+if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) { console.log("[p121] no CLAUDE_CODE_OAUTH_TOKEN — skipping: this probe measures live sessions only"); process.exit(0); }
 
 const log = (...a: unknown[]) => console.log("[p121]", ...a);
 const SESSIONS_DIR = join(homedir(), ".claude", "sessions");
@@ -173,8 +183,25 @@ function sendFrames(sock: string, frames: unknown[]): Promise<string> {
   });
 }
 
-/** One peer frame as the LIVE stream delivered it. */
-interface LiveArrival { order: number; uuid: string; msgId: string; body: string | undefined; content: string }
+/** The harness's own `rawTextOf` (harness/src/peer/address.ts), transcribed: a block array is joined on
+ *  "\n", where `contentText` above — which predates it — joins on "". The difference is invisible to a
+ *  nonce test and visible to an envelope scan, so the M9 section below reads content by the harness's rule
+ *  and prints the SHAPE it was read from beside every reading. */
+const rawTextOfLocal = (content: unknown): string =>
+  typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("\n")
+      : JSON.stringify(content ?? "");
+
+/** How the content was CARRIED, not what it says. A batch delivered as several text BLOCKS in one frame is
+ *  a different finding — and a different fix — from one delivered as a single string. */
+const contentShape = (content: unknown): string =>
+  typeof content === "string" ? "string"
+    : Array.isArray(content) ? `blocks[${content.length}]:${content.map((b: any) => String(b?.type ?? "?")).join("/")}`
+      : content === undefined ? "(absent)" : typeof content;
+
+/** One peer frame as the LIVE stream delivered it. `raw` and `shape` are how the harness would read it;
+ *  `content` is this file's older join, kept because the verdict above is stated in terms of it. */
+interface LiveArrival { order: number; uuid: string; msgId: string; body: string | undefined; content: string; raw: string; shape: string }
 
 type Sess = { q: any; init?: any; sessionId: string; arrivals: LiveArrival[]; results: any[]; text: string[] };
 
@@ -208,6 +235,8 @@ function start(tag: string): Sess {
           msgId: String(m.origin?.msg_id ?? "(none)"),
           body: typeof m.origin?.body === "string" ? m.origin.body : undefined,
           content: contentText(m.message?.content),
+          raw: rawTextOfLocal(m.message?.content),
+          shape: contentShape(m.message?.content),
         });
         log(`[${tag}] PEER FRAME #${s.arrivals.length} uuid=${String(m.uuid).slice(0, 8)} msg_id=${m.origin?.msg_id}`);
       }
@@ -370,6 +399,134 @@ function report(A: Attempt): void {
   console.log(`  distinct arrival uuids: ${distinct(A.live.map(a => a.uuid))}/${A.live.length}`);
 }
 
+// ── M9 TASK 7 · THE SECOND QUESTION ─────────────────────────────────────────────────────────────────
+// Verdict C above is about the PERSISTED side, and it says a collapsed batch attributes nothing per
+// message. LEG 10 of the harness's live app-server suite (criterion 20: every sent text appears in some
+// marked arrival item) then went red on a batch whose LIVE frames carried no envelope at all: with none to
+// read, `peerArrival` fell back to `origin.body`, which across a batch is the CAUSING message's text, so
+// two of three messages rendered as a third copy of the first. Whether that is a preference-order defect
+// or a genuinely unrecoverable text turns on ONE datum nobody has printed: what an envelope-less batched
+// frame's OWN `message.content` holds. The section below prints it per frame — for every live arrival and
+// for every persisted peer row — so the live and persisted sides can disagree visibly instead of being
+// summarised into one aggregate, which is the error the verdict above already had to correct once.
+
+/** A transcription of `peerArrival`'s envelope scan (harness/src/peer/address.ts): depth-counting, so a
+ *  quoted envelope is not truncated and siblings are not merged. It exists so the two "would render"
+ *  columns below are COMPUTED rather than eyeballed off a prefix. A change to that rule makes this
+ *  transcription stale, which is why every raw field is printed beside its verdict. */
+function envelopeBodiesLocal(raw: string): string[] {
+  const tag = /<cross-session-message\s[^>]*>|<\/cross-session-message>/g;
+  const bodies: string[] = [];
+  let depth = 0, start = -1, lastClose = -1;
+  for (let m = tag.exec(raw); m; m = tag.exec(raw)) {
+    if (m[0][1] !== "/") { if (depth === 0) { start = tag.lastIndex; lastClose = -1; } depth++; }
+    else if (depth > 0) { lastClose = m.index; if (--depth === 0) bodies.push(raw.slice(start, m.index).replace(/^\n/, "").replace(/\n$/, "")); }
+  }
+  if (depth > 0 && lastClose > start) bodies.push(raw.slice(start, lastClose).replace(/^\n/, "").replace(/\n$/, ""));
+  return bodies;
+}
+
+/** Which of OUR messages a field names, by nonce. The whole per-frame reading rests on this: a field that
+ *  holds one nonce names one message, a field that holds two holds a collapsed batch, and a field that
+ *  holds none names nothing recoverable. */
+const holds = (nonces: string[], s: string | undefined): string[] =>
+  typeof s === "string" ? nonces.filter(n => s.includes(n)) : [];
+const shortNonces = (list: string[]): string => (list.length ? list.map(n => n.split("-").pop()!).join(",") : "none");
+
+/** 64 characters STARTING AT the first nonce in the text. A LEADING prefix is useless here: these bodies
+ *  carry their nonce ~175 characters in, behind boilerplate every message shares, so a leading window shows
+ *  three different messages as one identical string. When no nonce is present the leading 64 are shown and
+ *  SAID to be nonce-less, which is itself the finding for a frame that names no message of ours. */
+function nonceWindow(nonces: string[], s: string | undefined): string {
+  if (typeof s !== "string") return "(absent)";
+  if (s === "") return "(empty string)";
+  const hits = nonces.map(n => s.indexOf(n)).filter(i => i >= 0);
+  const flat = (t: string) => JSON.stringify(t.replace(/\s+/g, " "));
+  if (!hits.length) return `no-nonce ${flat(s.slice(0, 64))}`;
+  const at = Math.min(...hits);
+  return `@${at} ${flat(s.slice(at, at + 64))}`;
+}
+
+/** One field, read every way that can disagree: length, envelope count, which messages it names, and a
+ *  window that starts where a name was found. */
+function dumpField(indent: string, name: string, value: string | undefined, nonces: string[]): void {
+  console.log(`${indent}${name.padEnd(16)} len=${value === undefined ? "-" : value.length}  env=${envelopeCount(value)}  holds=[${shortNonces(holds(nonces, value))}]  ${nonceWindow(nonces, value)}`);
+}
+
+/** What each of the two candidate preference orders would render for one frame. `today` is `peerArrival`
+ *  as it ships (envelopes first, then `origin.body`, then the raw text); `frame-first` is the candidate
+ *  that consults `origin.body` only when the frame carries NO TEXT AT ALL. They differ on exactly the
+ *  shape this section exists to measure — an envelope-less frame with non-empty text — and nowhere else. */
+function wouldRender(content: string, body: string | undefined): { today: string; frameFirst: string } {
+  const env = envelopeBodiesLocal(content);
+  const joined = env.join("\n\n");
+  return {
+    today: env.length ? joined : typeof body === "string" ? body : content,
+    frameFirst: env.length ? joined : content !== "" ? content : typeof body === "string" ? body : content,
+  };
+}
+
+function frameShape(A: Attempt): void {
+  const nonces = A.sent.map(m => m.nonce);
+  const causerOf = (msgId: string | undefined): string => {
+    const s = A.sent.find(x => x.msgId === msgId);
+    return s === undefined ? (msgId === undefined || msgId === "(none)" ? "(no msg_id)" : "(a msg_id we did not send)") : `M${s.n}`;
+  };
+  console.log(`\n--- FRAME SHAPE (M9 task 7), attempt ${A.tag}: what each frame's OWN content holds ---`);
+  console.log(`  holds=[...] names which SENT messages a field carries by nonce; env=<n> counts envelope open tags;`);
+  console.log(`  the window starts at the first nonce found, because these bodies share their first ~175 characters.`);
+  console.log(`  "positional own" is a PRESUMPTION — arrival #k paired with sent message #k — printed only so the`);
+  console.log(`  holds= columns can be read against it. Nothing below is derived from it.`);
+
+  for (const a of A.live) {
+    console.log(`\n  LIVE arrival #${a.order}  uuid=${a.uuid.slice(0, 8)}  origin.msg_id=${a.msgId.slice(0, 8)} -> causer ${causerOf(a.msgId)}   positional own: M${a.order}`);
+    console.log(`      content carried as: ${a.shape}${a.raw === a.content ? "" : `   (the two joins DISAGREE: rawTextOf len=${a.raw.length}, contentText len=${a.content.length})`}`);
+    dumpField("      ", "message.content", a.raw, nonces);
+    dumpField("      ", "origin.body", a.body, nonces);
+    const w = wouldRender(a.raw, a.body);
+    console.log(`      content === origin.body: ${a.raw === a.body}`);
+    console.log(`      WOULD RENDER  peerArrival-today=[${shortNonces(holds(nonces, w.today))}]  frame-text-first=[${shortNonces(holds(nonces, w.frameFirst))}]`);
+  }
+
+  // EVERY peer row on disk, not only the ones a live uuid found. The verdict above already met a batch that
+  // persisted fewer rows than it announced, so a table keyed on live uuids can miss the row that holds the
+  // missing text — and the cold reader (harness items/replay.ts) reads these rows, not the live frames.
+  const liveUuids = new Set(A.live.map(a => a.uuid));
+  console.log(`\n  == every persisted row with origin.kind='peer' (${A.rowsWithPeerOrigin.length}) ==`);
+  for (const [i, r] of A.rowsWithPeerOrigin.entries()) {
+    const uuid = typeof r?.uuid === "string" ? r.uuid : "";
+    const content = rawTextOfLocal(r?.message?.content);
+    const body = typeof r?.origin?.body === "string" ? r.origin.body : undefined;
+    const msgId = r?.origin?.msg_id === undefined ? undefined : String(r.origin.msg_id);
+    console.log(`\n  PERSISTED row #${i + 1}  uuid=${uuid.slice(0, 8)}  ${liveUuids.has(uuid) ? "(a live arrival announced this uuid)" : "(no live arrival carried this uuid)"}`);
+    console.log(`      origin.msg_id=${(msgId ?? "(none)").slice(0, 8)} -> causer ${causerOf(msgId)}  isMeta=${Boolean(r?.isMeta)}  content carried as: ${contentShape(r?.message?.content)}`);
+    dumpField("      ", "message.content", content, nonces);
+    dumpField("      ", "origin.body", body, nonces);
+    const w = wouldRender(content, body);
+    console.log(`      content === origin.body: ${content === body}`);
+    console.log(`      WOULD RENDER  peerArrival-today=[${shortNonces(holds(nonces, w.today))}]  frame-text-first=[${shortNonces(holds(nonces, w.frameFirst))}]`);
+  }
+
+  // THE TWO NUMBERS THE FIX TURNS ON. Coverage is the weak reading everywhere else in this file, and it is
+  // named as such — but criterion 20 IS a coverage claim ("every sent text appears in some marked item"),
+  // so this is the one place the aggregate is the question rather than a substitute for it. Read it with
+  // the per-frame table above, never alone: full coverage under one collapsed item is still a collapsed
+  // item, and the per-frame rows are what say which.
+  const cover = (texts: string[]): string[] => nonces.filter(n => texts.some(t => t.includes(n)));
+  const liveToday = A.live.map(a => wouldRender(a.raw, a.body).today);
+  const liveFirst = A.live.map(a => wouldRender(a.raw, a.body).frameFirst);
+  const rowTexts = (pick: "today" | "frameFirst"): string[] => A.rowsWithPeerOrigin.map(r => {
+    const w = wouldRender(rawTextOfLocal(r?.message?.content), typeof r?.origin?.body === "string" ? r.origin.body : undefined);
+    return pick === "today" ? w.today : w.frameFirst;
+  });
+  const envless = A.live.filter(a => envelopeCount(a.raw) === 0).length;
+  const emptyContent = A.live.filter(a => a.raw === "").length;
+  console.log(`\n  == what each preference order would COVER (criterion 20's claim), ${A.live.length} live frame(s), ${A.rowsWithPeerOrigin.length} peer row(s), ${N} sent ==`);
+  console.log(`  live frames carrying NO envelope: ${envless}/${A.live.length}   live frames whose content is the EMPTY string: ${emptyContent}/${A.live.length}`);
+  console.log(`  LIVE      peerArrival-today covers ${cover(liveToday).length}/${N} [${shortNonces(cover(liveToday))}]   frame-text-first covers ${cover(liveFirst).length}/${N} [${shortNonces(cover(liveFirst))}]`);
+  console.log(`  PERSISTED peerArrival-today covers ${cover(rowTexts("today")).length}/${N} [${shortNonces(cover(rowTexts("today")))}]   frame-text-first covers ${cover(rowTexts("frameFirst")).length}/${N} [${shortNonces(cover(rowTexts("frameFirst")))}]`);
+}
+
 function verdict(A: Attempt): void {
   const nonces = A.sent.map(m => m.nonce);
   const persistedBodies = A.live.map(a => { const b = A.persisted.get(a.uuid)?.origin?.body; return typeof b === "string" ? b : undefined; });
@@ -458,7 +615,7 @@ function verdict(A: Attempt): void {
     attempts.push(await runAttempt("burst", "one-write", ourAddr));
   }
 
-  for (const A of attempts) report(A);
+  for (const A of attempts) { report(A); frameShape(A); }
   const answering = attempts.find(A => A.batched) ?? attempts[attempts.length - 1];
   verdict(answering);
   console.log(`\nreceipts on our address: ${receipts.length}`);

@@ -147,7 +147,9 @@ describe("itemsFromTranscript", () => {
       type: "user",
       uuid: "99999999-1111-4111-8111-999999999999",
       parent_tool_use_id: null,
-      message: { role: "user", content: "x" },
+      // A row carrying NO text of its own, which is what it now takes to reach `origin.body`: a frame's own
+      // text outranks that field, so a one-character content would be the rendered body and cap nothing.
+      message: { role: "user", content: "" },
       origin: { kind: "peer", from: "uds:/a.sock", body: long },
     }];
     const user = itemsFromTranscript(rows).filter((i) => i.type === "userMessage");
