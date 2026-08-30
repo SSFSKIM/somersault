@@ -21,13 +21,13 @@
 // structural rule in `effectiveArrivalStore` builds a default filesystem store under the operator's real
 // `~/.claude` when the reader is also the default, and a fixture that engaged it would write this suite's
 // peer messages into a real transcript's neighbourhood.
-import { describe, it, expect, vi, afterAll } from "vitest";
+import { describe, it, expect, vi, afterAll, beforeAll } from "vitest";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
-import { fsArrivalStore, type ArrivalEntry, type ArrivalStore } from "../../../src/peer/arrivalLog.js";
+import { ARRIVAL_LOG_CAP, fsArrivalStore, type ArrivalEntry, type ArrivalStore } from "../../../src/peer/arrivalLog.js";
 
 const dirs: string[] = [];
 const tmpRoot = (tag: string): string => { const d = mkdtempSync(join(tmpdir(), `m9t6-${tag}-`)); dirs.push(d); return d; };
@@ -140,58 +140,100 @@ async function open(engine: any, deps: BootDeps, resume?: string) {
 }
 
 describe("(25) `thread/clear` detaches the arrivals — it does not delete them", () => {
-  it("the cleared thread reads empty, the fresh conversation logs under its OWN id, and a resume brings the old ones back", async () => {
-    // ONE PAGE PER READ throughout (the default limit is 200 and these transcripts are tiny), so
-    // "the arrivals render again" cannot be an accident of where a walk happened to stop — the null-anchor
-    // page gate (spec rev 8.3) only matters to a multi-page walk, and these entries are anchored anyway.
-    const root = tmpRoot("c25");
-    const store = fsArrivalStore(root);
-    const files: Record<string, unknown[]> = {
-      "sess-A": [ROW("r-1", "a question"), REPLY("r-2", "msg_1", "an answer")],
-      "sess-B": [ROW("b-1", "the fresh conversation's own prompt")],
-    };
-    const e = pushEngine();
-    const a = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store }, "sess-A");
+  // ONE SEQUENTIAL RUN, MANY CLAIMS. What follows — two arrivals, the clear, the init frame that reveals
+  // the fresh conversation's id, an arrival on it — is one server's history and cannot be re-derived per
+  // test, so it runs once here and each claim asserts against what that run captured. It is SPLIT rather
+  // than left as one block because vitest abandons an `it` at its first failed expect: as a single test, a
+  // break in the earliest claim hid every later one, and the later ones are where D2 actually lives (the
+  // entries stay under the OLD id, the fresh conversation logs under its own, and a resume brings them
+  // back). Split, a red names the claim that broke.
+  //
+  // ONE PAGE PER READ throughout (the default limit is 200 and these transcripts are tiny), so "the
+  // arrivals render again" cannot be an accident of where a walk happened to stop — the null-anchor page
+  // gate (spec rev 8.3) only matters to a multi-page walk, and these entries are anchored anyway.
+  const root = tmpRoot("c25");
+  const store = fsArrivalStore(root);
+  const files: Record<string, unknown[]> = {
+    "sess-A": [ROW("r-1", "a question"), REPLY("r-2", "msg_1", "an answer")],
+    "sess-B": [ROW("b-1", "the fresh conversation's own prompt")],
+  };
+  const e = pushEngine();
+
+  let a: Awaited<ReturnType<typeof open>>;
+  let before: ReadPage, postClear: ReadPage, cleared: ReadPage, afterArrival: ReadPage;
+  let clearReply: any;
+  // Snapshots, not live reads: the run walks past each of these states, so a claim that read
+  // `record.sessionId` when it executed would be reading the END of the run rather than its own moment.
+  let sessionIdAfterClear: string | undefined;
+  let sessionIdAfterInit: string | undefined;
+  let entriesA: string[] = [], entriesB: string[] = [];
+
+  beforeAll(async () => {
+    a = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store }, "sess-A");
 
     e.push(PEER("a-1", "first arrival"));
     e.push(PEER("a-2", "second arrival"));
     await tick();
-    const before = await a.read();
-    expect(ids(before)).toEqual(["r-1", "msg_1#0", "a-1", "a-2"]);
-    expect(before.arrivals).toEqual({ logged: 2, dropped: 0 });
+    before = await a.read();
 
-    // THE CLEAR. `sessionId: null` on the reply is the swap's own answer: the fresh conversation has no
-    // store id until its first init frame.
-    expect((await a.call("thread/clear", { threadId: a.threadId })).result).toEqual({ ok: true, sessionId: null });
-    expect(a.record.sessionId).toBeUndefined();
-
-    // The thread now reads as a thread that has never persisted — and `arrivals` reports ZERO rather than
-    // going absent: merging is still on, this conversation has simply logged nothing.
-    expect(await a.read()).toEqual({ data: [], nextCursor: null, arrivals: { logged: 0, dropped: 0 } });
+    clearReply = await a.call("thread/clear", { threadId: a.threadId });
+    sessionIdAfterClear = a.record.sessionId;
+    postClear = await a.read();
 
     // The init frame reveals the new id, and from here the thread is reading a DIFFERENT transcript.
     e.push(INIT("sess-B"));
     await tick();
-    expect(a.record.sessionId).toBe("sess-B");
-    const cleared = await a.read();
-    expect(ids(cleared)).toEqual(["b-1"]);
-    expect(cleared.data.filter((i) => i.origin)).toEqual([]);       // none of session A's arrivals leaked in
-    expect(cleared.arrivals).toEqual({ logged: 0, dropped: 0 });
+    sessionIdAfterInit = a.record.sessionId;
+    cleared = await a.read();
 
-    // An arrival on the fresh conversation is keyed to the NEW id, which is what "detached" means on the
-    // write side: two session ids, two logs, neither aware of the other.
     e.push(PEER("b-arr", "an arrival after the clear"));
     await tick();
-    expect(store.readAll("sess-B").map((entry: ArrivalEntry) => entry.id)).toEqual(["b-arr"]);
-    expect(store.readAll("sess-A").map((entry: ArrivalEntry) => entry.id)).toEqual(["a-1", "a-2"]);   // NOT deleted
-    const afterArrival = await a.read();
+    entriesB = store.readAll("sess-B").map((entry: ArrivalEntry) => entry.id);
+    entriesA = store.readAll("sess-A").map((entry: ArrivalEntry) => entry.id);
+    afterArrival = await a.read();
+  });
+
+  it("before the clear: both arrivals render at their anchors, and both are counted", () => {
+    expect(ids(before)).toEqual(["r-1", "msg_1#0", "a-1", "a-2"]);
+    expect(before.arrivals).toEqual({ logged: 2, dropped: 0 });
+  });
+
+  it("the clear replies with no session id, and leaves the record with none", () => {
+    // `sessionId: null` is the swap's own answer: the fresh conversation has no store id until its first
+    // init frame, and stamping the old one would point every reader at a transcript this thread dropped.
+    expect(clearReply.result).toEqual({ ok: true, sessionId: null });
+    expect(sessionIdAfterClear).toBeUndefined();
+  });
+
+  it("the cleared thread reads as one that has never persisted — zeros, not an absent key", () => {
+    // Absent would say "this server does not merge"; zero says "merging is on and this conversation has
+    // logged nothing". The difference is the whole of D3.
+    expect(postClear).toEqual({ data: [], nextCursor: null, arrivals: { logged: 0, dropped: 0 } });
+  });
+
+  it("the fresh conversation reads its OWN transcript, with none of session A's arrivals in it", () => {
+    expect(sessionIdAfterInit).toBe("sess-B");
+    expect(ids(cleared)).toEqual(["b-1"]);
+    expect(cleared.data.filter((i) => i.origin)).toEqual([]);
+    expect(cleared.arrivals).toEqual({ logged: 0, dropped: 0 });
+  });
+
+  it("an arrival after the clear is keyed to the NEW id, and session A's entries are untouched", () => {
+    // THE DETACH, on the write side: two session ids, two logs, neither aware of the other — and A's log
+    // is still there, which is the difference between detaching a conversation and deleting its history.
+    expect(entriesB).toEqual(["b-arr"]);
+    expect(entriesA).toEqual(["a-1", "a-2"]);
     expect(ids(afterArrival)).toEqual(["b-1", "b-arr"]);
     expect(afterArrival.arrivals).toEqual({ logged: 1, dropped: 0 });
+  });
 
-    // AND THE OTHER HALF OF "DETACHED": resuming session A re-engages the old id, and its arrivals render
-    // exactly where they did before the clear.
-    const resumed = (await a.call("thread/resume", { sessionId: "sess-A", crossSessionInbound: "accept" })).result.thread.id;
-    const again = await a.read(resumed);
+  it("resuming session A re-engages the old id: its arrivals render exactly where they did", async () => {
+    // The other half of "detached", and the reason the entries were kept: the conversation can be picked
+    // up again, and its history comes back whole. Last in the run and self-contained, so it can do its own
+    // admission without disturbing the claims above.
+    const reply = await a.call("thread/resume", { sessionId: "sess-A", crossSessionInbound: "accept" });
+    expect(reply.error).toBeUndefined();
+    const again = await a.read(reply.result.thread.id);
     expect(ids(again)).toEqual(["r-1", "msg_1#0", "a-1", "a-2"]);
     expect(again.data.filter((i) => i.origin).map((i) => i.text)).toEqual(["first arrival", "second arrival"]);
     expect(again.arrivals).toEqual({ logged: 2, dropped: 0 });
@@ -314,18 +356,21 @@ describe("(23) `arrivals.logged` equals the announcements the run made", () => {
     const e = pushEngine();
     const run = await open(e.engine, { getSessionMessages: readerOver({ "sess-C": rows }), arrivalStore: store }, "sess-C");
 
-    const sent = 35;                                    // ARRIVAL_LOG_CAP is 32: three entries are shed
+    // Read off the store's own cap, never a literal: a cap change must redden this loudly rather than
+    // quietly re-arithmetic itself into agreement.
+    const sent = ARRIVAL_LOG_CAP + 3;
     for (let i = 0; i < sent; i++) e.push(PEER(`c-${String(i).padStart(2, "0")}`, `peer message ${i}`));
     await tick();
 
     const announced = run.announced();
     expect(announced).toHaveLength(sent);
-    expect(store.readAll("sess-C")).toHaveLength(32);   // the log really did evict
+    expect(store.readAll("sess-C")).toHaveLength(ARRIVAL_LOG_CAP);   // the log really did evict
     const page = await run.read();
     expect(page.nextCursor).toBeNull();                 // one page, so this IS the final page
-    expect(page.arrivals).toEqual({ logged: sent, dropped: 3 });
-    // The client can therefore see the gap: it received 32 marked items and is told 35 arrived.
-    expect(page.data.filter((i) => i.origin)).toHaveLength(32);
+    expect(page.arrivals).toEqual({ logged: sent, dropped: sent - ARRIVAL_LOG_CAP });
+    // The client can therefore see the gap: it received `ARRIVAL_LOG_CAP` marked items and is told
+    // that more than that arrived.
+    expect(page.data.filter((i) => i.origin)).toHaveLength(ARRIVAL_LOG_CAP);
     warn.mockRestore();
   });
 });
