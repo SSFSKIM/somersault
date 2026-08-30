@@ -243,7 +243,11 @@ Commands from `CC-to-SDK/harness/`. Gates: `npm run typecheck`, `npm run test:un
 - **A8 (advisor immediate):** `/advisor opus` applies without the dialog; `/advisor garbage` prints the
   canon invalid message and applies nothing (P119: silent server = client validates).
 - **A9 (advisor live row):** after a mid-session `/advisor opus`, the next `Advising using …` row shows
-  the new display name (state, not the launch const).
+  the new model — printed VERBATIM (the resolved id), per bl7 T-ADVISOR's recorded D15 divergence in
+  `render.ts` (the row echoes the client's config value, not a display name). The live-value half (ref,
+  not the launch const) is the acceptance bar; the verbatim-vs-display-name presentation is the
+  pre-existing recorded divergence, restated here so this clause can't be read as demanding a display
+  name. [Amended when invoked — Task 3 review, 2026-08-30.]
 - **A10 (hook pty):** extend `scripts/hookblock-cells.sh` with a standalone-row cell: fake-host pushes a
   PostToolUse pair with no owning cluster → the REAL ccx binary renders the standalone row; feature-kill
   (drop the drain) fails the cell.
