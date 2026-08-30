@@ -50,38 +50,51 @@ All three round files live in `.doperpowers/sdd/2026-08-31-bl9-round/`.
   (:160) originally specified a display name — retiring D15 restores original intent. The
   ` · {input}` clause stays omitted (already recorded: advisor input is always `{}`).
 
-## 3. T-FOLLOW design
+## 3. T-FOLLOW design — v2, redesigned after plan review (D14)
 
-### 3.1 The replayed frame (D2, D3, D4)
+> v1 had the host retain a `swapped` latch and replay an anchorless `rewound` on `follow()`. The
+> adversarial plan review confirmed two highs against it: (F1) `remoteChatSession` resumes BEFORE
+> following precisely so its own swap stays silent (`chatAdapter.ts:94-100`, a documented
+> load-bearing invariant pinned by an existing adapter test) — the replay would hand every
+> resuming client its own swap back deterministically; (F2) `rebuildAfterRewind` wipes scrollback
+> (`clearScreen`), resets the task panel and bg-harvest state — a replayed frame on EVERY attach
+> to a once-swapped host would destroy correctly-drained live state, and the common case (disk
+> already read post-swap) would pay a visible wipe for nothing. Rather than patching both (swap
+> epochs + ordered-transaction buffering — a patch-the-corner spiral), v2 moves the fix to the
+> seam that creates the window.
 
-`SessionHost` gains a private `swapped = false`, set to `true` at exactly the site that pushes the
-live `rewound` frame in `swapEngine` (`host.ts:659`) — so the replay fires iff at least one live
-`rewound` was ever emitted (never on initial engine start). In `follow()`, after the buffered
-message replay and **before** the closing fresh `state` frame, when `swapped` is true deliver:
+### 3.1 The invariant (D14)
 
-```ts
-{ kind: "rewound", ...(sessionId !== undefined ? { sessionId } : {}), replay: true }
-```
+The staleness window exists because the ATTACH client reads disk before it follows
+(`cli/attach.ts:27` → dynamic Ink import → mount → connect → follow). The app server has no
+window because it follows-then-serves. So the fix lives in the client: **after the follow ack,
+re-read the transcript once and reconcile** — rebuild only if disk changed since the pre-follow
+read. No wire change, no host change, no fleetEngine change; a client that is current pays one
+cheap read and no repaint.
 
-- **Anchorless is load-bearing:** no `prevUuid` (a late joiner's disk read cannot race the
-  truncation, and turns may legitimately exist after the rewind — replaying a stale anchor would
-  truncate real history) and no `cleared` (it forces `sessionId = undefined` in
-  `chatAdapter.ts:65`, wrong if a later resume re-populated it). A bare `rewound` sends `useChat`
-  through `rebuildAfterRewind({})` — a plain full re-read under the current id: exactly what a
-  stale joiner needs, a harmless no-op for a current one.
-- `sessionId` is the host's **current** id when defined (never the id captured at swap time).
-- **Wire change (additive):** `wire.ts` declares `replay?: true` on the `rewound` variant (today
-  it is declared only on `message`). Doc comment states the replay semantics above.
+- `prepareAttach` returns, beside the bootstrap entries, a **disk stamp** of the read it made:
+  `{ lastUuid, count }` over the persisted rows. Threaded through `runChatClient` opts into
+  `useChat`.
+- `useChat` runs a one-shot **reconcile** after the session reports followed/ready (the adapter's
+  `whenReady()`; skipped entirely when no disk stamp was provided — fresh sessions and
+  non-attach flows). Reconcile re-reads via the existing `deps.getSessionMessages` seam, computes
+  the fresh stamp, and: match → no-op; mismatch → **narrow rebuild**.
+- The **narrow rebuild** reuses `rebuildAfterRewind`'s document core (clear + `replaceDocument`
+  of `replayDocument(rows)` + `lastAssistant` reseed) but MUST NOT reset the task panel,
+  bg-harvest, or composer prefill — the follow drain's `tasks_changed`/`turn` frames are
+  authoritative live state that the reconcile has no business clearing (review F2). Extract the
+  shared core rather than duplicating it.
+- Every code path that (re)builds the document from a disk read keeps the stamp ref honest
+  (initial seed, `resumeInto`, `rebuildAfterRewind`, the reconcile itself).
+- A live `rewound` arriving during or after reconcile follows the existing arm unchanged — the
+  two compose (last writer reads the same settled disk).
 
-### 3.2 Consumers (D5)
+### 3.2 What stays out (D5-v2)
 
-- **REPL:** `useChat`'s `rewound` arm already routes to `rebuildAfterRewind`; the `selfRewind`
-  suppression cannot swallow the replayed frame (an attaching client has no local op in flight —
-  R1 risk (a)). A test pins the bare-frame rebuild path.
-- **App server:** `fleetEngine`'s `rewound` arm (`fleetEngine.ts:288`) IGNORES a frame stamped
-  `replay: true`. The app server has no window of its own (it follows-then-serves,
-  `fleetEngine.ts:274/349`), so a replayed frame on adoption would only fan a spurious
-  `thread/rewound` broadcast.
+- **No wire frame, no host latch:** the host's replay drain is already state-derived and stays
+  untouched. `fleetEngine` needs nothing — it never had the window.
+- The self-resume invariant (`chatAdapter.ts:94`) is preserved untouched: a resuming client's
+  reconcile compares equal (its seed read the same file the resume re-opened) and no-ops.
 
 ### 3.3 Pinning the refuted halves (D6) and the test stand-in (D7)
 
@@ -89,24 +102,32 @@ message replay and **before** the closing fresh `state` frame, when `swapped` is
   neither the replayed `decision` list nor as any `decision_settled` frame — so a future author
   cannot "fix" the refuted half into a double-settle.
 - **fake-host (`scripts/fake-host.mjs`):** its pre-follow drain is kind-agnostic (strictly more
-  generous than production — a cell pushing `task`/`decision_settled` pre-follow would false-green
-  against it). Narrow the drain to production semantics: buffer/replay `message` frames; keep
-  `turn` replay as a DOCUMENTED divergence (production synthesizes an equivalent start frame —
-  observably equivalent for cells); drop `task`/`decision_settled` from the drain; a pre-follow
-  `rewound` replays anchorless with `replay: true` (matching post-fix production). Header comment
-  records the mapping. The divergence is latent today (`framesFor` emits only `message`/`turn`),
-  so no existing cell changes behavior.
+  generous than production — a cell pushing `task`/`decision_settled`/`rewound` pre-follow would
+  false-green against it). Narrow the drain to production semantics: buffer/replay `message`
+  frames; keep `turn` replay as a DOCUMENTED divergence (production synthesizes an equivalent
+  start frame — observably equivalent for cells); DROP `task`/`decision_settled`/`rewound` from
+  the drain (production replays none of them — v2 keeps production that way). Extract the
+  buffering policy as a testable unit so the narrowing lands red-first (review F4: the divergence
+  is latent — `framesFor` emits only `message`/`turn` — so the pty matrices alone cannot go red
+  on it). Header comment records the mapping.
 
 ### 3.4 Rejected alternatives
 
-- **Shape B (follow-then-read attach reorder):** structurally superior — it removes the window
-  instead of replaying into it, matching the app server — but it moves `initialEntries` off the
-  `<Static>` mount-seeding path, the TUI's most historically breakage-prone seam, and bl6
-  explicitly rejected gating first paint on the follow ack (spec :88-90). Recorded as the
-  preferred shape IF the Static seeding path is ever reworked for other reasons.
+- **Shape A (v1: host latch + anchorless `rewound` replay on follow):** rejected at plan review —
+  it deterministically re-announces a resuming client's own swap (the resume-before-follow
+  invariant, `chatAdapter.ts:94-100`) and its client handler destroys correctly-drained live
+  state on every attach to a once-swapped host (review F1/F2). Patching it (swap-epoch
+  correlation + ordered-transaction frame buffering) would have built exactly the multi-site
+  special-case calculus the round's convergence rule exists to prevent.
+- **Shape B (follow-then-read attach reorder):** structurally the same insight as v2 (the window
+  is the client's read-before-follow), but it moves `initialEntries` off the `<Static>`
+  mount-seeding path — the TUI's most historically breakage-prone seam — and bl6 explicitly
+  rejected gating first paint on the follow ack (spec :88-90). v2's reconcile keeps the immediate
+  paint AND closes the window post-hoc.
 - **Shape C (log-only):** rejected — the defect is real, permanent-per-attach, and the fix is
-  bounded retention + one replay site.
-- **Replaying the last live `rewound` payload verbatim:** rejected — see anchorless rationale.
+  bounded to one client-side reconcile.
+- **Replaying the last live `rewound` payload verbatim:** rejected with Shape A — a stale anchor
+  truncates post-rewind history; `cleared` clobbers a re-populated id.
 
 ## 4. T-POLISH design
 
@@ -132,33 +153,32 @@ message replay and **before** the closing fresh `state` frame, when `swapped` is
 
 ## 5. Acceptance
 
-- **A1 (follow replay, red-first):** unit `test/unit/host-follow.test.ts` — drive a rewind on a
-  fake-session host, then `follow()`: replayed frames include exactly one `rewound` with
-  `replay: true`, no `prevUuid`, no `cleared` (even though the live swap carried an anchor),
-  delivered before the closing `state`. A never-swapped host replays no `rewound`. Red on current
-  main (R1 ran it: `REPLAYED KINDS: ["state"]`).
-- **A2 (attach integration):** `test/integration/host-client.test.ts` — rewind the host after a
-  first client connected, then attach a second client through the real server/socket path: its
-  follow drain delivers the anchorless `replay`-stamped `rewound`. (The document-level rebuild is
-  A4's tui-harness claim — the integration client is wire-level and holds no document.)
+- **A1 (reconcile, red-first):** tui-harness — a session seeded from a stale disk stamp whose
+  post-follow re-read differs: the document is rebuilt to the fresh rows under the unchanged
+  session id (red on current main: no reconcile exists). A session whose re-read matches the
+  stamp repaints nothing (no `clearScreen`, document identity preserved).
+- **A2 (live-state preservation):** the mismatch rebuild leaves the task panel, bg-harvest state,
+  and any drained in-flight turn intact — only the disk-backed document is replaced (review F2's
+  loss scenario, pinned).
 - **A3 (settled-park guard):** a park settled pre-follow appears in neither the replayed
-  `decision` set nor as any `decision_settled` frame.
-- **A4 (bare-rewound rebuild):** `useChat` on an anchorless replayed `rewound` re-reads the
-  transcript and replaces the document under the current session id; no truncation of post-rewind
-  turns.
-- **A5 (app server):** `fleetEngine` takes no `thread/rewound` action on a `replay`-stamped
-  `rewound`; live (unstamped) frames still broadcast.
+  `decision` set nor as any `decision_settled` frame (integration, real server/socket path).
+- **A4 (self-resume silence):** a client built with `opts.resume` reconciles to a no-op — the
+  resume-before-follow invariant and its existing adapter pin stay untouched (review F1's
+  scenario, pinned).
+- **A5 (no-stamp skip):** a fresh session with no disk stamp never runs the reconcile read.
 - **A6 (transcript gate):** per-hook detail lines and the live counter render iff
   `projection !== "compact"`; a `verbose: true` + compact projection renders neither (the
-  formerly-latent branch is gone, not activated); both surfaces still render at detail
-  projections (existing bl8 tests stay green).
+  formerly-latent branch is gone, not activated). POSITIVE coverage is preserved for BOTH
+  builders: `hookLiveItems` gains a detail-projection + `verbose: false` case asserting the
+  exact counter text and `preStyled` segment (review F3 — the deleted compact+verbose case was
+  its only positive test), and `labeledHookItems`' existing detail cases stay green.
 - **A7 (display name):** the Advising row renders ` using Opus 4.8`-style display names for
   catalog ids/aliases and verbatim text for unknown ids; segments keep bold-"Advising" +
   dim-clause shape.
-- **A8 (fake-host discipline):** fake-host pre-follow `task`/`decision_settled` pushes are NOT
-  replayed to a late follower; a pre-follow `rewound` replays anchorless+stamped. (Unit-level
-  check against the script's host harness in `test/integration` or the script's own test if one
-  exists; otherwise pinned by the narrowed drain code + header doc.)
+- **A8 (fake-host discipline, red-first):** the extracted buffering policy has direct unit
+  coverage — pre-follow `task`/`decision_settled`/`rewound` pushes are NOT replayed to a late
+  follower; `message` (and documented `turn`) still are. Red before the narrowing (the current
+  drain replays every kind — review F4).
 - **A9 (battery):** full standing battery green at merge gates: `npm run typecheck`, unit, tui,
   build, plus the three pty matrices (`hookblock-cells.sh`, `cluster-expand-cells.sh`,
   `linkopen-cells.sh`) — T-POLISH touches hook-row rendering and T-FOLLOW touches fake-host, so
@@ -178,21 +198,17 @@ Two worktrees, disjoint files, parallel execution; merge T-FOLLOW first (larger)
 - **D1 (round reshape):** T-VERBOSE killed by R2; its residue (the deletion) folds into T-POLISH.
   Rejected: building fold+verbose extras (canon-unrepresentable); deferring the deletion (leaves
   code asserting a false premise about canon).
-- **D2 (anchorless replay):** replayed `rewound` carries no `prevUuid`/`cleared`; current
-  `sessionId` when defined. Rejected: verbatim last-payload replay (truncates post-rewind history;
-  clobbers restored ids).
-- **D3 (gate):** `swapped` set exactly at the live `rewound` push site. Rejected: any-swap gating
-  (fires on initial start), no gate (extra disk read on every attach to any host).
-- **D4 (wire):** `replay?: true` declared on the `rewound` variant; frame stamped. Rejected:
-  unstamped (correct for useChat but leaves fleetEngine unable to discriminate — D5 needs it).
-- **D5 (app server):** replay-stamped `rewound` ignored by fleetEngine. Rejected: broadcasting on
-  adoption (spurious `thread/rewound` to every app-server client for a window it never had).
+- **D2-D5 (v1, SUPERSEDED by D14):** the host-latch + anchorless-replay + wire-stamp +
+  fleetEngine-ignore quartet. Killed at plan review — see §3's v2 note and D14. Kept here because
+  the anchorless-payload reasoning (D2) remains the correct analysis of WHY a verbatim replay can
+  never be right, and it constrains any future revival of a host-side shape.
 - **D6 (refuted halves pinned):** settled-park guard test; `task` between-turns residue recorded,
   not fixed. Rejected: buffering `task` frames (double-delivery to every late joiner and to
   `fanFrame` — R1 §2.3).
-- **D7 (fake-host):** drain narrowed to production semantics with documented `turn` divergence.
-  Rejected: full-fidelity synthesis (over-building a test stand-in); document-only (leaves the
-  false-green trap armed for the next cell author).
+- **D7 (fake-host):** drain narrowed to production semantics (`message` + documented `turn`;
+  `task`/`decision_settled`/`rewound` dropped), policy extracted for direct red-first unit tests
+  (review F4). Rejected: full-fidelity synthesis (over-building a test stand-in); document-only
+  (leaves the false-green trap armed for the next cell author).
 - **D8-bl9 (duration merge):** comment re-citation only; bl7 D8 divergence stands. Rejected:
   switching message-level to `Math.max` (no batch wall-clock exists to max over).
 - **D10 (gate simplification):** delete `|| verbose` at the two sites; canon-unrepresentable
@@ -206,6 +222,20 @@ Two worktrees, disjoint files, parallel execution; merge T-FOLLOW first (larger)
 - **D13 (tech-debt routing):** `toolRenderer.tsx:870` comment-accuracy re-check → tech-debt
   tracker (zero-behavior, needs bounded binary research; R2's flag may itself be a conflation of
   `Ce` with `Gc`).
+- **D14 (v2 redesign — reconcile at the seam):** the attach staleness window is created by the
+  client's read-disk-before-follow; the fix is a one-shot post-follow reconcile in `useChat`
+  (disk stamp from `prepareAttach`, re-read via `deps.getSessionMessages`, narrow rebuild on
+  mismatch only). Chosen over: patching Shape A with swap-epoch correlation + ordered-transaction
+  frame buffering (a multi-site special-case calculus growing corners — review F1/F2 both trace
+  to one root, and the reconcile dissolves both); Shape B's mount reorder (Static-seeding risk).
+- **D15-bl9 (stamp shape):** `{ lastUuid, count }` over persisted rows — cheap, order-sensitive,
+  and computed identically by `prepareAttach` and the reconcile. Rejected: full uuid-list compare
+  (allocation for no added discrimination on append-only-or-truncated files); mtime (probe-known
+  to be unreliable across the store's write patterns).
+- **D16-bl9 (narrow rebuild):** the mismatch path replaces the document and reseeds
+  `lastAssistant` but never touches the task panel, bg-harvest, or composer prefill — those
+  belong to the follow drain's live frames. Rejected: reusing `rebuildAfterRewind` whole (review
+  F2's exact loss scenario).
 
 ## 8. Surprises & Discoveries
 
@@ -219,6 +249,13 @@ Two worktrees, disjoint files, parallel execution; merge T-FOLLOW first (larger)
   every producing caller, and canon has no state where the disjunct could matter.
 - (research) bl7's spec had already specified the advisor display name; D15's verbatim form was
   scaffolding for a missing module, not a design choice.
+- (plan review) The gate paid for the sixth consecutive round, and for the first time it killed a
+  whole design shape rather than a task detail: v1's host-side replay would have deterministically
+  broken the documented resume-before-follow invariant (`chatAdapter.ts:94-100`) and destroyed
+  drained live state on every attach to a once-swapped host. Both highs traced to one root — the
+  replay put the announcement on the wrong side of the seam that creates the window — and the v2
+  reconcile dissolved them instead of patching them (the convergence rule applied at DESIGN time,
+  before any wave existed).
 
 ## 9. Outcomes & Retrospective
 
@@ -228,3 +265,8 @@ Pending — written at finish.
 
 - v1 (2026-08-31): authored after R1/R2/R3 with all verdicts in; scope confirmed by the user's
   "Let's proceed" on the bl8 close-out candidate list.
+- v2 (2026-08-31, plan review): T-FOLLOW redesigned from host-side `rewound` replay (Shape A) to
+  the client-side post-follow reconcile (D14-D16), dissolving review highs F1/F2; A1-A5 rewritten
+  to the reconcile claims; A6 gains the positive `hookLiveItems` detail-projection case (F3); A8
+  becomes red-first via an extracted fake-host buffering policy (F4); both plans' final tasks now
+  run all three pty matrices (F5). All five review findings accepted after code verification.
