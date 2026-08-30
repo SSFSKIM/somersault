@@ -620,4 +620,60 @@ describe("Stage C reads back exactly what Stage B wrote", () => {
     expect(marked.map((i: any) => [i.id, i.text])).toEqual([["a-1", "M1"], ["a-2", "M2"], ["a-3", "M3"]]);
     expect(page.arrivals).toEqual({ logged: 3, dropped: 0 });
   });
+
+  // THE SAME BATCH, ARRIVING INSIDE THE SEED WINDOW. (9b) covers the ordinary path, where each frame
+  // advances the anchor as it is observed; this covers the OTHER path to an anchor entirely —
+  // `groundSeed`'s replay, which walks the buffered frames and logs each buffered arrival at the anchor it
+  // actually had. The two paths share `observeVisible` but not their ordering, so a rule enforced in only
+  // one of them would leave every arrival that landed during startup or resume anchored to its predecessor
+  // arrival — and a batch hitting a resuming thread is exactly when several arrive with no real row between
+  // them.
+  //
+  // The buffer opens with a REAL frame on purpose. An arrival buffered before any frame has nothing in the
+  // seed to be ordered against and is flushed `ambiguous` by design — counted, never placed — which is a
+  // different cell's subject (14). Here the question is whether the arrivals behind a placeable frame
+  // anchor on THAT frame or on each other, and only the second is a defect.
+  it("(9c) the same batch arriving DURING the seed window anchors on the buffered ROW, never on a sibling", async () => {
+    const e = pushEngine();
+    const store = fsArrivalStore(tmpRoot("c9c"));
+    const LIVE_PEER = (uuid: string, body: string) => { const { isMeta, ...live } = PEER(uuid, body) as any; return live; };
+    // The transcript as the seed read finds it, and as it stands by the time the page is read: the engine
+    // persists what it emits, so the frame observed live inside the window is a row afterwards. Modelling
+    // that is the whole point — an anchor recorded live has to resolve against the file later.
+    const atSeed = [
+      ROW("r-1", "a question"),
+      ROW("r-2", "an answer", { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "an answer" }] } }),
+    ];
+    const live = ROW("f-3", "said live inside the window");
+    const atRead = [...atSeed, live];
+    let resolveSeed!: (rows: unknown[]) => void;
+    const seed = new Promise<unknown[]>((r) => { resolveSeed = r; });
+    let call = 0;
+    const reader: Reader = () => (call++ === 0 ? seed : Promise.resolve(atRead.slice()));
+    const { c, lines, threadId } = await open(e.engine, { getSessionMessages: reader, arrivalStore: store }, "s9c");
+
+    e.push(live);
+    for (const [uuid, body] of [["a-1", "M1"], ["a-2", "M2"], ["a-3", "M3"]]) e.push(LIVE_PEER(uuid, body));
+    await tick();
+    expect(store.readAll("s9c"), "an arrival was logged before the seed grounded the chain").toHaveLength(0);
+
+    resolveSeed(atSeed.slice());
+    await tick();
+
+    const entries = store.readAll("s9c");
+    expect(entries.map((entry) => entry.id)).toEqual(["a-1", "a-2", "a-3"]);
+    const arrivalUuids = new Set(entries.map((entry) => entry.id));
+    for (const entry of entries) {
+      expect(entry.ambiguous, `arrival ${entry.id} was flushed ambiguous, though a real frame preceded it in the buffer`).toBeUndefined();
+      expect(arrivalUuids.has(String(entry.anchor?.afterUuid)), `arrival ${entry.id} anchored on sibling arrival ${entry.anchor?.afterUuid}`).toBe(false);
+      expect(entry.anchor?.afterUuid, `arrival ${entry.id} did not anchor on the one real frame the window observed`).toBe("f-3");
+    }
+
+    send(c, { id: 23, method: "thread/read", params: { threadId } });
+    await tick();
+    const page = parsed(lines).find((m) => m.id === 23)!.result;
+    const marked = page.data.filter((i: any) => i.type === "userMessage" && i.origin);
+    expect(marked.map((i: any) => [i.id, i.text])).toEqual([["a-1", "M1"], ["a-2", "M2"], ["a-3", "M3"]]);
+    expect(page.arrivals).toEqual({ logged: 3, dropped: 0 });
+  });
 });

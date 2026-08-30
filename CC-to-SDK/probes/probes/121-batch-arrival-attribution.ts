@@ -300,7 +300,10 @@ const coverage = (nonces: string[], fields: (string | undefined)[]): string[] =>
 // coverage — this probe's first run scored 3/3 coverage on a batch the engine had COLLAPSED into two
 // rows, one of which held two envelopes. Reporting that coverage as attribution is the error this
 // helper exists to make impossible: the bijection is asserted, never inferred from a total.
-const ENVELOPE_OPEN = /<cross-session-message\s/g;
+// BOTH grammars, for the same reason `envelopeBodiesLocal` below counts both: a counter that knew only the
+// tag this suite SENDS reports every `<agent-message …>` frame as envelope-less, which is 200 of this
+// machine's 228 peer rows — and "envelope-less" is the word this file's whole verdict turns on.
+const ENVELOPE_OPEN = /<(?:cross-session-message|agent-message)\s/g;
 const envelopeCount = (s: string | undefined): number =>
   typeof s === "string" ? (s.match(ENVELOPE_OPEN) ?? []).length : 0;
 interface Bijection { ok: boolean; perFrame: number[]; multi: number; unclaimed: string[]; shared: string[]; }
@@ -422,19 +425,31 @@ function report(A: Attempt): void {
 // for every persisted peer row — so the live and persisted sides can disagree visibly instead of being
 // summarised into one aggregate, which is the error the verdict above already had to correct once.
 
-/** A transcription of `peerArrival`'s envelope scan (harness/src/peer/address.ts): depth-counting, so a
- *  quoted envelope is not truncated and siblings are not merged. It exists so the two "would render"
- *  columns below are COMPUTED rather than eyeballed off a prefix. A change to that rule makes this
- *  transcription stale, which is why every raw field is printed beside its verdict. */
+/** A transcription of `peerArrival`'s envelope scan (harness/src/peer/address.ts): depth-counted PER TAG
+ *  NAME, over BOTH grammars, so a quoted envelope is not truncated, siblings are not merged, and one
+ *  grammar cannot be closed by a tag of the other. It exists so the two "would render" columns below are
+ *  COMPUTED rather than eyeballed off a prefix — which is exactly why it must not lag the shipped rule: a
+ *  one-grammar copy reports every `<agent-message …>` frame as envelope-less, and 200 of this machine's 228
+ *  peer rows use that grammar. A change to the shipped scan makes this stale, which is why every raw field
+ *  is printed beside its verdict. */
+const ENVELOPE_TAG_LOCAL = /<(cross-session-message|agent-message)\s[^>]*>|<\/(cross-session-message|agent-message)>/;
 function envelopeBodiesLocal(raw: string): string[] {
-  const tag = /<cross-session-message\s[^>]*>|<\/cross-session-message>/g;
+  const tag = new RegExp(ENVELOPE_TAG_LOCAL.source, "g");
   const bodies: string[] = [];
-  let depth = 0, start = -1, lastClose = -1;
+  const unwrap = (s: string) => s.replace(/^\n/, "").replace(/\n$/, "");
+  let depth = 0, start = -1, lastClose = -1, name = "";
   for (let m = tag.exec(raw); m; m = tag.exec(raw)) {
-    if (m[0][1] !== "/") { if (depth === 0) { start = tag.lastIndex; lastClose = -1; } depth++; }
-    else if (depth > 0) { lastClose = m.index; if (--depth === 0) bodies.push(raw.slice(start, m.index).replace(/^\n/, "").replace(/\n$/, "")); }
+    const opening = m[1] !== undefined;
+    const tagName = m[1] ?? m[2];
+    if (opening) {
+      if (depth === 0) { name = tagName; start = tag.lastIndex; lastClose = -1; depth = 1; }
+      else if (tagName === name) depth++;
+    } else if (depth > 0 && tagName === name) {
+      lastClose = m.index;
+      if (--depth === 0) bodies.push(unwrap(raw.slice(start, m.index)));
+    }
   }
-  if (depth > 0 && lastClose > start) bodies.push(raw.slice(start, lastClose).replace(/^\n/, "").replace(/\n$/, ""));
+  if (depth > 0 && lastClose > start) bodies.push(unwrap(raw.slice(start, lastClose)));
   return bodies;
 }
 
