@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { peerArrival, rawTextOf } from "../peer/address.js";
 import { contentHash16, fsArrivalStore, type ArrivalAnchor, type ArrivalEntry, type ArrivalFingerprint, type ArrivalStore } from "../peer/arrivalLog.js";
 import { getSessionMessages as defaultGetSessionMessages } from "../sessions/index.js";
-import { TurnMapper, userItem } from "./items/mapper.js";
+import { TurnMapper, arrivalItem } from "./items/mapper.js";
 import { turnFailureOf } from "../session/turnResult.js";
 import { beginTurn, emitItems, type TurnOutcome, type TurnStopped } from "./turns.js";
 import type { ThreadRecord } from "./registry.js";
@@ -32,7 +32,10 @@ const MAX_CAPTURED = 512;
  *  own turn is at worst briefly CONSIDERED for adoption, which `beginTurn`'s busy gate then declines. */
 const MAX_OWN_UUIDS = 64;
 
-interface Arrival { msgId: string; text: string; at: number }
+/** One arrival waiting for a turn to carry it. `origin` rides along because the ITEM carries it (M9,
+ *  items/types.ts): the live drain builds the same `arrivalItem` the cold and projected paths build, and a
+ *  queue that kept only the text would leave the live path as the one that could not. */
+interface Arrival { msgId: string; text: string; origin: Record<string, unknown>; at: number }
 
 interface AdoptedTurn {
   commandUuid: string;
@@ -70,14 +73,17 @@ export interface PeerInboundState {
    *  Per-record (it dies with the thread) and deleted at each terminal (it does not grow with turns). */
   ourUuids: Set<string>;
   adopted?: AdoptedTurn;
-  /** The last filter-surviving frame this thread observed, as an entry records it. `null` is CONFIRMED
-   *  EMPTY — the seed saw zero rows — and nothing else; `undefined` is "no frame has advanced it yet".
+  /** The last filter-surviving frame this thread observed, as an entry records it. `null` says the arrival
+   *  PRECEDES EVERY ROW THE SEED RETURNED — which subsumes, but is not limited to, a seed that saw zero
+   *  rows: grounding on row 0 of a transcript full of rows produces it too. `undefined` is the different
+   *  thing: "no frame has advanced it yet".
    *  It is NOT the record of whether this thread has been seeded: `seeded` is, and conflating the two let
    *  a single frame observed before the id was known both disable the seed forever and ground the chain at
    *  the top of a transcript it had never read. */
   anchor: ArrivalAnchor | null | undefined;
   /** Whether the seed read has completed and grounded the chain. No entry is ever written while it is
-   *  false, which is what keeps `anchor: null` on disk meaning confirmed-empty and nothing else. */
+   *  false, which is what keeps an `anchor: null` on disk a STATEMENT — the arrival precedes every row the
+   *  seed returned — rather than the absence of one, i.e. a chain nothing had read yet. */
   seeded: boolean;
   /** Non-null exactly while a seed read is in flight: frames and arrivals landing inside that window are
    *  held here rather than acted on. */
@@ -293,7 +299,7 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   // arrival appear twice to any client that reads its own history; it is the last resort, not the rule.
   const arrivalUuid = arrival.uuid ?? randomUUID();
 
-  state.arrivals.push({ msgId: arrivalUuid, text: arrival.text, at: Date.now() });
+  state.arrivals.push({ msgId: arrivalUuid, text: arrival.text, origin: arrival.origin, at: Date.now() });
   // Oldest-first, and the drop is announced: a silently truncated queue reads to an operator exactly like
   // a queue nothing was ever written to.
   while (state.arrivals.length > MAX_ARRIVALS) {
@@ -431,7 +437,11 @@ function observeVisible(state: PeerInboundState, frame: any): void {
 function beginSeeding(srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore, sessionId: string): void {
   const seeding: Seeding = { frames: [], arrivals: [] };
   state.seeding = seeding;
+  // Both halves of "not yet grounded", reset together: `anchor` is WHERE the chain is and `seeded` is
+  // WHETHER it is grounded, and a re-seed that cleared only the first would leave a thread claiming a
+  // grounded chain it no longer has an anchor for.
   state.anchor = undefined;
+  state.seeded = false;
   const epoch = record.epoch;
   const read = srv.deps.getSessionMessages ?? ((id: string) => defaultGetSessionMessages(id) as Promise<unknown[]>);
   const ground = (rows: unknown[]): void => groundSeed(srv, record, state, store, { seeding, sessionId, epoch }, rows as any[]);
@@ -525,7 +535,7 @@ function drainArrivals(srv: AppServer, record: ThreadRecord, state: PeerInboundS
   if (!adopted?.mapper || !adopted.turnId || adopted.terminated) return;
   const turnId = adopted.turnId;
   for (const a of state.arrivals.splice(0, state.arrivals.length)) {
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(a.text, a.msgId) }]);
+    emitItems(srv, record, turnId, [{ kind: "completed", item: arrivalItem(a.text, a.msgId, a.origin) }]);
   }
 }
 

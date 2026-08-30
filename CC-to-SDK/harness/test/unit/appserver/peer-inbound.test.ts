@@ -343,12 +343,16 @@ describe("thread/peerMessage", () => {
     // carry the messages that body never names. Preferring the body here announced one message's text under
     // another's id. NB the `thread/peerMessage` notification still carries `origin` verbatim, repeated body
     // included — see noteArrival: that is a separate defect in what this channel offers a client.
+    //   M9 EXTENDED THAT VERBATIM ORIGIN TO THE ITEM ITSELF (items/types.ts), so this cell reads the item's
+    // TEXT rather than the serialized notification: the claim under test is about what a client RENDERS,
+    // and the repeated body now travels beside it as the attribution the sender's host wrote.
     e.push(PEER_FRAME({ origin: { kind: "peer", from: "uds:/a.sock", body: "the causing message" } }));
     e.push(LIFECYCLE("started", "foreign-b3"));
     await tick();
-    const items = JSON.stringify(notes(lines, "item/completed"));
-    expect(items).toContain("hello");
-    expect(items).not.toContain("the causing message");
+    const texts: string[] = notes(lines, "item/completed").map((m) => m.params.item)
+      .filter((i: { type?: string }) => i?.type === "userMessage").map((i: { text: string }) => i.text);
+    expect(texts).toContain("hello");
+    expect(texts.join("\n")).not.toContain("the causing message");
   });
 
   it("falls back to the envelope when the framer supplied no body, but still needs a peer origin", async () => {

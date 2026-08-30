@@ -35,8 +35,10 @@ export interface ArrivalFingerprint { type: string; hash: string; timestamp?: st
 export interface ArrivalAnchor { afterUuid: string; prevUuid: string | null; fp: ArrivalFingerprint }
 export interface ArrivalEntry {
   v: 1; id: string; sessionId: string;
-  /** `null` is CONFIRMED EMPTY — the seed read saw zero rows, so the arrival precedes all history. It is
-   *  never "unknown": an unknowable position is `ambiguous`, and the two must not collapse. */
+  /** `null` says the arrival PRECEDES EVERY ROW THE SEED RETURNED — it subsumes confirmed-empty (a seed
+   *  that saw zero rows) rather than meaning only that, because an arrival grounded on row 0 of a transcript
+   *  full of rows records the same sentinel. It is never "unknown": an unknowable position is `ambiguous`,
+   *  and the two must not collapse. */
   anchor: ArrivalAnchor | null;
   /** Seed-window arrivals, whose order against the first observed frame cannot be known. Persisted and
    *  counted (they are real messages) but never placed. */

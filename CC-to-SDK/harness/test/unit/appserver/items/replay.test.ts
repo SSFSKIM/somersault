@@ -85,8 +85,10 @@ describe("itemsFromTranscript", () => {
       origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242, msg_id: "m-1" },
     }];
     // Whole item, not only the text: this is the exact object `noteArrival` -> `drainArrivals` emits live
-    // for the same frame (`userItem(origin.body, frame.uuid)`).
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "cccccccc-1111-4111-8111-cccccccccccc", text: "hello" }]);
+    // for the same frame (`arrivalItem(text, frame.uuid, origin)`). M9 added `origin` to that object on all
+    // three paths at once (items/types.ts) — a client renders an arrival AS an arrival, and an attribution
+    // that survived live only to vanish on reload would be a second answer under one id.
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "cccccccc-1111-4111-8111-cccccccccccc", text: "hello", origin: rows[0].origin }]);
   });
 
   it("Task 10c: an ordinary local user row is untouched by the peer rule", () => {
@@ -109,7 +111,7 @@ describe("itemsFromTranscript", () => {
       message: { role: "user", content: "two envelopes, unframed" },
       origin: { kind: "peer", from: "uds:/a.sock" },
     }];
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed" }]);
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed", origin: rows[0].origin }]);
   });
 
   // Task 10d: this file no longer holds its own copy of the peer rule — it asks `peerArrival`
@@ -125,7 +127,7 @@ describe("itemsFromTranscript", () => {
       message: { role: "user", content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/a.sock" from-name="peer" from-mode="prompting">\nhello\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user.' },
       origin: { kind: "peer", from: "uds:/a.sock" },
     }];
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "88888888-1111-4111-8111-888888888888", text: "hello" }]);
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "88888888-1111-4111-8111-888888888888", text: "hello", origin: rows[0].origin }]);
   });
 
   it("Task 10d: truncates a replayed peer body at the same ceiling the live path uses", () => {

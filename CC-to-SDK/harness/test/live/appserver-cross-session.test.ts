@@ -101,7 +101,7 @@ import { AppServer } from "../../src/appserver/server.js";
 import { listenWs } from "../../src/appserver/transport/ws.js";
 import { claudeConfigDir } from "../../src/config/claudeHome.js";
 import { peerArrival } from "../../src/peer/address.js";
-import { userItem } from "../../src/appserver/items/mapper.js";
+import { arrivalItem } from "../../src/appserver/items/mapper.js";
 
 const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
@@ -426,10 +426,11 @@ live("M8 cross-session, against a real engine", () => {
     expect(idle, "LEG 1 did not run").toBeTruthy();
     const { mark, arrivalUuid, body } = idle!;
 
-    // (1) THE LIVE ITEM. Built by `drainArrivals` through `userItem(text, msgId)`.
+    // (1) THE LIVE ITEM. Built by `drainArrivals` through `arrivalItem(text, msgId, origin)` — M9 added the
+    // `origin` field, so an arrival now says WHO sent it on every path a client can reach it by.
     const liveItem = itemsOf(mark, t1!.id).find((i: any) => i?.type === "userMessage" && i.id === arrivalUuid);
     expect(liveItem, `no live userMessage item carried the arrivalUuid ${arrivalUuid}`).toBeTruthy();
-    expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body });
+    expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body, origin: expect.objectContaining({ kind: "peer" }) });
 
     // (2) THE PERSISTED ROW, read raw off disk. It IS there, it IS a `type:"user"` row, and it carries the
     // very origin the live path recognised — so running the ONE reader (`peerArrival`) over it reproduces
@@ -442,7 +443,10 @@ live("M8 cross-session, against a real engine", () => {
     expect(persisted.type).toBe("user");
     const decoded = peerArrival(persisted);
     expect(decoded, "the persisted row does not read as a peer arrival").toBeTruthy();
-    expect(userItem(decoded!.text, String(persisted.uuid))).toEqual(liveItem);
+    // M9 makes this claim one step stronger than the id-and-text stitch it was: the item's `origin` comes
+    // from the same reader on both sides, so a persisted row that reproduces the live item now has to carry
+    // the very attribution the live frame did.
+    expect(arrivalItem(decoded!.text, String(persisted.uuid), decoded!.origin)).toEqual(liveItem);
     // The raw persisted TEXT is not the message: it carries a CLI-authored preamble the peer never wrote,
     // which is exactly why `origin.body` is the text and the envelope capture is only the fallback.
     expect(JSON.stringify(persisted.message?.content ?? ""), "the persisted row's own text is somehow already the clean body").toContain("Another Claude session sent a message");
