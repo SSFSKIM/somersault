@@ -2584,6 +2584,34 @@
           "type": "integer",
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
+        },
+        "arrivals": {
+          "description": "absent when this server merges no arrival log; null when the store is degraded; otherwise the pre-eviction totals",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "logged": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "dropped": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "logged",
+                "dropped"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

@@ -106,8 +106,18 @@ export const threadSearchOccurrencesParams = z.object({
  *  either way, and the corpus is unchanged — so a client renders the hit and simply offers no jump for it.
  *
  *  `nextCursor` non-null over an EMPTY `data` is legitimate and expected, exactly as in `thread/search`:
- *  the per-page row cap bounds work, never coverage. `skipped` (omitted when zero) counts rows too large
- *  to search — D-M5-8's disclosure half. */
+ *  the per-page row cap bounds work, never coverage. `skipped` (omitted when zero) counts what was in scope
+ *  and too large to scan — a row over 1,048,576 UTF-16 units, or (M9) a logged arrival past the request's
+ *  own arrival-text budget — D-M5-8's disclosure half either way.
+ *
+ *  M9 (spec Stage D): the scan also covers the CROSS-SESSION ARRIVALS this session logged, at the rows they
+ *  landed after — text a client can find nowhere else, since an arrival is never written to the transcript.
+ *  Such an occurrence is shaped exactly like a row's: `rowOffset` is the ANCHOR row's (an arrival rides a
+ *  row rather than occupying one, so no coordinate moves), `uuid` is the ARRIVAL's own id — the same id
+ *  `thread/read` renders it under and `thread/peerMessage` announced — and `readCursor` is the anchor's
+ *  jump. `arrivals` is the same three-state object `thread/read` publishes, and it carries the scan's one
+ *  scope limit: findability covers RETAINED arrivals, the per-session log sheds its oldest at a cap, and
+ *  `dropped > 0` is how a caller learns that finding nothing is not proof that nothing was said. */
 export const threadSearchOccurrencesResult = z.object({
   data: z.array(z.object({
     rowOffset: z.number().int(),
@@ -118,4 +128,6 @@ export const threadSearchOccurrencesResult = z.object({
   })),
   nextCursor: z.string().nullable(),
   skipped: z.number().int().optional(),
+  arrivals: z.object({ logged: z.number().int(), dropped: z.number().int() }).nullable().optional()
+    .describe("absent when this server merges no arrival log; null when the store is degraded; otherwise the pre-eviction totals"),
 });

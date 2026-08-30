@@ -633,3 +633,48 @@ describe("searchScan — snippet windows", () => {
     expect(SEARCH_CAPS.maxRowUnits).toBe(2 ** 20); // "1,048,576 UTF-16 units", spelled two ways
   });
 });
+
+// ── M9 Stage D: the occurrence cursor's discriminated phase ────────────────────────────────────────────
+describe("searchScan — the occurrence cursor's two phases", () => {
+  const forge = (o: unknown) => Buffer.from(JSON.stringify(o), "utf8").toString("base64url");
+
+  it("a PRE-M9 cursor — no phase field at all — decodes as the ROW phase", () => {
+    // THE COMPATIBILITY CLAIM, and it is about a cursor nobody can mint any more: a client holding one
+    // across the upgrade is mid-walk, and "no `a`" is exactly the row phase it was minted in. A version tag
+    // would have refused it, and refusing a cursor whose meaning did not change restarts a walk for nothing.
+    const legacy = { s: "sess", r: 7, c: 19, q: "qq", g: "L3:1" };
+    expect(decodeOccCursor(forge(legacy))).toEqual(legacy);
+    expect(decodeOccCursor(forge(legacy))).not.toHaveProperty("a");
+    // …and a row-phase MINT is still byte-identical to what M5 emitted, in both directions.
+    expect(encodeOccCursor(legacy)).toBe(forge(legacy));
+  });
+
+  it("the ARRIVAL phase round-trips, and its `(seq, id)` survives beside an entry-local `c`", () => {
+    const arrival = { s: "sess", r: 4, c: 12, q: "qq", g: "L3:1", a: { seq: 9, id: "arr-1" } };
+    expect(decodeOccCursor(encodeOccCursor(arrival))).toEqual(arrival);
+    // The two phases are distinguishable by their bytes, not merely by their meaning.
+    expect(encodeOccCursor(arrival)).not.toBe(encodeOccCursor({ s: "sess", r: 4, c: 12, q: "qq", g: "L3:1" }));
+  });
+
+  it("a phase marker that is PRESENT and malformed is refused, never repaired", () => {
+    // The same rule the row offset is screened by: the cursor is server-minted and opaque, so a phase that
+    // does not parse means forged or corrupted, and a repaired one would resume the scan inside an entry
+    // nothing named. Every field of `a` is required, `seq` is a non-negative safe integer and `id` a
+    // non-empty string — an empty id would match no entry and silently swallow the group behind it.
+    const base = { s: "a", r: 1, c: 2, q: "x", g: "L1" };
+    for (const a of [null, 5, "arr", [], {}, { seq: 1 }, { id: "arr" }, { seq: -1, id: "arr" }, { seq: 1.5, id: "arr" },
+      { seq: NaN, id: "arr" }, { seq: Infinity, id: "arr" }, { seq: 1, id: "" }, { seq: 1, id: 7 }, { seq: "1", id: "arr" }]) {
+      expect([a, decodeOccCursor(forge({ ...base, a }))]).toEqual([a, null]);
+    }
+    // …and the clean shape still decodes, so this is a screen rather than a blanket refusal.
+    expect(decodeOccCursor(forge({ ...base, a: { seq: 0, id: "arr-0" } }))).toEqual({ ...base, a: { seq: 0, id: "arr-0" } });
+  });
+
+  it("the cross-codec guards still hold with a phase present", () => {
+    // A phased occurrence cursor must not decode as either sibling, and neither sibling as it.
+    const arrival = encodeOccCursor({ s: "sess", r: 4, c: 12, q: "qq", g: "L3:1", a: { seq: 9, id: "arr-1" } });
+    expect(decodeSearchCursor(arrival)).toBeNull();
+    expect(decodeOccCursor(encodeSearchCursor({ v: 1, s: "sess", r: 4, q: "qq", g: "L3:1" }))).toBeNull();
+    expect(decodeOccCursor(forge({ s: "a", r: 1, c: 2, q: "x", g: "L1", a: { seq: 1, id: "arr" }, v: null }))).toBeNull();
+  });
+});
