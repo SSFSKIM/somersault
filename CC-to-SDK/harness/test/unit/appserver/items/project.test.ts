@@ -17,7 +17,7 @@ import { TRANSCRIPT_CORPUS } from "./corpus.js";
 
 const TS = "2026-08-30T00:00:00.000Z";
 const ORIGIN = { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242 };
-/** An entry as the observer wrote it (peerInbound.ts's `logArrival`). `anchor` is irrelevant to this file
+/** An entry as the observer wrote it (peerArrivalPath.ts's `logArrival`). `anchor` is irrelevant to this file
  *  — resolving an anchor to a row index is Task 4's job, and the projector is handed the ANSWER — so these
  *  entries carry the null sentinel and say what they mean through `byRow`/`atStart` instead. */
 const ENTRY = (over: Partial<ArrivalEntry> & Pick<ArrivalEntry, "id" | "text">): ArrivalEntry => ({

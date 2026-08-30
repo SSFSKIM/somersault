@@ -65,8 +65,8 @@ export interface EngineSession {
   /** Optional (the real lib Session has it — src/session/session.ts's `onUnclaimedResult`; a DI fake and
    *  the fleet engine need not): a terminal `result` frame that matched NO waiter, which is precisely what
    *  a peer-initiated turn's result is. The callback answers whether it CLAIMED the result — a claim
-   *  supplies an adopted turn's outcome (peerInbound.ts) and keeps `unmatchedResults` meaning "a result
-   *  nobody owns". */
+   *  supplies an adopted turn's outcome (peerAdoption.ts's `claimResult`) and keeps `unmatchedResults`
+   *  meaning "a result nobody owns". */
   onUnclaimedResult?(cb: (result: unknown) => boolean): () => void;
   /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
    *  session's permission mode through — see appserver/planUpgrade.ts. */

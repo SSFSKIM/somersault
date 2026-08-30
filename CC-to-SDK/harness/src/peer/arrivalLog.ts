@@ -81,7 +81,7 @@ export interface ArrivalStore {
   deleteSession(sessionId: string): void;
 }
 
-/** Mirrors `peerInbound.ts`'s `MAX_ARRIVALS` deliberately (spec: Bounds). Same attacker-influenced input,
+/** Mirrors `peerArrivalPath.ts`'s `MAX_ARRIVALS` deliberately (spec: Bounds). Same attacker-influenced input,
  *  same answer; this cap bounds what arrivals add to a last-resort page, and only that. */
 export const ARRIVAL_LOG_CAP = 32;
 

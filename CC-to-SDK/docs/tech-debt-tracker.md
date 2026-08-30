@@ -142,3 +142,36 @@ unreached code.
 content is `{ weird: 1 }` yields that object stringified, outranking `origin.body` — so the branch is
 tested-and-defined rather than untested-and-unreached; the entry STAYS, because a pin documents behaviour
 and changes neither the cost nor the reachability that deferred it.
+
+---
+
+## 2026-08-31 — two binding-machine residuals: compaction turns and lifecycle-frame drain order
+
+**Source:** BL7 Task 2 review (both findings judged real, neither reachable as a misattribution) ·
+`src/appserver/peerInbound.ts` with `src/appserver/peerAdoption.ts`.
+
+**What:** two places where BL7's bracket binding is bounded rather than complete.
+
+1. **A compact turn opens no own bracket.** Compaction runs through its own inline runner
+   (`src/appserver/lifecycle.ts`, `thread/compact/start`), which has no user prompt to mint a uuid for and
+   so never calls `notePeerTurnUuid`; peerInbound records no `ownTurn` for it. An arrival landing
+   mid-compaction therefore binds `next` instead of `own`, and is emitted into the next REAL bracket that
+   opens on the thread.
+2. **`command_lifecycle` frames return from `onFrame` before the per-frame drain.** A bracket that dies by
+   its own terminal frame has its bound arrivals reaped only at the next NON-lifecycle frame, because the
+   lifecycle route returns early.
+
+**Cost:** bounded, and in neither case can an arrival reach a turn it did not belong to. (1) is exactly the
+behaviour D-BL7-6 specifies for an arrival with no bracket open — the engine's own queue drains into the
+next bracket — so the only "loss" is that a compaction turn never shows an arrival as its own item, which
+it arguably should not anyway. (2) costs a delayed `console.warn` and one held queue slot between the
+terminal frame and the next observed frame; the arrivals are dropped correctly when the drain does run,
+and no successor bracket can claim them in the interim because they stay bound to the dead one.
+
+**Why deferred:** both are residuals of the bracket-evidence design working as specified, not gaps in it.
+(1) needs a `notePeerTurnUuid` hook in the compaction runner — a change to a runner that has nothing else
+to do with peers, for a turn shape that has no user-visible arrival story. (2) needs the lifecycle route
+re-ordered to drain before returning, which moves a drain inside terminal handling and would have to be
+re-argued against every ordering cell Task 2 pinned. Neither buys a correctness change; revisit if a
+driving case appears — an arrival genuinely lost across a compaction, or a warn late enough to confuse a
+gate run.

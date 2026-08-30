@@ -1,4 +1,4 @@
-// test/unit/peer/reader-predicate-contract.test.ts — `readerVisible` (appserver/peerInbound.ts) against the
+// test/unit/peer/reader-predicate-contract.test.ts — `readerVisible` (appserver/peerSeed.ts) against the
 // transcript reader it claims to mirror.
 //
 // WHY THE PREDICATE EXISTS AT ALL. An anchor names the last frame the observer saw that the reader will

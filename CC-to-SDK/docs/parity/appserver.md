@@ -590,20 +590,21 @@ port-ownership-checked removal. stdio/UDS remain spec-named, unbuilt.
 
 12. **CLOSED at M8 Task 10b** (kept at this number so older references still resolve). The arrival
     ANNOUNCEMENT the M8 spec designs and Task 10's rewrite dropped is emitted: `appserver/peerInbound.ts`
-    broadcasts `thread/peerMessage {threadId, arrivalUuid, origin, text}` (BL7 added `text`) to the thread's SUBSCRIBERS the
-    moment the replayed user frame lands, once per message and before any turn edge, so an arrival that
-    causes no turn is no longer indistinguishable from silence and the peer `origin` — with the
-    `verifiedPeerPid` the kernel vouches for, the one non-forgeable identity in the exchange — reaches a
-    client verbatim instead of being read and discarded. The same change made recognition the SDK's own
-    `origin.kind === "peer"` and gave the arrival the FRAME's uuid rather than a minted one, which is what
-    makes the live `userMessage` item deduplicate against the row `thread/read` replays under that same
-    id. Task 10d then moved that whole rule — what an arrival IS and what it reads as — into one function,
-    `peerArrival` in `src/peer/address.ts`, which both this path and the cold replay ask, and dropped the
-    envelope-text fallback recognition it had carried: measured over this machine's 64 transcript files,
-    52 user rows hold a complete envelope in their text and only 12 are real arrivals, so text recognition
-    rewrote a local user's own quoted-envelope prompt to a fragment of itself. It has a scorecard row and no `methodSchemas`
-    entry, which is what the registry means: a notification is dispatched by nobody. Keyed acceptance —
-    the live legs asserting `thread/peerMessage` -> `turn/started` -> items — is still ahead of it.
+    broadcasts `thread/peerMessage {threadId, arrivalUuid, origin, text}` (BL7 added `text`) to the
+    thread's SUBSCRIBERS the moment the replayed user frame lands, once per message and before any turn
+    edge, so an arrival that causes no turn is no longer indistinguishable from silence and the peer
+    `origin` — with the `verifiedPeerPid` the kernel vouches for, the one non-forgeable identity in the
+    exchange — reaches a client verbatim instead of being read and discarded. The same change made
+    recognition the SDK's own `origin.kind === "peer"` and gave the arrival the FRAME's uuid rather than
+    a minted one, which is what makes the live `userMessage` item deduplicate against the row
+    `thread/read` replays under that same id. Task 10d then moved that whole rule — what an arrival IS
+    and what it reads as — into one function, `peerArrival` in `src/peer/address.ts`, which both this
+    path and the cold replay ask, and dropped the envelope-text fallback recognition it had carried:
+    measured over this machine's 64 transcript files, 52 user rows hold a complete envelope in their
+    text and only 12 are real arrivals, so text recognition rewrote a local user's own quoted-envelope
+    prompt to a fragment of itself. It has a scorecard row and no `methodSchemas` entry, which is what
+    the registry means: a notification is dispatched by nobody. Keyed acceptance — the live legs
+    asserting `thread/peerMessage` -> `turn/started` -> items — is still ahead of it.
 
 **Since M3 Task 10 the `both` in this table is literal, not forward-looking — and since Task 11 that
 holds for the four swap-family rows too (`rewind_anchors`, `rewind_dryrun`, `rewind`, `clear`), whose

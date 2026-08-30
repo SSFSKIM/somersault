@@ -80,7 +80,7 @@ export const peerSend: Handler = async (srv, ctx, id, params) => {
 
   // The sender's own decoder is the honest oracle for "will this body survive its wrapper": a message
   // carrying an unbalanced wrapper tag decodes back truncated, and refusing is recoverable where a silent
-  // truncation is not (tracker 2026-08-30; the foreign-sender half of that entry has no fix we control).
+  // truncation is not (tracker 2026-08-31; the foreign-sender half of that entry has no fix we control).
   // The question is asked of a PAIR as well as of one envelope, because one envelope does not ask all of it:
   // a body holding an unclosed `<cross-session-message …>` opener decodes back intact ALONE (the decoder's
   // last-closing-tag salvage terminates it at the real terminator) and then swallows a neighbour's opening
