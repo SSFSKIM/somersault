@@ -291,8 +291,13 @@ An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, 
 thread's arrival scope starts empty, the old session's entries stay on disk, and resuming that
 transcript shows them again. **Detach, not delete, requires no code beyond the choice of key.**
 
-An arrival observed before the thread has a session id is held in memory and flushed at the init
-frame. A crash in that window loses it — a stated limit, bounded by the length of engine startup.
+An arrival observed before the thread has a session id takes M8's live-only path — announced, not
+logged (rev 8.2, from implementation contact). Holding and flushing it, as earlier revisions said,
+is not better: an arrival is an engine frame, and `system/init` — where the id is latched — precedes
+any engine frame of the turn it starts, so the window holds nothing in practice; what the
+hold-and-flush rule *did* do was force the seed machinery on before an id exists. The residual is
+one announcement with no entry in a window bounded by engine startup — a stated limit, adjacent to
+the crash-window limit it replaces.
 
 ### Placement — arrivals are injected as items, never as rows
 
@@ -590,8 +595,13 @@ reader maps read *failures* to `[]`, so an unreadable transcript is indistinguis
 empty one and grounds confirmed-empty; stated as a limit of the injected reader's contract — an
 embedder whose reader distinguishes failure gets the distinction for free.
 
-The filter-surviving predicate mirrors the reader's own (`isMeta`, `isSidechain`, `teamName` are
-dropped), and that coupling is **dangerous in both directions** — rev 5 claimed drift was safe, and
+The filter-surviving predicate mirrors the reader **as this server calls it**, which is narrower
+than the reader's drop rule alone: `type` is `user` or `assistant` only — both the seed read and
+`thread/read` call `getSessionMessages` without `includeSystemMessages`, which defaults false, so a
+`system` frame (the init frame included) is a row the reader never returns, and an anchor recorded
+on one would withhold every arrival behind it (rev 8.2, review round on Task 2). Beyond that,
+`isMeta`, `isSidechain` and `teamName` are dropped, and the coupling is **dangerous in both
+directions** — rev 5 claimed drift was safe, and
 the review showed the claim was one-sided. Dropping a frame the reader keeps leaves the anchor
 *stale but resolvable*: the arrival renders after an older row, before rows that actually preceded
 it — a misplacement, not a withholding. The predicate therefore gets a contract test that runs both
@@ -938,3 +948,13 @@ Pending — written at finish.
   misplaced a fork's first arrival, and both fresh and fork now seed at init against the revealed
   id (with the reader's failures-as-`[]` contract recorded as a limit); criterion 21 now permits
   exactly the two additive optional response members while pinning the cursor pattern byte-for-byte.
+- **rev 8.2 (2026-08-30)** — two corrections from implementation contact during Task 2 of the
+  build. Pre-id arrivals take M8's live-only path rather than hold-and-flush: an arrival is an
+  engine frame and `system/init` precedes any engine frame, so the held window contains nothing —
+  while the literal rule forced seed machinery on before an id existed (and, in tests, activated the
+  default filesystem store under fixtures that never emit init). And the filter-surviving predicate
+  narrows to `user`/`assistant`: both readers of the transcript call `getSessionMessages` with
+  `includeSystemMessages` defaulted false, so a system-frame anchor — the init frame being the
+  common case — would name a row the reader never returns and withhold everything behind it. Both
+  edits keep the withhold-never-misplace direction; both were found by a reviewer reading the real
+  call sites rather than the spec's own text.
