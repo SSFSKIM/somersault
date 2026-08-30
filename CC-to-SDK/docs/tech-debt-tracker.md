@@ -76,36 +76,6 @@ Self-inflicted-only and bounded; not worth either trade until a real sender hits
 
 ---
 
-## 2026-08-30 — `EMPTY_ARRIVALS` is an exported mutable singleton
-
-**Source:** M9 review ledger (carried minor) · `src/appserver/items/project.ts`.
-
-**What:** the empty `ResolvedArrivals` is a shared exported object rather than a constructor. The rule it
-relies on — construct fresh, never mutate — is a convention, not a type.
-
-**Cost:** one caller that mutates it corrupts every later projection in the process, silently.
-
-**Why deferred:** every current caller reads it only, and the parity-law property test would redden loudly
-on a mutation that changed a projection. Bounded until a new caller appears.
-
----
-
-## 2026-08-30 — items-test corpus fixtures are duplicated rather than shared
-
-**Source:** M9 review ledger (carried minor) · `test/unit/appserver/items/corpus.ts` versus the row builders
-open-coded in `test/unit/appserver/subscribe-arrivals.test.ts` and `search-arrivals.test.ts`.
-
-**What:** `items/replay.test.ts` and `items/project.test.ts` share `TRANSCRIPT_CORPUS`; the reply-side
-suites spell their own `USER`/`ASSISTANT`/`ENTRY` builders instead of drawing on it.
-
-**Cost:** data drift — one copy updated for a shape change and the other not, leaving a suite that agrees
-with itself about a shape the code no longer produces.
-
-**Why deferred:** the duplication is small and both copies are read by tests that fail loudly on drift in
-the code. Lift it the next time either corpus is edited.
-
----
-
 ## 2026-08-30 — search reports a duplicate-anchor arrival at both rows; `thread/read` picks the first
 
 **Source:** M9 review ledger (documented divergence) · `src/appserver/search.ts` (~:696).
@@ -138,22 +108,7 @@ cursor to fix it would break D1, which is the one constraint the whole milestone
 
 ---
 
-## 2026-08-30 — `tick()` macrotask waits instead of `vi.waitFor` in the arrivals suite
-
-**Source:** M9 review ledger (carried minor) · `test/unit/appserver/arrivals-clear-degraded.test.ts`.
-
-**What:** this suite drains the microtask/macrotask queue a fixed number of times where the `fr-*` family
-polls a condition with `vi.waitFor`.
-
-**Cost:** a future change that adds an await to the path makes the wait too short, and the test fails as a
-flake rather than as a statement about behavior.
-
-**Why deferred:** the suite is deterministic today (the engine fake is push-driven, and the reads it waits
-on are injected), and converting it is mechanical work with no current failure to motivate it.
-
----
-
-## 2026-08-30 — `peerArrival` JSON-stringifies non-string, non-array content
+## 2026-08-31 — `peerArrival` JSON-stringifies non-string, non-array content
 
 **Source:** M9 review ledger (carried minor) · `src/peer/address.ts`.
 
@@ -165,6 +120,11 @@ on are injected), and converting it is mechanical work with no current failure t
 **Why deferred:** unreachable for real CLI frames — every measured peer frame carries a string or a block
 array — so the branch exists only to avoid an undefined, and changing it would be changing untested,
 unreached code.
+
+**2026-08-31 (BL7, D-BL7-7):** `test/unit/peer/address.test.ts` now pins the fallback — a frame whose
+content is `{ weird: 1 }` yields that object stringified, outranking `origin.body` — so the branch is
+tested-and-defined rather than untested-and-unreached; the entry STAYS, because a pin documents behaviour
+and changes neither the cost nor the reachability that deferred it.
 
 ---
 

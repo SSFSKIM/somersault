@@ -276,6 +276,19 @@ describe("peerArrival", () => {
     expect(peerArrival(undefined)).toBeUndefined();
   });
 
+  // A PIN, NOT A FIX. `rawTextOf` JSON-stringifies content that is neither a string nor a block array, and
+  // that string is non-empty, so it outranks the framer's own `origin.body` and a client renders a
+  // serialized object where a message should be. The branch is unreachable for real CLI frames — every
+  // measured peer frame carries a string or a block array — so the debt entry stands rather than being
+  // "paid" here (a pin documents behaviour; it changes neither the cost nor the reachability). What this
+  // cell buys is that the behaviour is now DEFINED: a later change to the fallback has to say so out loud
+  // instead of altering an untested branch in silence.
+  it("JSON-stringifies exotic content, and that outranks origin.body — the pinned fallback", () => {
+    const a = peerArrival(row({ message: { role: "user", content: { weird: 1 } } }))!;
+    expect(a.text).toBe(JSON.stringify({ weird: 1 }));
+    expect(a.text).not.toBe("hello");                 // `row()`'s origin.body, which the raw text outranks
+  });
+
   it("handles block-array content", () => {
     const a = peerArrival(row({ origin: { kind: "peer" }, message: { role: "user", content: [{ type: "text", text: ENVELOPE_TEXT }] } }))!;
     expect(a.text).toBe("hello");

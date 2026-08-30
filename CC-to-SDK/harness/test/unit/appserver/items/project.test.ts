@@ -49,6 +49,34 @@ describe("the parity law: with no arrivals, the projector IS the replay", () => 
   });
 });
 
+describe("the shared empty refuses to be poisoned", () => {
+  // `EMPTY_ARRIVALS` is handed to EVERY read that carries no arrivals — the overwhelming majority of them —
+  // so one consumer that mutated it would corrupt every LATER projection in the process, silently, in reads
+  // that never asked about arrivals at all. A shallow `Object.freeze` does NOT close that: a `Map` accepts
+  // `set` through a frozen reference, and freezing the container does not reach the array either. Hence the
+  // shape of this cell: it performs the poisoning a consumer would perform and then re-projects, rather
+  // than asserting `Object.isFrozen` — which the broken version would also have passed.
+  const rows = [{ type: "user", uuid: "p0", message: { content: "a prompt" } }];
+  const smuggled = ENTRY({ id: "poison", text: "an arrival nobody logged" });
+
+  it("every mutator throws, and a projection taken afterwards is the one taken before", () => {
+    const before = projectItems(rows, EMPTY_ARRIVALS, true);
+    expect(() => EMPTY_ARRIVALS.byRow.set(0, [smuggled])).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.byRow.delete(0)).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.byRow.clear()).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.atStart.push(smuggled)).toThrow(TypeError);
+    // The container too: swapping `byRow` wholesale is the poisoning a throwing Map alone would still allow.
+    expect(() => { (EMPTY_ARRIVALS as { byRow: unknown }).byRow = new Map([[0, [smuggled]]]); }).toThrow(TypeError);
+
+    // THE CLAIM — not that the calls threw, but that the projector still projects the empty case, on both
+    // values of the window flag (`atStart` is the half a frozen map would have left open).
+    expect(projectItems(rows, EMPTY_ARRIVALS, true)).toEqual(before);
+    expect(projectItems(rows, EMPTY_ARRIVALS, false)).toEqual(before);
+    expect(before.map((i) => i.id)).toEqual(["p0"]);
+    expect(itemsFromTranscript(rows)).toEqual(before);      // …and the parity law survives the attempt
+  });
+});
+
 describe("placing arrivals", () => {
   const rows = [
     { type: "user", uuid: "r0", message: { content: "first prompt" } },
