@@ -343,6 +343,23 @@ kills quantified over ≥5 runs when probabilistic. Live: A8 keyed cell in `test
   orders through projectAll.
 - **D18** (plan review M8, accepted) Promoting `@anthropic-ai/sdk` updates `package-lock.json` in the
   same task (regenerated at the installed version), so a clean `npm ci` accepts the manifest.
+- **D19** (post-merge review loop, waves 1-4) Hook attribution is PER-ENTRY and TOOL-AWARE: an entry
+  with tool name T (the `hook_name` suffix) may be claimed by a run only if the run has a tool-T member,
+  with the causal cap `capForTool(R,T)` = unbounded while a tool-T member is open, else the max
+  resultSequence over settled tool-T members; entries are consumed once (first legal claim); the pop-out
+  widening's spanning-sibling refusal is scoped to the closing call's tool. Rejected along the way: pure
+  flush-order claiming (picks causally impossible owners), a run-global cap (starves open members'
+  hooks), a run-global cap-disable (steals settled-tool hooks), and tool-blind spanning refusal (drops
+  the closing call's own hook). Ambiguous entries whose owner popped out go UNCLAIMED — attaching hooks
+  to standalone calls is the deferred `Qy` seam. Residual (logged, not fixed): the malformed-name
+  fail-open arm bypasses the tool-scoped spanning guard — unreachable on the observed wire (P116).
+- **D20** (fix wave 1, review F1) Unresolved advisor rows are withheld from the append-once Static
+  region (same trailing-atom scope as the growable-tool-run withholding) and render via the pending/live
+  path until `advisorResolution` settles them; both force-publish paths (rows<=16 commitCap,
+  `publishLiveWindow` on dialog open) otherwise freeze the dim row permanently.
+- **D21** (fix wave 1, review F4) The advisor expanded-body predicate treats any non-`compact`
+  projection as transcript mode (canon's renderer is two-state; `detail-collapsed` is a ccx-only
+  intermediate that advisor bodies do not participate in).
 
 ## 8. Surprises & Discoveries
 
@@ -367,7 +384,31 @@ kills quantified over ≥5 runs when probabilistic. Live: A8 keyed cell in `test
 
 ## 9. Outcomes & Retrospective
 
-Pending — written at finish.
+Shipped, both tickets, one round (2026-08-30): **T-HOOKBLOCK** (branch merge `569a269dbf`, 5 tasks + a
+walk-gap pin) — collapsed clause/line forms, the expanded per-hook block, call-time attribution (D12)
+through all three production `segmentRuns` sites (D13), immediate reconcile on pair completion (D14),
+pty-proven in the real binary (`hookblock-cells.sh`: live block + replay-divergence pin, feature-kill
+mutation 3/3, `FOLLOWED` readiness signal closing bl6's Fix-2 item). **T-ADVISOR** (branch merge
+`409daf107e`, 5 tasks) — the four advisor result shapes + in-flight `Advising using {model}` row (client
+config, D15), plain-dim expanded body (D10), sdk:-namespace click/expand with the D16 cache-key subset,
+breaker pin, picker allowlist, keyed live cell (~$1.17, two env bugs fixed: mkdtemp realpath, bounded
+transcript poll). `/config` row dropped under D15 (catalog picker is D7-out; A9 amended v3).
+
+What the process caught, layer by layer: the plan review's H1 (stream-position sweep would drop hooks in
+the NORMAL wire order) reshaped the design before a line was written; the Task-5 acceptance walks caught
+a spec/code divergence (A9) and a latent branch (clause form — unreachable behind the silent-run drop,
+pinned contract-level); the whole-round review loop then ran four fix waves (advisor-Static freeze,
+double-attribution, boundary off-by-one, detail-collapsed predicate; then three rounds of attribution
+refinement converging on D19's unified rule) before closing on a logged defensive-corner residual. The
+retrospective lesson mirrors bl4's: point-fixes to a positional heuristic leak — the loop only converged
+when the per-entry tool-aware invariant replaced the stacked conditions (D19), and the wire's missing
+`tool_use_id` makes the remaining ambiguity irreducible by design.
+
+Deliberate divergences standing at close: hooks on all-silently-absorbed runs are dropped with the run
+(canon routes to the standalone `Qy` renderer — deferred with `di`); `stop_hook_summary` never crosses
+the wire so the collapsed count is synthesized from pairs; in-process callback hooks emit no frames
+(harness-owned); hook timing is client-arrival delta (no ms field on the wire). Debt and deferrals live
+in `docs/parity/tech-debt-tracker.md` (seeded this round).
 
 ## 10. Revision Notes
 
@@ -382,3 +423,5 @@ Pending — written at finish.
   forbidden), and the Task 5 acceptance walk caught that A9's text was never updated to match. The
   configuration surfaces are `--advisor-model` and the saved preference; a `/config` row is backlog
   material alongside a future catalog picker.
+- v4 (2026-08-30, close): D19-D21 added from the post-merge review loop (four fix waves); §8 gained the
+  latent clause-form discovery; §9 retrospective written.

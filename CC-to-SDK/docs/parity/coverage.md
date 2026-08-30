@@ -476,6 +476,21 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl7 round close-out — hook block + advisor row (2026-08-30)** — spec
+>   `docs/superpowers/specs/2026-08-30-bl7-hookblock-advisor-design.md` (v4), ledger
+>   `.doperpowers/sdd/2026-08-30-bl7-round/`. The two probe-wave flips shipped against canon 2.1.251.
+>   **T-HOOKBLOCK** (merge `569a269dbf`): PreToolUse hook pairs render as canon's collapsed dim
+>   line / bold-count clause (latent) and the expanded per-hook block, with per-entry tool-aware
+>   call-time attribution (D12/D19) through all three production segmentation sites; pty-proven
+>   (`hookblock-cells.sh`, feature-kill 3/3; replay shows none by design — hook frames never enter
+>   the document). **T-ADVISOR** (merge `409daf107e`): the D8 advisor clickable row is REAL — four
+>   result shapes, `Advising using {model}` in-flight (client config), plain-dim expanded body,
+>   `sdk:` click namespace, breaker + picker integration, keyed live cell green. `/config` row
+>   dropped (D15: full-or-dropped; catalog picker deferred). Campaign: plan review 4H+4M all real →
+>   10/10 task reviews → walks caught A9 spec drift + a latent branch → round review 4 P2 all fixed
+>   → 4 fix waves converged on the unified attribution rule → 1 residual logged in the new
+>   `docs/parity/tech-debt-tracker.md`. First server-tool rendering in ccx; hook visibility moves
+>   the Hooks domain's TUI mirror from dead-on-wire to shipped for settings-layer command hooks.
 > - **bl6 deferred-probe wave (2026-08-30, SDK 0.3.237)** — the §3.3 reachability gates, run a day
 >   early on token renewal (probes `116`-`118` + bl5 live-cell rerun; full record in `tui-ux.md`).
 >   FLIPPED buildable: the expanded-cluster **hook block** (settings-layer hooks now emit

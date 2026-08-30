@@ -1058,6 +1058,37 @@ measurement, tie-break adopted as robustness) → whole-round review **ZERO find
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
 
+**bl7 close-out (2026-08-30) — the hook block + the advisor row, one round.** The two features the
+deferred-probe wave flipped buildable, shipped against canon 2.1.251 (new build family; every bl6
+2.1.250 offset re-anchored by the research phase, which also corrected bl6's merge paraphrase — canon's
+`Uu` takes `Math.max` of durations, never a sum — and found canon renders hooks in THREE places, two in
+scope). **T-HOOKBLOCK** (merge `569a269dbf`): completed PreToolUse pairs (`HookPairTracker`, PreToolUse
+only, cleared on rebuild, reconciled on completion) render as canon's collapsed forms — the separate dim
+`Ran N PreToolUse hook(s) (X.Xs)` line, and the bold-count clause form when hooks are the sentence's only
+clause (LATENT today: the only producing shape is dropped upstream by the silent-run divergence; pinned
+contract-level) — plus the expanded per-hook block (`⎿ PreToolUse:Read (0.2s)` under the header gutter),
+with call-time attribution (D12) flowing through all three production `segmentRuns` sites (D13) and the
+errored pop-out suppressed when the run absorbed hooks. Pty-proven in the real binary
+(`hookblock-cells.sh`: live cluster + replay-divergence pin — hook frames never enter the document, so
+resume shows none by design; feature-kill 3/3; the new `FOLLOWED` readiness signal in `fake-host.mjs`
+closed bl6's Fix-2 flake). **T-ADVISOR** (merge `409daf107e`): `server_tool_use`/`advisor_tool_result`
+frames render canon's four result shapes + the blinking `⏺ Advising using {model}` in-flight row (model
+from CLIENT config `--advisor-model`/pref, D15 — never the frame's main-model id), expanded body as one
+plain dim Text (D10), clickable/expandable under the `sdk:` owner namespace with the D16 cache-key
+subset (tool clicks never rebuild anchored rows), advisor entries pinned as segment BREAKERS, picker
+previews allowlisted, and a keyed live cell through the real REPL (~$0.39/consult; two test-env bugs
+fixed: mkdtemp realpath, bounded transcript poll). `/config` row DROPPED under D15 (needs the D7-barred
+catalog picker; spec A9 amended v3). **Campaign:** plan review 4H+4M all verified real (headline: the
+planned cursor sweep dropped hooks in the NORMAL wire order and the planned pty producer would have
+masked it — D12 was born there) → 10 task reviews all approve (one caught the unguarded errored
+pop-out; one usage-429 reviewer resumed mid-flight) → acceptance walks caught the A9 spec drift and the
+latent clause form → whole-round review 4 P2, ALL verified actionable → four fix waves (advisor-Static
+freeze D20, detail-collapsed predicate D21, then three attribution rounds converging on D19's unified
+per-entry tool-aware rule after two waves each introduced a regression) → closing review's one
+defensive-corner residual LOGGED (`tech-debt-tracker.md`, seeded this round). Ledger
+`.doperpowers/sdd/2026-08-30-bl7-round/round.md`; spec
+`docs/superpowers/specs/2026-08-30-bl7-hookblock-advisor-design.md` (v4).
+
 **Deferred-probe wave (2026-08-30, SDK 0.3.237)** — the bl6 §3.3 reachability gates, run when the
 token renewed (a day before the Aug-31 reset). Two verdicts FLIPPED, two held, one residue closed:
 **(1) hook block BUILDABLE** — P116 (`116-hook-frames-0337.ts`): settings-layer command hooks now
