@@ -682,6 +682,44 @@ describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook blo
   });
 });
 
+// bl8 T-QY Task 4 — the expansion pin. `expandedMemberItems` already iterates `group.memberIds` with no
+// silent filter (T8 (b) above proved a MIXED cluster's silent TodoWrite member survives expansion) and
+// already appends the hook block unconditionally on `hookInfos.length > 0` (bl7 Task 3 above). Neither of
+// those cells ever combined with D5's own case — a run with NO visible member at all, whose very existence
+// as a group depends on the hook — so this is the one combination research-silentrun-hooks.md's
+// @177046212/@177046924 evidence actually calls for: expanding it must show BOTH the hidden members and the
+// hook block, exactly like canon's expansion branch (which sits before the "anything to say" early return
+// and therefore never asks the collapsed-row question at all).
+describe("bl8 T-QY Task 4: expansion pin — an all-silent run's members AND its hook block both survive expansion", () => {
+  const doc = () => built(
+    call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "ok"),
+    call("todo-2", "TodoWrite", { todos: [] }), result("todo-2", "ok"),
+    prose("done"),   // a breaker: `projectCompact`'s `trailingRunCut` withholds an unclosed trailing run from Static
+  );
+  const hookRuns = (d: TranscriptDocument) => [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: d.toolEvents()[0]!.callSequence, event: "PreToolUse" }];
+
+  it("collapses to a REAL row through the production pipeline — D5's own case, not a hand-built FoldGroup", () => {
+    const d = doc();
+    const items = projectCompact(d, { ...FS, hookRuns: hookRuns(d) });
+    expect(lineTexts(items).some((t) => t.includes("Ran 1 PreToolUse hook (0.1s)"))).toBe(true);
+  });
+
+  it("expanded: BOTH TodoWrite member rows show, AND the hook block header + per-hook line follow them", () => {
+    const d = doc();
+    const items = projectCompact(d, { ...FS, hookRuns: hookRuns(d), expandedFolds: new Set(["todo-1"]) });
+    const texts = lineTexts(items);
+    // Member header rows (bullet + bold name) — never filtered by silence, unlike the two disqualified
+    // reads below "Ran"/"hook" that would ALSO match a bare `.includes("TodoWrite")`.
+    expect(texts.filter((t) => t.startsWith("⏺ TodoWrite"))).toHaveLength(2);
+    expect(texts).toContain("  ⎿  Ran 1 PreToolUse hook (0.1s)");
+    expect(texts).toContain("     ⎿ PreToolUse:TodoWrite (0.1s)");
+    // canon's fixed order (@177046212): members THEN the hook block, never interleaved.
+    const iLastMember = texts.map((t) => t.startsWith("⏺ TodoWrite")).lastIndexOf(true);
+    const iHookHeader = texts.indexOf("  ⎿  Ran 1 PreToolUse hook (0.1s)");
+    expect(iHookHeader).toBeGreaterThan(iLastMember);
+  });
+});
+
 // bl7 T-HOOKBLOCK Task 3, review carry-forward (2), AMENDED by the round review (F3): the two rare flush
 // paths do NOT share one rule after all. The non-collapsible standalone close (line ~637, e.g. WebFetch)
 // still closes on the flushing call's own `callSequence` — that call is never a hook-attribution candidate

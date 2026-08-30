@@ -982,10 +982,11 @@ function groupRowLine(counts: GroupCounts, active: boolean, options: ProjectionO
   // chain, never a member of it — when a run's hooks are the only thing it has to say, they take over the
   // whole sentence (bold count) instead of leaving `otherClauses` (and therefore the row) empty. Form 2 (hooks
   // alongside another clause) is a SEPARATE dim line `groupItems` appends below this row, not built here.
-  // LATENT TODAY (Task 5 fix): unreachable through `segmentRuns`, which drops an all-silent run — the one
-  // case with zero `otherClauses` — before `emit()` ever runs (toolFold.ts:532-539, deliberate divergence).
-  // Canon routes hooks on such a run to the standalone renderer instead (out of scope, backlog); pinned here
-  // via a `groupItems`/`FoldGroup` fixture built directly (test/tui/toolFold.test.ts "form 1").
+  // bl8 T-QY Task 2's D5 gate SUPERSEDES the "LATENT" note this comment used to carry: `segmentRuns` no
+  // longer drops an all-silent run that absorbed a hook (research-silentrun-hooks.md's `BM` clause, canon
+  // @177052130) — `flush`'s emit gate resolves `hooks` BEFORE the visibility test, so this branch is reached
+  // through the real production pipeline now, not only through a hand-built `FoldGroup` fixture (pinned live
+  // in test/tui/fold-expand.test.tsx "bl8 T-QY Task 4", collapsed-row cell).
   const clauses = otherClauses.length === 0 && counts.hookTotalMs !== undefined && counts.hookTotalMs > 0
     ? [hookSentenceClause(counts.hookCount ?? 0, counts.hookTotalMs)] : otherClauses;
   const run = composeFoldRun(clauses, active ? "active" : "settled", { ellipsis: active, ...(elapsed === undefined ? {} : { elapsed }) });
