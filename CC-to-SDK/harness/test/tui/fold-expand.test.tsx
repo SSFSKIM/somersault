@@ -777,11 +777,24 @@ describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling w
     expect(expandedA.join("\n")).not.toContain("PreToolUse");
   });
 
-  it("same-tool control: a spanning TodoWrite sibling STILL refuses widening, so a PreToolUse:TodoWrite entry at C's own callSequence goes unclaimed", () => {
+  it("same-tool control: a spanning TodoWrite sibling STILL refuses WIDENING, so mid-1's run never claims the entry — but bl8's D5 gate lets d-1's OWN all-silent run claim it on its own merits", () => {
     // Identical shape to the test above, except the spanning sibling D is the SAME tool as the closing call
     // (TodoWrite, not Read) — the one case the unified rule still must refuse: D could just as plausibly own
     // a PreToolUse:TodoWrite entry stamped inside its own wide-open span, so `hasSpanningSibling` still
-    // blocks widening and the entry is never swept into todo-1's group via the widened boundary.
+    // blocks todo-1's own boundary from WIDENING to claim it, and the entry is never swept into mid-1's run
+    // that way — todo-1 still pops out of it exactly as before this task.
+    //
+    // bl8 T-QY Task 2 changes what happens NEXT, though: D is `d-1`, an all-silent TodoWrite run of its own
+    // (opened before everything else, settling only after todo-1 pops out and mid-1's run flushes). Before
+    // D5, `flush` never even CALLED `resolveRunHooks` for an all-silent run (`visibleMembers > 0` guarded
+    // the whole block), so this entry was simply dropped, unclaimed by anyone. D5 resolves `hooks` BEFORE
+    // that visibility test, so d-1's own trailing flush now runs `resolveRunHooks` for real — and the entry
+    // (stamped at afterSequence 4) legitimately falls inside d-1's OWN causal window (`[1, 6)`, d-1's own
+    // settled `resultSequence` as its TodoWrite cap): d-1 is ALSO a TodoWrite member, open across the exact
+    // span the entry could plausibly have arrived in, same as cell (k)'s open-member rule. This is NOT the
+    // widening path the J2 guard defends against — it is the ordinary per-tool causal rule finding a
+    // DIFFERENT, legitimate owner once D5 gives its run a chance to ask at all. Canon's own single-accumulator
+    // model would have absorbed this hook into d-1's still-open accumulator too (bl8 research-silentrun-hooks.md).
     const doc = built(
       call("d-1", "TodoWrite", { todos: [] }),                              // opens first, stays open (spans everything below) — the SAME tool as C
       call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"),
@@ -790,12 +803,17 @@ describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling w
       prose("done"));
     const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
     const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
-    // Widening is refused, so the boundary stays at todo-1's own callSequence and the entry (stamped exactly
-    // there) is excluded from mid-1's group just as it would be with no hooks at all — todo-1 still pops out.
     const compact = groupRows(projectCompact(doc, options));
-    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row"]);
-    const expandedMid = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) }));
-    expect(expandedMid.join("\n")).not.toContain("PreToolUse");
+    // mid-1 alone (no hooks) plus d-1's own all-silent group, now visible under D5 with the entry absorbed —
+    // canon's `BM` clause form (research Part 2.2), rendered as d-1's row's own sole line.
+    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row", "group:d-1:row"]);
+    expect(compact.find((i) => i.id === "group:d-1:row")).toMatchObject({ line: { text: "  Ran 1 PreToolUse hook (0.3s)" } });
+    // mid-1's OWN expanded content — scoped to its own `foldAnchor`, since the whole-document projection now
+    // legitimately contains "PreToolUse" elsewhere (d-1's row) — never mentions the entry: the widening
+    // refusal still holds, unaffected by D5.
+    const expandedMid = projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) })
+      .filter((i) => (i as { foldAnchor?: string }).foldAnchor === "mid-1");
+    expect(lineTexts(expandedMid).join("\n")).not.toContain("PreToolUse");
   });
 
   it("same-tool control (regression, unaffected by this wave): a spanning Read sibling DOES claim a PreToolUse:Read entry once its own settled window resolves it there", () => {

@@ -285,12 +285,16 @@ export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; s
  *  (`FoldAtom.thinkingKey`), `messageSequence` is its transcript position (for later interleave-by-sequence
  *  rendering), `body` is the raw `.trim()`ed — NOT whitespace-collapsed — thinking text. */
 export type AbsorbedThinking = { key: string; messageSequence: number; body: string };
-/** One resolved PreToolUse hook run attributed to this cluster (bl7 T-HOOKBLOCK Task 2, spec D12/D5): `name`
- *  is the wire's `hook_name` verbatim (Task 3 renders it as-is; ccx cannot recover canon's definition-derived
- *  command text from the wire — D5, recorded divergence), `durationMs` its own started→response arrival delta
- *  (`HookRunEntry.durationMs`, spec D2). Order matches `options.hookRuns` encounter order (arrival/afterSequence
- *  order per Task 1's invariant) — never re-sorted here (reviewer note: the invariant holds, don't defend it). */
-export type HookInfo = { name: string; durationMs: number };
+/** One resolved hook run attributed either to a cluster (PreToolUse only) or to a bl8 T-QY standalone
+ *  `{kind:"hooks"}` item (every other event): `name` is the wire's `hook_name` verbatim (Task 3 renders it
+ *  as-is; ccx cannot recover canon's definition-derived command text from the wire — D5, recorded
+ *  divergence), `durationMs` its own started→response arrival delta (`HookRunEntry.durationMs`, spec D2).
+ *  `id` is the entry's own `HookRunEntry.id` (the wire `hook_id`), carried through unconditionally — Task 3's
+ *  stable row identity (plan-review F2, bl8 Task 1). `exitCode`/`stderr` are copied off the entry the same
+ *  spread-only-when-defined way `HookRunEntry` copies them off the wire frame. Order matches
+ *  `options.hookRuns` encounter order (arrival/afterSequence order per Task 1's invariant) — never re-sorted
+ *  here (reviewer note: the invariant holds, don't defend it). */
+export type HookInfo = { name: string; durationMs: number; id: string; exitCode?: number; stderr?: string };
 /** `bashCount` is OPTIONAL and present only on a fullscreen run that absorbed a non-read Bash call (canon emits the
  *  pair the same way — `if ((e.bashCount ?? 0) > 0)`, 2.1.234:237035). Absent therefore means "classic", which is
  *  what keeps every existing counts literal valid and the classic clause chain unable to see the new counter.
@@ -338,7 +342,13 @@ export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: read
  *  swallowed (see `segmentRuns`). The renderer needs the distinction because two of those names are also
  *  SUPPRESSED, and a suppressed call's ordinary projection is nothing at all — which would make "emitted
  *  standalone so it is seen" mean "emitted standalone and invisible". */
-export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent; poppedOnError?: true } | { kind: "passthrough"; sequence: number };
+/** bl8 T-QY Task 2: the standalone sibling of `{kind:"group"}`, for a hook entry cluster absorption never
+ *  claims — every non-PreToolUse event, plus a PreToolUse entry outside every run's causal window. `label`
+ *  is the entries' shared `hook_event` (canon's row-header label; same-position same-label entries coalesce
+ *  into ONE item — Global Constraints — so `label` is never ambiguous within one item). Produced ONLY by
+ *  `weaveStandaloneHooks` (pass 2), never by `flush` (pass 1) — see that function's doc comment for why a
+ *  per-flush drain is forbidden. */
+export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent; poppedOnError?: true } | { kind: "passthrough"; sequence: number } | { kind: "hooks"; label: string; entries: readonly HookInfo[] };
 
 /** Upstream `rRo` (L302645): the per-contribution ceiling on a thought. Upstream measures a message GAP,
  *  so a conversation resumed hours later would otherwise book the whole wait as thinking; we measure one
@@ -557,6 +567,13 @@ function absorb(run: RunState, event: ToolEvent, kind: "read" | "search" | "list
  *  `matched` hands the caller exactly the entries this call counted, so the caller can add them to that set —
  *  this function stays a pure read, never mutating `consumed` itself (a non-mutating probe call, e.g. the
  *  `hooksAbsorbed` check below, must not claim what it only peeked at). */
+/** `HookRunEntry` → `HookInfo`, spread-only-when-defined — the one place either sink (cluster absorption
+ *  below, or `weaveStandaloneHooks`'s standalone items) turns a wire entry into the shape Task 3 renders. */
+const hookInfoOf = (entry: HookRunEntry): HookInfo => ({
+  name: entry.name, durationMs: entry.durationMs, id: entry.id,
+  ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}), ...(entry.stderr !== undefined ? { stderr: entry.stderr } : {}),
+});
+
 function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: readonly HookRunEntry[] | undefined,
     run: { readonly memberToolNames: ReadonlySet<string>; readonly openToolNames: ReadonlySet<string>; readonly resultSequenceByTool: ReadonlyMap<string, number>; readonly open: boolean; readonly lastResultSequence?: number },
     consumed?: ReadonlySet<HookRunEntry>): { infos: HookInfo[]; totalMs: number; matched: HookRunEntry[] } {
@@ -579,7 +596,7 @@ function resolveRunHooks(anchorSequence: number, boundary: number, hookRuns: rea
       cap = Math.min(boundary, capForTool);
     }
     if (entry.afterSequence >= cap) continue;
-    infos.push({ name: entry.name, durationMs: entry.durationMs });
+    infos.push(hookInfoOf(entry));
     matched.push(entry);
     totalMs += entry.durationMs;
   }
@@ -620,6 +637,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   // see that function's `consumed` doc. Only `flush`'s real emission adds to it; the `hooksAbsorbed` probe
   // inside the pop-out branch reads it but must stay non-mutating (it is a "what if" check, not a commit).
   const hookClaims = new Set<HookRunEntry>();
+  // bl8 T-QY Task 2: one emitted-group's worth of placement info per `flush` that actually pushes a group —
+  // `weaveStandaloneHooks` (pass 2, below) walks this AFTER pass 1 finishes, never during it (see that
+  // function's doc comment for why a per-flush drain is forbidden).
+  const slots: HookSlot[] = [];
   // The PENDING-THOUGHT buffer (F3 Task 3; `bodies` added bl6 T-CLUSTER). Upstream pushes the thinking
   // message straight into the open accumulator, so the thought belongs to the run being accumulated and is
   // lost at its next flush. Our groups are tool runs and cannot exist without a member, so a thought that
@@ -638,19 +659,29 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   // never guesses one, so a caller that forgets is a type error, not a silently wrong window.
   const flush = (boundary: number) => {
     pending = undefined;
-    // A run whose every member was absorbed silently has every counter at zero, and canon renders it as a
-    // zero-height row it still reports clickable (518513, 549764). We emit NO item for it — a DELIBERATE
-    // divergence (spec §3.1): an invisible clickable region means nothing in an item-based projection, and
-    // dropping it is exactly what today's suppressed-tool handling already does. Any buffered thought goes
-    // with it, the same way a thought held for a run that never opens is dropped today.
+    // A run whose every member was absorbed silently has every counter at zero. With NO hooks canon returns
+    // `null` for it too (`GU` @177045120 is false on every disjunct, bl8 research-silentrun-hooks.md Part
+    // 2.1(a)) — emitting no item here is exact PARITY, not a divergence, and any buffered thought is dropped
+    // with it exactly as a thought held for a run that never opens is dropped today. But canon's `BM` clause
+    // (@177052130) fires on `hookTotalMs>0` ALONE, with no counter of its own required, and renders
+    // `Ran N PreToolUse hooks (X.Xs)` as the row's sole clause — a real, visible line the OLD
+    // `run.visibleMembers > 0` gate dropped entirely (the pre-bl8 divergence, since fixed here: research
+    // Part 3's "one-condition change to flush's gate"). D5 (spec) closes that gap: `hooks` is resolved
+    // BEFORE the visibility test, so a silent-only run that absorbed a hook still emits its group.
     // The GROUP is conditional; the RESET never is. A pop-out can empty `memberIds` before the flush, and the
     // early return this used to take left the accumulator's thought behind to be spoken by the NEXT run.
-    if (run.memberIds.length > 0 && run.visibleMembers > 0) {
+    if (run.memberIds.length > 0) {
       // Spec D12's unified per-entry rule (fix wave 4): `resolveRunHooks` itself derives each entry's cap
-      // from ITS OWN tool's open/settled state on `run` — see that function's doc comment.
+      // from ITS OWN tool's open/settled state on `run` — see that function's doc comment. Resolved BEFORE
+      // the emit-gate test below (D5) — `hooks.infos.length` is one of the gate's two disjuncts.
       const hooks = resolveRunHooks(run.anchorSequence, boundary, options.hookRuns, run, hookClaims);
-      for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
-      out.push({ kind: "group", group: emit(run, hooks) });
+      if (run.visibleMembers > 0 || hooks.infos.length > 0) {
+        for (const m of hooks.matched) hookClaims.add(m);   // the one real emission point — claims win by flush order
+        // bl8 T-QY Task 2 pass 1: record this group's placement slot for `weaveStandaloneHooks` (pass 2)
+        // below — its position in `out` BEFORE the push, its anchor, and the boundary THIS flush closed on.
+        slots.push({ index: out.length, anchor: run.anchorSequence, boundary });
+        out.push({ kind: "group", group: emit(run, hooks) });
+      }
     }
     out.push(...deferred); deferred = []; run = newRun();
   };
@@ -823,7 +854,78 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
   // The trailing flush: no further atom bounds the run, so its hook window stays open to `Infinity` — the one
   // case spec D12 calls out by name, and exactly what lets test order (b) (an OPEN run at end-of-stream) still
   // absorb an entry stamped at its anchor's own `callSequence`.
-  flush(Infinity); return out;
+  flush(Infinity);
+  // bl8 T-QY Task 2 pass 2, run ONCE after pass 1 has fully settled every cluster claim (plan-review F1) —
+  // see `weaveStandaloneHooks`'s doc comment for why this cannot run per-flush.
+  return weaveStandaloneHooks(out, slots, options.hookRuns, hookClaims);
+}
+
+/** One emitted group's placement, recorded by `flush` (pass 1) for `weaveStandaloneHooks` (pass 2) to weave
+ *  leftover hook entries around: `index` is the group's own position in `out` (BEFORE pass 2 inserts
+ *  anything), `anchor` its `anchorSequence`, `boundary` the flush boundary that closed its causal window
+ *  (the same value `resolveRunHooks` capped against — NOT the tighter per-tool cap that may have excluded an
+ *  entry from the group itself; a `hookClaims`-rejected entry can still fall inside `[anchor, boundary)` and
+ *  park right after the group it was rejected by, spec D12's "park-after-cluster" rule). */
+export type HookSlot = { index: number; anchor: number; boundary: number };
+
+/** bl8 T-QY Task 2 pass 2 (plan-review F1 — a per-flush drain is FORBIDDEN): weaves every hook entry pass 1
+ *  left unclaimed into `out`, by the canon placement rule — BEFORE the FIRST group `g` (in `out`'s own
+ *  order) with `entry.afterSequence < g.anchor` (canon's empty-run straight-to-output); else AFTER the LAST
+ *  group `g` with `g.anchor <= entry.afterSequence < g.boundary` (canon's park-after-cluster); else at the
+ *  END. `slots` is already in `out`-position order (pass 1 pushes it in the same order it pushes groups), so
+ *  a forward scan finds "first" and "last" correctly without re-sorting.
+ *
+ *  WHY NOT per-flush: `segmentRuns` walks the ANCHORED stream, not raw call order, so a run of overlapping
+ *  calls whose later-started member finishes first is FLUSHED before an earlier-started, still-open sibling
+ *  run (see `resolveRunHooks`'s `consumed` doc, and the bl7 F1 regression cell below). Converting a
+ *  rejected entry to standalone AT THE REJECTING run's own flush would be a PERMANENT decision the moment it
+ *  happens — but the very next flush (an overlapping run whose window causally contains the same entry, per
+ *  `resolveRunHooks`'s per-tool cap) may be the run that actually owns it. Waiting until every flush has run
+ *  (this function's ONE call site, after the trailing flush) is what lets `hookClaims` settle first and
+ *  leaves only the TRULY unclaimed entries to weave.
+ *
+ *  Same-position same-label entries coalesce into ONE item (Global Constraints), entries in arrival order —
+ *  `hookRuns` is walked once, in its own encounter order (Task 1's invariant), so two labels destined for the
+ *  same position keep first-seen-label-first order and each label's own entries stay in their own arrival
+ *  order regardless of how they interleave with a DIFFERENT label at the same position.
+ *
+ *  Every entry this function places — claimed or not — joins `hookClaims` (the one consumption ledger, D1/D2,
+ *  bl7 F2's rule): an entry a cluster never claims and this function never reaches (impossible, since it
+ *  processes every entry not already in `hookClaims`) would otherwise have no sink at all.
+ *
+ *  Splice-free by construction: a single forward pass over `[0, out.length]` emits any hooks item whose
+ *  position equals the current index BEFORE `out[index]` itself (position `out.length` therefore emits
+ *  after the loop's last real element, i.e. at the end) — never mutates `out` or shifts its later indices
+ *  mid-walk. */
+export function weaveStandaloneHooks(out: readonly FoldItem[], slots: readonly HookSlot[],
+    hookRuns: readonly HookRunEntry[] | undefined, hookClaims: Set<HookRunEntry>): readonly FoldItem[] {
+  if (hookRuns === undefined || hookRuns.length === 0) return out;
+  const leftovers = hookRuns.filter((entry) => !hookClaims.has(entry));
+  if (leftovers.length === 0) return out;
+  const positionOf = (afterSequence: number): number => {
+    for (const slot of slots) if (afterSequence < slot.anchor) return slot.index;
+    let after = -1;
+    for (const slot of slots) if (slot.anchor <= afterSequence && afterSequence < slot.boundary) after = slot.index;
+    return after === -1 ? out.length : after + 1;
+  };
+  // position → (label → its coalesced entries), both maps insertion-ordered so emission replays arrival order.
+  const byPosition = new Map<number, Map<string, HookInfo[]>>();
+  for (const entry of leftovers) {
+    hookClaims.add(entry);
+    const position = positionOf(entry.afterSequence);
+    let byLabel = byPosition.get(position);
+    if (byLabel === undefined) { byLabel = new Map(); byPosition.set(position, byLabel); }
+    let infos = byLabel.get(entry.event);
+    if (infos === undefined) { infos = []; byLabel.set(entry.event, infos); }
+    infos.push(hookInfoOf(entry));
+  }
+  const result: FoldItem[] = [];
+  for (let index = 0; index <= out.length; index++) {
+    const byLabel = byPosition.get(index);
+    if (byLabel !== undefined) for (const [label, entries] of byLabel) result.push({ kind: "hooks", label, entries });
+    if (index < out.length) result.push(out[index]!);
+  }
+  return result;
 }
 
 /** One clause of the summary sentence. `boldRanges` are half-open `[start, end)` offsets into `text` — the count

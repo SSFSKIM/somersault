@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolEvent, foldClauses, hookSentenceClause, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
+import { classifyToolEvent, foldClauses, hookSentenceClause, segmentRuns, weaveStandaloneHooks, type FoldAtom, type FoldClass, type FoldItem, type GroupCounts } from "../../src/tui/toolFold.js";
 import { recognizeGitOps } from "../../src/tui/gitOps.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
 import type { HookRunEntry } from "../../src/tui/hookPairs.js";
@@ -902,7 +902,7 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
     const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
       { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
     expect(groups(items)[0]!.counts).toMatchObject({ hookCount: 1, hookTotalMs: 200 });
-    expect(groups(items)[0]!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200 }]);
+    expect(groups(items)[0]!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200, id: "PreToolUse:Read@10" }]);
   });
 
   it("(b) same order but the run OPEN (no result yet) at end of stream: still absorbed", () => {
@@ -961,8 +961,8 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
       atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 20 })),
     ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 999, 6), hook("PreToolUse:Read", 200, 8)] });
     const [run1, run2] = groups(items);
-    expect(run1!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100 }]);
-    expect(run2!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200 }]);
+    expect(run1!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100, id: "PreToolUse:Read@1" }]);
+    expect(run2!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200, id: "PreToolUse:Read@8" }]);
     expect(run2!.counts.hookTotalMs).toBe(200);
   });
 
@@ -971,7 +971,10 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
       { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 250, 3)] });
     const group = groups(items)[0]!;
     expect(group.counts).toMatchObject({ hookCount: 2, hookTotalMs: 350 });
-    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100 }, { name: "PreToolUse:Read", durationMs: 250 }]);
+    expect(group.hookInfos).toEqual([
+      { name: "PreToolUse:Read", durationMs: 100, id: "PreToolUse:Read@1" },
+      { name: "PreToolUse:Read", durationMs: 250, id: "PreToolUse:Read@3" },
+    ]);
   });
 
   // Round review F2: `segmentRuns` walks the ANCHORED stream, not raw call order — a settled atom is ordered by
@@ -997,7 +1000,7 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
     ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
     const [runB, runA] = groups(items);
     expect(runB!.counts.hookCount).toBeUndefined();   // causally impossible for B: 3 >= B's own resultSequence
-    expect(runA!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111 }]);
+    expect(runA!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111, id: "PreToolUse:Read@3" }]);
     const totalHookCount = groups(items).reduce((n, g) => n + (g.counts.hookCount ?? 0), 0);
     expect(totalHookCount).toBe(1);                   // never more groups claim an entry than entries exist
   });
@@ -1023,7 +1026,7 @@ describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => 
     const group = groups(items)[0]!;
     expect(group.open).toBe(true);
     expect(group.counts.hookCount).toBe(1);
-    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 250 }]);
+    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 250, id: "PreToolUse:Read@3" }]);
   });
 });
 
@@ -1094,5 +1097,135 @@ describe("bl7 fix wave 4 (finding J1, unifies waves 2-3): the causal cap is scop
     // The later, correct Bash(1/6) group claims it instead — its own window [1, 6) causally contains it.
     expect(run2!.memberIds).toEqual(["B2"]);
     expect(run2!.counts.hookCount).toBe(1);
+  });
+});
+
+// bl8 T-QY Task 2: the standalone hook weave (pass 2) + the D5 emit gate. Pass 2 runs ONCE after pass 1
+// (`segmentRuns`'s own claim loop) fully settles — never per-flush (plan-review F1) — so these tests
+// specifically exercise entries pass 1 never claims: non-PreToolUse events, and PreToolUse entries outside
+// every run's causal window.
+describe("bl8 T-QY Task 2: standalone hook weave + D5 emit gate", () => {
+  const groups = (items: readonly FoldItem[]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hooksItems = (items: readonly FoldItem[]) => items.flatMap((i) => (i.kind === "hooks" ? [i] : []));
+  const kinds = (items: readonly FoldItem[]) => items.filter((i) => i.kind !== "passthrough").map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("(a) an unclaimed PostToolUse entry between two Read clusters lands between the two groups", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 10, result: 11 })),
+    ], { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 200, 6, "PostToolUse")] });
+    expect(kinds(items)).toEqual(["group", "hooks", "group"]);
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.label).toBe("PostToolUse");
+    expect(hooks[0]!.entries).toEqual([{ name: "PostToolUse:Read", durationMs: 200, id: "PostToolUse:Read@6" }]);
+  });
+
+  it("(b) two adjacent same-label entries at the same slot coalesce into ONE hooks item with 2 entries", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 100, 3, "PostToolUse"), hook("PostToolUse:Read", 150, 4, "PostToolUse")] });
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.entries).toHaveLength(2);
+  });
+
+  it("(c) an entry stamped before the first tool atom lands BEFORE the first group", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "group"]);
+  });
+
+  it("(d) D5: an all-silent run with a CLAIMED PreToolUse entry still emits its group; hookless all-silent emits nothing", () => {
+    const FULL = { ...OPTIONS, fullscreen: true };
+    const withHook = segmentRuns([
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2 })),
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:TodoWrite", 100, 1)] });
+    expect(withHook).toHaveLength(1);
+    expect(groups(withHook)[0]!.counts.hookCount).toBe(1);
+
+    const hookless = segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2 }))], FULL);
+    expect(hookless).toEqual([]);
+  });
+
+  it("(e) an entry claimed by a cluster is never ALSO emitted as a standalone hooks item (shared ledger)", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(hooksItems(items)).toHaveLength(0);
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  // (f) the F1 regression pair (plan-review F1): reuses the bl7 F2/G1 reordering shape above (cell (i)) —
+  // B(call2/result3), breaker(4), A(call1/result5), a hook at afterSequence 3. B's own window caps at its
+  // own resultSequence (3, exclusive) so the hook is causally impossible for B; A's still-wider window [1,5)
+  // legitimately claims it. A per-flush drain would have converted the hook to standalone the moment B's
+  // flush rejected it — permanently, before A ever got a chance to claim it. Pass 2 running only once, after
+  // every claim has settled, is what keeps this test green.
+  it("(f) F1 regression: a hook rejected by an earlier run's cap, claimed by a later overlapping run, is NEVER also standalone", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    const [runB, runA] = groups(items);
+    expect(runB!.counts.hookCount).toBeUndefined();
+    expect(runA!.counts.hookCount).toBe(1);
+    expect(hooksItems(items)).toHaveLength(0);
+  });
+
+  it("(f-inverse) with no eligible later run, the rejected entry becomes exactly ONE standalone item, never two", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.entries).toHaveLength(1);
+  });
+
+  // Task 1 reviewer's deferred pin: `resolveRunHooks`'s event filter (Task 1) already refuses a non-PreToolUse
+  // entry, but before this task nothing gave it anywhere else to go — it was simply dropped. Now it must
+  // surface as a standalone item instead.
+  it("Task-1 reviewer pin: a PostToolUse:Read entry alongside a Read run is NOT absorbed into the cluster — it becomes standalone", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 90, 1, "PostToolUse")] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.label).toBe("PostToolUse");
+  });
+});
+
+describe("bl8 T-QY Task 2: weaveStandaloneHooks (pass 2), direct", () => {
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+  const group = (memberIds: readonly string[], anchorSequence: number): FoldItem =>
+    ({ kind: "group", group: { counts: counts(), memberIds, anchorId: memberIds[0]!, anchorSequence, open: false } });
+
+  it("places a leftover entry per the slot windows and adds it to hookClaims", () => {
+    const out = [group(["a"], 1), group(["b"], 10)];
+    const slots = [{ index: 0, anchor: 1, boundary: 5 }, { index: 1, anchor: 10, boundary: Infinity }];
+    const claims = new Set<HookRunEntry>();
+    const entry = hook("PostToolUse:Read", 100, 3, "PostToolUse");
+    const result = weaveStandaloneHooks(out, slots, [entry], claims);
+    expect(result.map((i) => i.kind)).toEqual(["group", "hooks", "group"]);
+    expect(claims.has(entry)).toBe(true);
+  });
+
+  it("is a no-op (identity) when every entry is already claimed", () => {
+    const entry = hook("PreToolUse:Read", 100, 1);
+    const claims = new Set<HookRunEntry>([entry]);
+    const out: FoldItem[] = [group(["a"], 1)];
+    expect(weaveStandaloneHooks(out, [{ index: 0, anchor: 1, boundary: Infinity }], [entry], claims)).toEqual(out);
+  });
+
+  it("returns `out` unchanged when `hookRuns` is undefined or empty", () => {
+    const out: FoldItem[] = [group(["a"], 1)];
+    expect(weaveStandaloneHooks(out, [], undefined, new Set())).toBe(out);
+    expect(weaveStandaloneHooks(out, [], [], new Set())).toBe(out);
   });
 });

@@ -1600,6 +1600,10 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   for (const item of visible) {
     if (item.kind === "group") { out.push(...groupItems(item.group, "published", options, emitted)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
+    // bl8 T-QY Task 2 lands `{kind:"hooks"}` standalone items in `segmentRuns`'s output; rendering them is
+    // Task 3's job (the shape 1/shape 2 row builders + Static-withholding seam). Stub skip here keeps this
+    // narrowed to `tool` below, exactly as before Task 2.
+    if (item.kind === "hooks") continue;
     // A popped-out failure whose own projection is empty gets the substitute row (see `poppedOnErrorItems`),
     // re-keyed exactly as `projectAll` keys a standalone unit so Static's append-once bookkeeping is unchanged.
     // The other three `popsOutOnError` names render normally and keep their real items.
