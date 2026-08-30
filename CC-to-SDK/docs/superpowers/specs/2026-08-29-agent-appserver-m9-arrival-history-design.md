@@ -254,8 +254,12 @@ An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, 
   observed that would survive the reader's filter, the uuid of the filter-surviving frame *before
   it* (`null` when the anchor is the first), and a fingerprint of the anchor frame — `type`, a short
   content hash, and `timestamp` when the frame carried one (live `timestamp` is declared optional:
-  "older emitters omit it", sdk.d.ts). `anchor: null` as a whole means **confirmed empty** — the
-  seed read completed and reported zero rows — never "not yet known".
+  "older emitters omit it", sdk.d.ts). `anchor: null` as a whole means **the arrival precedes every
+  row the seed returned** — which subsumes the confirmed-empty case and also covers an arrival
+  observed before the seed's first row (rev 8.2 correction: implementation contact showed the
+  ordinary `thread/start` shape reaches it with a non-empty seed, and the placement — top of
+  history — is identical and correct in both readings). It never means "not yet known": entries are
+  written only after the seed resolves.
 
   A uuid alone is not a row identity: M5 counted 1,562 duplicate uuid occurrences (31 disagreeing on
   `parentUuid`), and the reader's last-wins keying means a later duplicate would silently *rebind* a
