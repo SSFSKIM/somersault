@@ -162,26 +162,37 @@ export interface PeerArrival {
  *  ONLY when the frame carries no text at all. That is a DELIBERATE DEVIATION from the SDK's guidance, which
  *  says to render `origin.body` "instead of re-parsing the message text" — right for a single message, and
  *  measurably wrong for a BATCH, where `origin.body` is the CAUSING message's text repeated across every
- *  frame of the batch. Two measurements say so, and they are different failures:
+ *  frame of the batch. ONE measurement says so, and one thing that looked like a second does not:
  *
- *   1  COLLAPSE. Probe 121 (probes/probes/121-batch-arrival-attribution.ts, CLI 2.1.250) sent three messages
- *      the engine folded into two turns. Three sent messages left two rows, one carrying TWO envelopes (M2
- *      and M3) under one uuid while its `origin.body` named only M2 — so M3's text exists in no
- *      `origin.body` anywhere, and preferring that field renders one message under another's id while
- *      destroying the other, though the model was given all three.
- *   2  THE ENVELOPE-LESS BATCH MEMBER. LEG 10 of test/live/appserver-cross-session.test.ts went red on
- *      2026-08-30 (CLI 2.1.250): all three of a batch's arrival items rendered byte-for-byte the FIRST
- *      message's 355-character `origin.body`, so two messages the model demonstrably answered were absent
- *      from history. Under this file's rules that is only reachable through the envelope-less arm — the
- *      shape the old comment named as an open limit and declined to guess at. It is intermittent: probe
- *      121's keyed re-run the same day produced no envelope-less frame at all (three frames, envelope counts
- *      1/1/2), and LEG 5's original "one msg_id for the whole batch" finding did not reproduce either (two
- *      msg_ids for two turns). The engine's batch shape varies run to run, so both arms are live.
+ *   1  COLLAPSE — measured, and the only sighting this deviation rests on. Probe 121
+ *      (probes/probes/121-batch-arrival-attribution.ts, CLI 2.1.250) sent three messages the engine folded
+ *      into two turns. Three sent messages left two rows, one carrying TWO envelopes (M2 and M3) under one
+ *      uuid while its `origin.body` named only M2 — so M3's text exists in no `origin.body` anywhere, and
+ *      preferring that field renders one message under another's id while destroying the other, though the
+ *      model was given all three.
+ *   2  WITHDRAWN — an envelope-less batch member was never observed. LEG 10 of
+ *      test/live/appserver-cross-session.test.ts went red on 2026-08-30 and was read here as exactly that
+ *      shape: a batch whose arrival items all rendered the FIRST message's `origin.body`. That reading was
+ *      wrong. The reported text is ONE body, not three joined copies, so there was ONE arrival item and not
+ *      three — the other two were withheld by an unresolvable anchor and never rendered at all (M9 spec,
+ *      M13: an arrival was advancing the observer's anchor onto itself, so every batch member after the
+ *      first named a row the transcript reader drops). Probe 121's keyed burst, the only direct measurement
+ *      of the question, saw ZERO envelope-less frames (counts 1/1/2). The shape stays a stated unknown.
  *
- *  PREFERRING THE FRAME'S OWN TEXT IS ONLY SAFE BECAUSE THE GRAMMAR ABOVE IS COMPLETE. Every peer row on
- *  this machine (2026-08-30, 5,676 transcripts, 103 peer rows) carries the CLI's wrapper — a preamble, the
- *  envelope, and a 560-character safety postamble the peer did not write — and 79 of them use
- *  `<agent-message …>`, which this decoder did not know until now. Preferring raw text under the old
+ *  SO THE ORDER DOES NOT REST ON THAT SIGHTING, AND NEVER NEEDED TO. `origin.body` is a claim about a
+ *  message SOME frame carried; the frame's own text is a fact about THIS frame. Preferring the fact is right
+ *  for a lone message and right for a batch member, so this function does not have to know which it holds —
+ *  which is just as well, since it is pure and sees one frame while the evidence of a batch lives across
+ *  frames. The residual is narrow and named: a batch member carrying NO text would still return another
+ *  message's `origin.body`. No such frame has been observed, and rendering nothing instead would break the
+ *  ordinary single-message case, where `origin.body` is the only text there is and is correct.
+ *
+ *  PREFERRING THE FRAME'S OWN TEXT IS ONLY SAFE BECAUSE THE GRAMMAR ABOVE IS COMPLETE. Every peer row in the
+ *  MAIN corpus carries the CLI's wrapper — a preamble, the envelope, and a 560-character safety postamble the
+ *  peer did not write — and 79 of the 103 use `<agent-message …>`, which this decoder did not know until now.
+ *  MAIN is `~/.claude/projects/<slug>/*.jsonl`, what `getSessionMessages` reads, and NOT the nested
+ *  `subagents/` and `wf_…` transcripts only other readers open (2026-08-30: 5,676 files scanned, 103 peer
+ *  rows; the nested corpora hold 121 more, every one of them the second grammar). Preferring raw text under the old
  *  one-grammar decoder would have rendered that boilerplate as the peer's message on three quarters of the
  *  corpus. With both grammars decoded, the new rule renders text IDENTICAL to the old one on all 103 rows
  *  (measured by replaying both rules over the corpus), and differs only where the frame carries text in a

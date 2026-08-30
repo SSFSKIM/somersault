@@ -414,16 +414,23 @@ function report(A: Attempt): void {
   console.log(`  distinct arrival uuids: ${distinct(A.live.map(a => a.uuid))}/${A.live.length}`);
 }
 
-// ── M9 TASK 7 · THE SECOND QUESTION ─────────────────────────────────────────────────────────────────
+// ── M9 TASK 7 · THE SECOND QUESTION, STILL UNMEASURED ───────────────────────────────────────────────
 // Verdict C above is about the PERSISTED side, and it says a collapsed batch attributes nothing per
-// message. LEG 10 of the harness's live app-server suite (criterion 20: every sent text appears in some
-// marked arrival item) then went red on a batch whose LIVE frames carried no envelope at all: with none to
-// read, `peerArrival` fell back to `origin.body`, which across a batch is the CAUSING message's text, so
-// two of three messages rendered as a third copy of the first. Whether that is a preference-order defect
-// or a genuinely unrecoverable text turns on ONE datum nobody has printed: what an envelope-less batched
-// frame's OWN `message.content` holds. The section below prints it per frame — for every live arrival and
-// for every persisted peer row — so the live and persisted sides can disagree visibly instead of being
-// summarised into one aggregate, which is the error the verdict above already had to correct once.
+// message. The question here is a different one: what does an envelope-less BATCHED frame's own
+// `message.content` hold? If it holds its own message, a reader may prefer it over `origin.body` (which
+// across a batch is the CAUSING message's text); if it is empty, that message's text is nowhere.
+//
+// THE FRAME THAT MOTIVATED THE QUESTION TURNED OUT NOT TO EXIST. LEG 10 of the harness's live app-server
+// suite (criterion 20: every sent text appears in some marked arrival item) went red and was read as a
+// batch whose live frames carried no envelope. It was not: the assertion reported ONE message body, so
+// there was ONE arrival item rather than three, and the other two had been withheld by an unresolvable
+// anchor — the harness's own defect, not the engine's (M9 spec, M13). This section's own first keyed run
+// then found ZERO envelope-less frames (counts 1/1/2). So no such frame has ever been observed, the datum
+// below remains unmeasured, and the columns exist to catch one the day the engine emits it.
+//
+// It prints per frame — for every live arrival and for every persisted peer row — so the live and
+// persisted sides can disagree visibly instead of being summarised into one aggregate, which is the error
+// the verdict above already had to correct once.
 
 /** A transcription of `peerArrival`'s envelope scan (harness/src/peer/address.ts): depth-counted PER TAG
  *  NAME, over BOTH grammars, so a quoted envelope is not truncated, siblings are not merged, and one

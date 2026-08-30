@@ -118,7 +118,10 @@ measured rather than asserted.
 **M11 — `rowKind` does not discard a real peer row on the replay path.**
 `itemsFromTranscript` drops `PHANTOM_ROW_KINDS` before consulting `peerArrival` (replay.ts:27).
 Running the real `rowKind` over all 170 peer rows on this machine: 170 classify `prompt`, 0 are
-phantom. **This answers U2**, and it is structural rather than lucky — all four phantom classifiers
+phantom. *(Population, for legibility against M12.3: these 170 are M9m's count — BOTH the main and the
+nested corpora, as they stood before this milestone's own live runs. The equivalent figure today is 228,
+of which the main corpus alone holds 107. Neither number changes the verdict: the classifier is
+structural, not marginal.)* **This answers U2**, and it is structural rather than lucky — all four phantom classifiers
 anchor at the start of the text, and a peer frame opens with a CLI-authored preamble.
 
 **M12 — there are TWO envelope grammars, and the decoder knew one.** Three measurements, taken
@@ -885,7 +888,8 @@ in here.
   from the same runs are NOT in doubt: per-message *identity* in a batch remains impossible (verdict
   C), and one announced arrival persisted no row at all, so cold replay can never render that member.
 - **U2 — does `rowKind` change verdict on any widened row?** **Answered (M11): no**, and then made
-  moot for the splice path: all 170 peer rows classify `prompt` and none is a phantom kind, but the
+  moot for the splice path: all 170 peer rows classify `prompt` and none is a phantom kind (170 is the
+  both-corpora count as of M9m, pre-dating this milestone's runs — see M11's population note), but the
   rev 6 projector injects items without ever constructing a row, so `rowKind` no longer sits between
   an entry and its rendering. M11's remaining consumer is Stage A's replay of real peer rows. The
   comment in `sessions/rows.ts` asserting "The rows carry NO meta flags (probe 68b)" is true of the
