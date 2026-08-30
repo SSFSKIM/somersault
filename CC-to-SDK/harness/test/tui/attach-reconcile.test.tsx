@@ -137,6 +137,70 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     expect(frame(lastFrame)).toContain("the fresh tail reply");
   });
 
+  // A2 (T-FOLLOW Task 2): the brief's "non-empty tasks_changed AND an in-flight turn" claim splits in two —
+  // the tasks half is the fix wave's "D16 regression" test above (taskListRef/setTasks survive the mismatch
+  // rebuild); this pins the IN-FLIGHT TURN half. Drives a live turn the same way the sibling suite does
+  // (useChat.test.tsx: "an externally-started turn ... busy is true between start and end" — turn start,
+  // then a streamed `message` frame), races the reconcile's mismatch rebuild against it, and asserts `busy`
+  // (the harness's live-turn UI signal — spinner/status derive from it) survives the rebuild untouched,
+  // because `replaceFromDisk` (useChat.ts's D16 comment) touches only the document/lastAssistant/stamp ref,
+  // never `busy`/`liveTurnRef`. It then pushes a further frame of the SAME turn to prove the turn is still
+  // event-owned and rendering — not just that the flag didn't flip — and closes the turn to IDLE.
+  it("A2: an in-flight turn's live state survives the mismatch rebuild, and later frames of that turn still render", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => freshRows };
+    function BusyHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps);
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<BusyHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    // The follow drain's in-flight turn lands BEFORE the follow ack (`whenReady`) resolves — the same
+    // ordering the brief describes and the D16 test already exercises for tasks.
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("BUSY"));
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "live turn frame one" }] } } });
+    await waitFor(() => frame(lastFrame).includes("live turn frame one"));
+    session.resolveReady();                          // the follow ack lands → the reconcile's mismatch rebuild fires
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
+    expect(frame(lastFrame)).toContain("BUSY");       // the drained in-flight turn's UI state survives the narrow rebuild
+    // The turn is still event-owned after the rebuild: a later frame of the SAME turn still renders.
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "live turn frame two" }] } } });
+    await waitFor(() => frame(lastFrame).includes("live turn frame two"));
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+  });
+
+  // A4 (T-FOLLOW Task 2): the self-resume invariant, pinned from the reconcile's side. `chatAdapter.ts:94-100`
+  // documents RESUME BEFORE FOLLOW as load-bearing: a resuming client's `resumeOp` happens before it calls
+  // `follow()`, so it is never sent its own swap's `rewound` broadcast — the invariant review F1 required v2
+  // to preserve untouched (spec D14/D16, "the self-resume invariant … is preserved untouched"). A resume
+  // re-opens the SAME persisted file it just read, so this reconcile's own mechanism (comparing the
+  // pre-follow stamp against a fresh `getSessionMessages` read) sees a MATCH by construction — no correlation
+  // with `resumeOp` needed. This fixture fakes exactly that: `initialDiskStamp` is computed from the same
+  // rows `getSessionMessages` hands back, the resume-reopens-same-file case. Asserts no `clearScreen`, no
+  // repaint — same shape as A1b, but pinned here as review F1's named scenario per the task brief.
+  it("A4: a resume that reopens the same file it already read reconciles to a no-op (review F1's self-resume scenario)", async () => {
+    const rows = diskRows("a-resume", "the resumed tail reply");
+    let reads = 0, wipes = 0;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    // `getSessionMessages` stands in for the adapter's `resumeOp`-then-`follow` re-open: it returns the
+    // SAME rows the pre-follow read (`initialDiskStamp`) was computed from — the file did not move.
+    const deps = { getSessionMessages: async () => { reads++; return rows; }, clearScreen: () => { wipes++; } };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(rows)} initialDiskStamp={diskStampOf(rows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    const seeded = frame(lastFrame);
+    session.resolveReady();                          // the follow ack lands — mirrors `whenFollowed()` after resumeOp+follow
+    await waitFor(() => reads === 1);
+    await new Promise((r) => setTimeout(r, 20));      // long enough for a stray rebuild to land
+    expect(wipes).toBe(0);                            // no clearScreen — the self-resume stays silent
+    expect(frame(lastFrame)).toBe(seeded);            // document untouched
+  });
+
   // D16 (pinned per the fix-wave review): the mismatch rebuild is the document-only `replaceFromDisk` core,
   // deliberately narrow — it must never touch `taskListRef`/`setTasks` (or bgHarvest), unlike a real rewind's
   // rebuild. The reviewer's mutation test — adding `taskListRef.current.reset(); setTasks([]);` into
