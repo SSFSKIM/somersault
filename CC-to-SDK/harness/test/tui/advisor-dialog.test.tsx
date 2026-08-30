@@ -301,6 +301,13 @@ describe("the advisor startup notification (A12)", () => {
     expect(store.state().current).toBeNull();
   });
 
+  it("(e) a main model with no rank entry posts nothing, even with an advisor set", async () => {
+    const store = createNotificationStore();
+    mountApp({ fake: fakeRemote(), initialModel: UNKNOWN, initialAdvisorModel: OPUS, store });
+    await tick(); await tick();
+    expect(store.state().current).toBeNull();
+  });
+
   it("(d) does not re-post on a later re-render", async () => {
     const store = createNotificationStore();
     const r = mountApp({ fake: fakeRemote(), initialModel: SONNET, initialAdvisorModel: OPUS, store });

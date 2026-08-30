@@ -48,7 +48,7 @@ import { createNotificationStore, type CcxNotification, type NotificationStore }
 import type { DesktopNotifier } from "./desktopNotify.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, formatAdvisorResult, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
-import { applyAdvisorChoice, canAdvise, ADVISOR_NOTICE_KEY, ADVISOR_NOTICE_PAIRED_TEXT, ADVISOR_NOTICE_UNPAIRED_TEXT } from "./advisorModel.js";
+import { applyAdvisorChoice, canAdvise, supportsAdvisor, ADVISOR_NOTICE_KEY, ADVISOR_NOTICE_PAIRED_TEXT, ADVISOR_NOTICE_UNPAIRED_TEXT } from "./advisorModel.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -726,12 +726,18 @@ export function useChat(
   // (`applyAdvisorChoice`'s `message`), so this effect never re-arms. `[]` deps + the ref guard is the same
   // shape as the `noticeBridge` bind above: read once, off the mount-time closure over `model` (the launch
   // main model) and `advisorModelRef.current` (the launch advisor), never re-triggered by a later render.
+  //   Follow-up fix (three-state gate): canon's `M8` gate — a main model with NO rank entry at all does not
+  // support the advisor and must get no notice — was left to consuming code by design (advisorModel.ts's own
+  // comment on `applyAdvisorChoice`); this is that wiring. The `supportsAdvisor` guard below closes it,
+  // ahead of the `canAdvise` paired/unpaired branch so an unsupported main model short-circuits before
+  // either text is chosen.
   const advisorNoticeShown = useRef(false);
   useEffect(() => {
     if (advisorNoticeShown.current) return;
     advisorNoticeShown.current = true;
     const advisor = advisorModelRef.current;
     if (!advisor) return;
+    if (!supportsAdvisor(model ?? "")) return;
     const text = canAdvise(model ?? "", advisor) ? ADVISOR_NOTICE_PAIRED_TEXT : ADVISOR_NOTICE_UNPAIRED_TEXT;
     notifications.add({ key: ADVISOR_NOTICE_KEY, text, priority: "medium" });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, see comment above

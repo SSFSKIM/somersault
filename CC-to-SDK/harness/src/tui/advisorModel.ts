@@ -94,8 +94,9 @@ export const advisorUnsupportedWarning = (name: string): string =>
 /** bl8 T-ADVCMD Task 4 (spec §3.4, canon `jxe` @178890000): the launch-time discoverability notice. Canon
  *  re-derives "on"/"pairing" off `ale(mainLoopModel, advisorModel)` on every change and re-posts only on a
  *  state FLIP; ccx's own copy (spec §3.4, A12) is a one-shot posted at mount off the same `canAdvise`
- *  check — the fable-consent branch and the main-model-unsupported suppression (`M8` gate) are both out of
- *  scope here (D12; consuming code decides paired/unpaired purely from `canAdvise`). */
+ *  check. The fable-consent branch remains out of scope here (D12). The main-model-unsupported suppression
+ *  (`M8` gate) was left to consuming code by design, not dropped — useChat.ts's startup-notice effect now
+ *  gates on `supportsAdvisor` before choosing paired/unpaired text, closing it. */
 export const ADVISOR_NOTICE_KEY = "advisor-experimental";
 export const ADVISOR_NOTICE_PAIRED_TEXT = "Advisor Tool (experimental) is on and may use more tokens · /advisor";
 export const ADVISOR_NOTICE_UNPAIRED_TEXT =
