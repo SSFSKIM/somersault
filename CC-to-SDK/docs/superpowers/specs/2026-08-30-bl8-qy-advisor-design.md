@@ -321,6 +321,25 @@ reconciliation before its --no-ff merge (bl7 discipline).
 - **D17** (F5) `hook_started` triggers reconciliation (non-replay), or the live counter never paints —
   the only guaranteed projections otherwise bracket the hook's lifetime. `hook_progress` still repaints
   nothing (no rendered count changes).
+- **D18** (round review F1) Detail projections weave standalone hook rows over the `Anchored[]` list by
+  sequence — no fold threading, no claims, no growability (detail recomputes fresh); PreToolUse entries
+  also surface there (canon shows hooks in transcript mode). Rejected: threading the fold pipeline
+  through detail mode (would start clustering a projection defined as the raw view).
+- **D19** (round review F2 + waves 2-4) THE PLACEMENT INVARIANT: every row `segmentRuns` pushes records
+  a governing-sequence slot (groups additionally their `[anchor, boundary)` window); pass-2 placement is
+  ONE sequence-ordered scan with a containment floor (a contained entry never precedes its containing
+  group's row) and zero-render rows do not break same-label coalescing. Replaced, in order: the
+  groups-only slot model (hooks after a lone Edit fell to the end), point slots without containment
+  precedence (hook before its own cluster), containment-first without deferred-span awareness (hook
+  before the parked rows), and per-row slots without the zero-render rule (split coalescing). The
+  convergence tripwire ("two consecutive refinements of our own fix ⇒ find the single invariant") fired
+  after wave 2 and the invariant landed in wave 3 — one wave earlier than bl7's same spiral.
+- **D20** (round review F3/F4, amending D9-D11's apply path) `applyAdvisorChoice` takes
+  `mainModel: string | undefined` and suppresses both compatibility notes when the main model is unknown
+  (an attached client learns it only when a turn streams); the prefs write is best-effort (its own
+  try/catch, non-fatal notice) and the live state (ref + reconcile + confirmation) commits
+  unconditionally once `setAdvisorModel` succeeded — the file's own "a read-only home must not take down
+  a session" convention.
 
 ## 8. Surprises & Discoveries
 
@@ -336,10 +355,53 @@ reconciliation before its --no-ff merge (bl7 discipline).
 - bl7's §8 claim "canon routes hooks on all-silent runs to the standalone renderer Qy" was FALSE (R3:
   absorbed, clause form). The latent-branch adjudication pinned the right contract for the wrong reason —
   the branch was one emit-gate condition from reachable, not architecturally severed.
+- TWO pre-existing cells asserted total hook absence ("no PreToolUse anywhere") and both were pins of
+  the pre-QY world — they held only while unclaimed entries had no renderer (and, in one case, only via
+  the very positioning bug a fix wave removed). The guarded invariant in both was ABSORPTION; the
+  narrowing (not-absorbed + standalone-visible) was a controller adjudication each time, never a fixer's.
+- The placement fix spiraled exactly like bl7's attribution fix (each patch's corner found by the next
+  review), but converged one wave earlier because the tripwire was pre-committed in the ledger BEFORE
+  the loop started — wave 3 was mandated to replace, not patch.
+- The Task-4 review caught a red-state paperwork drift ("3 of 4 failed" was 1 of 4, two passing
+  VACUOUSLY through undefined imported constants) — undefined-import vacuity is a new failure shape for
+  the reviewer-reproduces-claims protocol to watch: a red test must fail for the finding's reason.
+- The closing review endorsed the final state in one sentence with zero findings — the loop's four
+  waves ended in an explicit clean bill, not exhaustion.
 
 ## 9. Outcomes & Retrospective
 
-Pending — written at finish.
+Shipped, both tickets plus the R-XXT closure, one round (2026-08-30). **T-QY** (merge `ac6924cc59`,
+5 tasks): the tracker retains all five reachable events with in-flight counts; unclaimed pairs weave
+into standalone `{kind:"hooks"}` items through the deferred park; the D5 emit-gate change activated
+bl7's pinned clause form through its true producing shape (all-silent runs with hooks); Qy's two row
+shapes and the `di` live counter render with D14 Static withholding; pty cells S1/S2 prove the drain in
+the real binary. **T-ADVCMD** (merge `ea0a078d9a` after reconciliation `2295440dbf`, 5 tasks + a
+spec-surfaced three-state gate fix): the `/advisor` command and "Advisor (experimental)" dialog with
+canon's verbatim literals, static transcribed ranks (floor 2, pairing rule), tri-state
+`flagAdvisorModel` surviving engine swaps, live ref + knobKey threading, the startup notice's three
+states, and a keyed live test that passed against the real engine (8.8s, real `applyFlagSettings`).
+**R-XXT** closed as record-don't-build (§0) — the research had been complete since mid-bl7; the backlog
+line was stale testimony.
+
+The campaign: plan review 4 high + 1 medium, all five verified real and accepted (D13-D17; the headline
+was the per-flush drain that would have regressed bl7's attribution invariant) — fifth consecutive
+round that gate caught a shipping-grade defect. Ten task reviews: nine clean, one Critical (the F2
+withholding's dead second loop, reproduced live by the reviewer) fixed and re-approved with a mutation
+check. Two acceptance walks: zero findings each (the keyed A11 run needed one test-authoring fix, an
+8-hex roster id). Whole-round review: 5 P2 — four fixed in wave 1, one logged (F5, test-infra-bounded).
+Then the placement spiral: waves 2-4, each finding a corner of the previous fix, converged by the
+pre-committed tripwire into D19's single invariant; the closing review returned ZERO findings with an
+explicit endorsement. Two controller adjudications narrowed pre-QY total-absence pins to their real
+invariant (absorption). Final battery: all seven gates green (unit 4175; tui 4880+; the four hookblock
+cells including the standalone kill; cluster-expand; linkopen).
+
+Divergences standing at close: per-hook standalone lines show `hook_name`, not command text (wire);
+Stop rows synthesize from `exit_code`/`stderr` (no preventedContinuation/stopReason source); the live
+counter counts started-without-response, not `hook_progress` frames; `/advisor` restricts args to the
+catalog, no fable-consent flow, no "(this session only)" suffix (live+persist both); SessionEnd rows
+unbuildable (dead wire); hooks remain live-only (absent on resume/attach). The D21-true branch
+(per-hook detail lines under compact-verbose; Pre/Post live counter text) remains latent behind
+production callers that never set it — recorded in the tech-debt tracker beside F5.
 
 ## Revision Notes
 
@@ -351,3 +413,9 @@ Pending — written at finish.
   the invariant bl7's four fix waves converged on (D13); and a bare `applyFlagSettings` advisor apply
   would silently vanish on every engine swap, with explicit-off resurrecting the launch advisor (D15).
   Fifth consecutive round the plan-review gate caught a shipping-grade defect.
+- v3 (2026-08-30, during execution): A9 amended at invocation (verbatim-id Advising row per bl7 D15);
+  §3.4 amended to the three-state startup notice (canon's unranked-main silent gate, surfaced by the
+  Task 4 implementer).
+- v4 (2026-08-30, close): D18-D20 added from the post-merge review loop (wave 1 F1-F4 + the waves 2-4
+  placement spiral); §8 gained the pre-QY-pin, tripwire-payoff, and vacuous-red discoveries; §9
+  retrospective written. F5 and the D21-latent branch logged in `docs/parity/tech-debt-tracker.md`.

@@ -29,12 +29,26 @@ the commit) or when a round's scope absorbs them.
 - **Pre-existing real-subprocess codec flakes in `test:unit`** (observed bl7 fix-wave gates, 2026-08-30).
   Image/clipboard codec tests that shell out can each fail ~once per full-suite run under load and pass in
   isolation. Bound them (retry or serialize) when they next block a gate read.
+- **`hookblock-cells.sh` restore path deletes its backup before verifying** (found bl8 round review F5,
+  2026-08-30; verdict `finding-F5-verdict.md`). `restore_kill_mutation` rm's the backup without checking
+  the `cp`, callers ignore its rc, and a failed post-restore rebuild can leave a feature-killed `dist`
+  under a PASS verdict (`git diff --quiet` checks source only). Bounded: `toolFold.ts` is git-tracked,
+  `dist/` regenerates on any build, and the trigger needs a rebuild to fail right after an identical
+  success. Fix when the script is next touched: check `cp` before `rm`, propagate rebuild failure, add a
+  dist-freshness check.
+- **The D21-true branch is latent behind production callers** (bl8 Task 3 review + round review F1,
+  2026-08-30). Per-hook detail lines and the Pre/PostToolUse "N hooks ran" counter gate on
+  `projection !== "compact" || verbose`, but `projectAll` only folds under compact-nonverbose and
+  `projectPending` hardcodes non-verbose — so the branch is pinned by pure-builder tests and dead in
+  production. Detail mode now shows standalone hook ROWS (bl8 D18 weave) without those extras.
+  Activates if a verbose/fold-aware projection path ever ships; revisit beside any ctrl+O rework.
 
 ## Backlog-shaped (deferred features, not defects — live in the next round's candidate list)
 
-- **Standalone hook renderer (`Qy`) + live counter (`di`)**, and with them the hooks-on-silent-run display:
-  today a PreToolUse hook on an all-silently-absorbed run is dropped with the run (bl7 Surprises); canon
-  routes it to `Qy`. The latent collapsed clause form (bold count, only-clause) is already pinned
-  contract-level and activates when this lands.
-- **`/config` advisor-model row + model-catalog picker** (bl7 D15/D7): the row ships only with a real
-  catalog picker — full-or-dropped, never display-only.
+- ~~**Standalone hook renderer (`Qy`) + live counter (`di`)**~~ **SHIPPED bl8 (T-QY, merge
+  `ac6924cc59` + fix waves)** — standalone rows, live counter, silent-run clause-form activation all
+  landed; entry kept one round for the pointer, delete next close-out.
+- ~~**`/config` advisor-model row + model-catalog picker**~~ **RESOLVED bl8 (T-ADVCMD, merge
+  `ea0a078d9a`)** — canon research (R1) proved the /config row was never parity: canon's surface is the
+  `/advisor` command + dialog, which shipped instead. The bl7 full-or-dropped rule stands satisfied;
+  entry kept one round for the pointer, delete next close-out.

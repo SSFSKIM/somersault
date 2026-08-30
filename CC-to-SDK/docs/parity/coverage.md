@@ -476,6 +476,25 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl8 round close-out — standalone hook rows + /advisor command (2026-08-30)** — spec
+>   `docs/superpowers/specs/2026-08-30-bl8-qy-advisor-design.md` (v4), ledger
+>   `.doperpowers/sdd/2026-08-30-bl8-round/`. bl7's two deferrals shipped against the same canon
+>   2.1.251. **T-QY** (merge `ac6924cc59` + fix waves through `04ad061a8c`): every reachable hook
+>   event (P119 census: five alive, SessionEnd dead-on-wire) now renders — unclaimed pairs as canon's
+>   standalone `Ran N <label> hook(s)` rows (Stop = error-only bold-count form), placed by D19's
+>   single sequence-ordered invariant; the bl7-latent clause form ACTIVATED (R3: canon absorbs
+>   silent-run hooks — bl7's "routes to Qy" record was corrected); the `Running <Event> hook…` live
+>   counter ships; detail mode weaves the rows too (D18). **T-ADVCMD** (merge `ea0a078d9a`): canon's
+>   real advisor surface is the `/advisor` command, NOT a /config row (R1 killed the bl7 assumption) —
+>   dialog with verbatim literals + transcribed advisor_ranks, tri-state live apply surviving engine
+>   swaps, three-state startup notice, keyed live test green. advisorModel validates SILENTLY
+>   server-side (P119) — client validation is load-bearing. Campaign: plan review 4H+1M all real
+>   (fifth consecutive payoff) → 10 task reviews (1 Critical fixed) → two zero-finding walks → round
+>   review 5 P2 (4 fixed, 1 logged) → placement spiral converged at wave 3 via the pre-committed
+>   tripwire → closing review ZERO findings. Hooks domain: standalone visibility completes the
+>   settings-layer story (live-only; resume shows none by design); Advisor: first runtime
+>   server-tool CONTROL surface in ccx (bl7 shipped rendering; bl8 ships the command).
+
 > - **bl7 round close-out — hook block + advisor row (2026-08-30)** — spec
 >   `docs/superpowers/specs/2026-08-30-bl7-hookblock-advisor-design.md` (v4), ledger
 >   `.doperpowers/sdd/2026-08-30-bl7-round/`. The two probe-wave flips shipped against canon 2.1.251.

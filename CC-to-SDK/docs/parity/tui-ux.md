@@ -1058,6 +1058,39 @@ measurement, tie-break adopted as robustness) → whole-round review **ZERO find
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
 
+**bl8 close-out (2026-08-30) — the standalone hook story + the /advisor command, one round.** The two
+halves bl7 deferred, shipped against the SAME canon 2.1.251 (no re-anchoring needed — a first). The
+research phase opened with a stale-premise kill: the "still-unread xxt" carry-over was already fully
+decoded inside bl7's own research file (`isNarrationSummaryBlock` — a protobuf-tag compare to
+`"narration"`, fail-closed; recorded, not built), the third consecutive round where a parked item's
+title was testimony, not diagnosis. Fresh research: R1 proved canon has NO /config advisor row — the
+real surface is a **`/advisor` command** + "Advisor (experimental)" dialog with a static three-alias
+catalog and binary-static `advisor_rank`s — reframing the ticket from client-addition to parity; P119
+censused the hook wire (PostToolUse/Stop/UserPromptSubmit/SessionStart REACHABLE, SessionEnd dead with
+a positive control, `hook_progress` ALIVE — P116's negative was fast-hook sampling — and `advisorModel`
+validated SILENTLY server-side, killing bl7's model_not_found premise, while `applyFlagSettings` proved
+live mid-session); R3 adjudicated two conflicting bl7 records against the binary (canon ABSORBS
+silent-run hooks — the "latent" clause form's true producing shape was one emit-gate condition away,
+and bl7's "routes to Qy" claim was corrected in a spec v5 note). **T-QY** (merge `ac6924cc59`): the
+tracker retains all five reachable events with in-flight counts; unclaimed pairs weave into standalone
+`⎿ Ran N <label> hook(s)` rows (Stop's error-only bold-count form from `exit_code`/`stderr`); the
+clause form ACTIVATED; the `Running <Event> hook…` live counter (started-without-response, not
+progress frames) rides the non-Static live path with D14 identity + withholding; pty cells S1/S2 prove
+the drain in the real binary. **T-ADVCMD** (merge `ea0a078d9a`): `/advisor` with canon's verbatim
+literals, transcribed ranks (floor 2, advisee ≤ advisor), a tri-state `flagAdvisorModel` that survives
+engine swaps (explicit off replays as null — launch config never resurrects), live ref + `knobKey`
+threading so the Advising row tracks mid-session changes, the three-state startup notice, and a keyed
+live test green against the real engine. Campaign: plan review 4H+1M ALL accepted (headline: the
+per-flush drain would have regressed bl7's D19 attribution — fifth consecutive round that gate caught
+a shipping-grade defect) → 10 task reviews (one Critical — dead second withholding loop — fixed +
+mutation-re-verified) → two zero-finding walks → whole-round 5 P2 (4 fixed, F5 logged) → the placement
+spiral converged into D19's single invariant at wave 3 (the tripwire was pre-committed; one wave
+earlier than bl7's same shape) → wave 4 fixed its coalescing corner → closing review ZERO findings
+with an explicit endorsement. Two pre-QY total-absence test pins were narrowed to their real invariant
+(absorption) by controller adjudication. Ledger `.doperpowers/sdd/2026-08-30-bl8-round/round.md`; spec
+`docs/superpowers/specs/2026-08-30-bl8-qy-advisor-design.md` (v4); residuals in
+`docs/parity/tech-debt-tracker.md` (F5 restore path, D21-latent branch).
+
 **bl7 close-out (2026-08-30) — the hook block + the advisor row, one round.** The two features the
 deferred-probe wave flipped buildable, shipped against canon 2.1.251 (new build family; every bl6
 2.1.250 offset re-anchored by the research phase, which also corrected bl6's merge paraphrase — canon's
