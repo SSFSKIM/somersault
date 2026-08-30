@@ -254,6 +254,14 @@ entry stays with that recorded attempt.
   plus every ladder rung — 1697 ms consumed idle by the floor cell. Reproduced deterministically at 2x CPU
   oversubscription; fixed with a frozen clock at the call level. The same race exists in
   `clipboardImage-codec.test.ts` (needs a production clock seam) — recorded as a new tracker entry.
+- (Task 4) The plan's single-decode round-trip oracle was measurably insufficient: a body with an
+  unclosed `<cross-session-message …>` opener decodes back INTACT alone (the decoder's last-closing-tag
+  salvage terminates it at the wrapper's real terminator) yet merges with its neighbor inside a collapsed
+  two-envelope frame — worse than the truncation the guard exists to stop. The shipped oracle asks the
+  decoder about a sibling PAIR as well: `intact(body, 1) && intact(body + "\n" + body, 2)` — a strict
+  superset of criterion 8's check that adds exactly the unmatched-opener class. The task reviewer fuzzed
+  200,000 tag-heavy bodies against a decode-as-truth harness (lone, 2- and 3-envelope collapses, both
+  orders, with and without the `\n` join): zero false refusals, zero under-refusals.
 - (Task 2) `bindingNow` had to check `activeTurnId(record) === ownTurn.turnId` rather than trusting
   `ownTurn` bare: `ownTurn` is only cleared by drains, so with no intervening frame an arrival landing
   after the own turn ended would bind to the dead bracket and be dropped, where `next` (claimed by the
