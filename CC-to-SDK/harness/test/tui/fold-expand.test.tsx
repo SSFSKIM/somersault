@@ -771,7 +771,11 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
     expect(joined).toContain("  ⎿  Ran 1 PreToolUse hook");         // the refused entry renders STANDALONE (no duration) at its position
   });
 
-  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence is still excluded (unchanged by F3)", () => {
+  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence stays out of the CLUSTER — and renders standalone (bl8 wave-3 adjudication, same narrowing as the spanning-refusal cell above)", () => {
+    // Pre-bl8 this cell demanded total absence, which held only while unclaimed entries had no renderer.
+    // The guarded invariant is absorption (no duration-bearing header, no member line in the cluster's
+    // block); visibility-as-standalone is canon's own empty-run path (bl7 research §A5: a summary no run
+    // absorbs goes straight to output) and bl8's whole point.
     const doc = built(
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
       call("web-1", "WebFetch", { url: "https://example.com" }), result("web-1", "body"));
@@ -780,7 +784,10 @@ describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): th
       ...FS, expandedFolds: new Set(["read-1"]),
       hookRuns: [{ id: "h1", name: "PreToolUse:WebFetch", durationMs: 300, afterSequence: webSequence, event: "PreToolUse" }],
     });
-    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+    const joined = lineTexts(items).join("\n");
+    expect(joined).not.toContain("Ran 1 PreToolUse hook (0.3s)");   // NOT absorbed into the expanded cluster block
+    expect(joined).not.toContain("     ⎿ PreToolUse:WebFetch");     // no per-hook member line inside the block
+    expect(joined).toContain("  ⎿  Ran 1 PreToolUse hook");         // renders STANDALONE (no duration)
   });
 });
 
