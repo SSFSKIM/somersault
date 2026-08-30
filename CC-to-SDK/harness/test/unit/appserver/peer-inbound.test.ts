@@ -648,7 +648,7 @@ describe("arrival attribution", () => {
     // died and T2 has opened.
     const e = pushEngine();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "m8ccx-attr7-store-")));
+    const store = fsArrivalStore(mkdtempSync(join(fileCcxDir, "attr7-store-")));   // under the dir afterAll removes
     let resolveSeed!: (rows: unknown[]) => void;
     const seed = new Promise<unknown[]>((r) => { resolveSeed = r; });
     const { lines, record } = await startAccepting(e.engine, { getSessionMessages: () => seed, arrivalStore: store });
