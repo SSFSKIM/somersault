@@ -247,8 +247,10 @@ Commands from `CC-to-SDK/harness/`. Gates: `npm run typecheck`, `npm run test:un
 - **A10 (hook pty):** extend `scripts/hookblock-cells.sh` with a standalone-row cell: fake-host pushes a
   PostToolUse pair with no owning cluster → the REAL ccx binary renders the standalone row; feature-kill
   (drop the drain) fails the cell.
-- **A11 (advisor pty/live, gated):** keyed live cell: `/advisor sonnet` mid-session then a consult
-  renders Advising-with-new-model (skips cleanly keyless).
+- **A11 (advisor live, gated):** keyed live test (skips cleanly keyless): `/advisor sonnet` mid-session
+  applies (`setAdvisorModel` accepted, result line rendered). The consult-render half (a real
+  `Advising using …` from a live consult) is evidence-optional — consults cost ~$0.39 and cannot be
+  forced honestly; A9 pins the same render path with a synthetic frame.
 - **A12 (startup notification):** launching with a paired advisorModel posts the experimental notice
   once; unpaired posts the sibling text.
 
