@@ -13,6 +13,18 @@
 // generation moved (`diskGenRef`, unchanged machinery), a turn has started since mount
 // (`turnStartedSinceMountRef`), or the document's entry count grew past the mount-time snapshot. Tests
 // tagged "(replaced)" below pin the NEW abort semantics where the old test pinned a deferred rebuild.
+//
+// bl9 wave 4 (rereview3 P1/P2, invariant REFINEMENT): wave 3's entry-count snapshot was captured too late —
+// inside the reconcile effect's own body, which runs AFTER two earlier mount effects (session-event
+// subscription, launch-time initial-prompt submit) that can synchronously drain a backlog frame or echo a
+// prompt first. Wave 4 replaces it with `TranscriptDocument.revision()` captured DURING RENDER (a lazily-
+// initialized ref, the earliest point nothing can race), which also catches duplicate-sidecar upgrades and
+// net-zero supersede+append pairs entry-count missed. `turnStartedSinceMountRef` (virgin condition 2, "a
+// turn ran at all") is DELETED outright rather than replaced: any turn that has actually drained content
+// already trips the revision check, so the flag was only ever deciding for a turn that opened but drained
+// NOTHING — the common attach-to-a-busy-host shape — and disqualifying that case was pure over-approximation.
+// Tests tagged "(revised)" below pin the two-condition rule; a mid-turn attach whose open turn HAS drained
+// content still permanently aborts (a known, accepted limitation, not a regression).
 import { describe, it, expect } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
@@ -154,10 +166,11 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
   // IN-FLIGHT TURN half under the new rule. Drives a live turn the same way the sibling suite does
   // (useChat.test.tsx: "an externally-started turn ... busy is true between start and end"), races the
   // reconcile's read against it, and asserts `busy`/the live turn are untouched — not because a document-only
-  // rebuild happens to spare them (the old D16-style argument), but because a turn having started at all
-  // permanently disqualifies this reconcile (`turnStartedSinceMountRef`), so NO rebuild — deferred or
-  // otherwise — ever runs again for the rest of this mount, including after `turn:end` (there is no re-arm
-  // left to react to it: wave 1's deferral machinery is deleted).
+  // rebuild happens to spare them (the old D16-style argument), but because the live turn's own message frame
+  // (pushed below) is a retained document append that bumps `revision()` past the render-time seed (wave 4:
+  // `turnStartedSinceMountRef` is gone, but a turn that has drained content trips the SAME abort through the
+  // revision check), so NO rebuild — deferred or otherwise — ever runs again for the rest of this mount,
+  // including after `turn:end` (there is no re-arm left to react to it: wave 1's deferral machinery is deleted).
   it("A2: an in-flight turn's live state survives the mismatch reconcile, which now aborts permanently instead of deferring", async () => {
     const staleRows = diskRows("a-stale", "the stale tail reply");
     const freshRows = diskRows("a-fresh", "the fresh tail reply");
@@ -218,14 +231,15 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     expect(frame(lastFrame)).toBe(seeded);            // document untouched
   });
 
-  // F1 (bl9 round), invariant REPLACED wave 3: waves 1/2 patched around a mismatch rebuild racing a live
-  // turn — first deferring it to turn end, then carrying the turn-end's own local rows forward. Wave 3
-  // deletes both: the reconcile is a mount-time correction, and a turn starting at ANY point since mount
-  // (`turnStartedSinceMountRef`) permanently disqualifies it. So F1's original race (a completed assistant
-  // message delivered mid-turn silently dropped by a rebuild that predates it) is now UNREPRESENTABLE —
-  // there is no rebuild left for it to be dropped by. This pins the abort: once a turn has started, the
-  // reconcile's own read — whenever it resolves, even long after the turn has fully closed — must never
-  // touch the document again.
+  // F1 (bl9 round), invariant REPLACED wave 3, refined wave 4: waves 1/2 patched around a mismatch rebuild
+  // racing a live turn — first deferring it to turn end, then carrying the turn-end's own local rows
+  // forward. Wave 3 deletes both: the reconcile is a mount-time correction, and (post-wave-4) a turn that
+  // has drained a message frame into the document permanently disqualifies it via the revision check — the
+  // frame pushed below bumps `revision()` past the render-time seed before the reconcile's read resolves. So
+  // F1's original race (a completed assistant message delivered mid-turn silently dropped by a rebuild that
+  // predates it) is now UNREPRESENTABLE — there is no rebuild left for it to be dropped by. This pins the
+  // abort: once a turn has drained content, the reconcile's own read — whenever it resolves, even long after
+  // the turn has fully closed — must never touch the document again.
   it("F1 (replaced): a turn starting before the reconcile's read resolves aborts it permanently, even after the turn ends", async () => {
     const staleRows = diskRows("a-stale", "the stale tail reply");
     const freshRows = diskRows("a-fresh", "the fresh tail reply");
@@ -283,12 +297,13 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     expect(frame(lastFrame)).not.toContain("the stale tail reply");
   });
 
-  // New (bl9 wave 3): virgin condition 3 in isolation — a local row appended with NO turn ever starting
-  // (the idle follow-gap marker `appendFollowGap` fires from a bare truncated turn-start with no `seq`,
-  // which opens no turn at all — see useChat.ts's turn:start arm) still permanently disqualifies the
-  // reconcile. Distinct from condition 2 (F1/A2 above, which always involve a real turn) and condition 1
-  // (D14 fix 1/F2, a document swap) — this is the one virgin condition neither predecessor exercises.
-  it("virgin condition 3: a local row appended before the read resolves aborts the reconcile, even with no turn ever started", async () => {
+  // New (bl9 wave 3, revised wave 4): a local row appended with NO turn ever starting (the idle follow-gap
+  // marker `appendFollowGap` fires from a bare truncated turn-start with no `seq`, which opens no turn at
+  // all — see useChat.ts's turn:start arm) still permanently disqualifies the reconcile — under wave 4, via
+  // the SAME `revision()` check that condition 2 (F1/A2 above, real turns with drained content) uses:
+  // `appendLocal` bumps `rev` exactly like `appendSdk` does. Distinct from condition 1 (D14 fix 1/F2, a
+  // document swap) — this is the case that exercises the non-turn append path through the merged condition.
+  it("virgin condition (revision): a local row appended before the read resolves aborts the reconcile, even with no turn ever started", async () => {
     const staleRows = diskRows("a-stale", "the stale tail reply");
     const freshRows = diskRows("a-fresh", "the fresh tail reply");
     const session = fakeAttachSession({ sessionId: "sess-1" });
@@ -467,5 +482,85 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     expect(frame(lastFrame)).toContain("L:0");                        // must STILL be empty
     expect(frame(lastFrame)).not.toContain("the stale tail reply");
     expect(frame(lastFrame)).not.toContain("the fresh tail reply");
+  });
+
+  // W4-F2 (rereview3 P2) — RED ON WAVE 3: this is wave 3's own bug, not a new scenario. Wave 3's virgin
+  // condition 3 captured `documentRef.current!.entries().length` INSIDE the reconcile effect's own body,
+  // which runs AFTER the earlier-defined launch-time initial-prompt effect (useChat.ts's `ranInitialPrompt`
+  // effect, source order precedes the reconcile effect). `runTurn` appends the user-echo BEFORE calling
+  // `session.submit` — so a `submit` stub that never resolves (no turn wrapper ever opens; `pushEvent` is
+  // never called) leaves the echo as the ONLY document mutation, landing entirely inside the mount's own
+  // effect flush, before the old entry-count snapshot line ever executed. That snapshot therefore already
+  // counted the echo as part of the "seed", so it never detects the mutation, and the wholesale
+  // `replaceFromDisk` rebuild erases the echo along with everything else — genuinely local-only content that
+  // was never on disk. Wave 4's `revision()` is captured one render earlier than that (see `seedRevisionRef`),
+  // strictly before this effect can run, so it catches the same mutation the entry count missed.
+  it("W4-F2 (red on wave 3): an initial-prompt echo landing before the old entry-count snapshot must survive the reconcile", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    // No turn wrapper ever opens: `submit` never calls back into the host event stream, so
+    // `turnStartedSinceMountRef` (wave 3) — and, post-wave-4, the message-append half of the revision
+    // check — are never the reason this passes. Only the bare local echo is at stake.
+    const session = fakeAttachSession({ sessionId: "sess-1", submit: () => new Promise<{ result: unknown }>(() => {}) });
+    const deps = { getSessionMessages: async () => freshRows };
+    function InitialPromptHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows), initialPrompt: "localecho" }, deps);
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<InitialPromptHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(frame(lastFrame)).toContain("localecho");   // the initial-prompt echo landed on mount, ahead of the reconcile's own setup
+    session.resolveReady();
+    await new Promise((r) => setTimeout(r, 30));        // long enough for the reconcile's read to resolve
+    expect(frame(lastFrame)).toContain("localecho");    // MUST survive: local-only content a disk rebuild cannot reconstruct
+    expect(frame(lastFrame)).not.toContain("resynced"); // MUST NOT have rebuilt — the document was never virgin
+  });
+
+  // New (bl9 wave 4, rereview3 P1) — the coverage the deleted `turnStartedSinceMountRef` condition was
+  // permanently blocking: a mid-turn attach whose open turn has drained NO content by the time the
+  // reconcile's read resolves. `turn:start` alone touches no document state (useChat.ts's turn-start ingest
+  // arm mutates only refs/React state), so `revision()` stays at the render-time seed and the mismatch
+  // rebuild may still run — this is the common attach-to-a-busy-host shape (`follow()` emits `turn:start`
+  // before `whenReady()` resolves) the finding named. RED ON WAVE 3: the old flag aborted the instant ANY
+  // turn opened, content or not, so this would time out waiting for "resynced" that never arrives.
+  it("new coverage (revised): a turn that opened but drained no content by read-resolve time still lets the reconcile rebuild", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => freshRows };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });   // a real turn opens — but drains NOTHING before the follow ack
+    session.resolveReady();
+    await waitFor(() => frame(lastFrame).includes("resynced"), 500);
+    expect(frame(lastFrame)).toContain("the fresh tail reply");
+    expect(frame(lastFrame)).not.toContain("the stale tail reply");
+  });
+
+  // New (bl9 wave 4, rereview3 boundary pin): the flip side of the restored coverage above — a mid-turn
+  // attach whose open turn HAS drained a row by the time the reconcile's read resolves keeps its stale
+  // prefix. This is the DELIBERATE, ACCEPTED limitation the controller declined to fix (no deferral, re-arm
+  // or merge-after-turn reconstruction): the drained row already bumped `revision()` past the render-time
+  // seed, so the same abort A2/F1 pin above still holds. Expected green on HEAD and after the fix alike —
+  // pinned so a future change cannot silently narrow or widen this boundary without a test noticing.
+  it("boundary pin: a turn that has drained one row by read-resolve time keeps the stale prefix (accepted limitation)", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => freshRows };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "live-drained", message: { content: [{ type: "text", text: "LIVE-DRAINED-ROW" }] } } });
+    await waitFor(() => frame(lastFrame).includes("LIVE-DRAINED-ROW"));
+    session.resolveReady();
+    await new Promise((r) => setTimeout(r, 30));        // long enough for the reconcile's read to resolve, if it were going to rebuild
+    expect(frame(lastFrame)).toContain("the stale tail reply");   // untouched — the accepted limitation
+    expect(frame(lastFrame)).not.toContain("the fresh tail reply");
+    expect(frame(lastFrame)).not.toContain("resynced");
   });
 });

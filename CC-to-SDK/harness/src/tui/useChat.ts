@@ -921,15 +921,39 @@ export function useChat(
   // `resumeInto`'s same-session APPEND arm still bumps it locally too — appending disk rows in place is not a
   // `replaceDocument` swap, so it is not covered by the centralized bump and stays a deliberate exception.
   const diskGenRef = useRef(0);
-  // bl9 wave 3 (invariant replacement): the post-follow reconcile below is a MOUNT-TIME correction only — it
-  // may rebuild the document exclusively while it is still virgin, i.e. exactly the attach-time mount seed,
-  // untouched. This flag is one of its three virgin signals: set true, forever, the moment a real turn opens
-  // (the turn-start ingest arm below, the same line that mints `liveTurnRef`'s `LiveTurn`) — never reset,
-  // because once a turn has run the document is no longer provably the mount seed and no later state can
-  // undo that. The other two signals live beside the reconcile itself: `diskGenRef` (any document swap) and
-  // the mount-time entry count captured at the reconcile's own setup (any row — local or disk-appended —
-  // added since). Sole reader: the reconcile effect's own `attemptReconcile`.
-  const turnStartedSinceMountRef = useRef(false);
+  // bl9 wave 4 (rereview3 P2, invariant refinement): the post-follow reconcile below is a MOUNT-TIME
+  // correction only — it may rebuild the document exclusively while it is still virgin, i.e. exactly the
+  // attach-time mount seed, untouched by anything since. Wave 3's virginity test was three conditions, one
+  // of which (a mount-time ENTRY-COUNT snapshot, taken inside the reconcile effect's own body) was captured
+  // too late: two EARLIER effects (the session-event subscription, the launch-time initial-prompt submit)
+  // can synchronously drain a backlog frame or echo a prompt before an effect-body capture ever runs, so
+  // that snapshot could already include rows that landed before it — indistinguishable from the true seed,
+  // and erasable by a mismatch rebuild. `revision()` (`TranscriptDocument.revision()`) read HERE, in a
+  // lazily-initialized ref, is the earliest honest capture point: a ref initializer runs on the component's
+  // very first render pass, strictly before commit, strictly before any effect — nothing can drain, echo or
+  // append ahead of it. `revision()` also closes a second gap entry-count had: a duplicate-sidecar upgrade
+  // or a net-zero supersede+append mutates the document (and must disqualify the reconcile) without moving
+  // `entries().length` at all.
+  //
+  // Sole reader: the reconcile effect's own `attemptReconcile`, alongside `diskGenRef` (a document SWAP —
+  // complementary, not redundant: `replaceDocument` installs a brand-new `TranscriptDocument`, whose own
+  // `rev` starts back at 0, so a swap is invisible to a naive revision compare across the two instances;
+  // `diskGenRef` is the signal built for exactly that case, bumped by `replaceDocument` itself).
+  //
+  // Wave 3's THIRD condition — `turnStartedSinceMountRef`, set forever the moment any turn opened, even one
+  // that drained no content before the reconcile's read resolved — is DELETED, not replaced. It over-approximated
+  // "content this reconcile cannot safely reconstruct": an open turn that has drained content into the document
+  // already trips the revision check above (every retained append bumps `rev`), so the flag was only ever the
+  // deciding vote for a turn that started but drained NOTHING — and for that case turn:start touches no document
+  // state at all (busy/spinner chrome lives in refs and React state, not in the document; D16 keeps `taskListRef`
+  // out of the rebuild's reach regardless). Keeping the flag there permanently disqualified the common
+  // attach-to-a-busy-host shape (`follow()` emits `turn:start` before `whenReady()` resolves) even when the
+  // turn had not yet produced anything a rebuild could destroy. DELIBERATELY NOT rebuilt by this reconcile: a
+  // mid-turn attach whose open turn has ALREADY drained content by the time this reconcile's read resolves
+  // keeps its stale prefix for the rest of the mount — that is a known, accepted limitation, not a bug; adding
+  // deferral, re-arm or merge-after-turn-end to reach for it is exactly the complexity wave 3 deleted.
+  const seedRevisionRef = useRef<number | null>(null);
+  if (seedRevisionRef.current === null) seedRevisionRef.current = documentRef.current!.revision();
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1520,7 +1544,6 @@ export function useChat(
         // that one feeds `TurnSpinner`'s wall-clock render loop and has to match it; this one is measured and
         // then FORMATTED into a permanent transcript row, so a test has to be able to place both ends of it.
         turnStartRef.current = nowFn(); turnDisqualifiedRef.current = false; turnEndNotifiedRef.current = false;
-        turnStartedSinceMountRef.current = true;   // bl9 wave 3: a real turn ran — the post-follow reconcile's document is no longer virgin, ever again
         liveTurnRef.current = new LiveTurn({ now: nowFn, columns: columnsFn, platform, cwd }); setBusy(true); setTurnStartedAt(Date.now()); setTurnMeter(IDLE_METER); setStreaming([]); clearRetry(); armStall();
       }
       else if (ev.kind === "message") {
@@ -1824,18 +1847,29 @@ export function useChat(
   // `typeof` guard), re-read disk and compare its stamp against `diskStampRef.current` (read AT FIRE TIME,
   // not the frozen `opts.initialDiskStamp` this effect closed over at mount).
   //
-  // THE GOVERNING RULE (wave 3 — waves 1/2 each patched a symptom of NOT having this rule stated): this
-  // reconcile may replace the document ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed,
-  // untouched by anything since. It aborts SILENTLY AND FINALLY (no retry, no re-arm) the moment ANY of
-  // three virgin conditions fails by the time its disk read resolves:
-  //   1. `diskGenRef` moved (any document swap since mount: a live rewind, `/clear`, a resume) — the
-  //      pre-existing generation guard (bl9 F2), which turns out to BE virgin-condition 1 as-is.
-  //   2. `turnStartedSinceMountRef` is true (a turn ran, in full or in part, since mount) — a turn's own
-  //      local chrome (a duration row, a connection-loss notice) and its disk-arriving content both live
-  //      outside what a document-only rebuild can safely reconstruct.
-  //   3. the document's entry count grew past `seedEntryCount` (captured synchronously below, at this
-  //      effect's own setup — i.e. at mount, before any follow event can possibly have landed): any local
-  //      visual or any live-appended SDK row means the document is no longer provably the mount seed.
+  // THE GOVERNING RULE (wave 3, refined wave 4 — rereview3 P1/P2): this reconcile may replace the document
+  // ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed, untouched by anything since. It
+  // aborts SILENTLY AND FINALLY (no retry, no re-arm) the moment EITHER of two virgin conditions fails by
+  // the time its disk read resolves:
+  //   1. `diskGenRef` moved (any document SWAP since mount: a live rewind, `/clear`, a resume) — the
+  //      pre-existing generation guard (bl9 F2). Complementary to condition 2, not redundant with it:
+  //      `replaceDocument` installs a brand-new `TranscriptDocument` whose own `rev` restarts at 0, so a
+  //      swap can slip past a naive revision compare across two different instances — this is the signal
+  //      built to catch exactly that.
+  //   2. `documentRef.current!.revision()` moved past `seedRevisionRef.current` (captured DURING RENDER, at
+  //      this hook's very first render pass — see `seedRevisionRef`'s own comment for why that is the
+  //      earliest honest capture point): ANY retained mutation of the SAME document instance since then —
+  //      a local visual, a live-appended SDK row, a duplicate-sidecar upgrade, a supersede+append pair that
+  //      nets to the same entry count — means the document is no longer provably the mount seed.
+  // Wave 3's third condition (`turnStartedSinceMountRef`, a turn having started at all, ever) is DELETED: a
+  // turn that has drained ANY content by read-resolve time already trips condition 2 (every retained append
+  // bumps `rev`), so the flag was only ever deciding for a turn that opened but drained NOTHING — and
+  // turn:start alone touches no document state (busy/spinner chrome is refs/React state, not the document).
+  // Keeping it disqualified the common attach-to-a-busy-host shape (`follow()` emits `turn:start` before
+  // `whenReady()` resolves) even when nothing had happened yet for a rebuild to destroy. What stays a
+  // DELIBERATE, ACCEPTED limitation: a mid-turn attach whose open turn has ALREADY drained content by the
+  // time this read resolves keeps its stale prefix for the rest of the mount — no deferral, re-arm or
+  // merge-after-turn-end reaches for it; that cascade is exactly what wave 3 deleted.
   // A virgin document, by construction, holds ONLY disk rows: `cli/attach.ts` seeds `initialEntries` (and
   // therefore `diskStamp`) from ONE `getSessionMessages` read with no local rows mixed in — the one path
   // that DOES inject a local row (`no persisted history yet`) never sets `diskStamp`, so the reconcile's own
@@ -1851,7 +1885,6 @@ export function useChat(
     const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
     if (!opts.initialDiskStamp || typeof ready !== "function") return;
     let cancelled = false;
-    const seedEntryCount = documentRef.current!.entries().length;   // virgin condition 3, captured AT MOUNT
     const attemptReconcile = async () => {
       if (cancelled || disposed.current) return;
       const id = session.sessionId;
@@ -1859,9 +1892,8 @@ export function useChat(
       const gen = diskGenRef.current;                        // virgin condition 1: captured AT READ-ISSUE
       const rows = await getSessionMessages(id).catch(() => null);
       if (cancelled || disposed.current || rows === null) return;
-      if (diskGenRef.current !== gen) return;                                    // condition 1: a swap already landed
-      if (turnStartedSinceMountRef.current) return;                              // condition 2: a turn ran
-      if (documentRef.current!.entries().length !== seedEntryCount) return;      // condition 3: a row was appended
+      if (diskGenRef.current !== gen) return;                                          // condition 1: a swap already landed
+      if (documentRef.current!.revision() !== seedRevisionRef.current) return;         // condition 2: the document mutated since render
       const fresh = diskStampOf(rows);
       const live = diskStampRef.current;
       if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
