@@ -363,11 +363,17 @@ is still `` `${record.epoch}:${begin}` `` over rows that really exist.
 **Null-anchored entries are outside the bisection, by construction.** Round 5 (finding 4) traced the
 alternative to a stranded arrival: a confirmed-empty entry appears in every prefix including width
 zero, so once discarded its boundary resolves to `begin = 0` and the walk terminates without ever
-emitting it. So the rule is a sentinel, not a row: null-anchored entries emit **only** on the page
-whose window includes row 0, are **never eligible for discard** on that page (they ride past `limit`
-the way the last-resort page already does, bounded by the log cap), and are **excluded from
-`boundaryRow`'s target set** — they have no row transition to bisect for. The exact `limit:1` walk
-the review constructed is pinned in acceptance.
+emitting it. So the rule is a sentinel, not a row: null-anchored entries emit **only** on a page
+whose oldest rendered item really is row 0's — the fetched window includes row 0 **and the page
+discarded nothing** — and are **excluded from `boundaryRow`'s target set**: they have no row
+transition to bisect for. The gate is deliberately a *page* property, not a *window* property
+(rev 8.3): the cursorless first read fetches the whole file, so under a window gate a long
+transcript's first page — the newest `limit` items — carried the precedes-everything arrival at
+its head, and a client that dedupes by first-seen id assembles it adjacent to the newest turns,
+the misplacement class D3 forbids. The page gate cannot strand: a page that discards has
+`boundaryRow ≥ 1`, hence `begin > 0` and a non-null cursor, so every walk reaches either a
+discard-free row-0 page or the last-resort page — which returns the whole file, head included.
+The exact `limit:1` walk the review constructed is pinned in acceptance.
 
 Two properties make this safe, and the existing pager already requires both of them:
 
@@ -962,3 +968,14 @@ Pending — written at finish.
   common case — would name a row the reader never returns and withhold everything behind it. Both
   edits keep the withhold-never-misplace direction; both were found by a reviewer reading the real
   call sites rather than the spec's own text.
+
+- **Rev 8.3 (2026-08-30, Task 4 review).** The null-sentinel gate moves from the window to the
+  page: `atStart` entries render only when the fetched window includes row 0 AND the page discards
+  nothing, replacing rev 8's "window includes row 0" plus never-discard rule. The window form was
+  faithful prose that produced a misplacement in a shape nobody had walked: a cursorless read of a
+  transcript longer than `limit` fetches the whole file, so its first page — the newest items —
+  opened with the arrival that precedes all of history. Withholding there costs nothing because a
+  discarding page always advances the cursor, so the head lands on the walk's terminal page, where
+  reading order puts it anyway. Found by Task 4's reviewer walking the assembled-client view;
+  adjudicated under D3 (withhold, never misplace) without a new owner decision — the page gate is
+  the decided principle applied, not a new rule.
