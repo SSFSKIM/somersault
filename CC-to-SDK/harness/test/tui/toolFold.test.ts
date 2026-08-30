@@ -1228,6 +1228,22 @@ describe("bl8 F2: standalone hook placement around non-group out-pushes (point s
     ], { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
     expect(kinds(items)).toEqual(["hooks", "tool", "group"]);
   });
+
+  // bl8 fix-wave round 2, P2: reuses the F2/G1 "reordering" shape (cell (i) above) — B(call2/result3),
+  // breaker(4), A(call1/result5) — where B's group is emitted FIRST in `out` (index 0, anchor 2) but A's group
+  // is emitted LAST (index 2, anchor 1, boundary Infinity) because A settles after the breaker. A leftover
+  // entry (tool name mismatched so `resolveRunHooks` never claims it into either group) stamped at
+  // afterSequence 1 sits ON A's own anchor — squarely inside A's `[1, ∞)` window — but ALSO satisfies "before
+  // B's slot" (`1 < 2`) since B's slot comes first in `out`-order. Containment must win: the entry belongs
+  // AFTER A (the containing group), not before B.
+  it("containment outranks an out-order-earlier point/group slot with a larger anchor (reordered runs)", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Write", 111, 1)] });
+    expect(kinds(items)).toEqual(["group", "passthrough", "group", "hooks"]);
+  });
 });
 
 describe("bl8 T-QY Task 2: weaveStandaloneHooks (pass 2), direct", () => {

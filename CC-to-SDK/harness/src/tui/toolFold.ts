@@ -886,11 +886,20 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
 export type HookSlot = { index: number; anchor: number; boundary: number };
 
 /** bl8 T-QY Task 2 pass 2 (plan-review F1 — a per-flush drain is FORBIDDEN): weaves every hook entry pass 1
- *  left unclaimed into `out`, by the canon placement rule — BEFORE the FIRST group `g` (in `out`'s own
- *  order) with `entry.afterSequence < g.anchor` (canon's empty-run straight-to-output); else AFTER the LAST
- *  group `g` with `g.anchor <= entry.afterSequence < g.boundary` (canon's park-after-cluster); else at the
- *  END. `slots` is already in `out`-position order (pass 1 pushes it in the same order it pushes groups), so
- *  a forward scan finds "first" and "last" correctly without re-sorting.
+ *  left unclaimed into `out`, by the canon placement rule — CONTAINMENT FIRST: AFTER the LAST slot `g` (in
+ *  `out`'s own order) with `g.anchor <= entry.afterSequence < g.boundary` (canon's park-after-cluster); only
+ *  when NO slot contains it, BEFORE the FIRST slot `g` with `entry.afterSequence < g.anchor` (canon's
+ *  empty-run straight-to-output); else at the END. `slots` is already in `out`-position order (pass 1 pushes
+ *  it in the same order it pushes groups and point slots), so a forward scan finds "first" and "last"
+ *  correctly without re-sorting — but containment must be checked BEFORE the "first later anchor" scan, not
+ *  after: `out`-position order and anchor order can diverge (a run whose LATER-started member settles first
+ *  is flushed — and its slot pushed — before an earlier-started, still-open sibling; see the WHY-NOT-PER-FLUSH
+ *  doc below), so an `out`-earlier slot can have a LARGER anchor than an `out`-later slot that actually
+ *  contains the entry. Scanning "first later anchor" before containment would then return the wrong (earlier,
+ *  non-containing) slot's position instead of parking after the true containing group (fix-wave round 2, P2:
+ *  the reordering shape in cell (i) below, `test (i)`'s B/A runs, is exactly this divergence — point slots
+ *  never trigger it themselves, since a point slot's window is empty (`anchor === boundary`), but they DO sit
+ *  in the `out`-order scan the "first later anchor" fallback walks, so the same precedence bug reaches them).
  *
  *  WHY NOT per-flush: `segmentRuns` walks the ANCHORED stream, not raw call order, so a run of overlapping
  *  calls whose later-started member finishes first is FLUSHED before an earlier-started, still-open sibling
@@ -920,10 +929,11 @@ export function weaveStandaloneHooks(out: readonly FoldItem[], slots: readonly H
   const leftovers = hookRuns.filter((entry) => !hookClaims.has(entry));
   if (leftovers.length === 0) return out;
   const positionOf = (afterSequence: number): number => {
-    for (const slot of slots) if (afterSequence < slot.anchor) return slot.index;
     let after = -1;
     for (const slot of slots) if (slot.anchor <= afterSequence && afterSequence < slot.boundary) after = slot.index;
-    return after === -1 ? out.length : after + 1;
+    if (after !== -1) return after + 1;
+    for (const slot of slots) if (afterSequence < slot.anchor) return slot.index;
+    return out.length;
   };
   // position → (label → its coalesced entries), both maps insertion-ordered so emission replays arrival order.
   const byPosition = new Map<number, Map<string, HookInfo[]>>();
