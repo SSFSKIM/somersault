@@ -911,12 +911,15 @@ export function useChat(
   // the reconcile below). `undefined` for every non-attach mount — a fresh launch has no pre-follow read to
   // reconcile against, which is exactly the reconcile effect's "no stamp, no read" guard (A5).
   const diskStampRef = useRef<{ lastUuid?: string; count: number } | undefined>(opts.initialDiskStamp);
-  // bl9 F2: bumped by every disk-backed document replacement that keeps `diskStampRef` honest (`resumeInto`,
-  // `replaceFromDisk`, `rebuildAfterRewind`'s empty-rows branch). The reconcile's own stamp-equality check
-  // (below) cannot tell "my read is stale because a newer rebuild already landed" from "my read is the
-  // newer, correcting one" — both look like a mismatch against whatever `diskStampRef` says NOW. Capturing
-  // this at read-issue and comparing it at read-resolve does: if it moved, a newer rebuild raced ahead and
-  // this read's rows must never win, regardless of what they say.
+  // bl9 F2, centralized by W2 F2 (rereview1): bumped once, inside `replaceDocument` itself — the one
+  // document-swap primitive every boundary (`resumeInto`'s real-session swap, `replaceFromDisk`,
+  // `rebuildAfterRewind`'s empty-rows branch, `clear()`) routes through, so none of them can forget to. The
+  // reconcile's own stamp-equality check (below) cannot tell "my read is stale because a newer rebuild
+  // already landed" from "my read is the newer, correcting one" — both look like a mismatch against whatever
+  // `diskStampRef` says NOW. Capturing this at read-issue and comparing it at read-resolve does: if it moved,
+  // a newer rebuild raced ahead and this read's rows must never win, regardless of what they say.
+  // `resumeInto`'s same-session APPEND arm still bumps it locally too — appending disk rows in place is not a
+  // `replaceDocument` swap, so it is not covered by the centralized bump and stays a deliberate exception.
   const diskGenRef = useRef(0);
   // bl9 F1: sole hand-off point between the post-follow reconcile effect and the turn-lifecycle event
   // effect below — set when the reconcile finds a mismatch while a turn is open (disk has no row for it
@@ -1355,6 +1358,14 @@ export function useChat(
    *  our own chip lying. Whether to keep the inline percentage at all is parked for a later wave. */
   function replaceDocument(next: TranscriptDocument): void {
     if (disposed.current) return;
+    // W2 F2 (rereview1): THE lowest-level document-swap primitive, so bumping the generation guard HERE —
+    // rather than at each of this function's callers — makes every boundary that ever routes through it
+    // (today: `resumeInto`'s real-session swap, `replaceFromDisk`, `rebuildAfterRewind`'s empty-rows arm,
+    // `clear()`; any FUTURE one too) invalidate an in-flight reconcile read by construction instead of by
+    // remembering to. `clear()` was the wave-1 gap this closes: it swapped the document without bumping
+    // `diskGenRef`, so a reconcile read still in flight when `/clear` landed could repopulate the just-cleared
+    // transcript once it resolved. One mechanism now, not one per call site — see `diskGenRef`'s own comment.
+    diskGenRef.current++;
     opts.clearStaticTranscript?.();
     docEpoch.current++; localSeq.current = 0; idleFollowReplay.current = false;
     clearLiveOpen();
@@ -1844,7 +1855,15 @@ export function useChat(
       // instead of firing mid-turn: its completion is what writes it to disk, so the deferred re-read (this
       // same function, invoked again below) catches everything then.
       if (liveTurnRef.current !== null) { pendingReconcileRef.current = attemptReconcile; return; }
-      replaceFromDisk(rows, id, { label: "resynced" });
+      // W2 F1 (rereview1): `carryLocalRows` is what makes this call safe against the race with `turn:end` —
+      // see `replaceFromDisk`'s own doc. The re-trigger right after is the title's half of the same fix:
+      // `replaceDocument` (inside the call above) unconditionally resets `aiTitleFetched`/bumps `titleGen`
+      // (its own "same boundary, same class" rule), so an `adoptAiTitle()` already in flight from THIS turn's
+      // `turn:end` is silently dropped when it resolves. Re-issuing it here — the latch is already open, so
+      // this is a real fetch, not a no-op — lands the title now instead of making the tab wait for a second
+      // turn to re-trigger it naturally.
+      replaceFromDisk(rows, id, { label: "resynced", carryLocalRows: true });
+      void adoptAiTitle();
     };
     // F3: a dead host during the readiness window is a real, expected failure — `whenReady()` mints a fresh
     // promise per call, so it needs its own rejection handler rather than relying on `chatAdapter.ts`'s
@@ -2547,11 +2566,13 @@ export function useChat(
     // Same conversation: APPEND the raw persisted rows into the EXISTING document and reconcile only the
     // ids nobody has seen. Replacing it with disk-only rows would erase every prior local notice and
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
-    if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
+    // W2 F2: the `else` arm now gets its generation bump from `replaceDocument` itself (the centralized
+    // primitive); the `sameSession` arm APPENDS in place and never calls it, so it keeps its own bump here —
+    // it is still a disk-backed change to what the document holds, and a reconcile read in flight must see it.
+    if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); diskGenRef.current++; reconcile(); }
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
     lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
     diskStampRef.current = diskStampOf(msgs);                   // bl9 D14: keep the reconcile's stamp honest across a resume too
-    diskGenRef.current++;                                       // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -3076,13 +3097,29 @@ export function useChat(
    *  stamp ref, nothing else — because the reconcile must never touch taskListRef/setTasks, bgHarvest, or
    *  the composer prefill (D16: those are rewind-specific resets a document-only reconcile has no business
    *  running). `rebuildAfterRewind` layers its own polling, anchor cut, empty-document arm and those three
-   *  resets ON TOP of this. */
-  function replaceFromDisk(rows: any[], id?: string, options: { label?: string } = {}): void {
+   *  resets ON TOP of this. The generation bump (bl9 F2) is now `replaceDocument`'s own job (W2 F2).
+   *
+   *  `carryLocalRows` (W2 F1, rereview1): the reconcile's OWN caller sets this — a rewind never does, and
+   *  must not (`rebuildAfterRewind`'s own doc comment: "a rewind is a deliberate session transition"; only
+   *  the persisted rows survive it). The reconcile is different: it races the very turn-end handler that can
+   *  re-arm it, so a mismatch rebuild resolving after that handler already appended LOCAL-ONLY rows (a
+   *  duration row, a connection-loss notice) would erase them outright — reordering cannot fix this, because
+   *  those rows never reach disk for ANY rebuild to recover. Carries every local row forward EXCEPT
+   *  `user-echo`: that one's content already gets a disk-sourced twin once the turn that produced it is
+   *  written (which is exactly what triggered this rebuild), so keeping the echo too would double the prompt.
+   *  Trailing-order (appended after the disk replay, not re-interleaved by original position) — the local
+   *  rows this carries are turn-boundary chrome, not conversation content whose position matters relative to
+   *  a specific disk row, so the cost of exact interleaving buys nothing a reader would notice. */
+  function replaceFromDisk(rows: any[], id?: string, options: { label?: string; carryLocalRows?: boolean } = {}): void {
     clearScreen();
-    replaceDocument(replayDocument(rows, { id, label: options.label, width: columnsFn() }));
+    const carried = options.carryLocalRows
+      ? documentRef.current!.entries().filter((e) => e.kind === "local-event" && e.event.kind !== "user-echo")
+      : [];
+    const next = replayDocument(rows, { id, label: options.label, width: columnsFn() });
+    for (const e of carried) if (e.kind === "local-event") next.appendLocal(e.event, e.identity);
+    replaceDocument(next);
     lastAssistant.current = recentAssistantTexts(rows);
     diskStampRef.current = diskStampOf(rows);
-    diskGenRef.current++;   // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
   }
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
@@ -3137,7 +3174,7 @@ export function useChat(
       const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh);
       lastAssistant.current = recentAssistantTexts(rows);   // rows is [] here — the ring resets, same as before
       diskStampRef.current = diskStampOf(rows);
-      diskGenRef.current++;   // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
+      // W2 F2: `replaceDocument` (just above) bumps `diskGenRef` itself now — no call-site bump needed here.
     }
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();

@@ -327,4 +327,106 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
     expect(tasks).toEqual([{ id: "1", subject: "build it", status: "pending" }]);
   });
+
+  // W2-F1a (rereview1, bl9 fix-wave 2): the SAME deferred rebuild F1 pins (a mismatch found mid-turn re-arms
+  // for that turn's own end) races the turn-end handler's OWN local appends — the duration row and
+  // `adoptAiTitle()` — because `void run()` (the re-armed reconcile) fires before those lines execute but
+  // resolves after them. Neither the duration row nor the title fetch has a disk copy, so a wholesale
+  // `replaceDocument` inside `replaceFromDisk` erased them outright. Fixed rebuild: carry local rows forward
+  // and reissue the title fetch the rebuild invalidated, rather than waiting for a second turn.
+  it("W2-F1a: the deferred rebuild preserves the turn-end duration row and reruns the invalidated title fetch", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRowsBeforeEnd = diskRows("a-fresh", "the fresh tail reply");
+    const freshRowsAfterEnd = [...freshRowsBeforeEnd, { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "LIVE-TURN-REPLY" }] } }];
+    let afterTurnEnd = false;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const titleResolvers: Array<() => void> = [];
+    const deps = {
+      getSessionMessages: async () => (afterTurnEnd ? freshRowsAfterEnd : freshRowsBeforeEnd),
+      getSessionInfo: () => new Promise<any>((res) => { titleResolvers.push(() => res({ customTitle: "engine title" })); }),
+    };
+    let aiTitle: string | undefined;
+    function BusyHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps as any);
+      aiTitle = c.state.aiTitle;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<BusyHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("BUSY"));
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "LIVE-TURN-REPLY" }] } } });
+    await waitFor(() => frame(lastFrame).includes("LIVE-TURN-REPLY"));
+    session.resolveReady();                          // the follow ack lands mid-turn — the mismatch rebuild defers
+    await new Promise((r) => setTimeout(r, 30));      // long enough for a stray mid-turn rebuild to land
+    afterTurnEnd = true;                              // disk now has the turn's rows (the real turn-end flush)
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1 });   // re-arms the reconcile AND appends the duration row + fires adoptAiTitle, in that order
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));   // the deferred rebuild fired
+    expect(titleResolvers.length).toBeGreaterThanOrEqual(1);
+    titleResolvers[0]();                              // the ORIGINAL fetch resolves only now — AFTER the rebuild invalidated it
+    await new Promise((r) => setTimeout(r, 20));
+    expect(aiTitle).toBeUndefined();                  // correctly dropped by the generation guard, not a bug
+    await waitFor(() => titleResolvers.length === 2);   // the rebuild must reissue the fetch itself — not make the tab wait for a second turn
+    titleResolvers[1]();
+    await waitFor(() => aiTitle === "engine title");
+    // and the SAME turn-end's duration row — local, never on disk — must have survived the rebuild
+    expect(frame(lastFrame)).toMatch(/(Baked|Brewed|Churned|Cogitated|Cooked|Crunched|Sautéed|Worked) for/);
+  });
+
+  // W2-F1b: the same race, for the OTHER local row the finding names — a connection-loss notice a failed
+  // turn's own end appends (`✗ <error>`, `useChat.ts`'s `turn:end` arm). Same mechanism, same fix.
+  it("W2-F1b: the deferred rebuild preserves a connection-loss row appended at the same turn's end", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRowsBeforeEnd = diskRows("a-fresh", "the fresh tail reply");
+    const freshRowsAfterEnd = [...freshRowsBeforeEnd, { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "LIVE-TURN-REPLY" }] } }];
+    let afterTurnEnd = false;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => (afterTurnEnd ? freshRowsAfterEnd : freshRowsBeforeEnd) };
+    function BusyHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps);
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<BusyHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("BUSY"));
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "LIVE-TURN-REPLY" }] } } });
+    await waitFor(() => frame(lastFrame).includes("LIVE-TURN-REPLY"));
+    session.resolveReady();
+    await new Promise((r) => setTimeout(r, 30));
+    afterTurnEnd = true;
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1, error: "connection dropped" } as any);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
+    expect(frame(lastFrame)).toContain("connection dropped");
+  });
+
+  // W2-F2 (rereview1): `clear()` swaps the document through `replaceDocument` but — before this fix — never
+  // advanced `diskGenRef`, so a reconcile read already in flight when `/clear` lands is invisible to the F2
+  // generation guard and can repopulate the just-cleared transcript with pre-clear rows once it resolves.
+  it("W2-F2: /clear invalidates a still-in-flight deferred reconcile read", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let resolveRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => new Promise<unknown[]>((r) => { resolveRead = r; }) };
+    const api: { clear?: () => void } = {};
+    function ClearHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps);
+      api.clear = c.clear;
+      return <Text>L:{c.state.finalizedItems.length} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<ClearHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();                    // fires the reconcile's read — held open by `resolveRead`
+    await new Promise((r) => setTimeout(r, 20));
+    api.clear!();                              // the user clears mid-flight, before the reconcile's read resolves
+    await waitFor(() => frame(lastFrame).includes("L:0"));
+    resolveRead(freshRows);                    // the stale-window read finally resolves, AFTER the clear
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("L:0");                        // must STILL be empty
+    expect(frame(lastFrame)).not.toContain("the stale tail reply");
+    expect(frame(lastFrame)).not.toContain("the fresh tail reply");
+  });
 });
