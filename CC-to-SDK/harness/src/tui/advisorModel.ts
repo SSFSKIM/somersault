@@ -91,6 +91,16 @@ export const ADVISOR_OFF_LABEL = "No advisor";
 export const advisorUnsupportedWarning = (name: string): string =>
   `The current main model (${name}) does not support the advisor.`;
 
+/** bl8 T-ADVCMD Task 4 (spec §3.4, canon `jxe` @178890000): the launch-time discoverability notice. Canon
+ *  re-derives "on"/"pairing" off `ale(mainLoopModel, advisorModel)` on every change and re-posts only on a
+ *  state FLIP; ccx's own copy (spec §3.4, A12) is a one-shot posted at mount off the same `canAdvise`
+ *  check — the fable-consent branch and the main-model-unsupported suppression (`M8` gate) are both out of
+ *  scope here (D12; consuming code decides paired/unpaired purely from `canAdvise`). */
+export const ADVISOR_NOTICE_KEY = "advisor-experimental";
+export const ADVISOR_NOTICE_PAIRED_TEXT = "Advisor Tool (experimental) is on and may use more tokens · /advisor";
+export const ADVISOR_NOTICE_UNPAIRED_TEXT =
+  "Advisor will not activate on the main model (advisor is less capable); subagents may still use it and may use more tokens · /advisor";
+
 /** Canon's `E` (`applyAdvisor`), minus the remote/`(this session only)` branch (D10: ccx always live-
  *  applies AND persists) and the fable-consent branch (D12: dropped). Pure: no I/O, no persistence — the
  *  caller (a later task) reads `action`/`model` off the result to drive `setAdvisorModel` + the prefs

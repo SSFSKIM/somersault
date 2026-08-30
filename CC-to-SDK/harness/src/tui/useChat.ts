@@ -48,7 +48,7 @@ import { createNotificationStore, type CcxNotification, type NotificationStore }
 import type { DesktopNotifier } from "./desktopNotify.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
 import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, formatAdvisorResult, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
-import { applyAdvisorChoice } from "./advisorModel.js";
+import { applyAdvisorChoice, canAdvise, ADVISOR_NOTICE_KEY, ADVISOR_NOTICE_PAIRED_TEXT, ADVISOR_NOTICE_UNPAIRED_TEXT } from "./advisorModel.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -719,6 +719,22 @@ export function useChat(
     if (!effortCapsSettled || !effort || effortSupported === false) return;
     notifications.add({ key: EFFORT_HINT_KEY, text: effortHint(effort), priority: "high", timeoutMs: EFFORT_HINT_TIMEOUT_MS });
   }, [effort, effortSupported, effortCapsSettled, notifications]);
+  // bl8 T-ADVCMD Task 4 (spec §3.4, A12) — THE ADVISOR STARTUP NOTIFICATION. Unlike the effort hint above,
+  // canon's own version (`jxe` @178890000) re-derives on every advisorModel/mainLoopModel change and
+  // re-posts on a state FLIP; spec §3.4 narrows ccx's copy to a ONE-SHOT launch-time nudge off whatever
+  // `initialAdvisorModel` seeded `advisorModelRef` — a later `/advisor` gets its own feedback line
+  // (`applyAdvisorChoice`'s `message`), so this effect never re-arms. `[]` deps + the ref guard is the same
+  // shape as the `noticeBridge` bind above: read once, off the mount-time closure over `model` (the launch
+  // main model) and `advisorModelRef.current` (the launch advisor), never re-triggered by a later render.
+  const advisorNoticeShown = useRef(false);
+  useEffect(() => {
+    if (advisorNoticeShown.current) return;
+    advisorNoticeShown.current = true;
+    const advisor = advisorModelRef.current;
+    if (!advisor) return;
+    const text = canAdvise(model ?? "", advisor) ? ADVISOR_NOTICE_PAIRED_TEXT : ADVISOR_NOTICE_UNPAIRED_TEXT;
+    notifications.add({ key: ADVISOR_NOTICE_KEY, text, priority: "medium" });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, see comment above
   // Wave C Task 6: the spinner reads a METER, not a token count — the parenthetical needs the streamed
   // character target (for the eased estimate), the stream mode (for the arrow) and the tool/thinking
   // windows (for the phase ladder). All four come off the one `LiveTurn` that already consumes the frames.

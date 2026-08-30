@@ -12,12 +12,14 @@ import { ChatApp } from "../../src/tui/ChatApp.js";
 import { AdvisorDialog } from "../../src/tui/AdvisorDialog.js";
 import {
   ADVISOR_TITLE, ADVISOR_BLURB, ADVISOR_RECOMMEND_PREFIX, ADVISOR_RECOMMEND_BODY, ADVISOR_LINK,
-  ADVISOR_OFF_LABEL, advisorCatalog, advisorDisplayName, advisorUnsupportedWarning,
+  ADVISOR_OFF_LABEL, ADVISOR_NOTICE_KEY, ADVISOR_NOTICE_PAIRED_TEXT, ADVISOR_NOTICE_UNPAIRED_TEXT,
+  advisorCatalog, advisorDisplayName, advisorUnsupportedWarning,
 } from "../../src/tui/advisorModel.js";
 import { COMMANDS } from "../../src/tui/commands.js";
 import { resolveModelAlias } from "../../src/config/models.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { projectPending, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { createNotificationStore } from "../../src/tui/notifications.js";
 
 // `flat`/`frame` strip ANSI colour codes AND the round-border box-drawing characters before joining lines:
 // `AdvisorDialog`'s bordered box hard-wraps its blurb/recommendation paragraphs at the pane width, and each
@@ -158,14 +160,14 @@ function fakeAdvisorRemote(advisorCalls: (string | null)[], remoteOpts: FakeRemo
   };
 }
 
-function mountApp(opts: { fake: ReturnType<typeof fakeRemote>; initialModel?: string; initialAdvisorModel?: string }) {
+function mountApp(opts: { fake: ReturnType<typeof fakeRemote>; initialModel?: string; initialAdvisorModel?: string; store?: ReturnType<typeof createNotificationStore> }) {
   // Same injected `savePrefs` sink `effort.test.tsx`'s `mountApp` uses — without it every test here would
   // fall through to the real `savePrefs` and write to this machine's actual `~/.claude/ccx/prefs.json`.
   const saves: Record<string, unknown>[] = [];
   const r = renderWithKeymap(
     <ChatApp makeSession={() => opts.fake} client={{ kind: "loopback" }} cwd={process.cwd()}
       hookOpts={{ initialModel: opts.initialModel ?? SONNET, ...(opts.initialAdvisorModel ? { initialAdvisorModel: opts.initialAdvisorModel } : {}) }}
-      deps={{ savePrefs: (patch) => { saves.push(patch); } }} />,
+      deps={{ ...(opts.store ? { notifications: opts.store } : {}), savePrefs: (patch) => { saves.push(patch); } }} />,
   );
   return { ...r, saves };
 }
@@ -269,5 +271,45 @@ describe("F4 (D16), half 2 — the anchored-entries cache keys on advisorModel, 
     const second = projectPending(doc, { ...FS, advisorModel: SONNET });
     expect(textOf(second)).toContain(`Advising using ${SONNET}`);
     expect(textOf(second)).not.toContain(OPUS);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
+// Task 4 (spec §3.4, A12) — the launch-time startup notification
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
+describe("the advisor startup notification (A12)", () => {
+  it("(a) a paired initialAdvisorModel posts the experimental notice once, medium priority, key advisor-experimental", async () => {
+    const store = createNotificationStore();
+    const r = mountApp({ fake: fakeRemote(), initialModel: SONNET, initialAdvisorModel: OPUS, store });
+    await waitFor(() => store.state().current?.key === ADVISOR_NOTICE_KEY);
+    expect(store.state().current).toMatchObject({ key: ADVISOR_NOTICE_KEY, text: ADVISOR_NOTICE_PAIRED_TEXT, priority: "medium" });
+    expect(frame(r.lastFrame)).toContain(ADVISOR_NOTICE_PAIRED_TEXT);
+  });
+
+  it("(b) an unpaired initialAdvisorModel (less capable than the main model) posts the sibling text", async () => {
+    const store = createNotificationStore();
+    // OPUS main (rank 4), SONNET advisor (rank 3): canAdvise(OPUS, SONNET) is false.
+    mountApp({ fake: fakeRemote(), initialModel: OPUS, initialAdvisorModel: SONNET, store });
+    await waitFor(() => store.state().current?.key === ADVISOR_NOTICE_KEY);
+    expect(store.state().current?.text).toBe(ADVISOR_NOTICE_UNPAIRED_TEXT);
+  });
+
+  it("(c) no initialAdvisorModel posts nothing", async () => {
+    const store = createNotificationStore();
+    mountApp({ fake: fakeRemote(), initialModel: SONNET, store });
+    await tick(); await tick();
+    expect(store.state().current).toBeNull();
+  });
+
+  it("(d) does not re-post on a later re-render", async () => {
+    const store = createNotificationStore();
+    const r = mountApp({ fake: fakeRemote(), initialModel: SONNET, initialAdvisorModel: OPUS, store });
+    await waitFor(() => store.state().current?.key === ADVISOR_NOTICE_KEY);
+    const first = store.state().current;
+    r.stdin.write("x");   // forces a re-render (composer text change) unrelated to the advisor state
+    await tick();
+    // Entries are stored BY IDENTITY (notifications.ts's own contract) — a same-key re-add would swap in a
+    // NEW object even with identical text, so reference equality is what proves the effect did not re-fire.
+    expect(store.state().current).toBe(first);
   });
 });
