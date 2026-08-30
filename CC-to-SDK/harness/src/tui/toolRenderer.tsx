@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, hookHeaderText, hookSeconds, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldPolicy, type GroupCounts } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, hookHeaderText, hookSeconds, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldItem, type FoldPolicy, type GroupCounts, type HookInfo } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -176,11 +176,18 @@ export type { ResultProjection };
  *  reads it INSIDE this same anchored-entry cache, so without a key component a `/advisor` mid-session
  *  would keep serving the stale pre-change model name out of the `byKnobs` map until some unrelated knob
  *  happened to also change. */
-/** `hookRuns` (bl7 T-HOOKBLOCK Task 1) is completed PreToolUse hook pairs, sorted by `afterSequence` — the
- *  `HookPairTracker` output a later task folds into a tool-cluster's expanded block. Like `thoughtMs` it is
- *  a projection INPUT rather than document state: hook frames never enter `TranscriptDocument` (spec D2),
- *  so a rewound/resumed/attached document has no source for them and must show none. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; advisorModel?: string; hookRuns?: readonly HookRunEntry[]; }
+/** `hookRuns` (bl7 T-HOOKBLOCK Task 1, widened bl8 T-QY Task 1) is every completed hook pair (all five
+ *  reachable events, not just PreToolUse), sorted by `afterSequence` — the `HookPairTracker` output
+ *  `resolveRunHooks` absorbs into a cluster's expanded block (PreToolUse only) and `weaveStandaloneHooks`
+ *  weaves the rest into standalone `{kind:"hooks"}` items (Task 2/3). Like `thoughtMs` it is a projection
+ *  INPUT rather than document state: hook frames never enter `TranscriptDocument` (spec D2), so a
+ *  rewound/resumed/attached document has no source for them and must show none.
+ *  `hookLive` (bl8 T-QY Task 3, spec D6) is `HookPairTracker.inProgress()` — started-without-response
+ *  counts per `hook_event` — the live counter's (`di`) source AND the second half of Task 3's F2 Static-
+ *  withholding rule: a standalone hooks item stays off Static while its own label still shows here, since a
+ *  same-label pair could still resolve and coalesce into a row `trailingRunCut` has already let go. Live-only
+ *  for the same reason `hookRuns` is: absent on a rewound/resumed/attached document. */
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; advisorModel?: string; hookRuns?: readonly HookRunEntry[]; hookLive?: ReadonlyMap<string, number>; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
@@ -1117,6 +1124,91 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
   return [...memberItems, hookHeader, ...hookLines];
 }
 
+// ══ bl8 T-QY Task 3 — canon `Qy`'s two standalone shapes, plus the live counter `di` ══════════════════════
+// A `{kind:"hooks"}` item (Task 2's `weaveStandaloneHooks`) has no `ToolEvent`/anchor of its own — it rides
+// on the entries' own identity. `hooks:<id of the item's FIRST entry>` (the wire `hook_id`) is that identity
+// (plan-review F2): stable across a reconcile that grows `entries` (Task 1's tracker only ever APPENDS, so
+// `entries[0]` never moves), and namespaced apart from every `tool:`/`group:`/`sdk:` owner key already in use.
+
+/** Shape 1 — canon's labeled form (research-hookblock.md §A5), every label except `"Stop"` (shape 2 below).
+ *  Global Constraints copy verbatim: header `"  ⎿  "` + `Ran {N} {label} {hook|hooks}`, dim, count NOT bold,
+ *  NO duration (unlike the expanded cluster's `hookHeaderText`, which has one — a deliberately different
+ *  string). Per-hook lines (`"     ⎿ "` + `{hook_name} ({s})`, spec D3: `hook_name` verbatim, never a
+ *  settings-derived command) gate on the SAME D21 predicate the live counter below shares. */
+function labeledHookItems(item: { label: string; entries: readonly HookInfo[] }, options: ProjectionOptions): readonly RenderItem[] {
+  const grey = resolveThemeColor(themeTokens().inactive);
+  const key = `hooks:${item.entries[0]!.id}`, count = item.entries.length;
+  const rows: RenderItem[] = [{
+    kind: "line", id: key, ownerKey: key,
+    line: { text: `${GROUP_HINT_GUTTER}Ran ${count} ${item.label} ${count === 1 ? "hook" : "hooks"}`, dim: true, color: grey },
+  }];
+  if (options.projection !== "compact" || options.verbose) {
+    item.entries.forEach((entry, index) => rows.push({
+      kind: "line", id: `${key}:cmd-${index}`, ownerKey: key,
+      line: { text: `${HOOK_LINE_GUTTER}${entry.name} (${hookSeconds(entry.durationMs)})`, dim: true, color: grey },
+    }));
+  }
+  return rows;
+}
+/** Shape 2 — canon's unlabeled Stop form, scoped down to what ccx's wire actually carries (Global
+ *  Constraints): `⏺ Ran {N} stop {hook|hooks}` (count BOLD, everything else plain — no dim, unlike shape 1),
+ *  then one `"  ⎿  Stop hook error: {text}"` per FAILED entry (`exitCode !== 0`; `stderr` when non-empty,
+ *  else `exit {code}`). `N` is the item's WHOLE entry count, not just the failed ones — canon's `vn` counts
+ *  the batch, not the errors. Canon's `stopReason`/feedback lines and the `(ctrl+o to expand)` hint have no
+ *  wire source ccx carries beyond `hook_response.stderr` and are out of scope (research §5.1/§A5). A clean
+ *  run (every entry's `exitCode` `0` or absent) renders NOTHING — canon's own early exit. */
+function stopHookItems(item: { label: string; entries: readonly HookInfo[] }, options: ProjectionOptions): readonly RenderItem[] {
+  const failed = item.entries.filter((entry) => (entry.exitCode ?? 0) !== 0);
+  if (failed.length === 0) return [];
+  const key = `hooks:${item.entries[0]!.id}`, count = item.entries.length;
+  const glyph = options.platform === "darwin" ? "⏺" : "●";
+  const header: RenderItem = {
+    kind: "line", id: key, ownerKey: key,
+    line: segmented([{ text: `${glyph} Ran ` }, { text: String(count), bold: true }, { text: ` stop ${count === 1 ? "hook" : "hooks"}` }]),
+  };
+  const errors: RenderItem[] = failed.map((entry, index) => ({
+    kind: "line", id: `${key}:err-${index}`, ownerKey: key,
+    line: { text: `${GROUP_HINT_GUTTER}Stop hook error: ${entry.stderr !== undefined && entry.stderr !== "" ? entry.stderr : `exit ${entry.exitCode}`}` },
+  }));
+  return [header, ...errors];
+}
+/** The one dispatcher `foldAnchored`/`projectPending` call — `"Stop"` routes to shape 2, everything else
+ *  (`"PreToolUse"` outside a causal window, `"PostToolUse"`, `"UserPromptSubmit"`, `"SessionStart"`) to
+ *  shape 1. */
+// Exported (bl8 T-QY Task 3, same rule as `weaveStandaloneHooks`/`groupItems`): a test needs to reach
+// this and `hookLiveItems` below directly, since `projectPending` hardcodes `projection:"compact", verbose:
+// false` and can never itself exercise the D21-true branch either builder gates on.
+export function hooksItemRows(item: { label: string; entries: readonly HookInfo[] }, options: ProjectionOptions): readonly RenderItem[] {
+  return item.label === "Stop" ? stopHookItems(item, options) : labeledHookItems(item, options);
+}
+
+/** The live counter `di` (spec D6) — a hook that STARTED but has not yet paired into a `HookRunEntry`, so it
+ *  can never appear as a `{kind:"hooks"}` item. Dynamic-region-only (bl7 D20's rule: never Static), appended
+ *  by `projectPending` as the very last item. PreToolUse/PostToolUse render `{N} {Event} {hook|hooks} ran`
+ *  ONLY under the D21 predicate the per-hook lines above share (canon's `isTranscriptMode` gate); every OTHER
+ *  event renders `Running {Event} {hook…|hooks…}` unconditionally while live — canon also gates that arm on
+ *  `resolvedHookCounts` catching up, which ccx does not track (D6's recorded gap), so "any live count" is
+ *  the whole predicate here. The whole line is dim with the event name embedded BOLD, which needs the same
+ *  raw-SGR passthrough `composeFoldRun`'s bold count does (F3 Task 1): `<Text dimColor bold>` drops bold. */
+function hookLiveRow(event: string, count: number, isPrePost: boolean): RenderItem {
+  const noun = isPrePost ? ` ${count === 1 ? "hook" : "hooks"} ran` : ` ${count === 1 ? "hook…" : "hooks…"}`;
+  const prefix = isPrePost ? `${count} ` : "Running ";
+  const raw = `\x1b[2m${prefix}\x1b[1m${event}\x1b[22m\x1b[2m${noun}\x1b[22m`;
+  const key = `hook-live:${event}`;
+  return { kind: "line", id: key, ownerKey: key, line: { text: stripSgr(raw), segments: [{ text: raw, preStyled: true }] } };
+}
+export function hookLiveItems(hookLive: ReadonlyMap<string, number> | undefined, options: ProjectionOptions): readonly RenderItem[] {
+  if (hookLive === undefined) return [];
+  const rows: RenderItem[] = [];
+  for (const [event, count] of hookLive) {
+    if (count <= 0) continue;
+    const isPrePost = event === "PreToolUse" || event === "PostToolUse";
+    if (isPrePost && !(options.projection !== "compact" || options.verbose)) continue;
+    rows.push(hookLiveRow(event, count, isPrePost));
+  }
+  return rows;
+}
+
 /** R3.1's early exit: a run whose clauses all came out empty renders NOTHING at all. */
 export function groupItems(group: FoldGroup, form: GroupForm, options: ProjectionOptions, emitted?: ReadonlySet<string>): readonly RenderItem[] {
   const active = form === "active";
@@ -1565,19 +1657,38 @@ export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: Rea
  *  renders from), and `advisorResolution`'s own tail-only rule (D17, advisorState.ts) guarantees such a
  *  breaker can only ever be unresolved while it is genuinely the run's trailing item — the identical
  *  "last non-neutral atom" scope this function already gives a growable tool run. */
-function trailingRunCut(atoms: readonly FoldAtom[], items: readonly { kind: string }[], policy: FoldPolicy): number {
+function trailingRunCut(atoms: readonly FoldAtom[], items: readonly FoldItem[], policy: FoldPolicy, hookLive?: ReadonlyMap<string, number>): number {
   let growing = false, trailingAdvisor = false;
   for (const atom of atoms) {
     if (atom.kind === "neutral") continue;
     trailingAdvisor = atom.kind === "breaker" && atom.openAdvisor === true;
     growing = atom.kind === "tool" && classifyToolEvent(atom.event, policy).collapsible;
   }
+  let cut = items.length;
+  // bl8 T-QY Task 3 (plan-review F2): a trailing standalone hooks item is GROWABLE exactly like a trailing
+  // tool run — `weaveStandaloneHooks` places it with no later atom bounding its window, so a later reconcile
+  // can still coalesce another same-label pair into it. Multiple different labels can share that one
+  // unbounded position (consecutive `kind:"hooks"` items at the very tail), so this walks back past every
+  // one found there; a hooks item ANYWHERE ELSE in `items` already has a later atom fixing its content for
+  // good and is safe to publish.
+  while (cut > 0 && items[cut - 1]!.kind === "hooks") cut--;
+  // A hooks item sitting right at the (possibly still items.length) frontier whose label `hookLive` still
+  // shows in flight joins the withheld region too: that in-flight pair could still resolve into a position
+  // this exact item will never see again once something bounds it, and publishing the item first is the
+  // "frozen Ran 1 plus a duplicate" bug Global Constraints forbids — it publishes once its label goes idle.
+  while (cut > 0) {
+    const item = items[cut - 1]!;
+    if (item.kind !== "hooks" || (hookLive?.get(item.label) ?? 0) === 0) break;
+    cut--;
+  }
   // An open advisor breaker maps to exactly ONE passthrough item (no run to fold), so withholding it is
-  // dropping the tail item outright — never a `for`-scan back to a `group`, which only a tool run ever emits.
-  if (trailingAdvisor) return Math.max(0, items.length - 1);
-  if (!growing) return items.length;
-  for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "group") return i;
-  return items.length;
+  // dropping that one tail item outright — never a `for`-scan back to a `group`, which only a tool run ever
+  // emits. It sits AFTER any trailing hooks items already excluded above (weaving never bounds on a bare
+  // breaker, only on an emitted group — see `weaveStandaloneHooks`), so `cut - 1` is its real index.
+  if (trailingAdvisor) return Math.max(0, cut - 1);
+  if (!growing) return cut;
+  for (let i = cut - 1; i >= 0; i--) if (items[i]!.kind === "group") return i;
+  return cut;
 }
 
 /** Compact-only (R6.1's inverse): the sorted anchor list becomes a fold-atom stream — index-keyed so a
@@ -1591,7 +1702,7 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   // fold silently sees none and the whole hook block goes dark downstream of a correct ingest — the
   // tests-pass-wiring-dead failure mode.
   const folded = segmentRuns(atoms, { cwd: options.cwd, home: options.home, ...policy, hookRuns: options.hookRuns });
-  const visible = folded.slice(0, trailingRunCut(atoms, folded, policy));
+  const visible = folded.slice(0, trailingRunCut(atoms, folded, policy, options.hookLive));
   // T8's de-dup input (see `expandedMemberItems`): every call THIS stream gives a row of its own. Here that
   // is every `tool` item without exception — a non-collapsible tool renders its items, and the one that
   // renders none (an errored suppressed pop-out) gets the substitute row below.
@@ -1600,10 +1711,10 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   for (const item of visible) {
     if (item.kind === "group") { out.push(...groupItems(item.group, "published", options, emitted)); continue; }
     if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
-    // bl8 T-QY Task 2 lands `{kind:"hooks"}` standalone items in `segmentRuns`'s output; rendering them is
-    // Task 3's job (the shape 1/shape 2 row builders + Static-withholding seam). Stub skip here keeps this
-    // narrowed to `tool` below, exactly as before Task 2.
-    if (item.kind === "hooks") continue;
+    // bl8 T-QY Task 3: `{kind:"hooks"}` items `weaveStandaloneHooks` (Task 2) placed anywhere BEFORE the
+    // trailing cut are already positionally fixed (a later atom bounds them) — `trailingRunCut` above has
+    // already excluded the still-growable trailing ones from `visible`, so every one reaching here renders.
+    if (item.kind === "hooks") { out.push(...hooksItemRows(item, options)); continue; }
     // A popped-out failure whose own projection is empty gets the substitute row (see `poppedOnErrorItems`),
     // re-keyed exactly as `projectAll` keys a standalone unit so Static's append-once bookkeeping is unchanged.
     // The other three `popsOutOnError` names render normally and keep their real items.
@@ -1679,8 +1790,13 @@ export function projectPending(document: TranscriptDocument, options: Projection
   // inert there, exactly as `projectAll` omits them), minus the trailing run it withholds.
   const settledAtoms = foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => !event.result || withheld.has(event) });
   const settled = segmentRuns(settledAtoms, fold);
+  // bl8 T-QY Task 3 (plan-review F2): captured once and reused below — `settled`'s own withheld SUFFIX
+  // (everything from `hookCut` on) is exactly the still-growable hooks item(s), rendered further down by
+  // reusing THIS fold rather than re-deriving through `dynamic` (which never handles `kind:"hooks"` at all,
+  // and marks a different set of tool events inert, so it is not guaranteed to weave hooks to the same slot).
+  const hookCut = trailingRunCut(settledAtoms, settled, policy, full.hookLive);
   const published = new Set<string>();
-  for (const item of settled.slice(0, trailingRunCut(settledAtoms, settled, policy)))
+  for (const item of settled.slice(0, hookCut))
     if (item.kind === "group") for (const id of item.group.memberIds) published.add(id);
   const items: RenderItem[] = [];
   const dynamic = segmentRuns(foldAtoms(anchored, { thoughtMs: options.thoughtMs, ...policy, inert: (event) => published.has(event.id) }), fold);
@@ -1708,6 +1824,13 @@ export function projectPending(document: TranscriptDocument, options: Projection
   // colored once `advisor.resolved` catches up) until it flows through the ordinary compact path exactly once.
   const tail = anchored.at(-1);
   if (tail?.atom === "breaker" && tail.openAdvisor === true) items.push(...tail.items);
+  // bl8 T-QY Task 3 (plan-review F2): the withheld hooks item(s) `hookCut` excluded from `published` above —
+  // rendered from `settled` itself (see that variable's own comment for why, not `dynamic`).
+  for (const item of settled.slice(hookCut)) if (item.kind === "hooks") items.push(...hooksItemRows(item, full));
+  // D6: the live in-progress counter, appended last and ALWAYS dynamic (bl7 D20's rule: never Static) — a
+  // count here is a hook that STARTED but has not yet paired into a `HookRunEntry`, so it can never be one of
+  // the `settled` items just rendered above.
+  items.push(...hookLiveItems(full.hookLive, full));
   return items;
 }
 

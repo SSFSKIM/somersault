@@ -611,11 +611,20 @@ describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the r
     expect(allText(items)).toContain("Ran 1 PreToolUse hook");
   });
 
-  it("drops a hook stamped before the call and shows none (the fold's own attribution, exercised end to end)", () => {
+  // bl8 T-QY Task 2/3 SUPERSEDES this cell's original title ("drops a hook... and shows none"): a hook the
+  // cluster's causal window rejects is no longer dropped — Task 2's `weaveStandaloneHooks` parks it
+  // standalone (D1/D2, research §A6: "non-PreToolUse labels — rendered, never absorbed" applies identically
+  // to a PreToolUse entry outside every run's window) and Task 3 renders it (shape 1). This cell now pins
+  // the half of that split THIS describe's own scope is about: the entry must never be absorbed into the
+  // CLUSTER's own hook clause/block (always duration-bearing, `hookSeconds`'s `"(0.2s)"` form) — it renders
+  // standalone instead (shape 1, no duration on the header).
+  it("a hook stamped before the call is NOT absorbed into the cluster — it renders standalone instead", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
     const callSequence = doc.toolEvents()[0]!.callSequence;
     const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence - 1, event: "PreToolUse" }] });
-    expect(allText(items)).not.toContain("PreToolUse");
+    const text = allText(items);
+    expect(text).not.toContain("PreToolUse hook (");   // never the cluster's own duration-bearing clause/block
+    expect(text).toContain("Ran 1 PreToolUse hook");    // but DOES render standalone (shape 1, T-QY Task 3)
   });
 });
 

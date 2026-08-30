@@ -351,6 +351,64 @@ describe("round review F1: an unresolved advisor consult is withheld from Static
   });
 });
 
+// bl8 T-QY Task 3 (plan-review F2): a standalone `{kind:"hooks"}` item gets the SAME "withheld while
+// growable" treatment the F1 advisor row above does — reusing that exact `trailingRunCut` seam (this ticket
+// widened it, not a second withholding channel). The mandatory cell: two same-label pairs completing ACROSS
+// two reconciles with a forced Static publish between them must land in Static as ONE final row, never a
+// frozen early copy plus a duplicate.
+describe("bl8 T-QY Task 3 (plan-review F2): a standalone hooks item is withheld from Static like a growable tool run", () => {
+  type Hook = ReturnType<typeof useChat>;
+  const staticText = (c: Hook): string =>
+    c.state.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("|");
+  const hookFrame = (subtype: "hook_started" | "hook_response", fields: Record<string, unknown>) =>
+    ({ kind: "message" as const, data: { type: "system", subtype, ...fields } });
+
+  it("two Stop pairs completing across two reconciles, with a forced Static publish in between, commit as ONE 'Ran 2 stop hooks' row", async () => {
+    const fake = fakeRemote();
+    let api: Hook | undefined;
+    // `rows: 16` forces `commitCap()===0` (the F1 advisor cell's own rig, above) — WITHOUT it, Static only
+    // releases a row once enough LATER content pushes it out of the terminal-height live window, which would
+    // make this cell about window geometry instead of the F2 withholding rule it exists to pin.
+    function H() {
+      const c = useChat(() => fake, {}, { rows: () => 16, columns: () => 100, now: () => 0, home: "/home/me", platform: "darwin" });
+      api = c;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));   // let mount effects subscribe
+
+    // Pair 1: a failing Stop hook (exit_code:2 so shape 2 renders at all — Global Constraints' own early exit).
+    fake.pushEvent(hookFrame("hook_started", { hook_id: "h1", hook_event: "Stop" }));
+    fake.pushEvent(hookFrame("hook_response", { hook_id: "h1", hook_name: "Stop", hook_event: "Stop", exit_code: 2, stderr: "boom" }));
+    await waitFor(() => allText(api!).includes("Ran 1 stop hook"));
+
+    // Nothing has bounded the item yet (no tool run, no group) — it is the trailing/unbounded item Task 1/2's
+    // `weaveStandaloneHooks` places with no later atom closing its window, so it must stay off Static even
+    // under a forced publish, exactly like the F1 advisor row above.
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("stop hook");
+
+    // Pair 2, a SECOND reconcile: same label, still nothing bounding it — Task 1's tracker only ever appends,
+    // so this coalesces into the SAME item (`entries[0]` — the render key — never moves).
+    fake.pushEvent(hookFrame("hook_started", { hook_id: "h2", hook_event: "Stop" }));
+    fake.pushEvent(hookFrame("hook_response", { hook_id: "h2", hook_name: "Stop", hook_event: "Stop", exit_code: 3, stderr: "bang" }));
+    await waitFor(() => allText(api!).includes("Ran 2 stop hooks"));
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("stop hook");   // still growable — still off Static
+
+    // Close the window: a real tool call AND its result, so the run genuinely settles and bounds the earlier
+    // hooks item (`weaveStandaloneHooks` parks it before this cluster's own slot) — this is what makes the
+    // row safe to publish.
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-read", content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-read-res", message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: "hi", is_error: false }] } } });
+    await waitFor(() => staticText(api!).includes("Ran 2 stop hooks"));
+
+    // ONE final row — never a frozen "Ran 1 stop hook" left behind alongside it.
+    expect(staticText(api!).match(/Ran \d+ stop hooks?/g) ?? []).toHaveLength(1);
+    expect(staticText(api!)).not.toContain("Ran 1 stop hook");
+  });
+});
+
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
     const { lastFrame } = render(<Host makeSession={() => fakeRemote()} prompt="hi" />);
