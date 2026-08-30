@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
+import { fsArrivalStore } from "../../../src/peer/arrivalLog.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -27,21 +28,28 @@ const RESULT = (over: Record<string, unknown> = {}) => ({ type: "result", subtyp
 
 /** An engine fake that lets a test PUSH frames, so the observer under test is driven by frame order
  *  rather than by promise order. `onFrame` and `onUnclaimedResult` mirror the real Session seams —
- *  both return an unsubscribe, and both are consulted synchronously from the read loop. */
-function pushEngine() {
+ *  both return an unsubscribe, and both are consulted synchronously from the read loop.
+ *
+ *  `holdSubmit` is what makes an OWN turn testable at all: the arrival attribution cells below are about
+ *  the window in which this server's own turn is RUNNING, and a submit that resolves on its own ends that
+ *  window before the test can push a frame into it. Held, the turn stays open until `endTurn()`. */
+function pushEngine(opts: { holdSubmit?: boolean } = {}) {
   const frameSubs = new Set<(f: unknown) => void>();
   const resultSubs = new Set<(r: unknown) => boolean>();
+  let finish: ((v: unknown) => void) | undefined;
   return {
     engine: {
       onFrame: (cb: (f: unknown) => void) => { frameSubs.add(cb); return () => frameSubs.delete(cb); },
       onUnclaimedResult: (cb: (r: unknown) => boolean) => { resultSubs.add(cb); return () => resultSubs.delete(cb); },
-      submit: async () => undefined,
+      submit: (): Promise<unknown> => (opts.holdSubmit ? new Promise((r) => { finish = r; }) : Promise.resolve(undefined)),
       dispose: async () => {},
       interrupt: async () => {},
     } as any,
     push: (f: unknown) => { for (const s of [...frameSubs]) s(f); },
     pushResult: (r: unknown) => { let claimed = false; for (const s of [...resultSubs]) claimed = s(r) || claimed; return claimed; },
     live: () => frameSubs.size,
+    /** Let a held submit resolve — the own turn ends exactly here and nowhere earlier. */
+    endTurn: () => finish?.(undefined),
   };
 }
 
@@ -49,11 +57,11 @@ function pushEngine() {
 // measured this against the running code, so do not reintroduce a `makeSession` option. `ccxDir` and
 // `listSessions` are injected for the reason peer-policy.test.ts states: without them a resume path
 // reads the operator's real ~/.claude/ccx.
-const boot = (engine: unknown) =>
-  new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => engine) as never });
+const boot = (engine: unknown, deps: Record<string, unknown> = {}) =>
+  new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => engine) as never, ...deps });
 
-async function startAccepting(engine: any) {
-  const srv = boot(engine);
+async function startAccepting(engine: any, deps: Record<string, unknown> = {}) {
+  const srv = boot(engine, deps);
   const { lines, sink } = mkSink();
   const c = srv.connect(sink);
   send(c, { id: 1, method: "initialize", params: { clientInfo: { name: "t" } } });
@@ -451,5 +459,223 @@ describe("thread/peerMessage", () => {
     e.push(PEER_FRAME());
     await tick();
     expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+  });
+});
+
+// ── ARRIVAL ATTRIBUTION (BL7 Stream 2, #64) ────────────────────────────────────────────────────────
+//
+// The defect these cells close: `drainArrivals` used to empty the whole live queue into whatever adoption
+// was CURRENT, so an arrival recorded while no turn was running — or during one of OUR turns — was later
+// emitted as a user item of a turn it did not cause. That is the live channel's own misplacement class.
+//
+// The rule replacing it is bracket EVIDENCE, and every cell below is a window in which queue position and
+// evidence disagree: an arrival belongs to the bracket that was open when its FRAME arrived, else to the
+// NEXT bracket that opens (which is where the engine's own message queue drains), and it is never carried
+// past that bracket — a bracket that dies takes its arrivals with it, dropped loudly rather than
+// re-attributed. The binding is stamped at arrival; the `next` claim happens at bracket OPEN; a drain only
+// ever emits, keeps, or drops.
+const ARRIVAL_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+/** Every item event this arrival produced, whichever turn it was attributed to — what a client actually
+ *  sees, and the only honest way to ask "was it emitted anywhere at all". */
+const arrivalItems = (lines: string[]) => notes(lines, "item/completed").filter((m) => m.params.item?.id === ARRIVAL_ID);
+const dropWarnings = (warn: { mock: { calls: unknown[][] } }) =>
+  warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("whose turn ended"));
+
+describe("arrival attribution", () => {
+  it("(attr-1) an arrival during an OWN turn is an item of THAT turn, and a later foreign adoption gets none", async () => {
+    // The fold shape, offline: the engine hands the message to the turn already running, `adopt` correctly
+    // declines on busy — and before this change the arrival then sat in the queue until some UNRELATED
+    // foreign turn drained it. The own bracket is tracked explicitly (`notePeerTurnUuid`, which runs inside
+    // the runner and therefore after `turn/started` is on the wire), so the item lands where the engine
+    // actually put the message.
+    const e = pushEngine({ holdSubmit: true });
+    const { c, lines, threadId, record } = await startAccepting(e.engine);
+    send(c, { id: 10, method: "turn/start", params: { threadId, input: "go" } });
+    await tick();
+    const ownTurnId = record.currentTurnId!;
+    expect(notes(lines, "turn/started")).toHaveLength(1);
+    expect(record.peerInbound!.ownTurn?.turnId, "the own bracket was never opened").toBe(ownTurnId);
+
+    e.push(PEER_FRAME());
+    await tick();
+    const items = arrivalItems(lines);
+    expect(items, "the arrival produced no item of the turn it was folded into").toHaveLength(1);
+    expect(items[0].params.turnId).toBe(ownTurnId);
+    // …and after that turn's own edge, never before it: the own bracket only ever opens post-broadcast.
+    const methods = parsed(lines).map((m) => m.method);
+    expect(methods.indexOf("turn/started")).toBeLessThan(methods.lastIndexOf("item/completed"));
+
+    e.endTurn();
+    await tick();
+    lines.length = 0;
+    e.push(LIFECYCLE("started", "foreign-attr1"));
+    await tick();
+    expect(notes(lines, "turn/started"), "the foreign adoption did not open").toHaveLength(1);
+    expect(arrivalItems(lines), "the arrival leaked into a turn it did not belong to").toHaveLength(0);
+  });
+
+  it("(attr-2) an arrival recorded while nothing runs is claimed by the NEXT bracket to open", async () => {
+    // The caused-turn shape, which is today's behaviour and stays it: the engine queues an undelivered
+    // message and the next turn drains that queue, so the next bracket is the engine's own attribution.
+    const e = pushEngine();
+    const { lines, record } = await startAccepting(e.engine);
+    e.push(PEER_FRAME());
+    await tick();
+    expect(arrivalItems(lines), "an arrival with no bracket open was emitted into nothing").toHaveLength(0);
+    expect(record.peerInbound!.arrivals[0].bind).toEqual({ kind: "next" });
+
+    e.push(LIFECYCLE("started", "foreign-attr2"));
+    await tick();
+    const items = arrivalItems(lines);
+    expect(items).toHaveLength(1);
+    expect(items[0].params.turnId).toBe(record.currentTurnId);
+  });
+
+  it("(attr-3) a bracket that dies before its mapper installs takes its claimed arrival with it", async () => {
+    // CLAIM AT OPEN, not at the next drain. The bracket is accepted (`adopt` succeeded) and the arrival is
+    // stamped to it there and then; when that bracket dies before ever reaching a runner, the arrival dies
+    // with it — dropped, counted out loud, and NOT handed to the next turn along, which is the defect one
+    // window smaller.
+    const e = pushEngine();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { lines, record } = await startAccepting(e.engine);
+    let release!: () => void;
+    record.chain = record.chain.then(() => new Promise<void>((r) => { release = r; }));
+
+    e.push(PEER_FRAME());
+    await tick();
+    expect(record.peerInbound!.arrivals).toHaveLength(1);
+    e.push(LIFECYCLE("started", "foreign-attr3"));      // the bracket opens and claims the arrival…
+    e.push(LIFECYCLE("cancelled", "foreign-attr3"));    // …and dies with the chain still held, so no mapper
+    await tick();
+    release();
+    await tick();
+
+    expect(arrivalItems(lines), "a dead bracket's arrival was emitted anyway").toHaveLength(0);
+    expect(record.peerInbound!.arrivals, "the dead arrival is still queued for some later turn").toHaveLength(0);
+    expect(dropWarnings(warn).join("\n"), "the drop was silent").toContain("dropped 1 arrival");
+    // The message was still ANNOUNCED — exactly once — because nothing about a dead turn changes what the
+    // engine delivered. Only the live ITEM is lost; history keeps its own record.
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+
+    lines.length = 0;
+    e.push(LIFECYCLE("started", "foreign-attr3b"));
+    await tick();
+    expect(arrivalItems(lines), "the arrival was re-attributed to a later bracket").toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("(attr-4) an arrival claimed by an OWN turn that ends before any drain is dropped, not carried", async () => {
+    // Claimed at the own bracket's open (`notePeerTurnUuid`), and the turn then ends without a single frame
+    // to trigger a drain. The next frame detects the dead bracket: the arrival is dropped rather than left
+    // waiting for a turn that has nothing to do with it.
+    const e = pushEngine({ holdSubmit: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { c, lines, threadId, record } = await startAccepting(e.engine);
+    send(c, { id: 10, method: "turn/start", params: { threadId, input: "go" } });
+    e.push(PEER_FRAME());                       // SAME TICK: busy is up but turn/started has not gone out
+    await tick();
+    const ownTurnId = record.currentTurnId!;
+    expect(record.peerInbound!.arrivals[0].bind, "the own bracket did not claim the arrival it opened over")
+      .toEqual({ kind: "own", turnId: ownTurnId });
+    expect(arrivalItems(lines), "a claim is not an emission — only a drain emits").toHaveLength(0);
+
+    e.endTurn();
+    await tick();
+    expect(notes(lines, "turn/completed")).toHaveLength(1);
+    e.push(ASSISTANT("a later frame, on no turn at all"));
+    await tick();
+    expect(record.peerInbound!.arrivals).toHaveLength(0);
+    expect(dropWarnings(warn).join("\n")).toContain("dropped 1 arrival");
+
+    lines.length = 0;
+    e.push(LIFECYCLE("started", "foreign-attr4"));
+    await tick();
+    expect(arrivalItems(lines), "an own turn's arrival outlived it into a foreign turn").toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("(attr-5) an arrival in a turn's busy-but-unbroadcast window stays `next` when that turn never opens", async () => {
+    // `busy` is NOT the own bracket: it flips true at request arrival, ahead of `turn/started`, and a turn
+    // cancelled inside that window never opens a bracket at all. Binding on `busy` would have attributed
+    // this arrival to a turn that never ran; binding on evidence leaves it `next` for the bracket that does.
+    const e = pushEngine({ holdSubmit: true });
+    const { c, lines, threadId, record } = await startAccepting(e.engine);
+    send(c, { id: 10, method: "turn/start", params: { threadId, input: "go" } });
+    e.push(PEER_FRAME());
+    send(c, { id: 11, method: "turn/interrupt", params: { threadId } });
+    await tick();
+    expect(notes(lines, "turn/completed")[0].params.turn.status).toBe("interrupted");
+    expect(record.peerInbound!.ownTurn, "a turn that never broadcast opened an own bracket").toBeUndefined();
+    expect(record.peerInbound!.arrivals[0].bind).toEqual({ kind: "next" });
+    expect(arrivalItems(lines)).toHaveLength(0);
+
+    e.push(LIFECYCLE("started", "foreign-attr5"));
+    await tick();
+    const items = arrivalItems(lines);
+    expect(items, "the arrival was not claimed by the bracket that truly opened").toHaveLength(1);
+    expect(items[0].params.turnId).toBe(record.currentTurnId);
+  });
+
+  it("(attr-6) an arrival landing after an adopted terminal, while `busy` is still falling, binds `next`", async () => {
+    // The other edge `busy` races: an adopted turn's terminal clears `state.adopted` synchronously while
+    // `busy` (and `currentTurnId`) still name the dying turn. Inferring the bracket from either would
+    // attribute this arrival to a turn that is already over.
+    const e = pushEngine();
+    const { lines, record } = await startAccepting(e.engine);
+    e.push(LIFECYCLE("started", "foreign-attr6"));
+    await tick();
+    const dying = record.currentTurnId!;
+    e.push(LIFECYCLE("completed", "foreign-attr6"));
+    e.push(PEER_FRAME());
+    expect(record.busy, "the premise failed: busy had already fallen").toBe(true);
+    expect(record.peerInbound!.arrivals[0].bind).toEqual({ kind: "next" });
+    await tick();
+    expect(arrivalItems(lines), "the arrival was emitted into a turn that had already terminated").toHaveLength(0);
+
+    e.push(LIFECYCLE("started", "foreign-attr6b"));
+    await tick();
+    const items = arrivalItems(lines);
+    expect(items).toHaveLength(1);
+    expect(items[0].params.turnId).not.toBe(dying);
+    expect(items[0].params.turnId).toBe(record.currentTurnId);
+  });
+
+  it("(attr-7) a seed that resolves after its bracket died drops the arrival it held, never re-homes it", async () => {
+    // The binding is stamped when the FRAME arrives, INCLUDING inside the seed window — a flush-time stamp
+    // would attribute a T1 arrival to whatever turn happened to be running when the read came back, which
+    // is the same defect wearing the seed's clothes. The seed read here is resolved by hand, after T1 has
+    // died and T2 has opened.
+    const e = pushEngine();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "m8ccx-attr7-store-")));
+    let resolveSeed!: (rows: unknown[]) => void;
+    const seed = new Promise<unknown[]>((r) => { resolveSeed = r; });
+    const { lines, record } = await startAccepting(e.engine, { getSessionMessages: () => seed, arrivalStore: store });
+
+    e.push({ type: "system", subtype: "init", session_id: "s-attr7" });   // the seed window opens here
+    e.push(LIFECYCLE("started", "foreign-attr7"));
+    await tick();
+    const t1 = record.currentTurnId!;
+    e.push(PEER_FRAME());
+    expect(record.peerInbound!.seeding!.arrivals, "the arrival was not held by the open seed window").toHaveLength(1);
+    expect(record.peerInbound!.seeding!.arrivals[0].bind, "the held arrival was not bound to the bracket it landed in")
+      .toMatchObject({ kind: "adopted", commandUuid: "foreign-attr7" });
+    e.push(LIFECYCLE("completed", "foreign-attr7"));
+    await tick();
+    e.push(LIFECYCLE("started", "foreign-attr7b"));
+    await tick();
+    expect(record.currentTurnId).not.toBe(t1);
+
+    resolveSeed([]);
+    await tick();
+    // Held is not lost: the flush persists and announces it exactly as M9 carved that exception…
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(1);
+    expect(store.readAll("s-attr7")).toHaveLength(1);
+    // …and only the LIVE item is gone, because the one turn it could honestly be an item of is over.
+    expect(arrivalItems(lines), "a held arrival was emitted into the turn that happened to be running").toHaveLength(0);
+    expect(record.peerInbound!.arrivals).toHaveLength(0);
+    expect(dropWarnings(warn).join("\n")).toContain("dropped 1 arrival");
+    warn.mockRestore();
   });
 });

@@ -18,7 +18,7 @@ import { getSessionMessages as defaultGetSessionMessages } from "../sessions/ind
 import { TurnMapper, arrivalItem } from "./items/mapper.js";
 import { turnFailureOf } from "../session/turnResult.js";
 import { beginTurn, emitItems, type TurnOutcome, type TurnStopped } from "./turns.js";
-import type { ThreadRecord } from "./registry.js";
+import { activeTurnId, type ThreadRecord } from "./registry.js";
 import type { AppServer, AppServerDeps } from "./server.js";
 
 /** How many un-adopted arrivals one thread holds. Attacker-influenced — any local process that can write
@@ -32,10 +32,21 @@ const MAX_CAPTURED = 512;
  *  own turn is at worst briefly CONSIDERED for adoption, which `beginTurn`'s busy gate then declines. */
 const MAX_OWN_UUIDS = 64;
 
+/** WHERE ONE ARRIVAL IS ALLOWED TO APPEAR, decided by bracket evidence at the moment its FRAME arrived
+ *  (BL7 Stream 2, #64): the turn bracket open at that instant, else `next` — the next bracket to open on
+ *  this thread, which is where the engine's own undelivered-message queue drains (LEG 5 measured exactly
+ *  that attribution for a batch). It is never re-attributed past its own bracket; a bracket that dies takes
+ *  its arrivals with it. The alternative this replaces was queue POSITION — "whatever adoption is current
+ *  when a drain happens" — which is how an arrival became a user item of a turn it did not cause. */
+type ArrivalBinding =
+  | { kind: "adopted"; commandUuid: string; epoch: number }
+  | { kind: "own"; turnId: string }
+  | { kind: "next" };
+
 /** One arrival waiting for a turn to carry it. `origin` rides along because the ITEM carries it (M9,
  *  items/types.ts): the live drain builds the same `arrivalItem` the cold and projected paths build, and a
  *  queue that kept only the text would leave the live path as the one that could not. */
-interface Arrival { msgId: string; text: string; origin: Record<string, unknown>; at: number }
+interface Arrival { msgId: string; text: string; origin: Record<string, unknown>; at: number; bind: ArrivalBinding }
 
 interface AdoptedTurn {
   commandUuid: string;
@@ -61,6 +72,10 @@ interface AdoptedTurn {
  *  held apart rather than in one event list because the overlap search only ever reads the frames. */
 interface PendingArrival {
   arrivalUuid: string; text: string; origin: Record<string, unknown>; observedAt: string; afterFrames: number;
+  /** Stamped HERE — synchronously at frame arrival — and carried through the flush unchanged. The seed
+   *  read can stall across a bracket transition, so a binding taken when the buffer flushes would attribute
+   *  an arrival observed under T1 to whichever turn happened to be running when the read came back. */
+  bind: ArrivalBinding;
   /** Set the moment this arrival's position stops being knowable — the buffered frame it was ordered
    *  against was shed by the cap. It travels to the ENTRY's own `ambiguous`: counted, never placed. */
   ambiguous?: true;
@@ -83,6 +98,15 @@ export interface PeerInboundState {
    *  Per-record (it dies with the thread) and deleted at each terminal (it does not grow with turns). */
   ourUuids: Set<string>;
   adopted?: AdoptedTurn;
+  /** THE OWN TURN'S BRACKET, tracked explicitly rather than inferred. `notePeerTurnUuid` records it from
+   *  inside the runner — which `beginTurn` invokes after it has broadcast `turn/started` — so an arrival
+   *  emitted into this bracket can never precede the turn edge that owns it. It is NOT `busy` and NOT
+   *  `currentTurnId`: both race the bracket's real edges in opposite directions (`busy` flips true before
+   *  the broadcast, and it is still true after an adopted terminal has cleared `state.adopted`), and an
+   *  arrival attributed on either would be attributed to a turn that never opened or to one already over.
+   *  Open exactly while `activeTurnId(record) === ownTurn.turnId`; cleared by the first drain that sees
+   *  otherwise. */
+  ownTurn?: { turnId: string };
   /** The last filter-surviving frame this thread observed, as an entry records it. `null` says the arrival
    *  PRECEDES EVERY ROW THE SEED RETURNED — which subsumes, but is not limited to, a seed that saw zero
    *  rows: grounding on row 0 of a transcript full of rows produces it too. `undefined` is the different
@@ -162,14 +186,53 @@ const advanceAnchor = (state: PeerInboundState, f: SeedFrame): void => {
   state.anchor = { afterUuid: f.uuid, prevUuid: state.anchor?.afterUuid ?? null, fp: f.fp };
 };
 
+/** The bracket evidence AT THIS INSTANT, which is the only moment an arrival's binding is ever taken.
+ *  An adoption that has terminated is not a bracket an arrival can join; an own turn counts only while it
+ *  is genuinely the running one (see `PeerInboundState.ownTurn` on why the id is compared rather than
+ *  trusted) — everything else is `next`, and `next` is claimed when a bracket actually opens. */
+const bindingNow = (record: ThreadRecord, state: PeerInboundState): ArrivalBinding => {
+  const a = state.adopted;
+  if (a && !a.terminated) return { kind: "adopted", commandUuid: a.commandUuid, epoch: a.epoch };
+  if (state.ownTurn && activeTurnId(record) === state.ownTurn.turnId) return { kind: "own", turnId: state.ownTurn.turnId };
+  return { kind: "next" };
+};
+
+/** THE CLAIM, and it happens at BRACKET OPEN — never at a drain. A drain-time claim leaves a window in
+ *  which a bracket opens and dies between two drains and its arrival skips to a later, unrelated one: the
+ *  defect again, one window smaller. Both queues are walked, because an arrival held by an in-flight seed
+ *  is as bound as one already drainable — it simply has not been persisted yet. */
+const claimNext = (state: PeerInboundState, bind: ArrivalBinding): void => {
+  for (const a of state.arrivals) if (a.bind.kind === "next") a.bind = bind;
+  for (const p of state.seeding?.arrivals ?? []) if (p.bind.kind === "next") p.bind = bind;
+};
+
+/** Is this binding's bracket gone? A `next` binding never is — it names no bracket yet, and the one place
+ *  an unclaimed arrival is discarded is `uninstallPeerInbound`, where the whole conversation goes. */
+const bindIsDead = (record: ThreadRecord, state: PeerInboundState, bind: ArrivalBinding): boolean => {
+  if (bind.kind === "next") return false;
+  if (bind.kind === "own") return activeTurnId(record) !== bind.turnId;
+  const a = state.adopted;
+  return !a || a.terminated || a.commandUuid !== bind.commandUuid || a.epoch !== bind.epoch;
+};
+
 /** Record a uuid this server is about to submit under, so its own lifecycle bracket is recognised.
- *  Called from turns.ts's `submitRunner` beside the `randomUUID()` that mints it. */
+ *  Called from turns.ts's `submitRunner` beside the `randomUUID()` that mints it.
+ *
+ *  It is ALSO where this thread's own turn bracket opens, and that is not an extra responsibility so much
+ *  as the same fact read twice: the call site is inside the runner, past `beginTurn`'s `turn/started`
+ *  broadcast, with `record.currentTurnId` already stamped — the exact instant at which "our turn is
+ *  running, and its subscribers know it" becomes true. Any arrival still waiting for a bracket is claimed
+ *  by it here, because the engine hands a queued message to the turn it starts. */
 export function notePeerTurnUuid(record: ThreadRecord, uuid: string): void {
   const state = record.peerInbound;
   if (!state) return;
   state.ourUuids.add(uuid);
   // Insertion-ordered, so the first key IS the oldest — see MAX_OWN_UUIDS on why eviction is harmless.
   while (state.ourUuids.size > MAX_OWN_UUIDS) state.ourUuids.delete(state.ourUuids.values().next().value as string);
+  const turnId = record.currentTurnId;
+  if (!turnId) return;   // unreachable from beginTurn's runner, which mints it before the chain callback
+  state.ownTurn = { turnId };
+  claimNext(state, { kind: "own", turnId });
 }
 
 const isOurs = (state: PeerInboundState, frame: any): boolean =>
@@ -262,7 +325,6 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // No `frame.type === "user"` pre-check: `peerArrival` already owns that, and a second copy of any part
     // of the recognition rule here is the exact drift this task removed.
     const arrived = noteArrival(srv, record, state, store, frame);
-    if (arrived) drainArrivals(srv, record, state);
 
     // AN ARRIVAL'S OWN FRAME IS NEVER AN ANCHOR — not for itself, and not for the arrival behind it.
     //
@@ -279,7 +341,13 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // return, so an anchor naming one is unresolvable by construction. `readerVisible` stays a faithful
     // mirror of the reader over ROWS (its contract test says so); it is simply not asked about a frame this
     // file has already recognised as something the reader will drop.
-    else if (store && readerVisible(frame)) observeVisible(state, frame);
+    if (!arrived && store && readerVisible(frame)) observeVisible(state, frame);
+
+    // AND EVERY FRAME DRAINS, not only an arrival's own. A drain is now what DETECTS a dead bracket as
+    // well as what empties a live one, and the frames that mark a bracket ending — an own turn's last
+    // assistant frame, a result, a straggler after the terminal — are exactly the ones that used to pass
+    // through here without ever asking. Cheap: the queue is empty on the overwhelming majority of frames.
+    if (state.arrivals.length) drainArrivals(srv, record, state);
   };
 
   state.off = record.session.onFrame(onFrame);
@@ -326,6 +394,9 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
     arrivalUuid, text: arrival.text, origin: arrival.origin,
     observedAt: new Date().toISOString(),
     afterFrames: state.seeding?.frames.length ?? 0,
+    // WHERE IT WILL BE ALLOWED TO APPEAR, decided now rather than at emission: this is the only moment the
+    // brackets open when this frame arrived are still knowable. Everything downstream carries it verbatim.
+    bind: bindingNow(record, state),
   };
 
   // THE LIVE QUEUE IS NOT WRITTEN TO HERE, and that is the whole of round 2's finding 3. An arrival becomes
@@ -391,7 +462,9 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
  *  already on disk and `logged` already counts it, so an eviction here costs a live item and never a
  *  history. */
 function enqueueLive(record: ThreadRecord, state: PeerInboundState, pending: PendingArrival): void {
-  state.arrivals.push({ msgId: pending.arrivalUuid, text: pending.text, origin: pending.origin, at: Date.now() });
+  // `bind` travels from the PendingArrival rather than being re-taken here: a seed-held arrival reaches
+  // this line long after its frame did, and re-stamping is exactly the re-attribution the binding forbids.
+  state.arrivals.push({ msgId: pending.arrivalUuid, text: pending.text, origin: pending.origin, at: Date.now(), bind: pending.bind });
   while (state.arrivals.length > MAX_ARRIVALS) {
     state.arrivals.shift();
     console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
@@ -605,17 +678,55 @@ function groundSeed(
   drainArrivals(srv, record, state);
 }
 
-/** The arrivals this thread is carrying become user items of whichever turn is actually running them —
- *  never before that turn's own `turn/started` has gone out, which is why the only two callers are the
- *  runner (which `beginTurn` invokes after the broadcast) and a frame that landed while one is live. */
+/** THE DRAIN, and what it may do is deliberately narrow: EMIT the arrivals bound to the bracket that is
+ *  open right now, DROP the ones whose bracket is gone, and KEEP everything else. It never claims — a
+ *  `next` arrival is claimed where a bracket OPENS (`adopt`, `notePeerTurnUuid`) — and it never re-homes:
+ *  emptying the queue into whatever turn was current is the defect (#64) this replaces.
+ *
+ *  Emission still never precedes the turn edge that owns it. The adopted arm runs only once the runner has
+ *  installed a mapper, which `beginTurn` invokes after broadcasting `turn/started`; the own arm is gated on
+ *  the bracket `notePeerTurnUuid` opens at that same point in the same order.
+ *
+ *  A DROP IS SAID OUT LOUD, once per drain with its count. Nothing leaves history by it: the arrival was
+ *  announced when it landed and logged by M9 — what is lost is the live item, for a turn that has ended. */
 function drainArrivals(srv: AppServer, record: ThreadRecord, state: PeerInboundState): void {
+  // The own bracket is closed the moment the thread is running something else (or nothing). Cleared here
+  // rather than at any turn-end seam, because this file observes the engine and does not own turn teardown.
+  if (state.ownTurn && activeTurnId(record) !== state.ownTurn.turnId) state.ownTurn = undefined;
+
   const adopted = state.adopted;
-  if (!adopted?.mapper || !adopted.turnId || adopted.terminated) return;
-  const turnId = adopted.turnId;
-  for (const a of state.arrivals.splice(0, state.arrivals.length)) {
-    emitItems(srv, record, turnId, [{ kind: "completed", item: arrivalItem(a.text, a.msgId, a.origin) }]);
+  const open: { bind: ArrivalBinding; turnId: string } | undefined =
+    adopted?.mapper && adopted.turnId && !adopted.terminated
+      ? { bind: { kind: "adopted", commandUuid: adopted.commandUuid, epoch: adopted.epoch }, turnId: adopted.turnId }
+      : state.ownTurn
+        ? { bind: { kind: "own", turnId: state.ownTurn.turnId }, turnId: state.ownTurn.turnId }
+        : undefined;
+
+  const queued = state.arrivals.splice(0, state.arrivals.length);
+  const kept: Arrival[] = [];
+  let dropped = 0;
+  for (const a of queued) {
+    if (open && sameBinding(a.bind, open.bind)) {
+      emitItems(srv, record, open.turnId, [{ kind: "completed", item: arrivalItem(a.text, a.msgId, a.origin) }]);
+    } else if (bindIsDead(record, state, a.bind)) {
+      dropped++;
+    } else {
+      kept.push(a);   // `next`, or a bracket that is open but not yet drainable (no mapper installed)
+    }
+  }
+  // Restored at the FRONT: anything an emission re-entered this file with belongs after what was already
+  // waiting, and the queue's order is the observation order every consumer of it assumes.
+  if (kept.length) state.arrivals.unshift(...kept);
+  if (dropped) {
+    console.warn(`[peer] dropped ${dropped} arrival(s) on thread ${record.id} whose turn ended before they could be shown; they were announced and logged, so only the live item is lost`);
   }
 }
+
+const sameBinding = (a: ArrivalBinding, b: ArrivalBinding): boolean => {
+  if (a.kind === "adopted" && b.kind === "adopted") return a.commandUuid === b.commandUuid && a.epoch === b.epoch;
+  if (a.kind === "own" && b.kind === "own") return a.turnId === b.turnId;
+  return false;   // `next` matches no OPEN bracket: an open bracket has already claimed what belongs to it
+};
 
 function adopt(srv: AppServer, record: ThreadRecord, state: PeerInboundState, commandUuid: string): void {
   const adopted: AdoptedTurn = { commandUuid, epoch: record.epoch, captured: [], terminated: false };
@@ -644,7 +755,12 @@ function adopt(srv: AppServer, record: ThreadRecord, state: PeerInboundState, co
   // beginTurn refuses a busy thread (and a closing or swapping one). That is the safety net under the
   // unmeasured uuid correlation: an own turn mistaken for a foreign one is declined here rather than
   // becoming a second turn.
-  if (!started) state.adopted = undefined;
+  if (!started) { state.adopted = undefined; return; }
+  // THE BRACKET IS OPEN — so every arrival still waiting for one is now this turn's, stamped here and not
+  // at the drain the runner will perform. Between this line and that drain the bracket can already die
+  // (its terminal is a frame away), and an arrival claimed by a dead bracket is DROPPED; one left `next`
+  // would have skipped to the turn after, which is the misplacement the binding exists to forbid.
+  claimNext(state, { kind: "adopted", commandUuid, epoch: adopted.epoch });
 }
 
 /** Settle an adopted turn from OUTSIDE the frame stream — a close, a shutdown, a stale epoch. Idempotent:
@@ -664,8 +780,10 @@ export function uninstallPeerInbound(record: ThreadRecord): void {
   state.off?.(); state.off = undefined;
   state.offResult?.(); state.offResult = undefined;
   // The arrivals belonged to the conversation that is being discarded; carrying them into a replacement
-  // engine would emit them as items of a turn in a transcript they were never part of.
+  // engine would emit them as items of a turn in a transcript they were never part of. The own bracket
+  // goes with them: a turn of the engine being torn down is not a bracket the replacement can reopen.
   state.arrivals.length = 0;
+  state.ownTurn = undefined;
   // The seed window belonged to it too — but what it was HOLDING does not go with it. An arrival buffered
   // inside the window has been neither persisted nor announced, so discarding the buffer loses an
   // engine-delivered message from the live channel and from the old session's count at once. It is
