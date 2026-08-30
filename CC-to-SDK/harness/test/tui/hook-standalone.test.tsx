@@ -60,9 +60,11 @@ describe("bl8 T-QY Task 3, shape 1 (canon Qy labeled form): standalone non-Stop 
     // So the gate is exercised directly against the exported pure builder, exactly as the D6 live-counter
     // tests below do for the identical reason.
     const item = { label: "PostToolUse", entries: [{ id: "h1", name: "PostToolUse:Read", durationMs: 200 }, { id: "h2", name: "PostToolUse:Read", durationMs: 300 }] };
+    // bl9 D10: canon has no folded-and-verbose state (verbose unfolds unconditionally, R2 @177046212);
+    // compact shows NO per-hook lines regardless of the verbose flag. The extras are transcript-surface
+    // (projection !== "compact") strictly.
     const verboseTexts = hooksItemRows(item, { ...context, projection: "compact", verbose: true }).map((i) => (i.kind === "line" ? i.line.text : ""));
-    expect(verboseTexts).toContain("     ⎿ PostToolUse:Read (0.2s)");
-    expect(verboseTexts).toContain("     ⎿ PostToolUse:Read (0.3s)");
+    expect(verboseTexts.some((t) => t.includes("PostToolUse:Read ("))).toBe(false);
   });
 
   it("1 entry renders the singular 'hook'", () => {
@@ -216,15 +218,18 @@ describe("bl8 T-QY Task 3, D6: the live in-progress hook counter", () => {
     expect(lineTexts(projectPending(doc, { ...context, hookLive: new Map() })).some((t) => t.includes("Running"))).toBe(false);
   });
 
-  it("Pre/PostToolUse renders '{N} {Event} {hook|hooks} ran' only under the D21 predicate", () => {
+  it("Pre/PostToolUse renders '{N} {Event} {hook|hooks} ran' only under the transcript-surface predicate (projection !== \"compact\")", () => {
     const compactOpts = { ...context, projection: "compact" as const, verbose: false };
     expect(hookLiveItems(new Map([["PreToolUse", 1]]), compactOpts)).toHaveLength(0);   // compact, non-verbose: nothing
+    // bl9 D10: canon has no folded-and-verbose state (verbose unfolds unconditionally, R2 @177046212);
+    // compact+verbose still gates closed — the extras key off the transcript surface strictly, never verbose.
     const verboseOpts = { ...context, projection: "compact" as const, verbose: true };
-    const rows = hookLiveItems(new Map([["PreToolUse", 1]]), verboseOpts);
+    expect(hookLiveItems(new Map([["PreToolUse", 1]]), verboseOpts)).toHaveLength(0);
+    const detailOpts = { ...context, projection: "detail-collapsed" as const, verbose: false };
+    const rows = hookLiveItems(new Map([["PreToolUse", 1]]), detailOpts);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.kind === "line" ? rows[0]!.line.text : "").toBe("1 PreToolUse hook ran");
-    const line = rows[0]!.kind === "line" ? rows[0]!.line : undefined;
-    expect(line?.segments?.[0]?.preStyled).toBe(true);
+    expect((rows[0]!.kind === "line" ? rows[0]!.line : undefined)?.segments?.[0]?.preStyled).toBe(true);
   });
 
   it("hooksItemRows dispatches 'Stop' to shape 2 and every other label to shape 1", () => {

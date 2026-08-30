@@ -45,6 +45,7 @@ import { resolveExpandHint } from "./keys/hints.js";
 // bl7 T-ADVISOR Task 3: shared with toolRenderer.tsx's §3.4 clickability predicate — "declined"/"the reason
 // text" is decided in exactly ONE place so the render decision and the click decision can never drift apart.
 import { isDeclined, advisorDeclineReason } from "./advisorState.js";
+import { advisorDisplayName } from "./advisorModel.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -218,9 +219,13 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
  *    click-toggle state on top of this same field; until then it reads the projection's own verbose/detail knob.
  *  - `clickHintSuppressed` is canon's `Gj` context (A2, "the affordance replaces the instruction") — Task 3
  *    owns the exact per-row clickability predicate; this field is what it will set.
- *  - `model` is D15: the CLIENT'S OWN `config.advisorModel`, never the SDK frame's `message.model` (the MAIN
- *    model). Printed VERBATIM — ccx has no model catalog reachable from this pure module to prettify it the
- *    way canon's `cs()` does (a recorded divergence, not a gap: the value is whatever the operator configured). */
+ *  - `model` is the CLIENT'S OWN `config.advisorModel`, never the SDK frame's `message.model` (the MAIN
+ *    model). D15's verbatim-print divergence is RETIRED (bl9): its rationale ("no model catalog reachable
+ *    from this pure module") died when bl8 shipped `advisorModel.ts` as a pure sibling in this same
+ *    directory, so the row now runs the id through `advisorDisplayName` and matches canon's `cs()`
+ *    (bl7 research-advisor.md @176900223) — an unknown id still passes through verbatim, exactly as `cs()`
+ *    itself falls back for a model outside its table. bl7 spec :160 had originally specified the display
+ *    name; this restores that intent rather than merely closing a gap. */
 export interface AdvisorRenderContext { resolvedIds: ReadonlySet<string>; erroredIds: ReadonlySet<string>; expanded: boolean; clickHintSuppressed: boolean; model?: string }
 export interface RenderMessageOptions { width?: number; platform?: NodeJS.Platform; showThinking?: boolean; projection?: ResultProjection; expandHint?: string; cwd?: string; imageOrdinal?: number; advisor?: AdvisorRenderContext }
 /** Defaults for every field a caller omits — direct `renderMessage` callers outside `projectMessageEntry`
@@ -280,7 +285,7 @@ export function renderMessage(m: any, opts: RenderMessageOptions = {}): RenderLi
           // RenderLine equivalent (Task 1's doc), so the space is baked into the text instead.
           const glyph = `${opts.platform === "darwin" ? "⏺" : "●"} `;
           const gutter: Gutter = { text: glyph, dim: unresolved, ...(unresolved ? {} : { color: resolveThemeColor(themeTokens()[errored ? "error" : "success"]) }) };
-          const modelClause = advisor.model ? ` using ${advisor.model}` : "";
+          const modelClause = advisor.model ? ` using ${advisorDisplayName(advisor.model)}` : "";
           out.push({ text: `Advising${modelClause}`, gutter, segments: [{ text: "Advising", bold: true }, ...(advisor.model ? [{ text: modelClause, dim: true }] : [])] });
         }
       }

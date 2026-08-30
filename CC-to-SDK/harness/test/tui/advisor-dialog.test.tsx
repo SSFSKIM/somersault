@@ -289,9 +289,9 @@ describe("F4 (D16), half 1 — projectionContext reads the LIVE ref, not a value
     // renders followed, because that value is a launch-time PROP `/advisor` has nowhere to write into.
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null,
       message: { id: "m-adv", content: [{ type: "server_tool_use", id: "srv1", name: "advisor", input: {} }] } } });
-    // The clause prints the RESOLVED id verbatim (render.ts's own recorded divergence — no client-side
-    // catalog to prettify it with), so the value to look for is `OPUS`, not a display name.
-    await waitFor(() => frame(r.lastFrame).includes(`Advising using ${OPUS}`));
+    // The clause prints the catalog display name (D15 retired, bl9 — render.ts now runs the resolved id
+    // through `advisorDisplayName`, matching canon's `cs()`), not the raw resolved id.
+    await waitFor(() => frame(r.lastFrame).includes(`Advising using ${advisorDisplayName(OPUS)}`));
   });
 });
 
@@ -305,12 +305,12 @@ describe("F4 (D16), half 2 — the anchored-entries cache keys on advisorModel, 
       items.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("|");
 
     const first = projectPending(doc, { ...FS, advisorModel: OPUS });
-    expect(textOf(first)).toContain(`Advising using ${OPUS}`);
+    expect(textOf(first)).toContain(`Advising using ${advisorDisplayName(OPUS)}`);
     // Same `doc` instance — NO append happened, so `doc.revision()` is identical to the call above. Only
     // `advisorModel` moved. Without it in `knobKey` this returns the FIRST call's cached array untouched.
     const second = projectPending(doc, { ...FS, advisorModel: SONNET });
-    expect(textOf(second)).toContain(`Advising using ${SONNET}`);
-    expect(textOf(second)).not.toContain(OPUS);
+    expect(textOf(second)).toContain(`Advising using ${advisorDisplayName(SONNET)}`);
+    expect(textOf(second)).not.toContain(advisorDisplayName(OPUS));
   });
 });
 

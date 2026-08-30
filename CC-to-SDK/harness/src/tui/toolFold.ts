@@ -322,9 +322,12 @@ export type HookInfo = { name: string; durationMs: number; id: string; exitCode?
  *  dedups at render. */
 /** `hookCount`/`hookTotalMs` (bl7 T-HOOKBLOCK Task 2, spec D12) are the resolved PreToolUse hook attribution
  *  for this run — present only when the run absorbed at least one hook entry, the same spread-when-non-empty
- *  style as `bashCount`/`absorbedThinking`. `hookTotalMs` is a per-pair SUM (canon's `Uu` merge takes
- *  `Math.max` of a batch's wall-clock durations instead — D8 — but ccx has only per-pair arrival deltas and no
- *  merge step here, so summing is the only number this shape can produce; recorded overstatement, spec §2.4). */
+ *  style as `bashCount`/`absorbedThinking`. `hookTotalMs` is a per-pair SUM — bl9 re-verification (R2 §4.5)
+ *  confirms this matches canon's OWN item-level merge verbatim (@162920074: `e.hookTotalMs=(e.hookTotalMs??0)
+ *  +(t.hookTotalMs??0)` when merging two adjacent collapsed cluster items). The divergence sits one level up:
+ *  canon's separate MESSAGE-level `Uu` merge (@177191105) takes `Math.max` of a batch's wall-clock durations
+ *  instead of summing — that half remains bl7 D8's recorded divergence, rationale unchanged (ccx has only
+ *  per-pair arrival deltas, no batch wall-clock here to max over; recorded overstatement, spec §2.4). */
 export type GroupCounts = {
   readCount: number; searchCount: number; listCount: number; mcpCallCount: number; mcpServerNames: readonly string[];
   thoughtForMs?: number; bashCount?: number; gitOpBashCount?: number;
