@@ -269,7 +269,34 @@ entry stays with that recorded attempt.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**Delivered (2026-08-31, one day).** Both live-channel defects are closed as designed: `thread/peerMessage`
+carries `text` beside verbatim `origin` (#63, criterion 1 proven live — the announcement's string equals the
+item's under one uuid), and the live queue's attribution runs on bracket evidence (#64) — bound at frame
+arrival, claimed at bracket open, dead with its bracket, seven deterministic race cells plus a mutation-test
+pass behind it. The debt ledger closed as adjudicated: five entries paid (`EMPTY_ARRIVALS` hardened, corpus
+lifted, `tick()` converted, the truncation entry's payable half closed by the pair-oracle refusal, the
+692→813-line `peerInbound.ts` split to a 178-line facade over three modules with per-declaration
+byte-identity), the flake entry resolved by a diagnosis that overturned its own recorded suspicion (an
+unstubbed 2 s codec deadline, not memory pressure), and four entries left standing with dated
+re-affirmations — including the JSON-stringify one the spec review correctly stopped this round from
+erasing. Gates at finish: typecheck clean, 4,338 unit tests across 275 files, drift gate unmoved
+(110 rows / 73 methods), keyed live 10/10 with the round's strengthened LEG 1/2/4 assertions.
+
+**Process outcome worth recording.** The whole-branch external review returned CLEAN on its first round —
+"no actionable defects in the changed production paths" — against M9's three waves and sixteen findings.
+The difference was where the adversarial effort was spent: the spec-stage review (nine findings, seven
+adopted) reshaped the binding design BEFORE any code existed — bind-at-arrival, claim-at-open, the explicit
+own bracket — and the per-task reviewers then verified by mutation testing, 200k-case fuzzing, and
+per-declaration diffing rather than by reading. Three executor deviations were all evidence-backed
+improvements over the plan's own text (the pair oracle, the `bindingNow` liveness check, the frozen-clock
+fix), and all three were caught, adjudicated, and recorded rather than slipping through as silent drift.
+
+**Gaps, stated.** The binding machine's two known residuals are tracker entries, not surprises: compact
+turns open no own bracket (a mid-compaction arrival binds `next`), and lifecycle frames don't trigger
+drains (a dead bracket's reap waits one frame). The dead-engine `busy` liveness problem remains out of
+scope by D-BL7-5, and the clipboard-belt entry now prices a real user-facing loss awaiting an owner-level
+product call. SDK 0.3.251 sits upstream with four new model-switch hook types — the next drift-ritual
+input, untouched by this round.
 
 ## Revision Notes
 
