@@ -425,3 +425,11 @@ in `docs/parity/tech-debt-tracker.md` (seeded this round).
   material alongside a future catalog picker.
 - v4 (2026-08-30, close): D19-D21 added from the post-merge review loop (four fix waves); §8 gained the
   latent clause-form discovery; §9 retrospective written.
+- v5 (2026-08-30, post-close correction from bl8 R3): §8's claim "Canon routes hooks on such runs to the
+  standalone renderer `Qy`" is FALSE against the 2.1.251 binary. Canon ABSORBS hooks on
+  all-silently-absorbed runs into the cluster (hidden members join `u.messages` unconditionally,
+  162914528→162915830) and the collapsed renderer's early-return disjunction includes
+  `(l.hookTotalMs??0)>0` (@177045120), so the run renders visibly with the hook clause as its only
+  clause — the "latent" clause form's true producing shape. The pinned contract test was right; the
+  reachability rationale was wrong. Evidence:
+  `.doperpowers/sdd/2026-08-30-bl8-round/research-silentrun-hooks.md`; ships in the bl8 spec (D5).
