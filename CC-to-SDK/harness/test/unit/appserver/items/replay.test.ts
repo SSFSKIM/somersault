@@ -7,6 +7,17 @@ import { itemsFromTranscript } from "../../../../src/appserver/items/replay.js";
 import { flattenForDisplay, normalizeTurnInput, type UserTurnInput } from "../../../../src/session/turnInput.js";
 import { MAX_FRAME_CHARS } from "../../../../src/peer/address.js";
 import type { Item } from "../../../../src/appserver/items/types.js";
+import { TRANSCRIPT_CORPUS } from "./corpus.js";
+
+/** A corpus shape by name prefix. Read from the shared corpus rather than re-typed here, so a golden below
+ *  and the parity law (project.test.ts) are asserting about the SAME bytes — a fixture edited in one place
+ *  and not the other is the drift these two files exist to prevent. */
+const corpusRows = (namePrefix: string): unknown[] => {
+  const found = TRANSCRIPT_CORPUS.find((f) => f.name.startsWith(namePrefix));
+  if (!found) throw new Error(`corpus shape not found: ${namePrefix}`);
+  return found.rows;
+};
+
 const frames = [
   { type: "user", uuid: "u-p", message: { content: "run ls" } },
   { type: "assistant", uuid: "u-a", message: { id: "msg_A", content: [{ type: "text", text: "sure" }, { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } },
@@ -157,6 +168,32 @@ describe("itemsFromTranscript", () => {
     expect(itemsFromTranscript(rows)).toEqual([
       { type: "userMessage", id: "77777777-1111-4111-8111-777777777777", text: quoted },
       { type: "userMessage", id: "66666666-1111-4111-8111-666666666666", text: quoted },
+    ]);
+  });
+
+  // TWO CORPUS SHAPES THAT HAD NO GOLDEN ANYWHERE (M9 Task 6). The parity law in project.test.ts runs both
+  // of them, but it only asserts that the projector and this function AGREE — and they agree by
+  // construction now that they are one routing body, so a router that dropped either shape entirely would
+  // keep the law green while the items vanished. These two cells say what the routing actually produces.
+  it("the collapsed two-envelope batch row (corpus): ONE item carrying both messages, under the row's own uuid", () => {
+    // Probe 121's measured shape. The engine folded a batch into one row with two envelopes and an
+    // `origin.body` naming only the causing one, so rendering `origin.body` would destroy the second
+    // message; the envelopes are joined instead, and the id stays the row's uuid so the live announcement
+    // and this item dedupe against each other.
+    expect(itemsFromTranscript(corpusRows("a peer row carrying two sibling envelopes"))).toEqual([{
+      type: "userMessage",
+      id: "42364455-1111-4111-8111-424242424242",
+      text: "first message\n\nsecond message",
+      origin: { kind: "peer", from: "uds:/a.sock", body: "first message", msg_id: "m-batch" },
+    }]);
+  });
+
+  it("the system/result/typeless mix (corpus): the ordinary prompt is the only item, and it is NOT dropped with them", () => {
+    // The positive half is the one that matters: three rows neither path itemizes surround a real prompt,
+    // and a router that discarded a row it did not recognise by taking the whole frame with it would lose
+    // `u-p` too.
+    expect(itemsFromTranscript(corpusRows("rows neither path itemizes"))).toEqual([
+      { type: "userMessage", id: "u-p", text: "run ls" },
     ]);
   });
 
