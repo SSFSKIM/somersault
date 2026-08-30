@@ -294,6 +294,26 @@ reconciliation before its --no-ff merge (bl7 discipline).
   restricted to catalog (canon's arbitrary-id path needs a credentialed check ccx lacks). Recorded
   divergence.
 - **D12** fable consent flow out of scope; fable is an ordinary row. Recorded divergence.
+- **D13** (plan review F1) Standalone placement is a TWO-PASS weave: all cluster claims settle first
+  (bl7's result-order J1/J2 semantics untouched), then leftovers place by the canon rule (before-group
+  for pre-anchor, after-group for in-window, end otherwise). Rejected: per-flush drain (steals entries
+  an early run rejected but a later overlapping run should claim — permanent mis-attribution through
+  the shared ledger).
+- **D14** (F2) Hooks items carry stable identity (first entry's `hook_id`) and are withheld from the
+  append-once Static region while growable (trailing window open, or same-label hook in progress) — the
+  bl7 D20 advisor-row mechanism reused, not a second channel. Rejected: publish-on-first-render (frozen
+  `Ran 1` or duplicate rows across reconciles).
+- **D15** (F3) The host keeps a tri-state `flagAdvisorModel: string | null | undefined` committed only
+  after SDK success and replayed onto every swapped engine when `!== undefined` (null included — an
+  explicit off must not resurrect a launch-config advisor). Rejected: bare `applyFlagSettings` call
+  (lost on resume/clear/rewind swaps).
+- **D16** (F4) `advisorModel` in useChat is a ref (read by `projectionContext` and every long-lived
+  closure), and joins `knobKey` (the "session-constant, deliberately not in knobKey" comment at
+  `toolRenderer.tsx:~173` is rewritten). Rejected: `useState` alone (stale mount-time closures render
+  the old model).
+- **D17** (F5) `hook_started` triggers reconciliation (non-replay), or the live counter never paints —
+  the only guaranteed projections otherwise bracket the hook's lifetime. `hook_progress` still repaints
+  nothing (no rendered count changes).
 
 ## 8. Surprises & Discoveries
 
@@ -318,3 +338,9 @@ Pending — written at finish.
 
 - v1: initial. D5/§2.4/A6 were drafted with a PENDING-R3 marker and resolved (absorb + clause form)
   before first commit once R3's binary verdict landed.
+- v2 (2026-08-30): pre-execution adversarial plan review (gpt-5.6-sol, xhigh) returned 4 high + 1
+  medium; ALL five verified real against the code and accepted — D13-D17. Headline: the per-flush
+  standalone drain would have permanently stolen hooks from later overlapping runs, regressing exactly
+  the invariant bl7's four fix waves converged on (D13); and a bare `applyFlagSettings` advisor apply
+  would silently vanish on every engine swap, with explicit-off resurrecting the launch advisor (D15).
+  Fifth consecutive round the plan-review gate caught a shipping-grade defect.
