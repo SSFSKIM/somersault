@@ -29,9 +29,9 @@
 // the spec claims exactly atomic visibility, an over-report-safe count, and a degraded signal as durable
 // as the store it describes — nothing more.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { claudeConfigDir } from "../config/claudeHome.js";
 
 export interface ArrivalFingerprint { type: string; hash: string; timestamp?: string }
 export interface ArrivalAnchor { afterUuid: string; prevUuid: string | null; fp: ArrivalFingerprint }
@@ -61,11 +61,24 @@ export interface ArrivalStore {
   append(e: ArrivalEntry): void;
   readAll(sessionId: string): ArrivalEntry[];
   /** Meaningful only while `isDegraded` is false. A session whose marker is unreadable cannot say how
-   *  many entries it shed, and the caller must render `arrivals: null` rather than these numbers. */
+   *  many entries it shed, and the caller must render `arrivals: null` rather than these numbers.
+   *  REPLY PATHS MUST NOT USE THIS PAIR — use `countsSnapshot`, which cannot come apart from its verdict. */
   counts(sessionId: string): ArrivalCounts;
+  /** The counts AND the verdict on whether they can be vouched for, from ONE read of the marker — `null`
+   *  being "I cannot tell you". Asking `isDegraded` and then `counts` is two reads with a window between
+   *  them, and another process on this session degrades the store inside that window: the second call then
+   *  returns numbers taken from a marker that had already stopped standing behind them, and the reply
+   *  publishes a completeness claim nobody makes. This is the only counts operation a reply may consult. */
+  countsSnapshot(sessionId: string): ArrivalCounts | null;
   nextSeq(sessionId: string): number;
   isDegraded(sessionId: string): boolean;
   markDegraded(sessionId: string): void;
+  /** DESTROY this session's arrivals — the counterpart of D2's detach, and the only operation that removes
+   *  entries a client did not evict. `thread/clear` detaches (the entries stay with the transcript they
+   *  landed in and reappear when it is reopened); `thread/delete` destroys the transcript, and the peer
+   *  message text this store holds beside it must not outlive it. Idempotent: a session that logged nothing
+   *  deletes successfully, because the point is that it is gone. */
+  deleteSession(sessionId: string): void;
 }
 
 /** Mirrors `peerInbound.ts`'s `MAX_ARRIVALS` deliberately (spec: Bounds). Same attacker-influenced input,
@@ -93,8 +106,14 @@ const UNREADABLE: MarkerState = { dropped: null, seqHigh: -1, degraded: true };
 const ENTRY_FILE = /^e-(\d+)-(.+)\.json$/;
 const MARKER_FILE = "marker.json";
 
+/** UNDER THE CONFIGURED NAMESPACE, never the literal `~/.claude`. An entry holds the full text of a peer
+ *  message and annotates one transcript, and both of those live wherever `CLAUDE_CONFIG_DIR` points — which
+ *  this harness's own tenant preset points per tenant (`config/tenantPreset.ts`). Rooted at the host user's
+ *  home instead, a sidecar stores one tenant's message text outside the namespace it serves, and annotates
+ *  transcripts it cannot see. `claudeConfigDir` is the ONE spelling the fleet registry and the config domain
+ *  already resolve through, so the sidecar cannot drift from the transcripts it describes. */
 function defaultRoot(): string {
-  return join(homedir(), ".claude", "cc-harness", "arrivals");
+  return join(claudeConfigDir(), "cc-harness", "arrivals");
 }
 
 /** 0o600/0o700 are not decoration: an entry holds the full text of a peer message, and these files
@@ -297,9 +316,21 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
    *  name. The padding makes the two agree for the first million entries and then stops: `e-1000000-` sorts
    *  lexically ahead of `e-999999-`, which would silently reverse the order eviction and `readAll` both
    *  depend on. Nothing here parses a body, and nothing here judges a seq: what is on disk is retained. */
-  const listFiles = (dir: string): Array<{ file: string; seq: number }> => {
+  const listFiles = (sessionId: string): Array<{ file: string; seq: number }> => {
+    const dir = dirOf(sessionId);
     let names: string[];
-    try { names = readdirSync(dir); } catch { return []; }
+    try { names = readdirSync(dir); } catch (err) {
+      // ENOENT IS THE ONE HONEST EMPTY: a session that has never logged. Every other errno — EACCES on a
+      // directory whose mode changed, EIO on a network mount — is an inability to list something that IS
+      // there, and answering it with zero entries is the falsely-certified history this file exists to
+      // rule out: `readAll` returns nothing, `counts` reports `{logged: 0, dropped: 0}`, and no reader can
+      // tell that apart from a session that truly received nothing. So it degrades instead — loud beats
+      // wrong — through the same latch-then-best-effort-marker path every other failure takes.
+      // (`sessions/storeAudit.ts` draws the same line for the transcript store, and D-M5-8 forbids the
+      // other reading in as many words.)
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") degrade(sessionId);
+      return [];
+    }
     const out: Array<{ file: string; seq: number; id: string }> = [];
     for (const file of names) {
       const m = ENTRY_FILE.exec(file);
@@ -373,7 +404,7 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
 
         // Marker-then-victim. `seqHigh` rides along so `nextSeq` still knows how far the log got after
         // the entry that proved it is gone; `pending` is cleared once, after the last unlink.
-        let files = listFiles(dir);
+        let files = listFiles(e.sessionId);
         if (files.length <= ARRIVAL_LOG_CAP) return;
         counted = true;
         while (files.length > ARRIVAL_LOG_CAP) {
@@ -403,7 +434,7 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
     readAll(sessionId: string): ArrivalEntry[] {
       const dir = dirOf(sessionId);
       const out: ArrivalEntry[] = [];
-      for (const f of listFiles(dir)) {
+      for (const f of listFiles(sessionId)) {
         const entry = readEntry(dir, f.file);
         if (entry) out.push(entry);
       }
@@ -412,16 +443,27 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
 
     /** `logged` is the PRE-eviction total: what the session actually received, which is the only number a
      *  client can check its own completeness against. An unknown `dropped` reads as 0 here, which would
-     *  under-report — hence the contract above: this pair is void while `isDegraded` is true. */
+     *  under-report — hence the contract above: this pair is void while `isDegraded` is true, and a reply
+     *  path must ask `countsSnapshot` instead, which cannot be separated from that verdict. */
     counts(sessionId: string): ArrivalCounts {
       const marker = readMarker(sessionId);
       const dropped = marker.dropped ?? 0;
-      return { logged: listFiles(dirOf(sessionId)).length + dropped, dropped };
+      return { logged: listFiles(sessionId).length + dropped, dropped };
+    },
+
+    /** ONE marker read decides both the numbers and whether they may be published. The listing runs before
+     *  the verdict deliberately: an unlistable directory degrades the session (see `listFiles`), and a
+     *  verdict read before that failure would certify a count taken from a directory we could not read. */
+    countsSnapshot(sessionId: string): ArrivalCounts | null {
+      const marker = readMarker(sessionId);
+      const files = listFiles(sessionId);
+      if (marker.dropped === null || marker.degraded || degradedLatch.has(sessionId)) return null;
+      return { logged: files.length + marker.dropped, dropped: marker.dropped };
     },
 
     nextSeq(sessionId: string): number {
       const marker = readMarker(sessionId);
-      const files = listFiles(dirOf(sessionId));
+      const files = listFiles(sessionId);
       const maxOnDisk = files.length > 0 ? Math.max(...files.map((f) => f.seq)) : -1;
       return Math.max(maxOnDisk, marker.seqHigh) + 1;
     },
@@ -436,6 +478,22 @@ export function fsArrivalStore(rootDir: string = defaultRoot()): ArrivalStore {
      *  `dropped`), writes the flag alone rather than a fabricated zero. */
     markDegraded(sessionId: string): void {
       degrade(sessionId);
+    },
+
+    /** The whole session directory, entries and marker and any lock leftover together — `recursive` because
+     *  there is no partial answer here: half a deletion leaves peer message text on disk after the
+     *  transcript it belonged to is gone, which is the thing being asked for. `force` makes an absent
+     *  session a success (ENOENT means it is already gone), and every other errno THROWS: the caller —
+     *  `thread/delete` — has to be able to tell "erased" from "still there", because a silent failure here
+     *  reports a deletion that did not happen.
+     *
+     *  THE LATCH GOES WITH IT. Degradation is a latch elsewhere because it describes a history whose
+     *  completeness this process can no longer vouch for; once that history is destroyed there is nothing
+     *  left to be uncertain about, and a latch outliving its subject would report `arrivals: null` forever
+     *  for a scope that is provably empty. */
+    deleteSession(sessionId: string): void {
+      rmSync(dirOf(sessionId), { recursive: true, force: true });
+      degradedLatch.delete(sessionId);
     },
   };
 }

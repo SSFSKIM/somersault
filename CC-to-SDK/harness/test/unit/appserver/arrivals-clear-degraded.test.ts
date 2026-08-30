@@ -22,7 +22,7 @@
 // `~/.claude` when the reader is also the default, and a fixture that engaged it would write this suite's
 // peer messages into a real transcript's neighbourhood.
 import { describe, it, expect, vi, afterAll, beforeAll } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServer } from "../../../src/appserver/server.js";
@@ -94,7 +94,7 @@ const readerOver = (files: Record<string, unknown[]>): Reader => async (sessionI
 interface ReadPage { data: Array<Record<string, any>>; nextCursor: string | null; arrivals?: { logged: number; dropped: number } | null }
 const ids = (page: ReadPage) => page.data.map((i) => String(i.id));
 
-interface BootDeps { getSessionMessages: Reader; arrivalStore: ArrivalStore }
+interface BootDeps { getSessionMessages: Reader; arrivalStore: ArrivalStore; deleteSession?: (id: string) => Promise<void> }
 const boot = (engine: unknown, deps: BootDeps) =>
   new AppServer({}, { ccxDir: fileCcxDir, listSessions: async () => [], sessionFactory: (() => engine) as never, ...deps });
 
@@ -309,6 +309,101 @@ describe("(13) degradation is exactly as durable as the store that records it", 
     const e2 = pushEngine();
     const second = await open(e2.engine, { getSessionMessages: readerOver(files), arrivalStore: fsArrivalStore(root) }, "sess-E");
     expect((await second.read()).arrivals).toEqual({ logged: 1, dropped: 0 });
+    warn.mockRestore();
+  });
+
+  it("a degrade landing between a reply's two reads still reaches the reply — the counts and the verdict are ONE snapshot", async () => {
+    // TWO app-server processes can hold one session, so a reply that asked "are you degraded?" and then
+    // "what are your counts?" has a window between the two questions, and the second process's degrade
+    // lands in it: the reply then publishes numbers taken from a marker that had already stopped standing
+    // behind them — a false completeness claim, which is the one direction this design forbids. The store
+    // below is exactly that window made deterministic: healthy to the old two-call sequence, degraded to
+    // the single snapshot the reply is required to use.
+    const root = tmpRoot("c13c");
+    const inner = fsArrivalStore(root);
+    const degradedByAnotherProcess: ArrivalStore = { ...inner, isDegraded: () => false, countsSnapshot: () => null };
+    const files = { "sess-F": [ROW("r-1", "a question")] };
+    const e = pushEngine();
+    const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: degradedByAnotherProcess }, "sess-F");
+
+    e.push(PEER("f-1", "an arrival whose count another process can no longer vouch for"));
+    await tick();
+    expect(inner.counts("sess-F")).toEqual({ logged: 1, dropped: 0 });   // the numbers really are available
+    expect((await live.read()).arrivals).toBeNull();                     // …and the reply still declines to claim them
+  });
+});
+
+describe("`thread/delete` DESTROYS the arrivals, where `thread/clear` detaches them", () => {
+  // The other half of D2, and the half a store keyed by session id does NOT give for free. Clear detaches
+  // because the transcript survives and the entries stay with it; delete destroys the transcript, and the
+  // full text of every peer message it received must not outlive it — nor be re-attachable to that id.
+  const files = { "sess-G": [ROW("r-1", "a question"), REPLY("r-2", "msg_1", "an answer")] };
+
+  it("removes the session's sidecar after the transcript delete succeeds, and the id then reads empty", async () => {
+    const root = tmpRoot("del-a");
+    const store = fsArrivalStore(root);
+    const deleted: string[] = [];
+    const e = pushEngine();
+    const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store, deleteSession: async (sid) => { deleted.push(sid); } }, "sess-G");
+
+    e.push(PEER("g-1", "a peer message with a body worth erasing"));
+    e.push(PEER("g-2", "and a second one"));
+    await tick();
+    expect(store.readAll("sess-G")).toHaveLength(2);
+    expect(readFileSync(join(root, "sess-G", readdirSync(join(root, "sess-G"))[0]), "utf8")).toContain("worth erasing");
+
+    // The live-guard refuses a delete on a session this server holds open, so the thread closes first —
+    // which is exactly the sequence a client performs.
+    await live.call("thread/close", { threadId: live.threadId });
+    const reply = await live.call("thread/delete", { threadId: "sess-G" });
+    expect(reply.result).toEqual({ ok: true });
+    expect(deleted).toEqual(["sess-G"]);                    // the transcript went first
+    expect(existsSync(join(root, "sess-G"))).toBe(false);   // …and the message text went with it
+
+    // RE-ADMISSION STARTS EMPTY: nothing is left to reattach to a restored id.
+    const e2 = pushEngine();
+    const second = await open(e2.engine, { getSessionMessages: readerOver({ "sess-G": [] }), arrivalStore: fsArrivalStore(root) }, "sess-G");
+    const page = await second.read();
+    expect(page.data).toEqual([]);
+    expect(page.arrivals).toEqual({ logged: 0, dropped: 0 });
+  });
+
+  it("a transcript delete that FAILS leaves the sidecar alone — the arrivals belong to a session that still exists", async () => {
+    const root = tmpRoot("del-b");
+    const store = fsArrivalStore(root);
+    const e = pushEngine();
+    const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store, deleteSession: async () => { throw new Error("EBUSY"); } }, "sess-G");
+    e.push(PEER("g-3", "an arrival on a session that survives"));
+    await tick();
+
+    await live.call("thread/close", { threadId: live.threadId });
+    expect((await live.call("thread/delete", { threadId: "sess-G" })).error.code).toBe(-32603);
+    expect(store.readAll("sess-G")).toHaveLength(1);
+    expect(existsSync(join(root, "sess-G"))).toBe(true);
+  });
+
+  it("a sidecar that cannot be removed is REPORTED, not swallowed — and the thread is still announced deleted", async () => {
+    // The transcript is gone either way, so a picker must drop the row; what must not happen is a `{ok:
+    // true}` for a deletion that left the message bodies on disk. Loud beats wrong.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const root = tmpRoot("del-c");
+    const inner = fsArrivalStore(root);
+    const wedged: ArrivalStore = { ...inner, deleteSession: () => { throw new Error("EACCES"); } };
+    const e = pushEngine();
+    const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: wedged, deleteSession: async () => {} }, "sess-G");
+    const watcher = mkSink();
+    const wc = live.srv.connect(watcher.sink);
+    send(wc, { id: 1, method: "initialize", params: { clientInfo: { name: "w" }, watchThreads: true } });
+    e.push(PEER("g-4", "an arrival whose sidecar cannot be removed"));
+    await tick();
+
+    await live.call("thread/close", { threadId: live.threadId });
+    const reply = await live.call("thread/delete", { threadId: "sess-G" });
+    expect(reply.result).toBeUndefined();
+    expect(reply.error.code).toBe(-32603);                  // ERR.INTERNAL, the handler's own failure idiom
+    expect(String(reply.error.message)).toContain("arrival");
+    expect(parsed(watcher.lines).some((m) => m.method === "thread/deleted")).toBe(true);
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 });

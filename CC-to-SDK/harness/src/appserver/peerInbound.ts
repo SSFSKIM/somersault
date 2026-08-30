@@ -322,20 +322,20 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
   // arrival appear twice to any client that reads its own history; it is the last resort, not the rule.
   const arrivalUuid = arrival.uuid ?? randomUUID();
 
-  state.arrivals.push({ msgId: arrivalUuid, text: arrival.text, origin: arrival.origin, at: Date.now() });
-  // Oldest-first, and the drop is announced: a silently truncated queue reads to an operator exactly like
-  // a queue nothing was ever written to.
-  while (state.arrivals.length > MAX_ARRIVALS) {
-    state.arrivals.shift();
-    console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
-  }
-
   const pending: PendingArrival = {
     arrivalUuid, text: arrival.text, origin: arrival.origin,
     observedAt: new Date().toISOString(),
     afterFrames: state.seeding?.frames.length ?? 0,
   };
 
+  // THE LIVE QUEUE IS NOT WRITTEN TO HERE, and that is the whole of round 2's finding 3. An arrival becomes
+  // DRAINABLE — eligible to be emitted as an item of whatever turn is running — only once the path below
+  // has settled what it is: persisted and announced, or announced-only because there is no scope to persist
+  // into. Queued on sight instead, a message held by an unresolved seed was drained the same tick by an
+  // adopted turn that had already installed its mapper, so `item/completed` went out for an arrival whose
+  // entry the seed had not written yet — persist-before-broadcast, held everywhere else in this file,
+  // broken in the one window where the entry is deliberately deferred. See `enqueueLive`.
+  //
   // INSIDE THE SEED WINDOW an arrival is HELD — neither persisted nor announced. Persisting it would mean
   // inventing an anchor the seed has not grounded yet (and `null`, the only anchor available before then,
   // means confirmed-empty: the top of history); announcing it would put a message on the wire that history
@@ -378,22 +378,41 @@ function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundSta
     logArrival(srv, record, state, store, record.sessionId, pending, store.nextSeq(record.sessionId), false);
   } else {
     announceArrival(srv, record, pending);
+    enqueueLive(record, state, pending);
   }
   return true;
 }
 
-/** Write the entry, THEN announce it. Killing the process between the two leaves an entry with no
- *  notification, never the reverse — and the one exception is here, in the catch: a write that throws is
- *  caught (an escaped exception would hit `readLoop`'s discard and vanish), the session latches degraded so
- *  every later `thread/read` reports `arrivals: null` rather than a count that might be short, and the
+/** An arrival joins the DRAINABLE queue — the one `drainArrivals` empties into a running turn. Called only
+ *  after the arrival's durable fate is settled, so nothing this queue emits can precede its own entry.
+ *
+ *  Oldest-first eviction, and the drop is said out loud: a silently truncated queue reads to an operator
+ *  exactly like a queue nothing was ever written to. This cap bounds the LIVE items only — the entry is
+ *  already on disk and `logged` already counts it, so an eviction here costs a live item and never a
+ *  history. */
+function enqueueLive(record: ThreadRecord, state: PeerInboundState, pending: PendingArrival): void {
+  state.arrivals.push({ msgId: pending.arrivalUuid, text: pending.text, origin: pending.origin, at: Date.now() });
+  while (state.arrivals.length > MAX_ARRIVALS) {
+    state.arrivals.shift();
+    console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
+  }
+}
+
+/** Write the entry, THEN announce it, THEN make it drainable. Killing the process at any point leaves a
+ *  prefix of that order — an entry with no notification, never the reverse, and never an item for a message
+ *  history does not have. The one exception is here, in the catch: a write that throws is caught (an
+ *  escaped exception would hit `readLoop`'s discard and vanish), the session latches degraded so every
+ *  later `thread/read` reports `arrivals: null` rather than a count that might be short, and the
  *  notification still goes out — the live channel reports what the ENGINE did, and the engine delivered the
- *  message whether or not our sidecar could record it. */
+ *  message whether or not our sidecar could record it. The queue step is the same trade: the gap is
+ *  disclosed by the latch, so the live item is not also withheld. */
 function logArrival(
   srv: AppServer, record: ThreadRecord, state: PeerInboundState, store: ArrivalStore,
   sessionId: string, pending: PendingArrival, seq: number, ambiguous: boolean,
 ): void {
   writeEntry(state, store, sessionId, pending, seq, ambiguous);
   announceArrival(srv, record, pending);
+  enqueueLive(record, state, pending);
 }
 
 /** The durable half on its own, because one caller has no notification to make: `uninstallPeerInbound`
@@ -575,6 +594,12 @@ function groundSeed(
     if (i < frames.length) advanceAnchor(state, frames[i]);
   }
   arrivals.length = 0;
+  // AND ONLY NOW are they drainable. Each `logArrival` above queued its arrival after writing it, in the
+  // replay's own interleaved order; this is the drain that carries them into a turn adopted while the seed
+  // was still in flight. Without it a held arrival would wait for the next frame to trigger a drain — and
+  // with it any earlier, the item would have gone out ahead of the entry (round 2, finding 3). A thread
+  // with no adopted turn drains nothing here and keeps them queued for the turn that comes.
+  drainArrivals(srv, record, state);
 }
 
 /** The arrivals this thread is carrying become user items of whichever turn is actually running them —

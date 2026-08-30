@@ -258,6 +258,40 @@ describe("durability", () => {
       .toEqual(["append", "note:thread/peerMessage"]);
   });
 
+  it("(10) persist-before-broadcast holds ACROSS THE SEED WINDOW: an arrival held by an unresolved seed emits no item until its entry lands", async () => {
+    // The window where the guarantee was reachable but unmet: a turn is already adopted (so its mapper and
+    // turn id are installed and the live drain is armed) WHILE the seed read is still in flight. The
+    // arrival is buffered — it has no anchor yet and nothing has been written — but the drain used to run
+    // on it regardless, publishing an `item/completed` for a message with neither an entry nor a degraded
+    // marker behind it. A crash inside that window left a client holding an item history could not produce.
+    const e = pushEngine();
+    const order: string[] = [];
+    const inner = fsArrivalStore(tmpRoot("c10c"));
+    const store: ArrivalStore = { ...inner, append(entry) { inner.append(entry); order.push("append"); } };
+    const held = heldReader();
+    const { lines } = await open(e.engine, { getSessionMessages: held.reader, arrivalStore: store }, "s10c", order);
+
+    e.push(LIFECYCLE("started", "foreign-seed"));            // adopted: the drain is live
+    await tick();
+    e.push(PEER("a-1", "an arrival inside the seed window"));
+    await tick();
+
+    expect(notes(lines, "item/completed")).toHaveLength(0);  // nothing on the wire for an unwritten arrival
+    expect(notes(lines, "thread/peerMessage")).toHaveLength(0);
+    expect(store.readAll("s10c")).toHaveLength(0);
+
+    held.resolve([ROW("r-1", "the seed's own row")]);
+    await tick();
+
+    // Grounded: the entry lands, THEN the announcement, THEN the item — and the item is the arrival's own.
+    expect(order.filter((s) => s === "append" || s === "note:thread/peerMessage" || s === "note:item/completed"))
+      .toEqual(["append", "note:thread/peerMessage", "note:item/completed"]);
+    const items = notes(lines, "item/completed");
+    expect(items).toHaveLength(1);
+    expect(items[0].params.item.id).toBe("a-1");
+    expect(store.readAll("s10c").map((x) => x.id)).toEqual(["a-1"]);
+  });
+
   it("(10) a write that throws still announces, and latches the session degraded", async () => {
     const e = pushEngine();
     const inner = fsArrivalStore(tmpRoot("c10b"));

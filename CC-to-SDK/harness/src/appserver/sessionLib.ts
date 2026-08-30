@@ -37,6 +37,7 @@ import { inArchivedPartition, listArchived } from "./archive.js";
 import { compareTuple, decodeListCursor, encodeListCursor, fingerprint, finite } from "./searchScan.js";
 import { SessionStoreError, storeRefusal } from "./archiveDomain.js";
 import { auditSessionStore } from "../sessions/index.js";
+import { effectiveArrivalStore } from "./peerInbound.js";
 
 const DEFAULT_LIST_LIMIT = 200; // same default as the pre-Task-12 registry-only thread/list (server.ts)
 
@@ -338,6 +339,22 @@ export const threadFork: Handler = async (srv, ctx, id, params) => {
   }
 };
 
+/** Remove one session's arrival sidecar, and return what stopped it — `undefined` on success, including the
+ *  ordinary case of a session that never received a peer message. It never throws: a failure here is a
+ *  RESIDUE rather than a broken delete (the transcript is already gone by the time it runs), and the caller
+ *  turns it into the reply's own error while still announcing the deletion. Said out loud too, because the
+ *  errno is the only place the operator can learn WHY the bodies are still on disk. */
+function deleteArrivalSidecar(srv: AppServer, sessionId: string): string | undefined {
+  try {
+    effectiveArrivalStore(srv.deps)?.deleteSession(sessionId);
+    return undefined;
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.warn(`[peer] session ${sessionId} was deleted but its arrival log could not be removed —`, e);
+    return why;
+  }
+}
+
 /** `thread/delete`: the ONE place the live-guard (module header) is enforced. Refuses BUSY (-33001) —
  *  reusing the busy-family code, not inventing a new one, since "you may not tear this down right now" is
  *  exactly what BUSY already means on the wire — with the spec's literal message. Passes through to the
@@ -376,7 +393,20 @@ export const threadDelete: Handler = async (srv, ctx, id, params) => {
     if (await liveInFleet(srv, resolved.sessionId)) { ctx.peer.replyError(id, ERR.BUSY, LIVE_REFUSAL_FLEET); return; }
     const deleteFn = srv.deps.deleteSession ?? realDeleteSession;
     await deleteFn(resolved.sessionId);
-    ctx.peer.reply(id, { ok: true });
+    // THE SIDECAR GOES WITH THE TRANSCRIPT (M9, round 2, finding 4). The arrival log holds the FULL TEXT of
+    // every peer message this session received, keyed by the same session id — so a transcript deleted
+    // without it leaves those bodies on disk indefinitely, and re-attachable to that id if it is ever
+    // restored. It is D2's other half: `thread/clear` DETACHES (the transcript survives and its entries
+    // stay with it), `thread/delete` DESTROYS.
+    //   AFTER the transcript delete, and only on its success: removing the entries first would erase the
+    // history of a session the store then refused to delete. `effectiveArrivalStore` is the one place that
+    // decides whether this server owns an arrival log at all, so an embedder that overrode the reader —
+    // whose transcripts this machine does not own — has nothing here to delete.
+    const arrivalResidue = deleteArrivalSidecar(srv, resolved.sessionId);
+    // The transcript IS gone whichever way the sidecar went, so a picker must drop the row either way.
+    // What the reply must not do is report `{ok: true}` for a deletion that left the message text behind.
+    if (arrivalResidue) ctx.peer.replyError(id, ERR.INTERNAL, `Session deleted, but its peer-arrival log could not be removed: ${arrivalResidue}`);
+    else ctx.peer.reply(id, { ok: true });
     srv.broadcastServer("thread/deleted", { sessionId: resolved.sessionId });
   } catch (e) {
     ctx.peer.replyError(id, ERR.INTERNAL, e instanceof Error ? e.message : String(e));

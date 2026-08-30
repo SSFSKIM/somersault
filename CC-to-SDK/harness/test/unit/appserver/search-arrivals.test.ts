@@ -93,9 +93,12 @@ const fakeStore = (entries: ArrivalEntry[], over: { dropped?: number; degraded?:
   append() {},
   readAll: () => entries,
   counts: () => ({ logged: entries.length + (over.dropped ?? 0), dropped: over.dropped ?? 0 }),
+  // The operation the reply actually consults: counts and verdict from one snapshot, `null` for degraded.
+  countsSnapshot: () => over.degraded === true ? null : { logged: entries.length + (over.dropped ?? 0), dropped: over.dropped ?? 0 },
   nextSeq: () => entries.length,
   isDegraded: () => over.degraded === true,
   markDegraded() {},
+  deleteSession() {},
 });
 
 interface Booted { srv: AppServer; threadId: string; epoch: number; recordId: string; calls: Array<{ offset?: number; limit?: number }> }

@@ -4,8 +4,8 @@
 // against, and a crash between "count the victim" and "delete the victim" has to resolve toward
 // over-reporting. Each test below is one of those, driven through a real filesystem root because a mocked
 // fs would test the mock's ordering rather than rename's.
-import { describe, expect, it, vi } from "vitest";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fsArrivalStore, contentHash16, ARRIVAL_LOG_CAP, type ArrivalEntry } from "../../../src/peer/arrivalLog.js";
@@ -237,5 +237,126 @@ describe("fsArrivalStore", () => {
     expect(contentHash16("hello")).toMatch(/^[0-9a-f]{16}$/);
     expect(contentHash16("hello")).toBe(contentHash16("hello"));
     expect(contentHash16("hello")).not.toBe(contentHash16("hello "));
+  });
+});
+
+/** A chmod fixture proves nothing where the mode is not enforced — Windows, or root, which reads through a
+ *  0o300 directory. The precedent is `arrivals-clear-degraded.test.ts`'s own guard. */
+const noModeEnforcement = process.platform === "win32" || process.getuid?.() === 0;
+
+describe("the default root follows CLAUDE_CONFIG_DIR", () => {
+  // The sidecar holds the FULL TEXT of a peer message and annotates a transcript, and both of those live
+  // under whatever directory the engine was pointed at — which this harness's own tenant preset points per
+  // tenant (config/tenantPreset.ts). A sidecar rooted at the literal `~/.claude` therefore writes one
+  // tenant's message text into a namespace it does not serve. One spelling for the whole harness:
+  // `claudeConfigDir`, the same function the fleet registry and the config domain resolve through.
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  afterEach(() => { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; });
+
+  it("writes under $CLAUDE_CONFIG_DIR when it is set, and not under the host user's home", () => {
+    const tenant = mkdtempSync(join(tmpdir(), "tenant-"));
+    process.env.CLAUDE_CONFIG_DIR = tenant;
+    const store = fsArrivalStore();                     // NO explicit root: this is the production default
+    store.append(entry(0));
+    expect(existsSync(join(tenant, "cc-harness", "arrivals", "s1"))).toBe(true);
+    expect(store.readAll("s1").map((e) => e.seq)).toEqual([0]);
+    rmSync(tenant, { recursive: true, force: true });
+  });
+
+  it("falls back to $HOME/.claude with the variable unset, which is where it always was", () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const home = mkdtempSync(join(tmpdir(), "home-"));
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      fsArrivalStore().append(entry(0));
+      expect(existsSync(join(home, ".claude", "cc-harness", "arrivals", "s1"))).toBe(true);
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a directory that is THERE but not listable is degraded, never empty", () => {
+  // ENOENT is the one honest empty — a session that never logged. Every other errno is an inability to read
+  // something that IS there, and answering it with `{logged: 0, dropped: 0}` certifies a complete history
+  // the store cannot see. `sessions/storeAudit.ts` states the same rule for the transcript store.
+  it.skipIf(noModeEnforcement)("latches degraded on an EACCES listing rather than reporting zero", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    fsArrivalStore(root).append(entry(0));
+    fsArrivalStore(root).append(entry(1));
+    const dir = join(root, "s1");
+    // 0o300 — write and traverse, no LIST. `readdir` fails EACCES while `open` of a named path still
+    // succeeds, which is exactly the shape that made an unlistable directory read as an empty one.
+    chmodSync(dir, 0o300);
+    try {
+      const store = fsArrivalStore(root);              // a fresh instance: the latch must come from the read
+      expect(store.readAll("s1")).toEqual([]);         // it genuinely cannot list them
+      expect(store.isDegraded("s1")).toBe(true);       // …and says so, rather than certifying zero
+      expect(store.countsSnapshot("s1")).toBeNull();
+    } finally { chmodSync(dir, 0o700); }
+  });
+
+  it("an absent session is still the honest empty, and not degraded", () => {
+    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "arr-")));
+    expect(store.readAll("never-logged")).toEqual([]);
+    expect(store.countsSnapshot("never-logged")).toEqual({ logged: 0, dropped: 0 });
+    expect(store.isDegraded("never-logged")).toBe(false);
+  });
+});
+
+describe("countsSnapshot — one marker read answers both questions", () => {
+  // `isDegraded` then `counts` is TWO marker reads, and another process on this session can degrade the
+  // store between them: the reply then publishes numbers taken from a marker that had already stopped
+  // vouching for them. One operation, one read, one answer.
+  it("returns the counts while the store can vouch for them", () => {
+    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "arr-")));
+    store.append(entry(0)); store.append(entry(1));
+    expect(store.countsSnapshot("s1")).toEqual({ logged: 2, dropped: 0 });
+  });
+  it("returns null the moment it cannot — including a marker another process degraded", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    fsArrivalStore(root).append(entry(0));
+    fsArrivalStore(root).markDegraded("s1");           // a second process, with its own in-memory latch
+    expect(fsArrivalStore(root).countsSnapshot("s1")).toBeNull();
+  });
+  it("null covers the UNKNOWN dropped count too, which `counts` can only report as a zero", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i <= ARRIVAL_LOG_CAP; i++) store.append(entry(i));
+    writeFileSync(join(root, "s1", "marker.json"), "");                  // truncated: the count is lost
+    expect(fsArrivalStore(root).countsSnapshot("s1")).toBeNull();
+  });
+});
+
+describe("deleteSession — delete DESTROYS where clear detaches", () => {
+  it("removes the session's entries and its marker, and the id then starts empty", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    for (let i = 0; i <= ARRIVAL_LOG_CAP; i++) store.append(entry(i));   // entries AND a marker
+    expect(existsSync(join(root, "s1"))).toBe(true);
+
+    store.deleteSession("s1");
+
+    expect(existsSync(join(root, "s1"))).toBe(false);
+    // A re-admitted id starts empty rather than inheriting a count for text that is gone.
+    expect(store.readAll("s1")).toEqual([]);
+    expect(store.countsSnapshot("s1")).toEqual({ logged: 0, dropped: 0 });
+    expect(store.nextSeq("s1")).toBe(0);
+  });
+  it("is ENOENT-tolerant: deleting a session that never logged is a success", () => {
+    const store = fsArrivalStore(mkdtempSync(join(tmpdir(), "arr-")));
+    expect(() => store.deleteSession("never-logged")).not.toThrow();
+  });
+  it("clears the degraded latch along with the history it was a statement about", () => {
+    const root = mkdtempSync(join(tmpdir(), "arr-"));
+    const store = fsArrivalStore(root);
+    store.append(entry(0));
+    store.markDegraded("s1");
+    expect(store.isDegraded("s1")).toBe(true);
+    store.deleteSession("s1");
+    expect(store.isDegraded("s1")).toBe(false);
+    expect(fsArrivalStore(root).isDegraded("s1")).toBe(false);
   });
 });

@@ -29,11 +29,18 @@ import type { ResolvedArrivals } from "./items/project.js";
  *    can legitimately exceed what any page returns.
  *
  *  A merge-enabled thread with no session id yet reports zeroes rather than hiding the field: merging is
- *  on, this thread has simply logged nothing that a session id could key. */
+ *  on, this thread has simply logged nothing that a session id could key.
+ *
+ *  ONE STORE OPERATION, AND THAT IS THE POINT (round 2, finding 5). Asking `isDegraded` and then `counts`
+ *  is two marker reads with a window between them, and two app-server processes can hold one session — so
+ *  the other process's degrade lands inside that window and this reply publishes numbers from a marker
+ *  that had already stopped standing behind them. `countsSnapshot` answers both questions from one read,
+ *  and `null` is the store saying it cannot tell: rendered here as the `arrivals: null` a client reads as
+ *  "I cannot vouch for this history", never as a zero. */
 export function arrivalsField(store: ArrivalStore | undefined, sessionId: string | undefined): { arrivals?: ArrivalCounts | null } {
   if (!store) return {};
   if (!sessionId) return { arrivals: { logged: 0, dropped: 0 } };
-  return { arrivals: store.isDegraded(sessionId) ? null : store.counts(sessionId) };
+  return { arrivals: store.countsSnapshot(sessionId) };
 }
 
 const uuidOf = (row: unknown): string | null => {
