@@ -103,6 +103,7 @@ import { HistorySearchOverlay } from "./HistorySearchOverlay.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { EffortDialog } from "./EffortDialog.js";
+import { AdvisorDialog } from "./AdvisorDialog.js";
 import { BypassConsent } from "./bypassConsent.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
@@ -422,7 +423,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, closeAdvisorDialog, chooseAdvisor, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -585,7 +586,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.effortDialog.open || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.addDir.open || state.picker.open
+      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.effortDialog.open || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.advisorDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
         // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
         // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
@@ -1355,7 +1356,8 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   // `ShortcutsOverlay` (18), `BypassConsent` (18), `ThemeDialog` (17), `HistorySearchOverlay` (15, the
   // `/history` picker), the inline `PermissionDialog`/`QuestionDialog` pair (12),
   // `AddDirDialog`, `EffortDialog` (Wave C Task 11 — one row plus a caveat line, the SHORTEST member of this
-  // half and about as content-contingent as `RestoringModal`), and `RestoringModal` (1) — every one of them measured CONSTANT
+  // half and about as content-contingent as `RestoringModal`), `AdvisorDialog` (bl8 T-ADVCMD — a fixed
+  // 3-or-4-row catalog list, same shape as `ThemeDialog`'s fixed 5), and `RestoringModal` (1) — every one of them measured CONSTANT
   // across that whole range. `SettingsDialog` (14) and `PermissionsDialog` (9) WERE ON THIS LIST and are not
   // any more: Wave S t5 windowed the first one's Config list and t6b the second one's rule and workspace
   // lists, which is what a new member of the other half looks like from here — a change that adds a
@@ -1867,6 +1869,13 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     onDone={closePermissions} rows={overlayRows()} columns={terminalColumns()} />
                 : state.themeDialog.open
                 ? <ThemeDialog onDone={closeThemeDialog} savePrefs={deps?.savePrefs} />
+                // bl8 T-ADVCMD Task 3: /advisor, mounted beside its ThemeDialog/ModelPicker siblings —
+                // useChat's `openAdvisorDialog` already snapshots `current`/`mainModel` into state, so this
+                // arm is a straight pass-through, same shape as the ThemeDialog arm above it.
+                : state.advisorDialog.open
+                ? <AdvisorDialog {...(state.advisorDialog.current !== undefined ? { current: state.advisorDialog.current } : {})}
+                    {...(state.advisorDialog.mainModel !== undefined ? { mainModel: state.advisorDialog.mainModel } : {})}
+                    onChoose={chooseAdvisor} onCancel={closeAdvisorDialog} />
                 : state.addDir.open
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open

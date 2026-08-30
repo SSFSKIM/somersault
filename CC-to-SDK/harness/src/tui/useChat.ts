@@ -47,7 +47,8 @@ import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import type { DesktopNotifier } from "./desktopNotify.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, formatAdvisorResult, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { applyAdvisorChoice } from "./advisorModel.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -127,7 +128,12 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean };
+  /** bl8 T-ADVCMD Task 3 — the standalone `/advisor` dialog's open state, snapshotted at open time exactly
+   *  like `effortDialog` (`openAdvisorDialog` below): `current` is the ref value in force when it opened
+   *  (a resolved id, or undefined for off) and `mainModel` is the live model, for the dialog's own
+   *  unsupported-model warning row. */
+  advisorDialog: { open: boolean; current?: string; mainModel?: string }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
   /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
    *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
    *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
@@ -165,12 +171,14 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
   opts: { initialMode?: string; initialModel?: string;
-    /** bl7 T-ADVISOR Task 3 (spec D15): the client's OWN `config.advisorModel`, threaded down the SAME
-     *  static-launch-fact path `initialModel` rides (`main.ts`'s `hookOpts` → `chatMain.tsx` →
-     *  `ChatApp.tsx`'s `hookOpts` prop, spread into these `opts`). Session-constant, like `cwd`/`home` —
-     *  never a live `/config` toggle in this ticket's scope — so it is read once below, not through a ref.
-     *  Absent on `ccx attach` (the host it joins may have configured its own, which this client cannot see):
-     *  `projectionContext()` then omits `advisorModel` entirely, which is canon-legal (§3.2: `Tp ? … : null`). */
+    /** bl7 T-ADVISOR Task 3 (spec D15) / bl8 T-ADVCMD (D16): the client's OWN `config.advisorModel`,
+     *  threaded down the SAME static-launch-fact path `initialModel` rides (`main.ts`'s `hookOpts` →
+     *  `chatMain.tsx` → `ChatApp.tsx`'s `hookOpts` prop, spread into these `opts`) — but only as the SEED
+     *  of `advisorModelRef` below, not the value itself: bl8 shipped `/advisor`, which changes it live, so
+     *  the bl7 "session-constant, read once" premise this comment used to make is false now (D16 plan
+     *  review F4). Absent on `ccx attach` (the host it joins may have configured its own, which this
+     *  client cannot see): `projectionContext()` then omits `advisorModel` entirely, which is canon-legal
+     *  (§3.2: `Tp ? … : null`). */
     initialAdvisorModel?: string;
     cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
     /** T2 (F9 T-AUTO §A2): the launch's account token source (`AccountFacts.tokenSource`), threaded
@@ -270,9 +278,14 @@ export function useChat(
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
-  // bl7 T-ADVISOR Task 3 (D15): a plain const, not a ref — `initialAdvisorModel` is session-constant exactly
-  // as `cwd`/`home` are (see the opts doc above), so it needs no repaint-surviving mutable cell.
-  const advisorModel = opts.initialAdvisorModel;
+  // bl8 T-ADVCMD (D16, plan review F4): a REF now, not the bl7 plain const — `/advisor` (below) writes it
+  // live, and `projectionContext()` is read by callbacks that outlive the render that created them (the
+  // SAME reason `bashHintRef`/`expandHintRef`/`isFullscreenRef` above are refs and not their own bare
+  // values): a mount-time closure over a plain const would keep rendering the LAUNCH advisor forever, no
+  // matter how many times `/advisor` changed it. `applyAdvisor` writes this FIRST, then calls `reconcile()`
+  // so the change repaints without waiting for a document revision (F4's other half is `toolRenderer.ts`'s
+  // `knobKey`, which must include this value too — see its own comment).
+  const advisorModelRef = useRef(opts.initialAdvisorModel);
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const rowsFn = deps.rows ?? (() => process.stdout.rows ?? 24);
@@ -320,7 +333,7 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, hookRuns: hookTrackerRef.current!.entries(), ...(advisorModel !== undefined ? { advisorModel } : {}) };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, hookRuns: hookTrackerRef.current!.entries(), ...(advisorModelRef.current !== undefined ? { advisorModel: advisorModelRef.current } : {}) };
   };
   /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
    *  the run's earliest-issued call).
@@ -648,6 +661,8 @@ export function useChat(
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
   const [addDir, setAddDir] = useState<{ open: boolean; prefill?: string }>({ open: false });   // W3 T3: /add-dir overlay
   const [themeDialog, setThemeDialog] = useState<{ open: boolean }>({ open: false });   // W3 T4: /theme overlay
+  // bl8 T-ADVCMD Task 3: /advisor overlay, snapshotted at open time exactly like `effortDialog`.
+  const [advisorDialog, setAdvisorDialog] = useState<{ open: boolean; current?: string; mainModel?: string }>({ open: false });
   const [bypassConsent, setBypassConsent] = useState<{ open: boolean }>({ open: false });   // Wave-T T15: /yolo's consent gate
   const [settings, setSettings] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T5: /config overlay
   // Baseline SettingsRowCtx captured the moment /config opens, diffed against a fresh snapshot when it
@@ -2246,6 +2261,11 @@ export function useChat(
         // (theme.ts's setTheme has "no persistence — caller's job", and the dialog IS that caller); this
         // just opens/closes it and prints whatever result line it hands back via closeThemeDialog.
         case "theme": setThemeDialog({ open: true }); break;
+        // bl8 T-ADVCMD (spec §3.3): no arg opens the dialog (`openAdvisorDialog` below snapshots the
+        // current ref + live model); an arg runs `applyAdvisorChoice` immediately, the SAME choke point
+        // the dialog's Enter uses (`applyAdvisor`, T-EFFORT's `applyEffort` precedent — one function, every
+        // caller).
+        case "advisor": { if (cmd.args) await applyAdvisor(cmd.args); else openAdvisorDialog(); break; }
         // FSW T15 (canon `fTb`, bundle L482580-482620) — SWAP THE RENDERER UNDER A LIVE CONVERSATION.
         // Canon's own order of business, kept: parse, refuse if busy, SAVE, then switch. Two of those
         // deserve a word here.
@@ -2666,6 +2686,47 @@ export function useChat(
   // (this dialog needs no session access) — `line` is the exact verbatim result string ("Theme set to
   // {id}" / "Theme picker dismissed"), just close + print it.
   function closeThemeDialog(line: string) { if (!disposed.current) { setThemeDialog({ open: false }); notice(line); } }
+
+  // bl8 T-ADVCMD Task 3: /advisor. Unlike ThemeDialog, this dialog does no engine work itself — Enter
+  // reports a plain string choice (`AdvisorDialog`'s `onChoose`), and the round-trip lives here, in
+  // `applyAdvisor`, so both the dialog's Enter and a typed `/advisor <arg>` share the one choke point
+  // (`applyEffort`'s own precedent). Snapshot at open time, exactly as `openEffortDialog` does.
+  function openAdvisorDialog(): void {
+    if (disposed.current) return;
+    setAdvisorDialog({ open: true, current: advisorModelRef.current, ...(model ? { mainModel: model } : {}) });
+  }
+  function closeAdvisorDialog(): void { if (!disposed.current) setAdvisorDialog({ open: false }); }
+  function chooseAdvisor(choice: string): void { closeAdvisorDialog(); void applyAdvisor(choice); }
+  /** THE SINGLE CHOKE POINT for `/advisor`'s three outcomes (spec §3.3) — the dialog's Enter and a typed
+   *  `/advisor <arg>` both funnel through this, exactly as `applyEffort` is `/effort`'s one choke point.
+   *  Validation is Task 1's pure `applyAdvisorChoice` (P119: the server never reports a bad value, so an
+   *  "invalid" verdict never reaches the engine at all). `setAdvisorModel` lives on the SAME `SettingsOps`
+   *  bundle `setEffort` does, so `hasSettingsOps` is the feature-detect for both — a session predating it
+   *  (an older attached host) gets the honest refusal rather than a silent no-op.
+   *    ORDER (Global Constraints): engine call → persist pref → write the ref (D16/F4 — the value
+   *  `projectionContext()` and every long-lived closure read; a bare `useState` would leave them all on
+   *  the launch model) → `reconcile()` so the change repaints without waiting for a document revision →
+   *  the result line. A `setAdvisorModel` rejection prints `advisor: <message>` (the existing mcp toggle
+   *  arm's own "verb: detail" line shape) and skips BOTH the persist and the ref write — a refused engine
+   *  call must not have the pref or the live row claim it happened. */
+  async function applyAdvisor(choice: string): Promise<void> {
+    if (disposed.current) return;
+    const result = applyAdvisorChoice(choice, model ?? "", advisorModelRef.current);
+    if (result.action === "invalid") { append(formatAdvisorResult(result.message)); return; }
+    if (!hasSettingsOps(session)) { notice("advisor: not supported by this host"); return; }
+    const nextModel = result.action === "set" ? result.model : null;
+    try {
+      await session.setAdvisorModel(nextModel);
+    } catch (e) {
+      if (!disposed.current) notice(`advisor: ${(e as Error).message}`);
+      return;
+    }
+    if (disposed.current) return;
+    savePrefsFn(nextModel !== null ? { advisorModel: nextModel } : { advisorModel: undefined }, historyEnv);
+    advisorModelRef.current = nextModel ?? undefined;
+    reconcile();
+    append(formatAdvisorResult(result.message));
+  }
 
   // Wave-T T15 — the two answers to `/yolo`'s consent. The dialog persists the acceptance itself (every route
   // into bypass records it, so no caller can forget to), which leaves these two the mode change and the
@@ -3307,5 +3368,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, advisorDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, closeAdvisorDialog, chooseAdvisor, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

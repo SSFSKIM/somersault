@@ -167,16 +167,20 @@ export type { ResultProjection };
  *  same field, two disjoint key namespaces. `knobKey` below reads only the `sdk:` subset for its cache key,
  *  because only advisor rows are consumed INSIDE the anchored-entry cache; `tool:*` owners are read
  *  downstream of it (`toolEventItems`, never cached) and must not cost it a rebuild. */
+/** `advisorModel` (bl7 T-ADVISOR Task 2, spec D15; bl8 T-ADVCMD D16): the CLIENT'S OWN advisor-model
+ *  config, threaded down to the advisor in-flight row's `" using {model}"` clause — NEVER the SDK frame's
+ *  own `message.model` (the MAIN model, a different fact). bl8 shipped `/advisor`, a LIVE mid-session
+ *  toggle (`useChat`'s `advisorModelRef`), which makes the bl7 "session-constant, deliberately not in
+ *  `knobKey`" reasoning here false: this value now changes for the life of a `useChat`, and IS in
+ *  `knobKey` (below) for exactly the reason `expandedItems`' `sdk:` subset is — `projectMessageEntry`
+ *  reads it INSIDE this same anchored-entry cache, so without a key component a `/advisor` mid-session
+ *  would keep serving the stale pre-change model name out of the `byKnobs` map until some unrelated knob
+ *  happened to also change. */
 /** `hookRuns` (bl7 T-HOOKBLOCK Task 1) is completed PreToolUse hook pairs, sorted by `afterSequence` — the
  *  `HookPairTracker` output a later task folds into a tool-cluster's expanded block. Like `thoughtMs` it is
  *  a projection INPUT rather than document state: hook frames never enter `TranscriptDocument` (spec D2),
  *  so a rewound/resumed/attached document has no source for them and must show none. */
-/** `advisorModel` (bl7 T-ADVISOR Task 2, spec D15): the CLIENT'S OWN advisor-model config, threaded down to
- *  the advisor in-flight row's `" using {model}"` clause — NEVER the SDK frame's own `message.model` (the
- *  MAIN model, a different fact). Like `cwd`/`home`, this is session-constant (set at launch, not a live
- *  `/config` toggle in this ticket's scope) and deliberately NOT in `knobKey` for the same reason those are
- *  not: no cached row can outlive a value that never changes for the life of a `useChat`. */
-export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; hookRuns?: readonly HookRunEntry[]; advisorModel?: string; }
+export interface ProjectionOptions { cwd: string; home: string; platform: NodeJS.Platform; columns: number; projection: ResultProjection; now: number; verbose: boolean; thoughtMs?: ReadonlyMap<string, number>; pending?: FoldPendingHooks; agentMeta?: ReadonlyMap<string, AgentMeta>; toolEvents?: readonly ToolEvent[]; bashHint?: string; expandHint?: string; fullscreen?: boolean; expandedFolds?: ReadonlySet<string>; expandedItems?: ReadonlySet<string>; advisorModel?: string; hookRuns?: readonly HookRunEntry[]; }
 /** THE ONE WAY the renderer identity reaches the pure fold policy, and the reason it is a named helper rather
  *  than an inline object literal at each of the seven call sites: "did that site get the flag?" becomes a grep
  *  instead of a reading of seven argument lists. Task 4's review found `foldClauses` called twice with only one
@@ -1428,9 +1432,13 @@ const anchoredCache = new WeakMap<TranscriptDocument, { revision: number; theme:
 // every ordinary tool-result click, churning the 8-deep LRU for a knob this cache never actually reads.
 // Deterministic serialization (sorted) so insertion order into the `Set` never mints two cache entries for
 // the one logical key.
+// bl8 T-ADVCMD (D16): `advisorModel` joins the key for the identical reason the `sdk:` subset above does —
+// `projectMessageEntry` reads it inside THIS cache, and `/advisor` now changes it live (see the field's own
+// comment above `ProjectionOptions`).
 const knobKey = (options: ProjectionOptions): string =>
   `${options.columns}|${options.projection}|${options.verbose}|${options.platform}|${options.expandHint === undefined ? "" : `=${options.expandHint}`}` +
-  `|x=${[...(options.expandedItems ?? [])].filter((k) => k.startsWith("sdk:")).sort().join(",")}`;
+  `|x=${[...(options.expandedItems ?? [])].filter((k) => k.startsWith("sdk:")).sort().join(",")}` +
+  `|adv=${options.advisorModel ?? ""}`;
 /** DI-by-deps test seam: the builder is reached through this record, so a test can count rebuilds without
  *  reading the cache itself. Production never reassigns it. */
 export const projectionDeps = { buildAnchored: buildAnchoredEntries };

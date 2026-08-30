@@ -210,6 +210,15 @@ describe("/bg (Goal B task 7)", () => {
   });
 });
 
+describe("/advisor (bl8 T-ADVCMD Task 3)", () => {
+  it("is a registered command, in LOCAL_NAMES, and in the palette entries, with the pinned summary", () => {
+    const row = COMMANDS.find((c) => c.name === "advisor");
+    expect(row?.summary).toBe("[fable|opus|sonnet|off] — let Claude consult a stronger model at key moments");
+    expect(LOCAL_NAMES.has("advisor")).toBe(true);
+    expect(LOCAL_COMMAND_ENTRIES.some((e) => e.name === "advisor")).toBe(true);
+  });
+});
+
 describe("/detach (F0 KB5 — detach moved off Ctrl-Z)", () => {
   it("is a registered command, in LOCAL_NAMES, and in the palette entries", () => {
     expect(COMMANDS.some((c) => c.name === "detach")).toBe(true);

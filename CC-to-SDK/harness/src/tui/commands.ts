@@ -74,6 +74,12 @@ export const COMMANDS: CommandRow[] = [
   { name: "rewind", summary: "rewind to a previous message (Esc Esc · aliases /checkpoint /undo)", aliases: ["checkpoint", "undo"] },
   { name: "add-dir", summary: "<path> — add a new working directory" },
   { name: "theme", summary: "change the theme" },
+  // bl8 T-ADVCMD (spec §3.1). Aliases named in `advisorCatalog()`'s OWN order (fable, opus, sonnet — the
+  // fixed 3-entry catalog `advisorModel.ts` filters, D8), not alphabetical — a summary that reordered them
+  // would drift the moment the catalog's own order became load-bearing anywhere else. Canon's description
+  // ("Let Claude consult a stronger model at key moments") lower-cased to match this table's own house
+  // style (every neighbouring summary opens lowercase).
+  { name: "advisor", summary: "[fable|opus|sonnet|off] — let Claude consult a stronger model at key moments" },
   // FSW T15 — canon's own descriptor, verbatim (`xR_`, bundle L352074:
   // `{type:"local-jsx", name:"tui", description:"Set the terminal UI renderer (default | fullscreen)",
   //   argumentHint:"[default|fullscreen]"}`).
@@ -234,6 +240,14 @@ export function formatEffortCurrent(effort: EffortLevel | undefined, defaultEffo
  *  constant string for every ccx install. */
 export function formatEffortInvalid(arg: string): RenderLine[] {
   return withLocalOutputGutter([`Invalid argument: ${arg}. Valid options are: low, medium, high, xhigh, max, auto`]);
+}
+/** bl8 T-ADVCMD — `/advisor`'s three outcomes (`applyAdvisorChoice`'s `message`), through the same `⎿`
+ *  channel `/effort` uses for its own set/invalid confirmations. The message can carry an embedded `\n`
+ *  (a "set" result followed by canon's unsupported-model/failed-pairing `Note: …` line, spec §3.3) —
+ *  split on it so `withLocalOutputGutter` pads the continuation to the gutter's width instead of the
+ *  glyph repeating once per line. */
+export function formatAdvisorResult(message: string): RenderLine[] {
+  return withLocalOutputGutter(message.split("\n"));
 }
 /** The one surface here with NO verbatim upstream counterpart: upstream's post-compact notice (`Fl_`,
  *  L314674) prints the word `Compacted` plus hint clauses and no numbers at all, so this before→after pair
