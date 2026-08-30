@@ -90,6 +90,42 @@ export const threadResumeParams = z.object({
 // Task 13: epoch-qualified cursor (epochCursorParam, not the plain decimal offset it was split from) —
 // see schema/core.ts's comment on why thread/read alone needs this shape.
 export const threadReadParams = threadIdParams.extend(epochCursorParam.shape);
+/** ONE history item, as a page carries it. Deliberately OPEN (`z.looseObject`): `type` and `id` are true of
+ *  every item and `origin` is M9's addition, but the rest of the item model — the tool-call shape, a
+ *  review's findings — is `items/types.ts`'s, and publishing a hand-transcribed union of it here would
+ *  create a second copy of that model with nothing tying the two together. A client validating a page
+ *  against this learns what the wire guarantees; it is not told that a `toolCall`'s extra keys are illegal,
+ *  because they are not.
+ *
+ *  `origin` is the M9 marker and the reason this result is published at all: it is what lets a client
+ *  render an arrival AS an arrival, and — because a withheld arrival is still counted in `arrivals` below —
+ *  what lets it count the marked items it received against the number the server logged. Carried VERBATIM
+ *  as the engine stamped it (`verifiedPeerPid` is the only field the kernel vouches for), so this server
+ *  re-describing its members would substitute its own opinion for a measured one. */
+const threadReadItem = z.looseObject({
+  type: z.string(),
+  id: z.string(),
+  origin: z.record(z.string(), z.unknown()).optional().describe("present only on a cross-session arrival; the sender attribution verbatim, as the engine stamped it"),
+});
+/** M9 (spec Stage C, criterion 21): `thread/read`'s reply, published for the first time — the method
+ *  declared params alone until this milestone gave its response a member whose ABSENCE carries meaning.
+ *
+ *  Three states for `arrivals`, and a client must tell them apart. ABSENT: this server does not merge a
+ *  cross-session arrival log into history (an embedder supplied its own transcript reader and no store), so
+ *  no claim is made. `null`: the store is degraded and cannot vouch for its own count — "I cannot tell
+ *  you", which a zero would have turned into a false all-clear. Present: `logged` is the PRE-eviction total
+ *  the session received, so it may legitimately exceed the marked items any page returns; the excess is
+ *  history the server knows it could not place, and saying so is the point.
+ *
+ *  `nextCursor` is `null` at the end of the walk and otherwise the epoch-qualified row cursor the params
+ *  above accept, unchanged by M9 — arrivals ride rows rather than occupying them, so the coordinate space
+ *  a client pages through is the one it already had. */
+export const threadReadResult = z.object({
+  data: z.array(threadReadItem),
+  nextCursor: z.string().nullable().describe("pass back as `cursor` for the next (older) page; null when the walk is done"),
+  arrivals: z.object({ logged: z.number().int(), dropped: z.number().int() }).nullable().optional()
+    .describe("absent when this server merges no arrival log; null when the store is degraded; otherwise the pre-eviction totals"),
+});
 // M6: `listCursorParam`, the keyset (core.ts), in the position `cursorParam` held — the field order is
 // unchanged, so re-cursoring costs the byte-pinned artifact one `pattern` and one `description`.
 // Task 12: extends the cursor shape with `cwd` (rather than reusing the alias directly) — the merged

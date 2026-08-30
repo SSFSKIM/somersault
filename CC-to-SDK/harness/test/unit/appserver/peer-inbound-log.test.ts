@@ -528,10 +528,13 @@ describe("the recorded fingerprint", () => {
   });
 });
 
-describe("Stage B changes nothing a reader can see", () => {
-  it("(9) thread/read's reply is identical with the store populated and with it empty", async () => {
-    // Stage B writes entries and NOTHING reads them, which is what makes it verifiable on its own. The
-    // projector is Task 3's; until it lands, a populated log must be invisible on the wire.
+describe("Stage C reads back exactly what Stage B wrote", () => {
+  it("(9) the arrivals the observer logged are on the next thread/read, anchored where they landed", async () => {
+    // This cell pinned the INVERSE while Stage B stood alone: nothing read the log yet, so a populated
+    // one had to be invisible on the wire — true only "until the projector lands", which is what Task 4
+    // is. The fixture is unchanged and now states the round trip end to end, through a REAL
+    // `fsArrivalStore` rather than a fake: the observer wrote these entries from live frames, and the
+    // pager resolved them against the rows the reader returned. Nothing else about the page moves.
     const e = pushEngine();
     const store = fsArrivalStore(tmpRoot("c9"));
     const rows = [
@@ -553,6 +556,20 @@ describe("Stage B changes nothing a reader can see", () => {
     lines.length = 0;
     send(c, { id: 21, method: "thread/read", params: { threadId } });
     await tick();
-    expect(parsed(lines).find((m) => m.id === 21)!.result).toEqual(before);
+    const after = parsed(lines).find((m) => m.id === 21)!.result;
+
+    // The transcript's own items are untouched, element for element — an arrival rides a row, it does not
+    // displace one.
+    expect(after.data.slice(0, before.data.length)).toEqual(before.data);
+    // Both entries anchored on the seed's LAST row (no live frame advanced the anchor past it), so they
+    // emit after it, in the store's `(seq, id)` order.
+    expect(after.data.slice(before.data.length).map((i: any) => [i.id, i.text, i.type])).toEqual([
+      ["a-1", "a logged arrival", "userMessage"],
+      ["a-2", "and another", "userMessage"],
+    ]);
+    for (const item of after.data.slice(before.data.length)) expect(item.origin).toMatchObject({ kind: "peer", verifiedPeerPid: 4242 });
+    // The counts come off the store, and they agree with what rendered here because every anchor resolved.
+    expect(before.arrivals).toEqual({ logged: 0, dropped: 0 });
+    expect(after.arrivals).toEqual({ logged: 2, dropped: 0 });
   });
 });

@@ -2094,6 +2094,82 @@
       ],
       "additionalProperties": false
     },
+    "thread/read": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "origin": {
+                "description": "present only on a cross-session arrival; the sender attribution verbatim, as the engine stamped it",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "pass back as `cursor` for the next (older) page; null when the walk is done"
+        },
+        "arrivals": {
+          "description": "absent when this server merges no arrival log; null when the store is degraded; otherwise the pre-eviction totals",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "logged": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "dropped": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "logged",
+                "dropped"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
     "thread/capabilities/read": {
       "type": "object",
       "properties": {
