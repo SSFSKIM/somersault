@@ -10,6 +10,29 @@ holds, leave it.
 
 ---
 
+## 2026-08-31 — a fork's inherited peer history is invisible, as is every pre-M9 session's
+
+**Source:** M9 branch external review, round 3 (finding 2) · `src/peer/arrivalLog.ts` (the store is keyed by
+session id) with `src/sessions/` (the SDK mints a new id and rewrites uuids on fork).
+
+**What:** `arrivals.logged` is derived from this server's own log, and the log starts where observation did.
+A forked session's sidecar is empty over copied history, so `thread/read` and `thread/searchOccurrences` on
+the fork omit every inherited arrival and report zero — the reader drops the copied `isMeta` peer rows, as
+it has always done. The identical shape holds for every session that received peer messages before this
+milestone shipped.
+
+**Cost:** on a fork, and on any pre-M9 conversation, the defect this milestone exists to fix is still
+present: history shows an answer with no question. The count is not lying — it reports what was observed —
+but it cannot distinguish "no arrivals" from "arrivals nobody was watching for".
+
+**Why deferred:** the fix is migrating entries onto the fork's rewritten uuids, which is placement work on a
+branched conversation — and D3, the owner's scope decision, puts branches and forks under *explicit refusal
+rather than correctness*. Doing it here would be the "solve the full correctness envelope before shipping
+anything" alternative D3 rejected by name. Revisit if branches enter scope; the boundary is stated in the
+spec beside the definition of `arrivals.logged` so the next reviewer reads it rather than re-deriving it.
+
+---
+
 ## 2026-08-30 — a literal closing tag in a peer body truncates that sender's own text
 
 **Source:** M9 branch external review, round 2 (P2) · `src/peer/address.ts` (the depth-counting envelope

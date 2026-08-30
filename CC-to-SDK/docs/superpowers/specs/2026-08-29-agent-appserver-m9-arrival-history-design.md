@@ -610,6 +610,18 @@ page speaks. Both halves are fixed structurally:
   marked items)` is exact only after a *completed, id-deduped walk*; on a single page it is a lower
   bound on what remains, not a verdict.
 
+  **`logged` IS LOG-DERIVED, AND THE LOG STARTS WHERE OBSERVATION DID** (rev 9.2, round 3, finding 2).
+  The count is what this server's observer wrote down, never a property read back off the transcript —
+  so it counts observation-forward, and a session whose peer messages predate its sidecar reports zero
+  honestly rather than falsely. That covers two populations by the same rule: every session that
+  received arrivals before this milestone shipped, and a **fork**, whose new session id starts with an
+  empty sidecar over copied history. Neither's inherited arrivals appear in `thread/read` or search —
+  the reader drops the copied `isMeta` rows, as it always has (M1) — and migrating entries onto a
+  fork's rewritten uuids is placement work on a branched conversation, which **D3 scopes to explicit
+  refusal rather than correctness.** The boundary is stated here so it reads as the scope decision it
+  is; the residue is logged in `CC-to-SDK/docs/tech-debt-tracker.md`, to be revisited if branches ever
+  enter scope.
+
   **The marker protocol is over-report-safe, and claims no more than that** (round 6, finding 5).
   Write order is marker-then-victim on eviction — increment `dropped`, fsync the marker, then unlink
   — and recovery treats a retained entry already counted dropped as dropped (unlink on sight),
@@ -1436,3 +1448,25 @@ gate reports the same 110 rows over 73 registered methods it did before the mile
   that sender's own remaining text at decode, because nothing in the CLI's grammar distinguishes a payload
   tag from the real terminator. It is self-inflicted-only and bounded, and it is logged in
   `CC-to-SDK/docs/tech-debt-tracker.md` rather than engineered around.
+
+- **rev 9.2 (2026-08-31) — round 3: the read ORDER inside the snapshot, and where the log begins.** Two
+  findings; one a regression the previous round introduced, one a scope boundary that was true all along
+  and unstated.
+
+  **A count is sampled files-first** (finding 1). `countsSnapshot` read the marker and then the listing, and
+  those two move together: an eviction in another process adds one to `dropped` and then removes one file,
+  so a marker sampled before it and a listing sampled after it each miss a half — 32 reported for 33
+  arrivals, the under-report this design forbids by name. Reversed, the sum is safe by monotonicity
+  (`dropped` never decreases, so the total is at least the truth at the instant of the listing) and its
+  worst case counts the evicted entry twice, which is the permitted direction. `counts()` carried the same
+  pair and was aligned with it; `nextSeq` keeps the opposite order **deliberately** — it wants the largest
+  value it can justify, and its freshest source has to be the listing — which is now stated where a future
+  reader would otherwise "fix" it. Rejected: snapshotting both under the marker lock, which would put a
+  write-side lock with a degrading bounded wait on every `thread/read`.
+
+  **`logged` is log-derived, and the log starts where observation did** (finding 2, logged not fixed). A
+  fork's sidecar is empty over copied history, so its inherited arrivals are invisible to `thread/read` and
+  search — the same boundary every pre-M9 session sits on, and the same reason: the reader drops the copied
+  `isMeta` rows. Migrating entries onto a fork's rewritten uuids is placement on a branched conversation,
+  which D3 scopes to explicit refusal rather than correctness. The boundary is now stated beside the
+  definition of `arrivals.logged`; the residue is in the tech-debt tracker.
