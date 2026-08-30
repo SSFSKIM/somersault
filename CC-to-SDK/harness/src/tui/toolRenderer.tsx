@@ -21,7 +21,7 @@ import { formatDuration } from "./format.js";
 import { Line, type LineSelection } from "./Line.js";
 import { resolveThemeColor, subagentColor, SUBAGENT_TOKEN_NAMES, themeGeneration, themeTokens } from "./theme.js";
 import { bashArgument, callSidecar, isSuppressedTool, normalizeToolResult, sedInPlaceTarget, type NormalizedToolResult, type ToolStatus } from "./toolResult.js";
-import { classifyToolEvent, foldClauses, hookHeaderText, hookSeconds, hookSentenceClause, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldItem, type FoldPolicy, type GroupCounts, type HookInfo } from "./toolFold.js";
+import { classifyToolEvent, foldClauses, hookHeaderText, hookSeconds, hookSentenceClause, positionStandaloneHooksFlat, segmentRuns, type AbsorbedThinking, type FoldAtom, type FoldGroup, type FoldItem, type FoldPolicy, type GroupCounts, type HookInfo } from "./toolFold.js";
 import { foldHint, foldToolOutput, foldWithTruncation, withoutTrailingBlanks, type ResultProjection } from "./outputFold.js";
 import { hintWithoutParens, resolveExpandHint } from "./keys/hints.js";
 import { summaryLines } from "./toolSummaries.js";
@@ -1563,6 +1563,26 @@ const bySequence = (a: Anchored, b: Anchored) => a.sequence - b.sequence || a.ra
 const batchByMember = (batches: readonly AgentBatch[]): ReadonlyMap<string, AgentBatch> =>
   new Map(batches.flatMap((batch) => batch.memberIds.map((id) => [id, batch] as const)));
 
+/** bl8 F1 fix: `projectAll`'s UNGROUPED branch (below) never runs `foldAnchored`/`segmentRuns`, so
+ *  `weaveStandaloneHooks` (toolFold.ts) — tied to that pipeline's `FoldItem`/`HookSlot` model — never sees
+ *  detail mode's `hookRuns` at all. This is the sibling weave for the flat `Anchored[]` stream: positions come
+ *  from `positionStandaloneHooksFlat` (keyed on each anchor's own `.sequence`, no groups to bound against), and
+ *  each `{label, entries}` group renders through the SAME `hooksItemRows` the folded path uses — the D21
+ *  verbose/detail gate inside it already does the right thing here for free (`options.projection` is always
+ *  non-"compact" in this branch), so a `Ran N {label} {hook|hooks}` header and its per-hook lines behave
+ *  identically to the compact-mode row, just never collapsed into a group. */
+function weaveStandaloneHooksFlat(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
+  const placements = positionStandaloneHooksFlat(anchored.map((a) => a.sequence), options.hookRuns);
+  if (placements.length === 0) return anchored.flatMap((a) => a.items);
+  const out: RenderItem[] = [];
+  let next = 0;
+  for (let index = 0; index <= anchored.length; index++) {
+    while (next < placements.length && placements[next]!.position === index) { out.push(...hooksItemRows(placements[next]!, options)); next++; }
+    if (index < anchored.length) out.push(...anchored[index]!.items);
+  }
+  return out;
+}
+
 function projectAll(document: TranscriptDocument, options: ProjectionOptions): readonly RenderItem[] {
   // The nested calls travel WITH the options (Task 7): an Agent's rows are derived from the document's other
   // events, and injecting them here keeps `renderToolEvent` a pure function of one call plus its context.
@@ -1583,7 +1603,7 @@ function projectAll(document: TranscriptDocument, options: ProjectionOptions): r
   for (const batch of batches)
     if (batch.complete) anchored.push({ sequence: batch.anchorSequence, rank: 1, event: batch.members[0]!, items: agentBatchItems(batch, "published", full) });
   anchored.sort(bySequence);
-  return full.projection === "compact" && !full.verbose ? foldAnchored(anchored, full) : anchored.flatMap((a) => a.items);
+  return full.projection === "compact" && !full.verbose ? foldAnchored(anchored, full) : weaveStandaloneHooksFlat(anchored, full);
 }
 
 /** The one atom builder both folded projections share, and the gate that decides which tools the fold policy is

@@ -818,6 +818,10 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           // TAGGED, because "standalone" is not self-evidently visible: TaskCreate/TaskUpdate are also on the
           // renderer's suppressed list and project to no items, so the tag is what lets `toolRenderer` give this
           // one its generic header row instead of the nothing every other call by those names gets.
+          // bl8 F2 fix: a POINT slot (`anchor === boundary`) at this push's own governing sequence — the same
+          // `hookBoundary` the guard above just resolved against — so `weaveStandaloneHooks`'s `positionOf`
+          // can see this standalone row too, not just emitted groups (see `HookSlot`'s doc comment).
+          slots.push({ index: out.length, anchor: hookBoundary, boundary: hookBoundary });
           out.push({ kind: "tool", event: atom.event, poppedOnError: true });
         }
         continue;
@@ -825,7 +829,12 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
       // A non-collapsible call closes the run at ITS OWN call-time position — the point a call this policy
       // will never absorb enters the stream (spec D12; never the call's `resultSequence`, which the call-time
       // model deliberately never reasons from).
-      flush(atom.event.callSequence); out.push({ kind: "tool", event: atom.event }); continue;
+      flush(atom.event.callSequence);
+      // bl8 F2 fix: same point-slot reasoning as the pop-out push above — a standalone non-collapsible tool
+      // (Edit/Write, or any call this policy never groups) is otherwise invisible to `positionOf`, so a hook
+      // stamped before it falls through to `out.length` (the very end) instead of its real position.
+      slots.push({ index: out.length, anchor: atom.event.callSequence, boundary: atom.event.callSequence });
+      out.push({ kind: "tool", event: atom.event }); continue;
     }
     if (atom.kind === "neutral") {
       const ms = atom.thoughtForMs === undefined ? 0 : Math.min(atom.thoughtForMs, THOUGHT_CAP_MS);
@@ -845,11 +854,19 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
           bodies: body === undefined ? (pending?.bodies ?? []) : [...(pending?.bodies ?? []), body],
         };
       }
-      (run.memberIds.length > 0 ? deferred : out).push({ kind: "passthrough", sequence: atom.sequence }); continue;
+      // bl8 F2 fix: a point slot ONLY when this passthrough actually reaches `out` — one deferred into an
+      // already-open run replays right after that run's own group and stays implicitly bound to ITS slot
+      // (F2 verdict's scope note: no distinct real sequence of its own in `FoldItem` today).
+      if (run.memberIds.length > 0) { deferred.push({ kind: "passthrough", sequence: atom.sequence }); continue; }
+      slots.push({ index: out.length, anchor: atom.messageSequence ?? atom.sequence, boundary: atom.messageSequence ?? atom.sequence });
+      out.push({ kind: "passthrough", sequence: atom.sequence }); continue;
     }
     // A breaker's `messageSequence` is its REAL transcript position (`sequence` is only the caller's own
     // back-pointer, see the `FoldAtom` doc comment) — the boundary a hook-attribution window closes on.
-    flush(atom.messageSequence ?? atom.sequence); out.push({ kind: "passthrough", sequence: atom.sequence });
+    flush(atom.messageSequence ?? atom.sequence);
+    // bl8 F2 fix: same point-slot reasoning — a breaker's own passthrough push must be visible to `positionOf`.
+    slots.push({ index: out.length, anchor: atom.messageSequence ?? atom.sequence, boundary: atom.messageSequence ?? atom.sequence });
+    out.push({ kind: "passthrough", sequence: atom.sequence });
   }
   // The trailing flush: no further atom bounds the run, so its hook window stays open to `Infinity` — the one
   // case spec D12 calls out by name, and exactly what lets test order (b) (an OPEN run at end-of-stream) still
@@ -925,6 +942,41 @@ export function weaveStandaloneHooks(out: readonly FoldItem[], slots: readonly H
     if (byLabel !== undefined) for (const [label, entries] of byLabel) result.push({ kind: "hooks", label, entries });
     if (index < out.length) result.push(out[index]!);
   }
+  return result;
+}
+
+/** bl8 F1 fix: detail mode's OWN standalone-hook weave. `projectDetail` (both variants) always takes
+ *  `projectAll`'s UNGROUPED else-branch — `anchored.flatMap`, which never runs `foldAnchored`/`segmentRuns`/
+ *  `weaveStandaloneHooks` above, so every `hookRuns` entry was silently dropped in that mode, header row and
+ *  all (finding F1). `weaveStandaloneHooks`/`HookSlot` are tied to the `FoldItem` model `segmentRuns` builds
+ *  and are not directly reusable here — there are no groups to bound against in the ungrouped stream — so
+ *  this is a SIBLING function keyed on each anchor's own `sequence` directly: one point-slot comparison per
+ *  anchor instead of a `HookSlot` window lookup. No claim tracking: cluster absorption (`resolveRunHooks`) is
+ *  PreToolUse-only and only ever runs inside `segmentRuns`, which this path never reaches — every `hookRuns`
+ *  entry reaching here is unclaimed by construction, PreToolUse included (canon's transcript-mode rule,
+ *  matched for free: detail/ctrl+O is exactly where the richest hook detail belongs).
+ *
+ *  Returns POSITIONS in `sequences`' own index space (`0..sequences.length` inclusive, `sequences.length`
+ *  meaning "after everything") — a pure grouping/positioning step, no rendering; the caller interleaves each
+ *  `{position, label, entries}` with its own item stream (`toolRenderer.tsx`'s `weaveStandaloneHooksFlat`,
+ *  which turns `label`/`entries` into rows via the shared `hooksItemRows`). Same-position/same-label
+ *  coalescing mirrors `weaveStandaloneHooks` exactly, `hookRuns` walked once in its own encounter order. */
+export function positionStandaloneHooksFlat(sequences: readonly number[], hookRuns: readonly HookRunEntry[] | undefined):
+    readonly { position: number; label: string; entries: readonly HookInfo[] }[] {
+  if (hookRuns === undefined || hookRuns.length === 0) return [];
+  const byPosition = new Map<number, Map<string, HookInfo[]>>();
+  for (const entry of hookRuns) {
+    let position = sequences.length;
+    for (let i = 0; i < sequences.length; i++) if (entry.afterSequence < sequences[i]!) { position = i; break; }
+    let byLabel = byPosition.get(position);
+    if (byLabel === undefined) { byLabel = new Map(); byPosition.set(position, byLabel); }
+    let infos = byLabel.get(entry.event);
+    if (infos === undefined) { infos = []; byLabel.set(entry.event, infos); }
+    infos.push(hookInfoOf(entry));
+  }
+  const result: { position: number; label: string; entries: readonly HookInfo[] }[] = [];
+  for (const position of [...byPosition.keys()].sort((a, b) => a - b))
+    for (const [label, entries] of byPosition.get(position)!) result.push({ position, label, entries });
   return result;
 }
 

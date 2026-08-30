@@ -1200,6 +1200,36 @@ describe("bl8 T-QY Task 2: standalone hook weave + D5 emit gate", () => {
   });
 });
 
+// bl8 F2 fix: `slots` (the placement ledger `weaveStandaloneHooks` positions against) only recorded a slot
+// for an emitted GROUP — a non-collapsible standalone tool (Edit/Write) or a prose/passthrough push never
+// registered one, so a hook stamped before either fell through to `out.length` (the very end) instead of its
+// real chronological position. Point slots (`anchor === boundary`) at every non-group `out`-push close the gap.
+describe("bl8 F2: standalone hook placement around non-group out-pushes (point slots)", () => {
+  const kinds = (items: readonly FoldItem[]) => items.map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("lone-Edit: a hook stamped before a standalone non-collapsible tool lands BEFORE it, not at the end", () => {
+    const items = segmentRuns([atom(tool("Edit", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "tool"]);
+  });
+
+  it("prose-only: a hook stamped before a lone breaker/prose atom (no group ever forms) lands BEFORE it", () => {
+    const items = segmentRuns([{ kind: "breaker", sequence: 100, messageSequence: 5 }],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "passthrough"]);
+  });
+
+  it("mixed: a standalone Edit before a later Read group — a hook stamped before BOTH lands before everything", () => {
+    const items = segmentRuns([
+      atom(tool("Edit", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 10, result: 11 })),
+    ], { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "tool", "group"]);
+  });
+});
+
 describe("bl8 T-QY Task 2: weaveStandaloneHooks (pass 2), direct", () => {
   const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
     ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });

@@ -16,7 +16,7 @@
 // reuses the withholding seam from; it needs the full `useChat` + `fakeRemote` harness this file has no use
 // for otherwise.
 import { describe, expect, it } from "vitest";
-import { hookLiveItems, hooksItemRows, projectCompact, projectPending, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { hookLiveItems, hooksItemRows, projectCompact, projectDetail, projectPending, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import type { RenderLine } from "../../src/tui/render.js";
 
@@ -131,6 +131,49 @@ describe("bl8 T-QY Task 3, shape 2 (canon Qy Stop form, scoped to ccx's wire): e
     const texts = lineTexts(projectCompact(doc, { ...context, hookRuns }));
     expect(texts).toContain("⏺ Ran 1 stop hook");
     expect(texts).toContain("  ⎿  Stop hook error: exit 2");
+  });
+});
+
+// bl8 F1 fix: `projectDetail` (both variants) always takes `projectAll`'s UNGROUPED else-branch
+// (`anchored.flatMap`), which never touches `foldAnchored`/`segmentRuns`/`weaveStandaloneHooks` at all — so a
+// standalone hook entry vanished ENTIRELY (header row included, not just the per-hook detail lines) under
+// ctrl+O. Canon's richest hook detail is exactly what should show there (research-hookblock.md §A5); instead
+// ccx showed nothing. Fix: a parallel weave over the `Anchored[]` list by sequence in `projectAll`'s non-fold
+// branch, reusing `hooksItemRows` — no claim tracking (nothing else absorbs hooks in detail mode), so a
+// PreToolUse entry surfaces standalone here too (correct: transcript mode shows every hook, canon's own rule).
+describe("bl8 F1: standalone hooks survive projectDetail (both variants), not just projectCompact", () => {
+  it("detail-all: the standalone hook header row still renders", () => {
+    const doc = closedDoc(), seq = callSeq(doc);
+    const hookRuns = [{ id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: seq, event: "PostToolUse" }];
+    const items = projectDetail(doc, { ...context, hookRuns, projection: "detail-all" });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PostToolUse hook");
+    // detail-all is verbose, so the D21 gate is open — per-hook lines show too.
+    expect(lineTexts(items)).toContain("     ⎿ PostToolUse:Read (0.2s)");
+  });
+
+  it("detail-collapsed: the standalone hook header row AND per-hook lines both render — the D21 gate keys off `projection !== \"compact\"`, true for either detail variant regardless of verbose", () => {
+    const doc = closedDoc(), seq = callSeq(doc);
+    const hookRuns = [{ id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: seq, event: "PostToolUse" }];
+    const items = projectDetail(doc, { ...context, hookRuns, projection: "detail-collapsed" });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PostToolUse hook");
+    expect(lineTexts(items)).toContain("     ⎿ PostToolUse:Read (0.2s)");
+  });
+
+  it("a PreToolUse entry also surfaces standalone in detail mode (no cluster to absorb it there)", () => {
+    const doc = closedDoc(), seq = callSeq(doc);
+    const hookRuns = [{ id: "h1", name: "PreToolUse:Read", durationMs: 90, afterSequence: seq, event: "PreToolUse" }];
+    const items = projectDetail(doc, { ...context, hookRuns, projection: "detail-all" });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook");
+  });
+
+  it("hook still renders at its correct position (before the closing 'done' prose)", () => {
+    const doc = closedDoc(), seq = callSeq(doc);
+    const hookRuns = [{ id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: seq, event: "PostToolUse" }];
+    const texts = lineTexts(projectDetail(doc, { ...context, hookRuns, projection: "detail-all" }));
+    const hookIndex = texts.indexOf("  ⎿  Ran 1 PostToolUse hook");
+    const doneIndex = texts.indexOf("done");
+    expect(hookIndex).toBeGreaterThanOrEqual(0);
+    expect(doneIndex).toBeGreaterThan(hookIndex);
   });
 });
 
