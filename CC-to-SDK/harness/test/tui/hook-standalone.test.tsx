@@ -70,6 +70,26 @@ describe("bl8 T-QY Task 3, shape 1 (canon Qy labeled form): standalone non-Stop 
     const hookRuns = [{ id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: seq, event: "PostToolUse" }];
     expect(lineTexts(projectCompact(doc, { ...context, hookRuns }))).toContain("  ⎿  Ran 1 PostToolUse hook");
   });
+
+  // Fix wave 4 (coalescing regression): two Read calls fold into ONE cluster, and each call's own raw
+  // tool_use/tool_result message entries become guaranteed-empty deferred passthrough rows parked while the
+  // run is open (see `FoldAtom.rendersNothing`'s doc comment, toolFold.ts). Before the fix, wave 3 gave every
+  // one of those rows its own point `HookSlot`, so a PostToolUse pair stamped one at each Read's own
+  // resultSequence landed at two DIFFERENT weave positions and rendered as two adjacent "Ran 1 PostToolUse
+  // hook" rows instead of coalescing into one "Ran 2" row — violating the plan's same-label-in-one-drain-
+  // window coalescing constraint (docs/superpowers/plans/2026-08-30-bl8-t-qy.md, Global Constraints).
+  it("2 sequential Reads in one cluster: two PostToolUse entries (one per Read) still coalesce into ONE 'Ran 2' row", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
+    const [read1, read2] = doc.toolEvents();
+    const hookRuns = [
+      { id: "h1", name: "PostToolUse:Read", durationMs: 200, afterSequence: read1!.result!.resultSequence, event: "PostToolUse" },
+      { id: "h2", name: "PostToolUse:Read", durationMs: 300, afterSequence: read2!.result!.resultSequence, event: "PostToolUse" },
+    ];
+    const texts = lineTexts(projectCompact(doc, { ...context, hookRuns }));
+    expect(texts).toContain("  ⎿  Ran 2 PostToolUse hooks");
+    expect(texts.filter((t) => /Ran \d+ PostToolUse hooks?/.test(t))).toHaveLength(1);   // never two adjacent "Ran 1"s
+  });
 });
 
 // Task-3 review CRITICAL: `trailingRunCut`'s second `while` loop (meant to also withhold a hooks item that

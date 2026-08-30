@@ -280,7 +280,22 @@ const commandHint = (command: string): string => {
  *  "still growing, don't publish yet" shape besides a collapsible tool run, and the only one a breaker atom
  *  can carry (an advisor consult can never mint a `ToolEvent`, so it has no `tool` atom of its own to be
  *  withheld through). See `trailingRunCut`'s use of it below. */
-export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number; openAdvisor?: true } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string; thinkingBody?: string; thinkingKey?: string };
+/** `rendersNothing` (fix wave 4, coalescing regression): set by `foldAtoms` (toolRenderer.tsx) exactly when
+ *  the anchored entry this atom stands for has `items.length === 0` — the SAME test `entryAtom`'s own
+ *  `items.length === 0` branch already used to classify it "neutral" in the first place (a message whose
+ *  content is purely `tool_use`/`tool_result` blocks, an absorbed teammate frame, or any other entry that
+ *  projects nothing under this projection). It is deliberately NOT set from `entryAtom`'s other, non-real-
+ *  content branch (a thinking-only or sentinel-text message that still produced non-empty items) — THAT row
+ *  really does draw something and is never tagged. `segmentRuns` carries the flag onto the pushed
+ *  `FoldItem` itself (never onto the `HookSlot` — a guaranteed-empty row still needs its fence there, or a
+ *  later real entry could wrongly skip past it into the unbounded trailing window, the wave 4 regression a
+ *  slot-skipping fix caused: see the WebFetch standalone-close cell, fold-expand.test.tsx). Instead,
+ *  `weaveStandaloneHooks` reads it off `out` at drain time to walk a computed position BACKWARD over any
+ *  immediately-preceding `rendersNothing` rows before grouping by position — two same-label entries
+ *  separated only by rows nobody can see coalesce into the earlier position's one row, exactly as if the
+ *  invisible rows were not there, without changing where either position was computed to land relative to
+ *  anything REAL. */
+export type FoldAtom = { kind: "tool"; event: ToolEvent } | { kind: "breaker"; sequence: number; messageSequence?: number; openAdvisor?: true } | { kind: "neutral"; sequence: number; messageSequence?: number; thoughtForMs?: number; thinkingSummary?: string; thinkingBody?: string; thinkingKey?: string; rendersNothing?: true };
 /** One absorbed thinking block's retained shape (bl6 T-CLUSTER): `key` disambiguates same-`message.id` frames
  *  (`FoldAtom.thinkingKey`), `messageSequence` is its transcript position (for later interleave-by-sequence
  *  rendering), `body` is the raw `.trim()`ed — NOT whitespace-collapsed — thinking text. */
@@ -348,7 +363,7 @@ export interface FoldGroup { counts: GroupCounts; hint?: string; memberIds: read
  *  into ONE item — Global Constraints — so `label` is never ambiguous within one item). Produced ONLY by
  *  `weaveStandaloneHooks` (pass 2), never by `flush` (pass 1) — see that function's doc comment for why a
  *  per-flush drain is forbidden. */
-export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent; poppedOnError?: true } | { kind: "passthrough"; sequence: number } | { kind: "hooks"; label: string; entries: readonly HookInfo[] };
+export type FoldItem = { kind: "group"; group: FoldGroup } | { kind: "tool"; event: ToolEvent; poppedOnError?: true } | { kind: "passthrough"; sequence: number; rendersNothing?: true } | { kind: "hooks"; label: string; entries: readonly HookInfo[] };
 
 /** Upstream `rRo` (L302645): the per-contribution ceiling on a thought. Upstream measures a message GAP,
  *  so a conversation resumed hours later would otherwise book the whole wait as thinking; we measure one
@@ -693,6 +708,9 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
     // same shape every other non-group `out`-push already gets (see `HookSlot`'s doc comment) — so a leftover
     // hook stamped between two deferred rows, or between a deferred row and the run's own close, lands where
     // it actually happened instead of being invisible to `positionOf` and swept to right after the group.
+    // The slot is unconditional (unlike the item's own `rendersNothing` tag, see that field's doc comment) —
+    // a fence still needs to exist here so a later entry cannot skip past a real one that follows; it is
+    // `weaveStandaloneHooks`'s drain, not the fence itself, that treats a `rendersNothing` row as invisible.
     for (const { item, sequence } of deferred) { slots.push({ index: out.length, anchor: sequence, boundary: sequence }); out.push(item); }
     deferred = []; run = newRun();
   };
@@ -868,9 +886,14 @@ export function segmentRuns(atoms: readonly FoldAtom[], options: { cwd: string; 
       // Fix-wave 3: a deferred passthrough now carries its OWN governing sequence (`messageSequence ??
       // sequence`) into the buffer, so `flush` can give it a real point slot once it lands in `out` — it is
       // no longer merely "implicitly bound" to its run's slot (the F2-era scope note this superseded).
-      if (run.memberIds.length > 0) { deferred.push({ item: { kind: "passthrough", sequence: atom.sequence }, sequence: atom.messageSequence ?? atom.sequence }); continue; }
+      // Fix wave 4: `rendersNothing` rides along onto the ITEM itself (not the slot — see the flush drain's
+      // doc comment) so `weaveStandaloneHooks` can tell a guaranteed-empty row apart from a real one.
+      if (run.memberIds.length > 0) {
+        deferred.push({ item: { kind: "passthrough", sequence: atom.sequence, ...(atom.rendersNothing === true ? { rendersNothing: true } : {}) }, sequence: atom.messageSequence ?? atom.sequence });
+        continue;
+      }
       slots.push({ index: out.length, anchor: atom.messageSequence ?? atom.sequence, boundary: atom.messageSequence ?? atom.sequence });
-      out.push({ kind: "passthrough", sequence: atom.sequence }); continue;
+      out.push({ kind: "passthrough", sequence: atom.sequence, ...(atom.rendersNothing === true ? { rendersNothing: true } : {}) }); continue;
     }
     // A breaker's `messageSequence` is its REAL transcript position (`sequence` is only the caller's own
     // back-pointer, see the `FoldAtom` doc comment) — the boundary a hook-attribution window closes on.
@@ -961,11 +984,22 @@ export function weaveStandaloneHooks(out: readonly FoldItem[], slots: readonly H
     for (const slot of slots) if (slot.index >= start && afterSequence < slot.anchor) return slot.index;
     return out.length;
   };
+  // Fix wave 4 (coalescing regression): a raw `positionOf` result can land right after a run of one or more
+  // guaranteed-empty rows (`FoldItem.rendersNothing` — see `FoldAtom`'s doc comment for what sets it and
+  // why the SLOT above must stay unconditional). Walking the position back over exactly that run — never
+  // past a row that draws something — makes two same-label entries separated only by rows nobody can see
+  // land at the identical position, so they coalesce below instead of splitting into adjacent `Ran 1`s with
+  // an invisible seam between them; a row that draws something still stops the walk exactly where it did.
+  const collapseToVisibleFloor = (position: number): number => {
+    let floor = position, previous = floor > 0 ? out[floor - 1] : undefined;
+    while (floor > 0 && previous?.kind === "passthrough" && previous.rendersNothing === true) { floor--; previous = floor > 0 ? out[floor - 1] : undefined; }
+    return floor;
+  };
   // position → (label → its coalesced entries), both maps insertion-ordered so emission replays arrival order.
   const byPosition = new Map<number, Map<string, HookInfo[]>>();
   for (const entry of leftovers) {
     hookClaims.add(entry);
-    const position = positionOf(entry.afterSequence);
+    const position = collapseToVisibleFloor(positionOf(entry.afterSequence));
     let byLabel = byPosition.get(position);
     if (byLabel === undefined) { byLabel = new Map(); byPosition.set(position, byLabel); }
     let infos = byLabel.get(entry.event);

@@ -1651,6 +1651,12 @@ export function foldAtoms(anchored: readonly Anchored[], opts: { thoughtMs?: Rea
       kind: "neutral", sequence: index, messageSequence: a.sequence,
       ...(ms === undefined ? {} : { thoughtForMs: ms, thinkingSummary: a.thinking }),
       ...(thoughtBearing ? { thinkingBody: a.thinkingBody, thinkingKey: `${a.identity ?? "anon"}:${a.sequence}` } : {}),
+      // Fix wave 4 (coalescing regression): `a.items.length === 0` is the SAME test `entryAtom` used to
+      // classify this entry "neutral" in the common case (it is also reachable via `entryAtom`'s other,
+      // non-real-content branch with non-empty items — a thinking-only or sentinel-text message — which
+      // deliberately does NOT set this flag, since that row still draws something). See `FoldAtom`'s doc
+      // comment (toolFold.ts) for what `segmentRuns` does with it.
+      ...(a.items.length === 0 ? { rendersNothing: true } : {}),
     };
   });
 }
