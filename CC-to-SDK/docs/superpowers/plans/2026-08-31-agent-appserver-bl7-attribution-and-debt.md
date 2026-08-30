@@ -50,43 +50,66 @@
 ### Task 2: #64 — arrival attribution by bracket evidence
 
 **Files:**
-- Modify: `src/appserver/peerInbound.ts` (`Arrival` interface, `enqueueLive`, `drainArrivals`, the `onFrame` drain call site, `groundSeed`'s trailing drain)
+- Modify: `src/appserver/peerInbound.ts` (`Arrival` + `PendingArrival` interfaces, `noteArrival`, `enqueueLive`, `drainArrivals`, `adopt`, `notePeerTurnUuid`, the `onFrame` drain call site, `groundSeed`'s flush)
+- Modify: `src/appserver/turns.ts` — ONLY if `notePeerTurnUuid`'s call site must pass more than it does (it already runs post-broadcast inside the runner; `record.currentTurnId` is readable there)
 - Test: `test/unit/appserver/peer-inbound.test.ts` (new `describe("arrival attribution")`)
+- Modify: `test/live/appserver-cross-session.test.ts` (LEG 4 strengthening + own-fold assertion — EDIT ONLY, controller runs keyed)
 
 **Interfaces:**
 - Consumes: from Task 1: `announceArrival`'s payload (untouched here).
-- Produces: the binding mechanism Task 6 relocates verbatim. `registry.ts` is read-only here (`activeTurnId`, `turnStartedBroadcast` already exist).
+- Produces: the binding mechanism Task 6 relocates verbatim. `registry.ts` is read-only here (`activeTurnId` exists at :508).
 
 - [ ] **Step 1: Write the failing tests** (`describe("arrival attribution")`):
-  - **(attr-1, the misattribution pin):** start an OWN turn mid-flight — via the suite's own server fake if it can drive `turn/start` against the fake engine, else via the `fr-*` family's harness pattern (a real `beginTurn` over a scripted engine), else by setting `record.busy`/`currentTurnId`/`turnStartedBroadcast` exactly as `beginTurn` does with the emit path observed — deliver a peer arrival frame mid-turn; assert the arrival's `item/completed` names the OWN turn's id and fires after its `turn/started`; then open a foreign adoption and assert it receives NO item for that arrival.
+  - **(attr-1, the misattribution pin):** start an OWN turn mid-flight — via the suite's own server fake if it can drive `turn/start` against the fake engine, else via the `fr-*` family's harness pattern (a real `beginTurn` over a scripted engine); the path MUST pass through the real `notePeerTurnUuid` (that call is what opens the explicit own bracket) — deliver a peer arrival frame mid-turn; assert the arrival's `item/completed` names the OWN turn's id and fires after its `turn/started`; then open a foreign adoption and assert it receives NO item for that arrival.
   - **(attr-2, next-bracket):** deliver an arrival while nothing runs; then open an adoption; assert the arrival's item lands in that adoption's turn (this is today's behavior for the caused-turn case — the cell pins that the fix keeps it).
   - **(attr-3, bracket death):** deliver an arrival while nothing runs; open an adoption whose `beginTurn` never installs a mapper and terminate it (the dead-adoption shape the suite already builds); assert no item is ever emitted for the arrival, a `console.warn` names the drop count (spy on warn), and the `thread/peerMessage` announcement fired exactly once regardless.
   - **(attr-4, own-turn end drops):** arrival bound to an own turn that ends before any drain could emit it (end the turn, then trigger a drain via a later frame) → dropped with warn, never emitted into any later bracket.
 - [ ] **Step 2: Run to verify they fail** — attr-1 currently leaks the arrival into the later foreign adoption; attr-3/4 currently keep it queued.
-- [ ] **Step 3: Implement the binding.**
+- [ ] **Step 3: Implement the binding** (spec Stream 2 rev 2 — binding at ARRIVAL, claiming at BRACKET OPEN, own bracket EXPLICIT):
 
 ```ts
-/** Where one live arrival is allowed to appear, decided by bracket evidence at enqueue time (spec
- *  Stream 2): the bracket open when its frame arrived, else the next bracket a drain observes open —
- *  which is where the engine's own message queue drains (LEG 5). Never re-attributed past that. */
+/** Where one live arrival is allowed to appear, decided by bracket evidence at frame arrival (spec
+ *  Stream 2): the bracket open when its frame arrived, else `next` — claimed at the next bracket OPEN,
+ *  which is where the engine's own message queue drains (LEG 5). Never re-attributed past its bracket. */
 type ArrivalBinding =
   | { kind: "adopted"; commandUuid: string; epoch: number }
   | { kind: "own"; turnId: string }
   | { kind: "next" };
 
 interface Arrival { msgId: string; text: string; origin: Record<string, unknown>; at: number; bind: ArrivalBinding }
+// PendingArrival gains the same `bind` field, stamped in noteArrival — the seed read can stall across a
+// bracket transition, so a flush-time stamp would attribute a T1 arrival to T2 (spec review, finding 1).
 
-const bindingNow = (record: ThreadRecord, state: PeerInboundState): ArrivalBinding => {
+const bindingNow = (state: PeerInboundState): ArrivalBinding => {
   const a = state.adopted;
   if (a && !a.terminated) return { kind: "adopted", commandUuid: a.commandUuid, epoch: a.epoch };
-  const own = activeTurnId(record);
-  if (own) return { kind: "own", turnId: own };
+  if (state.ownTurn) return { kind: "own", turnId: state.ownTurn.turnId };
   return { kind: "next" };
 };
 ```
 
-  `enqueueLive` stamps `bind: bindingNow(record, state)` (it gains the `record` parameter it already receives). `drainArrivals` becomes: compute the OPEN TARGET — the adoption when `adopted.mapper && adopted.turnId && !adopted.terminated`, else the own turn when `activeTurnId(record) && record.turnStartedBroadcast` — then walk the queue once: an arrival whose bind matches the target (or is `next`, which re-stamps to the target) is emitted (`arrivalItem` into the target's turnId, exactly the current emit); an arrival whose bind is DEAD is dropped and counted; anything else stays queued. Dead means: an `adopted` bind whose adoption is no longer `state.adopted` (by commandUuid+epoch) or is terminated; an `own` bind whose `turnId !== activeTurnId(record)`. `next` is never dead (uninstall still clears the queue). After the walk, one `console.warn` names the dropped count if nonzero.
-- [ ] **Step 4: Rewire the callers.** In `onFrame`, replace `if (arrived) drainArrivals(srv, record, state);` with an unconditional `if (state.arrivals.length) drainArrivals(srv, record, state);` placed after the arrival handling (so non-arrival frames — including an own turn's assistant frames and its terminal lifecycle — also trigger drains; this is what lets a broadcast-pending own bind drain on the next frame and what detects dead brackets promptly). The runner-install and `groundSeed` call sites stay as they are.
+  - `PeerInboundState` gains `ownTurn?: { turnId: string }` — the EXPLICIT own bracket. `notePeerTurnUuid`
+    sets it from `record.currentTurnId` (that function already runs post-broadcast, inside the runner, so
+    `ownTurn` set ⇒ `turn/started` is out; never infer the own bracket from `busy`, which races both
+    edges — spec review, finding 3). It is cleared, and its bound arrivals dropped, whenever a drain
+    observes `activeTurnId(record) !== state.ownTurn.turnId`.
+  - **Claim at open** (spec review, finding 2): a successful `adopt()` (after the `if (!started)` guard)
+    re-stamps every `next`-bound arrival — in `state.arrivals` AND `state.seeding?.arrivals` — to
+    `{ kind: "adopted", commandUuid, epoch }`. `notePeerTurnUuid` does the same toward
+    `{ kind: "own", turnId }`. A drain NEVER claims; it only emits, keeps, or drops.
+  - `noteArrival` stamps `bind: bindingNow(state)` on the `PendingArrival` it builds; `enqueueLive`
+    carries it onto the queued `Arrival`; `groundSeed`'s flush enqueues each held arrival with its
+    recorded bind intact.
+  - `drainArrivals` becomes: compute the OPEN TARGET — the adoption when `adopted.mapper &&
+    adopted.turnId && !adopted.terminated`, else the own turn when `state.ownTurn && activeTurnId(record)
+    === state.ownTurn.turnId` — then walk the queue once: an arrival whose bind matches the target is
+    emitted (`arrivalItem` into the target's turnId, exactly the current emit); an arrival whose bind is
+    DEAD is dropped and counted; anything else (including every `next`) stays queued. Dead means: an
+    `adopted` bind whose adoption is no longer `state.adopted` (by commandUuid+epoch) or is terminated; an
+    `own` bind whose `turnId !== activeTurnId(record)`. `next` is never dead (uninstall still clears the
+    queue). After the walk, one `console.warn` names the dropped count if nonzero.
+- [ ] **Step 4: Rewire the callers.** In `onFrame`, replace `if (arrived) drainArrivals(srv, record, state);` with an unconditional `if (state.arrivals.length) drainArrivals(srv, record, state);` placed after the arrival handling (so non-arrival frames — including an own turn's assistant frames and its terminal lifecycle — also trigger drains, which is what detects dead brackets promptly). The runner-install and `groundSeed` call sites stay as they are. Add the two race cells the spec's criterion 6 names beyond Step 1's: **(attr-5, pre-start cancellation)** an arrival in a turn's busy-but-unbroadcast window binds `next` (no `ownTurn` yet) and is claimed only when a bracket truly opens; **(attr-6, terminal-then-arrival)** an arrival landing after an adopted terminal cleared `state.adopted` but before `busy` fell binds `next`, never `own`; **(attr-7, held seed spanning brackets)** an arrival buffered under a live adoption T1 whose seed resolves after T1 died is dropped at flush-drain (warned), never emitted into T2.
+- [ ] **Step 4b: The live half (edit only — never run keyed).** Strengthen LEG 4: exactly ONE arrival item for the folded message, on the HOST turn's id, and none on any successor turn. Add an own-fold assertion (in LEG 4 or a sibling leg): a message delivered mid-OWN-turn yields an arrival item on the observer's own turn.
 - [ ] **Step 5: Run the full peer suites green** (`npx vitest run test/unit/appserver/peer-inbound.test.ts test/unit/appserver/peer-inbound-log.test.ts test/unit/appserver/arrivals-clear-degraded.test.ts`) — the existing adoption cells must pass UNCHANGED; if one contradicts the binding rule, stop and report rather than editing it.
 - [ ] **Step 6: Typecheck, then commit** (`fix(bl7): an arrival is attributed by bracket evidence, never by queue position (#64)`).
 
@@ -104,12 +127,12 @@ const bindingNow = (record: ThreadRecord, state: PeerInboundState): ArrivalBindi
 **Interfaces:**
 - Consumes: nothing. Produces: the shared builders Task 7's gates re-run.
 
-- [ ] **Step 1: `EMPTY_ARRIVALS` immutability.** Make mutation throw at runtime rather than being conventional: freeze the container and `atStart`, and replace `byRow`'s `set`/`delete`/`clear` with throwers (`Object.freeze` alone cannot stop `Map.set`), OR convert the export to an accessor returning a frozen empty — executor's call per the spec; whichever is chosen, `itemsFromTranscript`'s delegation and every current call site must compile unchanged or with mechanical-only edits. Add a cell in `project.test.ts` asserting mutation throws and the parity law still holds on the corpus.
+- [ ] **Step 1: `EMPTY_ARRIVALS` immutability — runtime-hard, mandatory** (spec review, finding 8: shallow freeze is NOT sufficient — `Map.set` and `Array.push` survive it). Either replace `byRow`'s `set`/`delete`/`clear` with throwers AND freeze the container and `atStart`, or convert the export to an accessor returning a fresh value; whichever is chosen, `itemsFromTranscript`'s delegation and every current call site must compile unchanged or with mechanical-only edits. Add a cell in `project.test.ts` asserting an attempted poisoning (a consumer calling `byRow.set`/`atStart.push`) cannot change a LATER projection's output — the poisoning test, not just an isFrozen check.
 - [ ] **Step 2: Corpus lift.** Move the `USER`/`ASSISTANT`/`ENTRY` builders open-coded in `subscribe-arrivals.test.ts` and `search-arrivals.test.ts` into `test/unit/appserver/items/corpus.ts` (exported, names preserved) and import them; zero assertion changes.
 - [ ] **Step 3: `tick()` conversion.** Replace the fixed-count macrotask drains in `arrivals-clear-degraded.test.ts` with `vi.waitFor` polling the same conditions the assertions read, per the `fr-*` family's pattern.
 - [ ] **Step 4: Pin the exotic-content fallback.** In `address.test.ts`: a peer frame whose `message.content` is `{ weird: 1 }` yields `text === JSON.stringify({ weird: 1 })` — the current, deliberate fallback, now stated by a test.
-- [ ] **Step 5: Run all five touched suites green, typecheck, then update `../docs/tech-debt-tracker.md`:** remove the three fully-paid entries (`EMPTY_ARRIVALS`, corpus duplication, `tick()`), rewrite the JSON-stringify entry to "pinned by test, behavior unchanged — leaves the file" and remove it too.
-- [ ] **Step 6: Commit** (`chore(bl7): pay four tracker entries — frozen EMPTY_ARRIVALS, shared corpus, waitFor, pinned fallback`).
+- [ ] **Step 5: Run all five touched suites green, typecheck, then update `../docs/tech-debt-tracker.md`:** remove the three fully-paid entries (`EMPTY_ARRIVALS`, corpus duplication, `tick()`); the JSON-stringify entry STAYS (spec D-BL7-7: a pin pays nothing) — re-date it 2026-08-31 and append one line noting the new pin cell.
+- [ ] **Step 6: Commit** (`chore(bl7): pay three tracker entries — hardened EMPTY_ARRIVALS, shared corpus, waitFor — and pin the exotic-content fallback`).
 
 ---
 
@@ -128,6 +151,7 @@ const bindingNow = (record: ThreadRecord, state: PeerInboundState): ArrivalBindi
   - body with an unmatched OPEN `<cross-session-message from="x">` → same refusal.
   - body that quotes a complete balanced envelope → accepted, and the frame written is byte-identical to what today's code writes.
   - body containing unbalanced `<agent-message>` tags → accepted (per-tag-name depth makes the foreign grammar irrelevant to our wrapper) — the cell states this cross-grammar immunity.
+  - **the differential matrix at the RPC surface** (spec criterion 8): balanced same-grammar nesting, balanced mixed-grammar nesting, unclosed `<cross-session-message …>` opener, bare unmatched closer, bodies beginning/ending with newlines, and a body at the size-cap boundary — for each, assert EITHER the socket write is byte-identical to today's OR zero bytes are written and INVALID_PARAMS returned; nothing between.
 - [ ] **Step 2: Implement.** Export `envelopeBodies` from `address.ts` (comment: exported for the sender's round-trip refusal — the decoder is the authority on what a receiver reads back). In `peerDomain.ts`, after `const body = buildEnvelope(...)(message)`:
 
 ```ts

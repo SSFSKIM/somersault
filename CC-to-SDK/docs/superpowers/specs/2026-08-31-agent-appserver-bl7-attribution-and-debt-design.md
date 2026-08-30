@@ -11,9 +11,10 @@ round closes, plus the debt M9 deliberately banked:
    recorded while no adoption exists is later emitted as a user item of a turn it did not cause — the live
    channel's own misplacement class, the exact shape M9 forbids in history.
 3. The **tech-debt tracker** (`CC-to-SDK/docs/tech-debt-tracker.md`) holds ten entries; each is
-   re-adjudicated here — six are paid this round (one of them partially: the truncation entry's foreign
-   half has no fix this server controls), three stand with their reasons re-affirmed, and one (a test
-   flake) gets a diagnosis with a decision rule rather than a promise.
+   re-adjudicated here — five are paid this round (one of them partially: the truncation entry's foreign
+   half has no fix this server controls), four stand with their reasons re-affirmed (one of those gains a
+   pinning test without leaving the ledger), and one (a test flake) gets a diagnosis with a decision rule
+   rather than a promise.
 
 Out of scope, stated so nobody re-derives it: the dead-engine `busy === true` liveness problem (#64's
 "related" note) needs its own timeout/liveness design and touches every turn, not just adopted ones;
@@ -70,57 +71,77 @@ Cases, concretely:
 
 - **(a) adopted bracket open** at arrival → bound to that adoption; drained into it exactly as today
   (mapper-install or per-frame). LEG 1/4/5/10 shapes unchanged.
-- **(b) own turn busy** at arrival (the fold-into-our-turn shape: the engine emits a nested lifecycle
+- **(b) own bracket open** at arrival (the fold-into-our-turn shape: the engine emits a nested lifecycle
   bracket, `adopt` correctly declines on busy, and today the arrival then leaks to a later foreign turn) →
-  bound to the OWN turn (`activeTurnId`), emitted into it via the same `emitItems` path adopted turns use —
-  gated on the started-broadcast flag so no item precedes its own `turn/started`, queued until a later
-  drain when the broadcast is still pending.
-- **(c) nothing open** → bound "next": stamped onto the first bracket a drain observes open, own or
-  adopted. The engine queues undelivered messages and the next turn drains that queue, so the next bracket
-  is the engine's own attribution, not a guess. No timers, no heuristics.
-- **(d) bracket death** → an adoption terminated without a mapper, an epoch swap, an own turn observed
-  over: its bound arrivals are dropped from the live queue with a `console.warn` naming the count.
-  `uninstallPeerInbound` keeps its existing clear.
+  bound to the OWN turn, emitted into it via the same `emitItems` path adopted turns use. "Own bracket
+  open" is NOT inferred from `busy`/`currentTurnId` (both race the bracket's real edges — `busy` flips
+  before `turn/started` broadcasts, and an adopted terminal clears `state.adopted` before `busy` falls):
+  peerInbound tracks its own-turn bracket EXPLICITLY — `notePeerTurnUuid`, which turns.ts already calls
+  from inside the runner (post-broadcast, by `beginTurn`'s ordering), records
+  `ownTurn = { turnId: record.currentTurnId }`, and the bracket is open exactly while
+  `activeTurnId(record) === ownTurn.turnId`. An arrival landing in the busy-but-unbroadcast window binds
+  `next` and is claimed by the own bracket the moment it truly opens; an arrival landing in the
+  adopted-terminal-but-still-busy window also binds `next` (no adoption, no ownTurn), never `own` for a
+  dying foreign turn.
+- **(c) nothing open** → bound `next`, and CLAIMED AT BRACKET OPEN, not at the next drain: a successful
+  `adopt()` re-stamps every `next`-bound arrival (live queue AND seed buffer) to itself the moment the
+  lifecycle bracket is accepted, and `notePeerTurnUuid` re-stamps them to the own turn it records. A
+  drain-time claim would let a bracket open and die between two drains and the arrival skip to a later
+  unrelated bracket — the defect again, one window smaller. The engine queues undelivered messages and the
+  next turn drains that queue, so the next bracket is the engine's own attribution, not a guess. No
+  timers, no heuristics.
+- **(d) bracket death** → an adoption terminated (with or without a mapper ever installing), an epoch
+  swap, an own bracket no longer open: its bound arrivals are dropped from the live queue with a
+  `console.warn` naming the count, detected at the next drain. A `next`-bound arrival is never dead
+  (`uninstallPeerInbound` keeps its existing clear).
 
-Mechanism: each queued `Arrival` gains a binding (`{ kind: "adopted", commandUuid, epoch } |
-{ kind: "own", turnId } | { kind: "next" }`); `drainArrivals` generalizes to "drain into the currently open
-bracket the arrivals bound to it (re-stamping `next`), drop arrivals whose bracket is provably dead" and
-runs where it runs today plus on frames while an own turn is busy. Seed-window arrivals bind at flush time
-(`groundSeed`) under the same rule — the window is milliseconds long and records no per-arrival bracket.
+Mechanism: each queued `Arrival` — and each seed-window `PendingArrival`, SYNCHRONOUSLY at `noteArrival`,
+because the seed read can stall across a bracket transition and a flush-time binding would attribute a
+T1-observed arrival to T2 — gains a binding (`{ kind: "adopted", commandUuid, epoch } |
+{ kind: "own", turnId } | { kind: "next" }`) recorded from the brackets open at that instant.
+`drainArrivals` generalizes to "emit the arrivals bound to the currently open bracket, drop arrivals whose
+bracket is dead" and runs where it runs today plus on every frame while the queue is nonempty. Seed-window
+arrivals carry their arrival-time binding through grounding; the flush enqueues them with it intact.
 
-Live behavior deliberately unchanged: announce-once-per-message, announce-at-arrival-with-no-turnId, the
-32-cap with oldest-first eviction, persist-before-broadcast ordering. The ONLY visible changes: an arrival
-never appears as an item of an unrelated later turn, and a fold into an own turn now emits into that own
-turn (new, correct — previously it leaked or sat forever).
+Live behavior deliberately unchanged: announce-once-per-message, the 32-cap with oldest-first eviction,
+persist-before-broadcast ordering, and announcement-after-durable-fate — which for the seed window means
+at flush, the exception M9 already carved (held arrivals announce once grounding settles what they are;
+a stalled seed delays the notification with the entry, never reorders them). The ONLY visible changes: an
+arrival never appears as an item of an unrelated later turn, and a fold into an own turn now emits into
+that own turn (new, correct — previously it leaked or sat forever).
 
-Tests: unit cells for (b) (arrival during own busy turn lands in THAT turn, and a later foreign adoption
-does NOT receive it — the misattribution pin), (c)+(d) (idle arrival binds to next bracket; bound arrival
-dropped at bracket death, warn observed), plus the existing adoption suite green unchanged. Live: existing
-LEGs stay green (they exercise (a) and (c) end to end); keyed rerun required.
+Tests — the race matrix is the point, deterministic cells first: (b)'s misattribution pin (arrival during
+own bracket lands in THAT turn; a later foreign adoption receives nothing); claim-at-open (a bracket that
+opens and terminates before its mapper installs takes its claimed arrivals with it — dropped, warned,
+never re-attributed); pre-start cancellation (arrival in the busy-but-unbroadcast window of a turn that
+never opens stays `next`); terminal-then-arrival on the same stack (adopted terminal cleared, `busy` still
+true → binds `next`, not `own`); a held seed spanning two brackets (arrival observed under T1, seed
+resolves after T2 opened → emitted into T1 if T1 still lives, dropped if not — never T2). Live: LEG 4
+strengthened to assert EXACTLY ONE arrival item on the host turn and none on its successor, plus an
+own-fold live assertion (the arrival item lands on the observer's own turn); keyed rerun required.
 
 ## Stream 3 — the debt ledger, adjudicated entry by entry
 
-**Paid this round (6):**
+**Paid this round (5):**
 
-1. **`EMPTY_ARRIVALS` mutable singleton** (`items/project.ts`) — make mutation impossible rather than
-   conventional (freeze, or an accessor returning a frozen empty; executor's call — the parity law's
-   call sites are identity-indifferent).
+1. **`EMPTY_ARRIVALS` mutable singleton** (`items/project.ts`) — make mutation impossible AT RUNTIME, not
+   conventionally: a shallow `Object.freeze` cannot stop `Map.set` or reach the array, so the fix is
+   either an accessor returning a fresh value or an immutable facade whose mutators throw — and a test
+   that one consumer's attempted poisoning cannot change a later projection.
 2. **Duplicated corpus fixtures** — the tracker's own trigger ("lift it the next time either corpus is
    edited") fires this round: #63/#64 edit these suites. Lift the shared `USER`/`ASSISTANT`/`ENTRY`
    builders into `test/unit/appserver/items/corpus.ts` and consume them from `subscribe-arrivals` and
    `search-arrivals`.
 3. **`tick()` macrotask waits** (`arrivals-clear-degraded.test.ts`) — convert to `vi.waitFor` per the
    `fr-*` family's pattern.
-4. **`peerArrival` JSON-stringifies exotic content** — not a behavior change: pin the current fallback
-   with a unit cell so "untested unreached" becomes "tested defined". Changing unreached code buys nothing.
-5. **Literal closing tag truncates the sender's own body — the half we control.** The debt entry stands
+4. **Literal closing tag truncates the sender's own body — the half we control.** The debt entry stands
    for FOREIGN senders (no framing exists), but OUR gateway can stop producing self-truncating frames: at
    `peer/send`, refuse a body the harness's own decoder would not read back intact (wrap → `envelopeBodies`
    → expect exactly the body back; refusal is the established posture — "refusing is recoverable; a silent
    downgrade is not"). Balanced quoted envelopes round-trip fine (depth counting), so ordinary
    envelope-quoting traffic (52 measured rows) is untouched; only unbalanced wrapper tags refuse. Tracker
    entry updates to name the remaining foreign-sender residue.
-6. **`peerInbound.ts` past 600 lines (now 692 + this round's additions)** — the tracker says "design the
+5. **`peerInbound.ts` past 600 lines (now 692 + this round's additions)** — the tracker says "design the
    split, do it as its own change"; this round is that change, and the split goes LAST, behavior-preserving,
    after streams 1–2 land. Seams (three modules + the existing file as install/uninstall facade holding
    `PeerInboundState`):
@@ -130,12 +151,16 @@ LEGs stay green (they exercise (a) and (c) end to end); keyed rerun required.
    Gate: the full unit suite green UNCHANGED (no assertion edits in the split commit), then the keyed live
    suite.
 
-**Left standing, reasons re-affirmed (3):** fork-inherited history (D3 owner scope — flagged to the owner
+**Left standing, reasons re-affirmed (4):** fork-inherited history (D3 owner scope — flagged to the owner
 rather than re-decided here); search's duplicate-anchor divergence (a genuine difference in what the
 two methods claim, documented at the call site; a "fix" would invent occurrence identity); the pre-M9
-row-phase cursor skip (self-clearing; a versioned cursor breaks D1). The truncation entry's foreign-sender
-residue also stands, inside its rewritten entry (no framing exists that this server controls). Each entry
-in the tracker gets its adjudication date appended; fully-paid entries are removed by their fixing commit.
+row-phase cursor skip (self-clearing; a versioned cursor breaks D1); and **`peerArrival`'s JSON-stringify
+of exotic content** — a unit cell pins the current fallback (untested-unreached becomes tested-defined),
+but the pin changes neither the debt's cost nor its reachability, so the entry STAYS, re-dated, noting the
+pin (the spec review's correction: removing it would erase known debt rather than resolve it). The
+truncation entry's foreign-sender residue also stands, inside its rewritten entry (no framing exists that
+this server controls). Each entry in the tracker gets its adjudication date appended; fully-paid entries
+are removed by their fixing commit.
 
 **`imageCodec-encode.test.ts` flake** — diagnose-then-decide: reproduce under full-suite load, record the
 failing ladder step, and apply the smallest of (resource-bound the test, serialize the file, fix a real
@@ -154,16 +179,26 @@ entry stays with that recorded attempt.
    never into any bracket after it.
 5. A bound arrival whose bracket dies unemitted produces no item ever, and a warn names the drop; its
    announcement and its M9 log entry are unaffected.
-6. Announce-once-per-message, announce-at-arrival, persist-before-broadcast, and the 32-cap all hold
-   exactly as their existing cells state.
-7. `peer/send` refuses a body whose wrapped envelope would not decode back to exactly that body, with a
-   named reason; every previously-accepted body that round-trips still sends byte-identically.
-8. After the module split, the full unit suite passes with zero assertion changes in the split commit, and
-   the keyed live suite passes 10/10.
-9. The tech-debt tracker reflects every adjudication above (paid entries removed by their fixing commits,
+6. The race matrix holds, each shape a deterministic cell: a bracket that opens and terminates before its
+   mapper installs takes its claimed arrivals with it; an arrival in a turn's busy-but-unbroadcast window
+   stays `next` (and is claimed when that turn truly opens); an arrival landing after an adopted terminal
+   while `busy` is still falling binds `next`, never `own`; an arrival held by a seed that resolves after
+   its bracket ended is dropped (or emitted into that exact bracket if it still lives), never into a
+   successor.
+7. Announce-once-per-message, persist-before-broadcast, announcement-after-durable-fate (the seed-window
+   exception as M9 carved it), and the 32-cap all hold exactly as their existing cells state.
+8. `peer/send` refuses a body whose wrapped envelope would not decode back to exactly that body, with a
+   named reason; every previously-accepted body that round-trips still sends byte-identically — proven by
+   a differential matrix at the RPC surface (balanced same- and mixed-grammar nesting, unclosed openers,
+   unmatched closers, newline edges, cap boundaries: exact write or zero write, nothing between).
+9. After the module split, the full unit suite passes with zero assertion changes in the split commit, and
+   the keyed live suite passes — including LEG 4 strengthened to exactly one arrival item on the host turn
+   and none on its successor, and an own-fold assertion placing the arrival item on the observer's own
+   turn.
+10. The tech-debt tracker reflects every adjudication above (paid entries removed by their fixing commits,
    standing entries re-dated), and `docs/parity/appserver.md` documents the notification's `text` field and
    the origin-vs-text meaning.
-10. Gates: full unit suite green, typecheck green, drift gate unmoved, keyed live 10/10.
+11. Gates: full unit suite green, typecheck green, drift gate unmoved, keyed live 10/10.
 
 ## Decision Log
 
@@ -185,6 +220,20 @@ entry stays with that recorded attempt.
 - **D-BL7-5** The dead-engine liveness problem stays out of scope, in task #64's text, awaiting its own
   design. *Rejected:* folding a turn-timeout mechanism into this round (touches every turn's settle path;
   undesigned).
+- **D-BL7-6** (spec review, adopted) Bindings are recorded synchronously at frame arrival — including
+  seed-window arrivals — and `next` is claimed at BRACKET OPEN (`adopt()` success, `notePeerTurnUuid`),
+  never at a drain; the own bracket is tracked explicitly rather than inferred from `busy`. *Rejected:*
+  flush-time seed binding and drain-time claiming (both leave a window where a bracket transition
+  re-attributes an arrival — the defect at a smaller scale).
+- **D-BL7-7** (spec review, adopted) The JSON-stringify tracker entry STAYS, re-dated, with its new pin
+  cell noted: a pin documents behavior but pays nothing — the cost and reachability are unchanged.
+  *Rejected:* counting the pin as payment (erases known debt); fixing the fallback (changing unreached
+  code buys nothing, the original deferral reason, which still holds).
+- **D-BL7-8** (spec review, dismissed) No versioning/migration for the `peer/send` refusal: the tightening
+  is deliberate, refuses only bodies our own decode side reads back truncated, and criterion 8's
+  differential matrix proves every intact body unaffected. (spec review, dismissed) "Scope exceeds a
+  reviewable change": the plan already lands each stream as its own reviewed task in the recommended
+  order; the split is its own commit with a zero-assertion-change gate.
 
 ## Surprises & Discoveries
 
@@ -198,3 +247,8 @@ Pending — written at finish.
 
 - rev 1 (2026-08-31): initial design, written from direct grounding of `peerInbound.ts` (692 lines, post-M9),
   `address.ts`, `registry.ts:508`, and the M9 spec's verdict-C/M13 blocks.
+- rev 2 (2026-08-31): codex adversarial review (9 findings) folded in — bindings move to arrival time
+  everywhere (incl. seed window), `next` claims at bracket open, the own bracket becomes explicit state
+  (D-BL7-6), the race matrix becomes criterion 6, the announce invariant wording carves the seed-window
+  exception, `EMPTY_ARRIVALS` must be runtime-hard, the JSON-stringify entry stays (D-BL7-7), the
+  `peer/send` differential matrix lands in criterion 8; two findings dismissed with reasons (D-BL7-8).
