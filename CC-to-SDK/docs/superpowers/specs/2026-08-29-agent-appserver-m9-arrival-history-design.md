@@ -1019,7 +1019,102 @@ in here.
 
 ## Outcomes & Retrospective
 
-Pending — written at finish.
+**The sentence this milestone existed to make true is true: a client reading its own history sees the
+question that produced the answer.** M8 shipped a live channel for inbound peer messages and a
+`thread/read` that could not return them — the CLI persists an arrival as an `isMeta` row and the SDK's
+reader drops every one — so LEG 2 of the cross-session live suite was written to assert that absence and
+to redden the day it closed. On the keyed acceptance run it asserts the presence instead: the arrival item
+precedes the assistant turn it caused, is deep-equal to the live item on id, text and `origin`, and is
+counted. **10 of 10 legs green in 166s**, including LEG 10's batch — three messages, every one of them in
+history as a marked item, and a `limit: 1` walk over that same session terminating without stranding one.
+
+**What shipped.** Stage B is the log and the observer: an append-only per-session store (one file per
+entry, capped, with an over-report-safe dropped-count marker), an observer seeded at the moment the
+session id is revealed — fresh and fork alike — that buffers arrivals while the seed read is in flight and
+grounds the buffer against it, anchors each entry to the last user/assistant frame it saw with that row's
+`prevUuid` and a SHA-256/16 content hash, persists before it announces, seeds `seq` from disk so order
+survives a restart, and latches a durable degraded marker when a write fails. Stage C is the projector:
+`project(messages, [])` is byte-identical to `itemsFromTranscript(messages)` over a 26-transcript corpus —
+the parity law that replaced rev 8's pseudocode, and the reason `thread/read` can run the projector on
+every read — plus the merge itself, `arrivals: {logged, dropped}` on all five reply paths, and rev 8.3's
+page-gated null sentinel, which renders a precedes-everything arrival only on a page that both reaches row
+0 and discards nothing. Stage D is the anchored scan in `thread/searchOccurrences`: entries scanned after
+the text of the row they ride, the occurrence cursor discriminated by phase with an entry-local character
+offset, and a pre-M9 cursor — which has no phase field — resuming as the row phase, so a walk in flight
+across the upgrade loses nothing. Task 7's fix wave added the two corrections the live runs forced: a
+second envelope grammar the decoder had never seen (200 of this machine's 228 peer rows use it), and the
+rule that a frame this server has recognised as an arrival never advances the anchor.
+
+**What it cost, and what that bought.** Three designs and twenty-four review findings before a line was
+written; then eight build tasks, two keyed reds and one revision spent undoing a claim. The expensive part
+was never the code — the store, the projector and the scan are small — it was establishing what the data
+actually is. The reward is the shape of the wire change: because an arrival rides its anchor row rather
+than occupying one, **no coordinate moved**. The cursor pattern is byte-identical in the generated
+artifact, the schema grows exactly two additive optional response members, and the appserver scorecard
+gate reports the same 110 rows over 73 registered methods it did before the milestone.
+
+**The gaps, stated rather than closed.**
+
+- **The pre-init window.** An arrival that lands before the engine reveals a session id is announced on
+  the live channel and never logged: there is no scope to key an entry by, and guessing one would be the
+  plausible-looking wrong answer D3 rules out.
+- **A write failure that can persist no marker.** Degradation is durable wherever the marker is writable
+  and in-process only where the fault is the directory itself — the fixture asserts exactly that half and
+  no more.
+- **The reader maps its own failures to `[]`.** A transcript read that fails looks like an empty
+  transcript, so every anchor resolves to nothing and every arrival is withheld. Withholding is the safe
+  direction, but the cause is invisible at this seam.
+- **The textless batch member.** `peerArrival` now prefers a frame's own text and consults `origin.body`
+  only for a frame carrying none, which closes the residual for every frame that carries text. A textless
+  member of a collapsed batch would still render another message's body, and that stays recorded because
+  withholding instead would break the ordinary single-message case, where `origin.body` is the only text
+  there is.
+- **Per-message identity in a collapsed batch (verdict C).** Not a defect to fix later: the identity is
+  not in the data. One frame carrying two envelopes produces one uuid, one entry and one item bearing both
+  texts, and one announced arrival in the measured runs persisted no row at all, so cold replay can never
+  render that member. Every claim this milestone makes about a batch is a claim about text, never identity.
+- **No withheld count.** A client is given `logged` and the marked items and computes the difference; an
+  honest server-side count would need whole-history resolution per read, the exact cost the pager exists to
+  avoid.
+- **U1 is open.** Do envelope-less (coordinator-path) arrivals batch at all? No sighting survives. Rev 8.4
+  recorded one on LEG 10's red, rev 8.5 explained that red as an anchor defect, and rev 8.6 withdrew the
+  sighting rather than leaving a convenient answer standing. The one direct measurement — probe 121's keyed
+  burst — saw zero envelope-less frames. Stage A's ordering no longer depends on the answer either way, so
+  the question stays open as a genuine unknown rather than being closed by the change that made it moot.
+
+**Lessons.**
+
+- **A fixture derived from what the system WRITES will lie about what it RECEIVES.** Every unit fixture in
+  this milestone pushed peer frames carrying `isMeta: true`, because that is how the CLI persists an
+  arrival — and the live frame need not carry the flag at all. Without it the frame survives the
+  visibility predicate, advances the anchor onto itself, and every arrival after the first in a batch is
+  anchored to a row the reader drops and withheld from every page forever. **4,283 green tests inherited
+  that fixture and none of them could see it** — not a gap in coverage but a gap in what the corpus was a
+  corpus OF: the suite agreed with itself about a shape the world never sends. It cost two identical keyed
+  reds. The generalisable rule is to name which side of a boundary a fixture's shape comes from and, where
+  both sides exist, to test both — cell (9b) derives the live shape from the persisted one by deletion, so
+  the two cannot drift into proving different things about different messages.
+- **A red is evidence of a defect, not of the defect you were looking for.** LEG 10's first red was read as
+  confirmation of the envelope-less batch that was already the open question, and that reading was written
+  into the record as a measurement. The second red — identical — was what refuted it: the reported text was
+  one body, not three, so the failure was never about text at all. The cost was a revision spent undoing a
+  claim, and the fix is procedural: a leg that can fail for three different reasons now prints all three
+  channels (announced, logged, paged) on failure, so the next disagreement between them costs a read rather
+  than a keyed run.
+- **An aggregate answers a question about the set, never about its members.** This round produced the same
+  error three times — an origin-kind census summed across two corpora, a nonce-coverage assertion read as
+  per-frame carriage, and a uuid count read as per-message identity — and each time the refuting detail was
+  already in output that had been quoted. It is now the header rule of the probe that found it.
+- **Price removing a commitment before engineering around it.** Rev 3 answered nine findings with nine
+  mechanisms, every one defending a position it had chosen to occupy: a merged coordinate space needed an
+  opaque cursor, a stored placement needed a rewind rebase, a turn anchor needed two phases. Permission to
+  refuse — be correct where you can, withhold where you cannot — let those positions be vacated, and seven
+  findings left with them. When a design needs a mechanism per objection, suspect the objections are all
+  downstream of one commitment.
+- **Know when prose review has stopped paying.** The rounds went eight findings, six, then seven; the count
+  stopped narrowing, and rev 8's sharpest finding — pseudocode that omitted the direct user-row path, which
+  would have erased ordinary prompts — is precisely the class one property test pins and no careful reader
+  reliably does. Ending the loop and writing the parity law was worth more than another rewrite.
 
 ## Revision Notes
 
