@@ -110,7 +110,7 @@ export const ADVISOR_NOTICE_UNPAIRED_TEXT =
  *  apply is idempotent (re-picking the active advisor just re-runs the same branch), and so is this one. */
 export function applyAdvisorChoice(
   choice: string,
-  mainModel: string,
+  mainModel: string | undefined,
   current: string | undefined,
 ): { action: "set"; model: string; message: string } | { action: "off"; message: string } | { action: "invalid"; message: string } {
   void current;
@@ -125,12 +125,20 @@ export function applyAdvisorChoice(
   }
 
   const advisorName = advisorDisplayName(resolved);
-  const mainName = advisorDisplayName(mainModel);
   let message = `Advisor set to ${advisorName}`;
-  if (!supportsAdvisor(mainModel)) {
-    message += `\nNote: the current main model (${mainName}) does not support the advisor. It will activate when you switch to a supported main model.`;
-  } else if (!canAdvise(mainModel, resolved)) {
-    message += `\nNote: ${advisorName} is less capable than the current main model (${mainName}), so the advisor will not activate. Choose a more capable advisor, or switch to a smaller main model.`;
+  // bl8 F3 fix: an UNKNOWN main model (genuinely `undefined` — an attached client that hasn't learned the
+  // host's model yet) prints NEITHER note, mirroring `AdvisorDialog.tsx:61`'s own
+  // `mainModel !== undefined && !supportsAdvisor(mainModel)` gate. The pre-fix caller-side `model ?? ""`
+  // coercion made "unknown" indistinguishable from "known and unranked", producing a misleading
+  // "main model ()" note even when the attached host may be running a fully supported model this client
+  // simply hasn't learned yet.
+  if (mainModel !== undefined) {
+    const mainName = advisorDisplayName(mainModel);
+    if (!supportsAdvisor(mainModel)) {
+      message += `\nNote: the current main model (${mainName}) does not support the advisor. It will activate when you switch to a supported main model.`;
+    } else if (!canAdvise(mainModel, resolved)) {
+      message += `\nNote: ${advisorName} is less capable than the current main model (${mainName}), so the advisor will not activate. Choose a more capable advisor, or switch to a smaller main model.`;
+    }
   }
   return { action: "set", model: resolved, message };
 }

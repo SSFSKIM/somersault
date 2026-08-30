@@ -2739,7 +2739,7 @@ export function useChat(
    *  call must not have the pref or the live row claim it happened. */
   async function applyAdvisor(choice: string): Promise<void> {
     if (disposed.current) return;
-    const result = applyAdvisorChoice(choice, model ?? "", advisorModelRef.current);
+    const result = applyAdvisorChoice(choice, model, advisorModelRef.current);
     if (result.action === "invalid") { append(formatAdvisorResult(result.message)); return; }
     if (!hasSettingsOps(session)) { notice("advisor: not supported by this host"); return; }
     const nextModel = result.action === "set" ? result.model : null;
@@ -2750,7 +2750,12 @@ export function useChat(
       return;
     }
     if (disposed.current) return;
-    savePrefsFn(nextModel !== null ? { advisorModel: nextModel } : { advisorModel: undefined }, historyEnv);
+    // bl8 F4 fix: the engine call above has ALREADY committed, so the persist below is best-effort ONLY —
+    // the same convention every other pref write in this file follows (`setShowTurnDuration`'s doc comment,
+    // ~:2804-2807: "a read-only home must not take down a session"). The ref write / `reconcile()` /
+    // confirmation must happen UNCONDITIONALLY once the write itself can no longer throw past this point.
+    try { savePrefsFn(nextModel !== null ? { advisorModel: nextModel } : { advisorModel: undefined }, historyEnv); }
+    catch { /* best-effort — a read-only home must not take down a session, same as setShowTurnDuration */ }
     advisorModelRef.current = nextModel ?? undefined;
     reconcile();
     append(formatAdvisorResult(result.message));

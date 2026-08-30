@@ -77,4 +77,14 @@ describe("applyAdvisorChoice", () => {
     const r = applyAdvisorChoice("garbage", SONNET, undefined);
     expect(r).toEqual({ action: "invalid", message: "garbage cannot be used as an advisor. Valid options: fable, opus, sonnet, off" });
   });
+  // bl8 F3 fix: `mainModel` genuinely UNDEFINED (an attached client that hasn't learned the host's model
+  // yet, e.g. `ccx attach` with no launch config — main.ts's own comment on `hookOpts`) must print NO note
+  // at all, mirroring `AdvisorDialog.tsx:61`'s own gate (`mainModel !== undefined && !supportsAdvisor(...)`).
+  // Coercing an unknown main model to `""` (the pre-fix call-site shape) reads as a REAL, ranked-nowhere
+  // model and produces a misleading "main model ()" note — this is the "unknown" case, distinct from
+  // `UNKNOWN` above (a defined-but-unranked string, which correctly DOES get the unsupported note).
+  it("mainModel undefined (not yet known): no compatibility note of either kind", () => {
+    const r = applyAdvisorChoice("opus", undefined, undefined);
+    expect(r).toEqual({ action: "set", model: OPUS, message: `Advisor set to ${advisorDisplayName(OPUS)}` });
+  });
 });

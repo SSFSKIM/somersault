@@ -224,6 +224,46 @@ describe("the REPL wiring: /advisor dispatch", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════
+// bl8 fix-wave F4 — a `savePrefsFn` throw AFTER `session.setAdvisorModel` already succeeded must not skip
+// the ref write / `reconcile()` / confirmation line: the engine has already committed, so those three are
+// unconditional once the write itself is a best-effort try/catch, matching every other pref write in this
+// file (`setShowTurnDuration`'s own convention, useChat.ts ~:2804-2807).
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
+describe("bl8 fix-wave F4: a savePrefs throw after a successful engine apply still confirms, both call paths", () => {
+  it("typed '/advisor opus': the engine call succeeds, savePrefs throws, and the SET CONFIRMATION still prints (not swallowed by a generic error)", async () => {
+    const advisorCalls: (string | null)[] = [];
+    const fake = fakeAdvisorRemote(advisorCalls);
+    const r = renderWithKeymap(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        hookOpts={{ initialModel: SONNET }}
+        deps={{ savePrefs: () => { throw new Error("EROFS: read-only file system"); } }} />,
+    );
+    await runCommand(r, "/advisor opus");
+    await waitFor(() => advisorCalls.length > 0);
+    expect(advisorCalls).toEqual([OPUS]);   // the engine call already committed
+    await waitFor(() => frame(r.lastFrame).includes(`Advisor set to ${advisorDisplayName(OPUS)}`));
+    // NOT the opaque filesystem error that pre-fix hid the fact the change took effect.
+    expect(frame(r.lastFrame)).not.toContain("EROFS");
+  });
+
+  it("dialog Enter path: the engine call succeeds, savePrefs throws, and the result line still prints — no unhandled rejection", async () => {
+    const advisorCalls: (string | null)[] = [];
+    const fake = fakeAdvisorRemote(advisorCalls);
+    const r = renderWithKeymap(
+      <ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()}
+        hookOpts={{ initialModel: SONNET }}
+        deps={{ savePrefs: () => { throw new Error("EROFS: read-only file system"); } }} />,
+    );
+    await runCommand(r, "/advisor");
+    await waitFor(() => frame(r.lastFrame).includes(ADVISOR_TITLE));
+    r.stdin.write("\r");   // Enter on the default-focused row ("off", per test (d)'s own doc comment)
+    await waitFor(() => advisorCalls.length > 0);
+    expect(advisorCalls).toEqual([null]);
+    await waitFor(() => frame(r.lastFrame).includes("Advisor disabled"));
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════════
 // Step 3(e) — the F4/D16 regression shape, in its two independently-failing halves.
 //
 // The two halves are NOT one assertion: `applyAdvisor`'s own result-line append is itself a document
