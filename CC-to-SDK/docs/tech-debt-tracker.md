@@ -31,6 +31,9 @@ rather than correctness*. Doing it here would be the "solve the full correctness
 anything" alternative D3 rejected by name. Revisit if branches enter scope; the boundary is stated in the
 spec beside the definition of `arrivals.logged` so the next reviewer reads it rather than re-deriving it.
 
+**2026-08-31 (BL7, D-BL7-4):** re-read and left standing, reason unchanged — the fix still lands inside
+D3's explicit-refusal scope, which is the owner's decision to revisit and not this round's.
+
 ---
 
 ## 2026-08-31 — an oversized clipboard paste can lose to the codec's 2 s belt on a busy machine
@@ -93,7 +96,7 @@ ours; the receive side is not, and stays bounded and self-inflicted-per-sender u
 
 ---
 
-## 2026-08-30 — search reports a duplicate-anchor arrival at both rows; `thread/read` picks the first
+## 2026-08-31 — search reports a duplicate-anchor arrival at both rows; `thread/read` picks the first
 
 **Source:** M9 review ledger (documented divergence) · `src/appserver/search.ts` (~:696).
 
@@ -108,9 +111,12 @@ composes one ordered history and must choose, while an occurrence is a claim abo
 positions are equally true of what was recorded. Documented at the call site; a "fix" would have to invent
 an occurrence identity the data does not carry.
 
+**2026-08-31 (BL7, D-BL7-4):** re-read and left standing. BL7 changed the LIVE channel's attribution, not
+the read side's; the divergence is between two read methods and the reason above is untouched by it.
+
 ---
 
-## 2026-08-30 — a pre-M9 row-phase search cursor at `r === 0` skips the `atStart` group
+## 2026-08-31 — a pre-M9 row-phase search cursor at `r === 0` skips the `atStart` group
 
 **Source:** M9 review ledger (upgrade artifact) · `src/appserver/search.ts`.
 
@@ -122,6 +128,10 @@ unaffected.
 
 **Why deferred:** one-time and self-clearing — the cursor is gone as soon as that walk ends. Versioning the
 cursor to fix it would break D1, which is the one constraint the whole milestone was designed around.
+
+**2026-08-31 (BL7, D-BL7-4):** re-read and left standing, reason unchanged. BL7 touched neither the search
+cursor nor its phases; the entry stays until a walk started before M9 can be shown impossible, at which
+point it leaves by being shown not to be debt rather than by ageing out.
 
 ---
 
