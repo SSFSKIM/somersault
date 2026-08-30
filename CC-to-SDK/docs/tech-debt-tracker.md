@@ -142,18 +142,3 @@ unreached code.
 content is `{ weird: 1 }` yields that object stringified, outranking `origin.body` — so the branch is
 tested-and-defined rather than untested-and-unreached; the entry STAYS, because a pin documents behaviour
 and changes neither the cost nor the reachability that deferred it.
-
----
-
-## 2026-08-30 — `peerInbound.ts` is past 600 lines
-
-**Source:** M9 review ledger (module-size advisory) · `src/appserver/peerInbound.ts`.
-
-**What:** the file now carries adoption, the seed window, the live queue and the logging path together.
-
-**Cost:** the usual — a hot file that every arrival-related change has to touch, and reviewers who have to
-hold four state machines at once.
-
-**Why deferred:** the four parts share one state object and one frame-ordering argument, so a split has to
-be designed rather than performed; doing it during a fix wave would put the milestone's riskiest code
-through an untested refactor. Do it as its own change.
