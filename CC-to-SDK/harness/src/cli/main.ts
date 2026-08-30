@@ -400,6 +400,7 @@ export async function attachToImpl(target: string, o: { initialPrompt?: string; 
   await deps.runChatClient({
     socketPath: prep.socketPath, client: { kind: "attached", short: prep.short }, cwd: prep.cwd,
     initialEntries: prep.initialEntries,
+    ...(prep.diskStamp ? { initialDiskStamp: prep.diskStamp } : {}),
     ...(o.initialPrompt ? { initialPrompt: o.initialPrompt } : {}),
     onDetach: () => { console.error(`detached — session ${prep.short} keeps running · reattach: ccx attach ${prep.short}`); },
   });

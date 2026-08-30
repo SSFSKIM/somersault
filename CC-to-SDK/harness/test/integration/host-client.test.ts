@@ -112,6 +112,35 @@ describe("host + client over a real socket", () => {
     }
   });
 
+  // A3 (spec §3.3 D6) — the settled-park guard: parks replay from LIVE state on `follow()`
+  // (`host.ts:790` iterates `this.parked.list()`), and a settle is never recorded anywhere
+  // (`host.ts:1035/1052/146`) — so a park already settled before a client follows must never reach it
+  // in EITHER form: not as a `decision` (it is already gone from the live list) and not as a
+  // `decision_settled` (nothing was recorded to replay). This pins the REFUTED half of the bl6 backlog
+  // entry so a future author cannot "fix" it into a double-settle for a joiner who never saw the park.
+  it("a park settled before follow is invisible to a late joiner — no decision, no decision_settled", async () => {
+    const { host, path } = await startHost();
+    let a: RemoteChatSession | undefined, b: RemoteChatSession | undefined;
+    try {
+      a = await RemoteChatSession.connect(path, { label: "tty-a" });
+      a.follow(() => {});
+      const decision = host.broker().request({ toolName: "Bash", input: {}, toolUseID: "t30", signal: new AbortController().signal });
+      await new Promise((r) => setTimeout(r, 50));
+      await a.answer("t30", { kind: "deny" });
+      await expect(decision).resolves.toEqual({ kind: "deny" });
+      // NOW connect a fresh client, over the real socket, and follow — this park settled BEFORE it did.
+      b = await RemoteChatSession.connect(path, { label: "tty-b" });
+      const seenB: any[] = [];
+      b.follow((e) => seenB.push(e));
+      await new Promise((r) => setTimeout(r, 80));
+      expect(seenB.filter((e) => e.kind === "decision")).toHaveLength(0);
+      expect(seenB.filter((e) => e.kind === "decision_settled")).toHaveLength(0);
+    } finally {
+      a?.detach(); b?.detach();
+      await stopQuietly(host);
+    }
+  });
+
   it("detach leaves the host and its park untouched; a re-attached client still sees the park", async () => {
     const { host, path } = await startHost();
     let a: RemoteChatSession | undefined, b: RemoteChatSession | undefined;

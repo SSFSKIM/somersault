@@ -26,6 +26,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeRoster } from "../dist/fleet/roster.js";
 import { hostSocketPath, mintShortId } from "../dist/fleet/paths.js";
+import { preFollowReplay } from "./fake-host-policy.mjs";
 
 const short = mintShortId(Math.random);
 const pid = process.pid;
@@ -188,6 +189,31 @@ function framesFor(word) {
 // before the first `follow` ack is sent): a frame pushed with no follower yet is queued here, then
 // replayed — marked `replay: true`, matching the real host — to the first follower before live pushes
 // resume.
+//
+// bl9 T-FOLLOW (spec D7, A8) — WHAT GETS QUEUED here is now governed by `fake-host-policy.mjs`'s
+// `preFollowReplay`, narrowed to match production's real pre-follow behavior (R1 §1's frame-lifecycle
+// table, re-verified by running the real `SessionHost`):
+//
+//   kind              | production pre-follow behavior                          | this fake host
+//   ------------------|----------------------------------------------------------|------------------
+//   message           | buffered (TurnBuffer) + replayed replay:true            | buffered + replayed
+//                      | (host.ts:412,783)                                       | verbatim
+//   turn              | NOT replayed — a start frame is SYNTHESIZED for an      | buffered + replayed
+//                      | in-flight turn, a bare truncation marker for an idle    | verbatim (DOCUMENTED
+//                      | one (host.ts:767,771)                                   | divergence — no turn
+//                      |                                                          | state to synthesize from)
+//   task              | NOT recorded, NEVER replayed (host.ts:841 has no        | DROPPED
+//                      | buffer home)                                            |
+//   decision_settled   | NOT recorded, NEVER replayed — parks replay from LIVE   | DROPPED
+//                      | state (host.ts:790 iterates parked.list(); a settled    |
+//                      | park is already gone from it)                           |
+//   rewound           | NOT recorded, NEVER replayed (host.ts:659 has no        | DROPPED
+//                      | buffer home — the one real gap, closed CLIENT-side by   |
+//                      | T-FOLLOW's reconcile, not here)                         |
+//
+// The narrowing was proven red-first against `test/unit/fake-host-policy.test.ts`: before it, the policy
+// was a kind-agnostic `(ev) => ev` (fake-host.mjs's ORIGINAL, more-generous behavior — a cell pushing
+// `task`/`decision_settled`/`rewound` pre-follow would have false-greened against it, review F4).
 const followers = new Set();
 const preFollowBuffer = [];   // frames pushed while nobody is following yet
 let stdinBuf = "";
@@ -197,8 +223,10 @@ process.stdin.on("data", (chunk) => {
     const word = stdinBuf.slice(0, nl).trim(); stdinBuf = stdinBuf.slice(nl + 1);
     if (!word) continue;
     for (const ev of framesFor(word)) {
-      if (followers.size === 0) preFollowBuffer.push(ev);
-      else for (const push of followers) push(ev);
+      if (followers.size === 0) {
+        const buffered = preFollowReplay(ev);
+        if (buffered) preFollowBuffer.push(buffered);
+      } else for (const push of followers) push(ev);
     }
   }
 });

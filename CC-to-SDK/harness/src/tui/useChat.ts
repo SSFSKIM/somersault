@@ -56,7 +56,7 @@ import { tokenWarning, TOKEN_WARNING_KEY, TOKEN_WARNING_TIMEOUT_MS } from "./tok
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
-import { recentAssistantTexts, RECENT_ASSISTANT_CAP } from "../sessions/rows.js";
+import { recentAssistantTexts, RECENT_ASSISTANT_CAP, diskStampOf } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
@@ -203,6 +203,11 @@ export function useChat(
     /** F9 T-MOUSE Task 7: the `copyOnSelect` pref, resolved by the caller (`chatMain.tsx`) exactly as
      *  `initialShowTurnDuration` is — DEFAULT TRUE, canon's own polarity (research r1-mouse.md §2.5). */
     initialCopyOnSelect?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+    /** bl9 D14: the disk stamp `cli/attach.ts` computed over the SAME rows that seeded `initialEntries` —
+     *  present only on an attach launch. Drives the one-shot post-follow reconcile below; absent everywhere
+     *  else (a fresh launch, a `--resume`/`--continue` launch), which is what keeps the reconcile from ever
+     *  running a disk read those paths have no business paying for (A5). */
+    initialDiskStamp?: { lastUuid?: string; count: number };
     /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
      *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
@@ -900,6 +905,12 @@ export function useChat(
     );
   };
   const lastAssistant = useRef<string[]>([]);    // recent assistant replies' text, NEWEST FIRST, for /copy [N] (ring, cap RECENT_ASSISTANT_CAP)
+  // bl9 D14/D15: the content-shape stamp of whatever disk read last built the document — seeded from the
+  // attach-time read (`opts.initialDiskStamp`, computed in `cli/attach.ts` over the SAME rows that became
+  // `initialEntries`) and kept honest by every later disk-driven rebuild (`resumeInto`, `rebuildAfterRewind`,
+  // the reconcile below). `undefined` for every non-attach mount — a fresh launch has no pre-follow read to
+  // reconcile against, which is exactly the reconcile effect's "no stamp, no read" guard (A5).
+  const diskStampRef = useRef<{ lastUuid?: string; count: number } | undefined>(opts.initialDiskStamp);
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1776,6 +1787,41 @@ export function useChat(
     if (ranInitialPrompt.current || !opts.initialPrompt) return; ranInitialPrompt.current = true;
     submit(opts.initialPrompt);
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // bl9 D14 — THE POST-FOLLOW ATTACH RECONCILE. `ccx attach` reads disk before it follows (cli/attach.ts's
+  // `prepareAttach` → the dynamic Ink import → mount → connect → follow), so a concurrent in-place rewind
+  // can truncate/replace the transcript in that gap and nothing else ever corrects it (research-follow-
+  // replay.md §2.1: the session id survives an in-place rewind, so a joiner comparing ids sees nothing).
+  // One post-follow re-read closes the window: once the session reports ready (the remote adapter's
+  // `whenReady()` — RemoteChat only; a lib/loopback session has none, hence the typeof guard), compare the
+  // fresh stamp against `diskStampRef.current` — NOT the frozen `opts.initialDiskStamp` this effect closed
+  // over at mount — read AT FIRE TIME, after the disk read resolves. `diskStampRef` is kept live by every
+  // OTHER disk-driven rebuild (`resumeInto`, `rebuildAfterRewind`, `replaceFromDisk`), so if a real rewind's
+  // rebuild lands while this reconcile's own read is in flight, the live ref already reflects it — comparing
+  // against the stale mount-time `stamp` would then see a mismatch that no longer exists and re-wipe a
+  // transcript that is already current (worst case: clobbering it with THIS read's now-staler rows). Absent
+  // stamp (a fresh launch, a --resume/--continue launch, a session with no `whenReady`) means no read, ever
+  // (A5) — this effect exists ONLY to close attach's own window. A match no-ops (A1b); a mismatch runs the
+  // SAME narrow document rebuild `rebuildAfterRewind` uses (`replaceFromDisk`), labeled "resynced" (not the
+  // default "resumed" — the likely cause is another client's rewind, not a resume) and D16 is the reason it
+  // is narrow: the follow drain's `tasks_changed`/in-flight-turn state is live truth this reconcile must
+  // never clear, unlike a real rewind's taskListRef/bgHarvest resets.
+  useEffect(() => {
+    const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
+    if (!opts.initialDiskStamp || typeof ready !== "function") return;
+    let cancelled = false;
+    void ready.call(session).then(async () => {
+      if (cancelled || disposed.current) return;
+      const id = session.sessionId;
+      if (!id) return;
+      const rows = await getSessionMessages(id).catch(() => null);
+      if (cancelled || disposed.current || rows === null) return;
+      const fresh = diskStampOf(rows);
+      const live = diskStampRef.current;
+      if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
+      replaceFromDisk(rows, id, { label: "resynced" });
+    });
+    return () => { cancelled = true; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // Fetch the live command catalog once per session (capabilities() works pre-turn — probe 29). On a /resume
   // swap the session changes → re-fetch. A failure/empty leaves the local-only palette (still fully usable).
   useEffect(() => {
@@ -2472,6 +2518,7 @@ export function useChat(
     if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
     lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
+    diskStampRef.current = diskStampOf(msgs);                   // bl9 D14: keep the reconcile's stamp honest across a resume too
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -2991,6 +3038,18 @@ export function useChat(
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeRewindPicker() { if (!disposed.current) setRewindPicker({ open: false, anchors: [] }); }
+  /** bl9 D14/D16: the document-only core shared by `rebuildAfterRewind`'s non-empty branch and the
+   *  post-follow reconcile effect above. Deliberately NARROW — clear, replay, reseed /copy, update the
+   *  stamp ref, nothing else — because the reconcile must never touch taskListRef/setTasks, bgHarvest, or
+   *  the composer prefill (D16: those are rewind-specific resets a document-only reconcile has no business
+   *  running). `rebuildAfterRewind` layers its own polling, anchor cut, empty-document arm and those three
+   *  resets ON TOP of this. */
+  function replaceFromDisk(rows: any[], id?: string, options: { label?: string } = {}): void {
+    clearScreen();
+    replaceDocument(replayDocument(rows, { id, label: options.label, width: columnsFn() }));
+    lastAssistant.current = recentAssistantTexts(rows);
+    diskStampRef.current = diskStampOf(rows);
+  }
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
    *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
@@ -3036,12 +3095,15 @@ export function useChat(
     }
     if (disposed.current) return;
     const rows = truncateAtAnchor(msgs, opts.prevUuid);
-    clearScreen();
     // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
     // messages. (Ctrl-O never uses this path.)
-    if (rows.length) replaceDocument(replayDocument(rows, { id, label: "⏪ rewound", width: columnsFn() }));
-    else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
-    lastAssistant.current = recentAssistantTexts(rows);     // /copy [N] follows what is on screen, whole ring seeded
+    if (rows.length) replaceFromDisk(rows, id, { label: "⏪ rewound" });
+    else {
+      clearScreen();
+      const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh);
+      lastAssistant.current = recentAssistantTexts(rows);   // rows is [] here — the ring resets, same as before
+      diskStampRef.current = diskStampOf(rows);
+    }
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     if (opts.prefill !== undefined) setComposerPrefill({ text: opts.prefill, token: Date.now() });

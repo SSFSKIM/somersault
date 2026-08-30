@@ -230,7 +230,7 @@ function RestoringModal(): React.ReactElement {
   return <Box paddingX={1}><Text dimColor>⏪ restoring…</Text></Box>;
 }
 
-export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, linkOpenDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
+export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts, cwd, initialResume, initialEntries, initialDiskStamp, clearStaticTranscript, noticeBridge, deps, yankHintMs, escClearMs, typingIdleMs = TYPING_IDLE_MS, initialTodosOpen = true, suspend, resumeOutput, resyncViewport, onResize, onFocusChange, doublePressDeps, linkOpenDeps, name, terminalTitle, progressBar, renderer, switchRenderer, selectRenderer, aroundSubprocess, altHandoff }: {
   makeSession: (resume?: string) => ChatSession;
   client: { kind: "loopback" | "attached"; short?: string };
   onDetach?: () => void;
@@ -250,6 +250,9 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   cwd: string;
   initialResume?: InitialResume;
   initialEntries?: readonly TranscriptBootstrapEntry[];
+  // bl9 D14: passthrough of `ChatClientOpts.initialDiskStamp` — this component's only job is the same
+  // unmodified spread `initialTokenSource` and friends already get (see the `hookOpts` doc above).
+  initialDiskStamp?: { lastUuid?: string; count: number };
   // Internal chatMain → ChatApp → useChat boundary (never a public ChatClientOpts field): wipes Ink's
   // append-only <Static> before a terminal boundary mounts a fresh one.
   clearStaticTranscript?: () => void;
@@ -429,7 +432,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
     // passes neither leaves `/status` exactly as silent about the renderer as it always was.
     ...(renderer ? { rendererChoice: renderer } : {}), ...(switchRenderer ? { switchRenderer } : {}), ...(selectRenderer ? { selectRenderer } : {}),
-    cwd, initialResume, initialEntries, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
+    cwd, initialResume, initialEntries, initialDiskStamp, initialPrompt, onExit: exit, detach: client.kind === "attached" ? () => { onDetach?.(); exit(); } : undefined, clearStaticTranscript, noticeBridge }, chatDeps);
   // WAVE R TASK 1 (defect i) — the terminal's SIZE IS REACT STATE. Ink's own SIGWINCH handler
   // (node_modules/ink/build/ink.js:83) re-runs Yoga layout over the EXISTING element tree and re-serializes
   // it; it never re-renders components. Nothing in ccx subscribed to "resize" at all, so the reads below
