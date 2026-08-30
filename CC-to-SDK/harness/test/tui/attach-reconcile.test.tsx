@@ -65,6 +65,9 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
     expect(frame(lastFrame)).not.toContain("the stale tail reply");
     expect(reads).toBe(1);
+    // Fix 3 (reviewer-recommended): the mismatch rebuild is labeled "resynced", not `replayDocument`'s
+    // default "resumed" — the likeliest cause is another client's rewind, and nothing here was resumed.
+    expect(frame(lastFrame)).toContain("resynced");
   });
 
   it("A1b: a matching stamp repaints nothing", async () => {
@@ -93,5 +96,73 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     session.resolveReady();
     await new Promise((r) => setTimeout(r, 40));
     expect(reads).toBe(0);
+  });
+
+  // Fix 1 (T-FOLLOW fix wave, Important finding): the mismatch compare used to close over the FROZEN
+  // `opts.initialDiskStamp` captured at mount, not the live `diskStampRef` every other disk-driven rebuild
+  // (`rebuildAfterRewind`) keeps current. So a real `rewound` rebuild that lands WHILE this reconcile's own
+  // disk read is still in flight already resolved the mismatch — and the reconcile, still comparing against
+  // the stale mount-time stamp, would see one anyway and fire a second, redundant `clearScreen` + rebuild.
+  // This pins the fix: once the live rebuild has landed, the reconcile's later-resolving read must see the
+  // CURRENT stamp and no-op.
+  it("D14 fix 1: a live rewound rebuild landing while the reconcile's own read is in flight must not repaint again", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let reads = 0, wipes = 0;
+    let resolveReconcileRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = {
+      // Call #1 is the reconcile's own read — held open (a deferred promise) so it resolves AFTER the
+      // rewind rebuild below has already landed. Call #2 is that rewind rebuild's own read, which
+      // resolves immediately.
+      getSessionMessages: async () => {
+        reads++;
+        if (reads === 1) return new Promise<unknown[]>((r) => { resolveReconcileRead = r; });
+        return freshRows;
+      },
+      clearScreen: () => { wipes++; },
+    };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();                       // the follow ack lands → the reconcile's read (call #1) starts, held open
+    await waitFor(() => reads === 1);
+    session.pushEvent({ kind: "rewound" } as any); // a live rewind rebuild races ahead of the reconcile's own read
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
+    expect(wipes).toBe(1);                         // the rewind rebuild wiped once
+    resolveReconcileRead(freshRows);               // NOW let the reconcile's stale-window read land
+    await new Promise((r) => setTimeout(r, 30));   // long enough for a stray second rebuild to land
+    expect(wipes).toBe(1);                         // NOT a second wipe: the live stamp already matched
+    expect(frame(lastFrame)).toContain("the fresh tail reply");
+  });
+
+  // D16 (pinned per the fix-wave review): the mismatch rebuild is the document-only `replaceFromDisk` core,
+  // deliberately narrow — it must never touch `taskListRef`/`setTasks` (or bgHarvest), unlike a real rewind's
+  // rebuild. The reviewer's mutation test — adding `taskListRef.current.reset(); setTasks([]);` into
+  // `replaceFromDisk` — survived all 215 tests in the suite, meaning nothing pinned the constraint. This does.
+  it("D16 regression: live task state seeded before the mismatch rebuild survives it", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => freshRows };
+    let tasks: unknown[] = [];
+    function TaskHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps);
+      tasks = (c.state as unknown as { tasks: unknown[] }).tasks;
+      return <Text>{allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<TaskHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    // Seed live task state the SAME way the sibling useChat suite does (useChat.test.tsx: "accumulates
+    // tasks from a turn's frames") — a TaskCreate tool_use followed by its tool_result.
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tc1", name: "TaskCreate", input: { subject: "build it" } }] } } });
+    session.pushEvent({ kind: "message", data: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "Task #1 created successfully: build it" }] } } });
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => tasks.length === 1);
+    session.resolveReady();                        // the follow ack lands → the reconcile fires its mismatch rebuild
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
+    expect(tasks).toEqual([{ id: "1", subject: "build it", status: "pending" }]);
   });
 });

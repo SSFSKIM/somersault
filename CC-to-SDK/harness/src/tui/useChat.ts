@@ -1793,16 +1793,21 @@ export function useChat(
   // replay.md §2.1: the session id survives an in-place rewind, so a joiner comparing ids sees nothing).
   // One post-follow re-read closes the window: once the session reports ready (the remote adapter's
   // `whenReady()` — RemoteChat only; a lib/loopback session has none, hence the typeof guard), compare the
-  // fresh stamp against the one `opts.initialDiskStamp` carries from the pre-follow read. Absent stamp (a
-  // fresh launch, a --resume/--continue launch, a session with no `whenReady`) means no read, ever (A5) —
-  // this effect exists ONLY to close attach's own window. A match no-ops (A1b); a mismatch runs the SAME
-  // narrow document rebuild `rebuildAfterRewind` uses (`replaceFromDisk`), and D16 is the reason it is
-  // narrow: the follow drain's `tasks_changed`/in-flight-turn state is live truth this reconcile must never
-  // clear, unlike a real rewind's taskListRef/bgHarvest resets.
+  // fresh stamp against `diskStampRef.current` — NOT the frozen `opts.initialDiskStamp` this effect closed
+  // over at mount — read AT FIRE TIME, after the disk read resolves. `diskStampRef` is kept live by every
+  // OTHER disk-driven rebuild (`resumeInto`, `rebuildAfterRewind`, `replaceFromDisk`), so if a real rewind's
+  // rebuild lands while this reconcile's own read is in flight, the live ref already reflects it — comparing
+  // against the stale mount-time `stamp` would then see a mismatch that no longer exists and re-wipe a
+  // transcript that is already current (worst case: clobbering it with THIS read's now-staler rows). Absent
+  // stamp (a fresh launch, a --resume/--continue launch, a session with no `whenReady`) means no read, ever
+  // (A5) — this effect exists ONLY to close attach's own window. A match no-ops (A1b); a mismatch runs the
+  // SAME narrow document rebuild `rebuildAfterRewind` uses (`replaceFromDisk`), labeled "resynced" (not the
+  // default "resumed" — the likely cause is another client's rewind, not a resume) and D16 is the reason it
+  // is narrow: the follow drain's `tasks_changed`/in-flight-turn state is live truth this reconcile must
+  // never clear, unlike a real rewind's taskListRef/bgHarvest resets.
   useEffect(() => {
-    const stamp = opts.initialDiskStamp;
     const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
-    if (!stamp || typeof ready !== "function") return;
+    if (!opts.initialDiskStamp || typeof ready !== "function") return;
     let cancelled = false;
     void ready.call(session).then(async () => {
       if (cancelled || disposed.current) return;
@@ -1811,8 +1816,9 @@ export function useChat(
       const rows = await getSessionMessages(id).catch(() => null);
       if (cancelled || disposed.current || rows === null) return;
       const fresh = diskStampOf(rows);
-      if (fresh.count === stamp.count && fresh.lastUuid === stamp.lastUuid) return;
-      replaceFromDisk(rows, id);
+      const live = diskStampRef.current;
+      if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
+      replaceFromDisk(rows, id, { label: "resynced" });
     });
     return () => { cancelled = true; };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
