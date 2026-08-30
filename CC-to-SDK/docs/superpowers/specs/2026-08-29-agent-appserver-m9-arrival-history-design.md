@@ -1230,6 +1230,18 @@ gate reports the same 110 rows over 73 registered methods it did before the mile
   would have erased ordinary prompts — is precisely the class one property test pins and no careful reader
   reliably does. Ending the loop and writing the parity law was worth more than another rewrite.
 
+**Addendum — the external review waves (2026-08-31).** After the eight tasks closed, three whole-branch
+codex rounds ran against the merge-base: seven findings, then seven, then two — sixteen in all. Fourteen
+were fixed across three waves (the seed window's loss shapes, the lock-ownership and degrade-latch races,
+the config-dir namespace, the delete lifecycle, the atomic counts snapshot, and — caught by round 3 — a
+read-ordering regression wave 2 itself had introduced, the only finding of the sixteen that was ours
+rather than inherited). One was deferred to the tech-debt tracker (a sender's literal closing tag
+truncating its own body; no framing exists to do better), and one was dismissed against D1–D3 with the
+boundary it exposed now stated in the spec instead (fork-inherited history). The convergence signal was
+the doctrine's own: round 3 produced one self-regression and one scoped dismissal, nothing new about the
+design. Keyed acceptance ran green three times along the way — after the anchor fix, after the drain
+gate, and on the final tree.
+
 ## Revision Notes
 
 - **rev 1 (2026-08-29)** — transcript splice. Dead: six confirmed findings.
