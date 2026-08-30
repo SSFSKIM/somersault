@@ -146,7 +146,15 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
   // because `replaceFromDisk` (useChat.ts's D16 comment) touches only the document/lastAssistant/stamp ref,
   // never `busy`/`liveTurnRef`. It then pushes a further frame of the SAME turn to prove the turn is still
   // event-owned and rendering — not just that the flag didn't flip — and closes the turn to IDLE.
-  it("A2: an in-flight turn's live state survives the mismatch rebuild, and later frames of that turn still render", async () => {
+  // Re-read for bl9 F1: the mismatch rebuild now DEFERS while a turn is open (disk has no row for it yet)
+  // rather than firing mid-turn — so the invariant this test pins is stronger than before: not just that
+  // `busy`/the live turn survive an immediate rebuild, but that no rebuild runs at all until the turn's own
+  // `turn:end` re-arms it. The old scenario asserted the rebuild fired mid-turn and busy/liveTurn merely
+  // rode through it untouched; that expectation encoded the very loss F1 fixed (a completed frame arriving
+  // in that same window would have been silently dropped — see the F1 test above), so the scenario moves
+  // the fresh-tail-reply wait to after `turn:end`, which the deferral design satisfies more strongly: the
+  // rebuild races nothing at all, because it only ever runs once the turn has fully closed.
+  it("A2: an in-flight turn's live state survives the mismatch reconcile, and the deferred rebuild fires only at turn end", async () => {
     const staleRows = diskRows("a-stale", "the stale tail reply");
     const freshRows = diskRows("a-fresh", "the fresh tail reply");
     const session = fakeAttachSession({ sessionId: "sess-1" });
@@ -163,14 +171,18 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     await waitFor(() => frame(lastFrame).includes("BUSY"));
     session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "live turn frame one" }] } } });
     await waitFor(() => frame(lastFrame).includes("live turn frame one"));
-    session.resolveReady();                          // the follow ack lands → the reconcile's mismatch rebuild fires
-    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
-    expect(frame(lastFrame)).toContain("BUSY");       // the drained in-flight turn's UI state survives the narrow rebuild
-    // The turn is still event-owned after the rebuild: a later frame of the SAME turn still renders.
+    session.resolveReady();                          // the follow ack lands mid-turn → the mismatch is found but deferred, not fired
+    await new Promise((r) => setTimeout(r, 30));      // long enough for a stray mid-turn rebuild to land
+    expect(frame(lastFrame)).toContain("BUSY");       // the live turn's UI state is untouched — nothing rebuilt yet
+    expect(frame(lastFrame)).toContain("live turn frame one");
+    expect(frame(lastFrame)).not.toContain("the fresh tail reply");   // deferred: no rebuild has run
+    // The turn is still event-owned: a later frame of the SAME turn still renders.
     session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text: "live turn frame two" }] } } });
     await waitFor(() => frame(lastFrame).includes("live turn frame two"));
     session.pushEvent({ kind: "turn", phase: "end", seq: 1 });
     await waitFor(() => frame(lastFrame).includes("IDLE"));
+    // `turn:end` re-arms the deferred reconcile, which re-reads disk and now rebuilds.
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
   });
 
   // A4 (T-FOLLOW Task 2): the self-resume invariant, pinned from the reconcile's side. `chatAdapter.ts:94-100`
@@ -199,6 +211,92 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     await new Promise((r) => setTimeout(r, 20));      // long enough for a stray rebuild to land
     expect(wipes).toBe(0);                            // no clearScreen — the self-resume stays silent
     expect(frame(lastFrame)).toBe(seeded);            // document untouched
+  });
+
+  // F1 (bl9 round): disk only gains a turn's rows AT TURN END (probe 62) — a COMPLETED assistant message
+  // that already arrived live and rendered mid-turn is not on disk yet, so the mismatch rebuild used to
+  // discard it silently by replacing the document wholesale from a disk read that predates it. The fix is
+  // DEFERRAL: a mismatch found while a turn is open re-arms for that turn's OWN end instead of firing now —
+  // the turn's completion is what writes it to disk, so the deferred re-read catches it. `afterTurnEnd`
+  // stands in for "disk now has the turn's rows": before it flips, disk has only the pre-turn tail; after,
+  // it also carries the completed message, exactly as a real host's turn-end flush would.
+  it("F1: a COMPLETED assistant message delivered mid-turn survives because the mismatch rebuild defers to turn end", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRowsBeforeEnd = diskRows("a-fresh", "the fresh tail reply");
+    const freshRowsAfterEnd = [...freshRowsBeforeEnd, { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "COMPLETED-BEFORE-REBUILD" }] } }];
+    let afterTurnEnd = false;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => (afterTurnEnd ? freshRowsAfterEnd : freshRowsBeforeEnd) };
+    function BusyHost() {
+      const c = useChat(() => session, { initialEntries: entriesFrom(staleRows), initialDiskStamp: diskStampOf(staleRows) }, deps);
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
+    }
+    const { lastFrame } = render(<BusyHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("BUSY"));
+    session.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "live-1", message: { content: [{ type: "text", text: "COMPLETED-BEFORE-REBUILD" }] } } });
+    await waitFor(() => frame(lastFrame).includes("COMPLETED-BEFORE-REBUILD"));
+    session.resolveReady();                         // the follow ack lands mid-turn — the mismatch rebuild must defer, not fire
+    await new Promise((r) => setTimeout(r, 30));     // long enough for a stray mid-turn rebuild to land
+    expect(frame(lastFrame)).toContain("COMPLETED-BEFORE-REBUILD");   // still there — nothing rebuilt yet
+    expect(frame(lastFrame)).not.toContain("the fresh tail reply");   // and the deferred rebuild hasn't fired either
+    afterTurnEnd = true;                             // disk now has the turn's rows (the real turn-end flush)
+    session.pushEvent({ kind: "turn", phase: "end", seq: 1 });
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));   // the deferred reconcile fired
+    expect(frame(lastFrame)).toContain("COMPLETED-BEFORE-REBUILD");   // and the re-read disk now carries it — nothing lost
+  });
+
+  // F2 (bl9 round): the reconcile's own read is a pure equality check against `diskStampRef.current` with no
+  // notion of recency — it cannot tell "my read is stale because a newer rebuild already landed" from "my
+  // read is the newer, correcting one." A generation token bumped by every disk-backed rebuild closes it: the
+  // reconcile captures the gen before its read and discards the result if the gen moved underneath it.
+  it("F2: a reconcile read that resolves with STALE pre-rewind rows after a newer rebuild must not win", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let reads = 0, wipes = 0;
+    let resolveReconcileRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = {
+      getSessionMessages: async () => {
+        reads++;
+        if (reads === 1) return new Promise<unknown[]>((r) => { resolveReconcileRead = r; });
+        return freshRows;   // the live rewound rebuild's own read
+      },
+      clearScreen: () => { wipes++; },
+    };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();
+    await waitFor(() => reads === 1);
+    session.pushEvent({ kind: "rewound" } as any);
+    await waitFor(() => frame(lastFrame).includes("the fresh tail reply"));
+    expect(wipes).toBe(1);
+    resolveReconcileRead(staleRows);   // the reconcile's stale-window read resolves with the ORIGINAL pre-rewind rows
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).toContain("the fresh tail reply");
+    expect(frame(lastFrame)).not.toContain("the stale tail reply");
+  });
+
+  // F3 (bl9 round): `whenReady()` mints a fresh promise per call and the reconcile's `.then(...)` chain had
+  // no rejection handler — a dead host during the readiness window (a real, expected failure mode) produced
+  // an unhandled rejection, which crashes the process outright under Node's default `--unhandled-rejections`
+  // semantics. A read-only side path must never take the session down with it.
+  it("F3: a rejecting whenReady() must not produce an unhandled promise rejection", async () => {
+    const rows = diskRows("a1", "irrelevant");
+    const rejectingSession = { ...fakeAttachSession({ sessionId: "sess-1" }), whenReady: () => Promise.reject(new Error("host died")) };
+    let caught: unknown;
+    const onUnhandled = (e: unknown) => { caught = e; };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      render(<Host makeSession={() => rejectingSession as any} initialEntries={entriesFrom(rows)} initialDiskStamp={diskStampOf(rows)} deps={{ getSessionMessages: async () => rows }} />);
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(caught).toBeUndefined();
   });
 
   // D16 (pinned per the fix-wave review): the mismatch rebuild is the document-only `replaceFromDisk` core,

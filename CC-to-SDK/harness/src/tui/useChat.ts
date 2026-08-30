@@ -911,6 +911,18 @@ export function useChat(
   // the reconcile below). `undefined` for every non-attach mount — a fresh launch has no pre-follow read to
   // reconcile against, which is exactly the reconcile effect's "no stamp, no read" guard (A5).
   const diskStampRef = useRef<{ lastUuid?: string; count: number } | undefined>(opts.initialDiskStamp);
+  // bl9 F2: bumped by every disk-backed document replacement that keeps `diskStampRef` honest (`resumeInto`,
+  // `replaceFromDisk`, `rebuildAfterRewind`'s empty-rows branch). The reconcile's own stamp-equality check
+  // (below) cannot tell "my read is stale because a newer rebuild already landed" from "my read is the
+  // newer, correcting one" — both look like a mismatch against whatever `diskStampRef` says NOW. Capturing
+  // this at read-issue and comparing it at read-resolve does: if it moved, a newer rebuild raced ahead and
+  // this read's rows must never win, regardless of what they say.
+  const diskGenRef = useRef(0);
+  // bl9 F1: sole hand-off point between the post-follow reconcile effect and the turn-lifecycle event
+  // effect below — set when the reconcile finds a mismatch while a turn is open (disk has no row for it
+  // yet, so rebuilding now would discard already-rendered live content) and consumed once by the turn's own
+  // `turn:end`, whose completion is what writes the turn to disk.
+  const pendingReconcileRef = useRef<(() => void) | null>(null);
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1692,6 +1704,10 @@ export function useChat(
       else if (ev.kind === "turn" && ev.phase === "end") {
         mergeThoughtMs();                            // the LAST read of this turn's clock — it is dropped on the next line
         const l = liveTurnRef.current; liveTurnRef.current = null;
+        // bl9 F1: this turn just closed — disk now has its rows. If the post-follow reconcile deferred a
+        // mismatch rebuild because this very turn was open, re-run it now (`liveTurnRef` is already null
+        // above, so its own guard will not defer again unless a NEW turn has already started).
+        if (pendingReconcileRef.current) { const run = pendingReconcileRef.current; pendingReconcileRef.current = null; void run(); }
         if (l?.model) setModel(l.model);
         // The turn's own failure is retained history, not a transient line: the live region dies with the
         // turn, so an error has to enter the document to survive into Static and a later Ctrl-O.
@@ -1809,17 +1825,33 @@ export function useChat(
     const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
     if (!opts.initialDiskStamp || typeof ready !== "function") return;
     let cancelled = false;
-    void ready.call(session).then(async () => {
+    // bl9 F1/F2: one attempt, re-armed by `turn:end` (below) rather than re-run inline, so both guards —
+    // "never rebuild while a turn is open" and "a stale-arriving read must never win" — apply identically
+    // whether this is the first attempt or a deferred retry.
+    const attemptReconcile = async () => {
       if (cancelled || disposed.current) return;
       const id = session.sessionId;
       if (!id) return;
+      const gen = diskGenRef.current;                        // F2: captured AT READ-ISSUE
       const rows = await getSessionMessages(id).catch(() => null);
       if (cancelled || disposed.current || rows === null) return;
+      if (diskGenRef.current !== gen) return;                 // F2: a newer disk-backed rebuild raced ahead — this read is stale regardless of what it says
       const fresh = diskStampOf(rows);
       const live = diskStampRef.current;
       if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
+      // F1: a turn is event-owned — disk has no row for it yet (it lands at turn end), so rebuilding now
+      // would silently drop content already rendered off the live stream. Re-arm for that turn's OWN end
+      // instead of firing mid-turn: its completion is what writes it to disk, so the deferred re-read (this
+      // same function, invoked again below) catches everything then.
+      if (liveTurnRef.current !== null) { pendingReconcileRef.current = attemptReconcile; return; }
       replaceFromDisk(rows, id, { label: "resynced" });
-    });
+    };
+    // F3: a dead host during the readiness window is a real, expected failure — `whenReady()` mints a fresh
+    // promise per call, so it needs its own rejection handler rather than relying on `chatAdapter.ts`'s
+    // internal `ready.catch`. This is a read-only side path; a rejection here means "no reconcile ran", not
+    // a reason to take the session down (same convention as the `getSessionMessages` `.catch(() => null)`
+    // two lines up).
+    void ready.call(session).then(attemptReconcile).catch(() => {});
     return () => { cancelled = true; };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // Fetch the live command catalog once per session (capabilities() works pre-turn — probe 29). On a /resume
@@ -2519,6 +2551,7 @@ export function useChat(
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
     lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
     diskStampRef.current = diskStampOf(msgs);                   // bl9 D14: keep the reconcile's stamp honest across a resume too
+    diskGenRef.current++;                                       // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -3049,6 +3082,7 @@ export function useChat(
     replaceDocument(replayDocument(rows, { id, label: options.label, width: columnsFn() }));
     lastAssistant.current = recentAssistantTexts(rows);
     diskStampRef.current = diskStampOf(rows);
+    diskGenRef.current++;   // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
   }
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
@@ -3103,6 +3137,7 @@ export function useChat(
       const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh);
       lastAssistant.current = recentAssistantTexts(rows);   // rows is [] here — the ring resets, same as before
       diskStampRef.current = diskStampOf(rows);
+      diskGenRef.current++;   // bl9 F2: a disk-backed replacement — any reconcile read still in flight is now stale
     }
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
