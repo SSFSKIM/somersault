@@ -90,3 +90,14 @@ export function recentAssistantTexts(messages: any[], cap = RECENT_ASSISTANT_CAP
   }
   return out;
 }
+
+/** bl9 D14/D15: a cheap, order-sensitive fingerprint of a persisted row set — count plus the last row's
+ *  uuid — over the SAME raw rows `getSessionMessages` returns. Lets `cli/attach.ts`'s pre-follow read and
+ *  `useChat`'s post-follow reconcile compare "is this the same disk content" without diffing the whole
+ *  array: production's rewind is in-place (the session id survives), so it is `count`/`lastUuid` that move,
+ *  not the id — either moving is enough to flag the read as stale, and an unchanged stamp lets a current
+ *  client skip the reconcile's rebuild entirely. */
+export function diskStampOf(rows: readonly any[]): { lastUuid?: string; count: number } {
+  const last = rows[rows.length - 1] as any;
+  return { lastUuid: typeof last?.uuid === "string" ? last.uuid : undefined, count: rows.length };
+}
