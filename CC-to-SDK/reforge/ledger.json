@@ -81,7 +81,39 @@
               "declKind": "function",
               "declStart": 2141922,
               "declEnd": 2142159,
-              "sha256": "b311f4e1aa3376c9dd6a3d39e245f55cb0d003aafa245a9d528ba34e19d21fe7"
+              "sha256": "b311f4e1aa3376c9dd6a3d39e245f55cb0d003aafa245a9d528ba34e19d21fe7",
+              "closure": [
+                {
+                  "name": "UDn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 2141117,
+                  "declEnd": 2141191,
+                  "sha256": "b15a466fbe8ba892150eac10be943cce506e3a1912e38d0aaabc5610e546861c",
+                  "declKind": "function"
+                },
+                {
+                  "name": "NDn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 2140635,
+                  "declEnd": 2140922,
+                  "sha256": "ef2b81438bb5596e72c7a31a03dc99554e41488eb159b116ff6b7bb9b719ac46",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$Dn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 2140922,
+                  "declEnd": 2141117,
+                  "sha256": "6466f551d1d879e41bcb553fffee135242f7285861176f05458a7831fb071fc8",
+                  "declKind": "function"
+                }
+              ]
             },
             {
               "name": "Ft",
@@ -113,7 +145,19 @@
                 "declStart": 1888,
                 "declEnd": 2035,
                 "sha256": "295d42939347ed184e7a2633f2a357e598f6dc40eb1f2121f3f2caa8b047042c"
-              }
+              },
+              "closure": [
+                {
+                  "name": "l",
+                  "chunk": "chunk-hx5r9amq.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1806,
+                  "declEnd": 1863,
+                  "sha256": "7e7240b0badaab4e01f605bdffcea3bb719aa7baf8ccc1921d8bff7b52d468ed",
+                  "declKind": "variable"
+                }
+              ]
             },
             {
               "name": "rYn",
@@ -129,7 +173,19 @@
                 "declStart": 1864,
                 "declEnd": 1888,
                 "sha256": "4a01c9ec326f76b7925e1b6bcea622f3f9432af746d8666e097ba07fc2b53853"
-              }
+              },
+              "closure": [
+                {
+                  "name": "o",
+                  "chunk": "chunk-hx5r9amq.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1703,
+                  "declEnd": 1805,
+                  "sha256": "edb73bbaeb6719b6f9ac729e6199b4f4336582e4845173d31b0fdac32937c7ba",
+                  "declKind": "variable"
+                }
+              ]
             },
             {
               "name": "_Pt",
@@ -154,7 +210,19 @@
                 "declStart": 10913,
                 "declEnd": 11193,
                 "sha256": "69544239f4e7bf5fb6ea79abe37235b9896bb4a3a42a56d8a2573d84976b2aa8"
-              }
+              },
+              "closure": [
+                {
+                  "name": "nVt",
+                  "chunk": "chunk-vvj94wew.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 11193,
+                  "declEnd": 11273,
+                  "sha256": "fa31a047616dd93be329572fd76fe9764cf5d5c7c744327b1bfaf9d39a73f44c",
+                  "declKind": "function"
+                }
+              ]
             },
             {
               "name": "XDe",
@@ -205,7 +273,39 @@
               "declKind": "function",
               "declStart": 2134697,
               "declEnd": 2134923,
-              "sha256": "495f0f4fd49a1d369493d4bf613f10bc22bc5e20f5d6f2c25c033d8e678abf05"
+              "sha256": "495f0f4fd49a1d369493d4bf613f10bc22bc5e20f5d6f2c25c033d8e678abf05",
+              "closure": [
+                {
+                  "name": "iyt",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 2134590,
+                  "declEnd": 2134697,
+                  "sha256": "c1893584ff3415992a2d82b165e06ff718c90b065ad44c3ced06bfa381cc16df",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$v",
+                  "chunk": "chunk-h4c9751g.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1935,
+                  "declEnd": 2347,
+                  "sha256": "f9026caec859c57fdd194c0b5f4897db36cd7b9a5be7681d4ab91f76f9bed286",
+                  "declKind": "function"
+                },
+                {
+                  "name": "IDn",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 2134557,
+                  "declEnd": 2134589,
+                  "sha256": "a38dd9288acf4404c8e91cf8cf0791ea2c8a238e430ebd5bee9ad5ce9a205168",
+                  "declKind": "variable"
+                }
+              ]
             },
             {
               "name": "Vze",
@@ -253,7 +353,49 @@
                 "declStart": 2897,
                 "declEnd": 3102,
                 "sha256": "c76ca1ed2e071809a2e96a723ce3387b594f415f05df657d1777b0d66fc5dda7"
-              }
+              },
+              "closure": [
+                {
+                  "name": "Kte",
+                  "chunk": "chunk-9bs8dvhj.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1641,
+                  "declEnd": 1665,
+                  "sha256": "6dd0cc8b6a4cb62fe689b7b5572fee0e5e759408e5e6e18d49d415c3201721f4",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Ft",
+                  "chunk": "chunk-n2te6bm7.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 615,
+                  "declEnd": 844,
+                  "sha256": "c86d391255ddc497a4c1a91a2931de2c42ae705f8866e3328b164b60421133a4",
+                  "declKind": "function"
+                },
+                {
+                  "name": "$De",
+                  "chunk": "chunk-9bs8dvhj.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1939,
+                  "declEnd": 1947,
+                  "sha256": "918050479ba42d693b6e0e4bb1f46dc276422871755114ee7475e9d311b73060",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "sfn",
+                  "chunk": "chunk-9bs8dvhj.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1666,
+                  "declEnd": 1691,
+                  "sha256": "68a0cf670c2b37733b115ba9857b49a09ff15b208e263d5083dd79812283a2f6",
+                  "declKind": "variable"
+                }
+              ]
             },
             {
               "name": "kK",
@@ -894,7 +1036,19 @@
                 "declStart": 638,
                 "declEnd": 664,
                 "sha256": "0f2b891bef566e14a557693862a63d01a7c31da7a03b029c7b41ad26d2a0d0a0"
-              }
+              },
+              "closure": [
+                {
+                  "name": "r",
+                  "chunk": "chunk-9rhc0mtn.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 615,
+                  "declEnd": 638,
+                  "sha256": "7ac8535ec006bd379527c3fb1d4d746d6639b386f73779d1e02aac28e0d004c6",
+                  "declKind": "function"
+                }
+              ]
             },
             {
               "name": "c",
@@ -910,7 +1064,19 @@
                 "declStart": 664,
                 "declEnd": 690,
                 "sha256": "d4c7342609cd0a7749fcf57a4e4890c3b5ec3da022d6e17789baa2ccb91c1a46"
-              }
+              },
+              "closure": [
+                {
+                  "name": "r",
+                  "chunk": "chunk-9rhc0mtn.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 615,
+                  "declEnd": 638,
+                  "sha256": "7ac8535ec006bd379527c3fb1d4d746d6639b386f73779d1e02aac28e0d004c6",
+                  "declKind": "function"
+                }
+              ]
             }
           ]
         }

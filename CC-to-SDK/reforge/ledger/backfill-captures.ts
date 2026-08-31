@@ -17,13 +17,16 @@
 // (A capture the EMITTER could only cover narrowly — an import whose exporting
 // chunk is out of the graph — arrives carrying footprint.ts's `note` and is
 // copied through with it, which is the schema's way of saying so out loud.)
+// An owned capture also carries its transitive callee closure, whose nodes are
+// measured in THEIR OWN chunks — the walk crosses chunk boundaries, so each one
+// is rebased against the chunk it names rather than the capture's.
 //
 // Re-run it after any `npx tsx strangle/build.ts`, then `npx tsx ledger/check.ts`.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
-import { FOOTPRINTS_PATH, LEDGER_PATH, toUpstreamOffset, type FootprintCapture, type Ledger } from "./check.js";
+import { FOOTPRINTS_PATH, LEDGER_PATH, toUpstreamOffset, type FootprintCapture, type FootprintClosure, type Ledger } from "./check.js";
 import type { FootprintFile } from "../strangle/footprint.js";
 
 const checkOnly = process.argv.includes("--check");
@@ -115,6 +118,28 @@ for (const row of ledger.rows) {
         const far = rebase(`${sp.name}/${c.as} <- ${c.from.chunk}`, c.from.chunk, c.from);
         if (!far) continue;
         record.from = { chunk: c.from.chunk, exportedAs: c.from.exportedAs, ...far, sha256: c.from.sha256 };
+      }
+      // The owned capture's transitive callees, each measured in ITS OWN chunk —
+      // the walk crosses chunks, so the rebase has to as well.
+      if (c.closure) {
+        const closure: FootprintClosure[] = [];
+        for (const cl of c.closure) {
+          const at = rebase(`${sp.name}/${c.as} -> ${cl.name} (${cl.chunk})`, cl.chunk, cl);
+          if (!at) continue;
+          const node: FootprintClosure = {
+            name: cl.name,
+            chunk: cl.chunk,
+            depth: cl.depth,
+            basis: cl.basis,
+            ...at,
+            sha256: cl.sha256,
+          };
+          if (cl.declKind) node.declKind = cl.declKind;
+          if (cl.note) node.note = cl.note;
+          closure.push(node);
+        }
+        if (closure.length !== c.closure.length) continue; // the misses are already reported
+        record.closure = closure;
       }
       captures.push(record);
     }

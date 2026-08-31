@@ -121,6 +121,19 @@ for (const sp of SPLICES) {
   const replacement = cut.render(sp.fn, [...cut.shapeArgs, ...forwarded.map((c) => c.identifier)]);
   editsFor.set(path, [...(editsFor.get(path) ?? []), { start: cut.start, end: cut.end, replacement }]);
 
+  const footprint = spliceFootprint({
+    name: sp.name,
+    chunk: relative(STRANGLED_DIR, path),
+    sf,
+    cut,
+    captures,
+    resolveModule: (specifier) => {
+      const text = sources.get(specifier);
+      if (text === undefined) return null;
+      return { name: relative(STRANGLED_DIR, specifier), sf: chunkAst(specifier, text) };
+    },
+    upstream: upstreamBytes,
+  });
   footprints.push({
     name: sp.name,
     shape: sp.target,
@@ -129,20 +142,13 @@ for (const sp of SPLICES) {
     anchor: sp.anchor,
     signature: cut.signature,
     coverage: sp.coverage,
-    ...spliceFootprint({
-      name: sp.name,
-      chunk: relative(STRANGLED_DIR, path),
-      sf,
-      cut,
-      captures,
-      resolveModule: (specifier) => {
-        const text = sources.get(specifier);
-        if (text === undefined) return null;
-        return { name: relative(STRANGLED_DIR, specifier), sf: chunkAst(specifier, text) };
-      },
-      upstream: upstreamBytes,
-    }),
+    ...footprint,
   });
+
+  // What the closure walk reached, per owned capture — the number that says
+  // whether a pin bump can still change an uncovered branch behind a green row.
+  const closures = footprint.captures.filter((c) => c.closure !== undefined);
+  const wholeChunk = closures.flatMap((c) => c.closure!).filter((n) => n.basis === "whole-chunk");
 
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
   const moduleFile = join(REFORGE_ROOT, "strangle", "modules", `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);
@@ -152,6 +158,7 @@ for (const sp of SPLICES) {
     `spliced ${sp.name} [${sp.target}] ${cut.label} in ${relative(STRANGLED_DIR, path)}: ` +
       `${cut.original.length} chars -> ${replacement.length}-char delegation` +
       `${captures.length > 0 ? ` (derived: ${captures.map((c) => `${c.as}=${c.identifier}${c.owned ? "*" : ""}`).join(", ")})` : " (no free variables)"}` +
+      `${closures.length > 0 ? ` [closure: ${closures.map((c) => `${c.as}+${c.closure!.length}`).join(", ")}${wholeChunk.length > 0 ? `, ${wholeChunk.length} WHOLE-CHUNK` : ""}]` : ""}` +
       `${sabotaged ? " [SABOTAGE]" : ""}`,
   );
 }

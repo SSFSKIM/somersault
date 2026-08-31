@@ -334,6 +334,14 @@ export interface Declaration {
   /** the span of the declaring node, in the chunk the excision came from */
   start: number;
   end: number;
+  /**
+   * The declaring node itself. Carried so a caller can KEEP WALKING from a
+   * declaration it resolved — which is what the footprint's transitive closure
+   * does (campaign spec W1 fix): an owned pure helper's own callees are part of
+   * the behaviour the owned module replaced, so their declarations have to be
+   * resolvable, not merely hashable.
+   */
+  node: ts.Node;
   /** what kind of declaration it is, for the footprint's readability */
   kind: "variable" | "function" | "class" | "parameter" | "import" | "catch";
   /** set when the binding is an import — the specifier the declaration lives behind */
@@ -358,6 +366,7 @@ export function resolveDeclaration(sf: ts.SourceFile, from: ts.Node, name: strin
 const spanOf = (sf: ts.SourceFile) => (n: ts.Node, kind: Declaration["kind"], extra?: Partial<Declaration>): Declaration => ({
   start: n.getStart(sf),
   end: n.getEnd(),
+  node: n,
   kind,
   ...extra,
 });

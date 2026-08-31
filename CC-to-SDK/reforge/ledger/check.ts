@@ -32,6 +32,9 @@
 //      cannot be staled when a captured declaration moves, which is half of what
 //      §5 exists to catch (see strangle/footprint.ts for the closure-surface
 //      argument). ledger/backfill-captures.ts writes it from C1's emission.
+//      An OWNED capture additionally carries `closure` — the transitive callees
+//      of the helper the module reimplemented — validated the same way, span by
+//      span, against whichever chunk each one names (W1 boundary review).
 //   2. SPAN SANITY — integer offsets, `start < end`, and within the chunk.
 //   3. UPSTREAM BYTES — with the extraction bundle present, the chunk must
 //      exist and the span's bytes must hash to `target.sha256`. Bundle absent
@@ -85,6 +88,25 @@ export interface FootprintCaptureSource {
 }
 
 /**
+ * One node of an OWNED capture's transitive callee closure: the declaration a
+ * helper the module reimplemented delegates to, or — when the emitter's walk had
+ * to give up — a whole chunk. Mirrors strangle/footprint.ts's
+ * `ClosureFootprint`.
+ */
+export interface FootprintClosure {
+  name: string;
+  /** the chunk the span is measured in — not necessarily the capture's own */
+  chunk: string;
+  depth: number;
+  basis: string;
+  declKind?: string;
+  declStart: number;
+  declEnd: number;
+  sha256: string;
+  note?: string;
+}
+
+/**
  * A closure identifier the spliced module receives from the graph (§2.4).
  * Mirrors strangle/footprint.ts's `CaptureFootprint`, rebased onto upstream
  * offsets (see SPAN BASIS above).
@@ -103,6 +125,8 @@ export interface FootprintCapture {
   /** sha256 (hex) of the declaration's bytes */
   sha256: string;
   from?: FootprintCaptureSource;
+  /** an owned capture's transitive callee closure; absent on a forwarded one */
+  closure?: FootprintClosure[];
   /** why this record is narrower than it should be, when it is */
   note?: string;
 }
@@ -402,6 +426,33 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
           // Rule 3 is not a target-only rule: a capture span nobody resolves is
           // the same decoration, one level in.
           if (chunk !== null) verifyBytes(`.captures[${k}]`, chunk, c.declStart, c.declEnd, c.sha256);
+
+          // An owned capture's transitive callees: the same argument one level
+          // out. The module reimplemented the helper, so upstream is free to
+          // rewrite what the helper CALLS with the helper itself byte-identical
+          // (campaign spec W1 fix).
+          if (c.closure !== undefined) {
+            if (!Array.isArray(c.closure)) cf(".closure: must be an array of {name, chunk, depth, basis, declStart, declEnd, sha256}");
+            else {
+              c.closure.forEach((cl, m) => {
+                const zf = (msg: string): void => {
+                  cf(`.closure[${m}]${msg}`);
+                };
+                if (!isRecord(cl)) return zf(": not an object");
+                if (typeof cl.name !== "string" || cl.name.length === 0) zf(".name: missing");
+                if (cl.basis !== "declaration" && cl.basis !== "whole-chunk") zf(".basis: must be 'declaration' or 'whole-chunk'");
+                if (!isOffset(cl.depth)) zf(".depth: must be a non-negative integer");
+                if (cl.basis === "whole-chunk" && typeof cl.note !== "string") {
+                  zf(".note: a whole-chunk record must say why the closure could not be enumerated");
+                }
+                const clChunk = chunkPath(cl.chunk, zf, ".chunk");
+                if (!isOffset(cl.declStart) || !isOffset(cl.declEnd)) return zf(": declStart/declEnd must be non-negative integer offsets");
+                if (cl.declStart >= cl.declEnd) return zf(`: declaration span [${cl.declStart}, ${cl.declEnd}] is empty or reversed`);
+                if (typeof cl.sha256 !== "string" || !HASH_RE.test(cl.sha256)) return zf(".sha256: not a sha256 hex digest");
+                if (clChunk !== null) verifyBytes(`.captures[${k}].closure[${m}]`, clChunk, cl.declStart, cl.declEnd, cl.sha256);
+              });
+            }
+          }
 
           // The far side of an imported capture lives in another chunk — where
           // the behaviour actually is, and where upstream is free to move it
