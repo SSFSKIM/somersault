@@ -256,6 +256,11 @@ export interface ThreadRecord {
   flagPerms: { allow: string[]; ask: string[]; deny: string[]; additionalDirectories: string[] };
   flagOutputStyle?: string;
   flagEffort?: string;
+  /** Tri-state where its two siblings above are two-state: `null` is an EXPLICIT session-level clear
+   *  (host.ts's setAdvisorModel — as much a committed value as any model id, and it must survive a swap,
+   *  since the replacement's settings files may name an advisor the client turned off), `undefined` alone
+   *  means never written. The replay guard is therefore `!== undefined`, never truthiness. */
+  flagAdvisorModel?: string | null;
   /** The thread's own RUNTIME MCP TOPOLOGY — everything `mcpServer/set`, `mcpServer/toggle` and
    *  `mcpServer/permissionModeOverride/set` (mcp.ts) have pushed since the engine was opened. It exists for
    *  the same one reason the flag layer above does: a replacement engine is rebuilt from `record.config`,

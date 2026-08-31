@@ -1,7 +1,8 @@
 // appserver/settingsOps.ts — M2b Task 3b: the nine host-wire ops gap 6 named (`thread/settings/read`,
 // `thread/directory/{list,add,remove}`, `thread/permissionRule/{add,remove}`, `thread/outputStyle/set`,
 // `thread/effort/set`, `thread/clear`). Six of the nine reach the engine through ONE primitive —
-// `applyFlagSettings` — which is PER-KEY REPLACEMENT: every key the pushed object names is overwritten
+// `applyFlagSettings` — joined by a seventh, `thread/advisorModel/set` (BL11, mirroring bl8's
+// `set_advisor_model` host op) — which is PER-KEY REPLACEMENT: every key the pushed object names is overwritten
 // wholesale, never merged into, while keys it does not name are left alone. This file depends on both
 // halves of that. Because a named key is REPLACED, the whole of that key's value must be pushed every
 // time — hence the per-record accumulator (`registry.ts`'s `flagPerms`/`flagOutputStyle`/`flagEffort`)
@@ -50,7 +51,7 @@ import { openSession, type OpenSessionConfig } from "../session/index.js";
 import type { AppServer, ConnCtx, Handler } from "./server.js";
 import {
   settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams,
-  outputStyleSetParams, effortSetParams, threadClearParams,
+  outputStyleSetParams, effortSetParams, advisorModelSetParams, threadClearParams,
 } from "./schema/settingsOps.js";
 
 const nowSec = (): number => Math.floor(Date.now() / 1000); // mirrors mcp.ts/tasks.ts — registry.ts's `updatedAt` is unix seconds, not ms
@@ -230,6 +231,19 @@ export const outputStyleSet = flagMutation((params) => {
     // No dedup: unlike the list ops there is nothing to double up, and re-asserting the current style is a
     // legitimate way to push it onto an engine whose layer a client believes has drifted.
     delta: (record) => ({ settings: { outputStyle: p.data.style }, commit: () => { record.flagOutputStyle = p.data.style; } }),
+  };
+});
+
+export const advisorModelSet = flagMutation((params) => {
+  const p = advisorModelSetParams.safeParse(params);
+  if (!p.success) return { ok: false };
+  return {
+    ok: true, threadId: p.data.threadId,
+    hostOp: { op: "set_advisor_model", model: p.data.model },
+    // No dedup, as outputStyle. `null` COMMITS like any model id (host.ts's setAdvisorModel: the clear is
+    // a value the swap replay must re-push, or the replacement's settings files re-enable an advisor the
+    // client turned off) — which is why the accumulator write happens for both arms of the tri-state.
+    delta: (record) => ({ settings: { advisorModel: p.data.model }, commit: () => { record.flagAdvisorModel = p.data.model; } }),
   };
 });
 

@@ -20,4 +20,8 @@ export const outputStyleSetParams = threadIdParams.extend({ style: z.string().mi
 // standing between a client's typo and an effort setting that reads as applied and is not. The enum is
 // host/ops.ts's `set_effort` list verbatim — two wires, one vocabulary.
 export const effortSetParams = threadIdParams.extend({ level: z.enum(["low", "medium", "high", "xhigh", "max"]) });
+// `nullable`, not `optional`: host/ops.ts's `set_advisor_model` shape verbatim. `null` is a request to
+// CLEAR the advisor — a committed value, not an omission (host.ts's setAdvisorModel doctrine) — so the
+// wire must be able to say it, while an absent `model` stays a malformed request.
+export const advisorModelSetParams = threadIdParams.extend({ model: z.string().min(1).nullable() });
 export const threadClearParams = threadIdParams;

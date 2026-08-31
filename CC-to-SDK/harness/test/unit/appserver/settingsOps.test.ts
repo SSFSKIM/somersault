@@ -403,6 +403,97 @@ describe("appserver thread/outputStyle/set + thread/effort/set (M2b Task 3b)", (
   });
 });
 
+describe("appserver thread/advisorModel/set (BL11 — the seventh applyFlagSettings op)", () => {
+  it("pushes {advisorModel} and commits after the engine accepts", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const { srv, s, c, threadId } = await bootThread({ sessions: [engine] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: "claude-opus-5" } });
+    await tick();
+
+    expect(reply(s.lines, 3).result).toEqual({ ok: true });
+    expect(engine.flagCalls).toEqual([{ advisorModel: "claude-opus-5" }]);
+    expect(srv.registry.get(threadId)!.flagAdvisorModel).toBe("claude-opus-5");
+  });
+
+  it("null CLEARS — pushed as a value, committed as a value (host.ts's tri-state doctrine)", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const { srv, s, c, threadId } = await bootThread({ sessions: [engine] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: null } });
+    await tick();
+
+    expect(reply(s.lines, 3).result).toEqual({ ok: true });
+    expect(engine.flagCalls).toEqual([{ advisorModel: null }]);
+    expect(srv.registry.get(threadId)!.flagAdvisorModel).toBeNull();
+  });
+
+  it("an empty string is -32602 BEFORE the engine is touched — the host op's min(1), one vocabulary on two wires", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const { s, c, threadId } = await bootThread({ sessions: [engine] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: "" } });
+    await tick();
+
+    expect(reply(s.lines, 3).error.code).toBe(ERR.INVALID_PARAMS);
+    expect(engine.flagCalls).toEqual([]);
+  });
+
+  it("an ABSENT model key is -32602 — omission is a malformed request, only explicit null clears", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const { s, c, threadId } = await bootThread({ sessions: [engine] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId } });
+    await tick();
+
+    expect(reply(s.lines, 3).error.code).toBe(ERR.INVALID_PARAMS);
+    expect(engine.flagCalls).toEqual([]);
+  });
+
+  it("a committed model REPLAYS across an engine swap", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [engine, fresh] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: "claude-opus-5" } });
+    await tick();
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(fresh.flagCalls).toEqual([{ advisorModel: "claude-opus-5" }]);
+  });
+
+  it("an explicit null clear REPLAYS across an engine swap — the guard is !== undefined, not truthiness", async () => {
+    const engine = mkEngine({ sessionId: "s1" });
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [engine, fresh] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: null } });
+    await tick();
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    // The replacement's settings files may name an advisor the client turned off; dropping the null here
+    // would silently re-enable it. This cell reds on a truthy replay guard.
+    expect(fresh.flagCalls).toEqual([{ advisorModel: null }]);
+  });
+
+  it("a REJECTED push is not committed — the next swap must not replay an advisor the engine refused", async () => {
+    const engine = mkEngine({ sessionId: "s1", flagImpl: async () => { throw new Error("model_not_found"); } });
+    const fresh = mkEngine({});
+    const { s, c, threadId } = await bootThread({ sessions: [engine, fresh] });
+
+    send(c, { id: 3, method: "thread/advisorModel/set", params: { threadId, model: "claude-nope-9" } });
+    await tick();
+    expect(reply(s.lines, 3).error.code).toBe(ERR.INTERNAL);
+
+    send(c, { id: 4, method: "thread/clear", params: { threadId } });
+    await settle();
+
+    expect(fresh.flagCalls).toEqual([]); // nothing accumulated, so nothing replayed
+  });
+});
+
 describe("appserver settings-ops chain scope + updatedAt (M2b Task 3b)", () => {
   it("the mutations are chain-scoped: a hung directory/add blocks a later outputStyle/set on the same thread", async () => {
     let release!: () => void;
@@ -465,6 +556,7 @@ describe("appserver settings-ops — absent engine method answers -32601", () =>
     ["thread/permissionRule/remove", { behavior: "allow", rule: "Write" }],
     ["thread/outputStyle/set", { style: "explanatory" }],
     ["thread/effort/set", { level: "high" }],
+    ["thread/advisorModel/set", { model: "claude-opus-5" }],
   ];
 
   for (const [method, extra] of cases) {
@@ -493,6 +585,7 @@ describe("appserver settings-ops — absent engine method answers -32601", () =>
     expect(record.flagPerms).toEqual(EMPTY_PERMS);
     expect(record.flagOutputStyle).toBeUndefined();
     expect(record.flagEffort).toBeUndefined();
+    expect(record.flagAdvisorModel).toBeUndefined();
   });
 });
 

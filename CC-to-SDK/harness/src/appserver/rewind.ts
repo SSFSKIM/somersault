@@ -295,9 +295,10 @@ export function latchSwap(srv: AppServer, record: ThreadRecord): () => void {
  *     worse, the reverse. Values seeded from `record.config` are re-pushed too: they are already what the
  *     replacement was built with, so the call is idempotent and cheap, and skipping them would mean
  *     tracking which fields were client-written, a second piece of state to get wrong.
- *  2. the FLAG LAYER (`record.flagPerms`/`flagOutputStyle`/`flagEffort`) — Task 3b's accumulator, pushed
- *     as the same three `applyFlagSettings` calls host.ts makes, and only for the parts that hold
- *     anything (an empty layer needs no push).
+ *  2. the FLAG LAYER (`record.flagPerms`/`flagOutputStyle`/`flagEffort`/`flagAdvisorModel`) — Task 3b's
+ *     accumulator (plus BL11's advisor slot), pushed as the same per-key `applyFlagSettings` calls host.ts
+ *     makes, and only for the parts that hold anything (an empty layer needs no push — where "holds
+ *     anything" for the advisor slot includes an explicit `null` clear, see the guard below).
  *  3. the MCP LAYER (`record.mcpServersSet`/`mcpToggles`/`mcpOverrides`) — mcp.ts's accumulator, pushed
  *     as at most three labelled steps. The wholesale SET goes first because it is the base the other two
  *     refine; the toggles and the overrides then each replay as ONE step looping their entries, so a
@@ -346,6 +347,9 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
     if (Object.values(perms).some((a) => a.length)) await step("permissions", () => s.applyFlagSettings!({ permissions: { ...perms } }));
     if (record.flagOutputStyle) await step("outputStyle", () => s.applyFlagSettings!({ outputStyle: record.flagOutputStyle }));
     if (record.flagEffort) await step("effortLevel", () => s.applyFlagSettings!({ effortLevel: record.flagEffort }));
+    // `!== undefined`, never truthiness: `null` is an explicit advisor CLEAR the replacement must inherit
+    // (registry.ts's tri-state) — a truthy guard would silently re-enable a settings-file advisor here.
+    if (record.flagAdvisorModel !== undefined) await step("advisorModel", () => s.applyFlagSettings!({ advisorModel: record.flagAdvisorModel }));
   }
   // The MCP layer, set first (the wholesale base the other two refine). `catalogMoved` gates the one ping
   // below: it is set INSIDE each step, after the pushes, so a step that threw leaves it as it was.
@@ -400,6 +404,7 @@ async function repushThreadState(srv: AppServer, record: ThreadRecord): Promise<
   if (lost.includes("permissions")) record.flagPerms = emptyFlagPerms();
   if (lost.includes("outputStyle")) record.flagOutputStyle = undefined;
   if (lost.includes("effortLevel")) record.flagEffort = undefined;
+  if (lost.includes("advisorModel")) record.flagAdvisorModel = undefined;
   // The wholesale MCP SET reconciles like the flag layer — one atomic call, so a refusal drops the whole
   // base. The toggle/override maps were already reconciled per entry in the replay loop above (R10), so no
   // coarse clear here: clearing the whole map would discard the entries that DID apply and are live on the

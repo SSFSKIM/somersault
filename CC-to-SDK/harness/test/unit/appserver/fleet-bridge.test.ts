@@ -98,6 +98,7 @@ describe("flag writers on a fleet thread forward dedicated ops and touch no accu
     { method: "thread/permissionRule/remove", params: { behavior: "deny", rule: "Bash(rm:*)" }, op: "remove_rule", args: ["deny", "Bash(rm:*)"] },
     { method: "thread/outputStyle/set", params: { style: "Explanatory" }, op: "set_output_style", args: ["Explanatory"] },
     { method: "thread/effort/set", params: { level: "high" }, op: "set_effort", args: ["high"] },
+    { method: "thread/advisorModel/set", params: { model: "claude-opus-5" }, op: "set_advisor_model", args: ["claude-opus-5"] },
   ];
 
   for (const c of CASES) {
@@ -115,8 +116,16 @@ describe("flag writers on a fleet thread forward dedicated ops and touch no accu
       expect(record.flagPerms).toEqual(emptyFlagPerms());
       expect(record.flagOutputStyle).toBeUndefined();
       expect(record.flagEffort).toBeUndefined();
+      expect(record.flagAdvisorModel).toBeUndefined();
     });
   }
+
+  it("an advisorModel null CLEAR forwards too — the host op's own tri-state (`.nullable()`), so turning the advisor off crosses this wire the same as choosing one", async () => {
+    const { fh, conn, lines, record } = await attached();
+    expect((await call(conn, lines, 10, "thread/advisorModel/set", { threadId: record.id, model: null })).result).toEqual({ ok: true });
+    expect(calls(fh, "set_advisor_model")).toEqual([[null]]);
+    expect(record.flagAdvisorModel).toBeUndefined();
+  });
 
   it("a repeat directory/add forwards AGAIN — the dedup guard is inProcess-only (the host owns truth)", async () => {
     const { fh, conn, lines, record } = await attached();

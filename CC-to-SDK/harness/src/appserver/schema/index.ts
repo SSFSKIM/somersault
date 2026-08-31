@@ -10,7 +10,7 @@ import { modelSetParams, permissionModeSetParams, thinkingSetParams, settingsApp
 import { rewindAnchorsParams, rewindDryRunParams, rewindParams, reopenParams } from "./rewind.js";
 import { mcpStatusParams, mcpNameParams, mcpToggleParams, mcpSetParams, mcpOverrideParams } from "./mcp.js";
 import { taskListParams, taskStopParams, turnBackgroundParams } from "./tasks.js";
-import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, threadClearParams } from "./settingsOps.js";
+import { settingsReadParams, directoryListParams, directoryPathParams, permissionRuleParams, outputStyleSetParams, effortSetParams, advisorModelSetParams, threadClearParams } from "./settingsOps.js";
 import { fleetListParams, threadAttachParams, threadStopParams } from "./fleet.js";
 import { fsReadParams, fsSearchParams, shellCommandParams } from "./workspace.js";
 import { reviewStartParams } from "./review.js";
@@ -93,6 +93,7 @@ export const methodSchemas: Record<string, MethodSchema> = {
   "thread/permissionRule/remove": { params: permissionRuleParams },
   "thread/outputStyle/set": { params: outputStyleSetParams },
   "thread/effort/set": { params: effortSetParams },
+  "thread/advisorModel/set": { params: advisorModelSetParams },
   "thread/clear": { params: threadClearParams },
   // Task 5's probe promotions. Both reloads take the bare `{threadId}` — no options exist to pass, the
   // engine re-scans its whole plugin/skill set.
