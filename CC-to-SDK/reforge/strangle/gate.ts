@@ -22,6 +22,12 @@
 //                ride along.
 //   final      : faithful build → the FULL acceptance surface (m2/all.ts:
 //                corpus + faults + partials + cross-resume + raw) must be GREEN.
+//   auxiliary  : the two end-to-end guards that cannot live in the determinism
+//                block because they are not build-free — the credential-leak
+//                proof (a real engine against a stub upstream) and the runtime
+//                pin's byte identity. Last because they are the slowest per
+//                check, in the gate because a suite that only ever runs by hand
+//                is a suite that rots.
 //
 // Both halves are mandatory: either alone is satisfiable by a no-op splice.
 //
@@ -121,6 +127,26 @@ if (!buildAndBoot([])) {
   const verdicts = (r.stdout ?? "").split("\n").filter((l) => /^\s+(PASS|FAIL)\s{2}/.test(l)).slice(-5);
   for (const v of verdicts) console.log(`  ${v.trim()}`);
   results.push({ label: "equivalence (faithful)", pass: r.status === 0 });
+}
+
+// ---- auxiliary suites: the end-to-end guards, run last ----------------------
+// Each spawns a real engine or hashes the 60 MB runtime, so neither belongs in
+// the build-free determinism block; both are cheap enough (seconds) to be
+// phases rather than a separate recipe nobody remembers to run.
+console.log("\n━━━ auxiliary: credential never reaches the engine; the runtime pin is the bytes ━━━");
+for (const [label, script] of [
+  ["credential leak (end-to-end, X6)", "src/credential-leak.test.ts"],
+  ["runtime pin is the bytes (§3.5)", "strangle/toolchain.test.ts"],
+] as [string, string][]) {
+  const r = run("npx", ["tsx", script]);
+  const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));
+  for (const l of lines) console.log(`  ${l.trim()}`);
+  // A suite that died before printing anything must still say why, or a red
+  // here reads as an unexplained FAIL in the summary.
+  if (r.status !== 0 && lines.every((l) => !l.startsWith("FAIL"))) {
+    console.log(`  ${`${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(-3).join(" | ") || "<no output>"}`);
+  }
+  results.push({ label, pass: r.status === 0 });
 }
 
 console.log("\n=== strangler gate ===");

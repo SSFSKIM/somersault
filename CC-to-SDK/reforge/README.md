@@ -772,7 +772,8 @@ GATE PASS — every splice is live AND the faithful build is equivalent
 Closure-ledger movement: `subsystem/environment-and-system-prompt`,
 `subsystem/session-storage` and `subsystem/query-loop` move `unowned` →
 `spliced`, and all four spliced rows now carry the upstream footprint hashes the
-build emits (`ledger.json`, 46 rows, `spliced=4 unowned=42`).
+build emits (`ledger.json`, 46 rows, `spliced=4 unowned=42`) — target spans then,
+plus all 22 capture declarations since the W0 close-out backfilled them.
 
 ## W0c — determinism & strict replay (2026-08-31): zero positional fallbacks
 
@@ -1029,6 +1030,8 @@ warning, and both were real:
   PASS  liveness write-tool-result / task-create-result / glob-result
   PASS  liveness env-block / text-delta / session-materialize
   PASS  equivalence (faithful)
+  PASS  credential leak (end-to-end, X6)
+  PASS  runtime pin is the bytes (§3.5)
 
 GATE PASS — every splice is live AND the faithful build is equivalent
 ```
@@ -1046,10 +1049,12 @@ npx tsx research/tools/extract-gate-defaults.ts --check
 npx tsx m3/flip-liveness.ts                  # override sweep + negative control
 ```
 
-Two W0-boundary-review suites run **alongside** the gate rather than as phases of
-it, because each spawns a real engine or hashes a 60 MB binary and the gate's
-determinism block is meant to be build-free and fast. Run them with the block
-above; folding them in is a candidate for the next gate revision:
+The two W0-boundary-review suites below used to run only by hand, alongside the
+gate rather than inside it, because each spawns a real engine or hashes a 60 MB
+binary and the determinism block is meant to be build-free and fast. They are now
+the gate's **auxiliary** phase — last, after equivalence, so the build-free
+checks still fail first — and a red in either fails the gate. Measured at ~5 s
+combined, against a gate that builds seven times. They still run standalone:
 
 ```sh
 npx tsx src/credential-leak.test.ts          # X6 end-to-end, fake credential + stub upstream
