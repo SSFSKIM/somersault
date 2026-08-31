@@ -2,8 +2,9 @@
 //
 //   mechanism  : the transform's own integrity, on fixtures
 //                (strangle/mechanism.test.ts): the footprint covers the closure
-//                surface and not just the target span, the capture inventory is
-//                exhaustive in both directions, the target-identity guard
+//                surface and not just the target span — including, for an OWNED
+//                helper, what that helper itself calls — the capture inventory
+//                is exhaustive in both directions, the target-identity guard
 //                refuses a drifted anchor, computed destructuring keys are
 //                refused. Each watched failing as well as passing — a guard
 //                only ever fed valid input proves nothing about what it

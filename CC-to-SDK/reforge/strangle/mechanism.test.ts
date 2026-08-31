@@ -14,6 +14,12 @@
 //   footprint  perturbing a CAPTURED declaration's bytes must move that
 //              capture's hash and must NOT move the target's — the whole point
 //              of extending §5's footprint past the excised span.
+//   closure    …and one level further out: perturbing what an OWNED helper
+//              CALLS must move the footprint even though the helper itself, its
+//              import site and the target are all byte-identical. Plus the
+//              conservative fallback, watched firing: a callee the graph cannot
+//              follow, or a closure too wide to enumerate, degrades to hashing
+//              whole chunks rather than to a narrower record.
 //   inventory  the manifest's captures must be exactly the body's free
 //              variables: dropping one fails, inventing one fails.
 //   signature  an anchor that drifts into a same-shaped NESTED node must fail
@@ -116,6 +122,109 @@ function footprintOf(owner: string, helper: string) {
   check("…and leaves the TARGET hash untouched", afterHelper.target.sha256 === base.target.sha256);
   check("…and leaves the import-site hash untouched",
     afterHelper.captures.find((c) => c.as === "helper")!.sha256 === helper().sha256);
+}
+
+// ---- FINDING 1b: the OWNED capture's transitive callee closure ---------------
+// The W1 boundary review's finding, on a fixture with the exact shape the real
+// graph has: the owned helper's whole body is a delegation, so every byte that
+// decides its behaviour lives in a callee the old record never touched.
+{
+  const DEEP_SPECIFIER = "/fixture/chunk-deep.js";
+  const ABSENT_SPECIFIER = "/fixture/chunk-absent.js";
+  // HELPER → DEEPEST → PAD: two levels, so `depth` has something to report.
+  const deepChunk =
+    `var PAD=" pad";\n` +
+    `function DEEPEST(n){return \`d:\${n}\`+PAD}\n` +
+    `function UNRELATED(x){return "untouched:"+x}\n` +
+    `function HELPER(o){return DEEPEST(o.n)}\n` +
+    `export{HELPER};\n`;
+  const deepOwner =
+    `import{HELPER as help}from"${DEEP_SPECIFIER}";\n` +
+    `export const tools={mapResult(output,id){return{id,content:"DEEP_ANCHOR"+help(output)}}};\n`;
+
+  /** `owned` decides whether the closure is walked at all — that is the claim. */
+  const deepFootprint = (helperText: string, owned = true, owner = deepOwner) => {
+    const sf = parse(owner, "deep-owner");
+    const cut = excise(sf, owner.indexOf("DEEP_ANCHOR"), "sibling-method");
+    return spliceFootprint({
+      name: "fixture-deep",
+      chunk: "chunk-owner.js",
+      sf,
+      cut,
+      captures: [{ as: "helper", kind: "pure-helper", owned, identifier: "help" }],
+      resolveModule: (specifier) =>
+        specifier === DEEP_SPECIFIER ? { name: "chunk-deep.js", sf: parse(helperText, "deep") } : null,
+      upstream: (t) => t,
+    });
+  };
+  const only = (fp: ReturnType<typeof deepFootprint>) => fp.captures[0];
+  const base = deepFootprint(deepChunk);
+  const closure = only(base).closure ?? [];
+  const nodeFor = (fp: ReturnType<typeof deepFootprint>, n: string) => (only(fp).closure ?? []).find((c) => c.name === n);
+
+  check("an owned capture records its transitive callees, with depth",
+    closure.length === 2 && nodeFor(base, "DEEPEST")?.depth === 1 && nodeFor(base, "PAD")?.depth === 2,
+    JSON.stringify(closure.map((c) => `${c.name}@d${c.depth}`)));
+  check("…each as a resolved declaration in the chunk that holds it",
+    closure.every((c) => c.basis === "declaration" && c.chunk === "chunk-deep.js" && /^[0-9a-f]{64}$/.test(c.sha256)));
+  check("a FORWARDED capture records none — upstream's own function still runs there",
+    only(deepFootprint(deepChunk, false)).closure === undefined);
+
+  // THE CONTROL. Perturb only the transitive callee, length-preserving, leaving
+  // the helper's own bytes, its import site and the target span untouched.
+  const movedDeep = deepChunk.replace("`d:${n}`", "`D:${n}`");
+  check("the transitive perturbation is length-preserving", movedDeep.length === deepChunk.length && movedDeep !== deepChunk);
+  const afterDeep = deepFootprint(movedDeep);
+  check("perturbing a TRANSITIVE callee moves the emitted footprint",
+    JSON.stringify(afterDeep) !== JSON.stringify(base),
+    "THE DEFECT: the record stopped at the directly-captured helper, so a rewritten callee was invisible");
+  check("…and it moves exactly that callee's hash",
+    nodeFor(base, "DEEPEST") !== undefined && nodeFor(afterDeep, "DEEPEST")?.sha256 !== nodeFor(base, "DEEPEST")?.sha256);
+  check("…while the captured helper's OWN declaration is byte-identical",
+    only(afterDeep).from?.sha256 !== undefined && only(afterDeep).from?.sha256 === only(base).from?.sha256);
+  check("…and the import site and the TARGET are untouched",
+    only(afterDeep).sha256 === only(base).sha256 && afterDeep.target.sha256 === base.target.sha256);
+  check("…and the callee's own callee is untouched",
+    nodeFor(base, "PAD") !== undefined && nodeFor(afterDeep, "PAD")?.sha256 === nodeFor(base, "PAD")?.sha256);
+
+  // Depth 2 is reached for real, not just labelled.
+  const movedPad = deepChunk.replace('var PAD=" pad"', 'var PAD=" PAD"');
+  const afterPad = deepFootprint(movedPad);
+  check("perturbing a DEPTH-2 callee moves the emitted footprint too",
+    JSON.stringify(afterPad) !== JSON.stringify(base));
+  check("…and it moves exactly that callee's hash",
+    nodeFor(base, "PAD") !== undefined && nodeFor(afterPad, "PAD")?.sha256 !== nodeFor(base, "PAD")?.sha256);
+
+  // …and the record is an enumeration, not a chunk hash in disguise: a change to
+  // a declaration nothing in the closure references must move nothing.
+  const movedUnrelated = deepChunk.replace('"untouched:"', '"UNTOUCHED:"');
+  check("the unrelated perturbation is length-preserving", movedUnrelated.length === deepChunk.length);
+  const afterUnrelated = deepFootprint(movedUnrelated);
+  check("a declaration OUTSIDE the closure moves nothing — the record is precise, not a whole-chunk hash",
+    JSON.stringify(afterUnrelated) === JSON.stringify(base));
+
+  // ---- the conservative fallback, watched firing ----
+  const unreachable =
+    `import{MISSING as gone}from"${ABSENT_SPECIFIER}";\n` +
+    `function HELPER(o){return gone(o.n)}\n` +
+    `export{HELPER};\n`;
+  const bailed = deepFootprint(unreachable);
+  const bailedClosure = only(bailed).closure ?? [];
+  check("a callee the graph cannot follow degrades to a WHOLE-CHUNK hash, not to silence",
+    bailedClosure.length === 1 && bailedClosure[0]?.basis === "whole-chunk" && bailedClosure[0]?.chunk === "chunk-deep.js" &&
+      bailedClosure[0]?.declStart === 0 && bailedClosure[0]?.declEnd === unreachable.length);
+  check("…and says why, on the node and on the capture",
+    /cannot reach/.test(bailedClosure[0]?.note ?? "") && /could not be enumerated/.test(only(bailed).note ?? ""));
+  check("…and that hash moves on ANY edit in the chunk it covers",
+    bailedClosure[0] !== undefined &&
+      (only(deepFootprint(unreachable.replace("o.n", "o.N"))).closure ?? [])[0]?.sha256 !== bailedClosure[0]?.sha256);
+
+  // Too WIDE rather than unreachable: the same degradation, on the budget.
+  const wide = new Array(25).fill(0).map((_, i) => `function W${i}(){return ${i}}`).join("\n");
+  const wideChunk = `${wide}\nfunction HELPER(o){return [${new Array(25).fill(0).map((_, i) => `W${i}`).join(",")}].length+o.n}\nexport{HELPER};\n`;
+  const wideFp = only(deepFootprint(wideChunk)).closure ?? [];
+  check("a closure too wide to enumerate degrades the same way",
+    wideFp.length === 1 && wideFp[0]?.basis === "whole-chunk" && /exceeds 20 declarations/.test(wideFp[0]?.note ?? ""));
 }
 
 // ---- FINDING 2: the capture inventory is exhaustive, both directions ---------
