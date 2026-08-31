@@ -574,7 +574,12 @@ follow as C4/C5.
   C1/C2/C3. **Required.** Status: not-dispatched.
 
 #### C13–C14: W10–W11 (bash executor + safety AST · MCP adapter + slash/skills) — autonomous at dispatch
-- Per §6 rows; C13 needs C1's class-method shape. **Required.** Status: not-dispatched.
+- Per §6 rows; C13 needs C1's class-method shape. **C13's charter widened (2026-09-01, C4
+  flow-back): it also owns `subsystem/tool-result-validators`** — the Edit `validateInput` unit
+  C4's scout split out of the formatter row (3,317 chars, effectful captures: file-staleness
+  side channel; W10 is the execution-depth wave, so the file-tool validation path rides with
+  it). C13's cut at dispatch decides S-method vs S-module for it. **Required.** Status:
+  not-dispatched.
 
 #### C15: W12 — subagent dispatch + sandbox (`ToolRuntimePort`) — controlled (fable)
 - Per §6 row; mutation battery per §3.1. **Required.** Status: not-dispatched.
