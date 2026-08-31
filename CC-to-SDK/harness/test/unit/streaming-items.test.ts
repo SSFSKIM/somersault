@@ -12,21 +12,28 @@ import type { RenderItem } from "../../src/tui/toolRenderer.js";
 
 const rows = (items: readonly RenderItem[]) => items.reduce((sum, i) => sum + renderItemHeight(i), 0);
 const text = (item: RenderItem) => (item.kind === "line" ? item.line.text : item.body.map((l) => l.text).join("\n"));
+// T-SPACE Task 4 (spec §2.2/D14, R3 §1.5): `streamingItems` now prepends its own leading `sep:*:gap` chrome
+// item (a real, unconditionally-non-empty-gated blank row — "any block gets one blank row above it"), so
+// every assertion below shifts by +1 and drops a row for the arithmetic. `dropGap` isolates the CONTENT rows
+// this file was always about; the id/ownerKey tests assert the separator itself where that's the point.
+const dropGap = (items: readonly RenderItem[]) => items.slice(1);
 
 describe("streamingItems", () => {
   it("reports three rows for a line three times the width, one item per physical row", () => {
     const line: RenderLine = { text: "abcdefghij".repeat(3) };      // 30 columns at a width of 10
     const items = streamingItems([line], 10);
-    expect(items).toHaveLength(3);
-    expect(rows(items)).toBe(3);
-    expect(items.map(text)).toEqual(["abcdefghij", "abcdefghij", "abcdefghij"]);
+    expect(items).toHaveLength(4);                    // R3 §1.5: +1 leading separator ahead of the 3 content rows
+    expect(rows(items)).toBe(4);
+    expect(items.map(text)).toEqual(["", "abcdefghij", "abcdefghij", "abcdefghij"]);
+    expect(dropGap(items).map(text)).toEqual(["abcdefghij", "abcdefghij", "abcdefghij"]);
   });
 
   it("leaves a line that already fits completely untouched — styling, segments and all", () => {
     const line: RenderLine = { text: "hi there", bold: true, segments: [{ text: "hi ", bold: true }, { text: "there", color: "#ff0000" }] };
     const items = streamingItems([line], 40);
-    expect(items).toHaveLength(1);
-    expect(items[0]!.kind === "line" && items[0]!.line).toEqual(line);
+    expect(items).toHaveLength(2);                    // R3 §1.5: the leading separator, then the untouched line
+    expect(items[0]!.id.startsWith("sep:")).toBe(true);
+    expect(items[1]!.kind === "line" && items[1]!.line).toEqual(line);
   });
 
   it("pays for the gutter's columns and keeps the glyph on the first row only", () => {
@@ -35,15 +42,15 @@ describe("streamingItems", () => {
     // the body, and the continuation row is indented to sit under it rather than under the bullet.
     const line: RenderLine = { text: "1234567890", gutter: { text: "⏺ " } };
     const items = streamingItems([line], 10);
-    expect(items).toHaveLength(2);
-    expect(items.map(text)).toEqual(["1234567", "   890"]);
-    expect(items[0]!.kind === "line" && items[0]!.line.gutter?.text).toBe("⏺ ");
-    expect(items[1]!.kind === "line" && items[1]!.line.gutter).toBeUndefined();
+    expect(items).toHaveLength(3);                    // R3 §1.5: +1 leading separator ahead of the 2 wrapped rows
+    expect(items.map(text)).toEqual(["", "1234567", "   890"]);
+    expect(items[1]!.kind === "line" && items[1]!.line.gutter?.text).toBe("⏺ ");
+    expect(items[2]!.kind === "line" && items[2]!.line.gutter).toBeUndefined();
   });
 
   it("gives an embedded newline its own row, and an empty line one row rather than none", () => {
-    expect(rows(streamingItems([{ text: "a\nb\nc" }], 80))).toBe(3);
-    expect(rows(streamingItems([{ text: "" }], 80))).toBe(1);
+    expect(rows(streamingItems([{ text: "a\nb\nc" }], 80))).toBe(4);   // R3 §1.5: 3 content rows + 1 leading separator
+    expect(rows(streamingItems([{ text: "" }], 80))).toBe(2);          // 1 content row + 1 leading separator
   });
 
   it("ids are positional and stable across calls, so React keeps its instances between deltas", () => {
@@ -51,19 +58,25 @@ describe("streamingItems", () => {
     const second = streamingItems([{ text: "one" }, { text: "two!!" }], 80).map((i) => i.id);
     // T17 fix round: the id of a row that did NOT wrap is the SOURCE id, and a wrapped one wears
     // `wrapItems`' `#w<row>` suffix — which is what lets a held scroll offset be remapped across a re-wrap.
-    expect(first).toEqual(["stream:0", "stream:1"]);
+    // T-SPACE: the separator is keyed off line 0's own unwrapped id (`stream:0`), so it too is stable
+    // across a delta that only grows line 1 (spacing-invariant.test.tsx pins the "does not accumulate" claim).
+    expect(first).toEqual(["sep:stream:0:gap", "stream:0", "stream:1"]);
     expect(second).toEqual(first);
     // …and a wrapped line's rows are distinct ids, never a collision that would drop rows.
-    expect(new Set(streamingItems([{ text: "x".repeat(25) }], 10).map((i) => i.id)).size).toBe(3);
+    expect(new Set(streamingItems([{ text: "x".repeat(25) }], 10).map((i) => i.id)).size).toBe(4); // 1 separator + 3 wrapped rows
   });
 
   // F10 T-HOVER H1: every item of one call carries the ownerKey it was given, and the default applies when
-  // none was — the sibling of this file's own id-scheme pins above.
+  // none was — the sibling of this file's own id-scheme pins above. T-SPACE: the leading separator is chrome
+  // and carries NO ownerKey by design (R3 §1.5 / D14 — "unbanded/no clickable/foldAnchor"), so it is excluded
+  // from the uniformity check rather than lumped in with the content rows.
   it("stamps every row with the given ownerKey, and falls back to streamOwnerKey(\"live\") when none is given", () => {
-    const rows = streamingItems([{ text: "one" }, { text: "x".repeat(25) }], 10, streamOwnerKey("msg_01"));
-    expect(rows.length).toBeGreaterThan(2);
-    expect(new Set(rows.map((r) => r.ownerKey)).size).toBe(1);
-    expect(rows[0]!.ownerKey).toBe("stream:msg_01");
-    expect(streamingItems([{ text: "one" }], 80)[0]!.ownerKey).toBe(streamOwnerKey("live"));
+    const withOwner = streamingItems([{ text: "one" }, { text: "x".repeat(25) }], 10, streamOwnerKey("msg_01"));
+    expect(withOwner[0]!.ownerKey).toBeUndefined();               // the leading separator: chrome, no ownerKey
+    const content = dropGap(withOwner);
+    expect(content.length).toBeGreaterThan(2);
+    expect(new Set(content.map((r) => r.ownerKey)).size).toBe(1);
+    expect(content[0]!.ownerKey).toBe("stream:msg_01");
+    expect(dropGap(streamingItems([{ text: "one" }], 80))[0]!.ownerKey).toBe(streamOwnerKey("live"));
   });
 });

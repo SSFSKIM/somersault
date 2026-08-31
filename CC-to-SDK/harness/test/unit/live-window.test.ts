@@ -169,10 +169,14 @@ describe("selectLiveWindow", () => {
 });
 
 describe("mainWindowCap", () => {
-  it("is rows minus the measured 14-row dock, floored at zero", () => {
-    expect(mainWindowCap(40)).toBe(26);
-    expect(mainWindowCap(24)).toBe(10);
-    expect(mainWindowCap(15)).toBe(1);
+  // T-SPACE Task 3 remeasured the dock 14 -> 16 rows (`MAIN_DOCK_ROWS` in `liveWindow.ts`: the live-turn
+  // slot's new `marginTop` and the composer's, both previously uncharged — R3 §1.5/D16). This suite
+  // (`test/unit/`) mirrors the dock constant directly and was missed by the test/tui-scoped Task 2/3
+  // rebaselines; fixed here as part of Task 4's full-battery pass.
+  it("is rows minus the measured 16-row dock, floored at zero", () => {
+    expect(mainWindowCap(40)).toBe(24);
+    expect(mainWindowCap(24)).toBe(8);
+    expect(mainWindowCap(15)).toBe(0);
     expect(mainWindowCap(14)).toBe(0);
     expect(mainWindowCap(8)).toBe(0);
     expect(mainWindowCap(0)).toBe(0);
