@@ -74,10 +74,10 @@ the ledger row (X2).
 
 ```sh
 npx tsx engine-ts/check-reachability.ts    # static ownership: no import reaches the substrate
-npx tsx engine-ts/reachability.test.ts     # its controls (19)
+npx tsx engine-ts/reachability.test.ts     # its controls (30)
 npx tsx engine-ts/skeleton.test.ts         # W0 acceptance: boot, --owned, refusal, registry (25)
 npx tsx ledger/check.ts                    # the closure ledger against its canonical row list
-npx tsx ledger/check.test.ts               # its controls (28)
+npx tsx ledger/check.test.ts               # its controls (56)
 npx tsc --noEmit                           # from reforge/
 ```
 
@@ -86,8 +86,22 @@ an import that resolves — or textually points — into the extraction bundle, 
 pinned binary, or `reforge/build/` (symlinks followed, since `build/real-binary`
 is one); a `/$bunfs/root/` specifier; a computed dynamic `import()` (not
 statically checkable, and §3.6 names it a delegation route); an unresolvable
-local import; and **any `.ts` under `engine-ts/` the walk never reached** — an
-unregistered module would otherwise carry a forbidden import invisibly.
+local import; a bare specifier that neither resolves nor is a node builtin; a
+file the parser reports syntax errors for; and **any `.ts` under `engine-ts/` the
+walk never reached** — an unregistered module would otherwise carry a forbidden
+import invisibly.
+
+Two properties are worth stating because their absence was a real hole. Discovery
+is a **TypeScript AST walk** (the same parser `strangle/ast.ts` excises with),
+not a regex sweep: the regexes required whitespace after `import`/`export`, so
+the compact forms a bundler emits — `export{x}from"<chunk>"`, `export*from"…"` —
+were invisible, and a re-export chain through one such line hid a whole subgraph.
+And a **bare specifier is not a leaf**: anything that resolves outside
+`ALLOWED_PACKAGES` (today `typescript`; node builtins are allowed separately and
+are not packages) is walked, because a workspace or `node_modules` entry that
+re-exports an extracted chunk is a delegation route like any other. Adding a name
+to that allowlist is the deliberate act of vouching for a dependency's own import
+graph.
 
 Stated honestly: this is the *static* half. An engine that reads and evals
 extracted source at runtime, or spawns the real binary, passes it while owning
@@ -107,16 +121,31 @@ implementation footprint its owner replaces.
   moving to `EXCLUDED_ROWS` with a reason and evidence (§1.2).
 - `ledger/check.ts` — refuses any `ledger.json` whose row set is not exactly the
   canonical list, whose state is outside §1.1's five, whose edges dangle or
-  self-reference, whose footprint is malformed, whose `stale` row lacks an
-  adjudication note, or whose `engineVersion` has drifted from the pin (so a pin
-  bump fails until §5's semantic invalidation has been run).
-- Footprint slots are `{chunk, hash}` (+ optional AST `span`), `null` until the
-  owning wave records one. `standalone-complete` and `assembled` **require** one:
-  §5's pin-bump staling is blind without it. `spliced` may still be null —
-  footprint emission is C1's deliverable and the three pre-campaign splices
-  predate it.
+  self-reference, whose `stale` row lacks an adjudication note, or whose
+  `engineVersion` has drifted from the pin (so a pin bump fails until §5's
+  semantic invalidation has been run).
+- Footprint slots carry the record C1's strangler build and C2's ledger share:
+  `{chunk, target: {start, end, sha256}, captures: [{name, declStart, declEnd,
+  sha256}]}`, `null` until the owning wave records one. `standalone-complete` and
+  `assembled` **require** one: §5's pin-bump staling is blind without it.
+  `spliced` may still be null — footprint emission is C1's deliverable and the
+  pre-campaign splices predate it. `captures` is optional *only* while C1's
+  emitter is mid-transition; the checker names every footprint missing one and
+  the omission becomes an error once the emitter lands.
+- A footprint is checked against what it points at, not merely for shape (W0
+  boundary review): the span must be sane and inside the chunk; with the pinned
+  extraction bundle present the chunk must exist and its bytes at that span must
+  hash to `target.sha256` (bundle absent → warn and skip, since another machine
+  may not have one; a hash mismatch → hard fail); an owned state must carry at
+  least one resolvable evidence link (`commit:<sha>` or `scenario:<tag>`) and,
+  for `standalone-complete` on a subsystem row, a matching X7 registration; and
+  every `spliced` footprint must correspond to a splice in
+  `build/footprints.json` when that file exists for this pin.
+- **Span basis:** the ledger records offsets into the upstream bundle module,
+  which are identical on every machine. `strangle/build.ts` emits offsets into
+  its materialized copy, whose absolute path shifts them, so the checker accepts
+  either basis and fails only when neither reproduces the digest.
 
-State at W0: 45 `unowned`, 1 `spliced` (`subsystem/tool-result-formatters`,
-covering the three existing leaf-formatter splices; `spliced` rather than
-`standalone-complete` because those modules still receive closure values from
-the extracted graph).
+State at W0: 42 `unowned`, 4 `spliced` — the rows covering the six existing leaf
+splices; `spliced` rather than `standalone-complete` because those modules still
+receive closure values from the extracted graph.

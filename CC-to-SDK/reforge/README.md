@@ -510,26 +510,36 @@ error naming all 15 unowned subsystems — exit 3, never a synthesized `result`
 frame, never a hang. `check-reachability.ts` walks its import graph and fails on
 anything reaching the extraction bundle, the pinned binary, or `build/`
 (symlinks followed), on `/$bunfs/root/` specifiers, on computed dynamic imports,
-and on any `engine-ts/` file the walk never reached — because an unregistered
-module could otherwise carry a forbidden import invisibly. It is the static half
-only; §3.6's OS-enforced hermetic gate is the proof, and it lands at W13/W14.
+on a bare specifier that neither resolves nor is a node builtin, and on any
+`engine-ts/` file the walk never reached — because an unregistered module could
+otherwise carry a forbidden import invisibly. Discovery is a **TypeScript AST
+walk**: the regexes it replaced needed whitespace after `import`/`export`, so
+`export{x}from"<chunk>"` and a re-export chain through one such line were
+invisible. Resolved packages outside `ALLOWED_PACKAGES` are traversed rather than
+treated as leaves, since a package entry can re-export a chunk. It is the static
+half only; §3.6's OS-enforced hermetic gate is the proof, and it lands at W13/W14.
 
 **`ledger.json` — the closure ledger**, the campaign's primary progress metric:
 46 rows (15 subsystems from §1.1, 31 headless catalog tools from §1.3), each with
-an ownership state, dependency edges, and an upstream-footprint slot
-(`{chunk, hash}`, `null` until its wave records one). Opening state: 45
-`unowned`, 1 `spliced` — the tool-result-formatter row, covering the three
-existing leaf splices, and `spliced` rather than `standalone-complete` precisely
+an ownership state, dependency edges, and an upstream-footprint slot — the record
+C1's strangler build and C2's ledger share,
+`{chunk, target:{start,end,sha256}, captures}`, `null` until its wave records
+one. Opening state: 42 `unowned`, 4 `spliced` — the rows covering the six
+existing leaf splices, `spliced` rather than `standalone-complete` precisely
 because those modules still take closure values from the graph.
 
 `ledger/check.ts` refuses a row set that is not exactly `ledger/rows.ts`'s
-canonical list, an invalid state, a dangling or self-referential edge, a
-malformed footprint, an owned state with no footprint, a `stale` row with no
-adjudication note, and an `engineVersion` that has drifted from the pin — so a
-pin bump fails the check until §5's semantic invalidation has been run. Both
-checkers ship with paired controls (28 ledger, 19 reachability, 25 skeleton
-acceptance): every rule is watched rejecting its violation *and* accepting its
-legitimate neighbour, per §3.1's non-vacuity doctrine.
+canonical list, an invalid state, a dangling or self-referential edge, a `stale`
+row with no adjudication note, and an `engineVersion` that has drifted from the
+pin — so a pin bump fails the check until §5's semantic invalidation has been
+run. Footprints are checked against the artifacts they point at, not just for
+shape: span sanity, the chunk's real bytes hashing to `target.sha256` against the
+pinned bundle (absent bundle warns and skips; a mismatch fails), an evidence link
+plus an X7 registration behind every owned state, and a cross-check against
+`build/footprints.json`. Both checkers ship with paired controls (56 ledger, 30
+reachability, 25 skeleton acceptance): every rule is watched rejecting its
+violation *and* accepting its legitimate neighbour, per §3.1's non-vacuity
+doctrine.
 
 ```sh
 npx tsx engine-ts/check-reachability.ts && npx tsx engine-ts/reachability.test.ts
