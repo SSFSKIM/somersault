@@ -104,6 +104,7 @@ import { AddDirDialog } from "./AddDirDialog.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { EffortDialog } from "./EffortDialog.js";
 import { AdvisorDialog } from "./AdvisorDialog.js";
+import { McpDialog } from "./McpDialog.js";
 import { BypassConsent } from "./bypassConsent.js";
 import { SettingsDialog } from "./SettingsDialog.js";
 import { PermissionsDialog } from "./PermissionsDialog.js";
@@ -426,7 +427,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ...(deps?.isFullscreen ? {} : { isFullscreen }),
     ...(aroundChild && !deps?.openEditor ? { openEditor: (file: string, prepare: () => void) => openInEditor(file, { prepare, around: aroundChild }) } : {}),
   }), [deps, aroundChild, isFullscreen]);
-  const { state, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, closeAdvisorDialog, chooseAdvisor, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
+  const { state, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, cancelEffortDialog, confirmEffort, applyEffort, openBgPanel, closeBgPanel, stopBgTask, closeMcpDialog, fetchMcpServers, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, closeHelp, clearPrefill, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, closeAdvisorDialog, chooseAdvisor, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification } = useChat(makeSession, { ...(hookOpts ?? {}),
     // FSW T15 — THE LIVE RENDERER OVERRIDES THE BOOT ONE, and this line is the whole of T9's second hand-off.
     // `hookOpts.rendererChoice` is assembled once in `runChatClient`; the prop is what `/tui` moves. Spread
     // AFTER the hook options so the flip wins, and only when there is a prop to win with — a mount that
@@ -1386,6 +1387,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
   const paneOwned = transcriptOpen || state.helpOpen || state.rewindPicker.open || state.modelPicker.open || state.picker.open
     || state.settings.open                                        // Wave S t5 — its Config list is windowed now
     || state.permissions.open                                     // Wave S t6b — its rule/workspace lists are windowed now
+    || state.mcpDialog.open                                       // T-MENU task 4 (D15) — its root list is windowed too
     || (inputOwnerRef.current === "decision" && state.pending?.kind === "plan");
   // F8 T6 — READ LIVE, NOT AT STARTUP: a `/config` toggle of `Reduce motion` must take effect on the very
   // next frame, which it cannot do if resolved once in `chatMain`. Computed once per render, here, and
@@ -1879,6 +1881,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                 ? <AdvisorDialog {...(state.advisorDialog.current !== undefined ? { current: state.advisorDialog.current } : {})}
                     {...(state.advisorDialog.mainModel !== undefined ? { mainModel: state.advisorDialog.mainModel } : {})}
                     onChoose={chooseAdvisor} onCancel={closeAdvisorDialog} />
+                // T-MENU task 4 (spec A2/D5-bl10): the `/mcp` browser — a bare `/mcp` opens it (useChat's
+                // `openMcpDialog`), `reconnect`/`toggle` arg forms stay text-only and never reach here. D15:
+                // it joins `paneOwned` above and is handed Task 1's authoritative rows/columns like its
+                // windowed-list peers (Settings/Permissions), not `process.stdout`'s own defaults.
+                : state.mcpDialog.open
+                ? <McpDialog fetchServers={fetchMcpServers} onClose={closeMcpDialog} rows={overlayRows()} columns={terminalColumns()} />
                 : state.addDir.open
                   ? <AddDirDialog prefill={state.addDir.prefill} onValidate={addDirValidate} onConfirm={confirmAddDir} onCancel={cancelAddDir} />
                   : state.picker.open
