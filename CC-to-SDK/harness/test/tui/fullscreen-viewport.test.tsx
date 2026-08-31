@@ -450,7 +450,17 @@ describe("ChatApp's fullscreen region is the whole document", () => {
     // is what the main screen's fourteen-row dock reservation leaves — a budget for a renderer whose other
     // fifty-two rows are in scrollback. Here there is no scrollback, so the region is full or the rows are
     // simply gone.
-    expect(lines.slice(0, 19).map(strip)).toEqual(Array.from({ length: 19 }, (_, i) => `⏺ ALPHA-${41 + i}`));
+    //   T-SPACE rebaseline. Still nineteen rows above the dock's top rule and still full — the dock did not
+    // move — but the spacing invariant re-spends them, and one of the nineteen is now chrome:
+    //   · rows 0–17 are the region. R3 §1.5 "assistant text → assistant text = 1 blank" (canon 189059) makes
+    //     each `⏺` block TWO painted rows, so eighteen rows hold NINE blocks — ALPHA-51..59, not forty-one on.
+    //   · row 18 is R3 §1.5 "last transcript block → composer = 1 blank" (canon 160599): the composer's own
+    //     `marginTop`, one row the region no longer gets, which is why the tail lost ALPHA-50 and not more.
+    expect(lines.slice(0, 18).map(strip)).toEqual(
+      Array.from({ length: 9 }, (_, i) => ["", `⏺ ALPHA-${51 + i}`]).flat(),
+    );
+    expect(strip(lines[18]!)).toBe("");                              // the composer's marginTop blank
+    expect(strip(lines[19]!)).toMatch(/^─+$/);                       // …then its top rule
     expect(strip(lines[20]!)).toContain("❯");                        // …and the dock starts on the next row
     r.unmount();
   });

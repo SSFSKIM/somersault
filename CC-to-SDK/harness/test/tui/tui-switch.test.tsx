@@ -548,9 +548,14 @@ const CLUSTER = "Ran 2 shell commands";        // the fullscreen shape of BOTH o
 /** The same divergence, near enough to the END of the document to be INSIDE the fullscreen viewport: that
  *  viewport takes the whole document but shows only its last `rows − 1` rows, so a corpus with twenty-four
  *  prose entries under the calls (`foldCorpus`) can pin that the cluster never reaches the classic screen
- *  while never once observing fullscreen paint it. Ten entries still push the calls clear of the eight-row
- *  commit budget, which is what makes them committed rows rather than live ones. */
-const nearFoldCorpus: TranscriptBootstrapEntry[] = [...shellRunEntries, ...alphaEntries(10)];
+ *  while never once observing fullscreen paint it. The entry count is squeezed from both ends: it must exceed
+ *  the eight-row commit budget (which is what makes the calls committed rows rather than live ones) and still
+ *  leave the cluster row inside the viewport's tail window.
+ *    T-SPACE rebaseline (R3 §1.5 — one blank row above every top-level block): every prose entry now paints
+ *  TWO rows, not one, so the ten this corpus carried paint twenty rows and push the cluster off the top of the
+ *  region. SIX entries paint twelve rows — still comfortably over the eight-row commit budget, and the cluster
+ *  block's own two rows land back inside the window. */
+const nearFoldCorpus: TranscriptBootstrapEntry[] = [...shellRunEntries, ...alphaEntries(6)];
 /** A committed item's text. `state.staticItems` is the one derived fact no frame can show — fullscreen hands
  *  `<Static>` `EMPTY_ITEMS` — so the cell that reads it drives the hook directly and reads the items out. */
 const itemText = (items: readonly RenderItem[]): string =>
