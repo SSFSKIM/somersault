@@ -129,7 +129,8 @@
                 "declStart": 615,
                 "declEnd": 844,
                 "sha256": "c86d391255ddc497a4c1a91a2931de2c42ae705f8866e3328b164b60421133a4"
-              }
+              },
+              "closure": []
             },
             {
               "name": "oYn",
@@ -254,7 +255,8 @@
                 "declStart": 11193,
                 "declEnd": 11273,
                 "sha256": "fa31a047616dd93be329572fd76fe9764cf5d5c7c744327b1bfaf9d39a73f44c"
-              }
+              },
+              "closure": []
             }
           ]
         },
@@ -321,7 +323,8 @@
                 "declStart": 4150,
                 "declEnd": 4302,
                 "sha256": "d50b63b59f2c3140af44898fb1b69916ac8285699a6ccbba65e0b3cfde4be139"
-              }
+              },
+              "closure": []
             },
             {
               "name": "$De",
@@ -413,7 +416,8 @@
               "declKind": "function",
               "declStart": 2135843,
               "declEnd": 2136962,
-              "sha256": "31b60cb14e19a207b692d26b5cbca38fdc8346d602793cbeba1785159b8e9449"
+              "sha256": "31b60cb14e19a207b692d26b5cbca38fdc8346d602793cbeba1785159b8e9449",
+              "closure": []
             },
             {
               "name": "_t",
@@ -445,7 +449,8 @@
                 "declStart": 19171,
                 "declEnd": 19194,
                 "sha256": "cf298d11f567cbe9d89835aae1c164e99b5117ac7eb17f88b04656b17680b2e2"
-              }
+              },
+              "closure": []
             },
             {
               "name": "yl",
@@ -498,7 +503,8 @@
               "declKind": "function",
               "declStart": 1886042,
               "declEnd": 1886153,
-              "sha256": "352a7bc808646c03762404bbe5f13266694b2032957ec64360f6056eaff901cc"
+              "sha256": "352a7bc808646c03762404bbe5f13266694b2032957ec64360f6056eaff901cc",
+              "closure": []
             },
             {
               "name": "k",
@@ -514,7 +520,8 @@
                 "declStart": 798,
                 "declEnd": 839,
                 "sha256": "00508eb8398da914196462cb3a9f4781378c4632932dcd6b58a69209717905b2"
-              }
+              },
+              "closure": []
             }
           ]
         },
@@ -533,7 +540,8 @@
               "declKind": "function",
               "declStart": 1880885,
               "declEnd": 1881340,
-              "sha256": "cdcb33cf59ddedcbf97b5e9712a20c0a701e2cfe7d4bfb673dd6d6a4585ee4fa"
+              "sha256": "cdcb33cf59ddedcbf97b5e9712a20c0a701e2cfe7d4bfb673dd6d6a4585ee4fa",
+              "closure": []
             }
           ]
         },
@@ -699,7 +707,8 @@
               "declKind": "function",
               "declStart": 30068,
               "declEnd": 30244,
-              "sha256": "1bb03c77233395248fcb26b4934328f9623bfcc223bdc2bd25f3f15df1b04f37"
+              "sha256": "1bb03c77233395248fcb26b4934328f9623bfcc223bdc2bd25f3f15df1b04f37",
+              "closure": []
             },
             {
               "name": "UK",
@@ -708,7 +717,8 @@
               "declKind": "function",
               "declStart": 30244,
               "declEnd": 30343,
-              "sha256": "c0444d487abcdff52c41cc257fa4f2898d2f9eaae6288d42115c53f8e7095dca"
+              "sha256": "c0444d487abcdff52c41cc257fa4f2898d2f9eaae6288d42115c53f8e7095dca",
+              "closure": []
             },
             {
               "name": "yBt",
@@ -852,7 +862,8 @@
                 "declStart": 2527,
                 "declEnd": 2626,
                 "sha256": "a84ab0a2488aed5689416393c679dde4e7f4b29aa980e121bd56b25ab3e7b5e4"
-              }
+              },
+              "closure": []
             },
             {
               "name": "$o",
@@ -868,7 +879,8 @@
                 "declStart": 3875,
                 "declEnd": 3967,
                 "sha256": "4306ca1eb578417c9c0b042ef01fefb5ccf190477c896ed29975a5a36ba46687"
-              }
+              },
+              "closure": []
             },
             {
               "name": "n",
@@ -900,7 +912,8 @@
                 "declStart": 2467,
                 "declEnd": 2527,
                 "sha256": "2f921ed78ffeed39032d7e9c4783e05c294cba2ce61cc5ac20466ece27a81075"
-              }
+              },
+              "closure": []
             },
             {
               "name": "h",

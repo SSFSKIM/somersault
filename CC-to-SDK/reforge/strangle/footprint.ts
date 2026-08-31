@@ -101,8 +101,12 @@ export interface CaptureFootprint extends DeclarationFootprint {
   from?: DeclarationFootprint & { chunk: string; exportedAs: string };
   /**
    * For an OWNED capture only: everything its declaration transitively
-   * references. Absent on a forwarded capture — the graph's own function is what
-   * runs there, so upstream's callees cannot go stale behind an owned copy.
+   * references. ABSENT means forwarded — the graph's own function is what runs
+   * there, so upstream's callees cannot go stale behind an owned copy. An empty
+   * array is the positive claim "this helper calls nothing, verified", the same
+   * distinction the manifest's `captures: []` draws; collapsing the two would
+   * make "which owned helpers have a recorded closure?" unanswerable from the
+   * ledger, which is the question the record exists to answer.
    */
   closure?: ClosureFootprint[];
   /** why this record is narrower than it should be, when it is */
@@ -262,7 +266,7 @@ export function spliceFootprint(input: FootprintInput): SpliceFootprint {
       const withClosure = (origin: Site): CaptureFootprint => {
         if (!c.owned) return record;
         const { closure, note } = walkClosure(origin);
-        if (closure.length > 0) record.closure = closure;
+        record.closure = closure; // `[]` is a claim, not an omission — see the field's doc
         if (note) say(note);
         return record;
       };

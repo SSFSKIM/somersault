@@ -169,6 +169,13 @@ function footprintOf(owner: string, helper: string) {
     closure.every((c) => c.basis === "declaration" && c.chunk === "chunk-deep.js" && /^[0-9a-f]{64}$/.test(c.sha256)));
   check("a FORWARDED capture records none — upstream's own function still runs there",
     only(deepFootprint(deepChunk, false)).closure === undefined);
+  // …and the two absences are distinguishable: an owned helper that calls
+  // nothing says so, the same way `captures: []` is a positive claim.
+  {
+    const flat = `function HELPER(o){return "flat:"+o.n}\nexport{HELPER};\n`;
+    check("an owned capture that calls nothing records an EMPTY closure, not no closure",
+      JSON.stringify(only(deepFootprint(flat)).closure) === "[]");
+  }
 
   // THE CONTROL. Perturb only the transitive callee, length-preserving, leaving
   // the helper's own bytes, its import site and the target span untouched.
