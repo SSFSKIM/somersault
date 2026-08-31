@@ -5,12 +5,29 @@ Code's harness features on top of the **Claude Agent SDK** (`@anthropic-ai/claud
 headless library/service. When working anywhere under `CC-to-SDK/`, this file + the root `../CLAUDE.md` both
 apply; `harness/CLAUDE.md` auto-loads on demand for build/test detail.
 
+## North star (the ultimate goal)
+
+A **fully ownable, fully customizable harness of Claude Code quality**. The Agent SDK is the
+substrate because (1) Claude Code sets the quality bar and (2) the SDK wraps that same engine while
+exposing an application-level programmable surface — so `ccx` inherits the quality today. But the
+SDK is also the known **ownability ceiling**: its engine is a black box, and `coverage.md` tracks
+what is empirically reachable through it. Closing that ceiling is `reforge/`'s lane — strangler-fig
+reimplementation of the engine behind the *unchanged* SDK wrapper seam (`pathToClaudeCodeExecutable`),
+each excised module replaced by reforge-owned TypeScript and graded by differential replay against
+the real binary, until the substrate is gone (`engine-ts`). Under this strategy **"customize X" and
+"own X" are the same act: splice X** — full customizability arrives module-by-module, not at the
+end. `~/claude-code-bundle/<latest>` is the canonical upstream reference (no changelog docs; the
+newest extraction is the truth, older dirs are history). Internal research only — engine artifacts
+derived from the extracted binary are not redistributable.
+
 ## Structure (one line each)
 
 - **`harness/`** — the product: the npm package **`cc-harness`**, shipping the `ccx` binary (foreground interactive REPL, `ccx attach`, `--detachable`) plus the library API. The interactive chat REPL (`src/tui/`, dynamic-imported) absorbed the former `tui/` package's chat half with A2b; the daemon console half retired with it. **Has its own `CLAUDE.md`** (commands, module map, conventions). This is where almost all work happens.
 - **`docs/parity/coverage.md`** — the **capability scorecard** and **source of truth** for what's built vs. reachable vs. out-of-reach (10 domains, %). Read it first to know the current state before proposing work.
 - **`docs/superpowers/specs/`** + **`plans/`** — per-feature design specs and implementation plans (one `YYYY-MM-DD-<feature>` pair each).
 - **`probes/`** — a self-contained npm workspace of **live SDK capability probes** (`probes/probes/NN-*.ts`, run with `tsx`). The evidence base for every design decision.
+- **`reforge/`** — the ownability lane (see North star): record/replay differential harness + strangler-fig engine reimplementation; its `README.md` is the source of truth for engines, gates, and the splice manifest. Pinned to a specific `~/claude-code-bundle/` extraction.
+- **`app-server/`** — **`cc-codex-appserver`**: a JSON-RPC/stdio worker (drop-in for the `codex app-server` shape) that the claude-companion Codex plugin spawns; built on the Agent SDK.
 - **`Claude Code Src/`** — TypeScript reference harness; **research only, not built** — read for reference, don't edit.
 
 ## The governing discipline: live-probe-first (the "A1 lesson")
