@@ -134,7 +134,10 @@ function renderSegment(s: Segment, key: number, runStart: number, hovered: boole
  *  width, no forced colour, no trailing pad — byte-for-byte what this file painted before this task). When
  *  set, the row's WHOLE background — every existing segment's own `bg`/`l.bg` included, not just the gap past
  *  it — becomes the band colour (canon's Box rectangle sits BEHIND all of a row's content, `cli.pretty.js`'s
- *  `MS` wrapper, research §1.3), and a trailing styled-space run pads the row out to `bandWidth`, canon's own
+ *  `MS` wrapper, research §1.3). Task 1 fix wave (review Important finding): `l.gutter` (e.g. the absorbed-
+ *  thinking `"∴ "` bullet) is INSIDE the rectangle too — it renders in column 1, so leaving it unpainted would
+ *  gap the band's own leading edge — hence `backgroundColor={rowBg}` on the gutter `<Text>` above, same `rowBg`
+ *  the segments/plain-text branches already take. And a trailing styled-space run pads the row out to `bandWidth`, canon's own
  *  `" ".repeat(width)` rectangle (`cli.pretty.js:376156-376163`). `stringWidth`, not `.length`, measures both
  *  the gutter and the text — the same convention `wrapItems.ts`'s `wrapLine` uses for the identical reason
  *  (a wide glyph is more than one column). */
@@ -153,7 +156,7 @@ export const Line = ({ l, wrap, selection, bandWidth }: { l: RenderLine; wrap?: 
   const pad = bandWidth !== undefined ? Math.max(0, bandWidth - gutterWidth - stringWidth(displayText)) : 0;
   return (
     <Text wrap={wrap}>
-      {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={hovered ? false : l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
+      {l.gutter ? <Text color={ink(l.gutter.color)} backgroundColor={rowBg} dimColor={hovered ? false : l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
       {segmentNodes ?? (plainPieces!.length === 1
         ? <Text color={ink(l.color)} backgroundColor={pieceBg(rowBg ?? ink(l.bg), plainPieces![0]!.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{plainPieces![0]!.text}</Text>
         : plainPieces!.map((p, i) => <Text key={i} color={ink(l.color)} backgroundColor={pieceBg(rowBg ?? ink(l.bg), p.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{p.text}</Text>))}

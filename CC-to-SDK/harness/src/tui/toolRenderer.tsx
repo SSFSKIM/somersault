@@ -1994,9 +1994,17 @@ export function RenderItemView({ item, start, end, showGutter = true, rowSelecti
   // banded body row's OWN available width is `columns` minus that sibling, mirroring `wrapOne`'s identical
   // `inner` subtraction for the same block.
   const bodyBandWidth = banded ? Math.max(1, columns - item.gutter.length) : undefined;
+  // Task 1 fix wave (review Important finding): this Box sits OUTSIDE `Line.tsx`'s own band paint (it is the
+  // gutter-block's SIBLING connector column, not a `RenderLine`), so a banded row's rectangle never reached
+  // it — column 1 stayed unpainted underneath the `⎿`/hint glyph. Banded rows now carry the same `expandedBg()`
+  // background here, and — since `showGutter={false}` (a pager continuation row) blanks the glyph to "" with
+  // nothing left for a background prop to paint — pad that blank to the column's own width with spaces so the
+  // rectangle still spans it; unbanded rows keep the exact `""` they always rendered.
+  const gutterBg = banded ? expandedBg() : undefined;
+  const gutterText = showGutter ? item.gutter : (banded ? " ".repeat(item.gutter.length) : "");
   return (
     <Box flexDirection="row">
-      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
+      <Box width={item.gutter.length}><Text backgroundColor={gutterBg} color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{gutterText}</Text></Box>
       <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} selection={rowSelections?.[i]} bandWidth={bodyBandWidth} />)}</Box>
     </Box>
   );

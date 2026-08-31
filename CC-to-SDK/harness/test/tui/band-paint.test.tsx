@@ -27,6 +27,7 @@ import { Transcript } from "../../src/tui/Transcript.js";
 import { TOOL_RESULT_GUTTER, projectCompact, type RenderItem } from "../../src/tui/toolRenderer.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import { themeTokens } from "../../src/tui/theme.js";
 import { tick } from "./keysTestUtil.js";
 
 // ══ Part 1 — the PROJECTION: `.band` lands on exactly the right rows ═══════════════════════════════════════
@@ -117,10 +118,16 @@ describe("T-CLICK Task 1: a T-SPACE separator is never part of the band", () => 
 });
 
 // ══ Part 2 — the PAINT: a banded row reaches the terminal edge, an unbanded one does not ═══════════════════
+// A plain-text (SGR-stripped) width check only proves the PADDING reaches the edge — it would pass exactly
+// as well if that padding were uncolored spaces. Canon's rectangle is a real background box (research §1.3),
+// so this half asserts the literal `\x1b[48;...` background escape itself is present, and — for the two row
+// shapes that carry their OWN leading gutter column ahead of the shared band paint (the `⎿` tool-result
+// connector, and a `line`'s inline `l.gutter`, e.g. the absorbed-thinking `"∴ "` bullet) — that the escape
+// PRECEDES the gutter glyph, not just the text that follows it. The `tabs.test.tsx`/`line-substrate.test.tsx`
+// convention: raw, un-stripped frame bytes, `toContain`/`indexOf` against the literal code.
 const COLS = 40;
-const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 const dock = <Box flexDirection="column"><Text>dock</Text></Box>;
-// A wide `rows` grant (a tall region, a one-line dock) so all six rows below land inside the sticky window
+// A wide `rows` grant (a tall region, a one-line dock) so all eight rows below land inside the sticky window
 // whole — this file's concern is per-row paint width, not scroll geometry, which `fold-hitmap.test.tsx` and
 // `fold-click.test.tsx`'s TALL_DOC already own.
 const scene = (items: readonly RenderItem[]) => (
@@ -130,48 +137,79 @@ const scene = (items: readonly RenderItem[]) => (
   </>} />
 );
 const settle = async () => { for (let i = 0; i < 4; i++) await tick(); };
+/** `Line.tsx`'s literal 24-bit background escape for a theme token — `hover.test.tsx`'s/`fold-click.test.tsx`'s
+ *  own `sgrBg`, kept local per this suite's no-cross-file-test-imports convention. */
+const sgrBg = (rgbToken: string): string => {
+  const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(rgbToken)!;
+  return `\x1b[48;2;${m[1]};${m[2]};${m[3]}m`;
+};
+const BAND = sgrBg(themeTokens().userMessageBackgroundHover);
 
 // One of each row class Task 1 distinguishes, in a fixed, known order — position alone locates each row in
-// the painted frame (every text here is short of `COLS`, so nothing wraps and the mapping is 1:1).
+// the painted frame (every text here is short of `COLS`, so nothing wraps and the mapping is 1:1). "thought"
+// stands in for an absorbed-thinking body row: a `line` item wearing an inline `l.gutter` (`"∴ "`), the SAME
+// gutter shape `render.ts`'s `withThinkingGutter` mints in production.
 const PAINT_DOC: readonly RenderItem[] = [
   { kind: "line", id: "header", band: true, line: { text: "HEADER" } },                                        // banded header
   { kind: "line", id: "collapsed", line: { text: "COLLAPSED" } },                                              // ordinary row, unchanged
-  { kind: "gutter-block", id: "result", gutter: TOOL_RESULT_GUTTER, band: true, body: [{ text: "body row" }, { text: "" }] }, // banded body + pad row
+  { kind: "gutter-block", id: "result", gutter: TOOL_RESULT_GUTTER, band: true, body: [{ text: "body row" }, { text: "" }] }, // banded body + pad row (⎿ connector column)
+  { kind: "line", id: "thought", foldAnchor: "a1", band: true, line: { text: "thinking text", gutter: { text: "∴ ", dim: true, italic: true } } }, // banded absorbed-thinking row (inline l.gutter)
   { kind: "line", id: "margin", foldAnchor: "a1", line: { text: "" } },                                        // cluster margin, never banded
   { kind: "line", id: "member", foldAnchor: "a1", band: true, line: { text: "MEMBER" } },                      // banded cluster member
   { kind: "line", id: "sep", line: { text: "" } },                                                             // T-SPACE separator shape
 ];
 
-describe("T-CLICK Task 1: banded rows paint a full-width background; everything else stays text-width", () => {
-  it("pads every `band: true` row to the terminal's own column count", async () => {
+describe("T-CLICK Task 1: banded rows paint a REAL full-width background, including their own leading gutter columns", () => {
+  it("carries the literal background escape edge-to-edge — through the ⎿ connector and the inline l.gutter bullet — on every `band: true` row, and nowhere else", async () => {
     const { lastFrame } = render(scene(PAINT_DOC));
     await settle();
     const rows = (lastFrame() ?? "").split("\n");
+    const plainRows = rows.map((r) => r.replace(/\x1b\[[0-9;]*m/g, ""));
 
-    const headerRow = plain(rows[0]);
-    const collapsedRow = plain(rows[1]);
-    const bodyRow = plain(rows[2]);
-    const padRow = plain(rows[3]);
-    const marginRow = plain(rows[4]);
-    const memberRow = plain(rows[5]);
-    const sepRow = plain(rows[6]);
+    // Fixed row order (PAINT_DOC, one row per entry — nothing here wraps): 0 header, 1 collapsed, 2 body,
+    // 3 pad, 4 thought, 5 margin, 6 member, 7 sep.
+    const [headerRow, collapsedRow, bodyRow, padRow, thoughtRow, marginRow, memberRow, sepRow] = rows as string[];
 
     // Premise: the rows actually landed where the fixed fixture order says they should.
-    expect(headerRow).toContain("HEADER");
-    expect(collapsedRow).toContain("COLLAPSED");
-    expect(bodyRow).toContain("body row");
-    expect(memberRow).toContain("MEMBER");
+    expect(plainRows[0]).toContain("HEADER");
+    expect(plainRows[1]).toContain("COLLAPSED");
+    expect(plainRows[2]).toContain("body row");
+    expect(plainRows[4]).toContain("thinking text");
+    expect(plainRows[6]).toContain("MEMBER");
 
-    // The band: full terminal width, every one of them — header, body row, AND the empty pad row.
-    expect(headerRow.length).toBe(COLS);
-    expect(bodyRow.length).toBe(COLS);
-    expect(padRow.length).toBe(COLS);
-    expect(memberRow.length).toBe(COLS);
+    // Plain-text width: proves padding reaches the edge (the premise every row below is checked against),
+    // but NOT that it is colored — that is what the SGR assertions after this block are for.
+    expect(plainRows[0]!.length).toBe(COLS);          // header
+    expect(plainRows[2]!.length).toBe(COLS);          // body
+    expect(plainRows[3]!.length).toBe(COLS);          // pad
+    expect(plainRows[4]!.length).toBe(COLS);          // thought
+    expect(plainRows[6]!.length).toBe(COLS);          // member
+    expect(plainRows[1]!.length).toBe("COLLAPSED".length);
+    expect(plainRows[5]!.length).toBeLessThan(COLS);  // margin
+    expect(plainRows[7]!.length).toBeLessThan(COLS);  // sep
 
-    // Everything NOT marked stays exactly as narrow as it always was — an ordinary row keeps its own text
-    // width, and a truly blank margin/separator row paints nothing to pad.
-    expect(collapsedRow.length).toBe("COLLAPSED".length);
-    expect(marginRow.length).toBeLessThan(COLS);
-    expect(sepRow.length).toBeLessThan(COLS);
+    // The BACKGROUND itself, on RAW (un-stripped) bytes: a row padded with plain uncolored spaces — exactly
+    // what finding 1's unfixed gutter Box/inline `l.gutter` produced under the glyph columns — still passes
+    // every plain-text check above but fails these.
+    expect(headerRow).toContain(BAND);
+    expect(bodyRow).toContain(BAND);
+    expect(padRow).toContain(BAND);
+    expect(thoughtRow).toContain(BAND);
+    expect(memberRow).toContain(BAND);
+    expect(collapsedRow).not.toContain(BAND);
+    expect(marginRow).not.toContain(BAND);
+    expect(sepRow).not.toContain(BAND);
+
+    // The rectangle's LEADING EDGE: the background escape must appear BEFORE the row's own gutter glyph, not
+    // merely somewhere later in the row — the exact defect a band that starts only after the gutter produces.
+    const bandIdxInBody = bodyRow.indexOf(BAND);
+    const glyphIdxInBody = bodyRow.indexOf("⎿");     // TOOL_RESULT_GUTTER's `⎿`
+    expect(bandIdxInBody).toBeGreaterThanOrEqual(0);
+    expect(glyphIdxInBody).toBeGreaterThan(bandIdxInBody);
+
+    const bandIdxInThought = thoughtRow.indexOf(BAND);
+    const glyphIdxInThought = thoughtRow.indexOf("∴"); // the absorbed-thinking `∴` bullet
+    expect(bandIdxInThought).toBeGreaterThanOrEqual(0);
+    expect(glyphIdxInThought).toBeGreaterThan(bandIdxInThought);
   });
 });
