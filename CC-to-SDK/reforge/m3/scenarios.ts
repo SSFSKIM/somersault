@@ -28,8 +28,8 @@ function trackedUserMessage(text: string, uuid: string, originKind: "human" | "a
 const frames = (msgs: unknown[], subtype: string) =>
   msgs.filter((m) => (m as { type?: string; subtype?: string }).type === "system" && (m as { subtype?: string }).subtype === subtype);
 
-/** The id of the Agent tool_use block — the anchor every task frame must name. */
-function agentToolUseId(msgs: unknown[]): string | undefined {
+/** The Agent tool_use block — the dispatch every task frame must name. */
+function agentToolUse(msgs: unknown[]): { id?: string; input?: { run_in_background?: unknown } } | undefined {
   for (const m of msgs) {
     const mm = m as { type?: string; message?: { content?: unknown } };
     if (mm.type !== "assistant") continue;
@@ -38,9 +38,19 @@ function agentToolUseId(msgs: unknown[]): string | undefined {
     const block = (c as { type?: string; name?: string; id?: string }[]).find(
       (b) => b?.type === "tool_use" && b?.name === "Agent",
     );
-    if (block?.id) return block.id;
+    if (block?.id) return block as { id?: string; input?: { run_in_background?: unknown } };
   }
   return undefined;
+}
+
+/** Indices of the system frames of one subtype, in transcript order. */
+function frameIndices(msgs: unknown[], subtype: string): number[] {
+  const out: number[] = [];
+  msgs.forEach((m, i) => {
+    const mm = m as { type?: string; subtype?: string };
+    if (mm.type === "system" && mm.subtype === subtype) out.push(i);
+  });
+  return out;
 }
 
 /**
@@ -54,17 +64,36 @@ function agentToolUseId(msgs: unknown[]): string | undefined {
  * actually agree with each other — a check written as a bare equality passes
  * vacuously on `undefined === undefined`, which is exactly the malformed engine
  * this is meant to catch.
+ *
+ * Backgroundness and completion are equally load-bearing. Without them the check
+ * accepts an engine that ran the very same agent in the FOREGROUND and never
+ * closed the task out: correlated `task_started` + `background_tasks_changed`
+ * frames plus a fold-back are all producible by a blocking dispatch. So the
+ * dispatch must have asked for background (`input.run_in_background`), the
+ * engine must have registered it as such (`task_started.is_backgrounded`), and
+ * the task must settle through the terminal bookend consumers use to close their
+ * panel entry and bank the usage — exactly one `task_notification` for that task,
+ * `status: "completed"`, naming the same tool_use id, arriving after the start
+ * frame. `task_notification` is itself the terminal edge (its declared statuses
+ * are completed | failed | stopped; `task_progress` carries the running ones),
+ * so a second one for the same task is a double-settle, not progress.
  */
 export function checkBackgroundTask(msgs: unknown[]): string | null {
   if (!usedTool(msgs, "Agent")) return "Agent tool never used";
-  const toolUseId = agentToolUseId(msgs);
+  const dispatch = agentToolUse(msgs);
+  const toolUseId = dispatch?.id;
   if (!toolUseId) return "the Agent tool_use block carried no id";
-  const started = frames(msgs, "task_started")[0] as { task_id?: string; tool_use_id?: string } | undefined;
-  if (!started) return "no task_started frame";
+  if (dispatch?.input?.run_in_background !== true)
+    return `the Agent dispatch did not request background (input.run_in_background = ${JSON.stringify(dispatch?.input?.run_in_background)})`;
+  const startedIdx = frameIndices(msgs, "task_started")[0];
+  if (startedIdx === undefined) return "no task_started frame";
+  const started = msgs[startedIdx] as { task_id?: string; tool_use_id?: string; is_backgrounded?: unknown };
   const taskId = started.task_id;
   if (!taskId) return "task_started carried no nonempty task_id";
   if (started.tool_use_id !== toolUseId)
     return `task_started.tool_use_id (${JSON.stringify(started.tool_use_id)}) did not match the Agent tool_use id (${toolUseId})`;
+  if (started.is_backgrounded !== true)
+    return `task_started.is_backgrounded was not true (${JSON.stringify(started.is_backgrounded)}) — the task ran in the foreground`;
   const changed = frames(msgs, "background_tasks_changed") as { tasks?: { task_id?: string }[] }[];
   if (changed.length === 0) return "no background_tasks_changed frame";
   // The signal is level, not edge (REPLACE semantics), so the run also ends
@@ -73,6 +102,23 @@ export function checkBackgroundTask(msgs: unknown[]): string | null {
   // frame must list the task `task_started` announced, under that same id.
   if (!changed.some((c) => Array.isArray(c.tasks) && c.tasks.some((t) => t?.task_id === taskId)))
     return `no background_tasks_changed frame listed the dispatched task (${taskId})`;
+  // Completion lifecycle. Position is asserted only against `task_started` —
+  // PRESENCE ordering within the task's own lane is deterministic, while the
+  // notification's position relative to the parent's reply/result is the same
+  // race the scenario's substanceOnly note describes, so nothing is asserted
+  // across lanes.
+  const notifIdx = frameIndices(msgs, "task_notification").filter(
+    (i) => (msgs[i] as { task_id?: string }).task_id === taskId,
+  );
+  if (notifIdx.length === 0) return `no task_notification frame settled the dispatched task (${taskId})`;
+  if (notifIdx.length > 1)
+    return `saw ${notifIdx.length} terminal task_notification frames for task ${taskId}; a task settles exactly once`;
+  const notif = msgs[notifIdx[0]] as { tool_use_id?: string; status?: string };
+  if (notif.tool_use_id !== toolUseId)
+    return `task_notification.tool_use_id (${JSON.stringify(notif.tool_use_id)}) did not match the Agent tool_use id (${toolUseId})`;
+  if (notif.status !== "completed")
+    return `task_notification settled the task as ${JSON.stringify(notif.status)}, not "completed"`;
+  if (notifIdx[0] <= startedIdx) return "the completion task_notification did not follow task_started";
   // Fold-back. A whole-transcript substring search always trips here: the
   // dispatch prompt necessarily contains the marker (same trap as
   // `interrupt`). The fold-back is the marker arriving as PARENT-LANE
@@ -308,16 +354,21 @@ export const M3_SCENARIOS: Scenario[] = [
     //
     // So it grades on its substance assertion alone — which is therefore the
     // ONLY thing constraining either engine here, and has to carry the whole
-    // claim: the dispatch-time sidechannel frames, correlated by their actual
-    // identifiers (`task_started` naming the Agent tool_use id and a nonempty
-    // task_id, `background_tasks_changed` listing that same task_id) AND that
-    // the agent's answer lands back in the parent conversation. What races is
-    // only WHERE the fold-back splices, so presence is assertable; position is
-    // not. See checkBackgroundTask above.
+    // claim: the work was actually BACKGROUNDED (the dispatch asked for it and
+    // task_started registered it), the dispatch-time sidechannel frames are
+    // correlated by their actual identifiers (`task_started` naming the Agent
+    // tool_use id and a nonempty task_id, `background_tasks_changed` listing
+    // that same task_id), the task SETTLES exactly once through a completed
+    // `task_notification` carrying both ids, and the agent's answer lands back
+    // in the parent conversation. What races is only WHERE the fold-back and
+    // the notification splice relative to the parent's own reply, so presence
+    // and same-lane order are assertable; cross-lane position is not. See
+    // checkBackgroundTask above.
     substanceOnly:
       "backgrounded work completes concurrently with the parent turn; the splice point in the parent's conversation is a race that cannot be canonicalized without discarding real conversation ordering",
     tag: "background-task",
-    title: "backgrounded Agent emits task_started + background_tasks_changed and folds its result back",
+    title:
+      "backgrounded Agent emits task_started + background_tasks_changed, settles via task_notification, and folds its result back",
     run: (ctx) =>
       drive(
         "Use the Agent tool with run_in_background set to true to dispatch one subagent (subagent_type 'general-purpose') whose entire task is: reply with the single word REFORGE_BG_OK. Do not wait for it; immediately reply with exactly DISPATCHED.",
