@@ -254,6 +254,12 @@ argument, cloud/account/setup family (out of reach).
 - **D16-bl10** (plan review F2) Dock budgets are remeasured, not inherited: `MAIN_DOCK_ROWS` 14 → 16,
   `dockDialogRows` re-derived, tall-write tests guard the Ink clear/replay cliff. Rejected: leaving
   the measured constant and spending the safety slack silently.
+- **D17-bl10** (T-SPACE T1 implementation contact, reviewer-verified in the bundle) An EXPANDED
+  fold cluster gets NO outer separator: canon's `uI` verbose branch never applies its own
+  `addMargin` (only the collapsed branch does, L193551) — the first member row's unconditional
+  leading blank supplies the single gap. Emitting both would double-blank the seam. Also verified:
+  the live hook counter row is margin-exempt in canon (`di`, L189434-189486). Rejected: the literal
+  "separator at every concat site" reading (double blank).
 
 ## 7. Surprises & Discoveries
 
