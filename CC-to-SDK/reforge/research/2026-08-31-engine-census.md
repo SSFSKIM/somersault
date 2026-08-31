@@ -117,7 +117,14 @@ The current manifest excises single methods by string anchor (all three splices 
 - **Tool description generators.** Read, Glob, Grep, WebFetch each live in their own 1–5 KB chunk
   (`hx5r9amq`, `y30v0ja7`, `hdmehzg7`, `qe0j59w7`) exporting one description function with a
   `td(e) ? brief : full` branch. These are whole-*chunk* seams, not just method seams — the
-  cheapest ownership wins available.
+  cheapest ownership wins available. **[Corrected 2026-08-31, caught by adversarial review and
+  verified against the extracted chunks: "exporting one description function" is wrong. The four
+  chunks export 15/3/17/4 symbols and import 2/3/10/4 other chunks respectively, carrying real
+  behavior beyond descriptions (Read page-range parsing, Grep defer policy, WebFetch
+  cache-TTL/prompt construction — and `q6t`, the Write freshness-suffix constant the
+  `write-tool-result` splice derives). Whole-chunk ownership therefore requires an
+  export-and-consumer inventory and per-export acceptance; the campaign spec §2.2 prices it
+  accordingly.]**
 - **Environment block.** `Primary working directory: … / Is a git repository: ${…} / Platform: …`
   is one 12-line function taking a snapshot object. Splice-sized.
 - **Compaction.** The summarization prompt and the `compact_boundary` emit are separate unique

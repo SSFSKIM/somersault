@@ -1,10 +1,12 @@
 # Reforge-full campaign — ratchet the extracted engine into owned TypeScript until engine-ts assembles
 
-**Status:** approved 2026-08-31 · **Track:** decomposing (campaign-scale; this spec is the parent
-design that `doperpowers:decomposing` cuts into the goal tree)
+**Status:** approved 2026-08-31; revised same day after adversarial review round 1 (see Revision
+Notes) · **Track:** decomposing (campaign-scale; this spec is the parent design that
+`doperpowers:decomposing` cuts into the goal tree)
 **Grounding:** `reforge/research/2026-08-31-engine-census.md` (subsystem census of the 2.1.251
-bundle) · `reforge/README.md` (harness + gate doctrine, M0→M3-B + pin-bump history) ·
-cassette measurement of the headless tool catalog (31 native tools, this spec §1.3)
+bundle, incl. its 2026-08-31 correction) · `reforge/research/2026-08-31-gate-blob-resolution.md`
+(how gates actually resolve offline) · `reforge/README.md` (harness + gate doctrine) · cassette
+measurement of the headless tool catalog (31 native tools, §1.3)
 
 ## Purpose
 
@@ -36,7 +38,7 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Subsystem | Census seam quality | Where |
 |---|---|---|
 | Tool result formatters + validators (Read, Edit, Bash, Grep, task family…) | very high (proven family) | `fy12d89p` |
-| Tool-description chunks (Read, Glob, Grep, WebFetch) | very high — whole-chunk seams | `hx5r9amq`, `y30v0ja7`, `hdmehzg7`, `qe0j59w7` |
+| Tool-description functions (Read, Glob, Grep, WebFetch) + their satellite chunks' other exports | high — but the chunks are multi-export grab-bags, NOT single-function seams (census correction) | `hx5r9amq` (15 exports), `y30v0ja7` (3), `hdmehzg7` (17), `qe0j59w7` (4) |
 | Environment block + system-prompt assembly | high (env block is one 12-line fn) | `fy12d89p` @336–350, @85.3k |
 | Compaction: summarization prompt, `compact_boundary` emit, trigger policy (reactive + microcompact) | high | `fy12d89p` @45–48k, @70k, @76.3k |
 | Hook dispatch + hooks chunks | high (event names are unique literals) | `7g4v1yq9` + 4 small chunks + `fy12d89p` @30–33k, @70–74k |
@@ -51,6 +53,13 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Query loop / turn driver (retry, 529, model fallback, compaction driver) | module-level (long async generator) | `fy12d89p` @75–80k |
 | Sandboxing (platform launchers behind an interface) | module-level (CEL/protobuf tangle) | `q4xe0m2r` |
 
+**The closure ledger.** The decomposition (step after this spec) materializes this table as a
+machine-checkable ledger: every in-scope subsystem row and every headless tool maps to an
+implementation wave, its owned artifact(s), its covering scenario families, and an ownership state
+(`unowned / spliced / standalone-complete / assembled`). The engine-ts assembly wave is **blocked
+while any row is unmapped** — a row leaves the ledger only by shipping or by moving to §1.2 with
+evidence. The ledger is the campaign's primary progress metric (§5).
+
 ### 1.2 Exclusion ledger (recorded, not implied)
 
 | Excluded | Size | Reason |
@@ -61,10 +70,9 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Server boundary: WebSearch execution, `count_tokens`, OAuth endpoints, OTLP ingest, update manifests | — | server-side; the engine only formats/calls them. Client-side *formatting/policy* over these stays in scope (e.g. WebSearch result formatting, retry policy over 529s) |
 | Glob/Grep beyond the existing splices | — | deprecated surface upstream; no further investment |
 
-**Feature gates are neither spliced nor excluded.** 2,179 gate names with 862 inlined call sites in
-the engine chunk have no seam. The campaign owns the *resolver* instead: pin it to a constant table
-snapshotted from the real engine's server-delivered client-data blob (§3.3). Call sites then read
-pinned values and dead branches fall away naturally in engine-ts.
+**Feature gates are neither spliced nor excluded** — see §3.3 for the corrected treatment (the
+resolver is GrowthBook and reforge's environment already forces compiled-in defaults; the campaign
+pins that state explicitly and snapshots the defaults table).
 
 ### 1.3 The headless tool catalog is the moat's reachability proof
 
@@ -74,39 +82,102 @@ EnterPlanMode/ExitPlanMode, EnterWorktree/ExitWorktree, Glob, Grep, ListAgents, 
 RemoteTrigger, ReportFindings, ScheduleWakeup, SendMessage, Skill, TaskCreate/Get/List/Output/Stop/
 Update, WebFetch, WebSearch, Workflow, Write. Presence in the tools array proves the *catalog*
 traverses the seam; per-tool *execution* reachability headlessly is a delegated unknown probed
-scenario-first per tool (§6).
+scenario-first per tool (§6). Every catalog tool gets a closure-ledger row: owned execution, or an
+evidence-backed exclusion.
 
-## 2. The granularity ladder — three splice mechanisms
+## 2. The granularity ladder — three splice mechanisms, dual-wired from the start
 
-- **S-method** (proven, unchanged): locate by true-substring-unique string anchor, excise the
-  balanced-brace body, delegate to `globalThis.__reforge`, re-derive closure identifiers from the
-  matched body per build (`deriveArgs`). Scope: nameable functions with distinctive literals —
-  formatters, env block, compaction prompt, hook dispatch sites, permission decision functions,
-  protocol switch cases. Survived ten versions and a bundler rewrite with zero re-anchoring.
-- **S-chunk** (new): replace an entire chunk file with a reforge-owned module exporting the same
-  surface. The 2.1.248 ESM packaging change made chunks importable seams. Minified export names
-  churn per version, so the build derives them from the original chunk's export statement each
-  build — the `deriveArgs` philosophy at file scale, never hardcoded. Debut: the four
-  tool-description chunks (1–5 KB each). The build must verify the replaced chunk's import surface
-  too (a chunk that imports engine internals needs those passed in or reimplemented).
-- **S-module** (later): for the census's tangled list — session storage, sandboxing, the query
-  loop — reimplement behind an explicitly designed interface and swap at the module boundary.
-  Mechanically an S-chunk (or a set) plus an owned adapter; the difference is the work is
-  design-first, not transcription-first, and gets fable-tier implementers (§4).
+### 2.1 S-method — generalize the proven transform to four target shapes
 
-**Assembly endgame.** engine-ts is a closure event, not a rewrite event: when the owned set covers a
-standalone core (protocol shell + query loop + tool layer + prompt assembly + storage), an assembly
-spike wires reforge modules + npm deps into a fresh entry speaking stream-json, registered as one
-more engine wrapper (`engines/engine-ts`) and graded by the same harness with zero harness changes.
+The proven mechanism: locate by true-substring-unique string anchor, excise the balanced-brace
+body, delegate to `globalThis.__reforge`, re-derive closure identifiers from the matched body per
+build (`deriveArgs`). It survived ten versions and a bundler rewrite with zero re-anchoring.
+
+**But the current builder handles exactly one syntactic shape** — a sibling method named
+`mapToolResultToToolResultBlockParam` (`strangle/manifest.ts` hardcodes `METHOD`; the builder
+searches backward from the anchor for that name). The subsystems this campaign assigns to S-method
+are different shapes: free functions (env block, formatters not on that method), `switch` cases
+(control protocol), class methods (Bash executor), dispatch sites (hooks). **The manifest therefore
+gains a `target` shape per splice** — `sibling-method | free-function | class-method | switch-case`
+— each with its own excision transform. Transforms stay literal-anchored (that is the versioning
+bet that has paid off), but body identification moves from name-search + balanced braces to an
+AST walk of the owning chunk (parse the chunk, find the anchor's enclosing function/case node,
+excise its exact span): minified chunks are plain ES modules, and an AST span is exact where a
+regex heuristic silently truncates. Each new shape ships behind a **mechanism spike** (W0): a
+trivial target excised, boot-checked, sabotaged RED, restored GREEN, and its derivation perturbed
+to prove loud failure — before any wave that depends on that shape is scheduled.
+
+### 2.2 S-chunk — whole-chunk ownership, priced honestly
+
+Replace an entire chunk file with a reforge-owned module exporting the same surface. The ESM
+packaging change made chunks importable seams — but the census's "each exports one description
+function" was **wrong** (corrected 2026-08-31): the four description chunks export 15/3/17/4
+symbols and import 2/3/10/4 other chunks, carrying real behavior (Read page-range parsing, Grep
+defer policy, WebFetch cache-TTL/prompt construction — and `q6t`, the Write freshness suffix our
+first splice derives). So S-chunk's price is the whole export surface:
+
+- **Precondition: an export-and-consumer inventory** — every export, every importer, top-level
+  side effects, live-binding requirements — committed as part of the wave's design.
+- **Acceptance per export**: behavioral coverage + sabotage evidence for every retained export,
+  not just the headline function. Export names are minified and churn per version, so the build
+  derives them from the original chunk's export statement each build; perturbing a derived name
+  must fail the build loudly.
+- Where an inventory reveals a chunk too entangled to own whole, the wave falls back to S-method
+  splices of the individual functions — ownership narrows rather than overclaims.
+
+Debut target: `y30v0ja7` (3 exports, 1.4 KB) — the smallest surface that exercises the whole
+mechanism.
+
+### 2.3 S-module — design-first reimplementation behind an interface
+
+For the census's tangled list — session storage, sandboxing, the query loop — reimplement behind an
+explicitly designed interface and swap at the module boundary. Mechanically an S-chunk (or a set)
+plus an owned adapter; the difference is the work is design-first, not transcription-first, gets
+fable-tier implementers (§4), and carries the deepest verification obligations (§3.2).
+
+### 2.4 Dual-wiring — the skeleton starts in W0, not W12
+
+Round-1 review exposed a dependency-direction flaw in the original "assembly is a closure event"
+framing: spliced modules *receive* closure values from the extracted graph (`freshnessSuffix`,
+`truncationNotice`), so every owned module was secretly substrate-dependent, and W12 would have
+degenerated into the big-bang rewrite this design exists to avoid. Corrected architecture:
+
+- **Every owned module is standalone-complete**: it owns its constants and helper closures
+  outright (readable TS, no graph inputs required).
+- **The strangled graph gets a thin adapter** per splice: it still passes the graph-derived
+  closure values, and the adapter **asserts they equal the module's owned values** before
+  delegating — every delegation call becomes a free micro-differential check, and a pin bump that
+  changes an upstream constant fails loudly at the adapter instead of silently drifting.
+- **The engine-ts skeleton exists from W0**: a stream-json protocol shell + module registry that
+  boots, reports its owned-module set, and fails gracefully on everything unowned. Each wave
+  registers its standalone-complete modules into the skeleton as well as splicing the graph.
+- **Closure is machine-checked continuously**: a static-reachability check over the skeleton
+  proves no `build/graph` import and no extracted-chunk dependency in the standalone set. The
+  final assembly wave is this check reaching the full ledger — a measured state, not an event of
+  faith.
 
 ## 3. Verification doctrine (extended, never weakened)
 
-### 3.1 Coverage leads reimplementation
+### 3.1 What green means, said honestly
 
-No splice lands without covering scenarios. The two-phase gate is unchanged and both halves stay
-mandatory: each splice sabotaged **alone** must turn its own covering scenarios RED (liveness), and
-the faithful build must stay GREEN on the full acceptance surface (equivalence). A splice with no
-covering scenario is ungated by construction (`strangle/gate.ts` already refuses it).
+A faithful GREEN is **corpus equivalence**: equality of normalized behavior on the recorded
+acceptance surface. It is strong evidence, not proof, of behavioral equivalence; the campaign
+widens the corpus so the gap shrinks per wave, and names the gap instead of rounding it up.
+Coverage leads: no splice lands without covering scenarios; the two-phase gate (each splice
+sabotaged **alone** turns its own covering scenarios RED; the faithful build stays GREEN on the
+full surface) is unchanged and both halves stay mandatory. Substance checks run against **both**
+engines (harness fixed 2026-08-31, commit `98d9553d`, with a negative control proving the
+previously hollow `substanceOnly` path now grades engine B).
+
+Verification depth scales with mechanism tier:
+
+- **S-method**: covering scenarios + solo sabotage + derivation-perturbation loudness.
+- **S-chunk**: the above per retained export, per §2.2.
+- **S-module**: the above **plus a behavioral-partition matrix defined in that wave's design
+  pass** — mandatory input partitions and error paths per subsystem, dirty/pre-existing
+  filesystem states for storage, controlled retry/interleaving schedules for the query loop,
+  long-horizon randomized session traces replayed differentially. These obligations are part of
+  the wave's acceptance, written before implementation.
 
 ### 3.2 Corpus growth, by family
 
@@ -114,16 +185,36 @@ Per-wave scenario families: per-tool behavior depth (Read truncation/cat-n forma
 modes, Bash timeout/backgrounding), a hooks matrix (which of the 8 headless-live events fire, with
 what payloads), permission-mode matrix (6 modes × representative tools), compaction depth
 (reactive trigger, microcompact, boundary contents), storage/resume depth (chain integrity, fork
-divergence), raw-protocol depth (every control subtype), and moat-tool scenarios (task family,
-SendMessage/ListAgents, Workflow, plan/worktree). Recording is live and serialized with backoff
-(record-freely posture, user-approved); replay grades forever offline.
+divergence, dirty-state), raw-protocol depth (every control subtype), and moat-tool scenarios
+(task family, SendMessage/ListAgents, Workflow, plan/worktree). Recording is live and serialized
+with backoff (record-freely posture, user-approved); replay grades forever offline.
 
-### 3.3 Determinism hardening (rides wave 1)
+### 3.3 Gate determinism — pin the disabled state, snapshot the defaults (corrected)
 
-Pin the feature-gate client-data blob: snapshot the blob the pinned engine actually uses into
-`reforge/config`, assert stability at record time the same way the leak check runs, and document it
-as part of the pin (a pin bump re-snapshots). Today's green replays silently depend on whatever
-gate values the engine cached; after this, gate values are an explicit input like the pin itself.
+Empirical correction (`reforge/research/2026-08-31-gate-blob-resolution.md`): the flag provider in
+2.1.251 is **GrowthBook** (the `statsig` literal is a vestigial cache path); both the bootstrap
+fetch (`/api/claude_cli/bootstrap`) and the disk-cache read are **already disabled** under
+reforge's environment (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` + `DISABLE_TELEMETRY=1`), so
+every gate resolves to its compiled-in call-site default (431 sites, 379 distinct gates) with
+`source:"disabled"`. The original "snapshot the blob into `reforge/config`" plan would have pinned
+a cache that is never read; it is replaced by:
+
+- **Pin the disabled state explicitly**: set `DISABLE_GROWTHBOOK=1` in the harness env (the
+  narrowest kill-switch, independent of the telemetry predicate chain keeping its shape) and
+  assert `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF` stays unset (the one opt-in that would
+  re-enable cache reads).
+- **Leak-check the config**: after record and replay, assert the GrowthBook/client-data cache keys
+  never appear in `reforge/config/.claude.json` (same posture as the existing record-time leak
+  check).
+- **Snapshot the defaults table as a tracked fixture**: extract the 431 call-site (gate → default)
+  pairs from the pinned bundle into a committed, `ENGINE_VERSION`-keyed fixture; a pin bump
+  regenerates it and the diff is reviewed — gate-behavior drift becomes visible at bump time
+  instead of silently changing engine behavior. This table is also the engine-ts deliverable:
+  engine-ts implements gates as this constant table.
+- **Delegated unknown**: whether any override path in the public build can flip a gate at runtime
+  (env overrides exist in the resolver's precedence but `CLAUDE_INTERNAL_FC_OVERRIDES` is
+  dead-ended and config overrides are stubbed). If one exists, add a flip-liveness test; if none,
+  record that the disabled path is the only reachable path, which is itself the determinism proof.
 
 ### 3.4 Gate cost honesty
 
@@ -137,74 +228,87 @@ around it.
 The session owner stays orchestrator; workers execute. Roles:
 
 - **Anchor scouts** (opus): verify a target's anchor uniqueness against the whole graph, extract
-  the method body + closure surface, propose the manifest row and `deriveArgs` regexes.
-- **Scenario authors** (opus): write the scenario + substance check; the orchestrator serializes
-  the live recording step.
+  the target node + closure surface, propose the manifest row (incl. `target` shape) and
+  derivation regexes; for S-chunk, produce the export-and-consumer inventory.
+- **Scenario authors** (opus): write the scenario + substance check (which now must hold for any
+  equivalent engine, since it runs on both); the orchestrator serializes the live recording step.
 - **Splice implementers** (opus): readable behavior-faithful rewrite (user-approved posture:
-  extraction is reference, product is clean maintainable code) + sabotage twin + manifest row.
-  S-module work (storage, query loop, sandbox interface design) goes to **fable-tier** workers.
+  extraction is reference, product is clean maintainable code), standalone-complete + adapter per
+  §2.4, sabotage twin, manifest row. S-module work (storage, query loop, sandbox interface design)
+  goes to **fable-tier** workers with a design pass before code.
 - **Independent review**: codex-companion adversarial review at wave boundaries per the standing
   review instructions; verified findings are fixed by a dispatched fix wave, minor-but-real
   findings go to `docs/tech-debt-tracker.md`.
 
 Parallelism rules: implementers run parallel on disjoint modules; **gate runs and cassette
 recordings serialize through the orchestrator** (shared `build/` directory; subscription rate
-limits). Every wave ends: gate PASS → scorecard ratchet (§5) → one commit per gated wave.
+limits). Every wave ends: gate PASS → ledger + scorecard update (§5) → one commit per gated wave.
 
-## 5. Progress metric — the ownership ratchet
+## 5. Progress metric — the closure ledger, with bytes as color
 
-`reforge/README.md` gains a per-subsystem scorecard: owned bytes (minified, measured from the
-excised regions) over the ~5–6 MB load-bearing denominator, plus per-subsystem state
-(unowned / partially spliced / owned / assembled-into-engine-ts). `docs/parity/coverage.md` links to
-it rather than duplicating. The metric only ever ratchets up; a pin bump that breaks a splice
-blocks the bump until re-anchored, it does not un-own the module.
+Primary: the **closure ledger** (§1.1) — per subsystem and per catalog tool, the ownership state
+(`unowned / spliced / standalone-complete / assembled`) and its evidence links. Secondary,
+informational only: owned minified bytes over the load-bearing denominator. The denominator is
+**recomputed at every pin bump** (regenerate the census's `tengu_*` map and the size buckets);
+newly shipped upstream behavior enters the ledger as new `unowned` rows — an explicit, visible
+rebaseline rather than a silently absorbed regression. A pin bump that breaks a splice blocks the
+bump until re-anchored. `reforge/README.md` hosts the scorecard; `docs/parity/coverage.md` links
+to it.
 
 ## 6. Wave sequence (the decomposition input)
 
 Ordered by seam quality within the user's stated priorities (prompt+context, tool layer,
 permissions+hooks first; moat completeness as the bar). `doperpowers:decomposing` formalizes this
-into the goal tree; waves are the natural children.
+into the goal tree; waves are the natural children. Waves overlap where mechanisms allow (scenario
+authoring for N+1 during implementation of N; W1 runs on the proven shape while W0 builds the new
+ones).
 
-| Wave | Scope | Mechanism | New corpus families |
+| Wave | Scope | Mechanism | New corpus families / gates |
 |---|---|---|---|
-| W1 | Remaining tool-result formatters (Read, Edit, Bash, Grep, task family) + feature-gate blob pinning | S-method | per-tool result depth |
-| W2 | Tool-description chunks ×4 | **S-chunk debut** | description-drift scenario (descriptions appear in request `tools` array — already diffed) |
-| W3 | Environment block + system-prompt assembly | S-method | prompt-assembly scenarios (settingSources, CLAUDE.md injection) |
+| W0 | **Mechanism foundation**: manifest `target` shapes + AST-span excision, one spike per shape (free-function, switch-case, class-method) gated end-to-end; **engine-ts skeleton** (stream-json shell + module registry + static-reachability closure check); **gate-determinism hardening** per §3.3 | infrastructure | spike gates; skeleton boot; env pins + leak check + defaults fixture |
+| W1 | Remaining tool-result formatters (Read, Edit, Bash, Grep, task family), standalone-complete + adapters retrofit of the existing 3 splices | S-method (proven shape) | per-tool result depth |
+| W2 | Tool-description functions (generalized S-method); S-chunk pilot on `y30v0ja7` (3 exports) with full export inventory | S-method + **S-chunk debut** | per-export coverage; derivation-perturbation |
+| W3 | Environment block + system-prompt assembly | S-method (free-function shape) | prompt-assembly scenarios (settingSources, CLAUDE.md injection) |
 | W4 | Compaction: prompt, boundary emit, trigger policy | S-method | compaction depth |
 | W5 | Hook dispatch | S-method | hooks matrix |
-| W6 | Permission decisions + rule matching/parsing chunks | S-method + S-chunk | permission-mode matrix |
-| W7 | Control-protocol switch | S-method | raw-protocol depth |
-| W8 | Moat tools: task family, SendMessage/ListAgents, Workflow, ScheduleWakeup, plan/worktree | scenario-led (probe reachability per tool first) | moat scenarios |
-| W9 | Session/transcript storage | **S-module debut** (fable) | storage/resume depth |
-| W10 | Bash executor + command-safety AST | S-method → S-module | bash depth |
-| W11 | Query loop / turn driver | S-module (fable) | fault-injection depth (already exists, widened) |
-| W12 | engine-ts assembly spike | assembly | full surface, engine-ts as engineB |
-
-Waves are ordered but not strictly serial: scenario authoring for wave N+1 overlaps implementation
-of wave N (coverage leads).
+| W6 | Permission decisions + rule matching/parsing chunks (`hw8qz4q5`, `8c6qx8qp` with inventories) | S-method + S-chunk | permission-mode matrix |
+| W7 | Control-protocol switch | S-method (switch-case shape) | raw-protocol depth |
+| W8 | Moat tools: task family, SendMessage/ListAgents, Workflow, ScheduleWakeup, plan/worktree | scenario-led (probe reachability per tool first) | moat scenarios; ledger rows per catalog tool |
+| W9 | Session/transcript storage | **S-module debut** (fable) | storage/resume depth + dirty-state matrix |
+| W10 | Bash executor + command-safety AST | S-method (class-method shape) → S-module | bash depth |
+| W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk | mcp/skills scenario families |
+| W12 | Agent/subagent dispatch + sandbox interface | S-module (fable) | subagent depth; sandbox matrix |
+| W13 | Query loop / turn driver | S-module (fable) | controlled retry/interleaving + long-horizon traces |
+| W14 | engine-ts closure: static reachability proves the standalone set imports nothing extracted; full acceptance surface with engine-ts as engineB | assembly (measured closure, §2.4) | ledger complete or evidence-backed exclusions only |
 
 ## Acceptance (behavior-phrased)
 
 - **Per wave:** every new splice sabotaged alone turns its own covering scenarios RED; the faithful
-  build is GREEN on the full acceptance surface (`m2/all.ts`); the scorecard row moves; the wave is
-  one commit with gate output quoted in the message.
-- **W1 hardening:** a gate-blob snapshot exists under `reforge/config`, record-time asserts its
-  stability, and `src/pin.ts`'s bump ritual documents re-snapshotting.
-- **S-chunk debut (W2):** a replaced description chunk passes the gate with export names derived
-  per build (test: perturbing a derived name fails the build loudly, never silently).
-- **Campaign:** `engines/engine-ts` boots, and passes the full acceptance surface as `engineB`
-  with the substrate absent from its process (verifiable: no `build/graph` read at runtime).
-- **Standing:** ownership % never decreases; no splice exists without coverage; the differ's
-  normalization spec grows only with written justification (existing doctrine).
+  build is GREEN on the full acceptance surface (`m2/all.ts`); every owned module is registered
+  standalone-complete in the skeleton and its adapter equality-asserts graph-supplied closure
+  values; the ledger rows move with evidence links; one commit per gated wave with gate output
+  quoted.
+- **W0:** each mechanism spike passes excise → boot → solo-sabotage RED → faithful GREEN →
+  derivation-perturbation-fails-loudly on a trivial target; the skeleton boots and reports its
+  (initially near-empty) owned set; `DISABLE_GROWTHBOOK=1` set, cache-opt-in asserted unset,
+  config leak check green, defaults fixture committed and keyed to `ENGINE_VERSION`.
+- **S-chunk (from W2):** per-export coverage + sabotage evidence for every retained export; export
+  derivation perturbation fails the build loudly, never silently.
+- **Campaign (W14):** `engines/engine-ts` boots and passes the full acceptance surface as
+  `engineB`; static reachability over the standalone set finds no extracted import and no
+  `build/graph` read at runtime; the closure ledger holds no `unowned` in-scope rows.
+- **Standing:** the ledger regresses only by explicit rebaseline entries at pin bumps; no splice
+  exists without coverage; the differ's normalization spec grows only with written justification
+  (existing doctrine); substance checks grade both engines.
 
 ## Delegated unknowns (empirical residue — named, not hidden)
 
-- Per-tool headless execution reachability for the moat tools (catalog presence is proven; execution
-  is probed scenario-first in W8 — some may be catalog-only headlessly, e.g. CronCreate probed dead
-  in earlier SDK research).
-- S-chunk export-surface derivation mechanics (settled by W2 implementation contact).
-- Where the pinned engine caches/reads the client-data gate blob (settled by a W1 probe before the
-  snapshot design).
+- Per-tool headless execution reachability for the moat tools (catalog presence is proven;
+  execution is probed scenario-first in W8 — some may be catalog-only headlessly, e.g. CronCreate
+  probed dead in earlier SDK research).
+- Whether any runtime gate-override path survives in the public build (§3.3; settles the
+  flip-liveness question).
+- AST-span excision mechanics on minified chunks (settled by the W0 spikes).
 - Gate runtime at ~50 splices (watch, then batch per §3.4 if needed).
 - The S-module interface designs (storage, query loop, sandbox) — each is its own design pass at
   its wave, fable-tier, with this spec as parent.
@@ -223,14 +327,29 @@ of wave N (coverage leads).
   is free forever after).
 - **Ordering: seam quality within user priorities; completeness moat is the bar** (user-directed).
   Glob/Grep deprioritized as deprecated upstream (user-supplied fact).
-- **Feature gates: own the resolver, pin the blob.** Rejected: splicing call sites (862 of them —
-  no seam); ignoring gates (leaves today's replays dependent on an unpinned server-supplied input).
-- **Topology: inside-out strangling with a granularity ladder.** Rejected: outside-in (own the
-  process shell first, delegate inward) — the control-protocol switch already has a high-quality
-  seam inside the chunk, so outside-in buys nothing the ladder doesn't and forfeits the proven
-  gate.
-- **Metric: per-subsystem scorecard in `reforge/README.md`**, linked from coverage.md. Rejected:
-  a new standalone tracker doc (one more thing to rot).
+- **Feature gates: pin the disabled state + snapshot call-site defaults** (revised after the
+  gate-resolution scout). Rejected: splicing 862 call sites (no seam); the original
+  blob-snapshot-into-config plan (pins a cache the engine never reads — disproven empirically);
+  ignoring gates (leaves replays dependent on an unpinned input).
+- **Topology: inside-out strangling with a granularity ladder, dual-wired to a W0 skeleton**
+  (revised after review round 1). Rejected: outside-in only (forfeits the proven gate);
+  skeleton-at-the-end (degenerates into big-bang at assembly because splices inherit
+  graph-supplied closures — the review's dependency-direction finding).
+- **S-method generalization: AST-span excision with literal anchors, four target shapes**
+  (adopted from review round 1). Rejected: stretching name-search + balanced braces per shape
+  (silent-truncation risk on shapes without a stable name); pure-AST anchoring without literals
+  (forfeits the anchor bet that survived ten versions).
+- **S-chunk honesty: export-and-consumer inventory + per-export acceptance** (adopted from review
+  round 1 after verifying the chunks are multi-export). Rejected: whole-chunk claims priced by
+  headline function only (latent regressions in unowned exports).
+- **Metric: closure ledger primary, bytes informational, explicit rebaselines** (adopted from
+  review round 1). Rejected: monotonic owned-bytes percentage (can approach 100% while parity
+  regresses; hides pin-bump drift).
+- **Green = corpus equivalence, said plainly; verification depth scales by tier** (adopted from
+  review round 1). Rejected: calling a corpus green "behavioral equivalence" (overclaim the
+  harness's own history warns against).
+- **Metric location: per-subsystem scorecard in `reforge/README.md`**, linked from coverage.md.
+  Rejected: a new standalone tracker doc (one more thing to rot).
 - **Spec location: `docs/superpowers/specs/`** per project convention, overriding the skill
   default path.
 
@@ -241,10 +360,15 @@ of wave N (coverage leads).
 - **The moat traverses the seam**: 31 native tools presented headlessly at 2.1.251, including
   SendMessage/ListAgents/Workflow/ScheduleWakeup — measured from cassette request bodies, so the
   completeness bar is differentially gradable.
-- **Statsig is not bundled in 2.1.251** — only a cache-directory literal; gates resolve from a
-  server-delivered client-data blob, which is what makes §3.3's pinning necessary and sufficient.
-- **Tool descriptions live in dedicated tiny chunks** — whole-chunk ownership for trivial cost, the
-  cheapest wins on the board and the natural S-chunk debut.
+- **The flag provider is GrowthBook, not Statsig**, and reforge's env already forces compiled-in
+  defaults — the planned blob pinning targeted a cache that is never read (scout, empirical).
+- **The "description chunks" are multi-export grab-bags** (15/3/17/4 exports), not single-function
+  seams — caught by adversarial review, verified against the extracted chunks, census corrected.
+- **The substance check graded only the oracle**: `substanceOnly` scenarios asserted nothing about
+  engine B until the round-1 fix (commit `98d9553d`) — the third hollow-pass instance this
+  harness's history has caught, and the reason the doctrine now says "both engines" explicitly.
+- **Spliced modules were substrate-dependent by construction** (graph-supplied closure values) —
+  the dependency-direction insight that moved the skeleton from W12 to W0.
 
 ## Outcomes & Retrospective
 
@@ -253,3 +377,10 @@ Pending — written at finish.
 ## Revision Notes
 
 - 2026-08-31: initial version, approved in-session after a census-grounded design pass.
+- 2026-08-31 (rev 1): adversarial review round 1 (two Codex `gpt-5.6-sol` lenses: design +
+  verification doctrine) + the gate-resolution scout. All eight findings confirmed and adopted:
+  S-method target shapes + W0 spikes; S-chunk export inventories (census corrected); §3.3
+  rewritten around the GrowthBook kill-switch + defaults fixture; dual-wiring + W0 skeleton +
+  machine-checked closure; closure ledger as primary metric with explicit rebaselines; corpus-
+  equivalence phrasing + tiered verification depth; waves added for MCP adapter, slash/skills,
+  subagent dispatch, sandbox; substance-check both-engines harness fix landed (`98d9553d`).
