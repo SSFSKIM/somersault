@@ -120,6 +120,40 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 }
 
 // ---------------------------------------------------------------------------
+// the engine's wall-clock MONTH — field-scoped to the fields the engine authors.
+// The rot this catches was live: the corpus recorded in August stopped matching
+// on 1 September and every scenario fell back positionally.
+// ---------------------------------------------------------------------------
+{
+  const webSearch = (month: string) =>
+    `IMPORTANT - Use the correct year in search queries:\n  - The current month is ${month}. You MUST use this year when searching for recent information, documentation, or current events.`;
+  const withTools = (month: string) =>
+    JSON.stringify({ model: "claude-sonnet-5", tools: [{ name: "Bash", description: "run a command" }, { name: "WebSearch", description: webSearch(month) }] });
+  check("month: a tool description rolls over without missing", canonicalizeForHash(withTools("August 2026")) === canonicalizeForHash(withTools("September 2026")));
+  check("month: the sentence around it survives", canonicalizeForHash(withTools("August 2026")).includes("You MUST use this year"));
+  check("month: a sibling tool description is untouched", canonicalizeForHash(withTools("August 2026")).includes("run a command"));
+  // The bundle's OTHER phrasing, which shares only the sentence prefix.
+  const dashForm = (month: string) => JSON.stringify({ system: [{ type: "text", text: `The current month is ${month} — use this when searching for recent information.` }] });
+  check("month: the second bundle phrasing is covered (system prompt)", canonicalizeForHash(dashForm("August 2026")) === canonicalizeForHash(dashForm("September 2026")));
+  check("month: that phrasing's tail survives", canonicalizeForHash(dashForm("August 2026")).includes("use this when searching"));
+
+  // NEGATIVE CONTROLS — the scrub is field-scoped precisely so that month-shaped
+  // text a USER wrote stays fully discriminating. Two prompts that differ only in
+  // a month must NOT share a replay key.
+  check("month: USER prose keeps its month", hashed("The current month is August 2026").includes("August 2026"));
+  check("month: USER prose still discriminates", !sameKey("The current month is August 2026", "The current month is September 2026"));
+  check("month: an assistant-authored month in a tool_result still discriminates",
+    !sameKey("<usage>The current month is August 2026</usage>", "<usage>The current month is September 2026</usage>"));
+  // Adjacent engine-authored prose that is NOT the wall clock must survive: the
+  // knowledge cutoff sits three lines above the git block in the same system text.
+  check("month: the knowledge-cutoff line is not month-shaped",
+    canonicalizeForHash(JSON.stringify({ system: "Assistant knowledge cutoff is January 2026." })).includes("January 2026"));
+  check("month: a different CUTOFF still discriminates",
+    canonicalizeForHash(JSON.stringify({ system: "Assistant knowledge cutoff is January 2026." })) !==
+      canonicalizeForHash(JSON.stringify({ system: "Assistant knowledge cutoff is March 2026." })));
+}
+
+// ---------------------------------------------------------------------------
 // tool_result ordering — shared structural canonicalization. The racy
 // completion order lands in request bodies, so the hash needs it too.
 // ---------------------------------------------------------------------------

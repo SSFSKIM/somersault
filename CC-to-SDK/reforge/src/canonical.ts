@@ -108,6 +108,32 @@ export const HOST_STATE_SCRUBS: [RegExp, string][] = [
   [/\nStatus:\n[\s\S]*?\n\nRecent commits:\n[\s\S]*$/g, "\nStatus:\n<git-status>\n\nRecent commits:\n<git-log>"],
 ];
 
+/**
+ * Tier 0 — the WALL CLOCK the engine stamps into its own prompt text, scrubbed
+ * ONLY inside the fields the ENGINE authors (`system`, `tools[].description`).
+ *
+ * Measured: the WebSearch tool description carries "The current month is August
+ * 2026. You MUST use this year when searching…", so the corpus recorded in
+ * August stopped hash-matching on 1 September and EVERY scenario degraded to the
+ * positional fallback — which §3.4 had just made fatal, so the equivalence phase
+ * of the gate went red on all five surfaces while every graded surface was still
+ * identical. Exactly the `Today's date` rot one tier down, one calendar unit
+ * slower.
+ *
+ * Two phrasings exist in the pinned bundle — "The current month is ${m} — use
+ * this when searching for recent information." and "The current month is ${m}.
+ * You MUST use this year…" — so the pattern anchors on the sentence PREFIX they
+ * share and leaves each continuation intact.
+ *
+ * FIELD-SCOPED on purpose. Every other prose scrub runs body-wide (`mapStrings`
+ * walks every string anywhere), which is the over-reach the collision backstop
+ * in `proxy.ts` exists to make unexploitable. Here the scoping is free: the
+ * string only ever occurs in engine-authored fields, so restricting it to those
+ * costs nothing and means a USER prompt that happens to discuss a month stays
+ * fully discriminating.
+ */
+export const ENGINE_PROMPT_SCRUBS: [RegExp, string][] = [[/The current month is [A-Z][a-z]+ \d{4}/g, "The current month is <month>"]];
+
 const applyAll = (rules: [RegExp, string][], s: string) => rules.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
 /**
@@ -172,6 +198,28 @@ function mapStrings(v: unknown, f: (s: string) => string): unknown {
  * instead, which is strictly stronger, and blanking them here first would
  * destroy the map's consistency check.
  */
+/**
+ * Apply `ENGINE_PROMPT_SCRUBS` to the two fields the engine authors and the
+ * caller never does: the `system` prompt (a string or an array of text blocks)
+ * and each tool's `description`. Returns the body unchanged when it is not
+ * shaped like a Messages request.
+ */
+function scrubEngineAuthoredFields(o: unknown): unknown {
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return o;
+  const body = o as Record<string, unknown>;
+  const scrub = (v: unknown) => mapStrings(v, (s) => applyAll(ENGINE_PROMPT_SCRUBS, s));
+  const out: Record<string, unknown> = { ...body };
+  if ("system" in out) out.system = scrub(out.system);
+  if (Array.isArray(out.tools)) {
+    out.tools = out.tools.map((t) =>
+      t !== null && typeof t === "object" && typeof (t as { description?: unknown }).description === "string"
+        ? { ...(t as Record<string, unknown>), description: scrub((t as { description: string }).description) }
+        : t,
+    );
+  }
+  return out;
+}
+
 export function scrubRequestBody(body: string): string {
   // The engine stamps the current date into its system prompt, so an unscrubbed
   // cassette ROTS AT MIDNIGHT: the live body stops hash-matching the recording.
@@ -181,9 +229,12 @@ export function scrubRequestBody(body: string): string {
   try {
     const o = JSON.parse(dated);
     if ((o as { metadata?: unknown })?.metadata) (o as { metadata?: unknown }).metadata = "<scrubbed>";
-    return JSON.stringify(mapStrings(o, (s) => applyAll(RUN_VALUE_SCRUBS, s)));
+    return JSON.stringify(mapStrings(scrubEngineAuthoredFields(o), (s) => applyAll(RUN_VALUE_SCRUBS, s)));
   } catch {
-    return applyAll(RUN_VALUE_SCRUBS, dated);
+    // A body that is not JSON has no fields to scope to (bodyless probes, and
+    // any future non-Messages payload). Fall back to body-wide: under-matching
+    // here is a fatal fallback, which is loud.
+    return applyAll(RUN_VALUE_SCRUBS, applyAll(ENGINE_PROMPT_SCRUBS, dated));
   }
 }
 
