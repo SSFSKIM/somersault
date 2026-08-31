@@ -34,21 +34,37 @@ const frames = (msgs: unknown[], subtype: string) =>
  * turn's frames carry null, a subagent's own frames carry the id of the tool
  * call that spawned them. A background child may dispatch agents of its own, and
  * those are its business, not this scenario's — so they are not counted here.
+ *
+ * The marker is required to be EXPLICITLY null, not merely falsy. The SDK's
+ * SDKAssistantMessage schema declares `parent_tool_use_id: string | null`, and
+ * the real capture carries the null, so a frame that omits the property (or
+ * carries an empty string) has lost the lane marker rather than claimed the
+ * parent lane. Accepting falsy would let an engine drop the field entirely and
+ * still be graded green — the scenario is substanceOnly, so nothing else looks.
  */
-function topLevelAgentDispatches(msgs: unknown[]): { id?: string; input?: { run_in_background?: unknown } }[] {
-  const out: { id?: string; input?: { run_in_background?: unknown } }[] = [];
+function topLevelAgentDispatches(msgs: unknown[]): {
+  parentLane: AgentDispatch[];
+  /** The marker every Agent-bearing frame carried, for a legible rejection. */
+  lanes: unknown[];
+} {
+  const parentLane: AgentDispatch[] = [];
+  const lanes: unknown[] = [];
   for (const m of msgs) {
-    const mm = m as { type?: string; parent_tool_use_id?: string | null; message?: { content?: unknown } };
-    if (mm.type !== "assistant" || mm.parent_tool_use_id) continue;
+    const mm = m as { type?: string; parent_tool_use_id?: unknown; message?: { content?: unknown } };
+    if (mm.type !== "assistant") continue;
     const c = mm.message?.content;
     if (!Array.isArray(c)) continue;
-    for (const b of c as { type?: string; name?: string; id?: string }[]) {
-      if (b?.type === "tool_use" && b?.name === "Agent")
-        out.push(b as { id?: string; input?: { run_in_background?: unknown } });
-    }
+    const blocks = (c as { type?: string; name?: string; id?: string }[]).filter(
+      (b) => b?.type === "tool_use" && b?.name === "Agent",
+    );
+    if (blocks.length === 0) continue;
+    lanes.push("parent_tool_use_id" in mm ? mm.parent_tool_use_id : "<property absent>");
+    if (mm.parent_tool_use_id === null) parentLane.push(...(blocks as AgentDispatch[]));
   }
-  return out;
+  return { parentLane, lanes };
 }
+
+type AgentDispatch = { id?: string; input?: { run_in_background?: unknown } };
 
 /** Indices of the system frames of one subtype, in transcript order. */
 function frameIndices(msgs: unknown[], subtype: string): number[] {
@@ -97,8 +113,9 @@ function frameIndices(msgs: unknown[], subtype: string): number[] {
  */
 export function checkBackgroundTask(msgs: unknown[]): string | null {
   if (!usedTool(msgs, "Agent")) return "Agent tool never used";
-  const dispatches = topLevelAgentDispatches(msgs);
-  if (dispatches.length === 0) return "the Agent tool was used, but never dispatched from the parent lane";
+  const { parentLane: dispatches, lanes } = topLevelAgentDispatches(msgs);
+  if (dispatches.length === 0)
+    return `the Agent tool was used, but no dispatch carried the parent-lane marker parent_tool_use_id: null — the lane markers seen were ${JSON.stringify(lanes)}`;
   if (dispatches.length > 1)
     return `saw ${dispatches.length} top-level Agent dispatches; the scenario dispatches exactly one background task`;
   const dispatch = dispatches[0];

@@ -40,6 +40,11 @@ interface Overrides {
   notifyBeforeStart?: boolean;
   /** Extra frames appended after the terminal bookend — e.g. a cloned lifecycle. */
   append?: unknown[];
+  /**
+   * The dispatch frame's `parent_tool_use_id` lane marker (default null).
+   * `undefined` deletes the property outright, as elsewhere in this builder.
+   */
+  dispatchLane?: unknown;
 }
 
 const notification = (n: NotificationSpec) => ({
@@ -61,7 +66,11 @@ const transcript = (o: Overrides = {}): unknown[] => {
     { type: "system", subtype: "init", session_id: "s", tools: ["Agent"] },
     {
       type: "assistant",
-      parent_tool_use_id: null,
+      ...("dispatchLane" in o
+        ? o.dispatchLane === undefined
+          ? {}
+          : { parent_tool_use_id: o.dispatchLane }
+        : { parent_tool_use_id: null }),
       message: {
         role: "assistant",
         content: [
@@ -291,7 +300,21 @@ rejects(
   transcript({ notifications: [{}, { task_id: TASK_ID_2, tool_use_id: TOOL_USE_ID_2 }] }),
 );
 
-// (i) the real shape must still pass, or the check is merely strict, not correct.
+// (i) the lane marker itself. `parent_tool_use_id` is what separates the parent
+// turn from a subagent's own frames, and the schema carries it as an explicit
+// null — which the real capture (transcripts/m1-background-task-A.jsonl) does.
+// A falsy test would read a frame that LOST the marker as a parent-lane frame,
+// so an engine could drop the field entirely and still be graded green.
+rejects(
+  "a dispatch frame with no parent_tool_use_id property at all is rejected",
+  transcript({ dispatchLane: undefined }),
+);
+rejects(
+  "a dispatch frame whose parent_tool_use_id is an empty string is rejected",
+  transcript({ dispatchLane: "" }),
+);
+
+// (j) the real shape must still pass, or the check is merely strict, not correct.
 const wellFormed = checkBackgroundTask(transcript());
 check("well-formed transcript passes", wellFormed === null, wellFormed ?? "");
 
