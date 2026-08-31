@@ -622,11 +622,11 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 
 | child | wave | spec | status |
 |---|---|---|---|
-| C1 | W0a | commit `2621aad3` (direct execution vs this doc) | **landed** — 4 target shapes, AST spans, 3 spike splices, footprints; gate 6-live PASS |
-| C2 | W0b | commit `453f5952` | **landed** — skeleton boots, ledger 46 rows + checker, reachability + 72 negative controls |
-| C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed** — env allowlist (2 oracle-steering vars caught), 439-gate fixture, flip-liveness via `tengu_cobalt_ridge`, Bun 1.4.1 pin, zero-fallback corpus, fatal rule (caught 2 latent harness defects) |
-| C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | not-dispatched — scouted; awaiting W0 boundary review |
-| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; awaiting W0 boundary review |
+| C1 | W0a | commit `2621aad3` (direct execution vs this doc) | **landed + boundary-reviewed** — 4 target shapes, AST spans, 3 spike splices, closure-surface footprints, free-variable inventory, structural signatures (fix commits `97701dc6`/`dd260620`/`2f057702`) |
+| C2 | W0b | commit `453f5952` | **landed + boundary-reviewed** — skeleton boots, ledger 46 rows evidence-backed, AST-based reachability w/ package allowlist (fix commits `bedff4b8`/`080e8dfd`/`cadb2e66`) |
+| C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed + boundary-reviewed** — env allowlist + credential injection (engine never holds a live secret), collision-fatal replay keys, SHA-pinned Bun, month-rot scrub (fix commits `64318463`…`fa8009d0`); gate 12/12, zero fallbacks |
+| C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | not-dispatched — scouted; W0 boundary closed, dispatchable now |
+| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; blocked-by C4 (gate/tree serialization) |
 | C6–C10 | W3–W7 | — | not-dispatched — blocked-by W0 trio |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
@@ -803,6 +803,20 @@ initiative, not this campaign.
 - **The TypeScript parser eats the 4 MB minified engine chunk in ~0.6 s** with zero diagnostics —
   the AST premise is cheap, not speculative.
 
+- **Cassette rot has a month class above the day class** (2026-09-01): the WebSearch description
+  embeds "The current month is …"; the day-scoped scrub caught midnight rot (M3-B) and missed the
+  month rollover. Caught within hours of the boundary *because* fallbacks had just become fatal —
+  the strictness rule proved its liveness on its first calendar event.
+- **`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is not a pure sanitizer**: a truthy value force-resets the
+  permission mode to `default` (bundle evidence), so "hardening" with it would silently grade a
+  different engine. Kill-switch env vars must be read in the bundle before adoption.
+- **`import.meta.resolve(spec, parentURL)` silently ignores its second argument under tsx** — the
+  reachability checker had been resolving every bare specifier against itself. Found while fixing
+  the package-traversal gap.
+- **The shared working tree is a real hazard**: a concurrent session's `git reset` wiped two
+  workers' uncommitted state mid-wave (both recovered). Standing mitigation: workers commit
+  incrementally; at most one code-writing worker in the tree at a time.
+
 ## Outcomes & Retrospective
 
 Pending — written at finish.
@@ -921,3 +935,19 @@ Pending — written at finish.
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
   design sections above are unchanged; authority grades on inherited content are marked in the
   child sections and contracts.
+- 2026-09-01 (W0 boundary review): three parallel Codex `gpt-5.6-sol` lenses over the whole wave
+  diff returned **11 findings (all confirmed, none dismissed)** — every one an
+  enforcement-integrity gap in W0's own machinery rather than a behavior defect: compact-syntax
+  and bare-package bypasses in the reachability walk; fabricated-evidence acceptance in the
+  ledger checker; footprints blind to closure-declaration drift; a perturbation phase that could
+  not detect an incomplete capture inventory; no target-identity guard on the nearest-shape walk;
+  computed destructuring keys silently re-evaluated; five pure helpers misclassified as effectful
+  ports; shape-only canonicalization scrubs that let genuinely different requests share a replay
+  key; the live API key reaching Bash subprocesses in key-mode recording; and a drift-tolerant
+  Bun surrogate. Fixed across four workers (commits `bedff4b8`…`fa8009d00`); the collision-fatal
+  cassette-load backstop, the free-variable inventory cross-check, per-row structural signatures,
+  proxy-side credential injection, and the SHA-pinned runtime are the durable upgrades. Gate:
+  **12/12 phases PASS, zero fallbacks, zero collisions.** One briefed fix was deliberately
+  refused with bundle evidence: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` force-resets the permission
+  mode to `default` (cli.pretty.js:233080), which would silently grade a different engine — the
+  variable is forbidden instead and the leak closed at its source.
