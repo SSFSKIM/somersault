@@ -161,7 +161,8 @@ export function freeIdentifiers(root: ts.Node): string[] {
       for (const p of n.parameters) bindingNames(p.name, inner.names);
       // A method/accessor's own name is a property, not a binding — but a
       // COMPUTED one is an expression evaluated in the OUTER scope.
-      if (ts.isMethodDeclaration(n) && ts.isComputedPropertyName(n.name)) visit(n.name.expression, scope);
+      const named = ts.isMethodDeclaration(n) || ts.isGetAccessorDeclaration(n) || ts.isSetAccessorDeclaration(n);
+      if (named && ts.isComputedPropertyName(n.name)) visit(n.name.expression, scope);
       // Defaults and computed keys inside the parameter list see the parameters.
       for (const p of n.parameters) visitPatternExtras(p.name, inner);
       for (const p of n.parameters) if (p.initializer) visit(p.initializer, inner);
