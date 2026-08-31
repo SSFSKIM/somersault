@@ -12,7 +12,7 @@
 > a `planned(...)`/`probe-gated` row's name must **not** be registered in `schema/index.ts`.
 >
 > **Scope of this scorecard:** the four sources spec §10 calls "generated, not hand-counted" —
-> `host/ops.ts` (**35** ops — the TUI-clone waves grew the host wire past M1's 25, see gap 6),
+> `host/ops.ts` (**36** ops — the TUI-clone waves grew the host wire past M1's 25, see gap 6),
 > `bridge/types.ts` (11 `ControlFrame` verbs), `sessions/index.ts` (7 store wrappers), and `sdk.d.ts`'s
 > `interface Query` (27 methods) — **80 seam tokens** total. Spec §10's full denominator has two more
 > legs (`docs/parity/tui-ux.md` §control-plane, the fleet CLI verbs); those aren't code-walkable the
@@ -657,6 +657,7 @@ this origin. The dedup guard goes with it: a re-add forwards, and the host decid
 | `add_rule` | host/ops.ts | `thread/permissionRule/add` | both | shipped(M2b) — flag accumulator, commit-after-accept; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
 | `remove_rule` | host/ops.ts | `thread/permissionRule/remove` | both | shipped(M2b) — flag accumulator, commit-after-accept; M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
 | `set_effort` | host/ops.ts | `thread/effort/set` | both | shipped(M2b) — closed level enum, host/ops.ts's verbatim (probe 102); emits no notification (deliberate, as `thread/settings/apply` — gap 6); M3 T10 fleet: forwarded per request, no accumulator, no dedup (see the note above) |
+| `set_advisor_model` | host/ops.ts | `thread/advisorModel/set` | both | shipped(BL11) — the SEVENTH `applyFlagSettings` op. The host op landed with bl8 t-advcmd's TUI path only; the D11 walker caught the rowless token when the 0.3.251 reconcile merge first ran the gate on main, and BL11 shipped this mirror (note 6's settled doctrine: post-inventory host ops ship as protocol methods). Tri-state `model` verbatim from the host schema (`z.string().min(1).nullable()`): a string chooses the advisor, `null` CLEARS it — and the clear COMMITS to `flagAdvisorModel` like a choice (host.ts's committed-value doctrine), so the swap replay's guard is `!== undefined` and a replacement engine cannot silently re-enable a settings-file advisor the client turned off. No dedup (as `set_output_style`/`set_effort`), no notification (gap 6's rule — the flag layer reads back on demand through the engine's own `get_settings`); fleet forwards the op verbatim, no local accumulator. No client-side model validation, matching the knob itself (`config/types.ts`): a bad pairing surfaces as the engine's `model_not_found`, relayed as -32603 and NOT committed |
 
 ## ControlFrame — `harness/src/bridge/types.ts` (11 tokens)
 

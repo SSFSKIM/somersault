@@ -34,7 +34,7 @@ import { broadcastToWatchers, broadcastToSubscribersAndWatchers } from "./fanout
 import { rewindAnchors, rewindDryRun, threadRewind, threadReopen } from "./rewind.js";
 import { mcpStatusList, mcpReconnect, mcpToggle, mcpSet, mcpPermissionModeOverrideSet } from "./mcp.js";
 import { taskList, taskStop, turnBackground } from "./tasks.js";
-import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, threadClear } from "./settingsOps.js";
+import { settingsRead, directoryList, directoryAdd, directoryRemove, permissionRuleAdd, permissionRuleRemove, outputStyleSet, effortSet, advisorModelSet, threadClear } from "./settingsOps.js";
 import { pluginReload, skillReload } from "./reloads.js";
 import { fleetDecisionRespond, fleetList, fleetStop, threadAttach, type StopPoll } from "./fleet.js";
 import { fsRead, fsSearch, shellCommand } from "./workspace.js";
@@ -732,6 +732,7 @@ export class AppServer {
     "thread/permissionRule/remove": permissionRuleRemove,
     "thread/outputStyle/set": outputStyleSet,
     "thread/effort/set": effortSet,
+    "thread/advisorModel/set": advisorModelSet,
     "thread/clear": threadClear,
     // M2b Task 5's probe promotions, registered last as their own cluster (probes 103b/105). `turn/steer`
     // is experimental-designated (X) — Task 6 adds the marker mechanism; it registers plainly here.

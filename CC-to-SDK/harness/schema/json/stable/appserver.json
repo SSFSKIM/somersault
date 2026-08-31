@@ -1452,6 +1452,31 @@
       ],
       "additionalProperties": false
     },
+    "thread/advisorModel/set": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "model"
+      ],
+      "additionalProperties": false
+    },
     "thread/clear": {
       "type": "object",
       "properties": {
