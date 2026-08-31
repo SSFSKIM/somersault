@@ -2063,7 +2063,11 @@ describe("U5a: /export /files /diff", () => {
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/export");
-    await waitFor(() => frame(lastFrame).includes("no conversation to export"));
+    // T-SPACE: the notice grew a leading separator item (canon "any block → system notice" = 1 blank,
+    // research-spacing.md §1.5 / cli.pretty.js:194161), so `allText`'s joined <Text> is two "|" cells
+    // longer and Ink's hard wrap now lands mid-notice, leaving "to\n export". `flat` collapses the
+    // whitespace run the de-wrap leaves behind — the same idiom the gutter assertions already use.
+    await waitFor(() => flat(lastFrame).includes("no conversation to export"));
     expect(writes).toHaveLength(0);
   });
   it("/export clipboard copies the markdown via copyText and does not touch writeFile", async () => {
@@ -2475,7 +2479,10 @@ describe("useChat: one retained document behind every surface", () => {
     expect(snap.finalizedItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);  // still withheld: a growable run is not finalized
     fake.pushEvent({ kind: "turn", phase: "end", seq: 1 });                         // a turn boundary is NOT a breaker
     await waitFor(() => frame(lastFrame).includes("Read 1 file (ctrl+o to expand)"));
-    expect(snap.pendingItems.map((i) => i.id)).toEqual(["group:read-1:unclosed-row"]);
+    // T-SPACE: the pending row is a top-level block, so it carries canon's one leading blank
+    // ("any block → tool row" = 1, research-spacing.md §1.5 / cli.pretty.js:190547), emitted as the
+    // stand-in separator item `sep:<boundaryId>:gap` (toolRenderer.tsx `separatorItemId`).
+    expect(snap.pendingItems.map((i) => i.id)).toEqual(["sep:group:read-1:unclosed-row:gap", "group:read-1:unclosed-row"]);
     fake.pushEvent({ kind: "message", data: CLOSING_PROSE });                       // the breaker publishes it
     await waitFor(() => snap.finalizedItems.some((i) => i.id === "group:read-1:row"));
     expect(snap.pendingItems).toEqual([]);                                          // and the dynamic copy is gone the same render
@@ -2777,7 +2784,12 @@ describe("useChat: one retained document behind every surface", () => {
     fake.pushEvent({ kind: "message", data: { type: "user", uuid: "user-result-b", message: { content: [{ type: "tool_result", tool_use_id: "read-2", content: "b", is_error: false }] } } });
     await waitFor(() => rows.some((r) => r.includes("Read 2 files (ctrl+o to expand)")));
     await waitFor(() => scheduler.armed === 0);                           // both settled → the epoch is over
-    expect(ids.every((i) => i.endsWith(":unclosed-row"))).toBe(true);     // and the run waits for a breaker, visibly
+    // T-SPACE: the run's own leading separator (`sep:…:gap`, canon "any block → tool row" = 1,
+    // research-spacing.md §1.5 / cli.pretty.js:190547) is chrome, not a row of the run — the claim is
+    // about the CONTENT ids, so read them apart from the gap item that now precedes them.
+    const contentIds = ids.filter((i) => !i.startsWith("sep:"));
+    expect(contentIds).toHaveLength(1);                                  // one row, not zero — `every` must not pass vacuously
+    expect(contentIds.every((i) => i.endsWith(":unclosed-row"))).toBe(true);   // and the run waits for a breaker, visibly
   });
 
   it("a truncated start WITH a numeric seq is a live mid-turn replay: gap record, LiveTurn, busy", async () => {

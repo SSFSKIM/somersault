@@ -72,7 +72,12 @@ describe("LiveTurn", () => {
     expect(texts(lt)).toEqual([]);
     // Task 5c: the default view folds an open read into ONE blinking active group row — the per-call
     // `⏺ Read(src/app.ts)` header it replaced is upstream's ctrl+o VERBOSE form, and lives on in projectDetail.
-    expect((projectPending(doc, projectionOptions)[0] as { line: { text: string } }).line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
+    // T-SPACE: index 0 is the block's leading separator now — canon puts one blank row above every
+    // top-level block, the pending tool row included ("any block → tool row" = 1, research-spacing.md
+    // §1.5 / cli.pretty.js:190547). The active group row is the item under it.
+    const pending = projectPending(doc, projectionOptions);
+    expect(pending[0]!.id).toBe("sep:group:read-1:pending-row:gap");
+    expect((pending[1] as { line: { text: string } }).line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
   });
 
   it("drops the partial blocks a COMPLETE message supersedes, so the same text never renders twice", () => {
@@ -352,8 +357,12 @@ describe("live and replay share ONE tool grammar", () => {
     const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR, CLOSED], { id: "session-1" });
     // The replay's own display dividers shift every later resultSequence, so the id's sequence component is
     // normalized away; everything else — header segments, gutter, body — must match byte for byte.
+    // T-SPACE: every top-level block now carries a leading `sep:<boundaryId>:gap` item (canon's one blank
+    // above every block, research-spacing.md §1.5). A replay divider's separator is as replay-only as the
+    // divider itself, so strip the `sep:` prefix before the replay test — otherwise the disk side keeps
+    // gaps whose content rows were just filtered out.
     const toolRows = (items: readonly { kind: string; id: string }[]) =>
-      items.filter((i) => !i.id.startsWith("local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
+      items.filter((i) => !i.id.replace(/^sep:/, "").startsWith("local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
     expect(toolRows(projectCompact(live, projectionOptions))).toEqual(toolRows(projectCompact(disk, projectionOptions)));
     expect(projectPending(live, projectionOptions)).toEqual([]);         // the call settled — nothing stays pending
   });
