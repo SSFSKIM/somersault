@@ -1,5 +1,6 @@
-// test/live/appserver-cross-session.test.ts — M8's keyed acceptance (spec rows 7–11). Gated exactly like
-// every other file under test/live/: without a key the whole describe skips, so this runs in CI as a
+// test/live/appserver-cross-session.test.ts — M8's keyed acceptance (spec rows 7–11), and M9's read side
+// on the same exchanges (LEGs 2 and 10: an arrival is HISTORY, not only a notification). Gated exactly
+// like every other file under test/live/: without a key the whole describe skips, so this runs in CI as a
 // no-op and against a real engine when a key is present.
 //
 // ── WHY THIS FILE EXISTS AT ALL ────────────────────────────────────────────────────────────────────
@@ -42,15 +43,23 @@
 //        `items/replay.ts`'s `peerArrival` branch was written for — but it also carries `isMeta: true`,
 //        and `getSessionMessages` (the SDK reader behind `thread/read`) returns no `isMeta` row at all,
 //        with or without `includeSystemMessages`. It also strips `origin` from the rows it DOES return.
-//        So `thread/read` can never project a peer arrival, and the live-vs-persisted id stitch spec row 7
-//        promises is unreachable THROUGH THAT READER. LEG 2 measures exactly this: the stitch holds at the
-//        STORE (the real rule, run over the real row, reproduces the live item byte for byte) and is cut
-//        at the reader. It is asserted in both directions so the day the reader stops dropping the row,
-//        this leg goes red and the design gets revisited.
+//        So `thread/read` can never project a peer arrival THROUGH THAT READER, and the live-vs-persisted
+//        id stitch spec row 7 promises is unreachable by it. LEG 2 measures exactly this: the stitch holds
+//        at the STORE (the real rule, run over the real row, reproduces the live item byte for byte) and
+//        is cut at the reader.
+//        M9 CLOSES IT FROM THE OTHER SIDE rather than waiting on the SDK: the arrival is logged the moment
+//        it lands, anchored to the row it followed, and `thread/read` merges that log back in at its anchor
+//        (appserver/arrivalsReply.ts). So LEG 2 now asserts the PRESENCE M8 asserted the absence of — while
+//        still pinning `isMeta`, because the day the reader stops dropping the row the merge would
+//        double-render it and `resolveArrivals`'s dedupe guard is what has to be re-verified.
 //        AND ITS SHARPER HALF: a FOLDED arrival is persisted NOWHERE — no `isMeta` row, no row at all
-//        (LEG 4, read against a positive control on the same transcript). So a folded message has no live
-//        item, no cold row, and exactly one durable trace: its `thread/peerMessage` announcement. The
-//        announcement is therefore load-bearing rather than a convenience.
+//        (LEG 4, read against a positive control on the same transcript). So a folded message's only
+//        DURABLE trace is its `thread/peerMessage` announcement, which is what makes the announcement
+//        load-bearing rather than a convenience.
+//        BL7 (#64) gives it a live trace too, and only inside the bracket that earned it: the folded
+//        arrival is emitted as a user item of the HOST turn the engine folded it into — exactly one, on
+//        that turn's id and no later one (LEG 4's (2b) and its successor re-check). The cold half is
+//        unchanged; a live item is not a row.
 //
 // ── THE FOUR DELEGATED UNKNOWNS, AND HOW EACH IS CLOSED ────────────────────────────────────────────
 //   U1 · the healthy terminal state's NAME → `completed` (M1). LEG 1 + LEG 6.
@@ -66,12 +75,17 @@
 //        back to back produce three replay frames with three distinct uuids — and only as many distinct
 //        `origin.msg_id`/`origin.body` values as there were TURNS. The other members' attributions never
 //        appear, though their TEXT does reach the model (all three check codes come back). So
-//        `thread/peerMessage` announces the causing message N times and never announces the rest. This
-//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it.
+//        `thread/peerMessage`'s `origin` names the causing message N times and never names the rest. This
+//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it. What
+//        BL7 (#63) changed is not that field but what travels beside it: the announcement also carries
+//        `text`, the frame's OWN resolved text, so the repeated attribution no longer costs a client the
+//        message's content.
 //
 // ── WHAT THE LEGS MAY AND MAY NOT ASSERT ───────────────────────────────────────────────────────────
-//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin }` and NOTHING else. There is no
-//     `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided.
+//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin, text }` and NOTHING else. There is
+//     no `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided. `origin`
+//     is the engine's verbatim delivery provenance and `text` is what THIS arrival says; the two
+//     deliberately disagree in a batch and neither is reconciled to the other.
 //   · an arrival's id is the FRAME's own uuid, never a minted one.
 //   · an adopted turn goes THROUGH `beginTurn`, so its `turn/started` payload is the ordinary
 //     `{ threadId, turn }` and carries NO origin field.
@@ -101,7 +115,8 @@ import { AppServer } from "../../src/appserver/server.js";
 import { listenWs } from "../../src/appserver/transport/ws.js";
 import { claudeConfigDir } from "../../src/config/claudeHome.js";
 import { peerArrival } from "../../src/peer/address.js";
-import { userItem } from "../../src/appserver/items/mapper.js";
+import { arrivalItem } from "../../src/appserver/items/mapper.js";
+import { effectiveArrivalStore } from "../../src/appserver/peerInbound.js";
 
 const live = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) ? describe : describe.skip;
 
@@ -362,7 +377,13 @@ live("M8 cross-session, against a real engine", () => {
   let t4: Thread | undefined;
   let t5: Thread | undefined;
   /** What LEG 1 observed, read by LEGs 2 and 3. */
-  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string } | undefined;
+  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string; announcedText: unknown } | undefined;
+  /** What LEG 5 SENT, read by LEG 10. Recorded as soon as the sends land rather than at the end of that
+   *  leg, and deliberately: LEG 5 pins the LIVE shape of a batch (one announcement per queued message) and
+   *  LEG 10 measures the READ side of the same exchange. A run on which the engine collapses the batch
+   *  differently reddens LEG 5's pins, and the read-side measurement is exactly what one would want to
+   *  still have in hand when it does. */
+  let batch: { tokens: string[]; msgIds: string[] } | undefined;
 
   it("LEG 1 — idle (spec row 7, closes U1): peer/list carries this thread's own row, peer/send reaches it, and the arrival becomes a real turn that settles `completed`", async () => {
     t1 = await openThread("accept", "idle");
@@ -384,7 +405,7 @@ live("M8 cross-session, against a real engine", () => {
     // (1) THE ARRIVAL — the one premise no unit test can establish.
     const announced = await a.waitFor("thread/peerMessage", 180_000,
       (n) => n.method === "thread/peerMessage" && n.params.threadId === t1!.id, mark);
-    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin}").toEqual(["arrivalUuid", "origin", "threadId"]);
+    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin, text}").toEqual(["arrivalUuid", "origin", "text", "threadId"]);
     const arrivalUuid = String(announced.params.arrivalUuid);
     expect(arrivalUuid, "the arrival's id is not the frame's own uuid").toMatch(UUID_RE);
     const origin = announced.params.origin;
@@ -419,17 +440,23 @@ live("M8 cross-session, against a real engine", () => {
     expect((t1.record.session as any).unmatchedResults, "the adopted turn's result was not claimed by the unclaimed-result hook").toBe(before);
     expect(a.since(mark).filter((n) => n.method === "peer/messageStatus").length, "a receipt arrived on the success path").toBe(0);
 
-    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId };
+    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId, announcedText: announced.params.text };
   }, 900_000);
 
-  it("LEG 2 — the live item and the persisted one are ONE row at the STORE, and the SDK's reader cuts the stitch (M4)", async () => {
+  it("LEG 2 — the live item and the persisted one are ONE row at the STORE, and (M9) history returns the arrival itself: marked, in position, and counted", async () => {
     expect(idle, "LEG 1 did not run").toBeTruthy();
     const { mark, arrivalUuid, body } = idle!;
 
-    // (1) THE LIVE ITEM. Built by `drainArrivals` through `userItem(text, msgId)`.
+    // (1) THE LIVE ITEM. Built by `drainArrivals` through `arrivalItem(text, msgId, origin)` — M9 added the
+    // `origin` field, so an arrival now says WHO sent it on every path a client can reach it by.
     const liveItem = itemsOf(mark, t1!.id).find((i: any) => i?.type === "userMessage" && i.id === arrivalUuid);
     expect(liveItem, `no live userMessage item carried the arrivalUuid ${arrivalUuid}`).toBeTruthy();
-    expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body });
+    expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body, origin: expect.objectContaining({ kind: "peer" }) });
+    // #63: the ANNOUNCEMENT LEG 1 captured says what this arrival says, and says it identically — one
+    // string under one `arrivalUuid` across the notification and the item, so a client that renders the
+    // announcement and a client that renders the item show the same message rather than `origin.body`,
+    // which in a batch names the CAUSING one.
+    expect(idle!.announcedText, "thread/peerMessage's text is not the arrival item's own text").toBe(liveItem.text);
 
     // (2) THE PERSISTED ROW, read raw off disk. It IS there, it IS a `type:"user"` row, and it carries the
     // very origin the live path recognised — so running the ONE reader (`peerArrival`) over it reproduces
@@ -442,28 +469,53 @@ live("M8 cross-session, against a real engine", () => {
     expect(persisted.type).toBe("user");
     const decoded = peerArrival(persisted);
     expect(decoded, "the persisted row does not read as a peer arrival").toBeTruthy();
-    expect(userItem(decoded!.text, String(persisted.uuid))).toEqual(liveItem);
+    // M9 makes this claim one step stronger than the id-and-text stitch it was: the item's `origin` comes
+    // from the same reader on both sides, so a persisted row that reproduces the live item now has to carry
+    // the very attribution the live frame did.
+    expect(arrivalItem(decoded!.text, String(persisted.uuid), decoded!.origin)).toEqual(liveItem);
     // The raw persisted TEXT is not the message: it carries a CLI-authored preamble the peer never wrote,
     // which is exactly why `origin.body` is the text and the envelope capture is only the fallback.
     expect(JSON.stringify(persisted.message?.content ?? ""), "the persisted row's own text is somehow already the clean body").toContain("Another Claude session sent a message");
 
-    // (3) …AND THE STITCH IS CUT AT THE READER, which is the finding. The row carries `isMeta: true`, and
-    // `getSessionMessages` — the SDK reader behind `thread/read` — returns no `isMeta` row at all (measured
-    // with and without `includeSystemMessages`) and strips `origin` from the rows it does return. So a
-    // client that reads its own history sees the arrival NOWHERE rather than twice: not a duplicate, a
-    // hole. Asserted in this direction on purpose — the day the reader stops dropping it, this goes red and
-    // the design gets revisited rather than silently double-rendering.
-    expect(persisted.isMeta, "the persisted arrival is no longer isMeta — re-check whether thread/read now projects it").toBe(true);
-    // The turn the arrival caused IS projected, so this is a hole in one row and not an unreadable thread —
-    // and waiting for that answer to appear is also what makes the absence below a measurement rather than
-    // a race with the CLI's own transcript flush (the assistant row lands on disk after `turn/completed`).
-    let data: any[] = [];
+    // (3) THE SDK'S READER STILL CUTS THE STITCH — and M9 no longer waits on it. The row carries
+    // `isMeta: true`, and `getSessionMessages` (the reader behind `thread/read`) returns no `isMeta` row at
+    // all, with or without `includeSystemMessages`. That is still asserted, because it is what the merge
+    // presumes: if the reader ever starts returning this row, the arrival would arrive from BOTH sides and
+    // `resolveArrivals`'s id dedupe is the guard that has to be re-verified rather than assumed.
+    expect(persisted.isMeta, "the persisted arrival is no longer isMeta — thread/read may now return the row itself, so the merge's dedupe guard must be re-verified before this leg is relaxed").toBe(true);
+    // Waiting for the ANSWER to appear is what makes everything below a measurement rather than a race with
+    // the CLI's own transcript flush (the assistant row lands on disk after `turn/completed`).
+    let page: any = { data: [] };
     await until("thread/read to project the answer the arrival produced", 120_000, async () => {
-      data = (await a.call("thread/read", { threadId: t1!.id }, 30_000)).data ?? [];
-      return data.some((i: any) => i?.type === "agentMessage" && String(i.text ?? "").includes(idle!.token));
+      page = await a.call("thread/read", { threadId: t1!.id }, 30_000);
+      return (page.data ?? []).some((i: any) => i?.type === "agentMessage" && String(i.text ?? "").includes(idle!.token));
     });
-    expect(data.map((i: any) => String(i.id)), `thread/read now projects the arrival (${arrivalUuid}) — M4 no longer holds; the live/persisted dedup must be re-verified`).not.toContain(arrivalUuid);
-  }, 120_000);
+    const data: any[] = page.data ?? [];
+    const ids = data.map((i: any) => String(i.id));
+
+    // (4) THE FLIP (spec criterion 19), and it is this milestone's whole point: the id M8 asserted ABSENT
+    // is present. The arrival reaches history by the route M9 built — logged at arrival against the row it
+    // followed, merged back in at that anchor — not by the reader that drops it, so a client reading its
+    // own history now sees the question that produced the answer beside it.
+    expect(ids, `thread/read did not return the arrival ${arrivalUuid} — M9's merge is what puts it there; check the store's entry and its anchor before touching this leg`).toContain(arrivalUuid);
+    expect(ids.filter((x) => x === arrivalUuid).length, "the arrival rendered more than once in one page — the live row and the merged entry are both being emitted").toBe(1);
+    // ONE ARRIVAL, THREE RENDERINGS, one answer: the live item (1), the cold twin over the persisted row
+    // (2), and the page's own — all deep-equal, `origin` included. A client that dedupes them by id must
+    // not have to choose between two different texts under that id.
+    expect(data[ids.indexOf(arrivalUuid)], "the item thread/read returned for the arrival is not the item the live path emitted").toEqual(liveItem);
+
+    // (5) IN POSITION. The question precedes the answer it caused. Not "immediately precedes": a turn may
+    // legitimately put reasoning between them, and the claim the design rests on is the ORDER.
+    const answerAt = data.findIndex((i: any) => i?.type === "agentMessage" && String(i.text ?? "").includes(idle!.token));
+    expect(answerAt, "the answer left the page between the poll above and this read").toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf(arrivalUuid), "thread/read returned the arrival AFTER the answer it caused — its anchor resolved to the wrong row").toBeLessThan(answerAt);
+
+    // (6) AND COUNTED. `arrivals` is absent only where this server merges no log, and `null` only where the
+    // store went degraded; neither is true of this run, so a count is owed. `logged` is the PRE-eviction
+    // total, so it may exceed what any page renders — it may never be short of it.
+    expect(page.arrivals, "thread/read reported no arrival counts: absent means this server merges no log, null means the store degraded mid-run — either would make the item above unaccountable").toBeTruthy();
+    expect(page.arrivals.logged, "the arrival rendered but the log counted nothing").toBeGreaterThanOrEqual(1);
+  }, 180_000);
 
   it("LEG 3 — arrival is a fact about the THREAD, not about a turn (spec row 9)", async () => {
     expect(idle, "LEG 1 did not run").toBeTruthy();
@@ -561,9 +613,20 @@ live("M8 cross-session, against a real engine", () => {
     expect(at(arrivalUuid, "started"), "the fold's bracket opened before the host turn's").toBeGreaterThan(at(String(hostUuid), "started"));
     expect(at(arrivalUuid, "completed"), "the fold's bracket did not close inside the host turn's — the two were not nested").toBeLessThan(at(String(hostUuid), "completed"));
 
-    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the only surviving vehicle for a
-    // folded message's text: it produces no live item (there is no adopted turn to own one) and, as the
-    // block below measures, no persisted row either.
+    // (2b) THE FOLD'S OWN LIVE ITEM, AND WHOSE TURN IT IS (BL7 #64). The engine folded this message into
+    // the turn that was already running — the nested bracket above is that fold, measured — so the running
+    // turn is the only honest home for its item. EXACTLY ONE, on the HOST turn's id: before the binding
+    // this arrival was held unattributed and then emitted into whichever turn drained next, which for this
+    // very leg is the successor turn started in (4) below. The successor assertion after it is therefore
+    // not belt-and-braces; it is the defect's own signature.
+    const foldItems = (): Notif[] => a.since(mark).filter((n) =>
+      n.method === "item/completed" && n.params.threadId === t2!.id && n.params.item?.id === arrivalUuid);
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival did not become exactly one item of the host turn").toEqual([hostTurnId]);
+
+    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the second vehicle for a folded
+    // message's text: it now also produces a live item on the host turn (2b), and, as the block below
+    // measures, still no persisted row.
     const text = agentText(mark, t2.id);
     expect(text, "the folded turn's completion does not carry the host prompt's answer").toContain("OMEGA");
     expect(text, "the folded turn's completion does not carry the peer message's token").toContain(token);
@@ -594,6 +657,11 @@ live("M8 cross-session, against a real engine", () => {
     expect(after.turn.status, "a following local turn was not accepted — the fold left an adoption holding busy").toBe("inProgress");
     await a.waitFor("the following local turn to complete", 300_000,
       (n) => n.method === "turn/completed" && n.params.threadId === t2!.id && n.params.turn?.id === String(after.turn.id), mark);
+    // …and the successor turn, now run to completion, carries NO item for the folded arrival. This is the
+    // #64 defect's exact live signature: an arrival held past its own bracket surfaced as a user item of
+    // the next turn to drain the queue — a message the client would have read as having been sent now.
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival was re-emitted into a turn it did not belong to").toEqual([hostTurnId]);
   }, 1_500_000);
 
   it("LEG 5 — batch (closes U3): a batched turn carries ONE bracket per queued message, and the engine attributes every one of them to the message that CAUSED the turn", async () => {
@@ -609,6 +677,7 @@ live("M8 cross-session, against a real engine", () => {
     const sends: any[] = [];
     for (const t of tokens) sends.push(await a.call("peer/send", { target: t3!.sessionId, message: askFor(t) }, 30_000));
     expect(new Set(sends.map((s) => s.msgId)).size, "peer/send reused a msgId").toBe(3);
+    batch = { tokens, msgIds: sends.map((s) => String(s.msgId)) };   // LEG 10 reads this exchange's READ side
 
     // (1) THE TERMINAL IS POSITIVE, NOT A QUIET WINDOW: every message asked for its own check code back, so
     // all three answers existing is proof that all three TEXTS reached the model — which is the "no message
@@ -765,7 +834,7 @@ live("M8 cross-session, against a real engine", () => {
     expect((t4.record.session as any).unmatchedResults, "the adopted turn's result was dropped rather than claimed").toBe(before);
   }, 1_800_000);
 
-  it("LEG 8 — refuse (spec row 11): the same send into a crossSessionInbound:'refuse' thread is silent on both channels", async () => {
+  it("LEG 8 — refuse (spec row 11): the same send into a crossSessionInbound:'refuse' thread runs NOWHERE, and since CLI 2.1.250 the sender is told so — one `expired` receipt carrying a reason", async () => {
     t5 = await openThread("refuse", "refuse");
     // The arrival observer is installed CONDITIONALLY on the policy, so a refusing thread has no
     // `peerInbound` state at all — this server is not even listening for what will not come.
@@ -773,21 +842,52 @@ live("M8 cross-session, against a real engine", () => {
     const token = nonce("M8REFUSE");
     const mark = a.mark();
 
-    // `peer/send` STILL SUCCEEDS: the sender is told nothing either way, which is the contract — the method
-    // reports that the frame was written, never that it was taken in.
+    // `peer/send` STILL REPORTS ONLY THAT THE FRAME WAS WRITTEN: `delivered` is a literal, not a status,
+    // and the method never waits for a receipt. What became of the message is learned on the status
+    // channel afterwards, or not at all.
     const sent = await a.call("peer/send", { target: t5.sessionId, message: askFor(token) }, 30_000);
     expect(sent.delivered).toBe(false);
     expect(sent.msgId).toMatch(UUID_RE);
 
-    // THE OBSERVATION WINDOW. On the accepting threads above the whole arrival→announcement hop completed
-    // in the low seconds; 45s is an order of magnitude of headroom over that, which is what makes this
-    // silence a measurement rather than an impatience.
+    // ── WHAT CHANGED, AND WHAT DID NOT ────────────────────────────────────────────────────────────────
+    // M8 measured (2026-08-28, on CLI 2.1.237) that a refused send was silent on BOTH channels: no turn,
+    // no items, AND no receipt, so a sender had no way whatever to learn its message had been refused.
+    // CLI 2.1.250 closes exactly that half: the refusal now comes back as a `peer/messageStatus`. The
+    // engine did NOT become more permissive — every enforcement assertion below is the one that was here
+    // before, and each still passes — it became TRANSPARENT. This leg therefore asserts both halves, and
+    // the receipt is what makes the second half falsifiable rather than a claim about an absence.
+    //
+    // Correlated by `msgId`, never by method alone: a receipt owed to some other send (a `held` message's
+    // eventual `expired`, a capped entry's `dropped`) must not be able to stand in for this one.
+    const receipt = await a.waitFor("peer/messageStatus for the refused send", 60_000,
+      (n) => n.method === "peer/messageStatus" && n.params.msgId === sent.msgId, mark);
+    // THE STATUS IS PINNED. `expired` is TERMINAL in `ReceiptMap`, so it releases the correlation entry
+    // where `held` deliberately does not — a client's next move differs by exactly this word, and a flip
+    // in either direction is a real contract change that must redden here.
+    expect(receipt.params.status, `the refusal receipt's status was ${JSON.stringify(receipt.params.status)}`).toBe("expired");
+    // THE SHAPE IS PINNED, and it is OURS to pin: this frame is assembled by this server's own receipt
+    // sink, and `reason` is emitted only when the engine supplied one — so the key set is precisely what
+    // says a reason arrived at all, rather than an `undefined` read as a pass.
+    expect(Object.keys(receipt.params).sort(), "the receipt is not the {msgId, status, reason, from, receivedAt} this server documents").toEqual(["from", "msgId", "reason", "receivedAt", "status"]);
+    expect(String(receipt.params.reason).trim().length, "the refusal receipt carried an empty reason — the whole point of the channel is that the sender can be TOLD why").toBeGreaterThan(0);
+    expect(receipt.params.receivedAt, "the receipt carries no unix-seconds stamp").toBeGreaterThan(0);
+    // …and the reason's ENGLISH is deliberately NOT pinned. Upstream wording is not a contract, and a leg
+    // that reddens on somebody's copy-edit teaches the next reader to ignore it. What this leg owes is
+    // that a reason is THERE and non-empty. Recorded rather than asserted, 2.1.250 says: "The recipient
+    // session is not accepting cross-session messages (the feature is off there, or a setting or policy
+    // there refuses them); your message was not delivered to its Claude."
+
+    // THE OBSERVATION WINDOW, unchanged, and still the leg's reason for existing. On the accepting threads
+    // above the whole arrival→announcement hop completed in the low seconds; 45s is an order of magnitude
+    // of headroom over that, which is what makes this silence a measurement rather than an impatience.
     await wait(45_000);
-    const window = a.since(mark).filter((n) => n.params?.threadId === t5!.id || n.method === "peer/messageStatus");
+    const window = a.since(mark).filter((n) => n.params?.threadId === t5!.id);
     expect(window.filter((n) => n.method === "thread/peerMessage"), "a refused message was announced").toEqual([]);
     expect(window.filter((n) => n.method === "turn/started"), "a refused message started a turn").toEqual([]);
     expect(window.filter((n) => n.method === "item/completed"), "a refused message produced an item").toEqual([]);
-    expect(window.filter((n) => n.method === "peer/messageStatus"), "a receipt came back for a refused message").toEqual([]);
+    // ONE receipt, not a stream: a terminal status releases the entry, so nothing further can route to it.
+    expect(a.since(mark).filter((n) => n.method === "peer/messageStatus" && n.params.msgId === sent.msgId).length,
+      "the refused send drew more than one receipt").toBe(1);
 
     // …and at the ENGINE, not only at this server: the refusing CLI never took the message into its
     // transcript at all. Without this the leg would pass merely because the observer was uninstalled.
@@ -838,4 +938,127 @@ live("M8 cross-session, against a real engine", () => {
     // An equal-value request is a tightening of size zero and applies, so a retry is not an error.
     expect(await a.call("thread/crossSessionInbound/set", { threadId: t1!.id, value: "refuse" }, 30_000)).toEqual({ ok: true });
   }, 600_000);
+
+  it("LEG 10 — M9 on a BATCH: every message the peer sent renders as a marked arrival item, and the finest possible walk over the same session terminates without stranding one (criteria 20, 21, 22)", async () => {
+    expect(batch && t3, "LEG 5 did not run").toBeTruthy();
+    const { tokens, msgIds } = batch!;
+    // LEG 5 left this thread idle, but it is re-established rather than assumed: this leg runs after four
+    // more legs, and a busy thread would be read mid-flush.
+    await until("the batch thread to be idle", 300_000, () => !t3!.record.busy);
+
+    // (1) SETTLE THROUGH THE READER UNDER TEST. The assistant rows land on disk AFTER `turn/completed`, so
+    // polling `thread/read` for the answers — rather than trusting LEG 5's live stream — is what makes
+    // everything below a measurement of a flushed transcript instead of a race with the CLI's own writer.
+    let page: any = { data: [] };
+    await until("thread/read to project every answer the batch produced", 300_000, async () => {
+      page = await a.call("thread/read", { threadId: t3!.id }, 30_000);
+      const answers = (page.data ?? []).filter((i: any) => i?.type === "agentMessage").map((i: any) => String(i.text ?? "")).join("\n");
+      return tokens.every((t) => answers.includes(t));
+    });
+    const data: any[] = page.data ?? [];
+
+    // (2) CRITERION 20, LIVE: every message the peer sent is IN history, in a MARKED item — including the
+    // one a collapsed batch would otherwise destroy. Across a batch `origin.body` repeats the CAUSING
+    // message's text (LEG 5's (4); repo defect #63), so a reader preferring that field renders one message
+    // twice under two ids and loses the others; `peerArrival` reads each frame's OWN envelopes and joins
+    // siblings, which is what makes the union below able to cover all three.
+    //
+    // Asserted as COVERAGE rather than as a fixed item count on purpose. Whether the engine collapses a
+    // given burst is its choice and not this suite's — probe 121 saw three messages leave two rows, one of
+    // them carrying two envelopes; LEG 5's own run saw three rows — and coverage is the claim that holds
+    // under either shape while being satisfiable under collapse ONLY by an item carrying more than one
+    // message. Neither the announcement count nor `origin.body`'s shape is pinned here: both belong to the
+    // engine defect LEG 5 already measures, and re-pinning them would make this leg red for its cause.
+    const marked = data.filter((i: any) => i?.type === "userMessage" && i.origin);
+    expect(marked.length, "thread/read returned no marked arrival item at all for a thread that took three peer messages").toBeGreaterThanOrEqual(1);
+    const markedText = marked.map((i: any) => String(i.text ?? "")).join("\n");
+    // A FAILURE HERE PRINTS ITS OWN EVIDENCE. Twice this leg went red on a batch and said only that a token
+    // was missing — which is true of three different defects (a text resolved from the wrong field, an entry
+    // never logged, an entry logged and then withheld at read), and telling them apart cost a keyed run
+    // each. The three channels that can disagree are the announcements, the log, and the page, so all three
+    // are read here and interpolated into the message: computed every run, shown only when an assertion
+    // fails. Bodies never appear — token membership and a 64-character window from the first token, which
+    // is probe 121's hygiene and also just more legible, since every message shares its first ~180
+    // characters.
+    const held = (s: unknown): string => { const t = String(s ?? ""); const found = tokens.filter((k) => t.includes(k)); return found.length ? found.join("+") : "none"; };
+    const win = (s: unknown): string => {
+      const t = String(s ?? "").replace(/\s+/g, " ");
+      const at = tokens.map((k) => t.indexOf(k)).filter((i) => i >= 0);
+      return t === "" ? "(empty)" : at.length ? JSON.stringify(t.slice(Math.min(...at), Math.min(...at) + 64)) : `(no token) ${JSON.stringify(t.slice(0, 64))}`;
+    };
+    const entries = (() => {
+      try { return effectiveArrivalStore((server as any).deps)?.readAll(t3!.sessionId) ?? []; } catch { return []; }
+    })();
+    // From 0, not from a mark: LEG 5 announced these five legs ago, and its window is gone.
+    const announcements = a.since(0).filter((n) => n.method === "thread/peerMessage" && n.params.threadId === t3!.id);
+    const evidence = [
+      `\n  ANNOUNCED (${announcements.length}): ` + announcements.map((n) => `${String(n.params.arrivalUuid).slice(0, 8)} msg_id=${String(n.params.origin?.msg_id ?? "-").slice(0, 8)}`).join(" | "),
+      `  LOGGED (${entries.length}): ` + entries.map((e: any) => `${String(e.id).slice(0, 8)} seq=${e.seq} anchor=${e.anchor === null ? "null(atStart)" : String(e.anchor?.afterUuid ?? "?").slice(0, 8)}${e.ambiguous ? " AMBIGUOUS" : ""} holds=${held(e.text)} ${win(e.text)}`).join("\n            "),
+      `  PAGE arrivals=${JSON.stringify(page.arrivals)} items=${data.length}, of which marked=${marked.length}:`,
+      ...data.map((i: any) => `    ${String(i.id).slice(0, 8)} ${i.type}${i.origin ? " [origin]" : ""} holds=${held(i.text)}`),
+    ].join("\n");
+    for (const t of tokens) {
+      expect(markedText, `no marked arrival item carries ${t}: a message the model demonstrably answered is missing from history. Read the three channels below against each other — announced but not logged is the observer, logged but not on the page is an anchor that did not resolve, and on the page with the wrong text is peerArrival.${evidence}`).toContain(t);
+    }
+    for (const item of marked) {
+      expect(item.origin.kind, "an arrival item rendered without the attribution that lets a client recognise it AS an arrival").toBe("peer");
+      expect(item.origin.verifiedPeerPid, "the rendered origin is not the one the kernel vouched for — it was re-derived somewhere rather than carried verbatim").toBe(process.pid);
+      expect(msgIds, `an arrival item names a msg_id nothing sent: ${JSON.stringify(item.origin.msg_id)}`).toContain(String(item.origin.msg_id));
+    }
+    // THE COLLAPSE ITSELF, on a run where the engine chose it: fewer marked items than messages means one
+    // frame carried more than one envelope, and that frame's ONE item has to carry both texts — which is
+    // criterion 20's sharp half, and the case `origin.body` cannot render.
+    if (marked.length < tokens.length) {
+      const both = marked.find((i: any) => tokens.filter((t) => String(i.text ?? "").includes(t)).length > 1);
+      expect(both, `the batch collapsed into ${marked.length} arrival item(s) for ${tokens.length} messages, yet no single item carries more than one message's text — the collapsed frame's siblings were reduced to one`).toBeTruthy();
+    }
+
+    // (3) COUNTED. `arrivals` is absent only where this server merges no log and `null` only where the
+    // store went degraded; neither is true here, so a count is owed. `logged` is the PRE-eviction total and
+    // may exceed what a page renders — it may never be short of it, nor exceed the messages that arrived.
+    expect(page.arrivals, "thread/read reported no arrival counts for a merge-enabled thread").toBeTruthy();
+    expect(page.arrivals.logged, `the page rendered ${marked.length} arrivals and the log counted ${page.arrivals?.logged}`).toBeGreaterThanOrEqual(marked.length);
+    expect(page.arrivals.logged, `the log counted ${page.arrivals?.logged} arrivals for ${tokens.length} messages sent`).toBeLessThanOrEqual(tokens.length);
+
+    // (4) CRITERIA 21 AND 22, LIVE: the coordinate space is unchanged and the finest possible walk loses
+    // nothing. `limit: 1` is the adversarial width — an arrival RIDES a row rather than occupying one, so
+    // one item per page is exactly where a boundary can fall between an arrival and the row it is anchored
+    // to. The cursorless page is the reference set, which is only legitimate if it returned everything.
+    expect(page.nextCursor, "the cursorless page did not return the whole transcript, so it cannot be the reference set the walk below is compared against — re-base this leg on a full read").toBeNull();
+    const expected = data.map((i: any) => String(i.id));
+    const epoch = String(t3!.record.epoch);
+    const seen: any[] = [];
+    let cursor: string | undefined;
+    let terminated = false;
+    for (let i = 0; i < 4 * expected.length + 50; i++) {
+      const p = await a.call("thread/read", { threadId: t3!.id, limit: 1, ...(cursor ? { cursor } : {}) }, 30_000);
+      seen.push(...(p.data ?? []));
+      if (p.nextCursor === null) { terminated = true; break; }
+      const next = String(p.nextCursor);
+      expect(next, "a page emitted a cursor that is not the epoch-qualified row offset thread/read publishes").toMatch(/^\d+:\d+$/);
+      expect(next.split(":")[0], "a page's cursor changed generation mid-walk").toBe(epoch);
+      // Strictly decreasing is what makes termination a PROPERTY rather than a hope: each boundary is
+      // computed from the window the page just rendered, and a cursor that failed to move walks forever.
+      if (cursor) expect(Number(next.split(":")[1]), `the walk stalled at the same row: ${cursor} -> ${next}`).toBeLessThan(Number(cursor.split(":")[1]));
+      cursor = next;
+    }
+    expect(terminated, "the limit:1 walk never reached a null cursor").toBe(true);
+
+    const seenIds = seen.map((i: any) => String(i.id));
+    for (const id of expected) expect(seenIds, `the limit:1 walk stranded ${id}: it is in the cursorless page and in no page of the walk`).toContain(id);
+    // …and the walk invents nothing. Compared as SETS, not as sequences: criterion 22 is explicit that the
+    // pager's contract is no-loss plus dedupe-by-id and NOT exactly-once — `boundaryRow` returns the
+    // smallest prefix holding every discarded id, so a row straddling that boundary is legitimately
+    // re-fetched on the next page and its item appears twice under one id.
+    expect([...new Set(seenIds)].sort(), "the walk and the cursorless read disagree about what this thread's history holds").toEqual([...new Set(expected)].sort());
+    // AN ARRIVAL IS STABLE WHEREVER IT LANDS. It is rendered from ONE stored entry rather than
+    // reconstructed from rows, so — unlike a straddling tool call, whose older-page form is legitimately
+    // unsettled — every occurrence of one across the walk must be the very item the cursorless page
+    // returned, `origin` included.
+    for (const item of marked) {
+      const occurrences = seen.filter((i: any) => String(i.id) === String(item.id));
+      expect(occurrences.length, `the walk lost arrival ${item.id}`).toBeGreaterThanOrEqual(1);
+      for (const o of occurrences) expect(o, `arrival ${item.id} rendered differently inside the walk than in the cursorless page`).toEqual(item);
+    }
+  }, 900_000);
 });

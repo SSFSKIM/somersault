@@ -5,7 +5,10 @@
 import { ERR } from "./rpc.js";
 import { itemEventNotification } from "./turns.js";
 import { queuedNotification } from "./queue.js";
-import { itemsFromTranscript } from "./items/replay.js";
+import { projectItems, type ResolvedArrivals } from "./items/project.js";
+import { arrivalsField, resolveArrivals, restrictTo } from "./arrivalsReply.js";
+import { effectiveArrivalStore } from "./peerInbound.js";
+import type { ArrivalEntry } from "../peer/arrivalLog.js";
 import type { Item } from "./items/types.js";
 import { getSessionMessages as sdkGetSessionMessages } from "../sessions/index.js";
 import { activeTurnId, threadStatus } from "./registry.js";
@@ -48,12 +51,20 @@ const defaultGetSessionMessages = (sessionId: string, opts?: { limit?: number; o
  *  monotonic in `w`, and so is the CONJUNCTION "prefix contains every id in `targetIds`" — its
  *  transition point is simply the max of each id's own transition point. Bisecting on that
  *  conjunction, over the FULL discarded set (not one representative), is what actually guarantees no
- *  discarded item's opening row is ever excluded from every future window. */
-function boundaryRow(windowMessages: unknown[], targetIds: Set<string>): number {
+ *  discarded item's opening row is ever excluded from every future window.
+ *
+ *  M9: the prefix is mapped by the PROJECTOR, so a discarded arrival is bisected for exactly like any
+ *  other item — an arrival rides a row, so "its id appears in the prefix" flips at that row and never
+ *  before, which is the same monotonicity this bisection already rested on. `restrictTo` narrows the
+ *  placements to the prefix and drops the null-anchored sentinel, whose ids never reach `targetIds` in the
+ *  first place (`pageFromWindow` never discards them): a confirmed-empty arrival appears in EVERY prefix
+ *  including width zero, so bisecting for one would resolve to row 0 and end the walk (spec round 5,
+ *  finding 4). */
+function boundaryRow(windowMessages: unknown[], targetIds: Set<string>, arrivals: ResolvedArrivals): number {
   let lo = 0, hi = windowMessages.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    const ids = new Set(itemsFromTranscript(windowMessages.slice(0, mid)).map((it) => it.id));
+    const ids = new Set(projectItems(windowMessages.slice(0, mid), restrictTo(arrivals, mid), false).map((it) => it.id));
     let hasAll = true;
     for (const t of targetIds) if (!ids.has(t)) { hasAll = false; break; }
     if (hasAll) hi = mid; else lo = mid + 1;
@@ -72,13 +83,33 @@ function boundaryRow(windowMessages: unknown[], targetIds: Set<string>): number 
  *  made NO progress (`begin >= cursorRow`, the fetch's own exclusive upper bound) — see threadRead's
  *  retry loop for why that can legitimately happen and how it's handled. Also returns the window's
  *  full item mapping (`all`) so a caller falling back to "return everything this window has" (the
- *  retry loop's last resort) doesn't need to re-parse it. */
-function pageFromWindow(windowMessages: unknown[], limit: number, base: number): { data: Item[]; begin: number; all: Item[] } {
-  const windowItems = itemsFromTranscript(windowMessages);
-  const discardCount = Math.max(0, windowItems.length - limit);
-  const page = windowItems.slice(discardCount);
-  const discardedIds = new Set(windowItems.slice(0, discardCount).map((it) => it.id));
-  const begin = discardCount > 0 ? base + boundaryRow(windowMessages, discardedIds) : base;
+ *  retry loop's last resort) doesn't need to re-parse it.
+ *
+ *  M9 — THE NULL SENTINEL IS A PAGE PROPERTY, NOT A WINDOW ONE (spec rev 8.3). A null-anchored arrival
+ *  precedes every row the seed returned, so it may only lead a page whose OLDEST RENDERED ITEM really is
+ *  row 0's: the window reaches row 0 AND this page discarded nothing. Gating on the window alone was
+ *  wrong for the case that matters most — the cursorless read fetches the whole file, so a long
+ *  transcript's first page is its NEWEST `limit` items, and a head prepended there lands the
+ *  precedes-everything arrival beside the newest turns in any client that dedupes by first-seen id.
+ *  That is misplacement, which D3 forbids, and misplacement is worse than deferral.
+ *
+ *  IT CANNOT STRAND, and the proof is short enough to keep beside the rule. A page that discards has a
+ *  non-empty `discardedIds`, no prefix of width 0 contains anything, so `boundaryRow >= 1`, so
+ *  `begin > 0` and the reply's cursor is non-null — the walk continues. It therefore always arrives at
+ *  either a discard-free page over a window reaching row 0, or the last-resort page, which returns the
+ *  whole window (`all`, head included) and ends the walk.
+ *
+ *  Discarding is still counted over the ROW items alone, never over the head: that is what keeps
+ *  null-anchored ids out of `discardedIds` and so out of `boundaryRow`'s target set, which they must be
+ *  since they have no row transition to bisect for. */
+function pageFromWindow(windowMessages: unknown[], limit: number, base: number, arrivals: ResolvedArrivals, windowIncludesRowZero: boolean): { data: Item[]; begin: number; all: Item[] } {
+  const windowItems = projectItems(windowMessages, arrivals, windowIncludesRowZero);
+  const headCount = windowIncludesRowZero ? arrivals.atStart.length : 0;
+  const rest = windowItems.slice(headCount);
+  const discardCount = Math.max(0, rest.length - limit);
+  const page = discardCount === 0 ? windowItems : rest.slice(discardCount);
+  const discardedIds = new Set(rest.slice(0, discardCount).map((it) => it.id));
+  const begin = discardCount > 0 ? base + boundaryRow(windowMessages, discardedIds, arrivals) : base;
   return { data: page, begin, all: windowItems };
 }
 
@@ -179,21 +210,45 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
     ctx.peer.replyError(id, ERR.INVALID_PARAMS, "cursor invalidated by a rewind; re-read from the start");
     return;
   }
-  if (!record.sessionId) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
+  // M9: resolved ONCE per read, and through the same function the write side uses — whether this server
+  // merges logged arrivals into history is a property of its deps, and a read that decided it separately
+  // could report counts for a log nothing writes to (or write to one it never reads).
+  const store = effectiveArrivalStore(srv.deps);
+  if (!record.sessionId) { ctx.peer.reply(id, { data: [], nextCursor: null, ...arrivalsField(store, undefined) }); return; }
   const getMessages = srv.deps.getSessionMessages ?? defaultGetSessionMessages;
+  // The counts come from the STORE, never from what rendered — an arrival whose anchor no longer resolves
+  // is withheld from the page and still counted here, and that asymmetry is what makes the omission
+  // visible to a client instead of silent. Spread onto every reply below.
+  const sessionId = record.sessionId;   // narrowed above, and captured so the closure below keeps it
+  // ONE SNAPSHOT, entries first and counts after — never counts sampled up front and entries after an
+  // await. The handler awaits the reader while the observer appends synchronously on the engine's read
+  // loop, so an arrival really can land between the two samples; taken in this order it is at worst
+  // counted-but-not-rendered, which is the visible omission `logged` exists to expose, and never
+  // rendered-but-not-counted, which breaks the client's completeness check in the direction that hides a
+  // gap. Read per PATH rather than once up front: the exhausted-cursor reply below renders nothing at all,
+  // and a walk's terminal page should not pay the store a directory scan to say so.
+  const snapshot = (): { entries: ArrivalEntry[]; counts: ReturnType<typeof arrivalsField> } => {
+    const entries = store ? store.readAll(sessionId) : [];
+    return { entries, counts: arrivalsField(store, sessionId) };
+  };
   const requested = parsed.data.limit;
   const limit = Math.min(requested ?? DEFAULT_LIMIT, MAX_LIMIT);
   if (requested !== undefined && requested > MAX_LIMIT) srv.warn(ctx.peer, "limitClamped", "thread/read limit clamped to 500");
 
   if (!parsed.data.cursor) {
     const messages = await getMessages(record.sessionId);
-    const { data, begin } = pageFromWindow(messages, limit, 0);
-    ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null });
+    const { entries, counts } = snapshot();
+    const resolved = resolveArrivals(entries, messages, undefined, true);
+    const { data, begin } = pageFromWindow(messages, limit, 0, resolved, true);
+    ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null, ...counts });
     return;
   }
 
   const cursorRow = Number(parsed.data.cursor.split(":")[1]); // the epoch half was validated above
-  if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null }); return; }
+  // The counts ride the terminal page of a walk too, and `record.sessionId` is what they are read for:
+  // this branch is reached only once a session exists, and it is precisely where hiding them would hide
+  // an omission from a client that has just been told it has read everything.
+  if (cursorRow <= 0) { ctx.peer.reply(id, { data: [], nextCursor: null, ...arrivalsField(store, sessionId) }); return; }
 
   // The `4*limit` lookahead is a guess, and a guess can undershoot: two (or more) tools can be open
   // at once, and the window's blind start can land AFTER one of them opened but still include a row
@@ -217,13 +272,27 @@ export const threadRead: Handler = async (srv, ctx, id, params) => {
   // rather than by the lookahead window, so the `O(window)` mapping-cost guarantee this task exists
   // to deliver degrades to `O(rows not yet returned)` for that single page — a real, bounded,
   // self-limiting cost, not a correctness bug.
+  const { entries, counts } = snapshot();
   let multiplier = LOOKAHEAD_MULTIPLIER;
   for (;;) {
     const from = Math.max(0, cursorRow - multiplier * limit);
-    const windowMessages = await getMessages(record.sessionId, { offset: from, limit: cursorRow - from });
-    const { data, begin, all } = pageFromWindow(windowMessages, limit, from);
-    if (begin < cursorRow) { ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null }); return; }
-    if (from === 0) { ctx.peer.reply(id, { data: all, nextCursor: null }); return; }
+    // ONE ROW OF LEFT CONTEXT per bounded fetch (M9, spec round 6 finding 4): an anchor sitting on the
+    // window's FIRST row cannot have its `prevUuid` verified without seeing the row before it, and a page
+    // whose `begin` lands on its own start never fetches that row again — so an unverifiable arrival there
+    // is stranded permanently, not merely deferred. The extra row is peeled off before ANY of the
+    // arithmetic below: `base` is still `from`, `boundaryRow` still bisects the window that will be
+    // rendered, and the emitted cursor still addresses rows that really exist. Skipped outright when the
+    // entry snapshot is empty: nothing can need left context then, and the reader is called with exactly
+    // the offsets it was called with before M9 — which is what a merge-disabled embedder observes.
+    const wantsLookbehind = from > 0 && entries.length > 0;
+    const fetchFrom = wantsLookbehind ? from - 1 : from;
+    const fetched = await getMessages(record.sessionId, { offset: fetchFrom, limit: cursorRow - fetchFrom });
+    const lookbehindRow = wantsLookbehind ? fetched[0] : undefined;
+    const windowMessages = wantsLookbehind ? fetched.slice(1) : fetched;
+    const resolved = resolveArrivals(entries, windowMessages, lookbehindRow, from === 0);
+    const { data, begin, all } = pageFromWindow(windowMessages, limit, from, resolved, from === 0);
+    if (begin < cursorRow) { ctx.peer.reply(id, { data, nextCursor: begin > 0 ? `${record.epoch}:${begin}` : null, ...counts }); return; }
+    if (from === 0) { ctx.peer.reply(id, { data: all, nextCursor: null, ...counts }); return; }
     multiplier *= 2;
   }
 };

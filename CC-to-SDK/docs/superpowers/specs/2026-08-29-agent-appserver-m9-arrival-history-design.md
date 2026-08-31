@@ -1,0 +1,1484 @@
+# M9 — arrival history: making an inbound peer message survive into `thread/read`
+
+**Status:** design, rev 8 — **Stage A shipped; Stages B–D ready for planning.** Three adversarial
+review rounds on the mechanism (twenty-four findings, every one adjudicated in the three round
+tables); the prose loop is closed and the residual findings are properties the implementation
+enforces as tests, the parity law first among them. · **Task:** #59 · **Depends on:** M8 (merged,
+`06bf3c0e44`)
+
+## Why this exists
+
+M8 gave the app-server cross-session messaging in both directions. A thread admitted with
+`crossSessionInbound: "accept"` turns an arriving peer message into a fully visible turn: subscribers
+get `thread/peerMessage`, then the model's answer, then a terminal state.
+
+That is true only while you are watching. Call `thread/read` afterwards and the inbound message is
+absent while the assistant's answer to it is present — **history shows an answer with no question.**
+
+The purpose is that **a thread's readable history should contain everything the thread actually
+received**, without the client having to know cross-session messaging exists.
+
+## Where this design actually stands
+
+Four revisions have been written and three adversarially reviewed. Twenty-four findings, every one
+real. Rev 1's approach is dead, rev 2's is superseded, and rev 3's machinery came back **NOT
+CONVERGED** with nine open findings that named missing mechanism rather than wording. Rev 4 recorded
+that honestly and put two of the nine to the owner.
+
+**The owner answered on 2026-08-30, and the answers are what made rev 5 possible.** They are load
+bearing rather than preferences, so they are stated once here and referenced as D1–D3 throughout:
+
+- **D1 — the cursor stays compatible.** No versioned break and no capability negotiation; whatever
+  extra state paging needs must live inside the published `^\d+:\d+$` shape. *(Rejected: accepting a
+  break, negotiating a capability, or keeping arrivals on a separate method and leaving default
+  history incomplete.)*
+- **D2 — `thread/clear` detaches rather than deletes.** Arrivals stay with the transcript they landed
+  in and reappear if it is reopened; the fresh conversation starts empty. *(Rejected: erasing them,
+  and carrying them forward into the new conversation.)*
+- **D3 — correct where we can be, explicitly refusing where we cannot.** The single-engine case is
+  made fully correct; concurrent engines, refused rewinds and branched conversations return an
+  explicit failure rather than a plausible-looking wrong answer. *(Rejected: solving the full
+  correctness envelope before shipping anything, and shipping the narrow case with silent
+  degradation.)*
+
+Under those three, the nine findings do not need nine mechanisms. Rev 3 was carrying machinery to
+defend positions it had chosen to occupy; D3 permits vacating most of them, and once vacated, seven of
+the nine dissolve and two become stated limits. Rev 5 is therefore **substantially smaller than rev
+3**, not larger — no two-phase placement, no `historyGeneration`, no rewind rebase, no lease, no
+opaque cursor, and in the end no cursor change at all.
+
+## Measurements
+
+Against 1,076,891 rows in 7,131 real transcripts, plus two keyed probe runs.
+
+**M1 — the drop is unconditional and no SDK option reaches it.** `getSessionMessages` filters
+`if (e.isMeta) return false`; `includeSystemMessages` gates only `type:"system"`. The projection is a
+fixed field literal with no `origin`. Byte-identical in 0.3.237 and 0.3.250, so task #60's bump did
+not close it and there is no option to ask for.
+
+**M2 — `origin` is a clean structural discriminator.** `isMeta` rows are 0.28% of all rows and split
+with no overlap: those with an `origin` object are inbound messages; those without are CLI
+bookkeeping.
+
+**M3 — in the corpus this reader opens, the hidden population is peer messages and nothing else.**
+
+| corpus | files | rows | hidden `isMeta`+`origin` |
+| --- | --- | --- | --- |
+| **main** (what `getSessionMessages` reads) | 3,856 | 567,273 | **`peer` 69, `auto-continuation` 2** |
+| `subagents/` (only `getSubagentMessages`) | 3,281 | 511,923 | `coordinator` 573, `task-notification` 94, `peer` 61, `human` 6 |
+
+**M4 — two provenances, one verified.** 112 rows carry `{body, from, kind, name, senderTaskId}`; 18
+carry `verifiedPeerPid`. Only `verifiedPeerPid` is kernel-vouched.
+
+**M5 — the engine's transcript is not a safe graph to splice.** 1,562 duplicate uuid occurrences (31
+disagreeing on `parentUuid`), 335 dangling `parentUuid` references.
+
+**M6 — the SDK's read window is post-compaction only**, for every message type.
+
+**M7 — a folded arrival persists nothing**, against a positive control.
+
+**M8m — A BATCH IS COLLAPSED. This supersedes rev 3's reading of the same probe.** Probe 121, keyed,
+CLI 2.1.250. Three messages sent, two peer-caused turns, three live arrival uuids — and **two**
+persisted rows:
+
+```
+row a2a99619  msg_id=c58aadc8  1 envelope   content: M1     origin.body: M1
+row 42364455  msg_id=4bc39d4d  2 envelopes  content: M2,M3  origin.body: M2
+live uuid 541d1e23 — no persisted row at all
+```
+
+Several messages land in **one frame under one uuid**. `origin.body` and `origin.msg_id` name one of
+them; the others are readable only as text inside a frame that claims to be a different message.
+
+**Rev 3 read this probe as "each frame carries its own text" and was wrong.** The probe scored
+aggregate nonce *coverage* — is each text present somewhere across the batch — and the verdict logic
+reported it as per-frame *attribution*. Corrected in `3c7ae43991`: the verdict now requires a
+bijection (every frame carrying exactly one message, every message in exactly one frame) before it
+will claim A or B, and prints envelope counts per row so a collapse is visible rather than inferred.
+
+**The consequence is a genuine impossibility, not a gap to engineer around: per-message identity for
+a batched arrival does not exist in the data.** This server has no independent source — it observes
+the engine's replayed frames and never receives inbound messages directly.
+
+**M9m — but no text need be lost.** Across all 170 peer rows on this machine (107 files), rendering
+*every* top-level envelope in a frame rather than `origin.body` returns byte-identical text on 169
+rows and differs on exactly one — the collapsed batch row, where it recovers the message that
+`origin.body` drops. 150 rows carry `origin.body` and no envelope, so the fallback stays. *(Corrected
+by M12.3: on the 2026-08-30 corpus those envelope-less rows are overwhelmingly the `<agent-message …>`
+grammar the decoder did not yet know — the fallback was standing in for a missing grammar, not for an
+absent envelope. It stays, but only for a frame carrying no text at all.)*
+
+**M10 — a synchronous durable write is cheap enough to sit in the observation path.** Write-plus-
+rename on the real `~/.claude` filesystem, 500 iterations: p50 0.143ms, p95 0.201ms, p99 0.896ms, max
+6.497ms. A 16KB body costs the same as a 400B one — the cost is the syscall pair, not the bytes.
+Reading a whole log back: 0.12ms at one entry, 2.1ms at a hundred, 17ms at a thousand, against a
+corpus-wide arrival count of 69. This is what lets Stage B skip an asynchronous persistence pipeline,
+measured rather than asserted.
+
+**M11 — `rowKind` does not discard a real peer row on the replay path.**
+`itemsFromTranscript` drops `PHANTOM_ROW_KINDS` before consulting `peerArrival` (replay.ts:27).
+Running the real `rowKind` over all 170 peer rows on this machine: 170 classify `prompt`, 0 are
+phantom. *(Population, for legibility against M12.3: these 170 are M9m's count — BOTH the main and the
+nested corpora, as they stood before this milestone's own live runs. The equivalent figure today is 228,
+of which the main corpus alone holds 107. Neither number changes the verdict: the classifier is
+structural, not marginal.)* **This answers U2**, and it is structural rather than lucky — all four phantom classifiers
+anchor at the start of the text, and a peer frame opens with a CLI-authored preamble.
+
+**M12 — there are TWO envelope grammars, and the decoder knew one.** Three measurements, taken
+2026-08-30 after LEG 10 of `test/live/appserver-cross-session.test.ts` went red on criterion 20. Read
+M12.1 with its correction: this block was written believing the red was a *text* defect, and M13 shows
+it was not. What survives unrefuted, and what the Stage A change actually rests on, is M12.3.
+
+1. **The red itself (CLI 2.1.250, keyed).** Three messages were sent, LEG 5 passed (so all three were
+   announced and logged), and the coverage assertion reported the *first* message's 355-character
+   `origin.body`. That was read as "all three arrival items rendered the causing message's body",
+   which under Stage A's rules is reachable only through the envelope-less arm — the shape the
+   residual limit below named and declined to guess at.
+   *(Corrected by M13: the reported text is ONE body, not three joined copies, so there was exactly
+   ONE marked item, not three — the two missing messages were withheld by an unresolvable anchor and
+   never rendered at all. No envelope-less batch member was observed here or anywhere else; this
+   measurement is not a sighting of one, and U1 goes back to open on the strength of that.)*
+2. **No envelope-less frame exists in any keyed measurement (probe 121, keyed re-run, same CLI).**
+   The same three-message burst produced three frames with envelope counts 1 / 1 / 2 and **zero**
+   envelope-less frames; the middle frame was a *bare* envelope with neither the CLI's preamble nor
+   its postamble; coverage was 3/3 under both the old and the new preference order. LEG 5's original
+   "one `msg_id` for the whole batch" finding did not reproduce either — two `msg_id`s for two turns,
+   so **the engine's batch shape does vary from run to run**. Read against M12.1's correction this is
+   no longer a non-reproduction of a sighting: it is the only direct measurement of the question, and
+   it says every batch member carried its own envelope. Verdict C is otherwise re-confirmed: one frame
+   carried two messages, and one announced arrival persisted no row at all.
+3. **The corpus says why preferring the frame's own text is only safe with a complete grammar.**
+   The filter is exactly the one the code uses — a row whose `origin` is an object with
+   `kind === "peer"` — over `~/.claude/projects/*/*.jsonl`, i.e. the MAIN corpus and only it, which is
+   what `getSessionMessages` reads: 5,676 files scanned, 103 peer rows. Every peer row carries a
+   CLI-authored wrapper — preamble, envelope, and a 560-character safety postamble the peer did not
+   write — and **79 of the 103 use `<agent-message from="…">`**, the CLI's wrapper for an *agent*
+   peer, not the `<cross-session-message …>` this codebase writes for a *session* peer. Those 79 were
+   invisible to the one-grammar decoder and rendered correctly only by falling through to
+   `origin.body`. Replaying both rules over the corpus: with both grammars decoded, the new order
+   renders text **identical to today on all 103 rows**, and the new decoder's first envelope equals
+   `origin.body` on all 103.
+
+   **The two scans in this document count different things** (raised in review as a 53×-larger sweep
+   finding 40% fewer rows). Re-measured 2026-08-30 with the discrepancy as the question: the main
+   corpus now holds **107** peer rows in 36 files (5,681 scanned), and the NESTED corpora that only
+   other readers open — `subagents/`, `wf_*/` — hold **121** more, for 228 across 127 files that
+   contain any. So M9m's "170 peer rows (107 files)" counted BOTH corpora and reported files
+   *containing* peer rows, while M12.3 counts the main corpus alone and reports files *scanned*.
+   Different population, different denominator; nothing vanished, and the ~58-row growth between the
+   two dates is this milestone's own live runs. The dual-grammar finding only strengthens on the wider
+   population: all 121 nested rows are `<agent-message …>` too, making 200 of 228. One more fact falls
+   out of the same sweep and matters for M13: **every peer row on disk carries `isMeta`, 228 of
+   228** — the persisted shape is not in doubt; only the live frame's flags ever were.
+
+**M13 — the LEG 10 red was never a text defect. A batch's arrivals were anchoring on each other.**
+M12's fix landed and LEG 10 came back red *identically*, which is itself the finding: two runs failing
+the same way is not the engine's run-to-run batch variance. The decisive detail was in the assertion's
+own output — the reported text is ONE 296-character body, not three joined copies, so `thread/read`
+returned exactly **one** marked item for three announced arrivals. That relocates the defect from what
+an item *says* to which items *exist*, and only three things can drop an arrival between announcement
+and page: it was never logged, it was logged `ambiguous`, or its anchor did not resolve. LEG 5 proves
+all three were announced (so all three were logged, under one store and one `seeded` state), and
+`ambiguous` is set only on the seed-overlap path, which had long since closed.
+
+The remaining cause is the anchor, and it reproduces offline and deterministically
+(`test/unit/appserver/peer-inbound-log.test.ts` (9b), which fails before the fix with *"arrival a-2
+anchored on a-1, which the reader never returns"*): the observer advanced its anchor onto an arrival's
+own frame, so arrival *n+1* was anchored to arrival *n*'s peer row — a row `getSessionMessages` drops
+unconditionally. Every arrival of a batch except the first was therefore withheld from every page,
+permanently. The load-bearing assumption was that a live peer frame carries `isMeta` because the
+persisted row does; every unit fixture in that file encodes it (`PEER(...)` sets `isMeta: true`), which
+is why a suite of 4,283 green tests never saw it. Probe 121 now prints the live and on-disk reader
+flags side by side, so the assumption is measured rather than inherited.
+
+It also explains the shape of both reds exactly: the one surviving item is the *first* arrival, whose
+anchor is a real assistant row — and its text is the first message's body, which is why the failure
+looked like `origin.body` winning a preference contest it was not in.
+
+## Stage A — ready, and independently valuable
+
+The shipped live path loses text. For the collapsed row above, `peerArrival` returns `origin.body`
+(M2) and M3 vanishes from everything a client can see, live and cold, even though the model answered
+both.
+
+`peerArrival` changes to read **every top-level envelope** in the frame and join them, falling back
+to the frame's **own raw text** when it carries no envelope, and to `origin.body` only when the frame
+carries no text at all. Extraction is a depth-counting scan, not a regex capture, because both
+obvious captures are measurably wrong on this machine's transcripts: a lazy capture truncates at the
+first closing tag when a peer's body quotes an envelope (52 rows here carry a complete envelope, only
+12 are arrivals), and a greedy capture merges sibling envelopes with their tags intact. Depth is
+counted **per tag name**, because there are two grammars (M12.3) and an envelope of one must not be
+closed by a quoted tag of the other.
+
+This is a **deliberate deviation** from the SDK's guidance to render `origin.body` "instead of
+re-parsing the message text" — right for a single message, measurably wrong for a batch.
+
+It does not restore per-message identity, which M8m shows is gone. It guarantees **no message is
+silently dropped**: one item under one uuid carrying everything that frame delivered, which is a
+faithful rendering of what the engine actually produced.
+
+**The limit, narrowed (rev 8.4, re-grounded in rev 8.5).** A frame that is both envelope-less and
+batched returns the causing message's text. The ordering below narrows that to the vanishing case, and
+it is justified WITHOUT any sighting of the shape — which matters, because the sighting rev 8.4 cited
+turned out to be M13's anchor defect and U1 is open again. The argument that survives is the one that
+never needed a batch at all: **`origin.body` is a claim about a message SOME frame carried; the
+frame's own text is a fact about THIS frame.** Preferring the fact is right for a lone message and
+right for a batch member, and `peerArrival` — still pure, still seeing one frame, still unable to tell
+the two apart — no longer has to know which it is holding.
+
+Two things make that ordering safe rather than merely plausible, and both are measured (M12.3): the
+decoder now knows **both** wrapper grammars, without which the new order would render 630 characters of
+CLI safety boilerplate as the peer's own message on three quarters of the real corpus; and with both
+known, the new order renders text identical to the old on every peer row that exists on this machine.
+The change is a no-op on all 103 measured rows.
+
+**The residual, stated precisely.** The limit is closed for every frame that carries text — which is
+every peer row ever measured here, all 228 of them carrying `origin.body` verbatim inside their own
+text. A *textless* batch member would still render another message's `origin.body`, and that stays the
+recorded residual rather than becoming a withholding rule: no such frame has been observed, and
+rendering nothing instead would break the ordinary single-message case, where `origin.body` is the
+only text there is and is correct. Withholding a message that did arrive, to guard a shape nobody has
+seen, would trade a measured behaviour for a hypothetical one.
+
+**What is still not claimed: identity.** Nothing here says which message an arrival uuid *names* —
+M8m's impossibility stands, re-confirmed by M12.2. This rule is about text only: what is rendered is
+what that frame carried. `origin` travels verbatim beside it and says what the engine claims, which in
+a batch is the causing message. The two are deliberately left unreconciled, because reconciling them
+would mean inventing an attribution the data does not contain.
+
+## Stages B–D — the mechanism
+
+The direction is rev 2's: **the server logs arrivals; it does not reconstruct them from the
+transcript.** Rev 3's machinery for it — two-phase placement, `historyGeneration`, a rebase on
+rewind, a lease, an opaque cursor — is **withdrawn in full**. Three moves replace it, and between them
+every one of the nine findings is either dissolved or converted into a stated limit.
+
+**Move 1 — anchor at observation, to the last row, not to a turn.** Rev 3 anchored an arrival to the
+turn it caused, which is why a folded arrival (whose host turn had already emitted rows) and an
+unsettled turn (`beginTurn` declines while the host turn is busy) had nowhere to attach. An arrival
+does not need a turn. It needs the row it came after, and the observer already knows that.
+
+**Move 2 — append-only, resolved at read.** The log is never mutated. Placement is recomputed on
+every read against whatever rows currently exist.
+
+**Move 3 — an arrival rides its anchor row rather than occupying a row of its own.** This is what
+keeps every existing coordinate valid.
+
+### Rev 3's nine findings, and where each one goes
+
+Every claim below is argued in the section named beside it. The findings are quoted from rev 4 so
+this table can be checked against the review that produced them rather than against a paraphrase.
+
+| # | Rev 3's finding | Disposition |
+| --- | --- | --- |
+| 1 | No durable ordering primitive — `readLoop` calls `onFrame` synchronously and neither awaits nor catches rejection | **Answered.** Content fixes position (given the store-seeded `seq` — round 4 tightened this); only durability remains, and a measured synchronous write covers it (M10). *Durability and ordering* |
+| 2 | Two-phase placement cannot locate a folded or unfinalized arrival | **Dissolved** by Move 1 — the coordinate is a row, not a turn, so there is no second phase to fail. *Placement* |
+| 3 | The cursor snapshot does not freeze finalize or eviction | **Dissolved** — entries are immutable and placement is derived, so there is no snapshot and nothing to freeze. *Placement* |
+| 4 | Rebase has no transaction boundary matching the real rewind | **Dissolved** by Move 2 — append-only, so a rewind needs no rebase and a refused rewind needs no compensation. *When placement fails* |
+| 5 | Concurrent writers do not form the claimed union | **Bounded.** A losing-branch anchor is absent, so the arrival is withheld rather than misplaced. Stated limit: an anchor on the shared trunk still renders. *When placement fails* |
+| 6 | `thread/clear` would erase arrivals from a still-resumable transcript | **Answered by D2** — keying by session id gives detach-not-delete, because clear already detaches by dropping `record.sessionId`. *The log* |
+| 7 | Search has no occurrence coordinate for a logged arrival | **Dissolved** by Move 3 — an arrival publishes its anchor's coordinate, which already lands a window containing it. *Placement* |
+| 8 | The opaque cursor is an unversioned wire break | **Absent.** Move 3 changes no cursor, so D1 is satisfied by needing nothing. *Placement* |
+| 9 | The injectable store has no compatibility rule | **Answered** — a structural default rule readable off the deps object. *Store injection* |
+
+Two gaps are carried forward rather than closed, and are named as such where they arise: the
+shared-trunk case under finding 5, and the absence of a *withheld* count (the *logged* count is
+published — see "When placement fails").
+
+### Round 4 — rev 5's eight findings, and where each one goes
+
+Rev 5 went back to the same reviewer with the code open. Eight findings, six high — every one real,
+none dismissed. The architecture (the three moves) survived untouched; what failed was mechanism
+detail, and each fix below is a refinement inside the rev 5 frame rather than a withdrawal of it.
+
+| # | Round 4 finding | Disposition |
+| --- | --- | --- |
+| 1 | Silent omission is not the "explicit refusal" D3 promises | **Adopted, narrowed.** The terminal page publishes `arrivalsLogged`, so incompleteness is always visible; failing the RPC is rejected because a post-compaction anchor is normal, and a permanently poisoned read is worse than a detectable gap. *When placement fails* |
+| 2 | Per-process `seq` reverses same-anchor order across an ordinary restart | **Adopted.** `seq` is seeded from the store's max at observer install; refutes rev 5's "write order is irrelevant" as stated, which is now conditional on the seeding. *The log* |
+| 3 | A bare uuid anchor can be rebound by a duplicate (M5's own 1,562) | **Adopted.** The anchor carries a fingerprint; mismatch withholds. The strongest finding of the round — it refuted rev 5 with this spec's own measurement. *The log* |
+| 4 | Seeding has no race-free mechanism; Stage B can certify a bad anchor | **Adopted.** Explicit buffering state: install synchronously, hold arrivals, ground the chain when the seed resolves, then persist and broadcast in observation order. `null` becomes unrepresentable except as confirmed-empty. Also corrects rev 5's one-sided "drift is safe" claim. *The observer has to be seeded* |
+| 5 | M10 measured happy-path latency, not failure semantics | **Adopted in substance.** Caught write failures, a degraded latch surfaced as `arrivalsLogged: null`, crash semantics honestly stated as atomic visibility rather than durability. Network-filesystem stalls documented, not engineered: the store lives beside the transcripts, which already carry that exposure. *Durability and ordering* |
+| 6 | M11 measured raw rows, but Stage C replays entries that are not rows — and a synthetic row would re-lose the batch through `peerArrival`'s fallback | **Adopted fully.** The splice becomes an item-level projector injecting `userItem(entry.text, entry.id)` directly, bypassing `rowKind` and `peerArrival`. Simpler than what it replaces; M11 is re-scoped to Stage A. *Placement* |
+| 7 | The search cursor cannot resume between same-anchor arrivals at `limit:1` | **Adopted.** The occurrence cursor (ours, unpublished) gains a `(seq, id)` discriminator; the published `readCursor` is untouched. Rev 5's "finding 7 dissolves" is corrected to "half dissolves". *Placement* |
+| 8 | The splice cannot leave `boundaryRow` untouched under either naive reading; the last-resort page is unbounded | **Adopted.** Same projector closes the coordinate hazard (independently found here before the review returned); a per-session log cap bounds the last-resort page, whose self-limiting behaviour is already tested. *Placement*, *Bounds* |
+
+### Round 5 — rev 6's six findings, and where each one goes
+
+All six named missing mechanism; all six are adopted. They are narrower than round 4's — edge
+composition rather than core mechanism — which is the direction convergence looks like from inside.
+
+| # | Round 5 finding | Disposition |
+| --- | --- | --- |
+| 1 | The `{type, timestamp}` fingerprint does not distinguish the duplicate-uuid population it targets, and live `timestamp` is optional | **Adopted.** The anchor gains `prevUuid` — chain position, which a rebound duplicate cannot fake — plus a content hash; fingerprint fields absent at observation constrain nothing; any disagreement withholds. *The log* |
+| 2 | The seed is not a snapshot; a frame can be both buffered and in the seed result, anchoring an arrival after its own answer | **Adopted.** Grounding rule: ground before the earliest buffered uuid that occurs in the seed result; replay the buffer once. Four overlap shapes pinned in acceptance. *The observer has to be seeded* |
+| 3 | "Items for that row" does not exist — the mapper is a whole-window stateful reduction; and search never calls the item mapper at all | **Adopted.** The projector is specified on the mapper's real per-frame `ingest`, completions tagged by producing row, one `finalize` at the end; the false "same projector serves search" claim is withdrawn and Stage D gets an explicit anchored-entry scan step. *Placement* |
+| 4 | Null-anchored entries are stranded: present in every prefix, so `begin` resolves to 0 and the walk ends without emitting them | **Adopted.** Null anchors become a sentinel outside the bisection: emitted only on the page reaching row 0, never discardable, excluded from `boundaryRow`'s targets. The review's exact `limit:1` walk is an acceptance criterion. *Placement* |
+| 5 | The cap silently deletes from an "append-only" log, and cannot bound the last-resort page anyway | **Adopted.** Eviction writes a durable dropped-count marker first, and `logged` reports the pre-eviction total; the bounds claim is corrected — the cap bounds the arrival contribution only, the page's transcript portion being the pager's pre-existing trade. *Placement*, *When placement fails* |
+| 6 | `arrivalsLogged` is uncheckable (arrival items are unmarked) and terminal-only | **Adopted.** Projected, drained and replayed arrival items all carry `origin` — countable and provenance-complete, converging with task #63 — and `arrivals: { logged, dropped }` rides every reply via one shared helper, with the degraded latch persisted in the marker. *When placement fails* |
+
+### Round 6 — rev 7's findings, and the decision to stop reviewing prose
+
+Seven missing-mechanism findings (five high, two medium) and three explicitly non-blocking ones.
+All real. But the round count — eight, six, seven — stopped narrowing, and the round's sharpest
+finding (the projector pseudocode omitting the direct user-row path) names the reason: **the
+reviewer is running implementation-grade verification against prose, and prose has hit its fidelity
+limit.** A pseudocode block can drift from the code it describes forever; the property test that
+defines it cannot. This round is therefore adjudicated, patched once, and the review loop on this
+spec ends — remaining assurance moves to the implementation's property tests, where these findings
+become executable.
+
+| # | Round 6 finding | Disposition |
+| --- | --- | --- |
+| 1 | The projector pseudocode erases ordinary user prompts (the direct top-level user-row path was omitted) | **Adopted, and the class killed:** transcription corrected, and the projector is now *defined* by the parity law — `project(messages, [])` byte-identical to `itemsFromTranscript(messages)` — enforced as a corpus property test. *Placement* |
+| 2 | `prevUuid` cannot distinguish a duplicate identical in every recorded field | **Stated limit.** For the swap to evade every recorded dimension, the replacement row must be indistinguishable from the original; the fixtures assert rendered-output equivalence rather than pretending occurrence identity exists where the data carries none. Hash construction pinned (SHA-256/16). *The log* |
+| 3 | The seed/buffer cut fails when the buffer holds only filtered arrivals | **Adopted.** Order against seed-only rows is genuinely unknowable; such arrivals persist with the ambiguity recorded, withheld from placement, counted in `logged` — D3 applied at the one place startup makes it unavoidable. Duplicate-uuid overlap resolves the same way. *The observer has to be seeded* |
+| 4 | A window's first row cannot verify `prevUuid` | **Adopted.** One row of left context per bounded fetch, used only for first-row verification, excluded from output, budget, and cursor arithmetic. *Placement* |
+| 5 | The marker cannot support durable completeness claims | **Adopted as scope-narrowing.** Marker-then-victim write order with idempotent recovery makes crashes over-report-safe (the chosen direction: over-reporting reveals, under-reporting certifies falsely); cross-restart and power-loss completeness are explicitly *not claimed*. *When placement fails* |
+| 6 | `(seq, id)` names an entry but not a position inside it | **Adopted.** The resume cursor is discriminated by phase — `row(...)` vs `arrival(rowOffset, seq, id, entry-local charOffset)`; null-anchored entries in an empty transcript are not enumerable as occurrences and the reply's `arrivals` field says so. *Search* |
+| 7 | Search silently claims exhaustion after eviction | **Adopted as scope-narrowing.** Findability is claimed for retained arrivals; the search reply carries `arrivals: { logged, dropped }`, so exhaustion-without-match is never mistaken for proof of absence. A searchable tombstone is rejected — it would retain the text the cap exists to shed. *Search* |
+| 8–10 | (low) telemetry overclaims; entry scan outside `rowsScanned`; hash underspecified | **Adopted.** "Every merge-enabled successful reply"; counts in arrival-frame units; walk-completeness scoped to a finished deduped walk; the entry-scan bound stated separately (`cap × MAX_FRAME_CHARS`); hash pinned. |
+
+### The log
+
+One entry per `noteArrival` call — that is, exactly one per `thread/peerMessage` notification, so the
+announcement channel and history cannot disagree about how many messages arrived.
+
+An entry is immutable and carries `{ v, id, sessionId, anchor, seq, observedAt, origin, text }`.
+
+- **`id`** — the frame's own uuid, or `noteArrival`'s minted fallback (peerInbound.ts:181). This is
+  the same id `items/replay.ts` gives a replayed row, which is the mechanism by which a client
+  dedupes the live item against the one `thread/read` returns.
+- **`text`** — `peerArrival(frame).text`, so live and cold remain one function's output. Stage A's
+  join is what makes this whole rather than the causing message alone.
+- **`origin`** — verbatim, for the reason `thread/peerMessage` carries it verbatim: `verifiedPeerPid`
+  is the only kernel-vouched field in the exchange and re-deriving it would replace a verified fact
+  with this server's opinion of it.
+- **`anchor`** — `{ afterUuid, prevUuid, fingerprint }`: the uuid of the last frame this thread
+  observed that would survive the reader's filter, the uuid of the filter-surviving frame *before
+  it* (`null` when the anchor is the first), and a fingerprint of the anchor frame — `type`, a short
+  content hash, and `timestamp` when the frame carried one (live `timestamp` is declared optional:
+  "older emitters omit it", sdk.d.ts). `anchor: null` as a whole means **the arrival precedes every
+  row the seed returned** — which subsumes the confirmed-empty case and also covers an arrival
+  observed before the seed's first row (rev 8.2 correction: implementation contact showed the
+  ordinary `thread/start` shape reaches it with a non-empty seed, and the placement — top of
+  history — is identical and correct in both readings). It never means "not yet known": entries are
+  written only after the seed resolves.
+
+  A uuid alone is not a row identity: M5 counted 1,562 duplicate uuid occurrences (31 disagreeing on
+  `parentUuid`), and the reader's last-wins keying means a later duplicate would silently *rebind* a
+  uuid-only anchor to a different row — a misplacement, the one failure class this design must not
+  produce (round 4, finding 3). A fingerprint alone is not enough either: a duplicate born from a
+  rewrite can carry identical type, timestamp *and* content at a different chain position (round 5,
+  finding 1). `prevUuid` is what pins the position — a rebound duplicate sits after a different
+  predecessor. At resolution, all three must agree: `afterUuid` found, its predecessor in the
+  reader's output equal to `prevUuid`, and every fingerprint field *recorded at observation* equal
+  on the row (a field the live frame omitted constrains nothing). Any disagreement withholds. The
+  content hash is pinned, not "short": SHA-256 over the UTF-8 bytes of `rawTextOf(message.content)`,
+  first 16 hex characters, one shared function for the live and read sides (round 6, low).
+
+  **The identity's floor, stated as a limit** (round 6, finding 2): a duplicate that is
+  byte-identical in *every* recorded dimension — uuid, predecessor, type, timestamp and content —
+  can still be selected by the reader's last-wins keying in place of the occurrence the observer
+  saw. No recorded field can tell them apart, by construction. What bounds the harm is the same
+  identity: for the swap to go unnoticed the replacement row must be indistinguishable from the
+  original in every dimension the fingerprint covers, so the rendered history differs from the
+  correct one only in which of two identical rows the arrival follows. Acceptance pins the
+  exact-repeated-segment and duplicated-first-row fixtures, asserting rendered-output equivalence
+  rather than pretending occurrence identity exists where the data carries none.
+- **`seq`** — per-session monotonic, ordering entries that share an anchor. **Seeded from the store**:
+  at observer install, the session's existing entries are read once (0.12ms at one entry, 2.1ms at a
+  hundred, M10) and `seq` continues from their maximum. Rev 5's per-process counter reversed order
+  across an ordinary restart — arrival A at seq 47, restart, arrival B at seq 1 sorts B first — which
+  is sequential single-engine operation, not the concurrent-engine limit (round 4, finding 2).
+  Cross-process ties still break on `id`.
+
+**Keyed by session id**, which is D2's mechanism in full. `thread/clear` sets
+`record.sessionId = undefined` and lets the replacement engine mint a new id at its init frame
+(settingsOps.ts:315-340, and the header there says why); it deletes no transcript. So a cleared
+thread's arrival scope starts empty, the old session's entries stay on disk, and resuming that
+transcript shows them again. **Detach, not delete, requires no code beyond the choice of key.**
+
+**`thread/delete` DESTROYS, and that half is NOT free** (rev 9, round 2, finding 4). The same key that
+gives detach for nothing gives deletion nothing at all: `thread/delete` removes the transcript and
+leaves the sidecar holding the full text of every peer message that session received — indefinitely,
+and re-attachable to that id if it is ever restored. So the store carries a delete operation, and the
+handler invokes it **after** the transcript delete succeeds: removing the entries first would erase
+the history of a session the store then refused to delete. The two lifecycles are stated together
+because each is the other's boundary — **clear detaches; delete destroys** — and neither is inferable
+from the key alone. A sidecar that cannot be removed is a RESIDUE rather than a failed delete: the
+transcript is already gone, so the deletion is still announced server-wide, and the reply carries the
+handler's own `INTERNAL` error naming what is left rather than an `{ok: true}` for a deletion that
+was not complete. Deletion also clears the session's degraded latch, which was a statement about a
+history that no longer exists.
+
+An arrival observed before the thread has a session id takes M8's live-only path — announced, not
+logged (rev 8.2, from implementation contact). Holding and flushing it, as earlier revisions said,
+is not better: an arrival is an engine frame, and `system/init` — where the id is latched — precedes
+any engine frame of the turn it starts, so the window holds nothing in practice; what the
+hold-and-flush rule *did* do was force the seed machinery on before an id exists. The residual is
+one announcement with no entry in a window bounded by engine startup — a stated limit, adjacent to
+the crash-window limit it replaces.
+
+### Placement — arrivals are injected as items, never as rows
+
+Rev 5 said "splice arrival rows into the array before `itemsFromTranscript`", and the review
+(round 4, findings 6 and 8) showed both available readings of that sentence are broken. A stored
+entry `{id, origin, text}` is not a transcript row — fed to `itemsFromTranscript` it emits nothing.
+Reconstructing a synthetic user row does not fix it: the synthetic row would route back through
+`peerArrival`, re-deciding a text this server had already decided — under rev 8.4's order it now
+returns the joined text unchanged, and under the order that shipped at the time it fell through to
+`origin.body` and **re-lost the very message Stage A recovered**. Either way a stored entry is not
+improved by being read a second time by the function that produced it. And mutating the array that
+`boundaryRow` indexes shifts every raw-row coordinate the cursor publishes.
+
+So the splice lives one level up, as an **item-level projector**. Round 5 (finding 3) caught the
+hand-wave in rev 6's version of this: "`itemsFromTranscript`'s items for that row" is not an
+operation the code has — the mapper is one stateful `TurnMapper` spanning the whole window, with a
+single `finalize(false)` at the end, and calling it per row would force-complete every open tool.
+The primitive is nonetheless buildable directly on the mapper's real API, because `ingest` is
+already per-frame:
+
+```
+project(rawRows, entries) :=
+  mapper := one TurnMapper for the whole window            (exactly as today)
+  if the window includes row 0: emit null-anchored entries, by (seq, id)
+  for each row in rawRows, in order:
+    route the row EXACTLY as itemsFromTranscript routes it (replay.ts):
+      phantom rowKinds are skipped; a top-level non-tool-result user row emits
+      its user item DIRECTLY (peerArrival or flattened content); everything
+      else goes through mapper.ingest, whose completed items emit here
+    then, for each entry whose anchor resolves at this row
+        (afterUuid + prevUuid + fingerprint), by (seq, id):
+      emit userItem(entry.text, entry.id, { origin: entry.origin })   (no rowKind, no peerArrival)
+  emit mapper.finalize(false)'s still-open items at the end (exactly as today)
+```
+
+Round 6 (finding 1) caught rev 7's version of this block omitting the direct user-row path — a
+projector transcribed from memory of the code rather than defined against it, which for a plain
+`[user, assistant]` transcript would have erased the user prompt and recreated the very
+answer-without-question defect this milestone exists to fix. The transcription is corrected above,
+and — more importantly — transcription is demoted from load-bearing to illustrative by the
+**parity law**, which is the projector's actual definition:
+
+> **`project(messages, [])` is byte-identical to `itemsFromTranscript(messages)`, for every
+> transcript.** With no entries, the projector *is* the existing replay. This is enforced as a
+> property test over the transcript corpus, not re-argued in prose — the entire class of
+> transcription drift, present and future, fails that test.
+
+One reducer, invoked identically by the full page mapping and by `boundaryRow`'s prefix predicate.
+
+**A window's first row can verify its predecessor, because every bounded fetch carries one row of
+left context** (round 6, finding 4): a window at `offset > 0` fetches from `offset - 1`, uses the
+extra row only to check the first real row's `prevUuid`, and excludes it from output, from
+`rowsScanned`, and from all cursor arithmetic. Without it, an anchor sitting at a window's left edge
+is unverifiable, and a `limit:1` walk could advance its exclusive cursor past the anchor row with
+the arrival never emitted — a permanent stranding the lookbehind removes for the price of one row.
+An item that *opens* at the anchor row but *completes* later emits at its completion row, after the
+arrival — which is the live stream's order too, so cold and live agree. The raw array is never
+touched: `begin`, `base`, `from` and `cursorRow` all stay in raw-row space, and the emitted cursor
+is still `` `${record.epoch}:${begin}` `` over rows that really exist.
+
+**Null-anchored entries are outside the bisection, by construction.** Round 5 (finding 4) traced the
+alternative to a stranded arrival: a confirmed-empty entry appears in every prefix including width
+zero, so once discarded its boundary resolves to `begin = 0` and the walk terminates without ever
+emitting it. So the rule is a sentinel, not a row: null-anchored entries emit **only** on a page
+whose oldest rendered item really is row 0's — the fetched window includes row 0 **and the page
+discarded nothing** — and are **excluded from `boundaryRow`'s target set**: they have no row
+transition to bisect for. The gate is deliberately a *page* property, not a *window* property
+(rev 8.3): the cursorless first read fetches the whole file, so under a window gate a long
+transcript's first page — the newest `limit` items — carried the precedes-everything arrival at
+its head, and a client that dedupes by first-seen id assembles it adjacent to the newest turns,
+the misplacement class D3 forbids. The page gate cannot strand: a page that discards has
+`boundaryRow ≥ 1`, hence `begin > 0` and a non-null cursor, so every walk reaches either a
+discard-free row-0 page or the last-resort page — which returns the whole file, head included.
+The exact `limit:1` walk the review constructed is pinned in acceptance.
+
+Two properties make this safe, and the existing pager already requires both of them:
+
+- **Pure** — `project`'s output is a function of the row window and the (immutable) entry set alone.
+- **Monotone** — an entry's id appears in `project(rows[0,w))` for every `w` past its anchor row and
+  never before, exactly the predicate `boundaryRow`'s bisection (subscribe.ts:28-61) already rests
+  on for tool items, so it keeps working unmodified.
+
+**A row carrying several items is not a new case for this pager; it is the case it was built for.**
+Its own header says rows and items are not 1:1 because "one row can complete several items", and its
+guarantee is that no discarded item's opening row is ever excluded from every future window — no
+loss, with duplication across a straddling boundary tolerated and deduped by id. An arrival riding
+its anchor is precisely a row that completes several items, and it carries a stable id (the arrival
+uuid, the same one `thread/peerMessage` announced), so it is deduped by the machinery already there.
+
+**Because an arrival rides a row rather than occupying one, the cursor arithmetic never changes.**
+`boundaryRow` still returns a raw row index, `base` is still a raw row offset, and the emitted cursor
+is still `` `${record.epoch}:${begin}` ``.
+
+Which means **no cursor change, no schema change, no capability negotiation and no versioned break**.
+Finding 8 is not mitigated; it is absent. The owner's decision was to preserve compatibility by
+keeping the cursor inside its published `^\d+:\d+$` shape, and that decision is honoured more cheaply
+than the read-snapshot id it selected: once entries are immutable and placement is derived rather
+than stored, there is no sequence left that needs freezing, so finding 3 goes with it.
+
+**Search does not use the projector, and rev 6 was wrong to say it did** (round 5, finding 3).
+`thread/searchOccurrences` scans raw text row by row (`rowSearchText`, search.ts:521-527) and never
+maps items at all. Stage D therefore adds its own explicit step to that loop: after scanning row
+`r`'s text, scan the text of every entry anchored at `r` (same resolution rule), in `(seq, id)`
+order; null-anchored entries scan before row 0. A match inside an arrival publishes its **anchor's**
+`readCursor`, `` `${epoch}:${rowOffset + 1}` `` (for a null-anchored entry: `` `${epoch}:1` `` when
+the session has a first row; in an empty transcript the entry is not enumerable as an occurrence at
+all — the public occurrence shape requires a row coordinate an empty transcript cannot supply — and
+the reply's `arrivals` field is what says so) — the *published* coordinate space is untouched.
+
+Search's **own** resume cursor, unpublished, becomes **discriminated by phase** (round 6, finding
+6): a resume point is either `row(rowOffset, charOffset)` — today's shape — or
+`arrival(rowOffset, seq, id, charOffset)`, where `charOffset` is *entry-local*. Round 5's `(seq,
+id)` alone named the entry but not the position inside it, so an arrival holding two matches at
+`limit: 1` would repeat or skip its second match; the entry-local offset completes the coordinate.
+Entry text scanned this way sits outside `rowsScanned`, whose budget counts rows; the entries add at
+most `cap × MAX_FRAME_CHARS` scan work per request, a separate bound stated here rather than
+laundered through a counter that means something else (round 6, low).
+
+**Eviction narrows findability, and the acceptance says so** (round 6, finding 7): search scans
+retained entries, so an evicted arrival's text is not findable — while the raw transcript never had
+the row either. The claim is scoped to retained arrivals, and the search reply carries the same
+`arrivals: { logged, dropped }` object as `thread/read`, so a caller seeing `dropped > 0` knows
+exhaustion-without-match is not proof of absence. A searchable tombstone index is rejected: it would
+retain the text the cap exists to shed.
+
+**Bounds — corrected** (round 5, finding 5). The from===0 last-resort page returns everything not
+yet returned, limit-free — an existing, tested, self-limiting branch (it always ends the walk;
+subscribe.test.ts test (j)) that arrivals make more reachable, since an anchor's entries cannot be
+split across pages. The **per-session log cap** (mirroring `MAX_ARRIVALS`: oldest dropped, drop
+announced) bounds *what arrivals add* to that page — and only that. The page's transcript portion
+was unbounded before M9 and stays so; that is the pager's pre-existing, documented trade, not this
+design's to fix. Rev 6 claimed the cap bounded the page; it does not, and the claim is withdrawn.
+
+**Dedupe guard.** Skip any entry whose `id` already appears among the fetched rows. Today it never
+fires, because `getSessionMessages` drops every `isMeta` row (M1); it is what keeps this design
+correct on the day a future SDK stops dropping them. It is monotone too, so the bisection is safe.
+
+**`rowKind` is no longer on the path.** The projector injects items directly, so no synthetic row
+ever meets `PHANTOM_ROW_KINDS` — rev 5 needed M11 to prove spliced rows survive classification, and
+the projector makes that load-bearing role moot. M11 stands as a true measurement (all 170 peer rows
+classify `prompt`; U2 answered) and keeps one consumer: Stage A's *replay* path, where real peer
+rows do route through `rowKind` before `peerArrival` (replay.ts:27). The corrected comment in
+`sessions/rows.ts` stands on its own merits.
+
+### When placement fails
+
+One rule: **the anchor resolves and the arrival renders there, or it does not resolve and the arrival
+does not render.** Never a guessed position.
+
+That rule absorbs three separate findings:
+
+- **Compaction.** M6: the reader's window is post-compaction only. The anchor is gone, and so is the
+  answer it preceded.
+- **Rewind (finding 4).** No transaction, no rebase, no `historyGeneration`. The log is never mutated
+  and placement is recomputed per read, so a rewind needs no compensating action — including the case
+  the finding named, where `thread/rewind` replies success (rewind.ts:560-565, after `swapEngine`
+  returns) and the replacement engine's `resumeDropsTurn` refusal surfaces only later, as a throw with
+  no named branch. Nothing was compensated, so nothing has to be un-compensated.
+- **A losing branch under two engines (finding 5).** The reader returns one leaf-selected spine; an
+  anchor on the other branch is simply absent. No cross-process fencing, no branch-aware history.
+
+**A stated limit, not a claim of correctness:** if a concurrent engine's arrival anchors to a row on
+the *shared trunk*, it will render in the surviving branch's history. Branches are not detectable
+from `getSessionMessages`' output. Two engines on one session is unsupported; this records what the
+design does there rather than promising what it guarantees.
+
+**Omission is made detectable, which is what "explicit" costs here.** Rev 5 argued omission was the
+status quo and left it silent; the review rightly refused that reading of D3 (round 4, finding 1) —
+`thread/read` would return an apparently complete success over incomplete history. What is *not*
+adopted is failing the RPC: an arrival whose anchor predates compaction is the *normal* aftermath of
+M6, and a poisoned read forever is worse than an incomplete one.
+
+Round 5 (finding 6) then showed rev 6's version of the mechanism didn't work: a count on the
+terminal page is uncheckable when the projected arrivals are plain user items a cold client cannot
+tell apart from ordinary ones, and "every read exposes degradation" is false if only the terminal
+page speaks. Both halves are fixed structurally:
+
+- **Arrival items are marked.** A projected item carries the entry's `origin` verbatim — an optional
+  item field old clients ignore, the same object `thread/peerMessage` broadcast, so the item is both
+  countable and provenance-complete. The live path's drained item and Stage A's replayed item gain
+  the same field in Stage C, so all three renderings of one arrival agree. (This is also the shape
+  task #63 wants for the notification side; the two converge.)
+- **Every merge-enabled successful reply carries `arrivals: { logged, dropped }`** — built by one
+  response helper used by all five reply paths (cursorless, normal page, last resort, empty-session,
+  no-session), so no path can forget it; the merge-disabled embedder path omits the field entirely,
+  which is its signal (round 6, low: "every reply" overclaimed). `logged` counts **arrival frames**
+  — the unit the log has; a collapsed batch is one frame carrying several messages, per M8m — and
+  includes evicted entries via the dropped-count marker (round 5, finding 5). The client's
+  completeness check is likewise scoped honestly: the discrepancy `logged − dropped − (deduped
+  marked items)` is exact only after a *completed, id-deduped walk*; on a single page it is a lower
+  bound on what remains, not a verdict.
+
+  **`logged` IS LOG-DERIVED, AND THE LOG STARTS WHERE OBSERVATION DID** (rev 9.2, round 3, finding 2).
+  The count is what this server's observer wrote down, never a property read back off the transcript —
+  so it counts observation-forward, and a session whose peer messages predate its sidecar reports zero
+  honestly rather than falsely. That covers two populations by the same rule: every session that
+  received arrivals before this milestone shipped, and a **fork**, whose new session id starts with an
+  empty sidecar over copied history. Neither's inherited arrivals appear in `thread/read` or search —
+  the reader drops the copied `isMeta` rows, as it always has (M1) — and migrating entries onto a
+  fork's rewritten uuids is placement work on a branched conversation, which **D3 scopes to explicit
+  refusal rather than correctness.** The boundary is stated here so it reads as the scope decision it
+  is; the residue is logged in `CC-to-SDK/docs/tech-debt-tracker.md`, to be revisited if branches ever
+  enter scope.
+
+  **The marker protocol is over-report-safe, and claims no more than that** (round 6, finding 5).
+  Write order is marker-then-victim on eviction — increment `dropped`, fsync the marker, then unlink
+  — and recovery treats a retained entry already counted dropped as dropped (unlink on sight),
+  making the sequence idempotent; a crash between the two steps can only *over*-report, and an
+  over-reported count reveals a gap that isn't there, while an under-reported one would falsely
+  certify completeness — the direction is chosen, not accidental. A write failure that can persist
+  no marker at all (the same fault domain took both) leaves the in-memory degraded latch for this
+  process's lifetime and **loses the latch at restart: stated as a limit.** Likewise power loss
+  before metadata flush can shrink `logged` alongside the entries it counted. Cross-restart and
+  power-loss completeness are therefore *not claimed*: what is claimed is atomic visibility, an
+  over-report-safe count under crashes between syscalls, and a degraded signal at least as durable
+  as the store it describes. `arrivals: null` means degraded — "I cannot tell you" stated as
+  itself, never as `0`.
+
+  **The `dropped` read-modify-write is serialised by a lock, and the lock is `withFileLock`'s shape
+  rather than a smaller one** (rev 9, external review finding 3). The losing half of a lost update
+  writes bytes identical to the winner's, so no read-back can see it — which is why the marker's RMW
+  needs exclusion rather than detection. The first implementation used an exclusive-create lockfile
+  broken by mtime, and that reproduced M5's own measured defect exactly: two writers meeting one
+  crashed holder's leftover both judge it stale, and the second's pathname `unlink` destroys the
+  first's fresh claim, putting both inside the section. So the sync store adopts **D-M5-24** whole —
+  a lock is a non-empty *directory* published by `rename`, holding one marker file whose name is
+  `<owner nonce>.<lease>`, so every delete is content-conditional and `rmdir`'s emptiness
+  precondition is the atomic "no successor has claimed this" test. A holder whose section outlived
+  the lease finds its own marker gone at release and degrades rather than vouching for a count it
+  computed beside a successor.
+
+  **Degradation is a LATCH, and no writer may clear one it did not set** (rev 9, external review
+  finding 5). The write that *sets* it is deliberately unlocked — a writer that could not take the
+  lock still has to say so, because loud beats blocked — so it lands inside another writer's
+  critical section, and that writer would otherwise put its own pre-read state over the top and
+  silently re-certify the count. Every marker write therefore re-reads immediately before writing
+  and carries forward a `degraded` it finds there. The residual is named rather than implied: a
+  degrade landing between that read and that write is still lost, which is one syscall pair wide
+  instead of a whole section, and the in-process latch covers the writer that set it either way.
+
+The shared-trunk case stays a stated limit: a misattributed anchor is not detectable from the
+reader's output at any price, and two engines on one session is unsupported. D3's claim is narrowed
+to what the mechanism actually delivers — **incompleteness is always visible; misattribution is
+excluded only by the supported topology.**
+
+### Durability and ordering (finding 1)
+
+`Session.readLoop` calls `onFrame` synchronously and neither awaits nor catches rejection. Rev 3
+needed an ordered asynchronous pipeline because it assigned placement *later*. Here it does not:
+the anchor and `seq` are both computed synchronously at observation, so **the entry's content fixes
+its position** — *given* the store-seeded `seq` above; rev 5's per-process counter made this claim
+false across a restart, and the seeding is what makes it true. Only durability remains, and a
+synchronous write answers it.
+
+Measured on the real `~/.claude` filesystem, write-plus-rename: p50 0.143ms, p95 0.201ms, p99
+0.896ms, max 6.497ms over 500 writes; a 16KB body costs the same as a 400B one, because the cost is
+the syscall pair rather than the bytes. That is the bounded synchronous write finding 1 explicitly
+permits, on a path already doing IO, and it removes the entire pipeline. It is written **before** the
+broadcast, so a client is never told about a message history does not have — with exactly one
+exception, the caught write failure below, where the broadcast proceeds *because* the degraded latch
+makes the store's gap visible on every subsequent read.
+
+**What M10 does not cover is failure, and the review was right that rev 5 had no answer** (round 4,
+finding 5). The semantics are now stated:
+
+- **A write that throws** (ENOSPC, EACCES, a failed rename) is caught in the observer — an escaped
+  exception would hit `readLoop`'s discard and vanish. The notification is still broadcast: the live
+  channel reports what the engine *did*, and the engine delivered the message whether or not our
+  sidecar could record it. The session latches **degraded** — persisted in the marker file, so a
+  restart does not forget it — and every subsequent `thread/read` reports `arrivals: null`:
+  history's incompleteness is undetectable from a count that might be short, so the count honestly
+  abstains.
+- **Crash semantics are atomic visibility, not fsync durability.** Temp-then-rename guarantees no
+  reader ever sees a torn entry; it does not guarantee an entry survives power loss before the
+  metadata flushes. For a history sidecar that is the right trade — losing the newest entry to a
+  machine crash is an absence the count reveals, while a torn entry would be a corruption — and it is
+  claimed as exactly that, not as "durable".
+- **A READ that fails is degraded too, and only `ENOENT` is empty** (rev 9, round 2, finding 2). The
+  degrade contract above is written from the write side, and the read side owes the same answer: a
+  session directory that exists but cannot be listed — a mode changed to `0300`, a transient `EACCES`,
+  an `EIO` on a network mount — is an inability to read something that *is* there, and answering it
+  with zero entries publishes `{logged: 0, dropped: 0}` beside `isDegraded() === false`, which is a
+  complete history certified by a store that could not see one. Absence is the one honest empty. Every
+  other errno latches degraded through the same path a write failure takes, so the reply says
+  `arrivals: null`. (`sessions/storeAudit.ts` draws this line for the transcript store; D-M5-8 forbids
+  the other reading in as many words.)
+- **The store root is the CONFIGURED config directory, not the literal `~/.claude`** (rev 9, round 2,
+  finding 1). `CLAUDE_CONFIG_DIR` replaces that path outright, this harness's own tenant preset exports
+  it per tenant (`config/tenantPreset.ts`), and an entry holds the full text of a peer message and
+  annotates one transcript — so a sidecar rooted at the host user's home stores one tenant's message
+  bodies outside the namespace it serves and annotates transcripts it cannot see. The root is
+  `<claudeConfigDir()>/cc-harness/arrivals`, resolved through the one function the fleet registry and
+  the config domain already share, so the sidecar cannot drift from the transcripts it describes.
+- **A network-filesystem home directory** can stall a synchronous write without bound, on the read
+  loop. Documented, not engineered around: this store lives where the CLI's own transcripts live, and
+  a deployment that puts `~/.claude` on NFS has accepted that class of stall for every transcript
+  write the engine itself makes.
+
+One file per entry with a temp-then-rename, rather than one appended JSONL: no partially written
+trailing line for a concurrent reader, and no interleaving between two app-server processes, without
+needing a lock. Reading a whole log costs 0.12ms at one entry and 2.1ms at a hundred; the corpus-wide
+arrival count is 69, and the per-session cap above bounds it structurally.
+
+### The observer has to be seeded
+
+The anchor is "the last filter-surviving frame this thread has observed", and on attach or resume the
+observer has seen none. The seed read (`getSessionMessages`, last row) is asynchronous while frames
+and arrivals land synchronously — so a bare "seed at startup" has a race on both sides: install the
+observer first and an immediate arrival is persisted with a `null` anchor, which means
+confirmed-empty and renders at the *top* of history (a misplacement); seed first and frames landing
+during the read are missed (round 4, finding 4 — and independently caught here before the review
+returned).
+
+So seeding is an explicit state, not an ordering hope. The observer installs synchronously —
+same-tick, as the admission contract requires — and opens **buffering**: frames advance a provisional
+anchor chain in arrival order, and arrivals are held, neither persisted nor broadcast. When the seed
+read resolves, the chain is grounded, buffered arrivals get their anchors computed in observation
+order, and each is then persisted and broadcast in that order. The window is one read long —
+milliseconds — and inside it nothing is durably wrong yet.
+
+**But the window does not always end by grounding, and each way it can end otherwise owes the same
+answer** (rev 9, external review findings 1, 2 and 6). Rev 8 said there was "nothing to repair
+afterwards", which was true only of the window that resolves; three do not. Its **arrival buffer**
+can overrun its cap, and rev 8 shed the oldest *announced but never logged* — which makes `logged`
+smaller than the notification count and lets a short history certify itself complete. Its **frame
+buffer** can overrun its own, and shifting a frame out re-anchored any arrival positioned by that
+frame onto whatever the *remaining* head grounds against — potentially hundreds of rows after where
+it was observed, unflagged: the misplacement class D3 forbids. And the whole window can be **torn
+down mid-read** (`thread/close`, `thread/clear`, a rewind swap), which discarded an engine-delivered
+message from the live channel and from the old session's count at once.
+
+All three resolve as the same thing, and it is the one the design already names for a position that
+cannot be known: **persisted, counted, withheld from placement** — `ambiguous`. An unplaced arrival
+is visible in `logged`; a misplaced one is indistinguishable from history, and an unrecorded one is
+indistinguishable from silence. `anchor: null` still means confirmed-empty on every entry the seed
+grounded; on an `ambiguous` entry, which the read side skips before it ever reads the anchor, it is
+not a statement at all — the window that wrote it had no ground to record. The teardown case is also
+the one place `logged` may legitimately exceed the notification count: the entry is persisted into
+the session the arrival landed in (D2) and deliberately *not* announced, because a notification is
+thread-scoped and that conversation is being discarded. Over-report is the safe direction — it
+reveals a gap that isn't there, where the reverse would falsely certify completeness. A thread torn
+down before its window ever opened has nothing buffered to save; that is the pre-init limit already
+stated below, not a further case.
+
+**Grounding has an overlap rule, because the seed is not a snapshot** (round 5, finding 2). A frame
+observed live during the read can also appear in the read's result — the engine persists as it
+emits — and grounding naively on the seed's tail would then anchor a buffered arrival *after* a row
+that arrived after it. The rule: find the earliest buffered frame uuid that occurs anywhere in the
+seed result; the chain grounds on the seed row **before** that occurrence, and the buffer replays
+from its start, so every frame counts exactly once. No overlap grounds on the seed's tail; an empty
+seed grounds on confirmed-empty. Acceptance pins the four shapes: seed-behind (no overlap),
+seed-ahead (buffer fully contained), partial overlap, and seed-tail-equals-buffer-head.
+
+**And the rule has a floor the cut cannot see through** (round 6, finding 3): a buffered *arrival*
+never appears in the seed result — the reader drops `isMeta` rows — so a buffer holding only
+arrivals establishes no overlap at all, while the seed may hold rows (the arrival's own answer among
+them) the observer never saw live. The order between that arrival and those seed-only rows is
+genuinely unknowable: nothing the process observed relates them. So it is treated as what it is —
+**an arrival whose anchor is ambiguous is persisted with the ambiguity recorded, withheld from
+placement, and counted in `logged`** — D3's rule applied at the one place startup makes it
+unavoidable, bounded to the single seed read's window. Grounding on the seed tail instead would
+render the question after its own answer, which is this milestone's original defect reproduced at
+resume. A uuid appearing in *both* the buffer and the seed at inconsistent positions (the
+duplicate-uuid overlap) resolves the same way: ambiguous, withheld, counted.
+
+**When to seed: at whichever moment the session id is actually known.** A record admitted with a
+session id (attach, resume) seeds at install. A record *without* one — and this covers more than
+fresh threads: fork admission deliberately leaves `record.sessionId` undefined while the fork
+already carries copied history — seeds **at the init frame**, against whatever id init reveals. A
+fresh session's seed returns zero rows and grounds confirmed-empty; a fork's returns its copied
+tail and grounds there. One rule, no fresh-versus-fork discrimination, and grounding
+confirmed-empty "because there is no id yet" — which would have rendered a fork's first arrival at
+the top of history it did not precede — is structurally impossible. One residual: the production
+reader maps read *failures* to `[]`, so an unreadable transcript is indistinguishable from an
+empty one and grounds confirmed-empty; stated as a limit of the injected reader's contract — an
+embedder whose reader distinguishes failure gets the distinction for free.
+
+The filter-surviving predicate mirrors the reader **as this server calls it**, which is narrower
+than the reader's drop rule alone: `type` is `user` or `assistant` only — both the seed read and
+`thread/read` call `getSessionMessages` without `includeSystemMessages`, which defaults false, so a
+`system` frame (the init frame included) is a row the reader never returns, and an anchor recorded
+on one would withhold every arrival behind it (rev 8.2, review round on Task 2). Beyond that,
+`isMeta`, `isSidechain` and `teamName` are dropped, and the coupling is **dangerous in both
+directions** — rev 5 claimed drift was safe, and
+the review showed the claim was one-sided. Dropping a frame the reader keeps leaves the anchor
+*stale but resolvable*: the arrival renders after an older row, before rows that actually preceded
+it — a misplacement, not a withholding. The predicate therefore gets a contract test that runs both
+predicates over a corpus of real frame shapes and fails on any disagreement, which turns silent
+drift into a red test at the SDK bump that introduces it — the same posture the drift ritual already
+takes for settings keys.
+
+**And an ARRIVAL's own frame is never an anchor, whatever the predicate says about it** (rev 8.5,
+M13). This was originally left to the predicate on the reasoning that a peer row carries `isMeta` and
+so fails it anyway — true of the row the CLI *persists*, and assumed of the frame it *streams*. The
+live frame need not carry the flag; when it does not, the predicate admits it, the arrival advances
+the anchor onto itself, and the next arrival of a batch is anchored to a peer row. The reader drops
+that row unconditionally, so the anchor can never resolve in any window and the arrival is withheld
+from history permanently — criterion 24 operating correctly on an anchor that was poisoned upstream.
+The rule is therefore stated on the arrival and not on the predicate: an arrival persists as a row
+the reader does not return, so an anchor naming one is unresolvable *by construction*, and no flag
+check can be the thing that saves it. `readerVisible` stays a faithful mirror of the reader over
+rows; it is simply not consulted about a frame this server has already recognised as an arrival.
+
+### Store injection (finding 9)
+
+`getSessionMessages` is optional on `AppServerDeps` (server.ts:68) with a default resolved at each of
+its four call sites. The arrival store is added the same way, under one structural rule:
+
+**The filesystem store is the default only when `getSessionMessages` is also the default.** An
+embedder that overrides the reader but not the store gets merging disabled, rather than this
+machine's arrivals merged into a transcript it does not own. Both are fields on one deps object, so
+this is checkable at startup rather than a convention to be honoured.
+
+### A separate defect this surfaced
+
+`drainArrivals` drains the queue into whatever adoption is current (peerInbound.ts:220-227), so an
+arrival recorded while no adoption exists is attributed to a later turn it did not cause. The log is
+immune — it anchors at observation and never consults adoption — but the live item stream is not.
+That is a defect in the M8 live path, not in history, and it is tracked on its own rather than folded
+in here.
+
+### Staging
+
+- **Stage B — store and observer.** Entries are written; nothing reads them. Verifiable alone:
+  one entry per `thread/peerMessage`, ids equal, every non-null anchor naming a row that exists.
+  Unlike rev 3's Stage B this bakes in no read-side contract, because placement is not stored.
+- **Stage C — the projector in `thread/read`.** The visible feature.
+- **Stage D — the anchored scan in `thread/searchOccurrences`,** so an arrival's text is findable
+  and its `readCursor` lands.
+
+## Acceptance
+
+### Stage A — shipped
+
+1. **No message a frame delivered is dropped.** For the collapsed row in M8m, the item carries both
+   M2 and M3 rather than M2 alone.
+2. **Every non-batched arrival is byte-identical to today** — 169 of the 170 measured rows.
+3. **A quoted or forwarded envelope inside a body is not truncated**, and sibling envelopes are not
+   merged with their tags.
+4. **An envelope-less frame resolves through its OWN text**, and through `origin.body` only when it
+   carries no text at all (rev 8.4) — so a batched member whose `origin.body` names the causing
+   message renders its own message instead of a second copy of another. Both wrapper grammars are
+   decoded, so "envelope-less" now means what it says.
+5. **The live item and its cold replay agree**, because one function serves both paths.
+
+### Stage B — store and observer
+
+6. **One entry per announcement.** For any keyed run, the number of log entries equals the number of
+   `thread/peerMessage` notifications, and their ids are equal as sets.
+7. **Every non-null anchor names a row that exists** in what `getSessionMessages` returns at the time
+   of writing, and carries a fingerprint matching that row.
+8. **A folded arrival is logged**, against M7's positive control — the case no transcript reader can
+   ever recover.
+9. **No merge is performed.** `thread/read`'s items are byte-identical to today with the store
+   populated, which is what makes Stage B verifiable on its own. (The observer does read: the seed
+   row and the session's max `seq` — its own store's write path, not a read-side merge.)
+10. **An arrival is persisted before it is announced, and before it is emitted as an item.** Killing
+    the process at any point leaves a prefix of that order — an entry with no notification, never
+    the reverse, and never a live item for a message history does not have. The exception is a
+    caught write failure, where the notification and the item both still go out and the session
+    latches degraded: the gap is disclosed rather than hidden, which is what makes withholding the
+    live item pointless there.
+    **The guarantee holds ACROSS THE SEED WINDOW, which is where it was reachable but unmet** (rev 9,
+    round 2, finding 3). A held arrival has deliberately not been written yet, so it must not be
+    drainable either: an arrival made eligible for the live drain on sight was emitted as
+    `item/completed` by a turn adopted during the window, ahead of the entry the seed had yet to
+    write. An arrival therefore joins the drainable queue only where its durable fate is settled —
+    at the logging path, or at the announce-only pre-init path that has no scope to write into —
+    and the held ones flush in the replay's own interleaved order once grounding has written them.
+11. **Order survives a restart.** Two same-anchor arrivals separated by a server restart carry
+    increasing `seq` — the store-seeded counter, pinned by a test that restarts between them.
+12. **An arrival racing the seed is neither lost nor misanchored.** Delay the seed read
+    artificially; deliver an arrival immediately at attach: the entry is persisted only after the
+    seed resolves and is never anchored `null` — anchored to a live-observed frame when one grounds
+    it, `ambiguous` otherwise (criterion 15 is the same state's other half, not a different rule:
+    with no buffered frame, order against seed rows is unknowable, and the answer is ambiguity, not
+    the seed tail). Scoped to the window that *grounds*: an entry a window writes before it resolves
+    (criterion 17a) is `ambiguous`, and its `anchor` is not read at all.
+13. **A write failure degrades loudly, and durably when the marker can still be written.** With a
+    one-shot entry-write failure (marker writable): the notification still broadcasts,
+    `thread/read` reports `arrivals: null` from then on — including after a restart, because the
+    latch is the on-disk marker. With the store *fully* unwritable, degradation is in-process only,
+    which is the stated limit "a write failure that can persist no marker" already records — the
+    fixture asserts the in-process half and nothing more.
+14. **Grounding survives seed/buffer overlap** in all four shapes: seed-behind, seed-ahead, partial
+    overlap, and seed-tail-equals-buffer-head. Each frame anchors exactly once; an arrival buffered
+    before a row that the seed also returned anchors *before* that row.
+15. **An arrival with no relatable order is ambiguous, not placed.** Buffer only arrivals while the
+    seed returns rows never observed live (the arrival's own answer among them): the entry persists
+    with the ambiguity recorded, is withheld from placement, and is counted in `logged` — never
+    anchored after its own answer.
+16. **The anchor identity rejects the measured collisions.** Against fixtures reproducing M5's
+    differing-parent duplicate shape, and against a live frame that omitted `timestamp`, resolution
+    withholds on position mismatch and never binds to a distinguishable wrong occurrence. Against
+    the exact-repeated-segment and duplicated-first-row shapes — indistinguishable in every recorded
+    field — the fixture asserts rendered-output equivalence, the strongest true claim.
+17. **Eviction is never silent, and a crash can only over-report.** Fill past the cap: the
+    dropped-count marker exists and `arrivals.logged` reports the pre-eviction total, exceeding what
+    any read returns. Kill between marker and unlink: recovery unlinks the counted victim, and the
+    count never under-reports. A sequence past six digits is still an entry, and entries order by
+    the parsed number rather than by the padded name.
+17a. **A window that ends without grounding still owes an entry per arrival** (rev 9). Each of the
+    three ways it can: overrun the arrival buffer, overrun the frame buffer, and tear the thread
+    down mid-read. In every one the arrival is persisted `ambiguous`, counted in `logged`, and
+    withheld from placement — never announced-without-logging, and never re-anchored onto a row the
+    remaining buffer happens to ground against.
+17b. **The count survives contention between real processes** (rev 9). Several `node` processes
+    appending against one crashed holder's leftover lock leave every session either exact or
+    degraded — never short with nothing to show for it. Measured across processes rather than
+    through a seam, because the interleave that loses an increment is invisible to one.
+
+### Stage C — the projector in `thread/read`
+
+18. **The parity law holds over the corpus.** `project(messages, [])` is byte-identical to
+    `itemsFromTranscript(messages)` for every transcript in the property-test corpus — the
+    projector's defining equation, and the gate every other Stage C criterion presupposes.
+19. **The question precedes the answer.** For a keyed cross-session exchange, `thread/read` returns
+    the arrival item immediately before the assistant turn it caused — the defect this milestone
+    exists to fix, and the inverse of M8's LEG 2, which is written to redden the day it closes.
+20. **The arrival item carries the entry's text verbatim and its `origin`** — for the collapsed
+    batch, both messages, proving the projector bypassed `peerArrival` (whose fallback would re-lose
+    one); and the `origin` field is what lets a client count arrival items at all. Live, replayed and
+    projected renderings of one arrival agree on id, text and origin.
+21. **The cursor is unchanged.** Paging a session that has arrivals emits cursors matching
+    `^\d+:\d+$` addressing raw rows, and a rewind still invalidates them with the same
+    `INVALID_PARAMS` message. Schema files change only by the two additive optional *response*
+    members (`origin` on user items, `arrivals` on read/search replies); the cursor pattern line in
+    the generated artifact is byte-identical before and after (D1).
+22. **A `limit:1` walk across a session with arrivals terminates and strands nothing.** Every item
+    appears at least once and its id is stable across pages. Not "exactly once": the pager's existing
+    contract is no-loss plus dedupe-by-id, because `boundaryRow` returns the smallest prefix holding
+    every discarded id and a row straddling that boundary is legitimately re-fetched. An arrival
+    inherits that contract rather than being held to a stronger one. Pinned at the named edges: an
+    anchor on the window's last row, an anchor row that opened a still-unfinished tool, more
+    same-anchor arrivals than `limit` (which ends in the tested last-resort page), **round 5's
+    exact construction** — a null-anchored entry plus three rows at `limit: 1`, which must return
+    all four items rather than stranding the entry — and **round 6's left edge**: an anchor sitting
+    at a bounded window's first row, which the one-row lookbehind must verify rather than strand.
+23. **`arrivals: { logged, dropped }` is on every merge-enabled reply**, from every path — cursorless, normal
+    page, last resort, empty-session and no-session — and `logged` matches the notification count
+    for the run. The one legitimate excess is criterion 17a's teardown case, which persists without
+    announcing; the deficit direction stays forbidden. The counts and the entries a reply renders
+    are ONE snapshot, entries sampled first: an arrival landing during the transcript read may be
+    counted-and-not-rendered, never rendered-and-not-counted. **The counts and the verdict on whether
+    they may be published are one snapshot too** (rev 9, round 2, finding 5): asking "are you
+    degraded?" and then "what are your counts?" is two marker reads, and the second app-server process
+    on this session degrades the store inside that window — after which the reply publishes numbers
+    taken from a marker that had already stopped standing behind them. One store operation answers
+    both from one read, and `null` is the whole of its "I cannot tell you".
+24. **An unresolvable anchor withholds rather than misplaces.** With the anchor row removed, its
+    fingerprint changed, OR its predecessor changed (the rebound-duplicate shape), the arrival does
+    not appear, no other item's position moves — and `arrivals.logged` exceeds the marked items
+    returned, making the omission visible.
+25. **A cleared thread starts empty and the old transcript keeps its arrivals** (D2), verified by
+    clearing and then resuming the prior session id.
+26. **An embedder that overrides `getSessionMessages` without a store gets no merge** (D3, finding 9)
+    and `arrivals` is absent, not `0`.
+
+### Stage D — the anchored scan in `thread/searchOccurrences`
+
+27. **A retained arrival's text is findable**, and its `readCursor` lands a `thread/read` window containing
+    it — including a null-anchored arrival, whose `readCursor` is `epoch:1` when a first row exists
+    (in an empty transcript it is not enumerable, and the reply's `arrivals` field says why).
+    Findability is claimed for retained arrivals only: after eviction, the search reply's
+    `arrivals.dropped > 0` is what distinguishes exhaustion from proof of absence.
+28. **Two same-anchor arrivals both matching resume correctly at `limit:1`** — the occurrence
+    cursor's discriminated `arrival(...)` phase names which entry is next, so neither is skipped
+    and neither repeats — and **two matches inside one arrival** at `limit: 1` resume on the
+    entry-local character offset, neither repeating nor skipping the second.
+
+## Delegated unknowns
+
+- **U1 — do envelope-less (coordinator-path) arrivals batch at all?** **Still open, and briefly
+  recorded as answered in error.** Rev 8.4 answered it "yes, intermittently" on LEG 10's red; M13
+  shows that red was an unresolvable anchor and not a text defect at all, so **no sighting of an
+  envelope-less batch member survives**. The one direct measurement of the question — probe 121's
+  keyed burst — saw zero envelope-less frames (counts 1 / 1 / 2), and what once looked like an
+  envelope-less *corpus* was a missing grammar: 200 of 228 peer rows on this machine use
+  `<agent-message …>` and every one of the 228 carries `origin.body` verbatim inside its own text.
+  Stage A no longer depends on the answer either way (its ordering is justified without it), so this
+  stays open as a genuine unknown rather than being closed by the change that made it moot. Two facts
+  from the same runs are NOT in doubt: per-message *identity* in a batch remains impossible (verdict
+  C), and one announced arrival persisted no row at all, so cold replay can never render that member.
+- **U2 — does `rowKind` change verdict on any widened row?** **Answered (M11): no**, and then made
+  moot for the splice path: all 170 peer rows classify `prompt` and none is a phantom kind (170 is the
+  both-corpora count as of M9m, pre-dating this milestone's runs — see M11's population note), but the
+  rev 6 projector injects items without ever constructing a row, so `rowKind` no longer sits between
+  an entry and its rendering. M11's remaining consumer is Stage A's replay of real peer rows. The
+  comment in `sessions/rows.ts` asserting "The rows carry NO meta flags (probe 68b)" is true of the
+  reader's output and false of the rows on disk, and is corrected to say which.
+
+## Decision Log
+
+- **Render every envelope and join, rather than pick one.** Rejected: preferring the first envelope —
+  in a multi-envelope frame that is an arbitrary member, no better than `origin.body`. Rejected:
+  splitting into N items — it would require inventing uuids the announcement never used and nothing
+  could dedupe against. The engine really did produce one frame; one item carrying everything it
+  delivered is the faithful rendering.
+- **Depth-counting extraction, not a regex capture.** Both captures are measurably wrong here: lazy
+  truncates at a quoted envelope's inner tag, greedy merges siblings with tags intact.
+- **The server logs arrivals; it does not reconstruct them from the transcript.** Rejected: rev 1's
+  splice. Six confirmed findings sharing one root — reading a file another process owns and
+  re-deriving its private ordering. The log also serves folded arrivals, which no transcript reader
+  can.
+- **Scope is peer arrivals.** M3: the other origin kinds are subagent history this reader never opens.
+- **An arrival rides its anchor row; it does not occupy a row of its own.** This is the decision the
+  whole of rev 5 rests on. Rejected: giving arrivals their own position in the merged sequence, which
+  is what forced rev 3's opaque cursor — a merged offset is not a raw offset, so every coordinate in
+  `thread/read` and `thread/searchOccurrences` would have had to move, and the published cursor
+  pattern with them. Riding an anchor keeps the splice a pure, monotone function of the row window,
+  which is exactly the predicate `boundaryRow`'s bisection already assumes, so no coordinate changes
+  at all. D1 is satisfied by needing nothing rather than by fitting something in.
+- **Anchor to the last observed row, not to the turn the arrival caused.** Rejected: rev 3's
+  two-phase placement. A turn is the wrong coordinate — a folded arrival's host turn has already
+  emitted rows, and `beginTurn` declines while that turn is busy, so there is no settlement to
+  finalize against. The row the arrival came after is known synchronously, needs no second phase, and
+  is what a reader can actually locate later.
+- **Append-only, resolved at read.** Rejected: rebasing the log on rewind. Rebasing needs a
+  transaction boundary against a transcript we do not own, and `thread/rewind` replies before the
+  replacement engine can refuse. Recomputing placement per read makes a rewind a non-event, which is
+  cheaper than making it atomic and is correct for the refusal case too.
+- **Withhold rather than interpolate when an anchor does not resolve.** Rejected: placing the
+  arrival next to its nearest resolvable neighbour. Interpolation always produces a position, and a
+  position we invented is exactly the plausible-looking wrong answer D3 rules out. Withholding is the
+  status quo for that one message and never lies about order.
+- **No withheld-count field, and it is named as a gap.** Rejected: reporting a count computed from
+  the current window, which would be a number the server cannot stand behind. An honest count needs
+  whole-history knowledge the pager is deliberately built to avoid gathering.
+- **One file per entry rather than one appended JSONL.** Rejected: appending to a per-session log,
+  which needs either a lock or a tolerance for a partially written trailing line, and can interleave
+  between two app-server processes. At 69 arrivals corpus-wide the per-file cost is irrelevant and
+  the atomicity is free.
+- **The store is keyed by session id.** This is D2's entire implementation: `thread/clear` already
+  detaches by dropping `record.sessionId` and letting the replacement engine mint a new one, so
+  keying by session gives "detach, not delete" with no code that knows about clearing.
+- **Items, not rows (rev 6).** The projector injects arrival items directly rather than
+  materialising synthetic transcript rows. Rejected: synthetic rows — they either corrupt the raw
+  cursor (if spliced into the indexed array) or re-decide a settled text by routing it back through
+  `peerArrival`, which under the then-shipping order fell through to `origin.body` and re-lost the
+  collapsed batch. The rejected alternative was not merely inferior; both of its readings were broken.
+  Rev 8.4's ordering removes the second breakage without reviving the alternative: an entry's text is
+  decided once, at observation, and re-deriving it later would still be a second answer to a settled
+  question.
+- **Publish the logged count, not a withheld count (rev 6).** Rejected in rev 5 as unknowable;
+  the review forced a better distinction: the *withheld* count needs whole-history knowledge, the
+  *logged* count is one readdir, and a client holding both the count and the items can compute the
+  discrepancy itself. Rejected: failing the RPC on any unresolvable anchor — compaction makes that
+  the common case and would poison every read of an ordinary long session.
+- **Degrade loudly, and let the notification outlive the store (rev 6).** A caught write failure
+  still broadcasts `thread/peerMessage` — the live channel reports what the engine did, and the
+  engine delivered the message regardless — while `arrivals: null` marks history untrustworthy.
+  Rejected: suppressing the notification on write failure, which would convert a sidecar fault into
+  a lie about the engine's behaviour.
+- **Chain position, not just content, is the anchor identity (rev 7).** Rejected: fingerprint-only —
+  a rewrite-born duplicate can be field-identical at a different position, and the misplacement it
+  permits is exactly the failure class under design. `prevUuid` pins the position; a rebound
+  duplicate sits after a different predecessor by construction.
+- **Null anchors are a sentinel, not a row-zero coordinate (rev 7).** Rejected: treating
+  confirmed-empty as "anchored at width 0", which made the entry discardable and then stranded it —
+  the bisection resolves it to `begin = 0` and ends the walk. An anchor that names no row cannot
+  participate in a bisection over rows.
+- **Arrival items are marked with `origin` (rev 7).** Rejected: an unmarked count — a client cannot
+  compare a count against items it cannot distinguish. Rejected: a server-computed withheld count —
+  it would need a whole-history resolution pass per read, the exact cost the pager exists to avoid.
+  The marked item makes the client's subtraction trivial and carries provenance the item should have
+  had anyway.
+- **The trust claim is withdrawn.** A same-user process that can write the transcript can write a
+  sidecar. What a log buys is that `thread/read` and `thread/peerMessage` cannot disagree, and that
+  accidental contamination is structurally impossible. Real integrity needs authenticated storage out
+  of that attacker's reach, and is out of scope.
+
+## Surprises & Discoveries
+
+- **The same error class twice in one round: an aggregate read as a statement about its members.**
+  First, an origin-kind census summed across main and subagent transcripts and produced a hidden
+  population five kinds wide; separating the corpora left `peer` and nothing else. Then probe 121's
+  nonce coverage — "all three texts are present" — was read as "each frame carries its own text",
+  when in fact one frame carried two. Both times the refuting detail was already in output I had
+  quoted. The generalisable rule is now in the probe's header: an aggregate over a set answers a
+  question about the set, never about its members.
+- **A subagent found the collapse independently and built a better rule than the one it was given.**
+  Briefed to prefer "the envelope", it discovered the multi-envelope row, recognised that a greedy
+  capture merges siblings, and returned every top-level envelope instead. It was then told to revert
+  on my mistaken reading and had done so before the cancellation arrived — the work was recoverable,
+  but a correction issued in haste cost more than the error it was chasing.
+- **Probe 121 found a shipped bug while answering a design question**, and the bug is not the one it
+  first appeared to be: not "the wrong text is announced" but "text the model answered is dropped
+  entirely".
+- **LEG 5's assertion passes for the wrong reason.** It pins "N arrivals, ONE `msg_id`, ONE `body`"
+  and attributes the loss to the engine. True of `origin.*`; it never examined the frame's content and
+  so never saw the collapse.
+- **An SDK bump is an engine change.** Task #60 moved the bundled CLI 2.1.237 → 2.1.250 and a
+  cross-session contract moved with it: a send into a `refuse` thread, previously silent, now returns
+  an `expired` receipt with a reason. Established by controlled experiment; the refusal is still
+  enforced, only the sender's visibility improved.
+- **Permission to refuse made the design smaller, not weaker.** Rev 3 answered nine findings by
+  adding nine mechanisms, and every one of them existed to defend a position it had chosen to occupy:
+  a merged coordinate space needed an opaque cursor, a stored placement needed a rebase, a turn
+  anchor needed two phases. The owner's D3 — be correct where you can and refuse where you cannot —
+  permitted vacating those positions, and seven findings went with them. The generalisable form: when
+  a design needs a mechanism per objection, suspect the objections are all downstream of one
+  commitment, and price *removing* it before engineering around it.
+- **A hopeful reading, checked before it was relied on.** The live path announces one arrival per
+  uuid and probe 121 saw three uuids for three messages, which suggested the log could restore the
+  per-message identity the transcript destroys. Reading `noteArrival` refuted it: it fires once per
+  *frame*, and the collapsed frame already carries two bodies at observation. Live and cold see the
+  same collapse. This is the same failure the round has now produced three times — an aggregate or an
+  adjacent count read as a statement about members — caught this time before it reached a document.
+- **Three designs, twenty-four findings, and the honest output is a smaller feature plus a list.**
+  Every revision was internally coherent and every one was broken in a single review pass. The cost
+  of each was measurement; the cost of shipping any would have been a history nobody could see was
+  wrong.
+
+## Outcomes & Retrospective
+
+**The sentence this milestone existed to make true is true: a client reading its own history sees the
+question that produced the answer.** M8 shipped a live channel for inbound peer messages and a
+`thread/read` that could not return them — the CLI persists an arrival as an `isMeta` row and the SDK's
+reader drops every one — so LEG 2 of the cross-session live suite was written to assert that absence and
+to redden the day it closed. On the keyed acceptance run it asserts the presence instead: the arrival item
+precedes the assistant turn it caused, is deep-equal to the live item on id, text and `origin`, and is
+counted. **10 of 10 legs green in 166s**, including LEG 10's batch — three messages, every one of them in
+history as a marked item, and a `limit: 1` walk over that same session terminating without stranding one.
+
+**What shipped.** Stage B is the log and the observer: an append-only per-session store (one file per
+entry, capped, with an over-report-safe dropped-count marker), an observer seeded at the moment the
+session id is revealed — fresh and fork alike — that buffers arrivals while the seed read is in flight and
+grounds the buffer against it, anchors each entry to the last user/assistant frame it saw with that row's
+`prevUuid` and a SHA-256/16 content hash, persists before it announces, seeds `seq` from disk so order
+survives a restart, and latches a durable degraded marker when a write fails. Stage C is the projector:
+`project(messages, [])` is byte-identical to `itemsFromTranscript(messages)` over a 26-transcript corpus —
+the parity law that replaced rev 8's pseudocode, and the reason `thread/read` can run the projector on
+every read — plus the merge itself, `arrivals: {logged, dropped}` on all five reply paths, and rev 8.3's
+page-gated null sentinel, which renders a precedes-everything arrival only on a page that both reaches row
+0 and discards nothing. Stage D is the anchored scan in `thread/searchOccurrences`: entries scanned after
+the text of the row they ride, the occurrence cursor discriminated by phase with an entry-local character
+offset, and a pre-M9 cursor — which has no phase field — resuming as the row phase, so a walk in flight
+across the upgrade loses nothing. Task 7's fix wave added the two corrections the live runs forced: a
+second envelope grammar the decoder had never seen (200 of this machine's 228 peer rows use it), and the
+rule that a frame this server has recognised as an arrival never advances the anchor.
+
+**What it cost, and what that bought.** Three designs and twenty-four review findings before a line was
+written; then eight build tasks, two keyed reds and one revision spent undoing a claim. The expensive part
+was never the code — the store, the projector and the scan are small — it was establishing what the data
+actually is. The reward is the shape of the wire change: because an arrival rides its anchor row rather
+than occupying one, **no coordinate moved**. The cursor pattern is byte-identical in the generated
+artifact, the schema grows exactly two additive optional response members, and the appserver scorecard
+gate reports the same 110 rows over 73 registered methods it did before the milestone.
+
+**The gaps, stated rather than closed.**
+
+- **The pre-init window.** An arrival that lands before the engine reveals a session id is announced on
+  the live channel and never logged: there is no scope to key an entry by, and guessing one would be the
+  plausible-looking wrong answer D3 rules out.
+- **A write failure that can persist no marker.** Degradation is durable wherever the marker is writable
+  and in-process only where the fault is the directory itself — the fixture asserts exactly that half and
+  no more.
+- **The reader maps its own failures to `[]`.** A transcript read that fails looks like an empty
+  transcript, so every anchor resolves to nothing and every arrival is withheld. Withholding is the safe
+  direction, but the cause is invisible at this seam.
+- **The textless batch member.** `peerArrival` now prefers a frame's own text and consults `origin.body`
+  only for a frame carrying none, which closes the residual for every frame that carries text. A textless
+  member of a collapsed batch would still render another message's body, and that stays recorded because
+  withholding instead would break the ordinary single-message case, where `origin.body` is the only text
+  there is.
+- **Per-message identity in a collapsed batch (verdict C).** Not a defect to fix later: the identity is
+  not in the data. One frame carrying two envelopes produces one uuid, one entry and one item bearing both
+  texts, and one announced arrival in the measured runs persisted no row at all, so cold replay can never
+  render that member. Every claim this milestone makes about a batch is a claim about text, never identity.
+- **No withheld count.** A client is given `logged` and the marked items and computes the difference; an
+  honest server-side count would need whole-history resolution per read, the exact cost the pager exists to
+  avoid.
+- **U1 is open.** Do envelope-less (coordinator-path) arrivals batch at all? No sighting survives. Rev 8.4
+  recorded one on LEG 10's red, rev 8.5 explained that red as an anchor defect, and rev 8.6 withdrew the
+  sighting rather than leaving a convenient answer standing. The one direct measurement — probe 121's keyed
+  burst — saw zero envelope-less frames. Stage A's ordering no longer depends on the answer either way, so
+  the question stays open as a genuine unknown rather than being closed by the change that made it moot.
+
+**Lessons.**
+
+- **A fixture derived from what the system WRITES will lie about what it RECEIVES.** Every unit fixture in
+  this milestone pushed peer frames carrying `isMeta: true`, because that is how the CLI persists an
+  arrival — and the live frame need not carry the flag at all. Without it the frame survives the
+  visibility predicate, advances the anchor onto itself, and every arrival after the first in a batch is
+  anchored to a row the reader drops and withheld from every page forever. **4,283 green tests inherited
+  that fixture and none of them could see it** — not a gap in coverage but a gap in what the corpus was a
+  corpus OF: the suite agreed with itself about a shape the world never sends. It cost two identical keyed
+  reds. The generalisable rule is to name which side of a boundary a fixture's shape comes from and, where
+  both sides exist, to test both — cell (9b) derives the live shape from the persisted one by deletion, so
+  the two cannot drift into proving different things about different messages.
+- **A red is evidence of a defect, not of the defect you were looking for.** LEG 10's first red was read as
+  confirmation of the envelope-less batch that was already the open question, and that reading was written
+  into the record as a measurement. The second red — identical — was what refuted it: the reported text was
+  one body, not three, so the failure was never about text at all. The cost was a revision spent undoing a
+  claim, and the fix is procedural: a leg that can fail for three different reasons now prints all three
+  channels (announced, logged, paged) on failure, so the next disagreement between them costs a read rather
+  than a keyed run.
+- **An aggregate answers a question about the set, never about its members.** This round produced the same
+  error three times — an origin-kind census summed across two corpora, a nonce-coverage assertion read as
+  per-frame carriage, and a uuid count read as per-message identity — and each time the refuting detail was
+  already in output that had been quoted. It is now the header rule of the probe that found it.
+- **Price removing a commitment before engineering around it.** Rev 3 answered nine findings with nine
+  mechanisms, every one defending a position it had chosen to occupy: a merged coordinate space needed an
+  opaque cursor, a stored placement needed a rewind rebase, a turn anchor needed two phases. Permission to
+  refuse — be correct where you can, withhold where you cannot — let those positions be vacated, and seven
+  findings left with them. When a design needs a mechanism per objection, suspect the objections are all
+  downstream of one commitment.
+- **Know when prose review has stopped paying.** The rounds went eight findings, six, then seven; the count
+  stopped narrowing, and rev 8's sharpest finding — pseudocode that omitted the direct user-row path, which
+  would have erased ordinary prompts — is precisely the class one property test pins and no careful reader
+  reliably does. Ending the loop and writing the parity law was worth more than another rewrite.
+
+**Addendum — the external review waves (2026-08-31).** After the eight tasks closed, three whole-branch
+codex rounds ran against the merge-base: seven findings, then seven, then two — sixteen in all. Fourteen
+were fixed across three waves (the seed window's loss shapes, the lock-ownership and degrade-latch races,
+the config-dir namespace, the delete lifecycle, the atomic counts snapshot, and — caught by round 3 — a
+read-ordering regression wave 2 itself had introduced, the only finding of the sixteen that was ours
+rather than inherited). One was deferred to the tech-debt tracker (a sender's literal closing tag
+truncating its own body; no framing exists to do better), and one was dismissed against D1–D3 with the
+boundary it exposed now stated in the spec instead (fork-inherited history). The convergence signal was
+the doctrine's own: round 3 produced one self-regression and one scoped dismissal, nothing new about the
+design. Keyed acceptance ran green three times along the way — after the anchor fix, after the drain
+gate, and on the final tree.
+
+## Revision Notes
+
+- **rev 1 (2026-08-29)** — transcript splice. Dead: six confirmed findings.
+- **rev 2 (2026-08-29)** — pivot to a server-side arrival log. Eight findings.
+- **rev 3 (2026-08-30)** — rev 2's gaps closed and work staged A–D. Returned NOT CONVERGED with nine
+  findings; separately, its central new measurement was misread.
+- **rev 4 (2026-08-30)** — corrects M8m: a batch is COLLAPSED and per-message identity does not exist
+  in the data, superseding rev 3's "each frame carries its own text". Stage A survives with a
+  different and better rationale — join every envelope so no message is dropped — and is ready.
+  Stages B–D are recorded as not converged, with their nine open findings named and the two owner
+  decisions surfaced rather than guessed. The status line now says what is true.
+- **rev 5 (2026-08-30)** — the owner answered, and Stages B–D acquire mechanism by *removing*
+  machinery rather than adding it. Three moves — anchor at observation to the last row, append-only
+  with placement resolved at read, and arrivals riding their anchor row — dissolve findings 2, 3, 4,
+  5, 7, 8 and 9, leave 1 answered by a measured synchronous write (M10), and convert the remainder
+  into two stated limits. Rev 3's two-phase placement, `historyGeneration`, rewind rebase, lease and
+  opaque cursor are all withdrawn; the cursor and the published schema do not change at all. U2 is
+  answered by measurement (M11). Acceptance is written for B, C and D. A separate M8 live-path defect
+  is recorded: `drainArrivals` attributes an arrival to whatever adoption is current, which can be a
+  turn it did not cause.
+- **rev 6 (2026-08-30)** — round 4 of review: eight findings, all real, all adopted, none requiring
+  the architecture to move. The splice becomes an item-level projector (no synthetic rows — both
+  readings of rev 5's row splice were broken, one corrupting the cursor and one re-losing the batch);
+  the anchor gains a fingerprint against uuid rebinding (refuted by M5's own duplicate count); `seq`
+  is seeded from the store so order survives a restart; seeding becomes an explicit buffering state
+  and `anchor: null` becomes unrepresentable except as confirmed-empty; write failure latches a
+  degraded state surfaced as `arrivalsLogged: null`; the terminal page publishes `arrivalsLogged` so
+  omission is detectable, which is the narrowed, honest form of D3's "explicit"; the occurrence
+  cursor gains a `(seq, id)` discriminator; a per-session log cap bounds the last-resort page.
+  Crash semantics are stated as atomic visibility, not durability. Rev 5's "drift is safe" and
+  "write order is irrelevant" claims are both corrected as one-sided or conditional.
+- **rev 7 (2026-08-30)** — round 5 of review: six findings, all missing-mechanism, all adopted, and
+  visibly narrower than round 4's — edge composition rather than core mechanism. The anchor gains
+  `prevUuid` (chain position — the fingerprint alone cannot distinguish a rewrite-born duplicate)
+  and a content hash with match-on-recorded-fields semantics; grounding gains an explicit
+  seed/buffer overlap rule with four pinned shapes; the projector is re-specified on `TurnMapper`'s
+  real per-frame `ingest` (rev 6's "items for that row" named an operation that does not exist), and
+  the false claim that search shares it is withdrawn — Stage D gets an anchored-entry scan step;
+  null anchors become a sentinel outside the bisection, closing the stranded-arrival walk the review
+  constructed; eviction writes a durable dropped-count marker and the cap's bounds claim is
+  corrected; arrival items are marked with `origin` on all three renderings and
+  `arrivals: { logged, dropped }` rides every reply through one helper, degraded state persisting
+  via the marker. Acceptance grows to 26 criteria.
+- **rev 8 (2026-08-30)** — round 6 returned seven missing-mechanism findings plus three lows, all
+  real, all adjudicated — and the round count (eight, six, seven) stopped narrowing, so this
+  revision also *ends the prose review loop*: the reviewer is doing implementation-grade
+  verification against text, and the sharpest finding (the projector pseudocode omitting the direct
+  user-row path, which would have erased ordinary prompts) is precisely the class prose cannot pin
+  and one property test can. The projector is now defined by the parity law
+  (`project(messages, [])` ≡ `itemsFromTranscript(messages)`, corpus-tested) with the pseudocode
+  demoted to illustration; bounded windows carry a one-row lookbehind for first-row anchor
+  verification; seed-window arrivals with no relatable order persist as ambiguous-withheld-counted;
+  the marker protocol is over-report-safe with idempotent recovery, and cross-restart/power-loss
+  completeness is explicitly not claimed; the exact-indistinguishable-duplicate rebind is a stated
+  limit with rendered-output-equivalence fixtures; the search resume cursor is discriminated by
+  phase with an entry-local offset, findability is scoped to retained arrivals with
+  `arrivals.dropped` on the search reply, the entry-scan bound is stated separately, and the hash is
+  pinned (SHA-256/16 over `rawTextOf` bytes). Acceptance grows to 28 criteria. **Status moves to
+  ready-for-planning: remaining findings are properties the implementation will enforce as tests,
+  not questions the spec can answer better by another rewrite.**
+- **rev 8.1 (2026-08-30)** — planning was the spec's first hostile read (writing-plans, spec-drift
+  rule), and the plan review surfaced four spec-level corrections, folded in place: criteria 12 and
+  15 contradicted each other on the same fixture (12 now names ambiguity as its no-frame outcome);
+  criterion 13's fixture demanded a marker persist in the very directory whose unwritability caused
+  the failure (split: one-shot failure → durable, fully-unwritable → the in-process limit rev 8
+  already stated); seeding is re-anchored to *when the session id is known* — fork admission leaves
+  `record.sessionId` undefined over copied history, so "no id = fresh = confirmed-empty" would have
+  misplaced a fork's first arrival, and both fresh and fork now seed at init against the revealed
+  id (with the reader's failures-as-`[]` contract recorded as a limit); criterion 21 now permits
+  exactly the two additive optional response members while pinning the cursor pattern byte-for-byte.
+- **rev 8.2 (2026-08-30)** — two corrections from implementation contact during Task 2 of the
+  build. Pre-id arrivals take M8's live-only path rather than hold-and-flush: an arrival is an
+  engine frame and `system/init` precedes any engine frame, so the held window contains nothing —
+  while the literal rule forced seed machinery on before an id existed (and, in tests, activated the
+  default filesystem store under fixtures that never emit init). And the filter-surviving predicate
+  narrows to `user`/`assistant`: both readers of the transcript call `getSessionMessages` with
+  `includeSystemMessages` defaulted false, so a system-frame anchor — the init frame being the
+  common case — would name a row the reader never returns and withhold everything behind it. Both
+  edits keep the withhold-never-misplace direction; both were found by a reviewer reading the real
+  call sites rather than the spec's own text.
+
+- **Rev 8.3 (2026-08-30, Task 4 review).** The null-sentinel gate moves from the window to the
+  page: `atStart` entries render only when the fetched window includes row 0 AND the page discards
+  nothing, replacing rev 8's "window includes row 0" plus never-discard rule. The window form was
+  faithful prose that produced a misplacement in a shape nobody had walked: a cursorless read of a
+  transcript longer than `limit` fetches the whole file, so its first page — the newest items —
+  opened with the arrival that precedes all of history. Withholding there costs nothing because a
+  discarding page always advances the cursor, so the head lands on the walk's terminal page, where
+  reading order puts it anyway. Found by Task 4's reviewer walking the assembled-client view;
+  adjudicated under D3 (withhold, never misplace) without a new owner decision — the page gate is
+  the decided principle applied, not a new rule.
+
+- **Rev 8.4 (2026-08-30, Task 7 fix).** *(Corrected by rev 8.5: the first two sentences below were
+  wrong. LEG 10's red was an unresolvable anchor, not an envelope-less frame — U1 is open again, and
+  Stage A's ordering is re-grounded on the argument that never needed a sighting. Everything from "The
+  fix is an ordering change" onward stands, and the dual-grammar finding is what carries it.)*
+  LEG 10's keyed red closes U1 and Stage A's residual limit.
+  The envelope-less batched frame is real — its three arrival items each rendered the causing
+  message's `origin.body` — and it is intermittent: probe 121's keyed re-run of the same burst
+  produced no such frame (M12.1, M12.2). The fix is an ordering change in `peerArrival`: the frame's
+  own text now outranks `origin.body`, which is consulted only for a frame carrying no text at all.
+  What made the fix safe was a finding nobody was looking for — **there are two envelope grammars**,
+  and the decoder knew one. 79 of this machine's 103 peer rows are wrapped in `<agent-message …>` and
+  had been rendering correctly only by falling through to the very field this change demotes; without
+  the second grammar, the new order would have rendered the CLI's 560-character safety postamble as
+  the peer's own message on three quarters of the corpus (M12.3). With both grammars decoded, the new
+  order renders identically to the old on all 103 rows, so the change is a no-op everywhere except
+  the shape that was broken. Depth is now counted per tag name so the grammars cannot close each
+  other. Identity is untouched and still impossible: this is a rule about text only, and the rowless
+  arrival means cold replay can never render that batch member at all.
+
+- **Rev 8.5 (2026-08-30, Task 7 second red).** Rev 8.4 shipped and LEG 10 failed *identically*, which
+  was the evidence: the reported text is one body, not three, so exactly one marked item existed for
+  three announced arrivals and the defect was never in the text at all (M13). A batch's arrivals were
+  anchoring on **each other** — the observer let an arrival's own frame advance the anchor, so every
+  member after the first named a peer row the reader drops and was withheld from every page forever.
+  Fixed by stating the rule on the arrival rather than on the visibility predicate: a frame this server
+  has recognised as an arrival never advances the anchor. Reproduced offline first — the unit fixtures
+  had encoded the persisted shape (`isMeta: true`) as the live one, which is exactly why 4,283 green
+  tests never caught it — and LEG 10 now prints its own three-channel evidence (announced / logged /
+  paged) on failure, so the next disagreement between those channels costs a read rather than a run.
+
+- **Rev 8.6 (2026-08-30, Task 7 review).** A correction round with no code behaviour in it. Rev 8.4 had
+  written a *sighting* into the record — "the envelope-less batched frame is real" — on a red that rev
+  8.5 then explained as an anchor defect, so M12.1 and the rev 8.4 note are corrected in place, **U1
+  goes back to open** ("no sighting survives"; probe 121's keyed burst is the only direct measurement
+  and it saw zero envelope-less frames), and Stage A's ordering is re-grounded on the argument that
+  never needed a sighting: `origin.body` is a claim about a message some frame carried, the frame's own
+  text is a fact about this one. The residual is stated precisely rather than declared closed — it is
+  closed for every frame that carries text, and a textless batch member would still render another
+  message's body, which stays recorded because withholding instead would break the ordinary
+  single-message case where `origin.body` is the only text there is.
+
+  Two measurements came out of the round. The document's two corpus scans disagreed (170 rows / 107
+  files versus 103 rows / 5,676 files); re-measured, **they count different things** — M9m counted both
+  the main and the nested corpora and reported files *containing* peer rows, M12.3 counts the main
+  corpus alone and reports files *scanned*. Today: 107 main + 121 nested = 228 rows in 127 containing
+  files, the growth being this milestone's own live runs. The dual-grammar finding strengthens on the
+  wider population (200 of 228 are `<agent-message …>`), and every one of the 228 persisted rows carries
+  `isMeta` — the flag whose absence on the *live* frame is what M13 turned on. Probe 121's local decoder
+  and envelope counter, which had stayed one-grammar while the shipped scan learned two, are synced.
+  Cell (9c) adds the seed-window twin of (9b): a batch buffered during grounding, replayed by
+  `groundSeed`. It was reviewed as holding "by construction" — it does, but it fails independently
+  against the pre-fix observer, so the argument is now a test.
+
+- **Rev 9 (2026-08-30, branch review fix wave).** Seven confirmed findings from an external review of
+  the assembled branch, and they fall into two families that the document had each stated *correctly*
+  while the code stated something weaker.
+
+  **The seed window's edges** (findings 1, 2, 6). The spec said the window holds arrivals and then
+  grounds them, and that "inside it nothing is durably wrong yet, so there is nothing to repair
+  afterwards" — true of a window that resolves, and rev 8 built only for that one. Three windows do
+  not resolve: the arrival buffer overruns (rev 8 shed the oldest *announced but never logged*, which
+  makes `logged` smaller than the notification count and lets a short history certify itself
+  complete), the frame buffer overruns (rev 8 clamped the shifted arrival's index, re-anchoring it
+  against whatever the remaining head grounds on — a misplacement, the one class D3 forbids), and the
+  thread is torn down mid-read (rev 8 discarded the buffer, losing an engine-delivered message from
+  the live channel and the old session's count at once). All three now take the answer the design
+  already had for an unknowable position: **persisted, counted, `ambiguous`, never placed.** The one
+  behavioural addition is that `logged` may exceed the notification count by what a teardown saved —
+  over-report, the direction that reveals a gap that isn't there.
+
+  **The count's own machinery** (findings 3, 4, 5, 7). The marker lock was an exclusive-create
+  lockfile broken by mtime, which reproduced M5's own measured defect: two writers meeting one
+  crashed holder's leftover both judge it stale and the second's pathname `unlink` destroys the
+  first's fresh claim. Rewritten as D-M5-24 — a directory lock published by `rename`, a
+  nonce-and-lease marker name, content-conditional deletes, `rmdir` as the successor test — plus a
+  release-time fence that degrades a holder evicted mid-section. Measured with real processes
+  before and after (`test/unit/peer/arrival-log-race.test.ts`). The entry-filename pattern was fixed
+  at six digits, so a session reaching seq 1,000,000 stopped recognising its own entries; it now
+  parses arbitrary width and orders by the parsed number, since the padded name sorts a seven-digit
+  seq *ahead* of a six-digit one. Degradation is now a latch nothing may clear: every marker write
+  re-reads and carries forward a flag another writer set, which is what makes the deliberately
+  unlocked degrade write unlosable. And `thread/read` samples the counts with the entry snapshot it
+  renders rather than before the transcript await, so a reply can no longer show a marked arrival
+  the number beside it predates.
+
+  Nothing here changed a decision. Every fix is an existing rule reaching a case the implementation
+  had not carried it to — which is what the review was for.
+
+- **rev 9.1 (2026-08-30) — the second external review round: six findings, and the store learns where it
+  lives.** One wave, and again no decision moved. Five of the six are an existing rule reaching a case the
+  implementation had not carried it to; the sixth is a doc path.
+
+  **Isolation** (finding 1). The sidecar rooted itself at the literal `~/.claude` while everything it
+  annotates follows `CLAUDE_CONFIG_DIR` — which this harness's own tenant preset exports per tenant — so one
+  tenant's peer message bodies were written outside the namespace serving them. The root is now
+  `<claudeConfigDir()>/cc-harness/arrivals`, the one spelling the fleet registry and the config domain
+  already resolve through.
+
+  **The degrade contract's read side** (finding 2). It was written from the write side only, so a session
+  directory that existed but could not be listed took the same branch as one that was absent: zero entries,
+  no degraded flag, and a complete history certified by a store that could not see it. Only `ENOENT` is
+  empty now; every other errno latches degraded, and the reply says `arrivals: null`.
+
+  **Persist-before-broadcast across the seed window** (finding 3). The guarantee held everywhere except the
+  one window where the entry is deliberately deferred: an arrival held by an unresolved seed was queued for
+  the live drain on sight, so a turn adopted inside that window emitted its item before the seed wrote the
+  entry. An arrival now becomes drainable only where its durable fate is settled, and the held ones flush in
+  the replay's own interleaved order after grounding has written them. Criterion 10 says so.
+
+  **Delete destroys** (finding 4). Keying by session id gave `thread/clear`'s detach for free and gave
+  `thread/delete` nothing: the transcript went and the full text of every peer message stayed, re-attachable
+  to that id. The store gains a delete operation, invoked after the transcript delete succeeds; a residue it
+  cannot remove is reported as the handler's own error rather than hidden under `{ok: true}`, and the
+  deletion is announced either way because the transcript really is gone. Clear detaches, delete destroys —
+  stated together, because neither follows from the key.
+
+  **One snapshot for the counts AND the verdict** (finding 5). `isDegraded` then `counts` is two marker
+  reads, and the second process on a shared session degrades the store between them. One operation now
+  answers both from one read.
+
+  **The plan's drift-check path** (finding 6, P2). That gate runs from `CC-to-SDK/`, not `harness/`.
+
+  Deferred with its reasoning: a peer body containing a literal `</cross-session-message>` still truncates
+  that sender's own remaining text at decode, because nothing in the CLI's grammar distinguishes a payload
+  tag from the real terminator. It is self-inflicted-only and bounded, and it is logged in
+  `CC-to-SDK/docs/tech-debt-tracker.md` rather than engineered around.
+
+- **rev 9.2 (2026-08-31) — round 3: the read ORDER inside the snapshot, and where the log begins.** Two
+  findings; one a regression the previous round introduced, one a scope boundary that was true all along
+  and unstated.
+
+  **A count is sampled files-first** (finding 1). `countsSnapshot` read the marker and then the listing, and
+  those two move together: an eviction in another process adds one to `dropped` and then removes one file,
+  so a marker sampled before it and a listing sampled after it each miss a half — 32 reported for 33
+  arrivals, the under-report this design forbids by name. Reversed, the sum is safe by monotonicity
+  (`dropped` never decreases, so the total is at least the truth at the instant of the listing) and its
+  worst case counts the evicted entry twice, which is the permitted direction. `counts()` carried the same
+  pair and was aligned with it; `nextSeq` keeps the opposite order **deliberately** — it wants the largest
+  value it can justify, and its freshest source has to be the listing — which is now stated where a future
+  reader would otherwise "fix" it. Rejected: snapshotting both under the marker lock, which would put a
+  write-side lock with a degrading bounded wait on every `thread/read`.
+
+  **`logged` is log-derived, and the log starts where observation did** (finding 2, logged not fixed). A
+  fork's sidecar is empty over copied history, so its inherited arrivals are invisible to `thread/read` and
+  search — the same boundary every pre-M9 session sits on, and the same reason: the reader drops the copied
+  `isMeta` rows. Migrating entries onto a fork's rewritten uuids is placement on a branched conversation,
+  which D3 scopes to explicit refusal rather than correctness. The boundary is now stated beside the
+  definition of `arrivals.logged`; the residue is in the tech-debt tracker.

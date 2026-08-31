@@ -18,7 +18,7 @@
 // which keeps every gate case free of scroll arithmetic. `TALL_DOC` overflows it, and exists for exactly one
 // case — the wheel discard, which cannot be shown on a document the wheel cannot move.
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { renderWithKeymap, tick } from "./keysTestUtil.js";
@@ -30,9 +30,19 @@ import type { HostEvent } from "../../src/host/wire.js";
 import { themeTokens } from "../../src/tui/theme.js";
 import { Box, Text } from "ink";
 import { FullscreenFrame } from "../../src/tui/FullscreenFrame.js";
-import { FullscreenViewport, type ViewportHitmap } from "../../src/tui/FullscreenViewport.js";
+import { FullscreenViewport, hitRowsOf, type ViewportHitmap } from "../../src/tui/FullscreenViewport.js";
 import { Transcript } from "../../src/tui/Transcript.js";
 import type { RenderItem } from "../../src/tui/toolRenderer.js";
+// bl7 T-ADVISOR Task 3 (spec §3.4/D9/D16) — the pure hitmap-level check reuses the REAL publish path
+// (`projectCompact` → `wrapItemsToWidth` → `pageItemSlices` → `hitRowsOf` → `clickableOwnersOf`, the exact
+// pipeline `FullscreenViewport.tsx`'s own paint uses, per `hitRowsOf`'s own doc) rather than hand-building a
+// `HitRow[]` — the same "against the real path, not a synthetic fixture" rule `hover-owner.test.tsx`'s cell
+// (n) states for its own mounted check.
+import { projectCompact, projectionDeps, sdkOwnerKey } from "../../src/tui/toolRenderer.js";
+import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import { wrapItemsToWidth } from "../../src/tui/wrapItems.js";
+import { pageItemSlices } from "../../src/tui/pager.js";
+import { clickableOwnersOf } from "../../src/tui/mouse/hitmap.js";
 import type { RenderLine } from "../../src/tui/render.js";
 
 const plain = (s: string | undefined): string => (s ?? "").replace(/\x1b\[[0-9;]*m/g, "");
@@ -703,5 +713,123 @@ describe("T-CLICKGATE Task 4 (blank-tail, expanded): a click past the row's own 
     await tap(r, BLANK_COL, rowOf(r.lastFrame(), "err line 11"));
     expect(r.lastFrame()).toBe(expanded);
     r.unmount();
+  });
+});
+
+// ══ bl7 T-ADVISOR Task 3 — the advisor result row goes through the SAME `item:` mechanism (spec §3.4/D9) ═══
+// The advisor result item is a plain `kind:"line"` RenderItem now carrying `ownerKey`/`clickable` exactly as
+// every other clickable transcript row does (`toolEventItems`'s gutter-block is the OTHER shape; this is the
+// bare-line one), so it reaches `hitRowOfLine`/`clickTargetAt` through the identical wiring T-CLICKGATE Task
+// 3 already built — no mouse-layer edit, per the interface note above. `advisorRowAt` is a needle finder
+// (never an exact `rowOf`) because the collapsed sentence's leading glyph is `TICK()`'s own runtime pick
+// (✔ unicode-capable, √ the ASCII fallback) and this file does not stub TERM the way `advisor-row.test.tsx`
+// does — the click mechanism does not care which glyph painted.
+const ADVISOR_SENTENCE = "Advisor has reviewed the conversation and will apply the feedback";
+const advisorRowAt = (frame: string | undefined): number => {
+  const at = rowsOf(frame).findIndex((l) => strip(l).includes(ADVISOR_SENTENCE));
+  expect(at, `advisor row not painted in:\n${clean(frame)}`).toBeGreaterThanOrEqual(0);
+  return at + 1;
+};
+const advisorMsg = (id: string, content: Record<string, unknown>) =>
+  sdk({ type: "assistant", parent_tool_use_id: null, uuid: `u-${id}`, message: { id: `m-${id}`, content: [{ type: "advisor_tool_result", tool_use_id: `srv-${id}`, content }] } });
+// LONG, not multi-line-via-`\n`: a raw embedded newline is a rendering edge case this file does not own
+// (advisor-row.test.tsx's D10 pin covers it), and a genuinely long single logical line wraps across several
+// PHYSICAL terminal rows through the ordinary `wrapItemsToWidth` path — giving the second tap in (a)/(b) a
+// row that exists only in the OPEN state, the same idiom the fold-cluster ancestor test uses via `memberRow`.
+const LONG_ADVISOR_TEXT = "AAAA-ADVISOR-HEAD full advisor body text, spelled out at deliberate length so the row wraps across more than one physical terminal row once it is expanded, letting a second tap land on a row the collapsed sentence never painted ZZZZ-ADVISOR-TAIL";
+const ADVISOR_RESULT_DOC: readonly TranscriptBootstrapEntry[] = [
+  prose("hello there", "a"), advisorMsg("r1", { type: "advisor_result", text: LONG_ADVISOR_TEXT, stop_reason: "end_turn" }), prose("all done", "b"),
+];
+const ADVISOR_DECLINED_NO_REASON_DOC: readonly TranscriptBootstrapEntry[] = [
+  prose("hello there", "a"), advisorMsg("d1", { type: "advisor_result", stop_reason: "refusal" }), prose("all done", "b"),
+];
+const ADV_COL = 3; // the advisor row has no gutter (§3.2: "no gutter, no indent") — its text starts at column 1.
+
+describe("bl7 T-ADVISOR Task 3 (a)/(b): a tap on the advisor result row expands it, and a tap on the open body collapses it", () => {
+  it("reveals the full advisor text and drops the collapsed sentence, then restores the ORIGINAL frame to the byte", async () => {
+    const r = await mount(ADVISOR_RESULT_DOC);
+    const before = r.lastFrame();
+    const collapsedRow = advisorRowAt(r.lastFrame());
+    expect(clean(before)).not.toContain("AAAA-ADVISOR-HEAD");
+
+    await tap(r, ADV_COL, collapsedRow);
+    const expanded = clean(r.lastFrame());
+    expect(expanded).toContain("AAAA-ADVISOR-HEAD");
+    expect(expanded).toContain("ZZZZ-ADVISOR-TAIL");
+    expect(expanded).not.toContain(ADVISOR_SENTENCE);
+
+    // Second tap on a row unique to the OPEN state (the wrapped tail, never painted collapsed) — the D9
+    // cache-regression guard: without `expandedItems` in `knobKey` this tap would resolve against a STALE
+    // cache entry and repaint nothing (see the revert cell in the report).
+    const tailRow = rowOf(r.lastFrame(), rowsOf(r.lastFrame()).find((l) => l.includes("ZZZZ-ADVISOR-TAIL"))!.trim());
+    await tap(r, ADV_COL, tailRow);
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
+describe("bl7 T-ADVISOR Task 3: a declined-without-reason row is not clickable", () => {
+  it("a tap on the declined sentence does nothing", async () => {
+    const r = await mount(ADVISOR_DECLINED_NO_REASON_DOC);
+    const before = r.lastFrame();
+    const declinedRow = rowOf(r.lastFrame(), "Advisor declined to advise on this request");
+    await tap(r, ADV_COL, declinedRow);
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
+// ── The hitmap-level half: error/redacted (and declined-without-reason) rows never enter `clickableOwners`,
+// checked against the REAL publish path rather than the mounted UI (`projectCompact` → `wrapItemsToWidth` →
+// `pageItemSlices` → `hitRowsOf` → `clickableOwnersOf` — `hitRowsOf`'s own doc names this the real chain
+// `FullscreenViewport.tsx`'s paint uses) — the direct analogue of `hitmap.test.ts`'s own
+// `clickableOwnersOf` cells, but sourced from the real advisor render arm rather than a hand-built HitRow. ──
+const advisorRawEntry = (id: string, content: Record<string, unknown>) =>
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: `m-${id}`, content: [{ type: "advisor_tool_result", tool_use_id: `srv-${id}`, content }] } }) as Record<string, unknown>;
+const advisorHitCtx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 80, now: 0 };
+describe("bl7 T-ADVISOR Task 3: hitmap-level — only an undeclined (or reasoned-decline) advisor_result is ever a clickable owner", () => {
+  it("advisor_result is clickable; declined-without-reason, advisor_tool_result_error and advisor_redacted_result never are", () => {
+    const doc = new TranscriptDocument();
+    doc.appendSdk("host", advisorRawEntry("ok", { type: "advisor_result", text: "fine", stop_reason: "end_turn" }));
+    doc.appendSdk("host", advisorRawEntry("declined", { type: "advisor_result", stop_reason: "refusal" }));
+    doc.appendSdk("host", advisorRawEntry("error", { type: "advisor_tool_result_error", error_code: "overloaded" }));
+    doc.appendSdk("host", advisorRawEntry("redacted", { type: "advisor_redacted_result", encrypted_content: "x", stop_reason: null }));
+
+    const items = projectCompact(doc, advisorHitCtx);
+    const wrapped = wrapItemsToWidth(items, advisorHitCtx.columns);
+    const { slices } = pageItemSlices(wrapped, 0, wrapped.length);
+    const owners = clickableOwnersOf(hitRowsOf(slices, advisorHitCtx.columns));
+
+    expect(owners.has(sdkOwnerKey("message:m-ok"))).toBe(true);
+    expect(owners.has(sdkOwnerKey("message:m-declined"))).toBe(false);
+    expect(owners.has(sdkOwnerKey("message:m-error"))).toBe(false);
+    expect(owners.has(sdkOwnerKey("message:m-redacted"))).toBe(false);
+  });
+});
+
+// ══ bl7 T-ADVISOR Task 3 — the D16 cache-key regression, both directions ═══════════════════════════════════
+// (a) an `sdk:`-only `expandedItems` change MUST change the advisor row's output (RED if `knobKey` omits the
+// subset — the D9 failure this whole task exists to close). (b) a `tool:`-only change must NOT rebuild the
+// anchored stream at all (RED if the FULL set were keyed — the D16 over-invalidation the amendment rejected).
+describe("bl7 T-ADVISOR Task 3 (D16): expandedItems in knobKey — sdk: rebuilds and repaints, tool: does neither", () => {
+  const doc = () => { const d = new TranscriptDocument(); d.appendSdk("host", advisorRawEntry("k", { type: "advisor_result", text: "the full body", stop_reason: "end_turn" })); return d; };
+  const advisorLineText = (items: readonly RenderItem[]): string =>
+    items.filter((i): i is Extract<RenderItem, { kind: "line" }> => i.kind === "line" && i.ownerKey === sdkOwnerKey("message:m-k")).map((i) => i.line.text).join("|");
+
+  it("(a) an sdk:-only expandedItems change alters the advisor row's rendered output", () => {
+    const d = doc();
+    const collapsed = advisorLineText(projectCompact(d, { ...advisorHitCtx, expandedItems: new Set() }));
+    const expanded = advisorLineText(projectCompact(d, { ...advisorHitCtx, expandedItems: new Set([sdkOwnerKey("message:m-k")]) }));
+    expect(collapsed).toContain(ADVISOR_SENTENCE);
+    expect(expanded).toBe("the full body");
+    expect(expanded).not.toBe(collapsed);
+  });
+
+  it("(b) a tool:-only expandedItems change does NOT rebuild the anchored stream", () => {
+    const d = doc();
+    projectCompact(d, { ...advisorHitCtx, expandedItems: new Set() }); // warm the cache entry for THIS knob key
+    const spy = vi.spyOn(projectionDeps, "buildAnchored");
+    projectCompact(d, { ...advisorHitCtx, expandedItems: new Set(["tool:unrelated-call:1"]) });
+    expect(spy).toHaveBeenCalledTimes(0);
   });
 });

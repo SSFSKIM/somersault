@@ -564,7 +564,12 @@ describe("appserver subscribe + thread/read (Task 9)", () => {
 
     send(connA, { id: 3, method: "thread/read", params: { threadId } });
     await tick();
-    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ data: [], nextCursor: null });
+    // M9: this is the one case in this file booted with DEFAULT deps — no reader override — which is
+    // exactly the condition under which the server merges its own arrival log (peerInbound.ts's structural
+    // rule), so the reply carries the counts. Zero, not absent: merging is on and this thread has simply
+    // logged nothing. Every other thread/read case here overrides the reader, which turns merging off and
+    // leaves their replies byte-identical to what they were before M9.
+    expect(parsed(a.lines).find((f) => f.id === 3).result).toEqual({ data: [], nextCursor: null, arrivals: { logged: 0, dropped: 0 } });
   });
 
   it("thread/read filters phantom persisted rows (command echoes, local-command output, caveats, compaction summaries) before mapping to items", async () => {

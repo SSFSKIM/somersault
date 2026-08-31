@@ -67,6 +67,7 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   addDir: async () => {},
   removeDir: async () => {},
   setOutputStyle: async () => {}, setEffort: async () => {},
+  setAdvisorModel: async () => {},
   addRule: async () => {},
   removeRule: async () => {},
   // F9 T-IMAGE Task 5 (I3b): a fixed stub path is fine here — this suite's own stageImage cells assert
@@ -247,6 +248,17 @@ describe("host ops", () => {
     for (const level of ["low", "medium", "high", "xhigh", "max"])
       expect(hostOp.safeParse({ op: "set_effort", level }).success, level).toBe(true);
     for (const frame of [{ op: "set_effort" }, { op: "set_effort", level: "bogus" }, { op: "set_effort", level: "" }, { op: "set_effort", level: 3 }])
+      expect(hostOp.safeParse(frame).success, JSON.stringify(frame)).toBe(false);
+  });
+
+  // Task 2 (bl8 T-ADVCMD): `set_advisor_model`'s `model` is a NULLABLE free string, not an enum — the
+  // catalog check lives client-side (Task 1's pure half); this schema only closes the shape, like
+  // `set_output_style`'s `style`. `null` must parse (canon's explicit off), an absent/empty/non-string
+  // model must not.
+  it("set_advisor_model accepts a non-empty string or null, rejects everything else", () => {
+    for (const model of ["claude-opus-5", "claude-sonnet-5", null])
+      expect(hostOp.safeParse({ op: "set_advisor_model", model }).success, JSON.stringify(model)).toBe(true);
+    for (const frame of [{ op: "set_advisor_model" }, { op: "set_advisor_model", model: "" }, { op: "set_advisor_model", model: 3 }, { op: "set_advisor_model", model: undefined }])
       expect(hostOp.safeParse(frame).success, JSON.stringify(frame)).toBe(false);
   });
 

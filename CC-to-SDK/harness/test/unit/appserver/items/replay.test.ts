@@ -7,6 +7,17 @@ import { itemsFromTranscript } from "../../../../src/appserver/items/replay.js";
 import { flattenForDisplay, normalizeTurnInput, type UserTurnInput } from "../../../../src/session/turnInput.js";
 import { MAX_FRAME_CHARS } from "../../../../src/peer/address.js";
 import type { Item } from "../../../../src/appserver/items/types.js";
+import { TRANSCRIPT_CORPUS } from "./corpus.js";
+
+/** A corpus shape by name prefix. Read from the shared corpus rather than re-typed here, so a golden below
+ *  and the parity law (project.test.ts) are asserting about the SAME bytes — a fixture edited in one place
+ *  and not the other is the drift these two files exist to prevent. */
+const corpusRows = (namePrefix: string): unknown[] => {
+  const found = TRANSCRIPT_CORPUS.find((f) => f.name.startsWith(namePrefix));
+  if (!found) throw new Error(`corpus shape not found: ${namePrefix}`);
+  return found.rows;
+};
+
 const frames = [
   { type: "user", uuid: "u-p", message: { content: "run ls" } },
   { type: "assistant", uuid: "u-a", message: { id: "msg_A", content: [{ type: "text", text: "sure" }, { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } },
@@ -67,13 +78,16 @@ describe("itemsFromTranscript", () => {
     expect(itemsFromTranscript(withPhantoms)).toEqual(itemsFromTranscript(frames)); // identical to the phantom-free fixture
   });
 
-  // Task 10c: a peer arrival's display text is the FRAMER's decoding (`origin.body`), on this path exactly
-  // as on the live one (peerInbound.ts's `noteArrival`). Task 10b gave both paths the same id — the frame's
+  // Task 10c: a peer arrival's display text is the message the peer wrote — the frame's own envelopes, and
+  // `origin.body` only where there is none (M9: probe 121 measured `origin.body` repeating the CAUSING
+  // message across a collapsed batch) — on this path exactly as on the live one (peerInbound.ts's
+  // `noteArrival`), which for a lone message like this row's is the same text either way.
+  // Task 10b gave both paths the same id — the frame's
   // own uuid — which is what lets a client dedupe the live item against the one `thread/read` returns; same
   // id plus different text is worse than either alone, because the rendered message would then depend on
   // whether anyone happened to be subscribed. Measured on this machine's transcripts (2026-08-27): the raw
   // persisted `content` also carries a CLI-added preamble the sender never wrote, so it is not the message.
-  it("Task 10c: a replayed peer arrival displays the framer's decoded body, not the raw envelope", () => {
+  it("Task 10c: a replayed peer arrival displays the decoded body, not the raw persisted content", () => {
     const rows = [{
       type: "user",
       uuid: "cccccccc-1111-4111-8111-cccccccccccc",
@@ -82,8 +96,10 @@ describe("itemsFromTranscript", () => {
       origin: { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242, msg_id: "m-1" },
     }];
     // Whole item, not only the text: this is the exact object `noteArrival` -> `drainArrivals` emits live
-    // for the same frame (`userItem(origin.body, frame.uuid)`).
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "cccccccc-1111-4111-8111-cccccccccccc", text: "hello" }]);
+    // for the same frame (`arrivalItem(text, frame.uuid, origin)`). M9 added `origin` to that object on all
+    // three paths at once (items/types.ts) — a client renders an arrival AS an arrival, and an attribution
+    // that survived live only to vanish on reload would be a second answer under one id.
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "cccccccc-1111-4111-8111-cccccccccccc", text: "hello", origin: rows[0].origin }]);
   });
 
   it("Task 10c: an ordinary local user row is untouched by the peer rule", () => {
@@ -106,7 +122,7 @@ describe("itemsFromTranscript", () => {
       message: { role: "user", content: "two envelopes, unframed" },
       origin: { kind: "peer", from: "uds:/a.sock" },
     }];
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed" }]);
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", text: "two envelopes, unframed", origin: rows[0].origin }]);
   });
 
   // Task 10d: this file no longer holds its own copy of the peer rule — it asks `peerArrival`
@@ -122,7 +138,7 @@ describe("itemsFromTranscript", () => {
       message: { role: "user", content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/a.sock" from-name="peer" from-mode="prompting">\nhello\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user.' },
       origin: { kind: "peer", from: "uds:/a.sock" },
     }];
-    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "88888888-1111-4111-8111-888888888888", text: "hello" }]);
+    expect(itemsFromTranscript(rows)).toEqual([{ type: "userMessage", id: "88888888-1111-4111-8111-888888888888", text: "hello", origin: rows[0].origin }]);
   });
 
   it("Task 10d: truncates a replayed peer body at the same ceiling the live path uses", () => {
@@ -131,7 +147,9 @@ describe("itemsFromTranscript", () => {
       type: "user",
       uuid: "99999999-1111-4111-8111-999999999999",
       parent_tool_use_id: null,
-      message: { role: "user", content: "x" },
+      // A row carrying NO text of its own, which is what it now takes to reach `origin.body`: a frame's own
+      // text outranks that field, so a one-character content would be the rendered body and cap nothing.
+      message: { role: "user", content: "" },
       origin: { kind: "peer", from: "uds:/a.sock", body: long },
     }];
     const user = itemsFromTranscript(rows).filter((i) => i.type === "userMessage");
@@ -152,6 +170,32 @@ describe("itemsFromTranscript", () => {
     expect(itemsFromTranscript(rows)).toEqual([
       { type: "userMessage", id: "77777777-1111-4111-8111-777777777777", text: quoted },
       { type: "userMessage", id: "66666666-1111-4111-8111-666666666666", text: quoted },
+    ]);
+  });
+
+  // TWO CORPUS SHAPES THAT HAD NO GOLDEN ANYWHERE (M9 Task 6). The parity law in project.test.ts runs both
+  // of them, but it only asserts that the projector and this function AGREE — and they agree by
+  // construction now that they are one routing body, so a router that dropped either shape entirely would
+  // keep the law green while the items vanished. These two cells say what the routing actually produces.
+  it("the collapsed two-envelope batch row (corpus): ONE item carrying both messages, under the row's own uuid", () => {
+    // Probe 121's measured shape. The engine folded a batch into one row with two envelopes and an
+    // `origin.body` naming only the causing one, so rendering `origin.body` would destroy the second
+    // message; the envelopes are joined instead, and the id stays the row's uuid so the live announcement
+    // and this item dedupe against each other.
+    expect(itemsFromTranscript(corpusRows("a peer row carrying two sibling envelopes"))).toEqual([{
+      type: "userMessage",
+      id: "42364455-1111-4111-8111-424242424242",
+      text: "first message\n\nsecond message",
+      origin: { kind: "peer", from: "uds:/a.sock", body: "first message", msg_id: "m-batch" },
+    }]);
+  });
+
+  it("the system/result/typeless mix (corpus): the ordinary prompt is the only item, and it is NOT dropped with them", () => {
+    // The positive half is the one that matters: three rows neither path itemizes surround a real prompt,
+    // and a router that discarded a row it did not recognise by taking the whole frame with it would lose
+    // `u-p` too.
+    expect(itemsFromTranscript(corpusRows("rows neither path itemizes"))).toEqual([
+      { type: "userMessage", id: "u-p", text: "run ls" },
     ]);
   });
 

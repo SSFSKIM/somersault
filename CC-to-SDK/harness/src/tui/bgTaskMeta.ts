@@ -1,6 +1,8 @@
 // tui/src/bgTaskMeta.ts — pure harvest of background-task metadata from frames the REPL already
-// receives. The streamed background_tasks_changed snapshot carries only {task_id, task_type,
-// description} (probe 74 Q3); the command, the output-file path, and the final status live in OTHER
+// receives. The streamed background_tasks_changed snapshot carries {task_id, task_type, description}
+// (probe 74 Q3) plus, since 0.3.250, `ambient` — a housekeeping marker hosts are told to exclude from
+// activity indicators; `task_started` likewise gained `is_backgrounded` and `spawn_depth`. None of the
+// three is harvested here. The command, the output-file path, and the final status live in OTHER
 // frames of the same stream: the assistant tool_use that started it (input.command + run_in_background —
 // Q2), the tool_result text ("Command running in background with ID: <id>. Output is being written
 // to: <path>. …" — Q1 verbatim), task_started's tool_use_id linking the two (Q2), and

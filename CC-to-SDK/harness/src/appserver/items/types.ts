@@ -3,7 +3,13 @@
 import type { ReviewFinding } from "../reviewFindings.js";
 
 export type ToolView = "command" | "fileChange" | "fileRead" | "search" | "webSearch" | "webFetch" | "mcp" | "subagentTask" | "other";
-export interface UserMessageItem { type: "userMessage"; id: string; text: string }
+/** `origin` marks a message the local user did not write — an M9 cross-session arrival, carrying the
+ *  sender attribution VERBATIM as the engine stamped it (`verifiedPeerPid` is the only field in that
+ *  exchange the kernel vouches for, so re-deriving it would substitute this server's opinion). Additive and
+ *  optional: an ordinary prompt has none, and a client built before M9 ignores the field rather than
+ *  breaking on it. It is what lets a client render an arrival AS an arrival on all three paths it can reach
+ *  one by — live, replayed from the transcript, projected from the arrival log. */
+export interface UserMessageItem { type: "userMessage"; id: string; text: string; origin?: Record<string, unknown> }
 export interface AgentMessageItem { type: "agentMessage"; id: string; text: string; aborted?: true }
 export interface ReasoningItem { type: "reasoning"; id: string; text: string; aborted?: true }
 export interface ToolCallItem { type: "toolCall"; id: string; tool: string; view: ToolView; arguments: Record<string, unknown>; status: "inProgress" | "completed" | "failed"; result?: string; parentToolUseId?: string }

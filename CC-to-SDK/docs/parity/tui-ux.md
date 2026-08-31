@@ -1025,7 +1025,7 @@ prefix-only) in the zero-import `imageDims.ts`; `checkImageBlock` overwrites the
 `stageBlocks` stages the corrected type; the app-server registry's chunk-0 allowlist relaxes to a
 bounded hint (format decided at completion from bytes); and `admitBytes`'s PNG/JPEG-only sniff — a real
 bl4 coverage gap that refused valid GIF/WebP app-server items — widens to four formats. The live
-mislabelled-block cell is committed but SKIPPED-429 (weekly account cap, resets Aug 31). No §-score
+mislabelled-block cell was committed SKIPPED-429 (weekly cap) and PASSED on the 2026-08-30 rerun. No §-score
 movement: both land inside rows already scored (recorded-delta closure). External campaign: pre-execution
 plan review (5 findings, 2 high — the ChatApp-owns-dispatch and link-before-fold catches that would have
 shipped dead/wrong wiring) → whole-round review 3 P2 (press-bound href; popup modifier gate; win32
@@ -1057,6 +1057,123 @@ accepted — the fake-host process contract, the clock-gated pending hole; 1 pre
 measurement, tie-break adopted as robustness) → whole-round review **ZERO findings first pass**.
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
+
+**bl9 close-out (2026-08-31) — the attach reconcile + three retired premises, one round.** Scope was
+bl8's carried candidates; research reshaped all three (fourth consecutive round a carried premise
+died under evidence). R1 executed the real `SessionHost` against the bl6 "follow() replay gap" entry:
+of its three named frame kinds only `rewound` was real — parks replay from live state and task frames
+ride the buffered message stream — and the "~36 ms window" was a borrowed measurement; the true
+window is attach's read-disk→follow interval (hundreds of ms, React/Ink import included), damage
+permanent because in-place rewind keeps the session id (probe 37b). R2 decoded canon 2.1.251's
+verbose path: cluster expansion is verbose-driven and unconditional (`uI` @177046212), so the
+"D21-latent activation" ticket died — bl9 DELETED the redundant `|| verbose` disjunct instead of
+building on it. R3 retired D15 (the Advising row's verbatim model id): its recorded rationale died
+when bl8 shipped `advisorModel.ts`, so the row now prints canon display names via `cs()`-equivalent
+lookup. The plan review then killed the round's own v1 design before code existed (host-side
+`rewound` replay would have deterministically re-announced a resuming client's own swap —
+`chatAdapter.ts:94`'s documented invariant — and wiped drained live state on every attach); v2 moved
+the fix to the seam that creates the window: a client-side post-follow reconcile (disk stamp from
+`prepareAttach`, one re-read after `whenReady`, rebuild only on mismatch, "resynced" divider). The
+post-merge loop ran five waves and the PRE-COMMITTED tripwire fired after wave 2, exactly as
+designed: wave 3 replaced the accumulating patch calculus (deferral, local-row carry-over, title
+refetch — all deleted, net −10 lines) with the virgin-window invariant — the reconcile aborts unless
+provably nothing non-re-derivable exists — and waves 4-5 only tightened the MEASUREMENT of virginity
+(render-time `TranscriptDocument.revision()` snapshot; a `liveActivitySeq` bumped per non-replay
+frame at the subscription choke points), each fixing its predecessor's regression, wave 5
+verify-first (streaming proved self-healing; hook-pair/agent-meta/parked-decision losses proved real,
+one bonus same-class fix). The closing review's single finding (state-only frames in the ~ms read
+window abort a harmless rebuild) was LOGGED per the convergence rule — safe-direction staleness, and
+its only fix is a frame-kind allowlist rejected for drift risk. Mid-round a concurrent session
+REBASED main under the round (~8.7k insertions of unrelated appserver/peer work); both ticket
+branches transplanted cleanly via `git rebase --onto` and cross-session messages held the merge
+window. Final battery all green (unit 4341, tui 4902+11 skips, cells 4/4+1/1+3/3, seam 79/79).
+Ledger `.doperpowers/sdd/2026-08-31-bl9-round/round.md`; spec
+`docs/superpowers/specs/2026-08-31-bl9-followreplay-polish-design.md` (v3); residuals in
+`docs/parity/tech-debt-tracker.md`.
+
+**bl8 close-out (2026-08-30) — the standalone hook story + the /advisor command, one round.** The two
+halves bl7 deferred, shipped against the SAME canon 2.1.251 (no re-anchoring needed — a first). The
+research phase opened with a stale-premise kill: the "still-unread xxt" carry-over was already fully
+decoded inside bl7's own research file (`isNarrationSummaryBlock` — a protobuf-tag compare to
+`"narration"`, fail-closed; recorded, not built), the third consecutive round where a parked item's
+title was testimony, not diagnosis. Fresh research: R1 proved canon has NO /config advisor row — the
+real surface is a **`/advisor` command** + "Advisor (experimental)" dialog with a static three-alias
+catalog and binary-static `advisor_rank`s — reframing the ticket from client-addition to parity; P119
+censused the hook wire (PostToolUse/Stop/UserPromptSubmit/SessionStart REACHABLE, SessionEnd dead with
+a positive control, `hook_progress` ALIVE — P116's negative was fast-hook sampling — and `advisorModel`
+validated SILENTLY server-side, killing bl7's model_not_found premise, while `applyFlagSettings` proved
+live mid-session); R3 adjudicated two conflicting bl7 records against the binary (canon ABSORBS
+silent-run hooks — the "latent" clause form's true producing shape was one emit-gate condition away,
+and bl7's "routes to Qy" claim was corrected in a spec v5 note). **T-QY** (merge `ac6924cc59`): the
+tracker retains all five reachable events with in-flight counts; unclaimed pairs weave into standalone
+`⎿ Ran N <label> hook(s)` rows (Stop's error-only bold-count form from `exit_code`/`stderr`); the
+clause form ACTIVATED; the `Running <Event> hook…` live counter (started-without-response, not
+progress frames) rides the non-Static live path with D14 identity + withholding; pty cells S1/S2 prove
+the drain in the real binary. **T-ADVCMD** (merge `ea0a078d9a`): `/advisor` with canon's verbatim
+literals, transcribed ranks (floor 2, advisee ≤ advisor), a tri-state `flagAdvisorModel` that survives
+engine swaps (explicit off replays as null — launch config never resurrects), live ref + `knobKey`
+threading so the Advising row tracks mid-session changes, the three-state startup notice, and a keyed
+live test green against the real engine. Campaign: plan review 4H+1M ALL accepted (headline: the
+per-flush drain would have regressed bl7's D19 attribution — fifth consecutive round that gate caught
+a shipping-grade defect) → 10 task reviews (one Critical — dead second withholding loop — fixed +
+mutation-re-verified) → two zero-finding walks → whole-round 5 P2 (4 fixed, F5 logged) → the placement
+spiral converged into D19's single invariant at wave 3 (the tripwire was pre-committed; one wave
+earlier than bl7's same shape) → wave 4 fixed its coalescing corner → closing review ZERO findings
+with an explicit endorsement. Two pre-QY total-absence test pins were narrowed to their real invariant
+(absorption) by controller adjudication. Ledger `.doperpowers/sdd/2026-08-30-bl8-round/round.md`; spec
+`docs/superpowers/specs/2026-08-30-bl8-qy-advisor-design.md` (v4); residuals in
+`docs/parity/tech-debt-tracker.md` (F5 restore path, D21-latent branch).
+
+**bl7 close-out (2026-08-30) — the hook block + the advisor row, one round.** The two features the
+deferred-probe wave flipped buildable, shipped against canon 2.1.251 (new build family; every bl6
+2.1.250 offset re-anchored by the research phase, which also corrected bl6's merge paraphrase — canon's
+`Uu` takes `Math.max` of durations, never a sum — and found canon renders hooks in THREE places, two in
+scope). **T-HOOKBLOCK** (merge `569a269dbf`): completed PreToolUse pairs (`HookPairTracker`, PreToolUse
+only, cleared on rebuild, reconciled on completion) render as canon's collapsed forms — the separate dim
+`Ran N PreToolUse hook(s) (X.Xs)` line, and the bold-count clause form when hooks are the sentence's only
+clause (LATENT today: the only producing shape is dropped upstream by the silent-run divergence; pinned
+contract-level) — plus the expanded per-hook block (`⎿ PreToolUse:Read (0.2s)` under the header gutter),
+with call-time attribution (D12) flowing through all three production `segmentRuns` sites (D13) and the
+errored pop-out suppressed when the run absorbed hooks. Pty-proven in the real binary
+(`hookblock-cells.sh`: live cluster + replay-divergence pin — hook frames never enter the document, so
+resume shows none by design; feature-kill 3/3; the new `FOLLOWED` readiness signal in `fake-host.mjs`
+closed bl6's Fix-2 flake). **T-ADVISOR** (merge `409daf107e`): `server_tool_use`/`advisor_tool_result`
+frames render canon's four result shapes + the blinking `⏺ Advising using {model}` in-flight row (model
+from CLIENT config `--advisor-model`/pref, D15 — never the frame's main-model id), expanded body as one
+plain dim Text (D10), clickable/expandable under the `sdk:` owner namespace with the D16 cache-key
+subset (tool clicks never rebuild anchored rows), advisor entries pinned as segment BREAKERS, picker
+previews allowlisted, and a keyed live cell through the real REPL (~$0.39/consult; two test-env bugs
+fixed: mkdtemp realpath, bounded transcript poll). `/config` row DROPPED under D15 (needs the D7-barred
+catalog picker; spec A9 amended v3). **Campaign:** plan review 4H+4M all verified real (headline: the
+planned cursor sweep dropped hooks in the NORMAL wire order and the planned pty producer would have
+masked it — D12 was born there) → 10 task reviews all approve (one caught the unguarded errored
+pop-out; one usage-429 reviewer resumed mid-flight) → acceptance walks caught the A9 spec drift and the
+latent clause form → whole-round review 4 P2, ALL verified actionable → four fix waves (advisor-Static
+freeze D20, detail-collapsed predicate D21, then three attribution rounds converging on D19's unified
+per-entry tool-aware rule after two waves each introduced a regression) → closing review's one
+defensive-corner residual LOGGED (`tech-debt-tracker.md`, seeded this round). Ledger
+`.doperpowers/sdd/2026-08-30-bl7-round/round.md`; spec
+`docs/superpowers/specs/2026-08-30-bl7-hookblock-advisor-design.md` (v4).
+
+**Deferred-probe wave (2026-08-30, SDK 0.3.237)** — the bl6 §3.3 reachability gates, run when the
+token renewed (a day before the Aug-31 reset). Two verdicts FLIPPED, two held, one residue closed:
+**(1) hook block BUILDABLE** — P116 (`116-hook-frames-0337.ts`): settings-layer command hooks now
+emit `system/hook_started`/`hook_response` pairs headlessly (hook_name/hook_event/stdout/exit_code;
+timing derivable from arrival deltas), staling P85's 0.3.220 "hooks invisible" verdict; in-process
+callback hooks stay frame-less (the harness owns those and can self-instrument); canon's
+`stop_hook_summary` never leaks — the "Ran N PreToolUse hooks (Xms)" block must be synthesized.
+**(2) D8 advisor row BUILDABLE** — P118: with settings `advisorModel`, assistant frames carry
+`server_tool_use` (name `advisor`) then an `advisor_tool_result` block
+(`content:{type:"advisor_result", text}`) — exactly canon's clickable kind (server tool; never in
+init.tools). **(3) memories HOLD DEAD on the wire** — P117/P117b: `autoMemoryEnabled` +
+`autoMemoryDirectory` work headlessly (init.memory_paths.auto acknowledges; facts injected and
+answered, at 2- and 14-file populations), but zero `system/memory_recall` frames ever arrive —
+declared-but-gated; "Recalled {basename}" stays unbuildable. **(4) goal HOLDS DEAD** — P118: no
+`active_goal` frame from plain-text or `<command-name>` dispatch; Wave 2's UI-command-only verdict
+stands on 0.3.237. **(5)** bl5's mislabelled-block live cell now PASSES (with the F9 and GIF/WebP
+cells, 3/3 in `image-submit.e2e.test.ts`) — the SKIPPED-429 note below is closed. Still open from
+the bl6 list: canon's signed-thinking flush carve-out (`xxt` predicate) — binary research, not a
+live probe; queue with the next round's research phase.
 
 ## Recorded additions (ours, outside the parity denominator)
 

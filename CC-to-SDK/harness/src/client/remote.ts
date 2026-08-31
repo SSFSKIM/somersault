@@ -222,6 +222,10 @@ export class RemoteChatSession {
   /** W-C T11: the effort flip (EP-C6). Same `…Op` shape and same never-busy-gated flag-layer group as
    *  `setOutputStyleOp` — the host answers it with `applyFlagSettings({effortLevel})` (probe 102). */
   setEffortOp(level: "low" | "medium" | "high" | "xhigh" | "max") { return this.send<{ ok: boolean; error?: string }>({ op: "set_effort", level }); }
+  /** Task 2 (bl8 T-ADVCMD). Same `…Op` shape and same never-busy-gated flag-layer group as `setEffortOp` —
+   *  the host answers it with `applyFlagSettings({advisorModel})` (P119 case 4). `model` is nullable, not
+   *  optional: `null` round-trips as the JSON value `null`, canon's explicit "off", never a dropped field. */
+  setAdvisorModelOp(model: string | null) { return this.send<{ ok: boolean; error?: string }>({ op: "set_advisor_model", model }); }
 
   /** Subscribe to the host's pushed events. The first live subscription sends `follow`; the last one
    *  leaving sends `unfollow`. Followers are keyed by a per-call token, not by the callback reference,

@@ -65,8 +65,8 @@ export interface EngineSession {
   /** Optional (the real lib Session has it — src/session/session.ts's `onUnclaimedResult`; a DI fake and
    *  the fleet engine need not): a terminal `result` frame that matched NO waiter, which is precisely what
    *  a peer-initiated turn's result is. The callback answers whether it CLAIMED the result — a claim
-   *  supplies an adopted turn's outcome (peerInbound.ts) and keeps `unmatchedResults` meaning "a result
-   *  nobody owns". */
+   *  supplies an adopted turn's outcome (peerAdoption.ts's `claimResult`) and keeps `unmatchedResults`
+   *  meaning "a result nobody owns". */
   onUnclaimedResult?(cb: (result: unknown) => boolean): () => void;
   /** Optional (the real lib Session has it; a DI fake need not): the seam an approved plan upgrades the
    *  session's permission mode through — see appserver/planUpgrade.ts. */
@@ -332,10 +332,14 @@ export interface ThreadRecord {
    *  `record.config` deliberately never carries them. Fixed at admission — there is no method that changes
    *  it, which is also why `mcpServer/set` is refused on a thread that has one (mcp.ts). */
   dynamicTools?: DynamicToolSpec[];
-  epoch: number;                // one generation token per thread, initialized to 0 at creation; bumped
-                                 // ONLY by M2b's rewind engine swap (spec D-M2-8) — every later task that
-                                 // needs "am I still talking to the current engine" reads this, not a
-                                 // second counter of its own
+  epoch: number;                // one generation token per thread, initialized to 0 at creation; every
+                                 // task that needs "am I still talking to the current engine" reads this,
+                                 // not a second counter of its own. TWO bump sites, not the one M2b's
+                                 // D-M2-8 named: `rewind.ts`'s swapEngine (shared by thread/rewind,
+                                 // thread/clear and thread/reopen) and `fleet.ts`'s engine.onRewound,
+                                 // which reconciles a fleet-origin thread from the host's rewound event.
+                                 // NOT persisted and never derived from the transcript — a close plus
+                                 // re-admission of the same session id mints epoch 0 again (search.ts)
 }
 
 /** The settings mirror at birth: what the engine a config OPENS is actually running, before any client

@@ -278,6 +278,137 @@ describe("useChat: initial prompt", () => {
   });
 });
 
+// bl7 T-ADVISOR Task 3 carry-forward (spec D15): `config.advisorModel` must reach the rendered "Advising
+// using {model}" clause through `projectionContext()` — the REAL closure `useChat.ts` builds (`opts.
+// initialAdvisorModel` → the plain `advisorModel` const → the returned context's `advisorModel` field), not
+// a hand-built `ProjectionOptions.advisorModel` bag the way `advisor-row.test.tsx`/`toolRenderer.test.tsx`
+// exercise render.ts and toolRenderer.tsx directly. This is the one seam those unit cells cannot see: whether
+// `main.ts` → `chatMain.tsx` → `ChatApp.tsx`'s `initialAdvisorModel` spread actually lands in the hook.
+describe("useChat: D15 — a configured advisorModel reaches the rendered row via the real projectionContext", () => {
+  it("initialAdvisorModel renders 'Advising using {model}' on an in-flight advisor consult, absent when omitted", async () => {
+    const advisorInFlight = { kind: "sdk" as const, source: "disk" as const, message: {
+      type: "assistant", parent_tool_use_id: null, uuid: "u-adv", message: { id: "m-adv",
+        content: [{ type: "server_tool_use", id: "srv1", name: "advisor", input: {} }] } } };
+    function AdvisorHost({ makeSession, model }: { makeSession: () => ChatSession; model?: string }) {
+      const c = useChat(makeSession, { initialAdvisorModel: model, initialEntries: [advisorInFlight] });
+      return <Text>{allText(c)}</Text>;
+    }
+    const withModel = render(<AdvisorHost makeSession={() => fakeRemote() as unknown as ChatSession} model="Opus 4.8" />);
+    await waitFor(() => frame(withModel.lastFrame).includes("Advising"));
+    expect(frame(withModel.lastFrame)).toContain("Advising using Opus 4.8");
+    withModel.unmount();
+
+    // D15's other half: absent config means the clause is OMITTED, not a phantom "Advising using undefined".
+    const noModel = render(<AdvisorHost makeSession={() => fakeRemote() as unknown as ChatSession} />);
+    await waitFor(() => frame(noModel.lastFrame).includes("Advising"));
+    expect(frame(noModel.lastFrame)).toContain("Advising");
+    expect(frame(noModel.lastFrame)).not.toContain("using");
+    noModel.unmount();
+  });
+});
+
+// Round review F1: an unresolved advisor consult must get the same "withheld while open" treatment a
+// growable tool run gets — `reconcile()`'s `rows<=16` (commitCap()===0) path and `publishLiveWindow()`'s
+// dialog-open path are the two production sites the verdict traced as able to force ANY unpublished
+// finalized item straight into append-only `<Static>`, geometry ignored. Both are exercised here at the
+// `useChat` level (not just the pure `projectCompact`/`projectPending` unit level in fold-expand.test.tsx)
+// because the bug the finding reports is specifically about `staticItems` — the one thing Ink can never
+// take back once written.
+describe("round review F1: an unresolved advisor consult is withheld from Static like a growable tool run", () => {
+  const advisorInFlight = { kind: "sdk" as const, source: "disk" as const, message: {
+    type: "assistant", parent_tool_use_id: null, uuid: "u-adv", message: { id: "m-adv",
+      content: [{ type: "server_tool_use", id: "srv1", name: "advisor", input: {} }] } } };
+  type Hook = ReturnType<typeof useChat>;
+  const staticText = (c: Hook): string =>
+    c.state.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("|");
+
+  it("commitCap()===0 (rows<=16) never force-publishes it; publishLiveWindow() (dialog-open) doesn't either; it commits exactly once, once resolved", async () => {
+    const fake = fakeRemote();
+    let api: Hook | undefined;
+    function H() {
+      const c = useChat(() => fake, { initialEntries: [advisorInFlight] }, { rows: () => 16, columns: () => 100, now: () => 0, home: "/home/me", platform: "darwin" });
+      api = c;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    await waitFor(() => allText(api!).includes("Advising"));      // it IS on screen — in the pending region
+    // The rows<=16 / commitCap()===0 path: `selectLiveWindow`'s cap check breaks on its very first iteration
+    // there, which the (pre-fix) verdict trace shows committing the WHOLE unpublished tail — this must not
+    // include the still-spinning consult.
+    expect(staticText(api!)).not.toContain("Advising");
+
+    // The publishLiveWindow() (dialog-open) path — "the whole live window, geometry ignored" — must not
+    // force it in either, for the same reason: it is still unresolved.
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("Advising");
+
+    // Resolve it: the SAME message entry (same id) re-projects resolved and must flow into Static exactly
+    // once — never twice (a stale dim copy plus a corrected one), and never zero (stuck live forever).
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "u-adv-res", message: { id: "m-adv-res",
+      content: [{ type: "advisor_tool_result", tool_use_id: "srv1", content: { type: "advisor_result", text: "looks fine", stop_reason: "end_turn" } }] } } });
+    await waitFor(() => staticText(api!).includes("Advising"));
+    expect(staticText(api!).match(/Advising/g) ?? []).toHaveLength(1);
+  });
+});
+
+// bl8 T-QY Task 3 (plan-review F2): a standalone `{kind:"hooks"}` item gets the SAME "withheld while
+// growable" treatment the F1 advisor row above does — reusing that exact `trailingRunCut` seam (this ticket
+// widened it, not a second withholding channel). The mandatory cell: two same-label pairs completing ACROSS
+// two reconciles with a forced Static publish between them must land in Static as ONE final row, never a
+// frozen early copy plus a duplicate.
+describe("bl8 T-QY Task 3 (plan-review F2): a standalone hooks item is withheld from Static like a growable tool run", () => {
+  type Hook = ReturnType<typeof useChat>;
+  const staticText = (c: Hook): string =>
+    c.state.staticItems.flatMap((i) => (i.kind === "line" ? [i.line.text] : i.body.map((l) => l.text))).join("|");
+  const hookFrame = (subtype: "hook_started" | "hook_response", fields: Record<string, unknown>) =>
+    ({ kind: "message" as const, data: { type: "system", subtype, ...fields } });
+
+  it("two Stop pairs completing across two reconciles, with a forced Static publish in between, commit as ONE 'Ran 2 stop hooks' row", async () => {
+    const fake = fakeRemote();
+    let api: Hook | undefined;
+    // `rows: 16` forces `commitCap()===0` (the F1 advisor cell's own rig, above) — WITHOUT it, Static only
+    // releases a row once enough LATER content pushes it out of the terminal-height live window, which would
+    // make this cell about window geometry instead of the F2 withholding rule it exists to pin.
+    function H() {
+      const c = useChat(() => fake, {}, { rows: () => 16, columns: () => 100, now: () => 0, home: "/home/me", platform: "darwin" });
+      api = c;
+      return <Text>{allText(c)}</Text>;
+    }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));   // let mount effects subscribe
+
+    // Pair 1: a failing Stop hook (exit_code:2 so shape 2 renders at all — Global Constraints' own early exit).
+    fake.pushEvent(hookFrame("hook_started", { hook_id: "h1", hook_event: "Stop" }));
+    fake.pushEvent(hookFrame("hook_response", { hook_id: "h1", hook_name: "Stop", hook_event: "Stop", exit_code: 2, stderr: "boom" }));
+    await waitFor(() => allText(api!).includes("Ran 1 stop hook"));
+
+    // Nothing has bounded the item yet (no tool run, no group) — it is the trailing/unbounded item Task 1/2's
+    // `weaveStandaloneHooks` places with no later atom closing its window, so it must stay off Static even
+    // under a forced publish, exactly like the F1 advisor row above.
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("stop hook");
+
+    // Pair 2, a SECOND reconcile: same label, still nothing bounding it — Task 1's tracker only ever appends,
+    // so this coalesces into the SAME item (`entries[0]` — the render key — never moves).
+    fake.pushEvent(hookFrame("hook_started", { hook_id: "h2", hook_event: "Stop" }));
+    fake.pushEvent(hookFrame("hook_response", { hook_id: "h2", hook_name: "Stop", hook_event: "Stop", exit_code: 3, stderr: "bang" }));
+    await waitFor(() => allText(api!).includes("Ran 2 stop hooks"));
+    api!.publishLiveWindow();
+    expect(staticText(api!)).not.toContain("stop hook");   // still growable — still off Static
+
+    // Close the window: a real tool call AND its result, so the run genuinely settles and bounds the earlier
+    // hooks item (`weaveStandaloneHooks` parks it before this cluster's own slot) — this is what makes the
+    // row safe to publish.
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-read", content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/work/a.ts" } }] } } });
+    fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-read-res", message: { content: [{ type: "tool_result", tool_use_id: "read-1", content: "hi", is_error: false }] } } });
+    await waitFor(() => staticText(api!).includes("Ran 2 stop hooks"));
+
+    // ONE final row — never a frozen "Ran 1 stop hook" left behind alongside it.
+    expect(staticText(api!).match(/Ran \d+ stop hooks?/g) ?? []).toHaveLength(1);
+    expect(staticText(api!)).not.toContain("Ran 1 stop hook");
+  });
+});
+
 describe("useChat", () => {
   it("streams a submitted turn into the transcript", async () => {
     const { lastFrame } = render(<Host makeSession={() => fakeRemote()} prompt="hi" />);
@@ -3756,5 +3887,77 @@ describe("Tool-stream T5: useChat pairs the fullscreen flag with the blank expan
     };
     expect(await boundary(true)).not.toContain("to expand");          // ← the ternary at the ingest site
     expect(await boundary(false)).toContain("Compact summary (ctrl+o to expand)");   // …and the classic control
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 1, spec D14 (plan review M5). Hook frames never mutate the document (a hook_response
+// enters no tool_use_id, no result — nothing `appendSdk` or the fold would react to), so without an explicit
+// reconcile a completed hook's timing would sit invisible in the tracker until some UNRELATED later frame
+// happened to trigger the next repaint. This pins the fix at the ingest seam: with a run already open (a
+// tool_use with no result yet, so it lives in the transient pending region) and a hook_response as the FINAL
+// event delivered, the pending projection is re-derived on its own — no further frame required. Task 2/3
+// still owe the actual rendering of the hook block; this only proves the repaint fires.
+describe("useChat: hook_response reconciliation (bl7 T-HOOKBLOCK D14)", () => {
+  // The 600 ms pending-region ticker (`scheduleRepaint`) re-projects on its own on every tick and would
+  // otherwise mask exactly what this suite pins — a `waitFor` with a 2 s default timeout would happily pass
+  // off the NEXT tick rather than off this arm's own reconcile. Disabled here for the same reason the F3
+  // final-review suite disables it (`noRepaint` above): the only thing left that can move `pendingItems` is
+  // an explicit `reconcile()` call.
+  const noRepaint = { scheduleRepaint: () => () => {} };
+
+  it("a hook_response as the final event repaints an already-open run with no further frame", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_response", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", output: "", stdout: "", stderr: "", outcome: "success", uuid: "hr1", session_id: "s1" } });
+    await waitFor(() => snap.pendingItems !== before);
+    expect(snap.pendingItems).not.toBe(before);   // a fresh projection ran off the hook_response alone — the ticker is disabled, so nothing else could have
+  });
+
+  // Reference identity, not a render count: EVERY message frame (hook or not) already triggers a render via
+  // the unconditional `setTasks(taskListRef.current.snapshot())` upstream of this arm (a fresh array every
+  // call), so counting renders cannot distinguish "reconciled" from "some unrelated state changed". Whether
+  // THIS reconcile ran is exactly what `pendingItems`' own reference answers: only `reconcile()` (and its
+  // siblings) call `setPendingItems`, so an untouched reference means it never fired.
+  it("a replayed hook_response never pairs (no timing to fabricate) and never reconciles", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    fake.pushEvent({ kind: "message", replay: true, data: { type: "system", subtype: "hook_response", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", output: "", stdout: "", stderr: "", outcome: "success", uuid: "hr1", session_id: "s1" } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(snap.pendingItems).toBe(before);   // no started() stamp was ever recorded for h1 under the replay guard, so the response is dropped, not reconciled
+  });
+
+  // bl8 T-QY Task 1 (plan-review F5): `started()` now returns true unconditionally (every event is retained,
+  // not just PreToolUse), so this arm reconciles on the OPEN too. Without it the live in-flight counter's row
+  // would never paint for a slow hook — the only other repaint trigger is the response that closes it, and a
+  // hook that never gets there (or is still running) would sit invisible until an unrelated frame arrived.
+  it("a hook_started as the final ingested event repaints on its own (the live row is observable with no further frame)", async () => {
+    const fake = fakeRemote();
+    let snap!: { pendingItems: readonly RenderItem[] };
+    function H() { const c = useChat(() => fake, {}, noRepaint); snap = { pendingItems: c.state.pendingItems }; return <Text>{allText(c)}</Text>; }
+    render(<H />);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });
+    fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "a1", content: [{ type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/a.ts" } }] } } });
+    await waitFor(() => snap.pendingItems.length > 0);
+    const before = snap.pendingItems;
+    fake.pushEvent({ kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "hs1", session_id: "s1" } });
+    await waitFor(() => snap.pendingItems !== before);
+    expect(snap.pendingItems).not.toBe(before);   // reconciled off the started() call alone — no response frame followed
   });
 });

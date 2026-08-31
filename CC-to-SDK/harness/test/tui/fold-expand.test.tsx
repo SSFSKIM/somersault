@@ -20,9 +20,10 @@ import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { useChat, type ChatSession } from "../../src/tui/useChat.js";
-import { projectCompact, projectPending, toolOwnerKey, TOOL_RESULT_GUTTER, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { groupItems, projectCompact, projectPending, toolOwnerKey, TOOL_RESULT_GUTTER, type GroupForm, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { wrapItem } from "../../src/tui/wrapItems.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import type { FoldGroup } from "../../src/tui/toolFold.js";
 import type { RenderLine } from "../../src/tui/render.js";
 import type { RendererChoice } from "../../src/tui/renderer.js";
 
@@ -516,5 +517,451 @@ describe("T-CLICKGATE Task 3 (j): an item expanded under fullscreen does not sur
     api!.submit("/tui default");                         // the leaving arm: refoldFor(false) runs first
     await tick(120);
     expect(gutterBlockOf(api!).body).toHaveLength(11);    // clipped again — the expansion did not survive
+  });
+});
+
+// ── bl7 T-ADVISOR TASK 4 (A7): AN ADVISOR RESULT IS A BREAKER ───────────────────────────────────────────
+// Spec §3.5: once the render arms exist (Task 2), an advisor entry flips from `neutral` (`items.length===0`
+// early-exit) to `breaker` in `entryAtom` — canon's segmenter takes the same disposition (advisor blocks
+// match no absorb/park predicate and take the flush arm). This is a PIN, not a new behavior: Task 2's render
+// arms already made the entry non-empty, so `entryAtom`'s existing "did it render something real" rule
+// already closes a still-open tool cluster the moment an advisor entry follows it — exactly as `prose` does
+// in cell (f) above ("keeps the hand-over to Static on the same anchor once a breaker closes the run").
+// EXPECT GREEN-FIRST: this cell is not expected to fail before the comment/test land; it exists so nobody
+// later "fixes" the breaker into absorption.
+const advisorResult = (toolUseId = "srv1", content: Record<string, unknown> = { type: "advisor_result", text: "looks fine", stop_reason: "end_turn" }) =>
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: "adv-1", content: [{ type: "advisor_tool_result", tool_use_id: toolUseId, content }] } }) as Record<string, unknown>;
+
+describe("T8 (g) / bl7 T-ADVISOR A7: an advisor_tool_result entry is a breaker", () => {
+  it("closes a still-open tool cluster into Static, exactly as prose would", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"),
+      advisorResult());
+    const items = projectCompact(doc, FS);
+    const rows = groupRows(items);
+    expect(rows).toHaveLength(1);                                     // the cluster PUBLISHED — a breaker closed it
+    expect(rows[0]!.id).toBe("group:read-1,bash-1:row");
+    expect(lineTexts(items).some((t) => t.includes("Advisor has reviewed"))).toBe(true);
+  });
+
+  it("control: WITHOUT the advisor entry the same cluster stays unclosed and is withheld from Static (the premise this pin rests on)", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"));
+    expect(groupRows(projectCompact(doc, FS))).toEqual([]);
+  });
+});
+
+// ── round review F1: an unresolved advisor row gets the SAME withholding a growable tool run gets ──────────
+// Unlike an open tool call (excluded from `projectCompact`'s output by `!event.result`, toolRenderer.tsx
+// :1460) or a still-growing fold run (withheld by `trailingRunCut`), an unresolved advisor consult had
+// NEITHER protection before this fix: `entryAtom` classifies it a `breaker` the moment its render arms make
+// it non-empty (T8 (g) above), regardless of resolution state, so it published into Static the instant its
+// message frame landed and could never self-correct once resolved (Static is append-only; the resolved
+// re-projection shares the SAME item id and is filtered out as already-published). Fixed by tagging the
+// entry `openAdvisor` (`buildAnchoredEntries`) and extending `trailingRunCut`'s growability scan to treat a
+// trailing `openAdvisor` breaker exactly like a growable tool run — withheld from `projectCompact`, drawn
+// live by `projectPending`, and published exactly once the moment `advisor_tool_result` resolves it.
+const advisorConsult = (toolUseId = "srv1") =>
+  ({ type: "assistant", parent_tool_use_id: null, message: { id: "adv-consult", content: [{ type: "server_tool_use", id: toolUseId, name: "advisor", input: {} }] } }) as Record<string, unknown>;
+
+describe("round review F1: an unresolved advisor row is withheld from Static, exactly like a growable tool run", () => {
+  it("compact EXCLUDES the unresolved row entirely — it never enters projectCompact's output while spinning", () => {
+    const doc = built(prose("hi"), advisorConsult());
+    expect(lineTexts(projectCompact(doc, FS)).some((t) => t.includes("Advising"))).toBe(false);
+  });
+
+  it("pending SHOWS it live, exactly where compact withholds it", () => {
+    const doc = built(prose("hi"), advisorConsult());
+    expect(lineTexts(projectPending(doc, FS)).some((t) => t.includes("Advising"))).toBe(true);
+  });
+
+  it("compact carries it EXACTLY ONCE, the moment advisor_tool_result resolves it — and pending drops it", () => {
+    const doc = built(prose("hi"), advisorConsult(), advisorResult("srv1"));
+    const compactTexts = lineTexts(projectCompact(doc, FS));
+    expect(compactTexts.filter((t) => t.includes("Advising")).length).toBe(1);
+    expect(compactTexts.some((t) => t.includes("Advisor has reviewed"))).toBe(true);  // the separate result row
+    expect(lineTexts(projectPending(doc, FS)).some((t) => t.includes("Advising"))).toBe(false);
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 2, spec D13 — the tests-pass-wiring-dead guard, third round running (D13 decision
+// log). This is deliberately NOT built from prebuilt `FoldAtom`s: it goes through a REAL `TranscriptDocument`
+// (`appendSdk`) and the two real production entry points, so a dropped `hookRuns:` forward at ANY of the
+// three `segmentRuns` call sites in `toolRenderer.tsx` (`foldAnchored`, and `projectPending`'s `settled`/
+// `dynamic` folds, which share one options object) shows up here as a silently-missing hook line rather than
+// a green unit suite hiding a dead wire.
+describe("bl7 T-HOOKBLOCK Task 2: hookRuns reaches rendered output through the real production pipeline (spec D13)", () => {
+  const allText = (items: readonly RenderItem[]) => [...lineTexts(items), ...bodies(items).flat()].join("\n");
+
+  it("projectCompact (foldAnchored's segmentRuns call site): a settled, breaker-closed run shows the hook line", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }] });
+    expect(allText(items)).toContain("Ran 1 PreToolUse hook");
+  });
+
+  it("projectPending (the settled+dynamic segmentRuns call sites): a still-growing run shows the hook line too", () => {
+    // No breaker: the lone Read call is the TRAILING run `trailingRunCut` withholds from Static, so this
+    // exercises the OTHER two production call sites — the ones `projectCompact` above never reaches.
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectPending(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }] });
+    expect(allText(items)).toContain("Ran 1 PreToolUse hook");
+  });
+
+  // bl8 T-QY Task 2/3 SUPERSEDES this cell's original title ("drops a hook... and shows none"): a hook the
+  // cluster's causal window rejects is no longer dropped — Task 2's `weaveStandaloneHooks` parks it
+  // standalone (D1/D2, research §A6: "non-PreToolUse labels — rendered, never absorbed" applies identically
+  // to a PreToolUse entry outside every run's window) and Task 3 renders it (shape 1). This cell now pins
+  // the half of that split THIS describe's own scope is about: the entry must never be absorbed into the
+  // CLUSTER's own hook clause/block (always duration-bearing, `hookSeconds`'s `"(0.2s)"` form) — it renders
+  // standalone instead (shape 1, no duration on the header).
+  it("a hook stamped before the call is NOT absorbed into the cluster — it renders standalone instead", () => {
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const callSequence = doc.toolEvents()[0]!.callSequence;
+    const items = projectCompact(doc, { ...context, expandHint: "", hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence - 1, event: "PreToolUse" }] });
+    const text = allText(items);
+    expect(text).not.toContain("PreToolUse hook (");   // never the cluster's own duration-bearing clause/block
+    expect(text).toContain("Ran 1 PreToolUse hook");    // but DOES render standalone (shape 1, T-QY Task 3)
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 3, spec §2.5 "Expanded block" — canon @177046924, appended AFTER the sorted
+// member/thinking interleave `expandedMemberItems` above already builds, taking NO part in its sort. Values
+// chosen (200ms/200ms) so `toFixed(1)` has no float-edge ambiguity (0.35 would format as "0.3", not "0.4").
+describe("bl7 T-HOOKBLOCK Task 3: the expanded cluster's own PreToolUse hook block", () => {
+  const oneRead = () => built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+  const readSequence = (doc: TranscriptDocument) => doc.toolEvents()[0]!.callSequence;
+
+  it("(a) header + two per-hook lines, exact gutters, dim, AFTER the member row", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const hookRuns = [
+      { id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" },
+      { id: "h2", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" },
+    ];
+    const items = projectCompact(doc, { ...FS, hookRuns, expandedFolds: new Set(["read-1"]) });
+    const texts = lineTexts(items);
+    const iMember = texts.findIndex((t) => t.includes("Read(a.ts)"));
+    const iHeader = texts.indexOf("  ⎿  Ran 2 PreToolUse hooks (0.4s)");
+    const iHook1 = texts.indexOf("     ⎿ PreToolUse:Read (0.2s)");
+    const iHook2 = texts.lastIndexOf("     ⎿ PreToolUse:Read (0.2s)");
+    expect(iMember).toBeGreaterThanOrEqual(0);
+    expect(iHeader).toBeGreaterThan(iMember);
+    expect(iHook1).toBeGreaterThan(iHeader);
+    expect(iHook2).toBeGreaterThan(iHook1);
+    // Both lines are `kind: "line"`, dim — never `gutter-block` (the per-hook gutter is 7 chars, not one of
+    // that kind's two fixed five-column constants), and tagged like every other expanded-cluster row.
+    const header = items.find((i) => i.kind === "line" && unlink((i as { line: RenderLine }).line.text) === "  ⎿  Ran 2 PreToolUse hooks (0.4s)")!;
+    expect((header as { line: RenderLine }).line.dim).toBe(true);
+    expect(header.foldAnchor).toBe("read-1");
+    expect(header.expanded).toBe(true);
+  });
+
+  it("(b) hookCount 1 renders singular 'hook'", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 200, afterSequence: callSequence, event: "PreToolUse" }], expandedFolds: new Set(["read-1"]) });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.2s)");
+  });
+
+  it("(c) zero hooks: the block strings are ABSENT from the expanded output (feature-kill guard)", () => {
+    const doc = oneRead();
+    const items = projectCompact(doc, { ...FS, expandedFolds: new Set(["read-1"]) }); // no hookRuns at all
+    expect(lineTexts(items).join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("(d) gates on hookInfos non-empty, NOT on hookTotalMs > 0 (a zero-duration hook still gets the block)", () => {
+    const doc = oneRead();
+    const callSequence = readSequence(doc);
+    const items = projectCompact(doc, { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 0, afterSequence: callSequence, event: "PreToolUse" }], expandedFolds: new Set(["read-1"]) });
+    expect(lineTexts(items)).toContain("  ⎿  Ran 1 PreToolUse hook (0.0s)");
+    expect(lineTexts(items)).toContain("     ⎿ PreToolUse:Read (0.0s)");
+  });
+});
+
+// bl8 T-QY Task 4 — the expansion pin. `expandedMemberItems` already iterates `group.memberIds` with no
+// silent filter (T8 (b) above proved a MIXED cluster's silent TodoWrite member survives expansion) and
+// already appends the hook block unconditionally on `hookInfos.length > 0` (bl7 Task 3 above). Neither of
+// those cells ever combined with D5's own case — a run with NO visible member at all, whose very existence
+// as a group depends on the hook — so this is the one combination research-silentrun-hooks.md's
+// @177046212/@177046924 evidence actually calls for: expanding it must show BOTH the hidden members and the
+// hook block, exactly like canon's expansion branch (which sits before the "anything to say" early return
+// and therefore never asks the collapsed-row question at all).
+describe("bl8 T-QY Task 4: expansion pin — an all-silent run's members AND its hook block both survive expansion", () => {
+  const doc = () => built(
+    call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "ok"),
+    call("todo-2", "TodoWrite", { todos: [] }), result("todo-2", "ok"),
+    prose("done"),   // a breaker: `projectCompact`'s `trailingRunCut` withholds an unclosed trailing run from Static
+  );
+  const hookRuns = (d: TranscriptDocument) => [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: d.toolEvents()[0]!.callSequence, event: "PreToolUse" }];
+
+  it("collapses to a REAL row through the production pipeline — D5's own case, not a hand-built FoldGroup", () => {
+    const d = doc();
+    const items = projectCompact(d, { ...FS, hookRuns: hookRuns(d) });
+    expect(lineTexts(items).some((t) => t.includes("Ran 1 PreToolUse hook (0.1s)"))).toBe(true);
+  });
+
+  it("expanded: BOTH TodoWrite member rows show, AND the hook block header + per-hook line follow them", () => {
+    const d = doc();
+    const items = projectCompact(d, { ...FS, hookRuns: hookRuns(d), expandedFolds: new Set(["todo-1"]) });
+    const texts = lineTexts(items);
+    // Member header rows (bullet + bold name) — never filtered by silence, unlike the two disqualified
+    // reads below "Ran"/"hook" that would ALSO match a bare `.includes("TodoWrite")`.
+    expect(texts.filter((t) => t.startsWith("⏺ TodoWrite"))).toHaveLength(2);
+    expect(texts).toContain("  ⎿  Ran 1 PreToolUse hook (0.1s)");
+    expect(texts).toContain("     ⎿ PreToolUse:TodoWrite (0.1s)");
+    // canon's fixed order (@177046212): members THEN the hook block, never interleaved.
+    const iLastMember = texts.map((t) => t.startsWith("⏺ TodoWrite")).lastIndexOf(true);
+    const iHookHeader = texts.indexOf("  ⎿  Ran 1 PreToolUse hook (0.1s)");
+    expect(iHookHeader).toBeGreaterThan(iLastMember);
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 3, review carry-forward (2), AMENDED by the round review (F3): the two rare flush
+// paths do NOT share one rule after all. The non-collapsible standalone close (line ~637, e.g. WebFetch)
+// still closes on the flushing call's own `callSequence` — that call is never a hook-attribution candidate
+// of its own, so nothing changes there. The errored `popsOutOnError` pop-out (line ~622) is different: THIS
+// call's own `PreToolUse` pair is stamped `afterSequence === callSequence` (the normal wire order — the hook
+// fires between `tool_use` and `tool_result`), which sits exactly on a flat `callSequence` boundary's
+// exclusive edge. Canon's raw-message-stream segmenter has already counted that hook by the time it
+// evaluates this same pop-out condition (the hook message always precedes the result in wire order), so
+// excluding it was the divergence, not the rule. The fix widens the pop-out site's boundary to the closing
+// call's `resultSequence` — but ONLY when `windowIsClear` already holds, since a clear window guarantees no
+// OTHER atom's call/result sequence can occupy that widened slot (only `C`'s own hook can).
+describe("bl7 T-HOOKBLOCK Task 3, carry-forward (amended by round review F3): the pop-out site's widened boundary", () => {
+  it("popsOutOnError pop-out flush, window CLEAR: a hook stamped at the failing call's OWN callSequence now counts — no pop-out, hook lands in the surviving run", () => {
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
+    // Collapsed form (no `expandedFolds`): membership alone proves no relocation happened.
+    expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,todo-1:row");
+    // Expanded form: the absorbed hook actually renders in the group's own block.
+    const expanded = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) }));
+    expect(expanded).toContain("  ⎿  Ran 1 PreToolUse hook (0.3s)");
+    expect(expanded).toContain("     ⎿ PreToolUse:TodoWrite (0.3s)");
+  });
+
+  it("window NOT CLEAR (sibling interference present): a hook on the closing call stays excluded from the CLUSTER — and surfaces standalone instead (the bl7 'Qy seam', built by bl8)", () => {
+    // Same shape as T8 (b2)'s fixture: read-2's call AND result both land strictly inside
+    // `(todo-1.callSequence, todo-1.resultSequence)`, so `windowIsClear` refuses and the boundary must stay
+    // at `callSequence` — widening here would risk pulling in a sibling's hook, not just this call's own.
+    //   bl8 round-review F2 narrowed THIS test's assertion: it used to demand total absence, which held only
+    // because the unclaimed entry fell to the document's end and was withheld there (the F2 positioning bug).
+    // The invariant this cell guards is ATTRIBUTION (not absorbed into the cluster's block — the absorbed
+    // header carries a duration, the standalone header never does); visibility-as-standalone is bl8's whole
+    // point (spec §2.2: unclaimed entries drain into standalone items).
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("todo-1", "TodoWrite", { todos: [] }),
+      call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"),
+      result("todo-1", "board is locked", true),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
+    expect(groupRows(projectCompact(doc, options))[0]!.id).toBe("group:read-1,read-2,todo-1:row");  // stayed a member regardless (sibling interference)
+    const joined = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["read-1"]) })).join("\n");
+    expect(joined).not.toContain("Ran 1 PreToolUse hook (0.3s)");   // NOT absorbed: the cluster block's duration-bearing header is absent
+    expect(joined).not.toContain("     ⎿ PreToolUse:TodoWrite");    // and no per-hook member line inside the block
+    expect(joined).toContain("  ⎿  Ran 1 PreToolUse hook");         // the refused entry renders STANDALONE (no duration) at its position
+  });
+
+  it("non-collapsible standalone close: a hook stamped at the closing call's OWN callSequence stays out of the CLUSTER — and renders standalone (bl8 wave-3 adjudication, same narrowing as the spanning-refusal cell above)", () => {
+    // Pre-bl8 this cell demanded total absence, which held only while unclaimed entries had no renderer.
+    // The guarded invariant is absorption (no duration-bearing header, no member line in the cluster's
+    // block); visibility-as-standalone is canon's own empty-run path (bl7 research §A5: a summary no run
+    // absorbs goes straight to output) and bl8's whole point.
+    const doc = built(
+      call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+      call("web-1", "WebFetch", { url: "https://example.com" }), result("web-1", "body"));
+    const webSequence = doc.toolEvents().find((e) => e.id === "web-1")!.callSequence;
+    const items = projectCompact(doc, {
+      ...FS, expandedFolds: new Set(["read-1"]),
+      hookRuns: [{ id: "h1", name: "PreToolUse:WebFetch", durationMs: 300, afterSequence: webSequence, event: "PreToolUse" }],
+    });
+    const joined = lineTexts(items).join("\n");
+    expect(joined).not.toContain("Ran 1 PreToolUse hook (0.3s)");   // NOT absorbed into the expanded cluster block
+    expect(joined).not.toContain("     ⎿ PreToolUse:WebFetch");     // no per-hook member line inside the block
+    expect(joined).toContain("  ⎿  Ran 1 PreToolUse hook");         // renders STANDALONE (no duration)
+  });
+});
+
+// Re-review G2 (spec D12 causal invariant): `windowIsClear`'s strictly-inside test only catches a sibling
+// whose OWN call or result lands inside the failing call's `(from, to)` window — it misses a sibling that
+// SPANS the window entirely (issued before `from`, still open past `to`), because neither of ITS endpoints
+// is strictly inside either. Such a spanning sibling is not membership "interference" (nothing of its own
+// landed between the failing call and its result, so relocation must still proceed), but its pending
+// PreToolUse hook can land anywhere across its own open span — including exactly on the failing call's own
+// boundary — and that hook is causally the SPANNING sibling's, never the closing call's, WHEN it shares the
+// closing call's own tool.
+//
+// Fix wave 4 (finding J2, superseding wave 3 H2's scoped re-review below): a spanning sibling's mere
+// existence does not prove a hook stamped at the failing call's own callSequence belongs to that sibling —
+// only a SAME-TOOL spanning sibling could plausibly own it, because `resolveRunHooks`'s per-tool
+// `capForTool` (spec D12's unified rule) already refuses to let ANY run claim a `"PreToolUse:Tc"` entry
+// without a member of tool `Tc` — a cross-tool spanning sibling can never absorb it regardless of how far
+// the boundary widens, so refusing to widen on ITS account was over-cautious. The wave 3 H2 test below
+// treated the fixture's spanning A as disqualifying purely because IT existed, independent of tool — that
+// was the artifact this wave corrects: `hasSpanningSibling` is now scoped to siblings of the closing call's
+// OWN tool, so a cross-tool spanning sibling (Read, here) no longer blocks TodoWrite's own hook from
+// widening into TodoWrite's own group, and relocation is correctly suppressed once the hook is retained.
+describe("bl7 fix wave 4 (finding J2, unifies waves 2-3): the spanning-sibling widening guard is scoped to the closing call's OWN tool", () => {
+  it("A(call1/result6) spans C(call4/err5) but is a DIFFERENT tool (Read, not TodoWrite): widening proceeds, C's own PreToolUse:TodoWrite hook is retained, and relocation is suppressed", () => {
+    const doc = built(
+      call("a-1", "Read", { file_path: "/work/a.ts" }),                      // opens first, stays open (spans everything below) — a DIFFERENT tool than C
+      call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"), // an ordinary completed sibling, settles before C
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      result("a-1"),                                                        // A finally settles AFTER C's error
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    // Stamped at exactly todo-1's own callSequence — the normal-order shape F3's widening exists to catch.
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
+    // Relocation is now SUPPRESSED: todo-1's own hook is retained (see below), so it stays a member of
+    // mid-1's run rather than popping out into a standalone row — canon's own "a run that absorbed a hook
+    // never relocates its errored member" rule (Task 3, carry-forward (4)), now reachable via a WIDENED
+    // boundary instead of only via an earlier member's hook.
+    const compact = groupRows(projectCompact(doc, options));
+    // A collapsed group carrying hooks emits an extra `:hooks` row alongside its own `:row` (spec §2.5 form 2).
+    expect(compact.map((i) => i.id)).toEqual(["group:mid-1,todo-1:row", "group:mid-1,todo-1:hooks", "group:a-1:row"]);
+    // The retained hook renders in mid-1's own expanded block — it is todo-1's OWN hook, never A's (A holds
+    // no TodoWrite member, so the tool-name guard would refuse it there regardless).
+    const expandedMid = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) }));
+    expect(expandedMid).toContain("  ⎿  Ran 1 PreToolUse hook (0.3s)");
+    expect(expandedMid).toContain("     ⎿ PreToolUse:TodoWrite (0.3s)");
+    // Not A's: A holds only a Read member, and the entry names TodoWrite.
+    const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
+    expect(expandedA.join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("same-tool control: a spanning TodoWrite sibling STILL refuses WIDENING, so mid-1's run never claims the entry — but bl8's D5 gate lets d-1's OWN all-silent run claim it on its own merits", () => {
+    // Identical shape to the test above, except the spanning sibling D is the SAME tool as the closing call
+    // (TodoWrite, not Read) — the one case the unified rule still must refuse: D could just as plausibly own
+    // a PreToolUse:TodoWrite entry stamped inside its own wide-open span, so `hasSpanningSibling` still
+    // blocks todo-1's own boundary from WIDENING to claim it, and the entry is never swept into mid-1's run
+    // that way — todo-1 still pops out of it exactly as before this task.
+    //
+    // bl8 T-QY Task 2 changes what happens NEXT, though: D is `d-1`, an all-silent TodoWrite run of its own
+    // (opened before everything else, settling only after todo-1 pops out and mid-1's run flushes). Before
+    // D5, `flush` never even CALLED `resolveRunHooks` for an all-silent run (`visibleMembers > 0` guarded
+    // the whole block), so this entry was simply dropped, unclaimed by anyone. D5 resolves `hooks` BEFORE
+    // that visibility test, so d-1's own trailing flush now runs `resolveRunHooks` for real — and the entry
+    // (stamped at afterSequence 4) legitimately falls inside d-1's OWN causal window (`[1, 6)`, d-1's own
+    // settled `resultSequence` as its TodoWrite cap): d-1 is ALSO a TodoWrite member, open across the exact
+    // span the entry could plausibly have arrived in, same as cell (k)'s open-member rule. This is NOT the
+    // widening path the J2 guard defends against — it is the ordinary per-tool causal rule finding a
+    // DIFFERENT, legitimate owner once D5 gives its run a chance to ask at all. Canon's own single-accumulator
+    // model would have absorbed this hook into d-1's still-open accumulator too (bl8 research-silentrun-hooks.md).
+    const doc = built(
+      call("d-1", "TodoWrite", { todos: [] }),                              // opens first, stays open (spans everything below) — the SAME tool as C
+      call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"),
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      result("d-1"),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
+    const compact = groupRows(projectCompact(doc, options));
+    // mid-1 alone (no hooks) plus d-1's own all-silent group, now visible under D5 with the entry absorbed —
+    // canon's `BM` clause form (research Part 2.2), rendered as d-1's row's own sole line.
+    expect(compact.map((i) => i.id)).toEqual(["group:mid-1:row", "group:d-1:row"]);
+    expect(compact.find((i) => i.id === "group:d-1:row")).toMatchObject({ line: { text: "  Ran 1 PreToolUse hook (0.3s)" } });
+    // mid-1's OWN expanded content — scoped to its own `foldAnchor`, since the whole-document projection now
+    // legitimately contains "PreToolUse" elsewhere (d-1's row) — never mentions the entry: the widening
+    // refusal still holds, unaffected by D5.
+    const expandedMid = projectCompact(doc, { ...options, expandedFolds: new Set(["mid-1"]) })
+      .filter((i) => (i as { foldAnchor?: string }).foldAnchor === "mid-1");
+    expect(lineTexts(expandedMid).join("\n")).not.toContain("PreToolUse");
+  });
+
+  it("same-tool control (regression, unaffected by this wave): a spanning Read sibling DOES claim a PreToolUse:Read entry once its own settled window resolves it there", () => {
+    const doc = built(
+      call("a-1", "Read", { file_path: "/work/a.ts" }),
+      call("mid-1", "Read", { file_path: "/work/mid.ts" }), result("mid-1"),
+      call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+      result("a-1"),
+      prose("done"));
+    const todoSequence = doc.toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const options = { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 300, afterSequence: todoSequence, event: "PreToolUse" }] };
+    const expandedA = lineTexts(projectCompact(doc, { ...options, expandedFolds: new Set(["a-1"]) }));
+    expect(expandedA.some((t) => t.includes("PreToolUse:Read"))).toBe(true);
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 3, review carry-forward (4): canon @162916xxx —
+// `if(!(u.hookCount>0||(u.relevantMemories?.length??0)>0)&&B.length>0&&…)` — a cluster that absorbed a
+// PreToolUse hook never relocates its errored member out, even when `windowIsClear` would otherwise allow it.
+// ccx has no `relevantMemories` counter (unreachable, spec §4), so the OR narrows to the one operand we can
+// build: hooks resolved for the run's window up to the failing call's own `callSequence` (the same boundary
+// its flush closes on).
+describe("bl7 T-HOOKBLOCK Task 3: an errored popsOutOnError call is not relocated out of a run that absorbed a hook (canon @162916xxx)", () => {
+  const doc = () => built(
+    call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"),
+    call("todo-1", "TodoWrite", { todos: [] }), result("todo-1", "board locked", true),
+    prose("done"));
+
+  it("baseline: pops out normally when the window is clear and NO hooks were absorbed", () => {
+    const items = groupRows(projectCompact(doc(), FS));
+    expect(items[0]!.id).toBe("group:read-1:row");
+  });
+
+  it("does NOT pop out when the run already absorbed a PreToolUse hook, even though the window is otherwise clear", () => {
+    const readSequence = doc().toolEvents().find((e) => e.id === "read-1")!.callSequence;
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:Read", durationMs: 100, afterSequence: readSequence, event: "PreToolUse" }] }));
+    expect(items[0]!.id).toBe("group:read-1,todo-1:row");
+  });
+
+  // Round review F3: the sibling of the case above, on the call actually BEING considered for relocation
+  // (not an earlier member) — the specific edge the finding raised, with no passing-for-the-right-reason
+  // coverage before this fix (a hook on an earlier member never touched the widened-boundary code path).
+  it("also does NOT pop out when the hook belongs to the CLOSING call itself, not an earlier member", () => {
+    const todoSequence = doc().toolEvents().find((e) => e.id === "todo-1")!.callSequence;
+    const items = groupRows(projectCompact(doc(), { ...FS, hookRuns: [{ id: "h1", name: "PreToolUse:TodoWrite", durationMs: 100, afterSequence: todoSequence, event: "PreToolUse" }] }));
+    expect(items[0]!.id).toBe("group:read-1,todo-1:row");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 5 fix, spec §2.5 collapsed-row form 1 (toolRenderer.tsx:918-929, "form 1" in
+// task-5-fix-report.md). `segmentRuns` cannot produce this fixture through the real pipeline TODAY: the one
+// case with zero `otherClauses` is an all-silent run, and `segmentRuns`'s flush gate drops it before `emit()`
+// ever runs (toolFold.ts:532-539, a deliberate, documented divergence — canon instead routes hooks on such a
+// run to the standalone hook renderer, out of scope this round). This is acceptable and expected: the fixture
+// below is a `FoldGroup` built DIRECTLY, bypassing `segmentRuns` entirely, and pins `groupItems`'/`groupRowLine`'s
+// own contract for the day a real member class makes "zero other clauses, nonzero hooks" reachable.
+describe("bl7 T-HOOKBLOCK Task 5 fix: collapsed-row form 1 — hooks are the run's ONLY clause (LATENT, pinned at the FoldGroup layer)", () => {
+  // Zeroed exactly like `toolFold.test.ts`'s `counts()` helper — every base counter at its empty value, so
+  // `foldClauses` returns `[]` (pinned there as "emits nothing for all-zero counts") and the ONLY thing this
+  // run has to say is its hooks.
+  const hookOnlyGroup = (): FoldGroup => ({
+    counts: { readCount: 0, searchCount: 0, listCount: 0, mcpCallCount: 0, mcpServerNames: [], hookCount: 3, hookTotalMs: 450 },
+    memberIds: ["hook-only-1"], anchorId: "hook-only-1", anchorSequence: 1, open: false,
+  });
+  const opts = { ...FS, projection: "compact" as const, verbose: false };
+
+  it("takes over the WHOLE sentence with a bold count, and emits NO separate dim hook line", () => {
+    const items = groupItems(hookOnlyGroup(), "published", opts);
+    // Form 2's shape (hooks alongside another clause) is a second `gutter-block` item — its total absence
+    // here is the form-1/form-2 discriminator: exactly one `line` item, nothing else.
+    expect(items).toHaveLength(1);
+    expect(items[0]!.kind).toBe("line");
+    expect(items.some((i) => i.kind === "gutter-block")).toBe(false);
+    expect(items[0]!.id).toBe("group:hook-only-1:row");
+    const line = (items[0] as { line: RenderLine }).line;
+    // The plain (SGR-stripped) sentence: the hook clause IS the whole row, verbatim `hookSentenceClause`
+    // wording/punctuation — no ordinary clause, no "and", no trailing hook line.
+    expect(unlink(line.text)).toBe("  Ran 3 PreToolUse hooks (0.5s)");
+    // The count carries its own `\x1b[1m…\x1b[22m` span with no dim re-open after it — the same bold-count
+    // byte pattern `toolRenderer.test.tsx`'s settled-read row pins, here over the hook sentence instead.
+    const run = line.segments?.find((s) => "preStyled" in s && s.preStyled === true) as { text: string } | undefined;
+    expect(run?.text).toBe("\x1b[38;2;153;153;153m\x1b[2mRan \x1b[1m3\x1b[22m PreToolUse hooks (0.5s)\x1b[22m\x1b[39m");
+  });
+
+  it("active form uses the SAME branch (no otherClauses to distinguish it) and still emits one line only", () => {
+    const items = groupItems(hookOnlyGroup(), "active", opts);
+    expect(items.filter((i) => i.kind === "line" || i.kind === "gutter-block")).toHaveLength(1);
+    expect(unlink((items[0] as { line: RenderLine }).line.text)).toContain("Ran 3 PreToolUse hooks (0.5s)");
   });
 });

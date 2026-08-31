@@ -40,13 +40,15 @@ import { RESIZE_SETTLE_MS } from "./resizeRepaint.js";
 import { LiveTurn, IDLE_METER, type SpinnerMeter } from "./liveTurn.js";
 import { retryStatusFrom, provesApiAnswered, type RetryStatus } from "./retryStatus.js";
 import { FoldPendingState, stampToolStarts } from "./foldPendingState.js";
+import { HookPairTracker } from "./hookPairs.js";
 import { ingestTaskFrame, stampAgentCalls, type AgentMeta } from "./agentProgress.js";
 import { TaskList, type TaskItem } from "./taskList.js";
 import { BgMetaHarvest, type BgTaskRow } from "./bgTaskMeta.js";
 import { createNotificationStore, type CcxNotification, type NotificationStore } from "./notifications.js";
 import type { DesktopNotifier } from "./desktopNotify.js";
 import { EFFORT_HINT_KEY, EFFORT_HINT_TIMEOUT_MS, EFFORT_LEVELS, effortHint, isEffortLevel, isPersistableEffortLevel, type EffortLevel } from "./modelPickerModel.js";
-import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { parseCommand, canonicalCommand, formatModel, formatModelSet, formatThink, formatEffortSet, formatEffortHelp, formatEffortCurrent, formatEffortInvalid, formatCompact, formatContext, formatCost, formatStatus, formatUnknown, formatTuiUsage, formatTuiResult, TUI_SETTINGS, TUI_BUSY_REFUSAL, type TuiSetting, parseMcpArgs, formatMcpStatus, formatMcpUsage, formatAdvisorResult, pickMostRecent, LOCAL_COMMAND_ENTRIES, LOCAL_NAMES, CLIENT_SIDE_NOTES, formatClientSide, parseConfigArg, totalOutputTokens, type ParsedCommand, type InitialResume, type SessionUsage } from "./commands.js";
+import { applyAdvisorChoice, canAdvise, supportsAdvisor, ADVISOR_NOTICE_KEY, ADVISOR_NOTICE_PAIRED_TEXT, ADVISOR_NOTICE_UNPAIRED_TEXT } from "./advisorModel.js";
 import { rewindFailureHeading } from "./rewindModel.js";
 import { truncateAtAnchor } from "./rewindRebuild.js";
 import { formatUsage, usageWarning, usageSummaryLine, USAGE_WARNING_KEY } from "./usageFormat.js";
@@ -54,7 +56,7 @@ import { tokenWarning, TOKEN_WARNING_KEY, TOKEN_WARNING_TIMEOUT_MS } from "./tok
 import { mergeCommands, toCatalogEntry, type CommandEntry } from "./commandComplete.js";
 import { parseThinkArg } from "./thinkLevels.js";
 import { exportMarkdown, defaultExportName, filesInContext, formatFiles, formatStats, formatSessionInfo, EXPORT_HEADER } from "./sessionTools.js";
-import { recentAssistantTexts, RECENT_ASSISTANT_CAP } from "../sessions/rows.js";
+import { recentAssistantTexts, RECENT_ASSISTANT_CAP, diskStampOf } from "../sessions/rows.js";
 import type { ModelInfo } from "./ModelPicker.js";
 import { replayDocument } from "./replay.js";
 import { runBash as realRunBash, formatBashOutput, type BashResult } from "./bash.js";
@@ -126,7 +128,12 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  `hasMessages`): how many prompts THIS client has sent, and whether the transcript holds any
    *  conversation message at all (a resumed or attached session does before the user types anything). */
   submitCount: number; hasMessages: boolean;
-  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
+  staticEpoch: number; turnMeter: SpinnerMeter; rewindPicker: { open: boolean; anchors: RewindAnchor[] }; composerPrefill: { text: string; token: number; mode?: "replace" | "prepend"; pastedContents?: PastedMap } | null; rewinding: boolean; shortcutsOpen: boolean; helpOpen: boolean; historyOpen: boolean; addDir: { open: boolean; prefill?: string }; themeDialog: { open: boolean };
+  /** bl8 T-ADVCMD Task 3 — the standalone `/advisor` dialog's open state, snapshotted at open time exactly
+   *  like `effortDialog` (`openAdvisorDialog` below): `current` is the ref value in force when it opened
+   *  (a resolved id, or undefined for off) and `mainModel` is the live model, for the dialog's own
+   *  unsupported-model warning row. */
+  advisorDialog: { open: boolean; current?: string; mainModel?: string }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
   /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
    *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
    *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
@@ -163,7 +170,17 @@ function ladderNext(mode: string): string { const i = LADDER.indexOf(mode); retu
 
 export function useChat(
   makeSession: (resume?: string) => ChatSession,
-  opts: { initialMode?: string; initialModel?: string; cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
+  opts: { initialMode?: string; initialModel?: string;
+    /** bl7 T-ADVISOR Task 3 (spec D15) / bl8 T-ADVCMD (D16): the client's OWN `config.advisorModel`,
+     *  threaded down the SAME static-launch-fact path `initialModel` rides (`main.ts`'s `hookOpts` →
+     *  `chatMain.tsx` → `ChatApp.tsx`'s `hookOpts` prop, spread into these `opts`) — but only as the SEED
+     *  of `advisorModelRef` below, not the value itself: bl8 shipped `/advisor`, which changes it live, so
+     *  the bl7 "session-constant, read once" premise this comment used to make is false now (D16 plan
+     *  review F4). Absent on `ccx attach` (the host it joins may have configured its own, which this
+     *  client cannot see): `projectionContext()` then omits `advisorModel` entirely, which is canon-legal
+     *  (§3.2: `Tp ? … : null`). */
+    initialAdvisorModel?: string;
+    cwd?: string; initialResume?: InitialResume; initialThink?: string; /** W-C T11: the launch effort (`--effort` ?? DEFAULTS.effort), so the §C6.2 hint can post at mount. */ initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean;
     /** T2 (F9 T-AUTO §A2): the launch's account token source (`AccountFacts.tokenSource`), threaded
      *  unmodified from `main.ts`'s own `accountInfo()` race all the way through `ChatClientOpts.hookOpts` →
      *  `ChatApp` props → here — the SAME field the welcome banner's billing label already reads, just handed
@@ -186,6 +203,11 @@ export function useChat(
     /** F9 T-MOUSE Task 7: the `copyOnSelect` pref, resolved by the caller (`chatMain.tsx`) exactly as
      *  `initialShowTurnDuration` is — DEFAULT TRUE, canon's own polarity (research r1-mouse.md §2.5). */
     initialCopyOnSelect?: boolean; initialEntries?: readonly TranscriptBootstrapEntry[]; initialPrompt?: string; onExit?: () => void; detach?: () => void; clearStaticTranscript?: () => void; noticeBridge?: { bind(push: (text: string) => void): void };
+    /** bl9 D14: the disk stamp `cli/attach.ts` computed over the SAME rows that seeded `initialEntries` —
+     *  present only on an attach launch. Drives the one-shot post-follow reconcile below; absent everywhere
+     *  else (a fresh launch, a `--resume`/`--continue` launch), which is what keeps the reconcile from ever
+     *  running a disk read those paths have no business paying for (A5). */
+    initialDiskStamp?: { lastUuid?: string; count: number };
     /** WAVE C TASK 10: the resolved `statusLine` setting, or undefined for "not configured". RESOLVED BY THE
      *  CALLER (`chatMain.tsx`, exactly as `initialOutputStyle` is seeded from `loadPrefs()`), and for a
      *  reason beyond symmetry: canon L154558 honours only the USER settings file, so resolving it here would
@@ -261,6 +283,14 @@ export function useChat(
 ) {
   const [session, setSession] = useState<ChatSession>(() => makeSession());
   const cwd = opts.cwd ?? process.cwd();
+  // bl8 T-ADVCMD (D16, plan review F4): a REF now, not the bl7 plain const — `/advisor` (below) writes it
+  // live, and `projectionContext()` is read by callbacks that outlive the render that created them (the
+  // SAME reason `bashHintRef`/`expandHintRef`/`isFullscreenRef` above are refs and not their own bare
+  // values): a mount-time closure over a plain const would keep rendering the LAUNCH advisor forever, no
+  // matter how many times `/advisor` changed it. `applyAdvisor` writes this FIRST, then calls `reconcile()`
+  // so the change repaints without waiting for a document revision (F4's other half is `toolRenderer.ts`'s
+  // `knobKey`, which must include this value too — see its own comment).
+  const advisorModelRef = useRef(opts.initialAdvisorModel);
   const nowFn = deps.now ?? (() => Date.now());
   const columnsFn = deps.columns ?? (() => process.stdout.columns ?? 80);
   const rowsFn = deps.rows ?? (() => process.stdout.rows ?? 24);
@@ -308,7 +338,7 @@ export function useChat(
    *  screen. Absent — every other caller — the ref remains the sole authority. */
   const projectionContext = (fullscreenOverride?: boolean): ProjectionContext => {
     const fullscreen = fullscreenOverride ?? isFullscreenRef.current();
-    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current };
+    return { cwd, home, platform, columns: columnsFn(), now: nowFn(), thoughtMs: thoughtMsRef.current, pending: pendingStateRef.current!, agentMeta: agentMetaRef.current, bashHint: bashHintRef.current, expandHint: fullscreen ? "" : expandHintRef.current, fullscreen, expandedFolds: expandedFoldsRef.current, expandedItems: expandedItemsRef.current, hookRuns: hookTrackerRef.current!.entries(), hookLive: hookTrackerRef.current!.inProgress(), ...(advisorModelRef.current !== undefined ? { advisorModel: advisorModelRef.current } : {}) };
   };
   /** TOOL-STREAM TASK 8 — WHICH CLUSTERS THE READER HAS OPENED, keyed by fold ANCHOR (`FoldGroup.anchorId`,
    *  the run's earliest-issued call).
@@ -375,6 +405,12 @@ export function useChat(
   // a document swap (rewind/resume/clear) — which IS P82's replay rule: durations exist nowhere on the
   // wire or on disk, so a rebuilt transcript must show no clause rather than a fabricated one.
   const thoughtMsRef = useRef<Map<string, number>>(new Map());
+  // bl7 T-HOOKBLOCK Task 1: the same live-only rule as `thoughtMsRef` above, for hook timing instead of
+  // thinking duration — P116 found the wire carries no duration and no tool_use_id, so pairing/stamping
+  // happens here at arrival and a rebuilt transcript (resume/rewind/attach) has no source to recover it
+  // from. Lazily constructed for the same reason `pendingStateRef` below is.
+  const hookTrackerRef = useRef<HookPairTracker | null>(null);
+  if (hookTrackerRef.current === null) hookTrackerRef.current = new HookPairTracker();
   // F3 Task 7: the Agent totals ladder's non-document inputs — the `system/task_*` sidechannel (P83: keyed
   // by the Agent `tool_use_id`, and the ONLY totals source for a parallel dispatch) plus the local
   // dispatch/result arrival stamps its derived rung measures against. Same lifetime rule as the thinking
@@ -630,6 +666,8 @@ export function useChat(
   const [historyOpen, setHistoryOpen] = useState(false);       // the Ctrl-R history-search overlay
   const [addDir, setAddDir] = useState<{ open: boolean; prefill?: string }>({ open: false });   // W3 T3: /add-dir overlay
   const [themeDialog, setThemeDialog] = useState<{ open: boolean }>({ open: false });   // W3 T4: /theme overlay
+  // bl8 T-ADVCMD Task 3: /advisor overlay, snapshotted at open time exactly like `effortDialog`.
+  const [advisorDialog, setAdvisorDialog] = useState<{ open: boolean; current?: string; mainModel?: string }>({ open: false });
   const [bypassConsent, setBypassConsent] = useState<{ open: boolean }>({ open: false });   // Wave-T T15: /yolo's consent gate
   const [settings, setSettings] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T5: /config overlay
   // Baseline SettingsRowCtx captured the moment /config opens, diffed against a fresh snapshot when it
@@ -686,6 +724,28 @@ export function useChat(
     if (!effortCapsSettled || !effort || effortSupported === false) return;
     notifications.add({ key: EFFORT_HINT_KEY, text: effortHint(effort), priority: "high", timeoutMs: EFFORT_HINT_TIMEOUT_MS });
   }, [effort, effortSupported, effortCapsSettled, notifications]);
+  // bl8 T-ADVCMD Task 4 (spec §3.4, A12) — THE ADVISOR STARTUP NOTIFICATION. Unlike the effort hint above,
+  // canon's own version (`jxe` @178890000) re-derives on every advisorModel/mainLoopModel change and
+  // re-posts on a state FLIP; spec §3.4 narrows ccx's copy to a ONE-SHOT launch-time nudge off whatever
+  // `initialAdvisorModel` seeded `advisorModelRef` — a later `/advisor` gets its own feedback line
+  // (`applyAdvisorChoice`'s `message`), so this effect never re-arms. `[]` deps + the ref guard is the same
+  // shape as the `noticeBridge` bind above: read once, off the mount-time closure over `model` (the launch
+  // main model) and `advisorModelRef.current` (the launch advisor), never re-triggered by a later render.
+  //   Follow-up fix (three-state gate): canon's `M8` gate — a main model with NO rank entry at all does not
+  // support the advisor and must get no notice — was left to consuming code by design (advisorModel.ts's own
+  // comment on `applyAdvisorChoice`); this is that wiring. The `supportsAdvisor` guard below closes it,
+  // ahead of the `canAdvise` paired/unpaired branch so an unsupported main model short-circuits before
+  // either text is chosen.
+  const advisorNoticeShown = useRef(false);
+  useEffect(() => {
+    if (advisorNoticeShown.current) return;
+    advisorNoticeShown.current = true;
+    const advisor = advisorModelRef.current;
+    if (!advisor) return;
+    if (!supportsAdvisor(model ?? "")) return;
+    const text = canAdvise(model ?? "", advisor) ? ADVISOR_NOTICE_PAIRED_TEXT : ADVISOR_NOTICE_UNPAIRED_TEXT;
+    notifications.add({ key: ADVISOR_NOTICE_KEY, text, priority: "medium" });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only, see comment above
   // Wave C Task 6: the spinner reads a METER, not a token count — the parenthetical needs the streamed
   // character target (for the eased estimate), the stream mode (for the arrow) and the tool/thinking
   // windows (for the phase ladder). All four come off the one `LiveTurn` that already consumes the frames.
@@ -845,6 +905,69 @@ export function useChat(
     );
   };
   const lastAssistant = useRef<string[]>([]);    // recent assistant replies' text, NEWEST FIRST, for /copy [N] (ring, cap RECENT_ASSISTANT_CAP)
+  // bl9 D14/D15: the content-shape stamp of whatever disk read last built the document — seeded from the
+  // attach-time read (`opts.initialDiskStamp`, computed in `cli/attach.ts` over the SAME rows that became
+  // `initialEntries`) and kept honest by every later disk-driven rebuild (`resumeInto`, `rebuildAfterRewind`,
+  // the reconcile below). `undefined` for every non-attach mount — a fresh launch has no pre-follow read to
+  // reconcile against, which is exactly the reconcile effect's "no stamp, no read" guard (A5).
+  const diskStampRef = useRef<{ lastUuid?: string; count: number } | undefined>(opts.initialDiskStamp);
+  // bl9 F2, centralized by W2 F2 (rereview1): bumped once, inside `replaceDocument` itself — the one
+  // document-swap primitive every boundary (`resumeInto`'s real-session swap, `replaceFromDisk`,
+  // `rebuildAfterRewind`'s empty-rows branch, `clear()`) routes through, so none of them can forget to. The
+  // reconcile's own stamp-equality check (below) cannot tell "my read is stale because a newer rebuild
+  // already landed" from "my read is the newer, correcting one" — both look like a mismatch against whatever
+  // `diskStampRef` says NOW. Capturing this at read-issue and comparing it at read-resolve does: if it moved,
+  // a newer rebuild raced ahead and this read's rows must never win, regardless of what they say.
+  // `resumeInto`'s same-session APPEND arm still bumps it locally too — appending disk rows in place is not a
+  // `replaceDocument` swap, so it is not covered by the centralized bump and stays a deliberate exception.
+  const diskGenRef = useRef(0);
+  // bl9 wave 4 (rereview3 P2, invariant refinement): the post-follow reconcile below is a MOUNT-TIME
+  // correction only — it may rebuild the document exclusively while it is still virgin, i.e. exactly the
+  // attach-time mount seed, untouched by anything since. Wave 3's virginity test was three conditions, one
+  // of which (a mount-time ENTRY-COUNT snapshot, taken inside the reconcile effect's own body) was captured
+  // too late: two EARLIER effects (the session-event subscription, the launch-time initial-prompt submit)
+  // can synchronously drain a backlog frame or echo a prompt before an effect-body capture ever runs, so
+  // that snapshot could already include rows that landed before it — indistinguishable from the true seed,
+  // and erasable by a mismatch rebuild. `revision()` (`TranscriptDocument.revision()`) read HERE, in a
+  // lazily-initialized ref, is the earliest honest capture point: a ref initializer runs on the component's
+  // very first render pass, strictly before commit, strictly before any effect — nothing can drain, echo or
+  // append ahead of it. `revision()` also closes a second gap entry-count had: a duplicate-sidecar upgrade
+  // or a net-zero supersede+append mutates the document (and must disqualify the reconcile) without moving
+  // `entries().length` at all.
+  //
+  // Sole reader: the reconcile effect's own `attemptReconcile`, alongside `diskGenRef` (a document SWAP —
+  // complementary, not redundant: `replaceDocument` installs a brand-new `TranscriptDocument`, whose own
+  // `rev` starts back at 0, so a swap is invisible to a naive revision compare across the two instances;
+  // `diskGenRef` is the signal built for exactly that case, bumped by `replaceDocument` itself).
+  //
+  // Wave 3's THIRD condition — `turnStartedSinceMountRef`, set forever the moment any turn opened, even one
+  // that drained no content before the reconcile's read resolved — is DELETED, not replaced. It over-approximated
+  // "content this reconcile cannot safely reconstruct": an open turn that has drained content into the document
+  // already trips the revision check above (every retained append bumps `rev`), so the flag was only ever the
+  // deciding vote for a turn that started but drained NOTHING — and for that case turn:start touches no document
+  // state at all (busy/spinner chrome lives in refs and React state, not in the document; D16 keeps `taskListRef`
+  // out of the rebuild's reach regardless). Keeping the flag there permanently disqualified the common
+  // attach-to-a-busy-host shape (`follow()` emits `turn:start` before `whenReady()` resolves) even when the
+  // turn had not yet produced anything a rebuild could destroy. DELIBERATELY NOT rebuilt by this reconcile: a
+  // mid-turn attach whose open turn has ALREADY drained content by the time this reconcile's read resolves
+  // keeps its stale prefix for the rest of the mount — that is a known, accepted limitation, not a bug; adding
+  // deferral, re-arm or merge-after-turn-end to reach for it is exactly the complexity wave 3 deleted.
+  const seedRevisionRef = useRef<number | null>(null);
+  if (seedRevisionRef.current === null) seedRevisionRef.current = documentRef.current!.revision();
+  // rereview4 P2 (wave 5): virgin condition 3 — `revision()` only sees the RETAINED DOCUMENT, but the reconcile
+  // also has to protect LIVE state that never touches it: a hook pairing (`hookTrackerRef`), a Task subagent's
+  // sidechannel enrichment (`agentMetaRef`), a pending decision, a streaming partial — every one of them is
+  // reset unconditionally by `replaceDocument` (bl7 T-HOOKBLOCK, P82/P83, W-S5's own rebuild-boundary rule),
+  // and a frame that only writes one of them (a `hook_started`, a `task_notification`, a `stream_event` delta)
+  // is BY DESIGN invisible to `revision()` — useChat.ts's own comments on those ingest arms say so verbatim
+  // ("nothing here mutates the document", "changes NOTHING outside the live turn"). Probes confirmed the gap
+  // is real: a `hook_started`/`hook_response` pair straddling the read is permanently unpaired (the tracker
+  // that would have matched them is gone), and a live `task_notification`'s usage detail is permanently
+  // discarded the same way. ONE counter, bumped once per non-replay frame at every subscription boundary
+  // (below), closes all of them at once — no per-kind enumeration, no reconstruction: a bump during the
+  // window means live content is en route, full stop, and the mount-time correction stands down exactly like
+  // it already does for conditions 1/2.
+  const liveActivitySeq = useRef(0);
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1277,6 +1400,14 @@ export function useChat(
    *  our own chip lying. Whether to keep the inline percentage at all is parked for a later wave. */
   function replaceDocument(next: TranscriptDocument): void {
     if (disposed.current) return;
+    // W2 F2 (rereview1): THE lowest-level document-swap primitive, so bumping the generation guard HERE —
+    // rather than at each of this function's callers — makes every boundary that ever routes through it
+    // (today: `resumeInto`'s real-session swap, `replaceFromDisk`, `rebuildAfterRewind`'s empty-rows arm,
+    // `clear()`; any FUTURE one too) invalidate an in-flight reconcile read by construction instead of by
+    // remembering to. `clear()` was the wave-1 gap this closes: it swapped the document without bumping
+    // `diskGenRef`, so a reconcile read still in flight when `/clear` landed could repopulate the just-cleared
+    // transcript once it resolved. One mechanism now, not one per call site — see `diskGenRef`'s own comment.
+    diskGenRef.current++;
     opts.clearStaticTranscript?.();
     docEpoch.current++; localSeq.current = 0; idleFollowReplay.current = false;
     clearLiveOpen();
@@ -1284,6 +1415,7 @@ export function useChat(
     publishedIds.current = new Set();
     thoughtMsRef.current = new Map();   // P82: a rebuilt transcript has no duration source — show none
     agentMetaRef.current = new Map();   // P83, same rule: the task sidechannel is live-only and its stamps are arrivals
+    hookTrackerRef.current!.clear();    // bl7 T-HOOKBLOCK: a rebuilt transcript has no hook source — show none
     // Same rule for the latched counters and the held hint (F3 Task 4): a rebuilt transcript reuses the very
     // same tool-use ids as anchors, so a maximum latched before the swap would ride onto a run re-read from disk.
     pendingStateRef.current!.reset();
@@ -1410,6 +1542,11 @@ export function useChat(
     followGen.current++;
     const off = session.onSessionEvent((ev) => {
       if (disposed.current) return;
+      // rereview4 P2 (wave 5), virgin condition 3's choke point: EVERY non-replay frame this router ever
+      // delivers counts as live activity, whatever it does or does not touch — see `liveActivitySeq`'s own
+      // comment. `replay` only exists on `message` frames (host/wire.ts); every other kind is by construction
+      // never a replay.
+      if (!(ev.kind === "message" && ev.replay)) liveActivitySeq.current++;
       if (ev.kind === "turn" && ev.phase === "start") {
         // The host has TWO truncated start shapes and they mean opposite things (host.ts's follow()).
         // A BARE `{truncated:true}` with no seq is the completed idle tail: it must never open a LiveTurn,
@@ -1530,6 +1667,32 @@ export function useChat(
             data: { species: COMPACT_SUMMARY_SPECIES },
           };
           if (nonEmptyString(data.uuid)) appendLocalIdentified(divider, `compact-divider:${data.uuid}`); else appendNewLocal(divider);
+        }
+        // bl7 T-HOOKBLOCK Task 1 (spec D2/D14). A hook frame never enters the document (`appendSdk` rejects
+        // every system frame already) and never paints as a notice — canon absorbs it into the tool-cluster's
+        // own expanded block (a later task), not a standalone line. `return`s unconditionally, BEFORE the
+        // system-notice arm below: `systemNoticeLines` has no branch for these subtypes anyway, but falling
+        // through would also skip this arm's own reconcile and instead rely on the generic message path's
+        // `reconcile()` at the bottom of this handler — which never runs for a hook frame, since nothing here
+        // mutates the document for it to react to. `!ev.replay`-guarded on the SAME rule as `stampToolStarts`
+        // below: a replayed hook's arrival is the moment this client attached, not the moment it ran, so a
+        // replay reports no timing rather than a fabricated one, and never re-pairs a hook the tracker cannot
+        // have seen before (a fresh tracker on a fresh mount).
+        // bl8 T-QY Task 1: `hook_progress` joins this arm (P119 — alive, liveness-only) alongside the pair.
+        if (data?.type === "system" && (data.subtype === "hook_started" || data.subtype === "hook_response" || data.subtype === "hook_progress")) {
+          if (!ev.replay) {
+            // bl8 plan-review F5: `started()` always returns true now (every event is retained, not just
+            // PreToolUse) — reconcile so the live in-flight counter's row paints the moment a hook opens,
+            // since the only other repaint trigger is the response that closes it.
+            if (data.subtype === "hook_started") { if (hookTrackerRef.current!.started(data, nowFn())) reconcile(); }
+            // D14, widened: `response()` now returns true for EVERY completed pair (the PreToolUse filter
+            // moved to `resolveRunHooks`), so this reconcile fires for all five reachable events, not just
+            // PreToolUse — each one can close a live counter row or, in a later task, paint a standalone one.
+            else if (data.subtype === "hook_response") { if (hookTrackerRef.current!.response(data, nowFn(), documentRef.current!.lastSequence())) reconcile(); }
+            // `hook_progress` is liveness-only (P119 §2/§6): no timing, no rendered count changes, so no reconcile.
+            else hookTrackerRef.current!.progress(data);
+          }
+          return;
         }
         // Task 10b: `dVo` (L428358). A `system` frame carrying a renderable string `content` is a notice the
         // transcript shows; everything else — every structured frame, every `level:"info"` line outside
@@ -1678,8 +1841,11 @@ export function useChat(
         if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
       }
     });
-    const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
-    const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
+    // Same choke-point rule, at the OTHER subscription this hook owns: `pendingStateRef` (decision dialogs)
+    // is reset by `replaceDocument` exactly like the hook tracker and agent meta are, and neither of these two
+    // callbacks routes through `onSessionEvent` above.
+    const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) { liveActivitySeq.current++; pushPending(entry); } }) : undefined;
+    const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) { liveActivitySeq.current++; dropPending(s.toolUseID, s.by, s.decision); } }) : undefined;
     return () => { off(); offDecision?.(); offSettled?.(); };
   }, [session]);
   // Launch-time resume: run once on mount if an initialResume intent was passed.
@@ -1693,6 +1859,83 @@ export function useChat(
   useEffect(() => {
     if (ranInitialPrompt.current || !opts.initialPrompt) return; ranInitialPrompt.current = true;
     submit(opts.initialPrompt);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // bl9 D14, invariant REPLACED wave 3 — THE POST-FOLLOW ATTACH RECONCILE. `ccx attach` reads disk before it
+  // follows (cli/attach.ts's `prepareAttach` → the dynamic Ink import → mount → connect → follow), so a
+  // concurrent in-place rewind can truncate/replace the transcript in that gap and nothing else ever
+  // corrects it (research-follow-replay.md §2.1: the session id survives an in-place rewind, so a joiner
+  // comparing ids sees nothing). One post-follow re-read closes the window: once the session reports ready
+  // (the remote adapter's `whenReady()` — RemoteChat only; a lib/loopback session has none, hence the
+  // `typeof` guard), re-read disk and compare its stamp against `diskStampRef.current` (read AT FIRE TIME,
+  // not the frozen `opts.initialDiskStamp` this effect closed over at mount).
+  //
+  // THE GOVERNING RULE (wave 3, refined wave 4 — rereview3 P1/P2 — and wave 5 — rereview4 P2): this reconcile
+  // may replace the document ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed, untouched by
+  // anything since, AND only while nothing live outside the document has moved either. It aborts SILENTLY AND
+  // FINALLY (no retry, no re-arm) the moment ANY of three virgin conditions fails by the time its disk read
+  // resolves:
+  //   1. `diskGenRef` moved (any document SWAP since mount: a live rewind, `/clear`, a resume) — the
+  //      pre-existing generation guard (bl9 F2). Complementary to condition 2, not redundant with it:
+  //      `replaceDocument` installs a brand-new `TranscriptDocument` whose own `rev` restarts at 0, so a
+  //      swap can slip past a naive revision compare across two different instances — this is the signal
+  //      built to catch exactly that.
+  //   2. `documentRef.current!.revision()` moved past `seedRevisionRef.current` (captured DURING RENDER, at
+  //      this hook's very first render pass — see `seedRevisionRef`'s own comment for why that is the
+  //      earliest honest capture point): ANY retained mutation of the SAME document instance since then —
+  //      a local visual, a live-appended SDK row, a duplicate-sidecar upgrade, a supersede+append pair that
+  //      nets to the same entry count — means the document is no longer provably the mount seed.
+  //   3. `liveActivitySeq` moved past its own read-issue snapshot — see its own comment. Conditions 1/2 only
+  //      see the RETAINED DOCUMENT; a hook pairing, a Task subagent's sidechannel enrichment, a pending
+  //      decision and a streaming partial all live OUTSIDE it and are reset by `replaceDocument` all the
+  //      same, so a frame that touches only one of them (rereview4 P2: a `hook_started`/`hook_response` pair
+  //      straddling the read, a `task_notification`'s usage detail) needs its own signal.
+  // Wave 3's third condition (`turnStartedSinceMountRef`, a turn having started at all, ever) is DELETED: a
+  // turn that has drained ANY content by read-resolve time already trips condition 2 (every retained append
+  // bumps `rev`), so the flag was only ever deciding for a turn that opened but drained NOTHING — and
+  // turn:start alone touches no document state (busy/spinner chrome is refs/React state, not the document).
+  // Keeping it disqualified the common attach-to-a-busy-host shape (`follow()` emits `turn:start` before
+  // `whenReady()` resolves) even when nothing had happened yet for a rebuild to destroy. What stays a
+  // DELIBERATE, ACCEPTED limitation: a mid-turn attach whose open turn has ALREADY drained content by the
+  // time this read resolves keeps its stale prefix for the rest of the mount — no deferral, re-arm or
+  // merge-after-turn-end reaches for it; that cascade is exactly what wave 3 deleted.
+  // A virgin document, by construction, holds ONLY disk rows: `cli/attach.ts` seeds `initialEntries` (and
+  // therefore `diskStamp`) from ONE `getSessionMessages` read with no local rows mixed in — the one path
+  // that DOES inject a local row (`no persisted history yet`) never sets `diskStamp`, so the reconcile's own
+  // `!opts.initialDiskStamp` guard already excludes it (A5). So a virgin mismatch rebuild has nothing local
+  // to carry forward — the SIMPLE wholesale rebuild (`replaceFromDisk`, no carry-over) is the correct one,
+  // and there is no title fetch to invalidate because no turn has run to have started one.
+  // A match no-ops (A1b); a virgin mismatch runs the SAME narrow document rebuild `rebuildAfterRewind` uses
+  // (`replaceFromDisk`), labeled "resynced" (not the default "resumed" — the likely cause is another
+  // client's rewind, not a resume). D16 stays the reason `replaceFromDisk` itself is narrow: even a virgin
+  // rebuild must never touch `taskListRef`/`bgHarvest`/the composer prefill — those are rewind-specific
+  // resets, not this reconcile's business.
+  useEffect(() => {
+    const ready = (session as { whenReady?: () => Promise<void> }).whenReady;
+    if (!opts.initialDiskStamp || typeof ready !== "function") return;
+    let cancelled = false;
+    const attemptReconcile = async () => {
+      if (cancelled || disposed.current) return;
+      const id = session.sessionId;
+      if (!id) return;
+      const gen = diskGenRef.current;                        // virgin condition 1: captured AT READ-ISSUE
+      const activity = liveActivitySeq.current;              // virgin condition 3: captured AT READ-ISSUE (see its own comment)
+      const rows = await getSessionMessages(id).catch(() => null);
+      if (cancelled || disposed.current || rows === null) return;
+      if (diskGenRef.current !== gen) return;                                          // condition 1: a swap already landed
+      if (documentRef.current!.revision() !== seedRevisionRef.current) return;         // condition 2: the document mutated since render
+      if (liveActivitySeq.current !== activity) return;                                // condition 3: live activity arrived during the read
+      const fresh = diskStampOf(rows);
+      const live = diskStampRef.current;
+      if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
+      replaceFromDisk(rows, id, { label: "resynced" });
+    };
+    // F3: a dead host during the readiness window is a real, expected failure — `whenReady()` mints a fresh
+    // promise per call, so it needs its own rejection handler rather than relying on `chatAdapter.ts`'s
+    // internal `ready.catch`. This is a read-only side path; a rejection here means "no reconcile ran", not
+    // a reason to take the session down (same convention as the `getSessionMessages` `.catch(() => null)`
+    // two lines up).
+    void ready.call(session).then(attemptReconcile).catch(() => {});
+    return () => { cancelled = true; };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   // Fetch the live command catalog once per session (capabilities() works pre-turn — probe 29). On a /resume
   // swap the session changes → re-fetch. A failure/empty leaves the local-only palette (still fully usable).
@@ -2207,6 +2450,11 @@ export function useChat(
         // (theme.ts's setTheme has "no persistence — caller's job", and the dialog IS that caller); this
         // just opens/closes it and prints whatever result line it hands back via closeThemeDialog.
         case "theme": setThemeDialog({ open: true }); break;
+        // bl8 T-ADVCMD (spec §3.3): no arg opens the dialog (`openAdvisorDialog` below snapshots the
+        // current ref + live model); an arg runs `applyAdvisorChoice` immediately, the SAME choke point
+        // the dialog's Enter uses (`applyAdvisor`, T-EFFORT's `applyEffort` precedent — one function, every
+        // caller).
+        case "advisor": { if (cmd.args) await applyAdvisor(cmd.args); else openAdvisorDialog(); break; }
         // FSW T15 (canon `fTb`, bundle L482580-482620) — SWAP THE RENDERER UNDER A LIVE CONVERSATION.
         // Canon's own order of business, kept: parse, refuse if busy, SAVE, then switch. Two of those
         // deserve a word here.
@@ -2382,9 +2630,13 @@ export function useChat(
     // Same conversation: APPEND the raw persisted rows into the EXISTING document and reconcile only the
     // ids nobody has seen. Replacing it with disk-only rows would erase every prior local notice and
     // command output from later Ctrl-O detail — a real session change is the only terminal boundary.
-    if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); reconcile(); }
+    // W2 F2: the `else` arm now gets its generation bump from `replaceDocument` itself (the centralized
+    // primitive); the `sameSession` arm APPENDS in place and never calls it, so it keeps its own bump here —
+    // it is still a disk-backed change to what the document holds, and a reconcile read in flight must see it.
+    if (sameSession) { for (const m of msgs) documentRef.current!.appendSdk("disk", m); setStreaming([]); diskGenRef.current++; reconcile(); }
     else replaceDocument(replayDocument(msgs, { id, width: columnsFn() }));
     lastAssistant.current = recentAssistantTexts(msgs);         // /copy [N] follows what is ON SCREEN, whole ring seeded, not just live turns
+    diskStampRef.current = diskStampOf(msgs);                   // bl9 D14: keep the reconcile's stamp honest across a resume too
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     // The old session's bg tasks died with its engine — the old subscription is already detached, and no
@@ -2628,6 +2880,52 @@ export function useChat(
   // {id}" / "Theme picker dismissed"), just close + print it.
   function closeThemeDialog(line: string) { if (!disposed.current) { setThemeDialog({ open: false }); notice(line); } }
 
+  // bl8 T-ADVCMD Task 3: /advisor. Unlike ThemeDialog, this dialog does no engine work itself — Enter
+  // reports a plain string choice (`AdvisorDialog`'s `onChoose`), and the round-trip lives here, in
+  // `applyAdvisor`, so both the dialog's Enter and a typed `/advisor <arg>` share the one choke point
+  // (`applyEffort`'s own precedent). Snapshot at open time, exactly as `openEffortDialog` does.
+  function openAdvisorDialog(): void {
+    if (disposed.current) return;
+    setAdvisorDialog({ open: true, current: advisorModelRef.current, ...(model ? { mainModel: model } : {}) });
+  }
+  function closeAdvisorDialog(): void { if (!disposed.current) setAdvisorDialog({ open: false }); }
+  function chooseAdvisor(choice: string): void { closeAdvisorDialog(); void applyAdvisor(choice); }
+  /** THE SINGLE CHOKE POINT for `/advisor`'s three outcomes (spec §3.3) — the dialog's Enter and a typed
+   *  `/advisor <arg>` both funnel through this, exactly as `applyEffort` is `/effort`'s one choke point.
+   *  Validation is Task 1's pure `applyAdvisorChoice` (P119: the server never reports a bad value, so an
+   *  "invalid" verdict never reaches the engine at all). `setAdvisorModel` lives on the SAME `SettingsOps`
+   *  bundle `setEffort` does, so `hasSettingsOps` is the feature-detect for both — a session predating it
+   *  (an older attached host) gets the honest refusal rather than a silent no-op.
+   *    ORDER (Global Constraints): engine call → persist pref → write the ref (D16/F4 — the value
+   *  `projectionContext()` and every long-lived closure read; a bare `useState` would leave them all on
+   *  the launch model) → `reconcile()` so the change repaints without waiting for a document revision →
+   *  the result line. A `setAdvisorModel` rejection prints `advisor: <message>` (the existing mcp toggle
+   *  arm's own "verb: detail" line shape) and skips BOTH the persist and the ref write — a refused engine
+   *  call must not have the pref or the live row claim it happened. */
+  async function applyAdvisor(choice: string): Promise<void> {
+    if (disposed.current) return;
+    const result = applyAdvisorChoice(choice, model, advisorModelRef.current);
+    if (result.action === "invalid") { append(formatAdvisorResult(result.message)); return; }
+    if (!hasSettingsOps(session)) { notice("advisor: not supported by this host"); return; }
+    const nextModel = result.action === "set" ? result.model : null;
+    try {
+      await session.setAdvisorModel(nextModel);
+    } catch (e) {
+      if (!disposed.current) notice(`advisor: ${(e as Error).message}`);
+      return;
+    }
+    if (disposed.current) return;
+    // bl8 F4 fix: the engine call above has ALREADY committed, so the persist below is best-effort ONLY —
+    // the same convention every other pref write in this file follows (`setShowTurnDuration`'s doc comment,
+    // ~:2804-2807: "a read-only home must not take down a session"). The ref write / `reconcile()` /
+    // confirmation must happen UNCONDITIONALLY once the write itself can no longer throw past this point.
+    try { savePrefsFn(nextModel !== null ? { advisorModel: nextModel } : { advisorModel: undefined }, historyEnv); }
+    catch { /* best-effort — a read-only home must not take down a session, same as setShowTurnDuration */ }
+    advisorModelRef.current = nextModel ?? undefined;
+    reconcile();
+    append(formatAdvisorResult(result.message));
+  }
+
   // Wave-T T15 — the two answers to `/yolo`'s consent. The dialog persists the acceptance itself (every route
   // into bypass records it, so no caller can forget to), which leaves these two the mode change and the
   // notice. The refusal ignores the exit code the dialog reports: those codes are the LAUNCH path's, and a
@@ -2858,6 +3156,23 @@ export function useChat(
     } catch (e) { append([{ text: `✗ ${(e as Error).message}`, color: role("error") }]); }
   }
   function closeRewindPicker() { if (!disposed.current) setRewindPicker({ open: false, anchors: [] }); }
+  /** bl9 D14/D16, simplified wave 3: the document-only core shared by `rebuildAfterRewind`'s non-empty
+   *  branch and the post-follow reconcile effect above. Deliberately NARROW — clear, replay, reseed /copy,
+   *  update the stamp ref, nothing else — because neither caller may touch taskListRef/setTasks, bgHarvest,
+   *  or the composer prefill (D16: those are rewind-specific resets a document-only rebuild has no business
+   *  running). `rebuildAfterRewind` layers its own polling, anchor cut, empty-document arm and those three
+   *  resets ON TOP of this. The generation bump (bl9 F2) is `replaceDocument`'s own job (W2 F2).
+   *
+   *  No local-row carry-over (wave 3 removed it): the reconcile's own caller now only ever invokes this
+   *  while the document is still VIRGIN (the mount seed, untouched — see the reconcile effect's own doc),
+   *  and a virgin document holds nothing local to carry — `cli/attach.ts` seeds it from disk rows alone. */
+  function replaceFromDisk(rows: any[], id?: string, options: { label?: string } = {}): void {
+    clearScreen();
+    const next = replayDocument(rows, { id, label: options.label, width: columnsFn() });
+    replaceDocument(next);
+    lastAssistant.current = recentAssistantTexts(rows);
+    diskStampRef.current = diskStampOf(rows);
+  }
   /** Rebuild the transcript from the PERSISTED session after a conversation rewind truncated it. Shared by
    *  the client that confirmed the rewind and by every other follower reacting to the host's `rewound`
    *  broadcast — a follower passes no prefill, because someone else's rewound prompt does not belong in
@@ -2903,12 +3218,16 @@ export function useChat(
     }
     if (disposed.current) return;
     const rows = truncateAtAnchor(msgs, opts.prevUuid);
-    clearScreen();
     // A rewind is a deliberate session transition: the fresh document derives ONLY the restored persisted
     // messages. (Ctrl-O never uses this path.)
-    if (rows.length) replaceDocument(replayDocument(rows, { id, label: "⏪ rewound", width: columnsFn() }));
-    else { const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh); }
-    lastAssistant.current = recentAssistantTexts(rows);     // /copy [N] follows what is on screen, whole ring seeded
+    if (rows.length) replaceFromDisk(rows, id, { label: "⏪ rewound" });
+    else {
+      clearScreen();
+      const fresh = new TranscriptDocument(); fresh.appendLocal({ kind: "rewind-divider", lines: [{ text: "⏪ rewound", dim: true }] }, "rewind:empty"); replaceDocument(fresh);
+      lastAssistant.current = recentAssistantTexts(rows);   // rows is [] here — the ring resets, same as before
+      diskStampRef.current = diskStampOf(rows);
+      // W2 F2: `replaceDocument` (just above) bumps `diskGenRef` itself now — no call-site bump needed here.
+    }
     taskListRef.current.reset(); setTasks([]);
     bgHarvest.current.reset();
     if (opts.prefill !== undefined) setComposerPrefill({ text: opts.prefill, token: Date.now() });
@@ -3268,5 +3587,5 @@ export function useChat(
   // frame the reset had just put back — which is the blank pane, one step later.
   function clear() { if (!disposed.current) { replaceDocument(new TranscriptDocument()); clearViewportFn(); } }
 
-  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
+  return { state: { sessionId: session.sessionId, staticItems, finalizedItems, pendingItems, streaming, streamOwnerKey, pending, mode, busy, aiTitle, renameTitle, ctxPct, model, picker, tasks, bgTasks, bgRows: bgHarvest.current.rows(bgTasks), bgPanelOpen, thinkLevel, effort, effortSupported, defaultEffort: DEFAULT_EFFORT, effortDialog, turnStartedAt, modelPicker, commandCatalog, queue, submitCount, hasMessages: documentRef.current!.messageCount > 0, staticEpoch, turnMeter, rewindPicker, composerPrefill, rewinding, shortcutsOpen, helpOpen, historyOpen, addDir, themeDialog, advisorDialog, bypassConsent, settings, outputStyle, showTurnDuration, prefersReducedMotion, terminalProgressBarEnabled, copyOnSelect, promptSuggestion, promptSuggestionEnabled, permissions, denials, workDirs, retryStatus, compacting, notification, statusLineText } as ChatState, detailItems, publishLiveWindow, toggleFold, toggleItemExpand, submit, popQueueToComposer, resolveDecision, cycleMode, interrupt, clear, closePicker, pickSession, reloadSessions, previewSession, renamePickedSession, closeModelPicker, pickModel, openModelPicker, openEffortDialog, closeEffortDialog, cancelEffortDialog, applyEffort, confirmEffort, notice, openBgPanel, closeBgPanel, stopBgTask, killAgents, backgroundNow, openRewind, closeRewindPicker, rewindDryRun, confirmRewind, openShortcuts, closeShortcuts, openHelp, closeHelp, clearPrefill, openHistorySearch, closeHistorySearch, acceptHistory, executeHistory, loadHistory, addDirValidate, confirmAddDir, cancelAddDir, closeThemeDialog, closeAdvisorDialog, chooseAdvisor, acceptBypassConsent, refuseBypassConsent, applyMode, setThink, setShowTurnDuration, setPrefersReducedMotion, setTerminalProgressBarEnabled, setCopyOnSelect, setPromptSuggestionEnabled, noteSuggestionSlot, acceptSuggestion, abortSuggestion, closeSettings, setSettingsTab, applyOutputStyle, fetchSettingsStatus, fetchSettingsUsage, fetchSettingsStats, closePermissions, setPermissionsTab, fetchPermSettings, fetchPermDirs, addPermRule, removePermRule, removeWorkspaceDir, notifications, notify, dismissNotification };
 }

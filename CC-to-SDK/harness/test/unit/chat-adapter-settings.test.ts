@@ -161,6 +161,42 @@ describe("remoteChatSession — SettingsOps (W3 T2)", () => {
     }
   });
 
+  // Task 2 (bl8 T-ADVCMD): `set_advisor_model` rides the same SettingsOps surface as `set_effort` above,
+  // same reasoning — the host answers it with `applyFlagSettings({advisorModel})` (P119 case 4).
+  it("10. setAdvisorModel sends {op:set_advisor_model, model} and resolves void on {ok:true}", async () => {
+    const host = stubHost({ set_advisor_model: { ok: true } });
+    await host.listen();
+    const adapter = remoteChatSession(host.path);
+    try {
+      await adapter.whenReady();
+      if (!hasSettingsOps(adapter)) throw new Error("adapter lacks SettingsOps");
+      await expect(adapter.setAdvisorModel("claude-opus-5")).resolves.toBeUndefined();
+      expect(host.seen.find((f) => f.op === "set_advisor_model")).toMatchObject({ op: "set_advisor_model", model: "claude-opus-5" });
+    } finally {
+      adapter.detach();
+      host.srv.close();
+    }
+  });
+
+  // `null` must round-trip as the JSON value `null` — canon's explicit "off" — never get stringified
+  // ("null") or dropped as an absent field, either of which would silently keep the wrong advisor live.
+  it("11. setAdvisorModel(null) sends {op:set_advisor_model, model:null}, not a stringified/dropped value", async () => {
+    const host = stubHost({ set_advisor_model: { ok: true } });
+    await host.listen();
+    const adapter = remoteChatSession(host.path);
+    try {
+      await adapter.whenReady();
+      if (!hasSettingsOps(adapter)) throw new Error("adapter lacks SettingsOps");
+      await expect(adapter.setAdvisorModel(null)).resolves.toBeUndefined();
+      const frame = host.seen.find((f) => f.op === "set_advisor_model");
+      expect(frame).toMatchObject({ op: "set_advisor_model", model: null });
+      expect(frame!["model"]).not.toBe("null");
+    } finally {
+      adapter.detach();
+      host.srv.close();
+    }
+  });
+
   it("8. an {ok:false,error} reply rejects with that error — proven on addDir and removeRule", async () => {
     const host = stubHost({
       add_dir: { ok: false, error: "already tracked" },

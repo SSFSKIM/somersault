@@ -30,4 +30,15 @@ describe("resolveSettings", () => {
   it("leaves settings undefined when neither settings nor autocompact fields are set", () => {
     expect(resolveSettings({}).settings).toBeUndefined();
   });
+  // bl7 T-ADVISOR task 1 — advisorModel rides the SAME fold as autoCompactEnabled/autoCompactWindow
+  // (settings.ts's one-line-per-field shape), landing on the SDK's Settings.advisorModel. Default OFF:
+  // absent from config means absent from the folded object, never a phantom key.
+  it("folds advisorModel into settings when set, absent by default", () => {
+    expect(resolveSettings({ advisorModel: "claude-opus-4-8" }).settings).toEqual({ advisorModel: "claude-opus-4-8" });
+    expect(resolveSettings({}).settings).toBeUndefined();
+  });
+  it("composes advisorModel with an explicit settings object and the autocompact fields", () => {
+    const s = resolveSettings({ settings: { foo: 1 }, autoCompactEnabled: true, advisorModel: "claude-opus-4-8" });
+    expect(s.settings).toEqual({ foo: 1, autoCompactEnabled: true, advisorModel: "claude-opus-4-8" });
+  });
 });

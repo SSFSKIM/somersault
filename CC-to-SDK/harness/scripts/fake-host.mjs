@@ -26,6 +26,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeRoster } from "../dist/fleet/roster.js";
 import { hostSocketPath, mintShortId } from "../dist/fleet/paths.js";
+import { preFollowReplay } from "./fake-host-policy.mjs";
 
 const short = mintShortId(Math.random);
 const pid = process.pid;
@@ -132,6 +133,45 @@ function framesFor(word) {
       { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-thinkcluster-done", content: [{ type: "text", text: "thinkcluster done" }] } } },
     ];
   }
+  // bl7 T-HOOKBLOCK task 4 — the pty acceptance producer for the expanded-cluster hook block. Two real
+  // `Read` calls (same two-Read shape as `thinkcluster`, so the collapsed clause reads "Read 2 files")
+  // with a `hook_started`/`hook_response` PreToolUse pair sandwiched between the FIRST call and ITS OWN
+  // result — the NORMAL wire order real settings-layer hooks fire in (P116: `system/hook_started` then
+  // `system/hook_response`, both carrying `hook_id`/`hook_name`/`hook_event`, no `tool_use_id`). This is
+  // deliberate and load-bearing: the plan review's headline catch (spec D12) was a producer that placed the
+  // pair AFTER the result, which never exercises `toolFold.ts`'s call-time (`anchorSequence <= afterSequence
+  // < flushing boundary`) resolution — do not "simplify" this to pair-after-result. `hook_id: "h1"` pairs the
+  // two system frames; each carries its own distinct `uuid` (system frames are never retained in the
+  // document — `appendSdk` rejects them — so the uuid is not a document identity key here, just a realistic
+  // wire shape). `outcome`/`exit_code`/`stdout` on the response mirror P116's measured shape even though
+  // `hookPairs.ts` reads none of them (kept for wire fidelity, not consumed).
+  if (name === "hookcluster") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-hook-read-1", content: [{ type: "tool_use", id: "hook-read-1", name: "Read", input: { file_path: "/work/alpha.txt" } }] } } },
+      { kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", uuid: "u-hook-started-1" } },
+      { kind: "message", data: { type: "system", subtype: "hook_response", hook_id: "h1", hook_name: "PreToolUse:Read", hook_event: "PreToolUse", outcome: "success", exit_code: 0, stdout: "probe-hook\n", uuid: "u-hook-response-1" } },
+      { kind: "message", data: { type: "user", uuid: "u-hook-read-1", message: { content: [{ type: "tool_result", tool_use_id: "hook-read-1", content: "alpha file body", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-hook-read-2", content: [{ type: "tool_use", id: "hook-read-2", name: "Read", input: { file_path: "/work/beta.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-hook-read-2", message: { content: [{ type: "tool_result", tool_use_id: "hook-read-2", content: "beta file body", is_error: false }] } } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-hookcluster-done", content: [{ type: "text", text: "hookcluster done" }] } } },
+    ];
+  }
+  // bl8 T-QY task 4 (cell S1) — the pty acceptance producer for the STANDALONE hook row: one Read call, its
+  // OWN result, THEN a `hook_started`/`hook_response` PostToolUse pair — after the result, unlike
+  // `hookcluster`'s PreToolUse pair above, because a real PostToolUse hook fires once the tool has already
+  // finished. `jar` (canon's cluster-absorption predicate, ported to `resolveRunHooks`) tests
+  // `hookLabel==="PreToolUse"` only, so this entry is never claimed by the Read cluster no matter where it
+  // lands — it is `weaveStandaloneHooks`' (Task 2) to park and `hooksItemRows`' (Task 3) to render, as its
+  // own row ("Ran 1 PostToolUse hook") placed after the cluster's "Read 1 file" row.
+  if (name === "posthook") {
+    return [
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-post-read-1", content: [{ type: "tool_use", id: "post-read-1", name: "Read", input: { file_path: "/work/gamma.txt" } }] } } },
+      { kind: "message", data: { type: "user", uuid: "u-post-read-1", message: { content: [{ type: "tool_result", tool_use_id: "post-read-1", content: "gamma file body", is_error: false }] } } },
+      { kind: "message", data: { type: "system", subtype: "hook_started", hook_id: "h2", hook_name: "PostToolUse:Read", hook_event: "PostToolUse", uuid: "u-posthook-started-1" } },
+      { kind: "message", data: { type: "system", subtype: "hook_response", hook_id: "h2", hook_name: "PostToolUse:Read", hook_event: "PostToolUse", outcome: "success", exit_code: 0, stdout: "post-hook\n", uuid: "u-posthook-response-1" } },
+      { kind: "message", data: { type: "assistant", parent_tool_use_id: null, message: { id: "m-posthook-done", content: [{ type: "text", text: "posthook done" }] } } },
+    ];
+  }
   return [];
 }
 
@@ -149,6 +189,31 @@ function framesFor(word) {
 // before the first `follow` ack is sent): a frame pushed with no follower yet is queued here, then
 // replayed — marked `replay: true`, matching the real host — to the first follower before live pushes
 // resume.
+//
+// bl9 T-FOLLOW (spec D7, A8) — WHAT GETS QUEUED here is now governed by `fake-host-policy.mjs`'s
+// `preFollowReplay`, narrowed to match production's real pre-follow behavior (R1 §1's frame-lifecycle
+// table, re-verified by running the real `SessionHost`):
+//
+//   kind              | production pre-follow behavior                          | this fake host
+//   ------------------|----------------------------------------------------------|------------------
+//   message           | buffered (TurnBuffer) + replayed replay:true            | buffered + replayed
+//                      | (host.ts:412,783)                                       | verbatim
+//   turn              | NOT replayed — a start frame is SYNTHESIZED for an      | buffered + replayed
+//                      | in-flight turn, a bare truncation marker for an idle    | verbatim (DOCUMENTED
+//                      | one (host.ts:767,771)                                   | divergence — no turn
+//                      |                                                          | state to synthesize from)
+//   task              | NOT recorded, NEVER replayed (host.ts:841 has no        | DROPPED
+//                      | buffer home)                                            |
+//   decision_settled   | NOT recorded, NEVER replayed — parks replay from LIVE   | DROPPED
+//                      | state (host.ts:790 iterates parked.list(); a settled    |
+//                      | park is already gone from it)                           |
+//   rewound           | NOT recorded, NEVER replayed (host.ts:659 has no        | DROPPED
+//                      | buffer home — the one real gap, closed CLIENT-side by   |
+//                      | T-FOLLOW's reconcile, not here)                         |
+//
+// The narrowing was proven red-first against `test/unit/fake-host-policy.test.ts`: before it, the policy
+// was a kind-agnostic `(ev) => ev` (fake-host.mjs's ORIGINAL, more-generous behavior — a cell pushing
+// `task`/`decision_settled`/`rewound` pre-follow would have false-greened against it, review F4).
 const followers = new Set();
 const preFollowBuffer = [];   // frames pushed while nobody is following yet
 let stdinBuf = "";
@@ -158,8 +223,10 @@ process.stdin.on("data", (chunk) => {
     const word = stdinBuf.slice(0, nl).trim(); stdinBuf = stdinBuf.slice(nl + 1);
     if (!word) continue;
     for (const ev of framesFor(word)) {
-      if (followers.size === 0) preFollowBuffer.push(ev);
-      else for (const push of followers) push(ev);
+      if (followers.size === 0) {
+        const buffered = preFollowReplay(ev);
+        if (buffered) preFollowBuffer.push(buffered);
+      } else for (const push of followers) push(ev);
     }
   }
 });
@@ -193,6 +260,15 @@ const server = createServer((sock) => {
         send(base);
         if (!following) {
           following = true;
+          // bl7 T-HOOKBLOCK task 4 — a readiness signal for pty cells that need a LIVE (non-replay) push:
+          // the "manual mode on" text the REPL paints as soon as it MOUNTS is not proof this socket's own
+          // `follow` op has been processed server-side yet (there is a real gap between the client sending
+          // `follow` and this handler running), so a test that pushes right after seeing that text can win
+          // the race and land its frame in `preFollowBuffer` — replayed with `replay:true` on drain, which
+          // starves any assertion that depends on a LIVE-only ingest arm (e.g. `useChat.ts`'s hook stamps).
+          // Printed to this process's own stdout, exactly like `SHORT=`/`SOCKET=` above, so a driver script
+          // already polling this pane can wait for it before pushing.
+          console.log(`FOLLOWED`);
           // Drain-before-register, same order as the real host's follow() (host.ts:770 adds LAST): any
           // stdin push that landed with zero followers is replayed to THIS first follower before it is
           // added to `followers`, so a live push racing this drain can never be delivered out of order.

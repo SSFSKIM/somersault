@@ -144,6 +144,12 @@ export const hostOp = z.discriminatedUnion("op", [
   // string — and that is not symmetry, it is probe 102: `applyFlagSettings({effortLevel})` accepts a bogus
   // level SILENTLY, so a frame that got past the client-side gate must not get past the schema too.
   z.object({ op: z.literal("set_effort"), level: z.enum(["low", "medium", "high", "xhigh", "max"]), ...withId }),
+  // Task 2 (bl8 T-ADVCMD): same never-busy-gated flag-layer group as set_effort/set_output_style. `model`
+  // is NULLABLE (not optional) like set_thinking's `maxTokens` above — `null` is canon's explicit "off",
+  // a value the client must be able to send, not an absent field. No enum here: the dialog (Task 1's pure
+  // half) already validated against the catalog, so this schema only closes the shape (string | null),
+  // same division of labor as set_output_style's free-string `style`.
+  z.object({ op: z.literal("set_advisor_model"), model: z.string().min(1).nullable(), ...withId }),
 ]);
 export type HostOp = z.infer<typeof hostOp>;
 export type ControlOp = Extract<HostOp, { op: "set_model" | "set_permission_mode" | "set_thinking" | "capabilities" | "compact" | "usage" | "context_usage" | "mcp_status" | "mcp_reconnect" | "mcp_toggle" }>;

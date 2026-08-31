@@ -5,7 +5,7 @@
   "description": "M0 differential harness: drive interchangeable Claude Code engines (real binary vs extracted payload vs future TS reimplementation) through sdk.mjs and diff normalized transcripts.",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.237",
+    "@anthropic-ai/claude-agent-sdk": "0.3.251",
     "zod": "^4.4.3"
   },
   "devDependencies": {

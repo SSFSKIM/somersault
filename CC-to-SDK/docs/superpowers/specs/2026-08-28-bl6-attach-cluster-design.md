@@ -285,3 +285,13 @@ report).
   findings; adjudication in D10-D12. §2.2 rewritten (fake-host process contract), §3.2(1) gains the
   clock-independent pending-state requirement + production-pipeline test, §3.2(2) gains the total
   ordering with tie-break.
+- v3 (2026-08-30, post-close): §3.3's deferred probe wave ran on SDK 0.3.237 (token renewed a day
+  before the Aug-31 reset; probes `116-hook-frames-0337.ts`, `117`/`117b-memory-recall`,
+  `118-goal-advisor-reachability.ts`). (c) hook block: REACHABLE — settings-layer hooks emit
+  `hook_started`/`hook_response` pairs headlessly (P85 was version-stale); `stop_hook_summary`
+  never leaks, so the block is synthesized from the pairs. (d) relevant memories: NOT reachable —
+  injection works headlessly but zero `system/memory_recall` frames at 2- and 14-file populations.
+  D8 goal_status: NOT reachable (`/goal` still UI-command-only). D8 advisor: REACHABLE —
+  `advisor_tool_result` blocks arrive as assistant content with settings `advisorModel`. Ticket
+  guidance from §3.3 ("ticket then if reachable"): hook block + advisor row are bl7 candidates;
+  memories/goal_status stay recorded with firmer evidence.

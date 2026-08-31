@@ -15,6 +15,19 @@ export function userItem(text: string, uuid: string): UserMessageItem {
   return { type: "userMessage", id: uuid, text };
 }
 
+/** A user item for a message THIS user did not write: a cross-session arrival (M9). Same shape and same id
+ *  rule as `userItem` — the id is the frame's own uuid, which is how a client dedupes the live item against
+ *  the one `thread/read` returns — plus the `origin` that says who sent it.
+ *
+ *  Its own constructor rather than an optional third parameter on `userItem`, because the two say different
+ *  things: an ordinary prompt has NO origin to carry, and a call site that could pass one and didn't would
+ *  be indistinguishable from one that had nothing to pass. All THREE paths an arrival reaches a client by
+ *  build the item here — the live drain (peerAdoption.ts), the cold replay of a persisted peer row and the
+ *  projection of a logged entry (items/project.ts) — so the three cannot disagree about its shape. */
+export function arrivalItem(text: string, uuid: string, origin: Record<string, unknown>): UserMessageItem {
+  return { type: "userMessage", id: uuid, text, origin };
+}
+
 /** M5 Task 13 (spec D-M5-22): 0.3.234 delivers a `/context` turn's structured card as `context_usage`, a
  *  WRAPPER-LEVEL sibling on the assistant frame — `frame.context_usage`, not `frame.message.context_usage`
  *  (probe 111 measured the inner one absent, which is also why it is never replayed to the model). The

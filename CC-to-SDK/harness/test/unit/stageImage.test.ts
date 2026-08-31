@@ -71,6 +71,7 @@ const handlers = (over: Partial<HostHandlers> = {}): HostHandlers => ({
   addDir: async () => {},
   removeDir: async () => {},
   setOutputStyle: async () => {}, setEffort: async () => {},
+  setAdvisorModel: async () => {},
   addRule: async () => {},
   removeRule: async () => {},
   stageImage: () => ({ path: "/fake/staged/path" }),

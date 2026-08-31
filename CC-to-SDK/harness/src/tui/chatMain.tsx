@@ -39,6 +39,10 @@ export interface ChatClientOpts {
   // The ONE ordered bootstrap stream (F1 Task 4): persisted disk rows and identified local notices in a
   // single array whose order IS the total order. No parallel `initialLines`/`initialMessages` channel.
   initialEntries?: readonly TranscriptBootstrapEntry[];
+  // bl9 D14: `cli/attach.ts`'s disk stamp over the SAME rows `initialEntries` came from — present only on
+  // `ccx attach`. Drives `useChat`'s one-shot post-follow reconcile; see that opts field's doc for why an
+  // absent stamp must never trigger a read.
+  initialDiskStamp?: { lastUuid?: string; count: number };
   // --permission-mode / --think, threaded so the status bar and Tab ladder start on the REAL mode.
   // `initialTokenSource` (T2, F9 T-AUTO §A2): `AccountFacts.tokenSource` from the SAME `accountInfo()` race
   // main.ts already runs for the welcome banner's billing label — a second consumer of one fact, not a
@@ -47,7 +51,9 @@ export interface ChatClientOpts {
   // `accountBridge` (F10 T-MAINT item 1): the LATE channel for that same fact — the LIVE, unraced
   // `accountInfo()` promise, so a cold handshake that missed the banner's budget can still reach the
   // auto-mode notice before its own later deadline.
-  hookOpts?: { initialMode?: string; initialModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
+  // `initialAdvisorModel` (bl7 T-ADVISOR Task 3, D15) rides the identical spread as `initialModel` — see
+  // `useChat.ts`'s opts doc for the whole chain (`main.ts` → here → `ChatApp.tsx` → `useChat`).
+  hookOpts?: { initialMode?: string; initialModel?: string; initialAdvisorModel?: string; initialThink?: string; initialEffort?: string; initialOutputStyle?: string; initialShowTurnDuration?: boolean; initialPromptSuggestionEnabled?: boolean; initialPrefersReducedMotion?: boolean; initialTerminalProgressBarEnabled?: boolean; initialTokenSource?: string; initialCopyOnSelect?: boolean; statusLine?: StatusLineConfig; promptLatch?: PromptLatch; accountBridge?: AccountBridge };
   onDetach?: () => void;
   // Test seam; default builds remoteChatSession(socketPath, { resume }).
   makeSession?: (resume?: string) => ChatSession;
@@ -967,6 +973,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
         onIssues={(issues) => { for (const line of formatIssues(issues, keybindingsFile)) notices.notify(line); }}>
         <ChatRoot rendererSwitch={rendererSwitch} makeSession={makeSession} client={opts.client} cwd={opts.cwd}
           initialPrompt={opts.initialPrompt} initialResume={opts.initialResume} initialEntries={opts.initialEntries}
+          initialDiskStamp={opts.initialDiskStamp}
           clearStaticTranscript={bridge.clearStaticTranscript} noticeBridge={notices}
           hookOpts={hookOpts} onDetach={opts.onDetach} resumeOutput={output} onResize={resizeChain.subscribe}
           onFocusChange={focusChain.subscribe}

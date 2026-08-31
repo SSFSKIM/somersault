@@ -217,6 +217,15 @@ export class SessionHost {
    *  launch level. Session-scoped only: `'max'` is explicitly non-persistable (sdk.d.ts:2368) and ccx never
    *  writes ANY of the five to a settings file from here, so this field is the whole of its lifetime. */
   private flagEffort?: string;
+  /** Task 2 (bl8 T-ADVCMD): TRI-STATE where the other two members of this accumulator are binary, because
+   *  unlike an output style or an effort level, "off" is a legitimate advisor value and must be told apart
+   *  from "never touched" — `undefined` leaves whatever the LAUNCH CONFIG says standing across a swap
+   *  (nothing to replay), `null` is an explicit `/advisor off` and MUST be replayed on the next swap or a
+   *  resumed/cleared/rewound engine would resurrect the launch-config advisor the user just turned off
+   *  (plan-review F3), and a string is an explicit choice. Commit-after-await like `setEffort`/
+   *  `setOutputStyle` below: a rejected `applyFlagSettings` call throws before the assignment runs, so a
+   *  rejected apply never enters replay state. */
+  private flagAdvisorModel: string | null | undefined;
 
   private finishedResolve!: () => void;
   /** Resolves when teardown completes (server closed). runHostMain awaits this for interactive hosts. */
@@ -335,6 +344,7 @@ export class SessionHost {
         addRule: (behavior, rule) => this.addRule(behavior, rule),
         removeRule: (behavior, rule) => this.removeRule(behavior, rule),
         setEffort: (level) => this.setEffort(level),
+        setAdvisorModel: (model) => this.setAdvisorModel(model),
       }, hostSocketPath(process.pid, this.env));
       await this.server.listen();
     } catch (e) {
@@ -545,7 +555,13 @@ export class SessionHost {
    *  workers' (and every library caller's) wire volume untouched. An explicit config value still wins in
    *  both directions: this is a default, not an override. */
   private engineConfig(extra: Partial<HarnessConfig> = {}): HarnessConfig {
-    const partials = this.opts.kind === "interactive" ? { includePartialMessages: this.opts.config.includePartialMessages ?? true } : {};
+    // bl7 T-HOOKBLOCK D1: same seam, same shape as `includePartialMessages` above — P116 (2026-08-30, SDK
+    // 0.3.237) found settings-layer hooks now emit `hook_started`/`hook_response` on the wire, so this is
+    // the config value that actually turns them on for a production LiveTurn. Config-overridable in both
+    // directions, exactly like the partial-message flag beside it.
+    const partials = this.opts.kind === "interactive"
+      ? { includePartialMessages: this.opts.config.includePartialMessages ?? true, includeHookEvents: this.opts.config.includeHookEvents ?? true }
+      : {};
     return { ...this.opts.config, ...partials, ...extra, permissionBroker: this.broker() };
   }
 
@@ -651,6 +667,11 @@ export class SessionHost {
     if (hasPerms) await this.session?.applyFlagSettings?.({ permissions: { ...this.flagPerms } });
     if (this.flagOutputStyle) await this.session?.applyFlagSettings?.({ outputStyle: this.flagOutputStyle });
     if (this.flagEffort) await this.session?.applyFlagSettings?.({ effortLevel: this.flagEffort });
+    // Task 2 (bl8 T-ADVCMD): `!== undefined`, NOT truthy — `null` (explicit off) is a value that MUST be
+    // replayed too, or a swap would let the fresh engine's empty flag layer fall through to whatever
+    // advisor the LAUNCH CONFIG names, resurrecting exactly what the user just turned off (plan-review F3).
+    // `undefined` alone (never touched) replays nothing, leaving the launch config to govern as before.
+    if (this.flagAdvisorModel !== undefined) await this.session?.applyFlagSettings?.({ advisorModel: this.flagAdvisorModel });
   }
 
   /** Apply + commit one whole permissions object. Commit ONLY after the engine accepts it — a rejected
@@ -685,6 +706,15 @@ export class SessionHost {
   async setEffort(level: string): Promise<void> {
     await this.session?.applyFlagSettings?.({ effortLevel: level });
     this.flagEffort = level;
+  }
+  /** Task 2 (bl8 T-ADVCMD). Same commit-after-await rule as `setEffort` above and for the same reason —
+   *  a rejected apply must not leave the tri-state accumulator in a shape a later swap would replay as
+   *  fact. `null` clears the advisor (canon's off path, `applyFlagSettings({advisorModel: null})`,
+   *  P119 case 4) and is written to the accumulator exactly like a string choice — the whole point of the
+   *  tri-state is that `null` here is as much a committed value as any model id. */
+  async setAdvisorModel(model: string | null): Promise<void> {
+    await this.session?.applyFlagSettings?.({ advisorModel: model });
+    this.flagAdvisorModel = model;
   }
   /** cwd first (it is implicit, always granted), then the launch config's static list, then this
    *  host's own session-scoped grants — the three sources /add-dir's UI needs to tell apart. */

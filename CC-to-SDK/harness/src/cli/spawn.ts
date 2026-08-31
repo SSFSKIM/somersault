@@ -18,7 +18,7 @@ function configFlags(inv: CcxInvocation): string[] {
   const out: string[] = [];
   const c = inv.config as Record<string, string | undefined>;
   for (const [flag, key] of [["--model", "model"], ["--effort", "effort"], ["--resume", "resume"],
-    ["--permission-mode", "permissionMode"]] as const) {
+    ["--permission-mode", "permissionMode"], ["--advisor-model", "advisorModel"]] as const) {
     if (c[key]) out.push(flag, c[key]!);
   }
   // --settings is the one flag parseCcx hands back as an OBJECT (it accepts inline JSON *or* a file path

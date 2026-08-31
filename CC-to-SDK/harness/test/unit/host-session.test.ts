@@ -245,3 +245,43 @@ describe("SessionHost: partial-message frames for the interactive REPL only", ()
     expect(seen[1]).toMatchObject({ includePartialMessages: true, resume: "sid-2" });
   });
 });
+
+// bl7 T-HOOKBLOCK Task 1, spec D1. Same seam, same shape as `includePartialMessages` above:
+// `includeHookEvents` is never set by any ccx front door today, so P116's now-visible settings-layer hook
+// frames (hook_started/hook_response) never reach a production LiveTurn either. The switch lives on the
+// host's KIND for the identical reason — both interactive front doors pass through `engineConfig`, no
+// headless caller does — and an explicit config value still wins in both directions.
+describe("SessionHost: hook-event frames for the interactive REPL only (bl7 T-HOOKBLOCK D1)", () => {
+  const captured = () => { const seen: any[] = []; return { seen, deps: deps((c: any) => { seen.push(c); return instantSession(); }) }; };
+
+  it("turns includeHookEvents ON for an interactive host", async () => {
+    const { seen, deps: d } = captured();
+    await new SessionHost({ ...opts(), kind: "interactive" }, d).start();
+    expect(seen[0].includeHookEvents).toBe(true);
+  });
+
+  it("leaves a bg host's wire volume exactly as configured", async () => {
+    const { seen, deps: d } = captured();
+    await new SessionHost(opts(), d).start();
+    expect(seen[0].includeHookEvents).toBeUndefined();
+    expect(resolveOptions(seen[0]).includeHookEvents).toBeUndefined();   // and nothing reaches the SDK either
+  });
+
+  it("never overrides an explicit choice, in either direction", async () => {
+    const a = captured();
+    await new SessionHost({ ...opts(), kind: "interactive", config: { includeHookEvents: false } }, a.deps).start();
+    expect(a.seen[0].includeHookEvents).toBe(false);
+    const b = captured();
+    await new SessionHost({ ...opts(), config: { includeHookEvents: true } }, b.deps).start();
+    expect(b.seen[0].includeHookEvents).toBe(true);
+  });
+
+  it("keeps the flag across a /resume engine swap, which reopens from the same launch config", async () => {
+    const { seen, deps: d } = captured();
+    const h = new SessionHost({ ...opts(), kind: "interactive" }, d);
+    await h.start();
+    await h.resumeSession("sid-2");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ includeHookEvents: true, resume: "sid-2" });
+  });
+});

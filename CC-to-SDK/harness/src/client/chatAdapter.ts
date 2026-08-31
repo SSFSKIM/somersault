@@ -202,6 +202,9 @@ export function remoteChatSession(socketPath: string, opts: RemoteChatOpts = {})
     // W-C T11 (EP-C6): the effort flip. The level is already inside the domain by the time it gets here —
     // useChat's `applyEffort` gate is what makes that true, and `ops.ts`'s enum is what makes it enforced.
     async setEffort(level: EffortLevel) { orFail(await (await ready).setEffortOp(level)); },
+    // Task 2 (bl8 T-ADVCMD). Same pattern as setEffort — the dialog (Task 1's pure half) already
+    // resolved/validated the choice, so this adapter is a plain pass-through, `null` included.
+    async setAdvisorModel(model: string | null) { orFail(await (await ready).setAdvisorModelOp(model)); },
     onSessionEvent(cb) {
       if (!eventCb) { eventCb = cb; for (const ev of backlog.splice(0)) { try { cb(ev); } catch {} } }
       else eventCb = cb;                     // single consumer: a re-subscribe replaces (useChat's session swap)

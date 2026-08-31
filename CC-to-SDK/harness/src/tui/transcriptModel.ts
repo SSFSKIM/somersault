@@ -142,6 +142,10 @@ export class TranscriptDocument {
    *  entry while a later append restores the count. Never decreases and never resets. */
   revision(): number { return this.rev; }
 
+  /** bl7 T-HOOKBLOCK: the sequence of the LATEST retained entry — what a hook frame (never itself retained,
+   *  see `appendSdk`) stamps its `afterSequence` attribution against at response arrival (spec D2). */
+  lastSequence(): number { return this.seq; }
+
   /** Disk rows from `getSessionMessages()` never carry the structured `tool_use_result` sidecar, but the host's
    *  live copy of the SAME uuid does — so the second delivery of a deduplicated identity can be strictly richer.
    *  Keep that copy and associate its sidecar against the retained entry's own result blocks. Strictly an upgrade:

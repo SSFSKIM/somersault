@@ -358,6 +358,7 @@ export async function startFakeHost(opts: FakeHostOpts = {}): Promise<FakeHostCo
     addRule: async (behavior, rule) => { record("add_rule", behavior, rule); },
     removeRule: async (behavior, rule) => { record("remove_rule", behavior, rule); },
     setEffort: async (level) => { record("set_effort", level); },
+    setAdvisorModel: async (model) => { record("set_advisor_model", model); },
     // F9 T-IMAGE Task 5 (I3b): the fleet suites this fake serves never exercise real image staging (that
     // lives in `test/unit/stageImage.test.ts` and the real-socket suite against `SessionHost`) — a fixed
     // stub path is enough to satisfy the dispatch wiring and keep the op observable in `ops`/`opCalls`.

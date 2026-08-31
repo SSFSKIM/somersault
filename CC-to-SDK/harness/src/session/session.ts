@@ -292,8 +292,13 @@ export class Session implements ControllableSession {
   // stream may then die at teardown — daemon restart policy covers revival.
   async interrupt(): Promise<unknown> { return this.callQ("interrupt"); }
   /** Re-send `initialize` to the running CLI → a FRESH init payload (commands/agents/models/account…),
-   *  unlike the cached initializationResult(). Probe 38: safe mid-session, even with a permission parked
-   *  (the parked request is deduped, NOT redelivered to this process). */
+   *  unlike the cached initializationResult(). Probe 38: safe mid-session with a permission parked (the
+   *  parked request is deduped, NOT redelivered to this process). NOT safe with a HOOK parked, as of
+   *  0.3.250: over stdio the CLI now re-registers this query's hooks from the re-sent request (the response
+   *  reports `hooks_applied`) and, because it cannot tell whether the re-sent callback ids still name the
+   *  same hooks, RESOLVES any hook callback it was waiting on — a pending PreToolUse is denied with a retry
+   *  notice and a pending prompt is blocked. So expect one denied-then-retried tool call, or one prompt to
+   *  re-send, when a reinitialize races an unanswered hook. */
   async reinitialize(): Promise<unknown> { this.assertRunning(); return this.callQValue("reinitialize"); }
   /** Re-scan plugins / skills on the running CLI (probe 105: both ALIVE). Each answers with a FRESH
    *  CATALOG — commands+agents+plugins+mcpServers for plugins, skills for skills — not a bare ack, so a

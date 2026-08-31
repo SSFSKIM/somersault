@@ -5,50 +5,21 @@
 // happened synchronously and let the machinery drain it when it installs — never to assume ordering the
 // read loop does not promise.
 //
-// ADOPTION GOES THROUGH `beginTurn`, NOT AROUND IT. An adopted turn owes its subscribers everything an
-// ordinary one does — `turn/started`, the model's items, a `turn/completed` whose status tells completed
-// from failed from interrupted from cancelled — and `beginTurn` already produces all of it, including the
-// close/interrupt re-check on the far side of the chain and the `turnFailureOf`-shaped failure tag. So
-// adoption supplies a runner and inherits the rest; `turn/interrupt` reaches an adopted turn for free,
-// because it raises the same `record.interruptRequested` latch `beginTurn`'s own success path reads.
-import { randomUUID } from "node:crypto";
-import { peerArrival } from "../peer/address.js";
-import { TurnMapper, userItem } from "./items/mapper.js";
-import { turnFailureOf } from "../session/turnResult.js";
-import { beginTurn, emitItems, type TurnOutcome, type TurnStopped } from "./turns.js";
+// THIS FILE IS THE FACADE: the thread's peer-inbound STATE, the observer that installs and tears down, and
+// the frame skeleton that routes each frame to one of three responsibilities — `peerAdoption.ts` (the
+// adopted turn's bracket, its binding and its drain), `peerSeed.ts` (the window that decides WHERE an
+// arrival sits in the transcript), `peerArrivalPath.ts` (what happens to one arrival: persist, announce,
+// enqueue). Every export the rest of the server imports is re-exported from here, so the seams are
+// responsibility boundaries and not a new set of import paths.
+import { fsArrivalStore, type ArrivalAnchor, type ArrivalStore } from "../peer/arrivalLog.js";
+import { captureFrame, claimResult, drainArrivals, routeLifecycle, type AdoptedTurn } from "./peerAdoption.js";
+import { beginSeeding, observeVisible, readerVisible, type Seeding } from "./peerSeed.js";
+import { noteArrival, writeEntry, type Arrival } from "./peerArrivalPath.js";
 import type { ThreadRecord } from "./registry.js";
-import type { AppServer } from "./server.js";
+import type { AppServer, AppServerDeps } from "./server.js";
 
-/** How many un-adopted arrivals one thread holds. Attacker-influenced — any local process that can write
- *  this session's socket can produce them — so it is capped and oldest-first evicted, never grown. */
-const MAX_ARRIVALS = 32;
-/** How many frames one adopted turn captures while its runner is still behind the chain. Bounded for the
- *  same reason; a turn that overruns it loses the earliest frames rather than the process. */
-const MAX_CAPTURED = 512;
-/** A ceiling on the uuid set below. Every entry is normally deleted by its own turn's terminal lifecycle
- *  frame, so this only ever catches an engine that stops bracketing — and evicting is safe: a forgotten
- *  own turn is at worst briefly CONSIDERED for adoption, which `beginTurn`'s busy gate then declines. */
-const MAX_OWN_UUIDS = 64;
-
-interface Arrival { msgId: string; text: string; at: number }
-
-interface AdoptedTurn {
-  commandUuid: string;
-  /** The `record.epoch` adoption started under. A frame that arrives after a swap belongs to a
-   *  conversation that no longer exists, and acting on it would move a turn that is not this one. */
-  epoch: number;
-  captured: unknown[];
-  mapper?: TurnMapper;
-  turnId?: string;
-  /** `beginTurn`'s OWN outcome type, imported rather than restated: the status words an adopted turn can
-   *  report are the same ones every other turn reports, and a local widening to `string` would let this
-   *  file invent a terminal `onSuccess` has no branch for. */
-  resolve?: (o: TurnOutcome) => void;
-  /** Set when the terminal arrives. If the runner has not installed yet, this is what it resolves with
-   *  the moment it does — the difference between a settled turn and a thread busy forever. */
-  outcome?: TurnOutcome;
-  terminated: boolean;
-}
+export { notePeerTurnUuid, settleAdopted } from "./peerAdoption.js";
+export { readerVisible } from "./peerSeed.js";
 
 export interface PeerInboundState {
   off?: () => void;
@@ -58,80 +29,79 @@ export interface PeerInboundState {
    *  Per-record (it dies with the thread) and deleted at each terminal (it does not grow with turns). */
   ourUuids: Set<string>;
   adopted?: AdoptedTurn;
+  /** THE OWN TURN'S BRACKET, tracked explicitly rather than inferred. `notePeerTurnUuid` records it from
+   *  inside the runner — which `beginTurn` invokes after it has broadcast `turn/started` — so an arrival
+   *  emitted into this bracket can never precede the turn edge that owns it. It is NOT `busy` and NOT
+   *  `currentTurnId`: both race the bracket's real edges in opposite directions (`busy` flips true before
+   *  the broadcast, and it is still true after an adopted terminal has cleared `state.adopted`), and an
+   *  arrival attributed on either would be attributed to a turn that never opened or to one already over.
+   *  Open exactly while `activeTurnId(record) === ownTurn.turnId`; cleared by the first drain that sees
+   *  otherwise. */
+  ownTurn?: { turnId: string };
+  /** The last filter-surviving frame this thread observed, as an entry records it. `null` says the arrival
+   *  PRECEDES EVERY ROW THE SEED RETURNED — which subsumes, but is not limited to, a seed that saw zero
+   *  rows: grounding on row 0 of a transcript full of rows produces it too. `undefined` is the different
+   *  thing: "no frame has advanced it yet".
+   *  It is NOT the record of whether this thread has been seeded: `seeded` is, and conflating the two let
+   *  a single frame observed before the id was known both disable the seed forever and ground the chain at
+   *  the top of a transcript it had never read. */
+  anchor: ArrivalAnchor | null | undefined;
+  /** Whether the seed read has completed and grounded the chain. No entry is ever written while it is
+   *  false, which is what keeps an `anchor: null` on disk a STATEMENT — the arrival precedes every row the
+   *  seed returned — rather than the absence of one, i.e. a chain nothing had read yet. */
+  seeded: boolean;
+  /** Non-null exactly while a seed read is in flight: frames and arrivals landing inside that window are
+   *  held here rather than acted on. */
+  seeding: Seeding | null;
+  /** This thread's mirror of the store's own latch — a write failed, so the counts are not to be trusted. */
+  degraded: boolean;
 }
 
-/** Record a uuid this server is about to submit under, so its own lifecycle bracket is recognised.
- *  Called from turns.ts's `submitRunner` beside the `randomUUID()` that mints it. */
-export function notePeerTurnUuid(record: ThreadRecord, uuid: string): void {
-  const state = record.peerInbound;
-  if (!state) return;
-  state.ourUuids.add(uuid);
-  // Insertion-ordered, so the first key IS the oldest — see MAX_OWN_UUIDS on why eviction is harmless.
-  while (state.ourUuids.size > MAX_OWN_UUIDS) state.ourUuids.delete(state.ourUuids.values().next().value as string);
+/** The one shared filesystem store, built on first use. One process, one store: the degraded latch and the
+ *  seq counter are per-session state that would be split by a per-thread instance. */
+let sharedFsStore: ArrivalStore | undefined;
+
+/** THE STRUCTURAL RULE (spec: Store injection), and the one place it is decided — Stage C's reader and
+ *  Stage D's search resolve their store through this same function, so the write side and the read side
+ *  cannot come to different answers about whether merging is on. The filesystem store is the default only
+ *  when the transcript reader is also the default: an embedder that overrode the reader has a transcript
+ *  this machine does not own, and merging this machine's arrivals into it would be worse than not merging.
+ *  Supplying a store explicitly is the way to say "merge anyway", and it is what every test does. */
+export function effectiveArrivalStore(deps: AppServerDeps): ArrivalStore | undefined {
+  return deps.arrivalStore ?? (deps.getSessionMessages ? undefined : (sharedFsStore ??= fsArrivalStore()));
 }
-
-const isOurs = (state: PeerInboundState, frame: any): boolean =>
-  // BOTH fields, because which one carries the submit uuid is not yet measured (Task 13's keyed half).
-  // Under the wrong guess this over-adopts, and beginTurn's busy gate makes that a no-op — an own turn
-  // holds `busy` for its whole length, so the attempt is declined rather than becoming a second turn.
-  // Under the right one it never adopts an own turn at all.
-  state.ourUuids.has(String(frame.command_uuid)) || state.ourUuids.has(String(frame.uuid));
-
-const forget = (state: PeerInboundState, frame: any): void => {
-  state.ourUuids.delete(String(frame.command_uuid));
-  state.ourUuids.delete(String(frame.uuid));
-};
-
-/** `queued` and `started` are the two non-terminal states probe 119b observed; anything else ends the
- *  bracket. Written as "not one of these" rather than as a list of terminals because the healthy
- *  terminal's NAME is a delegated unknown — only the failure path's `cancelled` has been seen — and a
- *  closed list would silently fail to settle a turn whose terminal is spelled something else. */
-const isTerminalState = (s: unknown): boolean => s !== "queued" && s !== "started";
-
-/** An adoption whose `beginTurn` settled WITHOUT ever reaching the runner — the chain callback's own
- *  closing/interrupt guard takes that path — leaves no resolver behind and no turn running. The object
- *  would then block every later adoption on this thread forever, so it is dropped the moment the thread
- *  is provably not running it: no resolver installed, and not busy. */
-const isDeadAdoption = (record: ThreadRecord, a: AdoptedTurn): boolean => !a.resolve && !record.busy;
 
 export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
   if (record.crossSessionInbound === "refuse") return;   // nothing is coming; observe nothing
-  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set() };
+  const state: PeerInboundState = record.peerInbound ?? { arrivals: [], ourUuids: new Set(), anchor: undefined, seeded: false, seeding: null, degraded: false };
   record.peerInbound = state;
+  // Resolved ONCE, here: whether this thread logs at all is a property of the server's deps rather than of
+  // any frame, and re-deciding it per frame is how a write side and a read side come to disagree.
+  const store = effectiveArrivalStore(srv.deps);
+  // A record admitted WITH a session id (attach, resume) seeds AT INSTALL — the read is fired here and
+  // resolves later, so the admission contract stays same-tick and no frame can land before the window is
+  // open. A record without one seeds at the frame that reveals the id (below), which covers the FORK shape
+  // as much as the fresh one: fork admission deliberately leaves `record.sessionId` undefined over copied
+  // history, and grounding confirmed-empty "because there is no id yet" would render a fork's first arrival
+  // at the top of a history it did not precede.
+  if (store && record.sessionId) beginSeeding(srv, record, state, store, record.sessionId);
 
   const onFrame = (frame: any): void => {
     if (!frame || typeof frame !== "object") return;
-
-    if (frame.type === "command_lifecycle") {
-      let adopted = state.adopted;
-      if (adopted && String(frame.command_uuid) === adopted.commandUuid) {
-        if (!isTerminalState(frame.state)) return;
-        adopted.terminated = true;
-        // A frame from a conversation that has been swapped out settles the turn as CANCELLED and clears
-        // everything — a branch that cleared only the uuid would leave `busy` true forever.
-        if (record.epoch !== adopted.epoch) { settleAdopted(srv, record, "cancelled"); return; }
-        const resolve = adopted.resolve;
-        state.adopted = undefined;
-        if (resolve) resolve(adopted.outcome);
-        // else: the runner has not installed. It reads `outcome` off the object it still holds.
-        return;
-      }
-      if (isOurs(state, frame)) { if (isTerminalState(frame.state)) forget(state, frame); return; }
-      if (adopted && isDeadAdoption(record, adopted)) { state.adopted = undefined; adopted = undefined; }
-      if (adopted) return;                               // one adopted turn at a time
-      if (isTerminalState(frame.state)) return;          // a terminal for a bracket we never saw open
-      adopt(srv, record, state, String(frame.command_uuid));
-      return;
+    // Seeding runs at whichever moment the session id is actually known (spec rev 8.1). `routeInit`
+    // latches it from the init frame and its subscription was installed first (server.ts's admission
+    // spines, rewind's swap), so by the time this observer sees that frame the id is already on the record.
+    // `seeded`, never `anchor === undefined`: an anchor that has moved is not evidence that a seed ever
+    // ran, and reading it as such let one frame observed before the id was known cancel the seed for the
+    // life of the thread — after which every arrival was logged against a chain grounded on `prevUuid:
+    // null`, which is the top of a transcript this observer had never read.
+    if (store && !state.seeding && !state.seeded && record.sessionId) {
+      beginSeeding(srv, record, state, store, record.sessionId);
     }
 
-    const adopted = state.adopted;
-    if (adopted && !adopted.terminated) {
-      if (adopted.mapper && adopted.turnId) {
-        emitItems(srv, record, adopted.turnId, adopted.mapper.ingest(frame));
-      } else if (adopted.captured.length < MAX_CAPTURED) {
-        adopted.captured.push(frame);
-      }
-    }
+    if (frame.type === "command_lifecycle") { routeLifecycle(srv, record, state, frame); return; }
+
+    captureFrame(srv, record, state, frame);
 
     // …and the arrival itself, which is a fact about this THREAD rather than about any one turn: it is
     // held unassigned until lifecycle evidence gives it a turn to belong to. Nothing here branches on
@@ -139,117 +109,34 @@ export function installPeerInbound(srv: AppServer, record: ThreadRecord): void {
     // possible fates and no way to predict which.
     // No `frame.type === "user"` pre-check: `peerArrival` already owns that, and a second copy of any part
     // of the recognition rule here is the exact drift this task removed.
-    if (noteArrival(srv, record, state, frame)) drainArrivals(srv, record, state);
+    const arrived = noteArrival(srv, record, state, store, frame);
+
+    // AN ARRIVAL'S OWN FRAME IS NEVER AN ANCHOR — not for itself, and not for the arrival behind it.
+    //
+    // This used to run `readerVisible` on every frame, on the reasoning that a peer row is `isMeta` and so
+    // fails that predicate anyway. That is true of the row the CLI PERSISTS and was assumed of the frame it
+    // STREAMS; the live frame need not carry the flag, and when it does not, an arrival advanced the anchor
+    // onto itself. The next arrival of a batch was then anchored to a peer row — which the reader drops
+    // unconditionally and will never return — so its anchor could not resolve in any window and criterion
+    // 24 withheld it from history forever. Measured twice on LEG 10 of the live suite (three arrivals
+    // announced, exactly one in history) and reproduced offline in peer-inbound-log.test.ts (9b).
+    //
+    // The rule is structural rather than a flag check, which is why it is stated on the ARRIVAL and not on
+    // `readerVisible`: whatever a live frame's flags say, an arrival persists as a row the reader does not
+    // return, so an anchor naming one is unresolvable by construction. `readerVisible` stays a faithful
+    // mirror of the reader over ROWS (its contract test says so); it is simply not asked about a frame this
+    // file has already recognised as something the reader will drop.
+    if (!arrived && store && readerVisible(frame)) observeVisible(state, frame);
+
+    // AND EVERY FRAME DRAINS, not only an arrival's own. A drain is now what DETECTS a dead bracket as
+    // well as what empties a live one, and the frames that mark a bracket ending — an own turn's last
+    // assistant frame, a result, a straggler after the terminal — are exactly the ones that used to pass
+    // through here without ever asking. Cheap: the queue is empty on the overwhelming majority of frames.
+    if (state.arrivals.length) drainArrivals(srv, record, state);
   };
 
   state.off = record.session.onFrame(onFrame);
-  state.offResult = record.session.onUnclaimedResult?.((result: unknown) => {
-    const adopted = state.adopted;
-    if (!adopted || adopted.terminated) return false;
-    // Normalized through the SAME reader ordinary turns use. A raw result stored and reported as "some
-    // result arrived" makes `is_error` and an API error read as a clean completion.
-    const failure = turnFailureOf(result);
-    adopted.outcome = failure ? { error: failure } : undefined;
-    if (adopted.mapper && adopted.turnId) emitItems(srv, record, adopted.turnId, adopted.mapper.ingest(result));
-    else if (adopted.captured.length < MAX_CAPTURED) adopted.captured.push(result);
-    return true;                                          // CLAIMED — this is what keeps it off the unmatched counter
-  });
-}
-
-/** Note one arrival, and ANNOUNCE it; returns whether the frame was a cross-session message at all.
- *
- *  What an arrival IS, and what it reads as, is `peerArrival`'s (peer/address.ts) — the SAME function
- *  `items/replay.ts` asks for the cold twin of this item. This file deliberately holds no copy of that
- *  rule: two files agreeing by construction is not the same as one rule, and every place the two copies
- *  drifted produced two different texts under ONE id. What stays here is what is genuinely live-only:
- *  queueing, eviction, the minted-uuid fallback, and the broadcast. */
-function noteArrival(srv: AppServer, record: ThreadRecord, state: PeerInboundState, frame: any): boolean {
-  const arrival = peerArrival(frame);
-  if (!arrival) return false;
-  const origin = arrival.origin;
-
-  // The FRAME's own uuid, never a minted one when it has one. This id is what the transcript persists, and
-  // `items/replay.ts` gives a replayed user row exactly this id — which is the whole mechanism by which a
-  // client deduplicates the live item against the one `thread/read` returns. A fresh uuid would make every
-  // arrival appear twice to any client that reads its own history; it is the last resort, not the rule.
-  const arrivalUuid = arrival.uuid ?? randomUUID();
-
-  state.arrivals.push({ msgId: arrivalUuid, text: arrival.text, at: Date.now() });
-  // Oldest-first, and the drop is announced: a silently truncated queue reads to an operator exactly like
-  // a queue nothing was ever written to.
-  while (state.arrivals.length > MAX_ARRIVALS) {
-    state.arrivals.shift();
-    console.warn(`[peer] arrival queue full on thread ${record.id} (cap ${MAX_ARRIVALS}); dropped the oldest`);
-  }
-
-  // ANNOUNCED HERE, at arrival, and with NO turnId — at this moment the message's fate is genuinely
-  // undecided (it may fold into a running turn, batch with others, or cause a turn whose id does not exist
-  // yet), so the field could only be fabricated, delayed, or null. A client correlates through
-  // `arrivalUuid`, which is also the id of the item this arrival eventually produces.
-  //
-  // `origin` travels VERBATIM, and is always present now that it is what MAKES this an arrival.
-  // `verifiedPeerPid` is the only field in this exchange the kernel vouches for — `from` is sender-authored
-  // and forgeable by any same-user process — so re-deriving the object would replace a verified fact with
-  // this server's opinion of it.
-  //
-  // `srv.broadcast` and not `broadcastServer`: this is the thread's SUBSCRIBERS, an audience distinct from
-  // the server-scoped watchers, because an arrival is CONTENT and `watchThreads` is existence fan-out
-  // (fanout.ts). It is the same call `emitItems` makes for the item this arrival becomes.
-  srv.broadcast(record.id, "thread/peerMessage", { threadId: record.id, arrivalUuid, origin });
-  return true;
-}
-
-/** The arrivals this thread is carrying become user items of whichever turn is actually running them —
- *  never before that turn's own `turn/started` has gone out, which is why the only two callers are the
- *  runner (which `beginTurn` invokes after the broadcast) and a frame that landed while one is live. */
-function drainArrivals(srv: AppServer, record: ThreadRecord, state: PeerInboundState): void {
-  const adopted = state.adopted;
-  if (!adopted?.mapper || !adopted.turnId || adopted.terminated) return;
-  const turnId = adopted.turnId;
-  for (const a of state.arrivals.splice(0, state.arrivals.length)) {
-    emitItems(srv, record, turnId, [{ kind: "completed", item: userItem(a.text, a.msgId) }]);
-  }
-}
-
-function adopt(srv: AppServer, record: ThreadRecord, state: PeerInboundState, commandUuid: string): void {
-  const adopted: AdoptedTurn = { commandUuid, epoch: record.epoch, captured: [], terminated: false };
-  state.adopted = adopted;
-  const started = beginTurn(srv, undefined, undefined, record, (turnId, mapper, releaseSlot): Promise<TurnOutcome> => {
-    // Released IMMEDIATELY: the slot's contract is to release the instant the engine call is dispatched,
-    // and for an adopted turn there is no engine call of ours to dispatch. Holding it would park every
-    // op chained behind this thread — `thread/close` included — for the length of somebody ELSE's turn.
-    releaseSlot();
-    if (record.epoch !== adopted.epoch) {
-      if (state.adopted === adopted) state.adopted = undefined;
-      return Promise.resolve({ stopped: "cancelled" });
-    }
-    adopted.mapper = mapper;
-    adopted.turnId = turnId;
-    // Everything the engine said while we were behind the chain, in order, through the same mapper an
-    // ordinary turn uses. This runs INSIDE the runner, which beginTurn invokes after it has broadcast
-    // turn/started — so no item can precede the turn edge that owns it.
-    const captured = adopted.captured;
-    adopted.captured = [];
-    for (const f of captured) emitItems(srv, record, turnId, mapper.ingest(f));
-    drainArrivals(srv, record, state);
-    if (adopted.terminated) { if (state.adopted === adopted) state.adopted = undefined; return Promise.resolve(adopted.outcome); }
-    return new Promise((resolve) => { adopted.resolve = resolve; });
-  });
-  // beginTurn refuses a busy thread (and a closing or swapping one). That is the safety net under the
-  // unmeasured uuid correlation: an own turn mistaken for a foreign one is declined here rather than
-  // becoming a second turn.
-  if (!started) state.adopted = undefined;
-}
-
-/** Settle an adopted turn from OUTSIDE the frame stream — a close, a shutdown, a stale epoch. Idempotent:
- *  a turn already settled has no resolver left to call. */
-export function settleAdopted(srv: AppServer, record: ThreadRecord, reason: TurnStopped): void {
-  void srv;   // symmetry with the rest of this surface: every teardown seam takes the server it acts on
-  const adopted = record.peerInbound?.adopted;
-  if (!adopted) return;
-  record.peerInbound!.adopted = undefined;
-  adopted.terminated = true;
-  adopted.resolve?.({ stopped: reason });
+  state.offResult = record.session.onUnclaimedResult?.((result: unknown) => claimResult(srv, record, state, result));
 }
 
 export function uninstallPeerInbound(record: ThreadRecord): void {
@@ -258,6 +145,34 @@ export function uninstallPeerInbound(record: ThreadRecord): void {
   state.off?.(); state.off = undefined;
   state.offResult?.(); state.offResult = undefined;
   // The arrivals belonged to the conversation that is being discarded; carrying them into a replacement
-  // engine would emit them as items of a turn in a transcript they were never part of.
+  // engine would emit them as items of a turn in a transcript they were never part of. The own bracket
+  // goes with them: a turn of the engine being torn down is not a bracket the replacement can reopen.
   state.arrivals.length = 0;
+  state.ownTurn = undefined;
+  // The seed window belonged to it too — but what it was HOLDING does not go with it. An arrival buffered
+  // inside the window has been neither persisted nor announced, so discarding the buffer loses an
+  // engine-delivered message from the live channel and from the old session's count at once. It is
+  // therefore persisted here, into the session the window opened against (D2: arrivals stay with the
+  // transcript they landed in), and AMBIGUOUS: the seed never resolved, so nothing relates this arrival to
+  // any row, and counted-but-unplaced is the designed answer for a position that cannot be known.
+  //   Not announced: the notification is thread-scoped and this conversation is being discarded — a client
+  // told about a peer message on a thread whose history no longer contains it is worse than a count that
+  // exceeds the announcements by what the teardown saved, which is the safe direction (over-report reveals
+  // a gap that isn't there; the reverse falsely certifies completeness).
+  //   A thread torn down BEFORE its window ever opened has nothing here, which is the pre-init limit the
+  // spec already states rather than a case this misses: with no session id there is no scope to write into,
+  // and such an arrival took M8's announce-only path when it landed.
+  const seeding = state.seeding;
+  if (seeding && seeding.arrivals.length > 0) {
+    let seq = seeding.store.nextSeq(seeding.sessionId);
+    for (const pending of seeding.arrivals) writeEntry(state, seeding.store, seeding.sessionId, pending, seq++, true);
+    seeding.arrivals.length = 0;
+  }
+  // The in-flight read's own resolve is declined by `groundSeed`'s identity check.
+  // The anchor returns to NOT YET KNOWN, so the next install seeds again against whatever id the record now
+  // carries — which is exactly what `thread/clear` needs (a new conversation, a new id at its init frame,
+  // an arrival scope that starts empty) and what a rewind swap needs (the retained id, re-read).
+  state.seeding = null;
+  state.seeded = false;
+  state.anchor = undefined;
 }

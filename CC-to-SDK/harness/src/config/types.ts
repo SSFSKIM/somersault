@@ -13,6 +13,12 @@ export interface HarnessConfig {
   cwd?: string;
   model?: string;
   fallbackModel?: string;
+  // bl7 T-ADVISOR task 1 (D6/D7): the server-side advisor tool's model, folded into `settings` at
+  // settings.ts (lands on the SDK's Settings.advisorModel). DEFAULT OFF — absent means no advisor consult
+  // at all, the `promptSuggestionEnabled` polarity for a paid secondary-model feature (~$0.39/consult).
+  // No client-side model-catalog validation and no client-side cost/frequency limiter (ccx has no catalog;
+  // a bad pairing surfaces as the server's own `model_not_found`).
+  advisorModel?: string;
   maxTurns?: number;
   // turn controls (verified live 2026-06-18; specs/2026-06-18-sdk-capability-closeout-design.md)
   effort?: EffortLevel;                    // 'low'|'medium'|'high'|'xhigh'|'max' — reasoning effort
@@ -160,9 +166,15 @@ export interface HarnessConfig {
   onElicitation?: OnElicitation;           // MCP elicitation handler (probe 43b ✅ stdio round-trip)
   onUserDialog?: OnUserDialog;             // request_user_dialog handler (probe 43: wireable, NO deterministic headless trigger)
   supportedDialogKinds?: string[];         // dialog kinds onUserDialog actually renders — CLI fails closed on absence
-  /** Declared = this consumer renders a per-task stop control, so an interrupt SPARES running background
-   *  tasks and each is stopped individually instead. Probes 126/126b measured that sparing already holding
-   *  on this transport; setting it pins the documented contract rather than relying on the observation. */
+  /** Declares that this consumer renders a per-task stop control wired to the `stop_task` control request:
+   *  the CLI reads it off the `initialize` request and, when declared, an interrupt on an open-input session
+   *  aborts only the turn and SPARES running background agents/workflows, each stopped individually instead.
+   *  Documented as failing closed on absence (an interrupt kills them), but probes 126/126b measured the
+   *  sparing already holding undeclared on this transport — setting it pins the documented contract rather
+   *  than relying on that observation. Truthful for the bundled TUI, whose Background panel stops a single
+   *  row (`BgTasksPanel onStop` → `stopBgTask` → `session.stopTask`); a library caller that ships no such
+   *  control must leave it unset. First-attached-client wins on multi-client sessions, and a closed-input
+   *  one-shot run (`-p`) kills hold-back tasks regardless. */
   perTaskStopAffordance?: boolean;
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // custom CLI child placement (probe 50 ✅ end-to-end)
   // process plumbing
@@ -174,7 +186,7 @@ export interface HarnessConfig {
   debug?: boolean;                         // CLI debug logging (pairs with stderr/debugFile)
   debugFile?: string;
   // dead/partial knobs — wired for completeness, DO NOT rely on them headless:
-  includeHookEvents?: boolean;             // 🚫 DEAD headless (probes 53/53b: no hook frames, programmatic hooks, haiku+sonnet)
+  includeHookEvents?: boolean;             // settings-layer hooks emit frames as of SDK 0.3.237 (P116, 2026-08-30); in-process `options.hooks` callbacks still emit none
   promptSuggestions?: boolean;             // 🚫 DEAD headless (probes 53/53b: no prompt_suggestion frame after result)
   agentProgressSummaries?: boolean;        // 🟡 PARTIAL (probe 54: task_progress fires; summary never populated in a 45s subagent)
   // escape hatches

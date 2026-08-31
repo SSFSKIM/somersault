@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolEvent, foldClauses, segmentRuns, type FoldAtom, type FoldClass, type GroupCounts } from "../../src/tui/toolFold.js";
+import { classifyToolEvent, foldClauses, hookSentenceClause, segmentRuns, weaveStandaloneHooks, type FoldAtom, type FoldClass, type FoldItem, type GroupCounts } from "../../src/tui/toolFold.js";
 import { recognizeGitOps } from "../../src/tui/gitOps.js";
 import type { ToolEvent } from "../../src/tui/transcriptModel.js";
+import type { HookRunEntry } from "../../src/tui/hookPairs.js";
 
 const OPTIONS = { cwd: "/repo", home: "/home/u" };
 let nextSequence = 0;
@@ -591,6 +592,25 @@ describe("F1 fold clauses (R3.8 + §3.4)", () => {
   it("emits nothing for all-zero counts", () => expect(foldClauses(counts(), false)).toEqual([]));
 });
 
+// bl7 T-HOOKBLOCK Task 5 fix, spec §2.5 collapsed-row form 1 — the PURE half of the branch `groupRowLine`
+// (toolRenderer.tsx:918-929) builds when a run's hooks are its ONLY thing to say: `otherClauses` from the
+// case right above ("emits nothing for all-zero counts") plus this sentence, in place of `otherClauses`. The
+// combination is LATENT in production today — `segmentRuns` never yields a run whose members contribute zero
+// counters yet still carry a resolved hook (see the fixture-layer test in fold-expand.test.tsx and
+// task-5-fix-report.md) — so this pins the clause builder's own contract independent of that reachability gap.
+describe("bl7 T-HOOKBLOCK Task 5 fix: hookSentenceClause, the clause half of collapsed-row form 1", () => {
+  it("always opens the sentence (capitalized 'Ran'), with the count as the ONLY bold span", () => {
+    expect(hookSentenceClause(1, 200)).toEqual({ text: "Ran 1 PreToolUse hook (0.2s)", boldRanges: [[4, 5]] });
+  });
+  it("pluralizes 'hooks' for any count other than one, and scales the bold range with the digit count", () => {
+    expect(hookSentenceClause(3, 450)).toEqual({ text: "Ran 3 PreToolUse hooks (0.5s)", boldRanges: [[4, 5]] });
+    expect(hookSentenceClause(12, 1000)).toEqual({ text: "Ran 12 PreToolUse hooks (1.0s)", boldRanges: [[4, 6]] });
+  });
+  it("uses hookSeconds' one-decimal formatter, never formatDuration's unit ladder", () => {
+    expect(hookSentenceClause(1, 65000).text).toContain("(65.0s)"); // NOT "1m 5s" — spec §2.5, shared with hookHeaderText
+  });
+});
+
 // ── TS Task 4 ────────────────────────────────────────────────────────────────────────────────────────────────
 // The git-operation scraper (canon `vFr` 194436–194473, driven by `odS` 236993–237019) and the fullscreen half of
 // the clause chain (518574–518626). Recognition inputs are quoted from T1's addendum §B.3, not re-derived.
@@ -863,5 +883,415 @@ describe("TS fullscreen fold clauses (canon ZIl 518574–518626)", () => {
     expect(joined(foldClauses(counts(over), false))).toBe("Read 1 file");
     expect(joined(foldClauses(counts(over), false, {}))).toBe("Read 1 file");
     expect(joined(foldClauses(counts(over), false, { fullscreen: false }))).toBe("Read 1 file");
+  });
+});
+
+// bl7 T-HOOKBLOCK Task 2 (spec D12, plan review H1 — the round's headline catch). Every letter below is one of
+// the brief's mandatory orders. Cell (a) is the one a stream-position cursor gets wrong: the settled atom's
+// `resultSequence` (11) sits AFTER the hook's `afterSequence` (10) in stream order, so a design that sweeps
+// entries against atom positions would pass the hook before the run exists and drop it. The call-time model
+// resolves against `callSequence` instead and gets it right.
+describe("bl7 T-HOOKBLOCK Task 2: call-time hook attribution (spec D12)", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
+
+  it("(a) normal wire order — tool_use(10) → hook(afterSequence:10) → tool_result(11): absorbed", () => {
+    // Under a stream-position sweep this is the cell that goes RED: the settled atom's stream position is its
+    // resultSequence (11), strictly AFTER the hook's afterSequence (10), so a cursor walking atoms in that
+    // order would already be past 10 with an empty run and drop the entry.
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(groups(items)[0]!.counts).toMatchObject({ hookCount: 1, hookTotalMs: 200 });
+    expect(groups(items)[0]!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200, id: "PreToolUse:Read@10" }]);
+  });
+
+  it("(b) same order but the run OPEN (no result yet) at end of stream: still absorbed", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, settled: false }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 150, 10)] });
+    const group = groups(items)[0]!;
+    expect(group.open).toBe(true);
+    expect(group.counts.hookCount).toBe(1);
+  });
+
+  it("(c) single-tool run, hook pair stamped strictly between call and result: absorbed", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 15 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 300, 12)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  it("(d) entry stamped before the run's earliest callSequence: dropped", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 5)] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+  });
+
+  it("(e) entry after the closing breaker's sequence belongs to the NEXT run when one opens at/before it", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 9 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 400, 8)] });        // afterSequence(8) === run2's own anchorSequence — "opens at it"
+    const [run1, run2] = groups(items);
+    expect(run1!.counts.hookCount).toBeUndefined();                        // 8 >= boundary(5): excluded from run1
+    expect(run2!.counts.hookCount).toBe(1);                                // 8 >= anchorSequence(8): included in run2
+  });
+
+  it("(f) between-run gap — after the breaker, before the next run opens: dropped from both", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 9 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 400, 6)] });        // 5 <= 6 < 8: in the dead gap
+    const [run1, run2] = groups(items);
+    expect(run1!.counts.hookCount).toBeUndefined();
+    expect(run2!.counts.hookCount).toBeUndefined();
+  });
+
+  it("(g) zero hooks: NO hook fields on the group at all (spread-when-non-empty)", () => {
+    const group = groups(segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))], OPTIONS))[0]!;
+    expect(group.counts.hookCount).toBeUndefined();
+    expect(group.counts.hookTotalMs).toBeUndefined();
+    expect(group.hookInfos).toBeUndefined();
+  });
+
+  it("(h) two runs, three entries split correctly across the boundary and the gap", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 8, result: 20 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 999, 6), hook("PreToolUse:Read", 200, 8)] });
+    const [run1, run2] = groups(items);
+    expect(run1!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 100, id: "PreToolUse:Read@1" }]);
+    expect(run2!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 200, id: "PreToolUse:Read@8" }]);
+    expect(run2!.counts.hookTotalMs).toBe(200);
+  });
+
+  it("sums hookTotalMs across more than one absorbed entry in the same run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1 })), atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 100, 1), hook("PreToolUse:Read", 250, 3)] });
+    const group = groups(items)[0]!;
+    expect(group.counts).toMatchObject({ hookCount: 2, hookTotalMs: 350 });
+    expect(group.hookInfos).toEqual([
+      { name: "PreToolUse:Read", durationMs: 100, id: "PreToolUse:Read@1" },
+      { name: "PreToolUse:Read", durationMs: 250, id: "PreToolUse:Read@3" },
+    ]);
+  });
+
+  // Round review F2: `segmentRuns` walks the ANCHORED stream, not raw call order — a settled atom is ordered by
+  // its `resultSequence` (see the `anchorId` doc comment in toolFold.ts), so a run of overlapping calls whose
+  // LATER-issued member finishes FIRST reorders ahead of the earlier one in the atom stream this function sees.
+  // B is issued second (callSequence 2) but settles first (resultSequence 3, before the breaker at 4); A is
+  // issued first (callSequence 1) but settles last (resultSequence 5, trailing/open-ended flush). Windowing
+  // each run independently — B's `[2,4)`, A's `[1,∞)` — makes both windows cover `afterSequence: 3`, so a hook
+  // stamped there without shared consumption would double-count into both `hookInfos`.
+  //
+  // Re-review G1 (spec D12 causal invariant): a PreToolUse pair for a member always arrives BEFORE that
+  // member's own tool_result frame, so an entry with `afterSequence >= run's own last resultSequence` is
+  // causally impossible for that run no matter what flush order claims it first. B's ONLY member settles at
+  // resultSequence 3, so B's window caps at `min(boundary, 3) = 3` — the hook at `afterSequence: 3` sits ON
+  // that cap's exclusive edge and is causally impossible for B (it arrived no earlier than B's own result).
+  // It is, however, well inside A's still-open window `[1, min(∞, 5)) = [1,5)`, so the cap resolves the
+  // ambiguity in A's favor — the flush-order claim the F2 fix relied on was the wrong tiebreaker here.
+  it("(i) reordering — B(call2/result3), breaker(4), A(call1/result5): a hook at afterSequence 3 is causally impossible for B and lands in A", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    const [runB, runA] = groups(items);
+    expect(runB!.counts.hookCount).toBeUndefined();   // causally impossible for B: 3 >= B's own resultSequence
+    expect(runA!.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 111, id: "PreToolUse:Read@3" }]);
+    const totalHookCount = groups(items).reduce((n, g) => n + (g.counts.hookCount ?? 0), 0);
+    expect(totalHookCount).toBe(1);                   // never more groups claim an entry than entries exist
+  });
+
+  // Re-review G1: the cap is a no-op on the normal, in-order case — `min(boundary, resultSequence)` still
+  // contains the call's own `callSequence`, so nothing here regresses cell (a)/(c)'s coverage above.
+  it("(j) the causal cap never excludes a hook stamped strictly before the run's own result (normal order unaffected)", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  // Fix wave 3 H1 (spec D12's causal invariant applies only to a FULLY-SETTLED run): the cap in cell (i)
+  // above only makes sense because B's run has NO open member left — every settled member's result is a real
+  // upper bound on what could still arrive. A run with a still-open member has no such bound: B's own
+  // PreToolUse pair can arrive at any point before ITS eventual (not-yet-known) result, so a settled
+  // sibling's resultSequence must not truncate the window ahead of it.
+  it("(k) settled A(call1/result2) + open B(call3) in one run: an earlier settled member's result never caps the window while B is still open", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 3, settled: false })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 250, 3)] });
+    const group = groups(items)[0]!;
+    expect(group.open).toBe(true);
+    expect(group.counts.hookCount).toBe(1);
+    expect(group.hookInfos).toEqual([{ name: "PreToolUse:Read", durationMs: 250, id: "PreToolUse:Read@3" }]);
+  });
+});
+
+// Fix wave 3 H2 (spec D12's tool-identity invariant): a run's membership does not by itself prove which tool
+// a hook entry belongs to — only a matching tool name does. Without this guard, a Read-only run whose causal
+// window (G1's cap) happens to cover a foreign PreToolUse entry could still claim it.
+describe("bl7 fix wave 3 H2: hook attribution refuses a run holding no member of the entry's own tool", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
+  const FULL = { ...OPTIONS, fullscreen: true };
+
+  // Fix wave 4 (finding J2) supersedes this cell's original expectation: wave 3's `hasSpanningSibling` was
+  // tool-BLIND, so A (Read) being ANY spanning sibling — regardless of tool — was enough to refuse widening
+  // C's own boundary, and C's own PreToolUse:TodoWrite hook went unclaimed as collateral damage. Under the
+  // unified rule, `hasSpanningSibling` is scoped to siblings of C's OWN tool (TodoWrite) — A is a different
+  // tool and no longer disqualifies widening, which is safe regardless: `resolveRunHooks`'s per-tool cap
+  // already refuses to let A's Read-only run claim a TodoWrite-named entry, widened boundary or not. C is
+  // this run's only TodoWrite member, so its own hook is retained and relocation is suppressed.
+  it("(l) fix wave 4: a cross-tool spanning sibling no longer blocks a run's own tool from claiming its own hook", () => {
+    // M(Read2/3), C(TodoWrite4/err5), A(Read1/6): A spans C but is a DIFFERENT tool.
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/mid.ts" }, { id: "M", sequence: 2, result: 3 })),
+      atom(tool("TodoWrite", { todos: [] }, { id: "C", sequence: 4, result: 5, settled: "error" })),
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 6 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:TodoWrite", 300, 4)] });
+    const [mc, a] = groups(items);
+    expect(mc!.memberIds).toEqual(["M", "C"]);
+    expect(mc!.counts.hookCount).toBe(1);
+    expect(a!.counts.hookCount).toBeUndefined();
+  });
+
+  it("same-tool control: a PreToolUse:Read entry still attributes normally in a Read run", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...FULL, hookRuns: [hook("PreToolUse:Read", 200, 1)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  it("a malformed hook name (no tool suffix) matches unconditionally rather than silently dropping", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...FULL, hookRuns: [hook("PreToolUse", 200, 1)] });
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+});
+
+// Fix wave 4 (finding J1, spec D12's unified rule): wave 3 H1's cap was `run.open`-GATED for the whole run —
+// disabled entirely (`undefined`) the moment ANY member was open, regardless of which tool that open member
+// was. That is too coarse: a run can hold a SETTLED member of one tool and an OPEN member of another, and
+// the settled tool's own hook window must still close at ITS OWN last result even though a different tool's
+// member is still in flight. Scoping the cap to `capForTool(run, entry's own tool)` — unbounded only when
+// THAT tool has an open member — fixes the regression without reintroducing wave 2's coarser run-wide cap.
+describe("bl7 fix wave 4 (finding J1, unifies waves 2-3): the causal cap is scoped to the entry's OWN tool, not the whole run", () => {
+  const groups = (items: readonly ReturnType<typeof segmentRuns>[number][]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hook = (name: string, durationMs: number, afterSequence: number): HookRunEntry => ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event: "PreToolUse" });
+  const FULL = { ...OPTIONS, fullscreen: true };
+
+  it("Bash(call2/result3) + Read(call4/open), breaker(5), Bash(call1/result6): the first run's SETTLED Bash cap (3) still excludes a hook at 4, even though its own Read member is open", () => {
+    const items = segmentRuns([
+      atom(tool("Bash", { command: "npm run one" }, { id: "B1", sequence: 2, result: 3 })),
+      atom(tool("Read", { file_path: "/repo/x.ts" }, { id: "R", sequence: 4, settled: false })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Bash", { command: "npm run two" }, { id: "B2", sequence: 1, result: 6 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:Bash", 300, 4)] });
+    const [run1, run2] = groups(items);
+    // The first run (B1 settled + R still open) must NOT claim the hook: B1's own Bash window closed at its
+    // resultSequence (3), and R being a different, still-open tool (Read) does not reopen it.
+    expect(run1!.memberIds).toEqual(["B1", "R"]);
+    expect(run1!.counts.hookCount).toBeUndefined();
+    // The later, correct Bash(1/6) group claims it instead — its own window [1, 6) causally contains it.
+    expect(run2!.memberIds).toEqual(["B2"]);
+    expect(run2!.counts.hookCount).toBe(1);
+  });
+});
+
+// bl8 T-QY Task 2: the standalone hook weave (pass 2) + the D5 emit gate. Pass 2 runs ONCE after pass 1
+// (`segmentRuns`'s own claim loop) fully settles — never per-flush (plan-review F1) — so these tests
+// specifically exercise entries pass 1 never claims: non-PreToolUse events, and PreToolUse entries outside
+// every run's causal window.
+describe("bl8 T-QY Task 2: standalone hook weave + D5 emit gate", () => {
+  const groups = (items: readonly FoldItem[]) => items.flatMap((i) => (i.kind === "group" ? [i.group] : []));
+  const hooksItems = (items: readonly FoldItem[]) => items.flatMap((i) => (i.kind === "hooks" ? [i] : []));
+  const kinds = (items: readonly FoldItem[]) => items.filter((i) => i.kind !== "passthrough").map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("(a) an unclaimed PostToolUse entry between two Read clusters lands between the two groups", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 10, result: 11 })),
+    ], { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 200, 6, "PostToolUse")] });
+    expect(kinds(items)).toEqual(["group", "hooks", "group"]);
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.label).toBe("PostToolUse");
+    expect(hooks[0]!.entries).toEqual([{ name: "PostToolUse:Read", durationMs: 200, id: "PostToolUse:Read@6" }]);
+  });
+
+  it("(b) two adjacent same-label entries at the same slot coalesce into ONE hooks item with 2 entries", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 100, 3, "PostToolUse"), hook("PostToolUse:Read", 150, 4, "PostToolUse")] });
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.entries).toHaveLength(2);
+  });
+
+  it("(c) an entry stamped before the first tool atom lands BEFORE the first group", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "group"]);
+  });
+
+  it("(d) D5: an all-silent run with a CLAIMED PreToolUse entry still emits its group; hookless all-silent emits nothing", () => {
+    const FULL = { ...OPTIONS, fullscreen: true };
+    const withHook = segmentRuns([
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2 })),
+      atom(tool("TodoWrite", { todos: [] }, { sequence: 3, result: 4 })),
+    ], { ...FULL, hookRuns: [hook("PreToolUse:TodoWrite", 100, 1)] });
+    expect(withHook).toHaveLength(1);
+    expect(groups(withHook)[0]!.counts.hookCount).toBe(1);
+
+    const hookless = segmentRuns([atom(tool("TodoWrite", { todos: [] }, { sequence: 1, result: 2 }))], FULL);
+    expect(hookless).toEqual([]);
+  });
+
+  it("(e) an entry claimed by a cluster is never ALSO emitted as a standalone hooks item (shared ledger)", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 200, 10)] });
+    expect(hooksItems(items)).toHaveLength(0);
+    expect(groups(items)[0]!.counts.hookCount).toBe(1);
+  });
+
+  // (f) the F1 regression pair (plan-review F1): reuses the bl7 F2/G1 reordering shape above (cell (i)) —
+  // B(call2/result3), breaker(4), A(call1/result5), a hook at afterSequence 3. B's own window caps at its
+  // own resultSequence (3, exclusive) so the hook is causally impossible for B; A's still-wider window [1,5)
+  // legitimately claims it. A per-flush drain would have converted the hook to standalone the moment B's
+  // flush rejected it — permanently, before A ever got a chance to claim it. Pass 2 running only once, after
+  // every claim has settled, is what keeps this test green.
+  it("(f) F1 regression: a hook rejected by an earlier run's cap, claimed by a later overlapping run, is NEVER also standalone", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    const [runB, runA] = groups(items);
+    expect(runB!.counts.hookCount).toBeUndefined();
+    expect(runA!.counts.hookCount).toBe(1);
+    expect(hooksItems(items)).toHaveLength(0);
+  });
+
+  it("(f-inverse) with no eligible later run, the rejected entry becomes exactly ONE standalone item, never two", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Read", 111, 3)] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.entries).toHaveLength(1);
+  });
+
+  // Task 1 reviewer's deferred pin: `resolveRunHooks`'s event filter (Task 1) already refuses a non-PreToolUse
+  // entry, but before this task nothing gave it anywhere else to go — it was simply dropped. Now it must
+  // surface as a standalone item instead.
+  it("Task-1 reviewer pin: a PostToolUse:Read entry alongside a Read run is NOT absorbed into the cluster — it becomes standalone", () => {
+    const items = segmentRuns([atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 }))],
+      { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 90, 1, "PostToolUse")] });
+    expect(groups(items)[0]!.counts.hookCount).toBeUndefined();
+    const hooks = hooksItems(items);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]!.label).toBe("PostToolUse");
+  });
+});
+
+// bl8 F2 fix: `slots` (the placement ledger `weaveStandaloneHooks` positions against) only recorded a slot
+// for an emitted GROUP — a non-collapsible standalone tool (Edit/Write) or a prose/passthrough push never
+// registered one, so a hook stamped before either fell through to `out.length` (the very end) instead of its
+// real chronological position. Point slots (`anchor === boundary`) at every non-group `out`-push close the gap.
+describe("bl8 F2: standalone hook placement around non-group out-pushes (point slots)", () => {
+  const kinds = (items: readonly FoldItem[]) => items.map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("lone-Edit: a hook stamped before a standalone non-collapsible tool lands BEFORE it, not at the end", () => {
+    const items = segmentRuns([atom(tool("Edit", { file_path: "/repo/a.ts" }, { sequence: 10, result: 11 }))],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "tool"]);
+  });
+
+  it("prose-only: a hook stamped before a lone breaker/prose atom (no group ever forms) lands BEFORE it", () => {
+    const items = segmentRuns([{ kind: "breaker", sequence: 100, messageSequence: 5 }],
+      { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "passthrough"]);
+  });
+
+  it("mixed: a standalone Edit before a later Read group — a hook stamped before BOTH lands before everything", () => {
+    const items = segmentRuns([
+      atom(tool("Edit", { file_path: "/repo/a.ts" }, { sequence: 2, result: 3 })),
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { sequence: 10, result: 11 })),
+    ], { ...OPTIONS, hookRuns: [hook("UserPromptSubmit", 50, 1, "UserPromptSubmit")] });
+    expect(kinds(items)).toEqual(["hooks", "tool", "group"]);
+  });
+
+  // bl8 fix-wave round 2, P2: reuses the F2/G1 "reordering" shape (cell (i) above) — B(call2/result3),
+  // breaker(4), A(call1/result5) — where B's group is emitted FIRST in `out` (index 0, anchor 2) but A's group
+  // is emitted LAST (index 2, anchor 1, boundary Infinity) because A settles after the breaker. A leftover
+  // entry (tool name mismatched so `resolveRunHooks` never claims it into either group) stamped at
+  // afterSequence 1 sits ON A's own anchor — squarely inside A's `[1, ∞)` window — but ALSO satisfies "before
+  // B's slot" (`1 < 2`) since B's slot comes first in `out`-order. Containment must win: the entry belongs
+  // AFTER A (the containing group), not before B.
+  it("containment outranks an out-order-earlier point/group slot with a larger anchor (reordered runs)", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/b.ts" }, { id: "B", sequence: 2, result: 3 })),
+      { kind: "breaker", sequence: 100, messageSequence: 4 },
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { id: "A", sequence: 1, result: 5 })),
+    ], { ...OPTIONS, hookRuns: [hook("PreToolUse:Write", 111, 1)] });
+    expect(kinds(items)).toEqual(["group", "passthrough", "group", "hooks"]);
+  });
+});
+
+// bl8 fix-wave 3 (unified invariant): a hook entry parked in the SAME deferred buffer as a neutral passthrough
+// that interrupted an open run must still respect that passthrough's own chronological position — containment
+// inside the group's window only clamps the entry to AFTER the group's row, it must never jump it ahead of a
+// deferred row that arrived earlier than it (bl7 research §A5: canon parks the standalone hook in the SAME
+// buffer `d` as every other parked row, in arrival order — containment-first must not skip that ordering).
+describe("bl8 fix-wave 3: a leftover hook stamped between a deferred passthrough and the run's own close keeps its true chronological slot", () => {
+  const kinds = (items: readonly FoldItem[]) => items.map((i) => i.kind);
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+
+  it("group, passthrough@3, hooks@4: the deferred passthrough (parked while the run was open) stays BEFORE the hook, not after", () => {
+    const items = segmentRuns([
+      atom(tool("Read", { file_path: "/repo/a.ts" }, { sequence: 1, result: 2 })),
+      { kind: "neutral", sequence: 999, messageSequence: 3 },
+      { kind: "breaker", sequence: 100, messageSequence: 5 },
+    ], { ...OPTIONS, hookRuns: [hook("PostToolUse:Read", 90, 4, "PostToolUse")] });
+    expect(kinds(items)).toEqual(["group", "passthrough", "hooks", "passthrough"]);
+  });
+});
+
+describe("bl8 T-QY Task 2: weaveStandaloneHooks (pass 2), direct", () => {
+  const hook = (name: string, durationMs: number, afterSequence: number, event = "PreToolUse"): HookRunEntry =>
+    ({ id: `${name}@${afterSequence}`, name, durationMs, afterSequence, event });
+  const group = (memberIds: readonly string[], anchorSequence: number): FoldItem =>
+    ({ kind: "group", group: { counts: counts(), memberIds, anchorId: memberIds[0]!, anchorSequence, open: false } });
+
+  it("places a leftover entry per the slot windows and adds it to hookClaims", () => {
+    const out = [group(["a"], 1), group(["b"], 10)];
+    const slots = [{ index: 0, anchor: 1, boundary: 5 }, { index: 1, anchor: 10, boundary: Infinity }];
+    const claims = new Set<HookRunEntry>();
+    const entry = hook("PostToolUse:Read", 100, 3, "PostToolUse");
+    const result = weaveStandaloneHooks(out, slots, [entry], claims);
+    expect(result.map((i) => i.kind)).toEqual(["group", "hooks", "group"]);
+    expect(claims.has(entry)).toBe(true);
+  });
+
+  it("is a no-op (identity) when every entry is already claimed", () => {
+    const entry = hook("PreToolUse:Read", 100, 1);
+    const claims = new Set<HookRunEntry>([entry]);
+    const out: FoldItem[] = [group(["a"], 1)];
+    expect(weaveStandaloneHooks(out, [{ index: 0, anchor: 1, boundary: Infinity }], [entry], claims)).toEqual(out);
+  });
+
+  it("returns `out` unchanged when `hookRuns` is undefined or empty", () => {
+    const out: FoldItem[] = [group(["a"], 1)];
+    expect(weaveStandaloneHooks(out, [], undefined, new Set())).toBe(out);
+    expect(weaveStandaloneHooks(out, [], [], new Set())).toBe(out);
   });
 });

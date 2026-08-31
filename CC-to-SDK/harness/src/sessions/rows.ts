@@ -1,7 +1,13 @@
 // sessions/rows.ts — content-shape classification of persisted transcript rows (getSessionMessages).
-// The rows carry NO meta flags (probe 68b) — a "user" row can be a real prompt, a tool_result, a CLI
-// slash-command echo, local-command stdout/caveat, or a compact continuation summary, and only the
-// content shape tells them apart. ONE module so the rewind picker and transcript replay cannot drift.
+// What THIS READER RETURNS carries no meta flags (probe 68b) — the rows on disk do carry `isMeta` and
+// `origin`, and `getSessionMessages` projects a fixed field literal that drops both, so classification
+// here has only the content shape to work with: a "user" row can be a real prompt, a tool_result, a CLI
+// slash-command echo, local-command stdout/caveat, or a compact continuation summary. Stated as a fact
+// about the rows it was false; about the projection it is the whole reason this module exists.
+// ONE module so the rewind picker and transcript replay cannot drift.
+// A peer-arrival row classifies `prompt` and is NOT a phantom kind — measured over all 170 peer rows on
+// one machine (M9 spec, M11). `items/replay.ts` discards phantom kinds before it consults `peerArrival`,
+// so that is what lets an arrival row reach the arrival reader at all.
 // F4 Task 10a: the tag regexes moved to `tui/species.ts` — the sentinel router that has to know the SAME
 // shapes to decide what a user frame is — and are imported back here rather than kept in two places. There
 // is exactly one spelling of "this row is a caveat" in the codebase now.
@@ -83,4 +89,15 @@ export function recentAssistantTexts(messages: any[], cap = RECENT_ASSISTANT_CAP
     if (t) out.push(t);
   }
   return out;
+}
+
+/** bl9 D14/D15: a cheap, order-sensitive fingerprint of a persisted row set — count plus the last row's
+ *  uuid — over the SAME raw rows `getSessionMessages` returns. Lets `cli/attach.ts`'s pre-follow read and
+ *  `useChat`'s post-follow reconcile compare "is this the same disk content" without diffing the whole
+ *  array: production's rewind is in-place (the session id survives), so it is `count`/`lastUuid` that move,
+ *  not the id — either moving is enough to flag the read as stale, and an unchanged stamp lets a current
+ *  client skip the reconcile's rebuild entirely. */
+export function diskStampOf(rows: readonly any[]): { lastUuid?: string; count: number } {
+  const last = rows[rows.length - 1] as any;
+  return { lastUuid: typeof last?.uuid === "string" ? last.uuid : undefined, count: rows.length };
 }
