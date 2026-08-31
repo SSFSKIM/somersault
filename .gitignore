@@ -101,3 +101,9 @@ __pycache__/
 
 # doperpowers subagent-driven worktrees (local scratch)
 .worktrees/
+
+# playwright-cli session artifacts (local scratch)
+.playwright-cli/
+
+# third-party reference clone (PrimeIntellect-ai/prime-agent), not ours to track
+ptc-surface/prime-agent/
