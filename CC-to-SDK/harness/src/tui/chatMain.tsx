@@ -13,7 +13,7 @@ import type { TranscriptBootstrapEntry } from "./transcriptModel.js";
 import type { InitialResume } from "./commands.js";
 import { loadPrefs, type CcxPrefs } from "./prefs.js";
 import { TMUX_CC_NOTICE, makeTmuxProbe, selectRenderer, type RendererChoice, type RendererMode } from "./renderer.js";
-import { readSettingsFile } from "./settingsFile.js";
+import { readSettingsFile, type SettingsFileDeps } from "./settingsFile.js";
 import { resolveStatusLineConfig, type StatusLineConfig } from "./statusLine.js";
 import type { PromptLatch } from "../hooks/promptLatch.js";
 import type { AccountBridge } from "./accountBridge.js";
@@ -33,6 +33,12 @@ export interface ChatClientOpts {
   socketPath: string;
   client: { kind: "loopback" | "attached"; short?: string };
   cwd: string;
+  /** The HOST's resolved config root (bl12): present on `ccx attach` when the roster row carries one, so
+   *  this client's userSettings I/O — the statusLine read below and useChat's remembered permission rules —
+   *  lands in the file THAT host's engine loads, not wherever this shell's own env points. Absent (a
+   *  loopback launch, or a pre-bl12 row) means the process env decides, which is correct for loopback —
+   *  the host shares this process — and the old behavior for skew. */
+  configDir?: string;
   initialPrompt?: string;
   // Launch-time --resume: useChat's resumeInto owns replay + the adapter's resume op.
   initialResume?: InitialResume;
@@ -689,6 +695,12 @@ export function ChatRoot({ rendererSwitch, ...props }: { rendererSwitch: Rendere
 export async function runChatClient(opts: ChatClientOpts): Promise<void> {
   const prefs = loadPrefs();                             // W3 T4: apply a saved theme BEFORE the first render
   if (prefs.theme) setTheme(prefs.theme);
+  // bl12: an attach carries the HOST's config root (ChatClientOpts.configDir), and every userSettings
+  // touch in this client — the statusLine read below, useChat's remembered permission rules — goes through
+  // this ONE deps value so the two cannot disagree about whose namespace they are in. `configDir` is
+  // absolute (the host resolved it), so the env override IS the directory.
+  const settingsFileDeps: SettingsFileDeps | undefined =
+    opts.configDir !== undefined ? { env: { CLAUDE_CONFIG_DIR: opts.configDir } } : undefined;
   // FSW T5 (spec §A2): WHICH RENDERER, DECIDED ONCE. Here and nowhere else — this is the only point in the
   // process that has the real TTY, the real env and the prefs file in hand at the same time, and the
   // decision must not move again: a resize never re-evaluates it (§L2.1), so every consumer reads this one
@@ -733,7 +745,7 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
     // command on the machine that checks it out), and every layer below this is a pure function or a hook a
     // test mounts — none of them may touch `~/.claude`. `resolveStatusLineConfig` also owns the
     // `disableAllHooks` guard, so the whole setting is decided in this one expression.
-    statusLine: opts.hookOpts?.statusLine ?? resolveStatusLineConfig(readSettingsFile("userSettings", opts.cwd)),
+    statusLine: opts.hookOpts?.statusLine ?? resolveStatusLineConfig(readSettingsFile("userSettings", opts.cwd, settingsFileDeps)),
     // FSW T5: handed down, never re-derived — see the `selectRenderer` call above. No `??` override on this
     // one: unlike the seeded prefs beside it, a caller-supplied renderer choice could contradict the terminal
     // this process is actually painting into.
@@ -979,7 +991,8 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
           onFocusChange={focusChain.subscribe}
           initialTodosOpen={prefs.showExpandedTodos ?? true}
           renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
-          {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} progressBar={progressBar} deps={{ notifier }} />
+          {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} progressBar={progressBar}
+          deps={{ notifier, ...(settingsFileDeps ? { settingsFileDeps } : {}) }} />
       </UserKeymap>,
       { exitOnCtrlC: false, stdout: output.stdout },
     );

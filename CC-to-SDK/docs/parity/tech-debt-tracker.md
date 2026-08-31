@@ -6,16 +6,6 @@ the commit) or when a round's scope absorbs them.
 
 ## Open
 
-- **`ccx attach` resolves the userSettings path from the CLIENT's env** (found by bl12's codex review,
-  2026-09-01). `settingsPath("userSettings", …)` honors `CLAUDE_CONFIG_DIR` since bl12, but on an attach
-  the deciding env is the attach shell's, while the host's engine fixed its own at spawn — the wire
-  (`prepareAttach`, the roster row) carries only `cwd`, no config root. An attach shell exporting a
-  DIFFERENT value than the host's has `/statusline` reading, and a remembered userSettings permission rule
-  writing, a file that host's engine never loads. Pre-bl12 the same divergence existed for `$HOME`
-  differences, so this is an inherited boundary made visible, not a regression. Proper fix is
-  protocol-level — carry the host's resolved config root in the roster row or do this I/O host-side — and
-  worth doing when the attach surface is next open; until then the shape only bites a shell whose exported
-  tenant differs from the host it attaches to.
 - **`test/live/image-submit.e2e.test.ts` unresolved-mkdtemp symlink bug** (found bl7, 2026-08-30). Line ~92
   uses `mkdtempSync` without `realpathSync`, the exact macOS `/var` → `/private/var` storage-key mismatch
   the bl7 advisor live cell hit and fixed locally (`test/live/advisor.e2e.test.ts:126`). The suite passed

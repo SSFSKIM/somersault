@@ -17,7 +17,7 @@ export interface PrepareAttachDeps {
  *  everything, and there is deliberately no uuid-dedup layer: host.follow() only replays a `turn start`
  *  for an IN-FLIGHT turn, and an idle buffer replay (whose content the disk transcript already covers)
  *  gets no start frame — the REPL's no-live-turn guard drops it without needing to compare uuids. */
-export async function prepareAttach(target: string, deps: PrepareAttachDeps = {}): Promise<{ socketPath: string; short: string; sessionId?: string; cwd: string; initialEntries: TranscriptBootstrapEntry[]; diskStamp?: { lastUuid?: string; count: number } }> {
+export async function prepareAttach(target: string, deps: PrepareAttachDeps = {}): Promise<{ socketPath: string; short: string; sessionId?: string; cwd: string; configDir?: string; initialEntries: TranscriptBootstrapEntry[]; diskStamp?: { lastUuid?: string; count: number } }> {
   const row = (deps.resolve ?? resolveTarget)(target);
   if (TERMINAL.has(row.state)) throw new Error(`session ${row.short} has ended (${row.state}) — resume it with: ccx --resume ${row.sessionId ?? "<uuid>"}`);
   // ONE ordered, identity-bearing stream (F1 Task 4) — never a flattened `RenderLine[]` and never a second
@@ -40,5 +40,7 @@ export async function prepareAttach(target: string, deps: PrepareAttachDeps = {}
       initialEntries = [{ kind: "local", identity: "attach:no-persisted-history", event: { kind: "notice", lines: [{ text: "⚠ no persisted history yet — showing live turn only", dim: true }] } }];
     }
   }
-  return { socketPath: hostSocketPath(row.pid), short: row.short, sessionId: row.sessionId, cwd: row.cwd, initialEntries, diskStamp };
+  // `configDir` rides through verbatim — the HOST's resolved config root (RosterRow.configDir), so the
+  // client's settings I/O lands where that host's engine reads; absent on a pre-bl12 row.
+  return { socketPath: hostSocketPath(row.pid), short: row.short, sessionId: row.sessionId, cwd: row.cwd, configDir: row.configDir, initialEntries, diskStamp };
 }

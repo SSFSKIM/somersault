@@ -39,6 +39,21 @@ function connectClient(env: NodeJS.ProcessEnv) {
 const connectionCountOf = (host: SessionHost) =>
   (host as unknown as { server: { connectionCount(): number } }).server.connectionCount();
 
+describe("SessionHost roster mint carries the config root (bl12)", () => {
+  it("the row's configDir is claudeConfigDir over the HOST's env, a RELATIVE value anchored on the host's cwd", async () => {
+    const env = { ...tmpFleet(), CLAUDE_CONFIG_DIR: "cfg" };
+    const host = new SessionHost(
+      { short: "d1d1d1d1", name: "t", cwd: "/tmp", kind: "interactive", detached: false, config: {} as never, env },
+      { openSession: () => instantSession() as any, procStartOf: async () => "start" },
+    );
+    await host.start();
+    // resolve("/tmp", "cfg") — the same session-cwd anchoring settingsPath itself applies, so the row
+    // states where THIS engine actually reads, not a spelling the attacher would re-anchor differently.
+    expect(readRoster("d1d1d1d1", env)!.configDir).toBe("/tmp/cfg");
+    await host.stop();
+  });
+});
+
 describe("SessionHost multi-turn state (A2b)", () => {
   it("after a successful turn, an interactive host reads 'working' (not 'done'); a bg host stays 'done'", async () => {
     const { host: ih } = hostFor("interactive");

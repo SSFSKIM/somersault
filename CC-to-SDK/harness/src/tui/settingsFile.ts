@@ -23,8 +23,9 @@ export type SettingsTarget = "localSettings" | "projectSettings" | "userSettings
  *  at the session cwd and resolves `./settings.json` there, and `configDomain.ts`'s `userLayerDir` already
  *  enforces the identical invariant (its own fix wave G / G6); a client launched with `--cwd` elsewhere
  *  would otherwise read and write a file the engine never opens, the exact class this arm just closed.
- *  Known residue (tracker 2026-09-01): `ccx attach` resolves from the CLIENT's env — the wire carries no
- *  config root, so an attach shell exporting a different CLAUDE_CONFIG_DIR than the host's diverges here. */
+ *  Across an ATTACH the deciding env is the HOST's, not this shell's: the roster row carries the host's
+ *  resolved root (`RosterRow.configDir`) and `chatMain` hands it in as `deps.env` — only a pre-bl12 row
+ *  falls back to the client env, the documented skew arm. */
 export function settingsPath(target: SettingsTarget, cwd: string, deps?: SettingsFileDeps): string {
   if (target === "localSettings") return join(cwd, ".claude", "settings.local.json");
   if (target === "projectSettings") return join(cwd, ".claude", "settings.json");
