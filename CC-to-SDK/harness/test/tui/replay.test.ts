@@ -22,14 +22,23 @@ const compactText = (doc: TranscriptDocument) => JSON.stringify(projectCompact(d
  *  legitimately carries the two display dividers `replayDocument` seeds (Task 4 step 3 item 4), and those
  *  local entries shift every later `resultSequence` by one — so a raw whole-array equality between a disk
  *  document and a bare host document can never hold no matter how faithful the projection is. What the
- *  cutover actually promises is that the TOOL ROW is identical, which is exactly what this compares. */
+ *  cutover actually promises is that the TOOL ROW is identical, which is exactly what this compares.
+ *  T-SPACE: each of those replay-only dividers is a top-level block, so canon's "any block → system notice = 1"
+ *  (research-spacing.md §1.5, cite 194161) now puts a `sep:<dividerId>:gap` row above it too. That gap is as
+ *  replay-only as the divider it belongs to, so the filter drops both spellings — the shared blocks' own
+ *  separators (`sep:group:…`, `sep:sdk:…`) stay in and must still match byte for byte on both sides. */
 const toolRows = (items: readonly { kind: string; id: string }[]) =>
-  items.filter((i) => !i.id.startsWith("local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
+  items.filter((i) => !i.id.startsWith("local:replay:") && !i.id.startsWith("sep:local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
 
 describe("replayDocument", () => {
   it("frames the replay with a derived header (label · turns · hh:mm) and a live divider", () => {
     const items = projectCompact(replayDocument([userText("fix the parser"), asstText("done")], {}), projectionOptions);
-    expect(items[0]).toEqual({ kind: "line", id: "local:replay:session:head:line:0", ownerKey: localOwnerKey("replay:session:head"), line: { text: "─── resumed: fix the parser · 1 turn · 15:58 ───", dim: true } });
+    // T-SPACE: both dividers are top-level blocks, so each now opens with canon's one blank row above
+    // (research-spacing.md §1.5 "any block → system notice = 1", cite 194161; no document-start suppression,
+    // so even the head divider — the very first unit — gets one). The head divider is therefore items[1],
+    // and the live divider stays last because the separator sits ABOVE its block, never below.
+    expect(items[0]).toEqual({ kind: "line", id: "sep:local:replay:session:head:line:0:gap", line: { text: "" } });
+    expect(items[1]).toEqual({ kind: "line", id: "local:replay:session:head:line:0", ownerKey: localOwnerKey("replay:session:head"), line: { text: "─── resumed: fix the parser · 1 turn · 15:58 ───", dim: true } });
     expect(items.at(-1)).toEqual({ kind: "line", id: "local:replay:session:live:line:0", ownerKey: localOwnerKey("replay:session:live"), line: { text: "─── resumed here · live ───", dim: true } });
   });
   // `frame: false` (wave2 T8) is for a surface that only READS a transcript — the /resume preview pane, which
@@ -43,7 +52,10 @@ describe("replayDocument", () => {
     expect(JSON.stringify(unframed)).toContain("done");
     const framed = projectCompact(replayDocument(msgs, {}), projectionOptions);
     expect(JSON.stringify(framed)).toContain("resumed here · live");         // the default is unchanged
-    expect(framed).toHaveLength(unframed.length + 2);
+    // T-SPACE: framing still adds exactly the two divider rows — but each is a top-level block and so carries
+    // its own leading blank (research-spacing.md §1.5 "any block → system notice = 1"), hence 2 rows apiece.
+    expect(framed).toHaveLength(unframed.length + 4);
+    expect(framed.filter((i) => i.id.startsWith("sep:local:replay:"))).toHaveLength(2);
   });
   it("RETAINS the tool_result body the old lossy replay dropped, and renders it through the shared tool row", () => {
     const doc = replayDocument([userText("add a flag"), READ_CALL, READ_RESULT_FLAT, asstText("added", "a-2")], replayOptions);
@@ -90,7 +102,8 @@ describe("replayDocument", () => {
       { type: "user", uuid: "u4", message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary…" } },
     ];
     const items = projectCompact(replayDocument(msgs, {}), projectionOptions);
-    expect(items[0]).toMatchObject({ line: { text: "─── resumed: session · 1 turn ───" } });
+    // T-SPACE: items[0] is now the head divider's own leading blank (research-spacing.md §1.5, cite 194161).
+    expect(items[1]).toMatchObject({ line: { text: "─── resumed: session · 1 turn ───" } });
   });
   it("gives the two display dividers and each echo a POSITION-derived identity, so replaying twice is idempotent", () => {
     const msgs = [userText("hi"), { type: "user", uuid: "e1", message: { role: "user", content: "<command-name>/help</command-name>" } }, { type: "user", uuid: "e2", message: { role: "user", content: "<command-name>/help</command-name>" } }];

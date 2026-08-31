@@ -52,8 +52,13 @@ describe("one tool grammar across live and replay", () => {
     const disk = replayDocument([READ_CALL, READ_RESULT_WITH_SIDECAR, closed], { id: "session-1" });
     // The replay's own display dividers are local rows that shift every later resultSequence by one, so the
     // id's sequence component is normalized away; everything else must match byte for byte.
+    // T-SPACE: each divider is a top-level block and so now carries its own `sep:<dividerId>:gap` blank above it
+    // (research-spacing.md §1.5 "any block → system notice = 1", cite 194161). That gap is replay-only chrome
+    // like the divider itself, so it is filtered too. The SHARED blocks' separators are deliberately NOT
+    // filtered — `sep:group:read-1:row:gap` and `sep:sdk:message:assistant-done:block:0:0:gap` appear on both
+    // sides, which is what keeps this test's "one grammar" claim honest under the new invariant.
     const toolRows = (items: readonly { kind: string; id: string }[]) =>
-      items.filter((i) => !i.id.startsWith("local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
+      items.filter((i) => !i.id.startsWith("local:replay:") && !i.id.startsWith("sep:local:replay:")).map((i) => ({ ...i, id: i.id.replace(/^tool:([^:]+):\d+:/, "tool:$1:") }));
     expect(toolRows(projectCompact(host, projectionOptions))).toEqual(toolRows(projectCompact(disk, projectionOptions)));
   });
 });

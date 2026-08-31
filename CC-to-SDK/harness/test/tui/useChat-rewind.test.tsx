@@ -226,7 +226,9 @@ describe("useChat: rewind flow", () => {
   it("8. replayDocument({label}) overrides the header prefix (default 'resumed')", () => {
     const msgs = [{ type: "user", message: { content: [{ type: "text", text: "fix it" }] }, timestamp: "2026-07-28T08:00:00.000Z" }];
     const out = projectCompact(replayDocument(msgs, { label: "⏪ rewound" }), projectionOptions);
-    expect((out[0] as any).line.text.startsWith("─── ⏪ rewound:")).toBe(true);
+    // T-SPACE: the head divider is a top-level block, so out[0] is now its one leading blank row
+    // (research-spacing.md §1.5 "any block → system notice = 1", cite 194161) and the divider is out[1].
+    expect((out[1] as any).line.text.startsWith("─── ⏪ rewound:")).toBe(true);
     expect((out.at(-1) as any).line.text).toBe("─── ⏪ rewound here · live ───");
   });
 
