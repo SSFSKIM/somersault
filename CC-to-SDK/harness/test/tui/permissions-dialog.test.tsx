@@ -600,3 +600,134 @@ describe("PermissionsDialog — the chrome's wrap allowance is what the frame re
     }
   }, 20000);
 });
+
+// ── T-MENU TASK 2 — THE SHELL MIGRATION + THE AUTO MODE TAB (spec D12) ────────────────────────────────────
+// D12 (plan-review F5, corrected from R1's own misread): canon's TRUE order is Recently denied · Allow · Ask
+// · Deny · Auto mode · Workspace (cli.pretty.js:829914-829953) — the five pre-existing tabs already matched
+// canon's order, so Auto mode is an INSERT before Workspace, never a reorder. This block pins that order
+// exactly, keyboard cycling across the new tab in both directions, its display-only content (no data
+// contract yet — canon's own empty-state literal, transcribed verbatim), and its narrow-pane wrap geometry.
+describe("PermissionsDialog — the six-tab order and the Auto mode tab (T-MENU task 2, spec D12)", () => {
+  /** `tab` is CONTROLLED (the same reason SettingsDialog's is — `useChat`'s hook state owns it across the
+   *  whole app), so cycling needs a real state-carrying host, exactly like the pre-existing "a cursor from one
+   *  tab does not carry into another tab's list" case above: a no-op `onTabChange` still FIRES on every
+   *  keypress (proving the key resolved and the handler ran) but the prop the component reads never moves. */
+  function Host({ initial }: { initial: string }) {
+    const [tab, setTab] = React.useState(initial);
+    return <PermissionsDialog {...props({ tab, onTabChange: setTab })} />;
+  }
+
+  it("cycles right through the exact canon order, Recently denied → … → Workspace, Auto mode before Workspace", async () => {
+    const { stdin, lastFrame } = render(<Host initial="Recently denied" />);
+    await waitFor(() => frame(lastFrame).includes("Permissions"));
+    const order = ["Recently denied", "Allow", "Ask", "Deny", "Auto mode", "Workspace"];
+    // The intro line is unique per tab (unlike the tab chip strip, which truncates nothing here but is a
+    // weaker signal) — each step's own wait proves the STEP landed, not merely that six steps happened.
+    const introOf: Record<string, string> = {
+      "Recently denied": "Commands recently denied by the auto mode classifier.",
+      Allow: "Claude Code won't ask before using allowed tools.",
+      Ask: "Claude Code will always ask for confirmation before using these tools.",
+      Deny: "Claude Code will always reject requests to use denied tools.",
+      "Auto mode": "Extra rules for the auto mode classifier.",
+      Workspace: "Claude Code can read files in the workspace",
+    };
+    await waitFor(() => frame(lastFrame).includes(introOf["Recently denied"]!), "starts on Recently denied");
+    for (let i = 1; i < order.length; i++) {
+      stdin.write(RIGHT);
+      await waitFor(() => frame(lastFrame).includes(introOf[order[i]!]!), `RIGHT lands on ${order[i]}`);
+    }
+    // One more RIGHT wraps back to the first tab (`Tabs`' own modular cycling, select/Tabs.tsx:106).
+    stdin.write(RIGHT);
+    await waitFor(() => frame(lastFrame).includes(introOf["Recently denied"]!), "wraps back to Recently denied");
+  });
+
+  it("cycles left (the reverse direction) across the new tab too — Workspace → Auto mode → Deny", async () => {
+    const { stdin, lastFrame } = render(<Host initial="Workspace" />);
+    await waitFor(() => frame(lastFrame).includes("Claude Code can read files in the workspace"));
+    stdin.write(LEFT);
+    await waitFor(() => frame(lastFrame).includes("Extra rules for the auto mode classifier."), "LEFT from Workspace lands on Auto mode");
+    stdin.write(LEFT);
+    await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."), "LEFT from Auto mode lands on Deny");
+  });
+
+  it("shows the tab chip strip in the exact six-tab order", async () => {
+    const { lastFrame } = render(<PermissionsDialog {...props({ tab: "Allow" })} />);
+    await waitFor(() => plain(lastFrame).includes("Auto mode"));
+    // The chip strip is one row; each chip reads ` <title> ` (Tabs.tsx:121) so the raw indexOf order IS the
+    // rendered order, left to right.
+    const strip = plain(lastFrame).split("\n").find((l) => l.includes("Recently denied") && l.includes("Workspace"))!;
+    const positions = ["Recently denied", "Allow", "Ask", "Deny", "Auto mode", "Workspace"].map((t) => strip.indexOf(t));
+    expect(positions.every((p) => p >= 0), "every one of the six chips is on the strip").toBe(true);
+    expect(positions, "…in canon's exact order, left to right").toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("Auto mode is display-only: no data contract yet, so it always shows canon's own empty-state literal, never a false affordance", async () => {
+    // 130 columns keeps the 111-column intro on ONE line (`permissionsWrapRows` below pins the wrap boundary
+    // separately) — otherwise Ink's own word-wrap would split the literal across two frame lines and a plain
+    // `toContain` on the un-wrapped sentence would fail for a reason that has nothing to do with this claim.
+    // The `<Box width>` wrapper is load-bearing (same trap the chrome-wrap describes above spell out):
+    // `ink-testing-library`'s fake stdout reports a fixed 100 columns whatever the component prop says.
+    const { lastFrame } = render(<Box width={130}><PermissionsDialog {...props({ tab: "Auto mode" })} columns={130} /></Box>);
+    await waitFor(() => plain(lastFrame).includes("Extra rules for the auto mode classifier."));
+    const f = plain(lastFrame);
+    // The intro (canon `or`, ~L828247) and the empty state (canon `Qt`, ~L828045, `control === "empty"`) are
+    // both transcribed VERBATIM — see PermissionsDialog.tsx's own `INTRO["Auto mode"]`/`AUTO_MODE_EMPTY` docs
+    // for why "Add a rule to customize it" stays even though this round ships no add flow (the plan's own
+    // "never invent copy" constraint outranks trimming a phrase that describes a real, just-not-yet-wired
+    // feature).
+    expect(f).toContain("Extra rules for the auto mode classifier. Rules are plain sentences; new rules are saved to your user settings.");
+    expect(f).toContain("This section has no configured rules, so the built-ins apply. Add a rule to customize it.");
+    // No "Add a new rule…" affordance row (unlike Allow/Ask/Deny) and no add/edit mutation surface at all —
+    // this tab ships display-only (D12).
+    expect(f).not.toContain("Add a new rule…");
+    // The footer must not claim a working Enter/↑↓ over a list that is PERMANENTLY empty — the exact false
+    // affordance RECENT_FOOTER's own divergence note already exists to avoid (PermissionsDialog.tsx).
+    expect(f).toContain("Esc to cancel");
+    expect(f).not.toContain("Enter to select");
+    expect(f).not.toContain("to navigate");
+  });
+
+  it("renders real auto-mode rule rows instead of the empty state IF the model ever exposes them (guards the display-only contract, not just its current absence)", async () => {
+    // `permissionsModel.ts` exposes no `autoMode` parsing today (verified by reading it for this task) — this
+    // guard pins that the DIALOG side of the contract (surface real data when present, else the empty state)
+    // stays true regardless, by asserting the CURRENT, honest state: with no model support, Auto mode is
+    // ALWAYS the empty state, never a stale or fabricated row.
+    const { lastFrame } = render(<PermissionsDialog {...props({ tab: "Auto mode" })} />);
+    await waitFor(() => frame(lastFrame).includes("Extra rules for the auto mode classifier."));
+    expect(frame(lastFrame)).toContain("This section has no configured rules, so the built-ins apply.");
+  });
+
+  // ── NARROW-PANE GEOMETRY, DELIBERATE (per the task brief) ───────────────────────────────────────────────
+  // `permissionsWrapRows`/`permissionsVisibleRows` are already TAB-DEPENDENT (five intros, three footers,
+  // pinned above) — adding a sixth tab must widen that dependency correctly rather than silently falling
+  // through the `nonsense` fallback arm. The 111-column intro is the LONGEST of the six (Workspace's 89 was
+  // previously the widest), so Auto mode is now the tab that wraps earliest as the pane narrows.
+  it("adds the wrap allowance for Auto mode's own (now the LONGEST) intro, and its short Esc-only footer never wraps", () => {
+    // Computed from `wrap-ansi` itself (the call the renderer makes), the same instrument the sibling cases
+    // above use — never `Math.ceil(width / inner)` (a different function, disagrees at most widths).
+    expect(permissionsWrapRows("Auto mode", 115)).toBe(0);         // inner 111 — the intro's own length, last 1-line width
+    expect(permissionsWrapRows("Auto mode", 114)).toBe(1);         // …and the first where it takes a second line
+    expect(permissionsWrapRows("Auto mode", 61)).toBe(1);
+    expect(permissionsWrapRows("Auto mode", 60)).toBe(2);          // a third line
+    expect(permissionsWrapRows("nonsense", 60)).not.toBe(permissionsWrapRows("Auto mode", 60));   // distinct from the fallback tab (Allow)
+  });
+
+  it("reaches the window for Auto mode exactly like every other tab — the tab AND the width, both required", () => {
+    expect(permissionsVisibleRows(20, "Auto mode")).toBe(7);              // a tab with no width names no allowance
+    expect(permissionsVisibleRows(20, "Auto mode", 115)).toBe(7);         // comfortable width: wrap 0, same as height-only
+    expect(permissionsVisibleRows(20, "Auto mode", 100)).toBe(6);         // wrap 1: the 111-column intro takes a second line
+    expect(permissionsVisibleRows(20, "Auto mode", 60)).toBe(5);          // wrap 2: a third line too
+  });
+
+  it("keeps the composed Auto mode frame strictly shorter than the pane at a width where its intro wraps", async () => {
+    for (const cols of [60, 80, 100, 115]) {
+      const r = render(<Box width={cols}><PermissionsDialog {...props({ tab: "Auto mode" })} rows={16} columns={cols} /></Box>);
+      await waitFor(() => plain(r.lastFrame).includes("Extra rules for the auto mode classifier."), `Auto mode at ${cols} columns`);
+      const h = plain(r.lastFrame).split("\n").length;
+      // The dialog alone plus the one unconditional `ChatApp` sibling (the footer row) must stay strictly
+      // under the pane — Ink's `outputHeight >= stdout.rows` clear/replay cliff (ink.js:121).
+      expect([cols, h + 1 < 16]).toEqual([cols, true]);
+      r.unmount();
+    }
+  });
+});

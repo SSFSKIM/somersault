@@ -56,7 +56,7 @@ import { rankCommands, type CommandEntry } from "./commandComplete.js";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { Select, type SelectOption } from "./select/Select.js";
 import { truncateLabel } from "./select/selectModel.js";
-import { Tabs } from "./select/Tabs.js";
+import { Tabs, Tab } from "./select/Tabs.js";
 import { ShortcutsGrid } from "./ShortcutsOverlay.js";
 
 /** `pei`'s one-sentence pitch (L459656), em dash and all. */
@@ -87,10 +87,6 @@ export const browseFooter = (escChord: string, tabChord: string): string =>
 export const browseSearchFooter = (escChord: string): string => `Type to filter · ${escChord} to clear`;
 
 export type HelpTab = "general" | "commands" | "custom";
-/** `RNa`'s three `tp` panels, in its order (L459719-459732). */
-export const HELP_TABS: readonly { id: HelpTab; title: string }[] = [
-  { id: "general", title: "General" }, { id: "commands", title: "Commands" }, { id: "custom", title: "Custom commands" },
-];
 
 /** `FYH` (L459681) mapped onto `CommandEntry`, which carries no `type`/`source`/`isHidden` — see the header's
  *  second divergence. Every command a live catalog can report is therefore a DEFAULT one. */
@@ -189,18 +185,27 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
   const compact = rows < HELP_TALL_ROWS;
   return (
     <DialogFrame title="Help" color="permission">
-      <Tabs tabs={HELP_TABS} active={tab} onChange={changeTab} disableNavigation={search !== null} />
-      <Text> </Text>
-      {tab === "general" ? (
-        <Box flexDirection="column" paddingY={compact ? 0 : 1} gap={compact ? 0 : 1}>
-          <Box flexShrink={0}><Text>{HELP_INTRO}</Text></Box>
-          <Box flexDirection="column">
-            <Box flexShrink={0}><Text bold>Shortcuts</Text></Box>
-            <ShortcutsGrid gap={2} fixedWidth fullscreen={fullscreen} />
+      {/* T-MENU task 2: the SHELL calling convention (canon `Pg`/`Zi`) — the tab list is DERIVED from the
+          `<Tab>` children below (`id ?? title`) instead of a separately maintained array, and each pane
+          renders only while active. `tab`/`changeTab` are unchanged: this component still owns the active id
+          (a search reset on tab change, `Help`'s own ref-backed state), so `Tabs` is CONTROLLED via
+          `selectedTab`+`onTabChange` rather than handed the id to own itself. The blank spacer that used to sit
+          between the strip and the body is a non-`Tab` child placed FIRST — `Tabs` renders it once, ahead of
+          every `<Tab>`, exactly where the deleted `<Text> </Text>` sat. */}
+      <Tabs selectedTab={tab} onTabChange={changeTab} disableNavigation={search !== null}>
+        <Text> </Text>
+        <Tab title="General" id="general">
+          <Box flexDirection="column" paddingY={compact ? 0 : 1} gap={compact ? 0 : 1}>
+            <Box flexShrink={0}><Text>{HELP_INTRO}</Text></Box>
+            <Box flexDirection="column">
+              <Box flexShrink={0}><Text bold>Shortcuts</Text></Box>
+              <ShortcutsGrid gap={2} fixedWidth fullscreen={fullscreen} />
+            </Box>
           </Box>
-        </Box>
-      ) : tab === "commands" ? browser(defaults, BROWSE_DEFAULT_TITLE)
-        : browser(custom, BROWSE_CUSTOM_TITLE, NO_CUSTOM_COMMANDS)}
+        </Tab>
+        <Tab title="Commands" id="commands">{browser(defaults, BROWSE_DEFAULT_TITLE)}</Tab>
+        <Tab title="Custom commands" id="custom">{browser(custom, BROWSE_CUSTOM_TITLE, NO_CUSTOM_COMMANDS)}</Tab>
+      </Tabs>
       <Box marginTop={1} flexShrink={0}><Text>{HELP_DOCS_LABEL} {HELP_DOCS_URL}</Text></Box>
       {showsFeedbackLine(commands, rows) ? <Box marginTop={1} flexShrink={0}><Text dimColor>{HELP_FEEDBACK_LINE}</Text></Box> : null}
       {/* L459757: `<esc> to cancel`, italic and dim, with the chord resolved from the table like every other

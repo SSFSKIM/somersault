@@ -2297,6 +2297,9 @@ describe("<ChatApp>", () => {
     stdin.write("\r"); await waitFor(() => frame(lastFrame).includes("Permissions"));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    // T-MENU task 2 (spec D12): Auto mode now sits between Deny and Workspace, so a FOURTH RIGHT is needed —
+    // three used to be enough when Workspace was Deny's immediate neighbor.
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Extra rules for the auto mode classifier."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
     // Match the pointer + a path PREFIX, not the full cwd: the row truncates with an ellipsis (its
     // product behavior), and the test renderer is 100 columns wide, so a checkout whose absolute path
@@ -2330,6 +2333,9 @@ describe("<ChatApp>", () => {
     // pressUntil/explicit waits, so each press sees the PREVIOUS press's committed state.
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    // T-MENU task 2 (spec D12): Auto mode now sits between Deny and Workspace, so a FOURTH RIGHT is needed —
+    // three used to be enough when Workspace was Deny's immediate neighbor.
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Extra rules for the auto mode classifier."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
     await waitFor(() => frame(lastFrame).replace(/\n/g, " ").includes(sessionDir));
     stdin.write("\x1b[B"); stdin.write("\x1b[B");                     // ↓ ↓ : Add directory…(0) → cwd row(1) → session dir row(2)
@@ -2364,6 +2370,9 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Permissions"));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always ask for confirmation before using these tools."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Claude Code will always reject requests to use denied tools."));
+    // T-MENU task 2 (spec D12): Auto mode now sits between Deny and Workspace, so a FOURTH RIGHT is needed —
+    // three used to be enough when Workspace was Deny's immediate neighbor.
+    stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Extra rules for the auto mode classifier."));
     stdin.write("\x1b[C"); await waitFor(() => frame(lastFrame).includes("Add directory…"));
     stdin.write("\r");                                              // Enter on "Add directory…" (idx 0) → embedded AddDirDialog entry phase
     await waitFor(() => frame(lastFrame).includes("Enter the path to the directory:"));

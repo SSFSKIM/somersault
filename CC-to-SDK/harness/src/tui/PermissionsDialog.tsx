@@ -1,5 +1,6 @@
-// tui/src/PermissionsDialog.tsx — the `/permissions` dialog (Wave 3 task 7): five tabs (Recently denied ·
-// Allow · Ask · Deny · Workspace) over the SAME two data sources — get_settings() (rule provenance,
+// tui/src/PermissionsDialog.tsx — the `/permissions` dialog (Wave 3 task 7): six tabs (Recently denied ·
+// Allow · Ask · Deny · Auto mode · Workspace — Auto mode inserted by T-MENU task 2, spec D12) over the SAME
+// two data sources — get_settings() (rule provenance,
 // permissionsModel.ts's ruleRows) and listDirs() (workspace rows, workspaceRows) — fetched once on mount
 // and refetched after any mutation, so a just-added rule or just-removed directory shows up immediately
 // without closing the dialog. Callback-only, no session access here (useChat.ts owns every session call,
@@ -53,27 +54,48 @@ import type { SettingsTarget } from "./settingsFile.js";
 import type { AddDirVerdict } from "./addDir.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ACCENT } from "./theme.js";
-import { Tabs } from "./select/Tabs.js";
+import { DialogFrame } from "./dialogs/DialogFrame.js";
+import { Tabs, Tab as TabPane } from "./select/Tabs.js";
 import { Select } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
 import { truncateLabel, type SelectView } from "./select/selectModel.js";
 
-const TABS = ["Recently denied", "Allow", "Ask", "Deny", "Workspace"] as const;
+// T-MENU task 2 (spec D12, plan-review F5): canon's true order is Recently denied · Allow · Ask · Deny ·
+// Auto mode · Workspace (cli.pretty.js:829914-829953) — our five pre-existing tabs ALREADY matched canon's
+// order, so this is an INSERT of "Auto mode" before Workspace, not a reorder.
+const TABS = ["Recently denied", "Allow", "Ask", "Deny", "Auto mode", "Workspace"] as const;
 type Tab = typeof TABS[number];
-const TAB_SPECS = TABS.map((t) => ({ id: t, title: t }));
 type Behavior = "allow" | "ask" | "deny";
 const BEHAVIOR_OF: Partial<Record<Tab, Behavior>> = { Allow: "allow", Ask: "ask", Deny: "deny" };
 
 // Verbatim 2.1.220 copy (plan Global Constraints line 34) — every literal below is reproduced exactly,
-// including the upstream typo in the User-settings destination description.
+// including the upstream typo in the User-settings destination description. "Auto mode"'s own intro is
+// verbatim from chunk `y7da6q4n` (~L828247, the `or` node inside `ur`): "Extra rules for the auto mode
+// classifier. Rules are plain sentences; new rules are saved to your user settings."
 const INTRO: Record<Tab, string> = {
   "Recently denied": "Commands recently denied by the auto mode classifier.",
   Allow: "Claude Code won't ask before using allowed tools.",
   Ask: "Claude Code will always ask for confirmation before using these tools.",
   Deny: "Claude Code will always reject requests to use denied tools.",
+  "Auto mode": "Extra rules for the auto mode classifier. Rules are plain sentences; new rules are saved to your user settings.",
   Workspace: "Claude Code can read files in the workspace, and make edits when auto-accept edits is on.",
 };
 const RECENT_EMPTY = "No recent denials. Commands denied by the auto mode classifier will appear here.";
+// Auto mode ships DISPLAY-ONLY this round (spec D12): our `permissionsModel.ts`/settings expose no auto-mode
+// rule data at all (no `autoMode` parsing), so the tab always renders canon's own per-section empty-state
+// literal, transcribed verbatim from chunk `y7da6q4n` (~L828045, `Qt` inside `ur`: `control === "empty"`).
+// Verbatim per the plan's own global constraint ("never invent copy") even though "Add a rule to customize
+// it" describes a mutation flow this round does not ship — no add/edit lands until Auto mode gets a real
+// data contract (spec D12), so the sentence is honest about the FEATURE existing even though this tab can't
+// drive it yet, the same way `INTRO["Auto mode"]` above says rules "are saved to your user settings" with
+// no add-rule row anywhere on this tab.
+const AUTO_MODE_EMPTY = "This section has no configured rules, so the built-ins apply. Add a rule to customize it.";
+// OURS, not canon's — canon's Auto mode tab always has an "Add a new rule…" affordance, a builtins toggle
+// and a `Select`-native accept action, none of which this display-only round ships. Advertising
+// "Enter to select"/"↑/↓ to navigate" over a permanently EMPTY list would be exactly the false affordance
+// RECENT_FOOTER's own divergence note (below) already exists to avoid — so this tab gets an Esc-only footer
+// instead of falling through to DEFAULT_FOOTER.
+const AUTO_MODE_FOOTER = "Esc to cancel";
 const DELETE_LABEL: Record<Behavior, string> = { allow: "allowed", ask: "ask", deny: "denied" };
 const DEST_OPTIONS: { label: string; desc: (cwd: string) => string; target: SettingsTarget }[] = [
   { label: "Project settings (local)", desc: (cwd) => `Saved in ${cwd}/.claude/settings.local.json`, target: "localSettings" },
@@ -316,6 +338,7 @@ const wrapLines = (text: string, width: number): number =>
  *  the tab can reach holds still, and it costs nothing at any width where the two agree. */
 function tabFooters(tab: Tab): string[] {
   if (tab === "Recently denied") return [RECENT_FOOTER];
+  if (tab === "Auto mode") return [AUTO_MODE_FOOTER];
   if (tab === "Workspace") return [DEFAULT_FOOTER, MANAGED_DIR_FOOTER];
   return [DEFAULT_FOOTER];
 }
@@ -327,7 +350,9 @@ function tabFooters(tab: Tab): string[] {
  *  whatever the window holds, so their extra lines are a genuine per-frame constant — which is what a term
  *  subtracts.
  *
- *  IT IS TAB-DEPENDENT, which `rewindWrapRows` is not, because this dialog has FIVE intros and THREE footers.
+ *  IT IS TAB-DEPENDENT, which `rewindWrapRows` is not, because this dialog has SIX intros and FOUR footers
+ *  (T-MENU task 2 added Auto mode's own 111-column intro and Esc-only footer — now the widest of the six,
+ *  see the describe block in permissions-dialog.test.tsx that pins it).
  *  The spread is the whole point: `INTRO.Workspace` is 89 columns and wraps below 93, `INTRO.Allow` is 49 and
  *  does not wrap until 53, and `DEFAULT_FOOTER` (65) wraps below 69 while `RECENT_FOOTER` (31) holds one line
  *  down to 34. So at 60 columns the allowance is 2 on Workspace, 1 on Allow and 0 on Recently denied — three
@@ -630,14 +655,22 @@ export function PermissionsDialog({
   );
 
   const loading = activeTab === "Workspace" ? dirs === undefined : activeTab !== "Recently denied" && settings === undefined;
+  const footerText = activeTab === "Recently denied" ? RECENT_FOOTER
+    : activeTab === "Auto mode" ? AUTO_MODE_FOOTER
+    : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER
+    : DEFAULT_FOOTER;
 
-  return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
-      <Text bold>Permissions</Text>
-      <Tabs tabs={TAB_SPECS} active={activeTab} onChange={onTabChange} />
-      <Text> </Text>
+  /** T-MENU task 2: ONE shared body, computed once per render from the already tab-scoped variables above
+   *  (`items`/`loading`/`INTRO[activeTab]`/`footerText`) — unlike Settings/Help, this dialog never had a
+   *  per-tab JSX *shape* to switch on (all six tabs share one intro-line + list + footer skeleton; only the
+   *  DATA differs, and that was already threaded through `activeTab` before this task). The six `<Tab>`
+   *  elements below exist to derive the strip (canon `Pg`/`Zi`) and to be the thing D12's six-tab-order test
+   *  pins directly; only the active one ever renders this same node. */
+  const body = (
+    <>
       <Text dimColor>{INTRO[activeTab]}</Text>
       {activeTab === "Recently denied" && denials.length === 0 ? <Text dimColor>{RECENT_EMPTY}</Text> : null}
+      {activeTab === "Auto mode" && items.length === 0 ? <Text dimColor>{AUTO_MODE_EMPTY}</Text> : null}
       <Text> </Text>
       {/* WAVE S t6b — the list is the shared `Select`, windowed from `rows`, with upstream's counted overflow
           indicators OUTSIDE it (select/overflow.ts) because the window lives in the list's own reducer.
@@ -657,7 +690,7 @@ export function PermissionsDialog({
               node: (focused: boolean) => <Text color={focused ? ACCENT : undefined}>{renderItem(it, permissionsRowWidth(columns))}</Text>,
             }))}
             hideIndexes
-            // The tab is what makes the wrap allowance answerable (five intros, three footers) — see
+            // The tab is what makes the wrap allowance answerable (six intros, four footers) — see
             // `permissionsWrapRows`. Both are always available here, which is the case that budget is for.
             visibleOptionCount={permissionsVisibleRows(rows, activeTab, columns)}
             // Spread, not a bare prop: `undefined` would be passed through as an explicit "focus nothing" and
@@ -675,7 +708,27 @@ export function PermissionsDialog({
         </>
       )}
       <Text> </Text>
-      <Text dimColor>{activeTab === "Recently denied" ? RECENT_FOOTER : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER : DEFAULT_FOOTER}</Text>
-    </Box>
+      <Text dimColor>{footerText}</Text>
+    </>
+  );
+
+  return (
+    <DialogFrame title="Permissions" color="permission">
+      {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) replaces the deleted `TABS`/`TAB_SPECS`-fed explicit
+          `<Tabs tabs active onChange>` call. `Tabs` is CONTROLLED via `selectedTab`+`onTabChange` (the tab id
+          already lives in `useChat`'s hook state, the same reason SettingsDialog is controlled). The blank
+          spacer that used to sit between the strip and the intro is a non-`Tab` child placed FIRST, exactly
+          where the deleted `<Text> </Text>` sat. Six explicit `<Tab>` elements pin the exact order — spec D12:
+          Recently denied · Allow · Ask · Deny · Auto mode · Workspace, Auto mode inserted before Workspace. */}
+      <Tabs selectedTab={activeTab} onTabChange={onTabChange}>
+        <Text> </Text>
+        <TabPane title="Recently denied">{body}</TabPane>
+        <TabPane title="Allow">{body}</TabPane>
+        <TabPane title="Ask">{body}</TabPane>
+        <TabPane title="Deny">{body}</TabPane>
+        <TabPane title="Auto mode">{body}</TabPane>
+        <TabPane title="Workspace">{body}</TabPane>
+      </Tabs>
+    </DialogFrame>
   );
 }

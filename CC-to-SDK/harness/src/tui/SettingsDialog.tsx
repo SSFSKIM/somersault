@@ -65,14 +65,14 @@ import { ACCENT, currentTheme } from "./theme.js";
 import { ThemeDialog } from "./ThemeDialog.js";
 import { OutputStylePicker } from "./OutputStylePicker.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
-import { Tabs } from "./select/Tabs.js";
+import { DialogFrame } from "./dialogs/DialogFrame.js";
+import { Tabs, Tab as TabPane } from "./select/Tabs.js";
 import { Select } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
 import type { SelectView } from "./select/selectModel.js";
 
 const TABS = ["Status", "Config", "Usage", "Stats"] as const;
 type Tab = typeof TABS[number];
-const TAB_SPECS = TABS.map((t) => ({ id: t, title: t }));
 const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
 // DELIBERATE DIVERGENCE, same class as PermissionsDialog's RECENT_FOOTER (W3 final review Finding 5):
 // upstream's search footer promises "↑ to tabs" — a header-focus mode this wave doesn't ship (line 86's
@@ -468,13 +468,28 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   if (sub === "theme") return <ThemeDialog hideEsc onDone={() => setSub("none")} savePrefs={savePrefs} />;
   if (sub === "outputStyle") return <OutputStylePicker current={outputStyle} onPick={(id) => { void applyOutputStyle(id); setSub("none"); }} onCancel={() => setSub("none")} />;
 
-  return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
-      <Text bold>Settings</Text>
-      <Tabs tabs={TAB_SPECS} active={activeTab} onChange={onTabChange} disableNavigation={search !== null} />
+  /** The Status/Usage/Stats bodies are byte-identical apart from which cached formatter output they read — one
+   *  small helper instead of tripling the JSX across three `<Tab>` elements (T-MENU task 2: the migration
+   *  deletes the old three-way ternary, not re-spells it three times). */
+  const readOnlyTabBody = (t: Exclude<Tab, "Config">) => (
+    <>
+      {tabLines[t] === undefined ? <Text dimColor>Loading…</Text> : tabLines[t]!.map((l, i) => <Line key={i} l={l} />)}
       <Text> </Text>
-      {activeTab === "Config" ? (
-        <>
+      <Text dimColor>{READONLY_FOOTER}</Text>
+    </>
+  );
+
+  return (
+    <DialogFrame title="Settings" color="permission">
+      {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) — the tab list is derived from the `<Tab>` children below
+          instead of the deleted `TABS`/`TAB_SPECS` array, and `Tabs` is CONTROLLED via `selectedTab`+
+          `onTabChange` because `activeTab` already lives in `useChat`'s hook state (it must survive the
+          Model-row round trip — see the header). The blank spacer that used to sit between the strip and the
+          body is a non-`Tab` child placed FIRST, exactly as it rendered before this task. */}
+      <Tabs selectedTab={activeTab} onTabChange={onTabChange} disableNavigation={search !== null}>
+        <Text> </Text>
+        <TabPane title="Status">{readOnlyTabBody("Status")}</TabPane>
+        <TabPane title="Config">
           {search !== null ? (
             <Box flexDirection="row">
               {search.length ? <Text>{search}</Text> : <Text dimColor>Search settings…</Text>}
@@ -529,14 +544,10 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
           )}
           <Text> </Text>
           <Text dimColor>{search !== null ? SEARCH_FOOTER : NORMAL_FOOTER}</Text>
-        </>
-      ) : (
-        <>
-          {tabLines[activeTab] === undefined ? <Text dimColor>Loading…</Text> : tabLines[activeTab]!.map((l, i) => <Line key={i} l={l} />)}
-          <Text> </Text>
-          <Text dimColor>{READONLY_FOOTER}</Text>
-        </>
-      )}
-    </Box>
+        </TabPane>
+        <TabPane title="Usage">{readOnlyTabBody("Usage")}</TabPane>
+        <TabPane title="Stats">{readOnlyTabBody("Stats")}</TabPane>
+      </Tabs>
+    </DialogFrame>
   );
 }
