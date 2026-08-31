@@ -38,7 +38,7 @@ Features go **brainstorm → spec (`docs/superpowers/specs/`) → plan (`docs/su
 subagent-driven execution** (superpowers skills). Each feature is live-probed first, ships with unit + a
 gated live test, and ends by refreshing `docs/parity/coverage.md` + the relevant memory. Git rules are the
 root `../CLAUDE.md` defaults: commit completed work to the current branch (incl. `main`) without asking, **no
-`Co-Authored-By`**, and **never push / open PRs without an explicit request**.
+`Co-Authored-By`**.
 
 ## Commands & secrets
 
