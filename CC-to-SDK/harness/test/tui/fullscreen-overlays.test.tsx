@@ -286,10 +286,10 @@ describe("ChatApp routes the two mechanisms", () => {
       const rule = lines.findIndex(isDialogRule);
       return lines.slice(0, rule).map(strip).join("\n");
     };
-    const before = bandOf(r.lastFrame());
+    const before = bandOf(r.lastFrame() ?? "");
     r.stdin.write("\x15");                                            // ctrl+u — SelectDecision's scroll:halfPageUp
     await settle();
-    const after = bandOf(r.lastFrame());
+    const after = bandOf(r.lastFrame() ?? "");
     expect(after).not.toBe(before);
     expect(after).toMatch(/ALPHA-/);
     r.unmount();
