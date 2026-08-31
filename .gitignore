@@ -1,25 +1,14 @@
 # deps
-# Node.js dependencies
 node_modules
 .pnpm-store
 .pnpm-debug.log
-
-# Keep pnpm-lock.yaml
 !pnpm-lock.yaml
 
 # build
 dist/
-bazel-*
-user.bazelrc
 build/
 out/
 storybook-static/
-
-# ignore README for publishing
-codex-cli/README.md
-
-# ignore Nix derivation results
-result
 
 # editor
 .vscode/
@@ -29,14 +18,21 @@ result
 *.swp
 *~
 
-# cli tools
-# NOTE: upstream ignores CLAUDE.md; this fork intentionally TRACKS CLAUDE.md so the
-# committed agent-doc hierarchy reaches fresh clones / cloud containers. See docs/fork-overview.md.
+# agent tooling
 # Track only the shared project settings (.claude/settings.json) so cloud Claude Code
 # inherits plugins/preferences; keep personal state (settings.local.json, worktrees/) ignored.
 .claude/*
 !.claude/settings.json
 AGENTS.override.md
+
+# doperpowers subagent-driven worktrees (local scratch)
+.worktrees/
+
+# playwright-cli session artifacts (local scratch)
+.playwright-cli/
+
+# third-party reference clone (PrimeIntellect-ai/prime-agent), not ours to track
+ptc-surface/prime-agent/
 
 # caches
 .cache/
@@ -61,15 +57,6 @@ yarn-error.log*
 # package
 *.tgz
 
-# ci
-.vercel/
-.netlify/
-/.tmp/sdk-ci/
-/upstream-rusty-v8/
-
-# patches
-apply_patch/
-
 # coverage
 coverage/
 
@@ -86,24 +73,6 @@ Icon?
 .yarn/
 yarn.lock
 
-# release
-package.json-e
-session.ts-e
-CHANGELOG.ignore.md
-
-# nix related
-.direnv
-.envrc
-
 # Python bytecode files
 __pycache__/
 *.pyc
-
-# doperpowers subagent-driven worktrees (local scratch)
-.worktrees/
-
-# playwright-cli session artifacts (local scratch)
-.playwright-cli/
-
-# third-party reference clone (PrimeIntellect-ai/prime-agent), not ours to track
-ptc-surface/prime-agent/

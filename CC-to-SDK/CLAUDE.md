@@ -1,6 +1,6 @@
 # CLAUDE.md — CC-to-SDK
 
-A self-contained **TypeScript** sub-project (independent of the surrounding Rust fork): replicate Claude
+A self-contained **TypeScript** project — the main project of this monorepo: replicate Claude
 Code's harness features on top of the **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`), shipped as a
 headless library/service. When working anywhere under `CC-to-SDK/`, this file + the root `../CLAUDE.md` both
 apply; `harness/CLAUDE.md` auto-loads on demand for build/test detail.
