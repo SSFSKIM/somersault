@@ -420,8 +420,9 @@ identifiers **from the matched body**, and the corpus scenarios that cover it.
 Adding a splice is now: write the module + its sabotage twin, add a manifest
 row, name its covering scenarios. Nothing else changes.
 
-*(As of W0a below, the row also declares a `target` shape, and `deriveArgs` has
-become a list of taxonomy-classified `captures`.)*
+*(As of W0a below, the row also declares a `target` shape, a structural
+`signature` for the node that shape resolves to, and `deriveArgs` has become an
+exhaustive list of taxonomy-classified `captures`.)*
 
 ### The gate sabotages one splice at a time
 
@@ -585,10 +586,25 @@ A splice's row now declares every value the excised body took from its enclosing
 scope, each with a §2.4 class saying what an adapter may do with it:
 `primitive` (own it and equality-assert the graph's), `pure-helper` (own it and
 use ours in both wirings), `effectful-port` (an explicitly typed delegation
-argument and a ledger edge to the wave that will own its far side). Today all
-six rows wire every capture as a delegation argument; the retrofit that makes
-the first two classes owned-and-asserted is W1's. The classification is the
-truthful input to that work, not a claim that it has happened.
+argument and a ledger edge to the wave that will own its far side).
+
+Classification and wiring are separate facts. Most rows still wire every capture
+as a delegation argument; the retrofit that makes the first two classes
+owned-and-asserted is W1's, and the classification is the truthful input to that
+work, not a claim that it has happened. The one exception carries an `owned: true`
+flag: `text-delta`'s `known`/`describe` — upstream `w`/`c` in `chunk-9rhc0mtn.js`,
+one-line wrappers over `function r(n){return n}`, an erased type brand that is the
+identity function at runtime. The owned module ships them, the build stops
+forwarding them, and a contract test pins the behaviour.
+
+The list is also EXHAUSTIVE, and machine-checked to be: the build derives each
+excised body's free variables from a real lexical scope walk (`strangle/scope.ts`)
+and refuses any mismatch against the declared captures in either direction. So
+`captures: []` is the positive claim "verified zero free variables", not an
+omission. Before that check the manifest was its own only witness — deleting a
+row's captures made the build quieter rather than louder, and the corpus could
+not tell either when the forgotten identifier is only read on a branch the
+scenarios never take.
 
 ### Module layout and ownership hygiene
 
@@ -615,16 +631,60 @@ seconds.
 capture, against the real span in the pinned bundle: **tracking** — rename the
 identifier upstream and the derivation must return the new name (a hardcoded
 derivation fails here) — and **loudness** — destroy the identifier and the
-derivation must THROW rather than return something plausible. 44 checks, all
-green at this pin.
+derivation must THROW rather than return something plausible. 44 checks, plus one
+capture-inventory check per splice, all green at this pin.
 
-### Every build emits an upstream footprint
+### Every build emits an upstream footprint — target AND closure surface
 
-`build/footprints.json` records, per splice, the owning chunk, the node, the
-span, and a **sha256 of the excised upstream bytes** (taken after undoing
-prepare.ts's `/$bunfs/root/` rewrite, so the hash moves only when upstream does).
+`build/footprints.json` records, per splice, the owning chunk, the target span
+with a **sha256 of the excised upstream bytes** (taken after undoing prepare.ts's
+`/$bunfs/root/` rewrite, so the hash moves only when upstream does), and the same
+for **every capture's declaration**:
+
+```json
+{ "chunk": "chunk-fy12d89p.js",
+  "target": { "start": 3208589, "end": 3208823, "sha256": "764b83…" },
+  "captures": [
+    { "name": "w", "as": "known", "kind": "pure-helper", "declKind": "import",
+      "declStart": 2797, "declEnd": 2798, "sha256": "50e721…",
+      "from": { "chunk": "chunk-9rhc0mtn.js", "exportedAs": "w",
+                "declStart": 638, "declEnd": 664, "sha256": "0f2b89…" } } ] }
+```
+
 That is what lets a pin bump invalidate owned rows *semantically*: an export
-inventory cannot see a changed branch inside a body it still exports.
+inventory cannot see a changed branch inside a body it still exports. The closure
+half is not an extra — a splice consumes declarations that live OUTSIDE its span
+(the Write tool's `q6t` suffix string, Glob's `APn` formatter, often in another
+chunk entirely), and upstream can change any of them with the target span
+byte-identical. An imported capture is covered on both sides: the import site,
+which is what breaks if the export is renamed or dropped, and the declaration in
+the exporting chunk, which is where the behaviour lives. When the far side is out
+of reach the record carries a `note` saying so rather than narrowing silently.
+
+### The target-identity guard
+
+The shape walk climbs from the anchor to the NEAREST enclosing node of the
+declared shape, so an anchor that drifts into a same-shaped nested helper
+resolves to the inner node — a wrong-but-plausible splice the build had no way to
+notice. Each row therefore records a **structural signature** verified at splice
+time: the target's arity plus the syntax kinds of its enclosing shape-forming
+nodes (`params=0 ancestry=SwitchStatement<SwitchStatement<FunctionDeclaration<SourceFile`).
+Both facts are free of minified names and byte offsets — the two things that churn
+every release — while descending into a nested callable necessarily prepends a
+function-like kind to the ancestry. A mismatch fails the build and tells the
+operator to re-verify the target and update the signature deliberately; it is
+never auto-healed.
+
+### Fixture negative controls (`strangle/mechanism.test.ts`)
+
+Each of the four guards above is watched failing as well as passing, on synthetic
+fixture chunks — the real bundle is never mutated, and a mechanism test that
+needed it edited would be untestable exactly when it matters. Perturbing a
+captured constant moves its capture hash and leaves the target hash untouched;
+perturbing an imported helper's body moves its far-side hash and nothing else;
+dropping a declared capture fails, inventing one fails; the drifted anchor fails
+the signature guard while the verified one passes; a computed destructuring key
+fails the build while a plain renamed property still forwards. 30 checks.
 
 ### The three spikes, and the two suggested targets that did not survive contact
 
@@ -660,13 +720,17 @@ what a later wave has to budget.
 
 ### Gate
 
-The perturbation check runs as the gate's first phase — cheap, build-free, and a
-precondition for believing any of the rest.
+The mechanism and perturbation checks run as the gate's first phases — cheap,
+build-free, and a precondition for believing any of the rest. Mechanism goes
+first because it grades the machinery perturbation runs on.
 
 ```
-━━━ derivation: every capture tracks its rename and throws when destroyed ━━━
-  === derivation perturbation: 44 check(s) ===
-  PASS — every capture tracks its rename and fails loudly when destroyed
+━━━ mechanism: footprint closure surface, capture inventory, target guard, computed keys ━━━
+  === splice mechanism: 30 check(s) ===
+  PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused
+━━━ derivation: every capture tracks its rename, throws when destroyed, and is the complete inventory ━━━
+  === derivation perturbation: 44 check(s) + 6 capture inventor(ies) ===
+  PASS — every capture tracks its rename, fails loudly when destroyed, and the declared set IS the body's free-variable set
 ...
 ━━━ equivalence: FAITHFUL build → full acceptance surface must be GREEN ━━━
   PASS  corpus (22 scenarios)
@@ -676,6 +740,7 @@ precondition for believing any of the rest.
   PASS  raw protocol (no sdk)
 
 === strangler gate ===
+  PASS  splice mechanism
   PASS  derivation perturbation
   PASS  liveness write-tool-result
   PASS  liveness task-create-result

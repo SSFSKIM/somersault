@@ -1,9 +1,20 @@
 // M3-B gate — the acceptance ritual for a MANIFEST of splices:
 //
+//   mechanism  : the transform's own integrity, on fixtures
+//                (strangle/mechanism.test.ts): the footprint covers the closure
+//                surface and not just the target span, the capture inventory is
+//                exhaustive in both directions, the target-identity guard
+//                refuses a drifted anchor, computed destructuring keys are
+//                refused. Each watched failing as well as passing — a guard
+//                only ever fed valid input proves nothing about what it
+//                excludes.
 //   derivation : every capture must track an upstream rename and must throw
-//                when its shape is destroyed (strangle/perturb.ts). A splice
-//                whose derivation silently returns something plausible would
-//                wire a delegation to a binding that no longer exists.
+//                when its shape is destroyed, and the manifest's declared
+//                captures must BE the excised body's free variables
+//                (strangle/perturb.ts). A splice whose derivation silently
+//                returns something plausible would wire a delegation to a
+//                binding that no longer exists; an incomplete inventory would
+//                wire one to a binding it never received.
 //   per splice : build with ONLY that splice sabotaged → its covering corpus
 //                scenario(s) must go RED. Proves each splice is individually
 //                live in the execution path — an all-at-once sabotage would
@@ -55,8 +66,19 @@ for (const [label, argv] of [
   results.push({ label, pass: r.status === 0 });
 }
 
+// ---- mechanism: the splice transform's own integrity, on fixtures ----------
+// Ahead of derivation because it grades the machinery derivation runs ON: a
+// footprint that under-covers, an inventory that cannot detect its own gaps or
+// a target guard that never fires would make every phase below optimistic.
+console.log("━━━ mechanism: footprint closure surface, capture inventory, target guard, computed keys ━━━");
+{
+  const r = run("npx", ["tsx", "strangle/mechanism.test.ts"]);
+  for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
+  results.push({ label: "splice mechanism", pass: r.status === 0 });
+}
+
 // ---- derivation: re-derivation must track renames and fail loudly ----------
-console.log("━━━ derivation: every capture tracks its rename and throws when destroyed ━━━");
+console.log("━━━ derivation: every capture tracks its rename, throws when destroyed, and is the complete inventory ━━━");
 {
   const r = run("npx", ["tsx", "strangle/perturb.ts"]);
   const summary = (r.stdout ?? "").split("\n").filter((l) => l.trim().startsWith("===") || l.startsWith("PASS") || l.startsWith("FAIL"));
