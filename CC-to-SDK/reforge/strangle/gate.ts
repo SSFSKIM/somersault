@@ -63,12 +63,14 @@ const results: { label: string; pass: boolean }[] = [];
 // ---- determinism: the environment the whole gate runs under (W0c / §3.3) ----
 // First, and build-free. Every phase below spawns engines through the
 // allowlisted env and grades them under strict replay, so if the schema, the
-// shared canonicalization, or the pinned gate defaults are wrong, everything
-// after this is measuring the wrong engine.
-console.log("━━━ determinism: env schema, canonicalization, pinned gate defaults ━━━");
+// shared canonicalization, the state surface or the pinned gate defaults are
+// wrong, everything after this is measuring the wrong engine — or measuring it
+// through a surface that cannot see a difference.
+console.log("━━━ determinism: env schema, canonicalization, state surface, pinned gate defaults ━━━");
 for (const [label, argv] of [
   ["env schema + credential matrix", ["src/env.test.ts"]],
   ["canonicalization scrubs", ["src/canonical.test.ts"]],
+  ["state surface catches what it claims", ["src/state.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);

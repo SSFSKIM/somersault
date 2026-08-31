@@ -3,6 +3,8 @@
 // and engine-extracted (B) and diff three behavioral surfaces:
 //   1. SDK message transcripts   2. harness-side events (hooks/permission consults)
 //   3. the API requests each engine emitted
+//   4. engine STATE — the sandbox filesystem tree with content hashes, plus how
+//      the engine process ended (src/state.ts; §3.2's cheap subset)
 // On the identical-code pair every diff is a harness/normalization defect; once
 // engine-ts exists, every diff is a reimplementation defect.
 //
@@ -15,7 +17,8 @@ import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harnes
 import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { gateCacheCheck } from "../src/leakcheck.js";
 import { scrubRequestBody } from "../src/canonical.js";
-import { CONFIG_DIR, enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
+import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX, saveTranscript } from "../src/runTurn.js";
+import { stateSnapshot, type StateSnapshot } from "../src/state.js";
 import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
@@ -50,6 +53,8 @@ interface RunResult {
   messages: unknown[];
   events: unknown[];
   observedFile: string;
+  /** §3.2's fourth surface: what the run left on disk, and how it ended. */
+  state: StateSnapshot;
   /** false when this run hit a fatal positional fallback or a gate-cache leak. */
   ok: boolean;
 }
@@ -73,6 +78,9 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   } catch (e) {
     messages = [{ type: "reforge-exception", name: (e as Error).name, message: String((e as Error).message).slice(0, 200) }];
   }
+  // Taken BEFORE the next run resets the sandbox, and before the proxy closes —
+  // nothing after this point touches the tree.
+  const state = stateSnapshot(SANDBOX, messages);
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallback = mode === "replay" ? proxy.fallbackServed() : 0;
@@ -85,7 +93,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   // §3.3: the gate caches must never appear in the harness config dir, after
   // EITHER mode — a record writes config, and so does a replay.
   const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
-  return { messages, events, observedFile, ok: fallbackOk && gateOk };
+  return { messages, events, observedFile, state, ok: fallbackOk && gateOk };
 }
 
 /**
@@ -199,7 +207,7 @@ async function oracleVariance(
   s: Scenario,
   cassette: string,
   a: RunResult,
-): Promise<{ transcripts: OracleVariance; events: OracleVariance; requests: OracleVariance; total: number }> {
+): Promise<{ transcripts: OracleVariance; events: OracleVariance; requests: OracleVariance; state: OracleVariance; total: number }> {
   const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2");
   const n1 = makeRunNormalizer(a.messages);
   const n2 = makeRunNormalizer(a2.messages);
@@ -208,7 +216,8 @@ async function oracleVariance(
   const requests = varianceOf(
     diffTranscripts(loadObservedRequests(a.observedFile).map(n1), loadObservedRequests(a2.observedFile).map(n2)),
   );
-  return { transcripts, events, requests, total: transcripts.size + events.size + requests.size };
+  const state = varianceOf(diffTranscripts([a.state], [a2.state]));
+  return { transcripts, events, requests, state, total: transcripts.size + events.size + requests.size + state.size };
 }
 
 const verdicts: { tag: string; pass: boolean }[] = [];
@@ -290,15 +299,29 @@ for (const s of SCENARIOS) {
     loadObservedRequests(a.observedFile).map(normA),
     loadObservedRequests(b.observedFile).map(normB),
   );
+  // §3.2's fourth surface. Graded even on `substanceOnly` scenarios: that
+  // exemption is about transcript nondeterminism and says nothing about what
+  // the engine left on disk, so exempting the state surface too would widen an
+  // exemption past its own justification.
+  const sFind = diffTranscripts([a.state], [b.state]);
 
   // Only pay for triage when something actually differs.
   let variance: Awaited<ReturnType<typeof oracleVariance>> | undefined;
-  if (tFind.length + eFind.length + rFind.length > 0) {
+  if (tFind.length + eFind.length + rFind.length + sFind.length > 0) {
     console.log("    (diff seen — replaying the oracle again to separate nondeterminism)");
     variance = await oracleVariance(s, cassette, a);
     if (variance.total > 0) console.log(`    oracle is nondeterministic on ${variance.total} path(s)`);
   }
 
+  // The state surface is graded unconditionally (see above); the other three
+  // follow the scenario's own exemption. The entry count is printed so an
+  // "identical" over two EMPTY trees is visible as the weak claim it is, rather
+  // than reading like the strong one.
+  const sOk = report(
+    `state (${a.state.sandbox.length} sandbox entr${a.state.sandbox.length === 1 ? "y" : "ies"}, engine ${a.state.engine})`,
+    sFind,
+    variance?.state,
+  );
   let tOk: boolean;
   let eOk: boolean;
   let rOk: boolean;
@@ -327,7 +350,7 @@ for (const s of SCENARIOS) {
     : [];
   for (const [side, failure] of substance) console.log(`    substance: FAIL [${side}] — ${failure}`);
   if (s.check && substance.length === 0) console.log("    substance: ok");
-  verdicts.push({ tag: s.tag, pass: replayOk && tOk && eOk && rOk && substance.length === 0 });
+  verdicts.push({ tag: s.tag, pass: replayOk && tOk && eOk && rOk && sOk && substance.length === 0 });
 }
 
 console.log("\n=== M1 corpus verdicts ===");
