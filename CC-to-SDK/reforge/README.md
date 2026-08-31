@@ -784,15 +784,36 @@ along:**
 | `CLAUDE_CODE_ENTRYPOINT` | stamped into every request body as `cc_entrypoint`. Cassettes recorded from inside a Claude Code session carried `sdk-cli`; the same recording from a plain terminal would have carried `sdk-ts`. The corpus's match key depended on which shell recorded it. Now pinned (`PINNED_ENTRYPOINT`), which also makes the SDK-driven and raw drivers agree — they share cassettes. |
 | `ENABLE_PROMPT_CACHING_1H` | forced `cache_control.ttl:"1h"` on every prompt-cache breakpoint. Without it the engine falls back to per-scope resolution and the subagent/compaction lanes take `5m`. So the corpus had a **cost-bearing** behavior baked in from a shell export. Three cassettes were re-recorded rather than normalizing it away — prompt-cache TTL is behavior. |
 
-**Credentials are selected, not inherited** (§3.3's round-3 interlock). Record
-mode passes exactly one deliberately chosen credential, OAuth preferred; replay
-mode passes a fixed non-secret placeholder, because replays are served entirely
-by the local proxy and should not depend on the operator being logged in. That
-replaces upstream's own precedence, where `ANTHROPIC_API_KEY` silently *shadows*
-the OAuth token — the reason every run recipe here had to say `unset
-ANTHROPIC_API_KEY` by hand. `src/env.test.ts` grades the five-case matrix
-(OAuth-only / key-only / both / missing / seeded-override), each case watched
-rejecting its violation *and* accepting its legitimate neighbour: 59 checks.
+**Credentials are selected, not inherited** (§3.3's round-3 interlock), and since
+the W0 boundary review **the engine never holds a real one in either mode**. The
+schema selects the *variable* — OAuth preferred, which replaces upstream's own
+precedence where `ANTHROPIC_API_KEY` silently *shadows* the OAuth token — and
+writes a **placeholder** into that variable, so the engine still takes the auth
+path the operator's real credential implies. `startRecordProxy` swaps the real
+value, read in the harness process, into the outbound auth header
+(`Authorization` for OAuth, `x-api-key` for the key).
+
+The motive was again measured. The pinned engine's subprocess environment
+sanitizer strips `CLAUDE_CODE_OAUTH_TOKEN` from the environments it hands Bash
+commands but **preserves `ANTHROPIC_API_KEY`**, so record mode used to make a
+live key readable by any command the engine ran — and tool output flows into the
+next request body, hence into cassettes, observed logs and transcripts, all of
+which are committed.
+
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` looks like the obvious hardening and is
+**refused**: at this pin a truthy value forces the permission mode to `default`,
+overriding the `bypassPermissions` every corpus scenario is recorded under. It
+would grade a different engine rather than a hardened one, so it joins
+`FORBIDDEN_VARS` and the leak is closed at its source instead.
+
+`src/env.test.ts` grades the five-case matrix (OAuth-only / key-only / both /
+missing / seeded-override), each case watched rejecting its violation *and*
+accepting its legitimate neighbour: **71 checks**.
+`src/credential-leak.test.ts` is the end-to-end half — the real engine, record
+mode, a FAKE credential, a stub upstream and a Bash command that dumps its own
+environment: the fake value must appear nowhere, the placeholder must be visible
+in the dump, and the stub must have received the fake value on the wire. Watched
+failing: restoring the old one-line behaviour turns three of its ten checks red.
 
 ### Gate determinism: pin the disabled state, snapshot the defaults
 
@@ -882,6 +903,17 @@ the binary exactly; the underlying commit is not provably the one Anthropic
 compiled against. Recorded rather than rounded up — and still far closer than a
 minor version of skew. **Nothing went red under the matched runtime.**
 
+**The pin is the BYTES** (W0 boundary review). Because that asset *rolls*, a
+version-string pin is a pin a moving target satisfies: tomorrow's canary, or any
+`BUN` override that printed `1.4.1`, would have been accepted with the hash
+difference downgraded to a printed note. `assertBunPin` now checks
+`PINNED_BUN_SHA256` — on the downloaded candidate before install, on the cached
+binary, and in `prepare.ts` on whatever `BUN` resolves to, env override included
+— and the hash is checked *before* the binary is executed. Accepting different
+bytes requires editing the pin constant. `strangle/toolchain.test.ts` watches it
+both ways (7 checks): the cached surrogate passes; a copy with one appended byte,
+a script that merely prints `1.4.1`, and a missing file are all refused.
+
 ### Strict replay: one canonical form, shared (`src/canonical.ts`, §3.4)
 
 The proxy's match hash and the differ had drifted apart, so requests carrying a
@@ -894,9 +926,10 @@ needs the stateless equivalent.
 
 | tier | used by | contents |
 |---|---|---|
+| wall clock | differ + hash | `Today's date is …` body-wide; `The current month is …` **field-scoped** to `system` and `tools[].description` |
 | run values | differ + hash | proxy port, inline `*_ms` in prose *and* XML, `cc_version` process suffix, `cc-socks` pid, plan-file random suffix |
-| run id shapes | hash only | agent ids (`a` + exactly 16 hex), RFC-4122 uuids — the differ maps these instead |
-| host state | hash only | the `gitStatus` block's `Status:`/`Recent commits:` sections |
+| run id shapes | hash only | agent ids and session uuids **in the engine prose that mints them** — `agentId: a…`, `to: 'a…'`, `/tasks/a….output`, `<task-id>a…</task-id>`, `…/<uuid>/tasks/`. The differ maps these instead |
+| host state | hash only | the `gitStatus` block's `Status:`/`Recent commits:` sections, **anchored to the whole envelope sentence** |
 | structural | differ + hash | `tool_result` ordering, with the cache breakpoint kept as a count |
 
 The host-state tier is the one asymmetry, and the asymmetry is the point: the
@@ -910,7 +943,7 @@ went quiet but the is-a-repo flag, branch and global `user.name` survived — an
 sandbox-owned repository would drop a `.git` directory and a seed commit into a
 directory `search-tools` greps and `file-tools` writes into.)
 
-`src/canonical.test.ts` is the non-vacuity control: 55 checks, every pattern
+`src/canonical.test.ts` is the non-vacuity control: **84 checks**, every pattern
 watched catching its value **and** sparing a deliberately adjacent neighbour — a
 40-hex sha, a `toolu_` id, a *configured* `timeout_ms`, a different plan prompt,
 a different branch name. Widening the agent-id pattern to `[0-9a-f]{16,}` turns
@@ -919,6 +952,35 @@ four of them red, which is how we know the suite is looking at something.
 **A fallback is now FATAL for every `engineB` that is not `engine-extracted`.**
 Warning-only survives solely on the identical-code self-test pair, which makes no
 equivalence claim about a different implementation.
+
+### Two ways normalization can be wrong, and the answer to each (W0 boundary review)
+
+Every scrub is a bet that the text it erases carries no behavior, and the bet can
+fail in both directions.
+
+**Too narrow** rots at a calendar boundary. The WebSearch tool description
+carries `The current month is August 2026`; the corpus was recorded in August, so
+on 1 September *every* scenario missed its body hash and fell back positionally —
+fatal under the rule above, which turned the gate's equivalence phase red on all
+five surfaces while every graded surface was still identical. A scrub for the
+sentence prefix both bundle phrasings share fixes it, scoped to the two fields the
+engine authors so that a *user* prompt discussing a month still discriminates.
+
+**Too wide** is the dangerous direction, and it was live: the id scrubs matched
+by shape in *any* string anywhere, and the git-state pattern was not anchored to
+its envelope. Two genuinely different requests carrying id-shaped tokens, or
+quoting a status report, could share one replay key — the proxy would serve the
+first match to both, report **zero** fallbacks, and grade two engines against a
+response that answered a different question. Tightening the patterns to the
+engine's own enclosing prose (table above) removes the known instances.
+
+The structural backstop is what removes the *unknown* ones.
+`assertNoKeyCollisions` runs at replay-proxy startup: if two entries whose raw
+bodies differ share a canonical key, the proxy **refuses to start** and names the
+first differing bytes. Residual over-reach — from these scrubs or any future one
+— can now only refuse to run, never misroute. All 28 recorded cassettes load
+collision-free; the suite's positive controls prove the check fires on two agent
+ids, two session uuids, two host git states and two months.
 
 ### What strictness caught the first time it ran
 
@@ -946,6 +1008,7 @@ warning, and both were real:
   PASS  env schema + credential matrix
   PASS  canonicalization scrubs
   PASS  gate-defaults fixture matches the pin
+  PASS  splice mechanism
   PASS  derivation perturbation
   PASS  liveness write-tool-result / task-create-result / glob-result
   PASS  liveness env-block / text-delta / session-materialize
@@ -965,6 +1028,16 @@ npx tsx src/env.test.ts                      # X6 credential/allowlist matrix
 npx tsx src/canonical.test.ts                # per-scrub regression + strictness
 npx tsx research/tools/extract-gate-defaults.ts --check
 npx tsx m3/flip-liveness.ts                  # override sweep + negative control
+```
+
+Two W0-boundary-review suites run **alongside** the gate rather than as phases of
+it, because each spawns a real engine or hashes a 60 MB binary and the gate's
+determinism block is meant to be build-free and fast. Run them with the block
+above; folding them in is a candidate for the next gate revision:
+
+```sh
+npx tsx src/credential-leak.test.ts          # X6 end-to-end, fake credential + stub upstream
+npx tsx strangle/toolchain.test.ts           # the runtime pin is the bytes
 ```
 
 ## Next
