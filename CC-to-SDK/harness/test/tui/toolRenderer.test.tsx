@@ -291,9 +291,13 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
   it("renders ONE blinking active group row for open collapsible calls, with the ⎿ hint below it", () => {
     const doc = built(call("read-1", "Read", { file_path: "src/app.ts" }));
     const items = projectPending(doc, context);
-    expect(items).toHaveLength(2);
-    const line = (items[0] as { line: RenderLine }).line;
-    expect(items[0]!.id).toBe("group:read-1:pending-row");
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547): the cluster row is a top-level
+    // block, so a `sep:` chrome item leads it — items[0] is that blank, items[1] the row. Its own `⎿` hint
+    // still butts against it with NO separator between ("tool row (header) → its ⎿ result body = 0", 190586).
+    expect(items).toHaveLength(3);
+    expect(items[0]!.id).toBe("sep:group:read-1:pending-row:gap");
+    const line = (items[1] as { line: RenderLine }).line;
+    expect(items[1]!.id).toBe("group:read-1:pending-row");
     expect(line.text).toBe("⏺ Reading 1 file… (ctrl+o to expand)");
     // Task 7 corrections, both measured on the tracked 2.1.220 golden (see groupRowLine's header): the
     // leader GLYPH and the expand hint are dim AND `inactive` (#999999), with only the glyph cell coloured
@@ -310,22 +314,23 @@ describe("F1 collapsed group rows (R3.4–R3.8, R4.1–R4.8, R5.2)", () => {
     // The golden paints `  ⎿  src/app.ts` as ONE dim #999999 run — connector included, which is why the
     // gutter cells carry their own style here rather than staying plain text. `foldAnchor` (T8) is the
     // cluster this row belongs to: the hint block is part of the same clickable unit as the row above it.
-    expect(items[1]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", ownerKey: groupOwnerKey(["read-1"]), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }], foldAnchor: "read-1" });
+    expect(items[2]).toEqual({ kind: "gutter-block", id: "group:read-1:pending-hint", ownerKey: groupOwnerKey(["read-1"]), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true }, body: [{ text: "src/app.ts", dim: true, color: grey }], foldAnchor: "read-1" });
     // R4.1: a single glyph BLINKING on a 600 ms period — glyph for one half, a bare 2-column gap for the other.
     const off = projectPending(doc, { ...context, now: 600 });
-    expect((off[0] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
-    expect((projectPending(doc, { ...context, now: 1200 })[0] as { line: RenderLine }).line.text).toBe(line.text);
-    expect((projectPending(doc, { ...context, platform: "linux" })[0] as { line: RenderLine }).line.text.startsWith("● ")).toBe(true);
+    expect((off[1] as { line: RenderLine }).line.text).toBe("  Reading 1 file… (ctrl+o to expand)");   // the glyph, not the box, blinks away
+    expect((projectPending(doc, { ...context, now: 1200 })[1] as { line: RenderLine }).line.text).toBe(line.text);
+    expect((projectPending(doc, { ...context, platform: "linux" })[1] as { line: RenderLine }).line.text.startsWith("● ")).toBe(true);
   });
 
   it("keeps a NON-collapsible open call on its own per-call pending row, and folds two open reads into one row", () => {
     const bash = built(call("bash-1", "Bash", { command: "echo hi" }));
-    expect(lineTexts(projectPending(bash, context))).toEqual(["⏺ Bash(echo hi)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(lineTexts(projectPending(bash, context))).toEqual(["", "⏺ Bash(echo hi)"]);
     const reads = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }));
     const items = projectPending(reads, context);
-    expect(items[0]!.id).toBe("group:read-1,read-2:pending-row");
-    expect((items[0] as { line: RenderLine }).line.text).toBe("⏺ Reading 2 files… (ctrl+o to expand)");
-    expect(projectPending(reads, context, new Set(["read-2"]))[0]!.id).toBe("group:read-2:pending-row");
+    expect(items[1]!.id).toBe("group:read-1,read-2:pending-row");
+    expect((items[1] as { line: RenderLine }).line.text).toBe("⏺ Reading 2 files… (ctrl+o to expand)");
+    expect(projectPending(reads, context, new Set(["read-2"]))[1]!.id).toBe("group:read-2:pending-row");
   });
 
   it("matches the Task 6 golden masks for an open single-read group in a real Ink frame", () => {
@@ -384,19 +389,21 @@ describe("F1 5c fixes: silent absorption and the unclosed trailing group", () =>
     const open = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"));
     expect(groupRows(projectCompact(open, context))).toEqual([]);                    // nothing has closed the run
     const dynamic = projectPending(open, context);
-    expect(lineTexts(dynamic)).toEqual(["  Read 1 file (ctrl+o to expand)"]);        // settled geometry: two-space leader, no `…`
-    expect(dynamic[0]!.id).toBe("group:read-1:unclosed-row");                        // distinct from the published `:row`
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547): the leading "" is the separator item.
+    expect(lineTexts(dynamic)).toEqual(["", "  Read 1 file (ctrl+o to expand)"]);    // settled geometry: two-space leader, no `…`
+    expect(dynamic[1]!.id).toBe("group:read-1:unclosed-row");                        // distinct from the published `:row`
     expect(dynamic.some((i) => i.kind === "gutter-block")).toBe(false);              // R3.7: the ⎿ hint stays ACTIVE-only
   });
 
   it("switches the dynamic row from active to settled the moment its last member completes", () => {
     const running = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-1"));
     const live = projectPending(running, context);                                  // one member settled, one still running
-    expect(lineTexts(live)).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);     // the run counts BOTH, not just the open one
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — leading "" is the separator item.
+    expect(lineTexts(live)).toEqual(["", "⏺ Reading 2 files… (ctrl+o to expand)"]); // the run counts BOTH, not just the open one
     expect(live.filter((i) => i.kind === "gutter-block")).toHaveLength(1);          // R3.7: the ⎿ hint, active-only
     const settled = built(call("read-1", "Read", { file_path: "/work/a.ts" }), call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-1"), result("read-2"));
     const done = projectPending(settled, context);
-    expect(lineTexts(done)).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    expect(lineTexts(done)).toEqual(["", "  Read 2 files (ctrl+o to expand)"]);
     expect(done.filter((i) => i.kind === "gutter-block")).toEqual([]);
   });
 
@@ -423,7 +430,9 @@ describe("F1 5c fixes: silent absorption and the unclosed trailing group", () =>
   it("keeps a standalone tool and a non-collapsible open call out of each other's way", () => {
     const doc = built(call("bash-1", "Bash", { command: "npm test" }), result("bash-1", "ok"), prose("mid"),
       call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), call("bash-2", "Bash", { command: "npm run build" }));
-    expect(lineTexts(projectPending(doc, context))).toEqual(["  Read 1 file (ctrl+o to expand)", "⏺ Bash(npm run build)"]);
+    // T-SPACE (R3 §1.5: "tool result body → next tool row = 1 blank", canon 190547): two adjacent top-level
+    // tool blocks, so ONE separator apiece — the fold row and the standalone Bash row each lead with a "".
+    expect(lineTexts(projectPending(doc, context))).toEqual(["", "  Read 1 file (ctrl+o to expand)", "", "⏺ Bash(npm run build)"]);
   });
 });
 
@@ -440,8 +449,9 @@ describe("F1 anchored-stream memoization", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
     const spy = vi.spyOn(projectionDeps, "buildAnchored");
     // Two consecutive frames of the same 600 ms blink: `now` moves, the document does not.
-    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
-    expect(lineTexts(projectPending(doc, { ...context, now: 600 }))).toEqual(["  Reading 1 file… (ctrl+o to expand)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(lineTexts(projectPending(doc, context))).toEqual(["", "⏺ Reading 1 file… (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, { ...context, now: 600 }))).toEqual(["", "  Reading 1 file… (ctrl+o to expand)"]);
     expect(spy).toHaveBeenCalledTimes(1);
     // A projection at the SAME knobs shares that entry — `projectPending` and `projectCompact` are both
     // compact/non-verbose, so the blink and the published read never rebuild for each other. F4 Task 5:
@@ -456,9 +466,10 @@ describe("F1 anchored-stream memoization", () => {
   it("rebuilds when a retained append changes the document, and the projection follows", () => {
     const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }));
     const spy = vi.spyOn(projectionDeps, "buildAnchored");
-    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(lineTexts(projectPending(doc, context))).toEqual(["", "⏺ Reading 1 file… (ctrl+o to expand)"]);
     doc.appendSdk("host", result("read-1"));
-    expect(lineTexts(projectPending(doc, context))).toEqual(["  Read 1 file (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, context))).toEqual(["", "  Read 1 file (ctrl+o to expand)"]);
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
@@ -575,8 +586,9 @@ describe("F3 thought clause on the collapsed group row", () => {
     const doc = built(thinkingCall("read-1", { file_path: "/work/a.ts" }, "m1", "Checking the config"));
     const spy = vi.spyOn(projectionDeps, "buildAnchored");
     const at = (ms: number) => lineTexts(projectPending(doc, { ...context, thoughtMs: thoughtMs({ "message:m1": ms }) }));
-    expect(at(3200)).toEqual(["⏺ Thinking for 3s, reading 1 file… (ctrl+o to expand)"]);
-    expect(at(9000)).toEqual(["⏺ Thinking for 9s, reading 1 file… (ctrl+o to expand)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(at(3200)).toEqual(["", "⏺ Thinking for 3s, reading 1 file… (ctrl+o to expand)"]);
+    expect(at(9000)).toEqual(["", "⏺ Thinking for 9s, reading 1 file… (ctrl+o to expand)"]);
     expect(spy).toHaveBeenCalledTimes(1);                    // the stream itself was still built once
   });
 
@@ -648,19 +660,21 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
   it("never lets the live row's read count drop when R1.5's quirk recounts the run", () => {
     const state = new FoldPendingState({ now: () => 0 });
     const doc = built(cat("b1", "a.ts"));
-    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["", "⏺ Reading 1 file… (ctrl+o to expand)"]);
     doc.appendSdk("host", result("b1")); doc.appendSdk("host", cat("b2", "b.ts"));
-    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["", "⏺ Reading 2 files… (ctrl+o to expand)"]);
     doc.appendSdk("host", result("b2")); doc.appendSdk("host", call("read-1", "Read", { file_path: "/work/c.ts" }));
     // The would-be count is 1 now (one distinct file_path beats two operations) — the latch holds 2.
-    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["⏺ Reading 2 files… (ctrl+o to expand)"]);
-    expect(lineTexts(projectPending(doc, context))).toEqual(["⏺ Reading 1 file… (ctrl+o to expand)"]);   // control: no state, the drop is real
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["", "⏺ Reading 2 files… (ctrl+o to expand)"]);
+    expect(lineTexts(projectPending(doc, context))).toEqual(["", "⏺ Reading 1 file… (ctrl+o to expand)"]);   // control: no state, the drop is real
   });
 
   it("keys the latch on the run's ANCHOR, so a second run starts from its own zero", () => {
     const state = new FoldPendingState({ now: () => 0 });
     const first = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"));
-    expect(lineTexts(projectPending(first, at(state)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);   // unclosed form: latched too
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    expect(lineTexts(projectPending(first, at(state)))).toEqual(["", "  Read 2 files (ctrl+o to expand)"]);   // unclosed form: latched too
     const second = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"), prose("done"), call("read-9", "Read", { file_path: "/work/z.ts" }));
     expect(lineTexts(projectPending(second, at(state)))).toContain("⏺ Reading 1 file… (ctrl+o to expand)");
   });
@@ -671,7 +685,9 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     // without writing, so sweeping history cannot create latch entries.
     const state = new FoldPendingState({ now: () => 0 });
     const doc = built(cat("b1", "a.ts"), result("b1"), cat("b2", "b.ts"), result("b2"));
-    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547) — the leading "" is the separator item.
+    // The `groupRows(...)` reads below stay unchanged: separator ids are `sep:group:…`, which that filter excludes.
+    expect(lineTexts(projectPending(doc, at(state)))).toEqual(["", "  Read 2 files (ctrl+o to expand)"]);
     doc.appendSdk("host", call("read-1", "Read", { file_path: "/work/c.ts" })); doc.appendSdk("host", result("read-1")); doc.appendSdk("host", prose("done"));
     expect(lineTexts(groupRows(projectCompact(doc, at(state))))).toEqual(["  Read 2 files (ctrl+o to expand)"]);
     // A replay with NO latch state (fresh mount) recomputes honestly — and gains no state from the sweep.
@@ -700,7 +716,9 @@ describe("F3 latch-to-max and the throttled hint (R3.2, R4.7)", () => {
     const ctx = () => ({ ...at(state, clock.now), thoughtMs: new Map([["message:m1", 3200]]) });
     const grey = resolveThemeColor(themeTokens().inactive);
     const items = projectPending(doc, ctx());
-    expect(items[1]).toEqual({
+    // T-SPACE (R3 §1.5, canon 190547): items[0] is the cluster row's leading separator, items[1] the row,
+    // items[2] its `⎿` hint — which still butts against the row ("tool row → its ⎿ body = 0 blanks", 190586).
+    expect(items[2]).toEqual({
       kind: "gutter-block", id: "group:read-1:pending-hint", ownerKey: groupOwnerKey(["read-1"]), gutter: GROUP_HINT_GUTTER, gutterStyle: { color: grey, dim: true },
       body: [{ text: "weighing the options", dim: true, color: grey, italic: true }], foldAnchor: "read-1",
     });
@@ -752,13 +770,18 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
 
   it("shows dim `Initializing…` while the agent has produced no inner call yet", () => {
     const items = projectPending(built(agent()), context);
-    expect(lineTexts(items)).toEqual(["⏺ Agent(review the diff)"]);
-    expect(items[1]).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "Initializing…", dim: true }] });
+    // T-SPACE (R3 §1.5: "any block → tool row = 1 blank", canon 190547): the Agent row is one top-level block —
+    // one separator ahead of it, and its `⎿` body still butts against it (0 blanks, canon 190586).
+    expect(lineTexts(items)).toEqual(["", "⏺ Agent(review the diff)"]);
+    expect(items[2]).toMatchObject({ kind: "gutter-block", gutter: TOOL_RESULT_GUTTER, body: [{ text: "Initializing…", dim: true }] });
   });
 
   it("shows the last THREE inner rows plus the hidden-count marker (upstream zVp = 3)", () => {
     const items = projectPending(built(agent(), ...children(5)), context);
+    // T-SPACE (R3 §1.5, canon 190547): the progress unit is ONE top-level block — a single leading separator
+    // ahead of the Agent row, and nothing between the row and its condensed inner rows.
     expect(rowTexts(items)).toEqual([
+      "",
       "⏺ Agent(review the diff)",
       "  ⏺ Read(f2.ts)", "  ⏺ Read(f3.ts)", "  ⏺ Read(f4.ts)",
       "  … +2 tool uses (ctrl+o to expand)",
@@ -766,8 +789,8 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
     const marker = items.at(-1) as { line: RenderLine };
     expect(marker.line).toEqual({ text: "  … +2 tool uses (ctrl+o to expand)", dim: true });
     expect(items.every((i) => i.kind === "line")).toBe(true);                    // condensed: no inner result bodies
-    // Exactly three or fewer inner calls earn no marker at all.
-    expect(rowTexts(projectPending(built(agent(), ...children(3)), context))).toHaveLength(4);
+    // Exactly three or fewer inner calls earn no marker at all (4 rows + the one leading separator).
+    expect(rowTexts(projectPending(built(agent(), ...children(3)), context))).toHaveLength(5);
   });
 
   it("renders completion as a `⎿` GUTTER row with the bullet suppressed, plus a sibling dim hint line", () => {
@@ -822,7 +845,10 @@ describe("F3 Task 7: Agent progress and the Done row", () => {
   it("expands to the nested rows in the detail projections, and drops the hint there (`Bg` is null in transcript mode)", () => {
     const doc = built(agent(), ...children(2), agentResult(COMPLETED), prose("summary"));
     const detail = projectDetail(doc, { ...context, projection: "detail-collapsed" });
-    expect(rowTexts(detail)).toEqual(["⏺ Agent(review the diff)", "  ⏺ Read(f0.ts)", "  ⏺ Read(f1.ts)", "summary"]);
+    // T-SPACE (R3 §1.5, canon 190547 + 189059): one separator ahead of the Agent block, one ahead of the
+    // "summary" assistant text ("tool result body → assistant text = 1 blank"); the nested rows belong to the
+    // Agent block itself and take none.
+    expect(rowTexts(detail)).toEqual(["", "⏺ Agent(review the diff)", "  ⏺ Read(f0.ts)", "  ⏺ Read(f1.ts)", "", "summary"]);
     expect(bodyOf(detail).map((l) => l.text)).toEqual(["Done (3 tool uses · 24.1k tokens · 1m 12s)", "Read 2 lines", "Read 2 lines"]);
     expect(rowTexts(detail).some((t) => t.includes("ctrl+o to expand"))).toBe(false);
     expect(rowTexts(projectCompact(doc, context))).not.toContain("  ⏺ Read(f0.ts)");
@@ -849,17 +875,20 @@ describe("F3 Task 8: same-message agent batches", () => {
 
   it("collapses two running same-message Agents into ONE active unit, with no individual Agent rows", () => {
     const items = projectPending(built(pair(), childOf("ag-1", "c-1", "/work/a.ts")), context);
+    // T-SPACE (R3 §1.5, canon 190547): the whole batch is ONE top-level block, so exactly one separator leads
+    // the header and the per-agent rows below it take none (they are the block's own body).
     expect(lineTexts(items)).toEqual([
+      "",
       "⏺ Running 2 agents… (ctrl+o to expand)",
       "   ├ review the diff · 1 tool use", "   │ ⎿  Read",
       "   └ write the tests · 0 tool uses", "     ⎿  Initializing…",
     ]);
     expect(lineTexts(items).some((t) => t.startsWith("⏺ Agent("))).toBe(false);   // Task 7's standalone row is gone
-    expect(items[0]!.id).toBe("agents:ag-1,ag-2:pending-header");
+    expect(items[1]!.id).toBe("agents:ag-1,ag-2:pending-header");
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
     // R4.1's blink, the `ile` model: the leader GLYPH alone blinks on the 600 ms period while unresolved.
-    expect(lineTexts(projectPending(built(pair()), { ...context, now: 600 }))[0]).toBe("  Running 2 agents… (ctrl+o to expand)");
-    expect(lineTexts(projectPending(built(pair()), { ...context, platform: "linux" }))[0]!.startsWith("● ")).toBe(true);
+    expect(lineTexts(projectPending(built(pair()), { ...context, now: 600 }))[1]).toBe("  Running 2 agents… (ctrl+o to expand)");
+    expect(lineTexts(projectPending(built(pair()), { ...context, platform: "linux" }))[1]!.startsWith("● ")).toBe(true);
   });
 
   it("forms ONE unit when the parallel dispatch arrives SPLIT across frames — one API id, two uuids (t8 review)", () => {
@@ -869,8 +898,9 @@ describe("F3 Task 8: same-message agent batches", () => {
     const frameA = { type: "assistant", parent_tool_use_id: null, uuid: "fa-1", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } }] } } as Record<string, unknown>;
     const frameB = { type: "assistant", parent_tool_use_id: null, uuid: "fb-2", message: { id: "m-split", content: [{ type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>;
     const items = projectPending(built(frameA, frameB), context);
-    expect(lineTexts(items)[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
-    expect(items[0]!.id).toBe("agents:ag-1,ag-2:pending-header");
+    // T-SPACE (R3 §1.5, canon 190547): index 0 is the batch block's leading separator, index 1 the header.
+    expect(lineTexts(items)[1]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
+    expect(items[1]!.id).toBe("agents:ag-1,ag-2:pending-header");
     expect(lineTexts(items).some((t) => t.startsWith("⏺ Agent("))).toBe(false);
   });
 
@@ -878,7 +908,8 @@ describe("F3 Task 8: same-message agent batches", () => {
     const doc = built(pair(), settle("ag-1", COMPLETED));
     expect(projectCompact(doc, context).filter((i) => i.id.startsWith("agents:"))).toEqual([]);
     const pending = lineTexts(projectPending(doc, context));
-    expect(pending[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");            // one unit, still active
+    // T-SPACE (R3 §1.5, canon 190547): index 0 is the batch block's leading separator, index 1 the header.
+    expect(pending[1]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");            // one unit, still active
     expect(pending.filter((t) => t.includes("Running 2 agents"))).toHaveLength(1);
     expect(pending).toContain("   ├ review the diff · 3 tool uses · 24.1k tokens");
     expect(pending).toContain("   │ ⎿  Done");
@@ -913,11 +944,12 @@ describe("F3 Task 8: same-message agent batches", () => {
 
   it("qualifies the noun only when every member shares one non-default subagent_type", () => {
     const typed = built(agents([{ id: "ag-1", input: { subagent_type: "reviewer" } }, { id: "ag-2", input: { subagent_type: "reviewer" } }]));
-    expect(lineTexts(projectPending(typed, context))[0]).toBe("⏺ Running 2 reviewer agents… (ctrl+o to expand)");
+    // T-SPACE (R3 §1.5, canon 190547): index 0 is the batch block's leading separator; every index below is +1.
+    expect(lineTexts(projectPending(typed, context))[1]).toBe("⏺ Running 2 reviewer agents… (ctrl+o to expand)");
     const mixed = built(agents([{ id: "ag-1", input: { subagent_type: "reviewer" } }, { id: "ag-2", input: { subagent_type: "writer" } }]));
-    expect(lineTexts(projectPending(mixed, context))[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
+    expect(lineTexts(projectPending(mixed, context))[1]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");
     // hideType=false: the per-agent row leads with the TYPE and parenthesizes the description (`jla` 422185).
-    expect(lineTexts(projectPending(mixed, context))[1]).toBe("   ├ reviewer (do ag-1) · 0 tool uses");
+    expect(lineTexts(projectPending(mixed, context))[2]).toBe("   ├ reviewer (do ag-1) · 0 tool uses");
   });
 
   it("renders an all-async resolved batch as the background-launch form, with no ctrl+o hint", () => {
@@ -938,7 +970,8 @@ describe("F3 Task 8: same-message agent batches", () => {
     expect(lineTexts(all)).toContain("⏺ Agent(review the diff)");
     expect(lineTexts(all)).toContain("⏺ Agent(write the tests)");
     const collapsed = projectDetail(doc, { ...context, projection: "detail-collapsed" });
-    expect(lineTexts(collapsed)[0]).toBe("⏺ 2 agents finished");                  // grouped, and `Bg` is null here
+    // T-SPACE (R3 §1.5, canon 190547): index 0 is the batch block's leading separator, index 1 the header.
+    expect(lineTexts(collapsed)[1]).toBe("⏺ 2 agents finished");                  // grouped, and `Bg` is null here
   });
 
   it("leaves a SINGLE Agent in a message on Task 7's standalone path, untouched", () => {
@@ -978,7 +1011,9 @@ describe("F3 Task 8: same-message agent batches", () => {
     ] } } as Record<string, unknown>;
     const items = projectPending(built(bashes), context);
     expect(items.some((i) => i.id.startsWith("agents:"))).toBe(false);
-    expect(lineTexts(items)).toEqual(["⏺ Bash(npm test)", "⏺ Bash(npm run build)"]);
+    // T-SPACE (R3 §1.5: "tool result body → next tool row = 1 blank", canon 190547): two ungrouped standalone
+    // Bash blocks, so one separator apiece — the ungrouped shape is what makes the second "" appear.
+    expect(lineTexts(items)).toEqual(["", "⏺ Bash(npm test)", "", "⏺ Bash(npm run build)"]);
   });
 
   it("keeps a live-turn filter honest: a disk-bootstrapped dangling batch does not blink", () => {
@@ -1046,7 +1081,9 @@ describe("F3 Task 9 — the Bash background hint (LT20)", () => {
     const doc = new TranscriptDocument();
     doc.appendSdk("host", { type: "assistant", parent_tool_use_id: null, uuid: "a1", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } }] } });
     const items = projectPending(doc, { cwd: "/work", home: "/home/me", platform: "darwin", columns: 100, now: 0, bashHint: hint, agentMeta: started("bash-1", "local_bash") });
-    expect(items.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["⏺ Bash(npm test)", "     (ctrl+b to run in background)"]);
+    // T-SPACE (R3 §1.5, canon 190547): one separator ahead of the open Bash block; the hint is a row OF that
+    // block, so it still butts against the header (same 0-gap rule as the `⎿` body, canon 190586).
+    expect(items.map((item) => (item.kind === "line" ? item.line.text : ""))).toEqual(["", "⏺ Bash(npm test)", "     (ctrl+b to run in background)"]);
   });
 });
 
@@ -1214,8 +1251,9 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
     const batch = built({ type: "assistant", parent_tool_use_id: null, message: { id: "m-pair", content: [
       { type: "tool_use", id: "ag-1", name: "Agent", input: { description: "review the diff", prompt: "p" } },
       { type: "tool_use", id: "ag-2", name: "Agent", input: { description: "write the tests", prompt: "p" } }] } } as Record<string, unknown>);
-    expect(lineTexts(projectPending(batch, FS))[0]).toBe("⏺ Running 2 agents…");
-    expect(lineTexts(projectPending(batch, context))[0]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");        // control
+    // T-SPACE (R3 §1.5, canon 190547): index 0 is the batch block's leading separator, index 1 the header.
+    expect(lineTexts(projectPending(batch, FS))[1]).toBe("⏺ Running 2 agents…");
+    expect(lineTexts(projectPending(batch, context))[1]).toBe("⏺ Running 2 agents… (ctrl+o to expand)");        // control
   });
 
   // The pager takes the blanket with it, and that is CANON-FAITHFUL rather than a leak: canon provides `Ett`
@@ -1248,15 +1286,18 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
       call("tc-1", "TaskCreate", { description: "ship the wave" }), result("tc-1", "board is locked", true),
       call("read-2", "Read", { file_path: "/work/b.ts" }), result("read-2"), prose("done"));
     const rows = lineTexts(projectCompact(doc, FS));
-    expect(rows[1]).toContain("TaskCreate");                          // ← the failure has a row of its own…
-    expect(rows).toEqual(["  Read 1 file", rows[1]!, "  Read 1 file", "done"]);
+    // T-SPACE (R3 §1.5: "tool result body → next tool row = 1 blank", canon 190547, plus 189059 for the closing
+    // assistant text): four top-level blocks here, so each is preceded by its own separator "" and every index
+    // below doubles. The pop-out's row still SPEAKS and still stands between the two cluster rows.
+    expect(rows[3]).toContain("TaskCreate");                          // ← the failure has a row of its own…
+    expect(rows).toEqual(["", "  Read 1 file", "", rows[3]!, "", "  Read 1 file", "", "done"]);
     // …and that row is what stands between the two cluster rows the pop-out created. Without it the seam is
     // invisible: two adjacent, identical, unexplained "Read 1 file" rows.
-    expect(rows[0]).toBe(rows[2]);
-    expect(rows.indexOf(rows[1]!)).toBe(1);
+    expect(rows[1]).toBe(rows[5]);
+    expect(rows.indexOf(rows[3]!)).toBe(3);
     // The classic control: there the call never reaches the policy at all (`foldAtoms` diverts it to a neutral
-    // atom), so ONE cluster spans it and nothing about this changed.
-    expect(lineTexts(projectCompact(doc, context))).toEqual(["  Read 2 files (ctrl+o to expand)", "done"]);
+    // atom), so ONE cluster spans it and nothing about this changed — bar the two separators.
+    expect(lineTexts(projectCompact(doc, context))).toEqual(["", "  Read 2 files (ctrl+o to expand)", "", "done"]);
   });
 
   // ── T5 FIX 3: THE TWO `projectPending` FOLD-ATOM SITES, EACH ON ITS OWN ───────────────────────────────
@@ -1296,11 +1337,13 @@ describe("Tool-stream T5: the fullscreen projection switch", () => {
   // flag existed. Both docs above, on the classic path, down to the SGR run of the group row.
   it("leaves the classic renderer byte-identical: no flag, no widening, chip intact", () => {
     const mixed = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), bash("bash-1", "npm run build"), result("bash-1", "ok"), prose("done"));
-    expect(lineTexts(projectCompact(mixed, context))).toEqual(["  Read 1 file (ctrl+o to expand)", "⏺ Bash(npm run build)", "done"]);
+    // T-SPACE (R3 §1.5, canon 190547 + 189059): "byte-identical" is about the CLASSIC-vs-fullscreen difference,
+    // and the new invariant is orthogonal to it — both paths now open each top-level block with one separator.
+    expect(lineTexts(projectCompact(mixed, context))).toEqual(["", "  Read 1 file (ctrl+o to expand)", "", "⏺ Bash(npm run build)", "", "done"]);
     expect(raw(groupLines(projectCompact(mixed, context)))).toContain("\x1b[38;2;153;153;153m\x1b[2mRead \x1b[1m1\x1b[22m file");
     const bashOnly = built(bash("bash-1", "npm run build"), result("bash-1", "ok"), bash("bash-2", "npm test"), result("bash-2", "ok"), prose("done"));
     expect(groupLines(projectCompact(bashOnly, context))).toEqual([]);            // classic never folds a non-read Bash
-    expect(lineTexts(projectCompact(bashOnly, context))).toEqual(["⏺ Bash(npm run build)", "⏺ Bash(npm test)", "done"]);
+    expect(lineTexts(projectCompact(bashOnly, context))).toEqual(["", "⏺ Bash(npm run build)", "", "⏺ Bash(npm test)", "", "done"]);
   });
 
   // T-PRLINK, END TO END: a real `gh pr create` Bash call, scraped by `recognizeGitOps`, through the whole
