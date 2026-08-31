@@ -374,9 +374,19 @@ different frame counts. So `Scenario.substanceOnly` opts that scenario out of
 diff grading **with a required written reason**, the runner prints the exemption
 and the ungraded difference counts every run, and the scenario grades strictly
 less than the others. Its substance check therefore carries the whole claim, on
-both engines: the dispatch frames *and* the fold-back — presence only, since what
-races is where the fold-back splices, not whether it arrives. The alternative — stretching normalization until it went
-green — would have bought a passing gate by deleting a real contract.
+both engines: the dispatch frames *and* the fold-back — presence only for the
+fold-back, since what races is where it splices, not whether it arrives. Being
+the only grader, the check asserts the **correlation identifiers themselves**,
+not merely that frames appeared: `task_started` must carry a nonempty `task_id`
+and a `tool_use_id` equal to the id of the `Agent` tool_use block that dispatched
+it, and some `background_tasks_changed` frame must list an entry under that same
+`task_id`. Those are the fields ccx joins its task panel on, and a laxer check
+passes vacuously — an absent id on both sides compares `undefined === undefined`.
+`m3/background-check.test.ts` is the negative control: it feeds the check
+synthetic transcripts with each identifier missing, empty, or mismatched and
+proves every one is rejected while the real shape passes. The alternative —
+stretching normalization until it went green — would have bought a passing gate
+by deleting a real contract.
 
 ## M3-B — the splice manifest (2026-08-25)
 

@@ -28,6 +28,69 @@ function trackedUserMessage(text: string, uuid: string, originKind: "human" | "a
 const frames = (msgs: unknown[], subtype: string) =>
   msgs.filter((m) => (m as { type?: string; subtype?: string }).type === "system" && (m as { subtype?: string }).subtype === subtype);
 
+/** The id of the Agent tool_use block — the anchor every task frame must name. */
+function agentToolUseId(msgs: unknown[]): string | undefined {
+  for (const m of msgs) {
+    const mm = m as { type?: string; message?: { content?: unknown } };
+    if (mm.type !== "assistant") continue;
+    const c = mm.message?.content;
+    if (!Array.isArray(c)) continue;
+    const block = (c as { type?: string; name?: string; id?: string }[]).find(
+      (b) => b?.type === "tool_use" && b?.name === "Agent",
+    );
+    if (block?.id) return block.id;
+  }
+  return undefined;
+}
+
+/**
+ * Substance assertion for the `background-task` scenario. Exported because that
+ * scenario is substanceOnly — this function is the ONLY thing grading engine B,
+ * so it carries its own negative controls (m3/background-check.test.ts).
+ *
+ * The correlation identifiers are the contract, not decoration: ccx keys its
+ * task panel off `task_id` and joins the frames back to the dispatching tool
+ * call through `tool_use_id`. So the ids must be present, nonempty, and
+ * actually agree with each other — a check written as a bare equality passes
+ * vacuously on `undefined === undefined`, which is exactly the malformed engine
+ * this is meant to catch.
+ */
+export function checkBackgroundTask(msgs: unknown[]): string | null {
+  if (!usedTool(msgs, "Agent")) return "Agent tool never used";
+  const toolUseId = agentToolUseId(msgs);
+  if (!toolUseId) return "the Agent tool_use block carried no id";
+  const started = frames(msgs, "task_started")[0] as { task_id?: string; tool_use_id?: string } | undefined;
+  if (!started) return "no task_started frame";
+  const taskId = started.task_id;
+  if (!taskId) return "task_started carried no nonempty task_id";
+  if (started.tool_use_id !== toolUseId)
+    return `task_started.tool_use_id (${JSON.stringify(started.tool_use_id)}) did not match the Agent tool_use id (${toolUseId})`;
+  const changed = frames(msgs, "background_tasks_changed") as { tasks?: { task_id?: string }[] }[];
+  if (changed.length === 0) return "no background_tasks_changed frame";
+  // The signal is level, not edge (REPLACE semantics), so the run also ends
+  // with an EMPTY tasks array — "some frame carried an array" is satisfied
+  // by that teardown alone. The dispatch itself has to be visible: some
+  // frame must list the task `task_started` announced, under that same id.
+  if (!changed.some((c) => Array.isArray(c.tasks) && c.tasks.some((t) => t?.task_id === taskId)))
+    return `no background_tasks_changed frame listed the dispatched task (${taskId})`;
+  // Fold-back. A whole-transcript substring search always trips here: the
+  // dispatch prompt necessarily contains the marker (same trap as
+  // `interrupt`). The fold-back is the marker arriving as PARENT-LANE
+  // output — a top-level assistant text block, or a result — whichever side
+  // of the parent's own reply the race splices it on.
+  const inParentText = msgs.some((m) => {
+    const mm = m as { type?: string; parent_tool_use_id?: string | null; message?: { content?: unknown } };
+    if (mm.type !== "assistant" || mm.parent_tool_use_id) return false;
+    const c = mm.message?.content;
+    return (
+      Array.isArray(c) &&
+      c.some((b: { type?: string; text?: string }) => b?.type === "text" && b.text?.includes("REFORGE_BG_OK"))
+    );
+  });
+  const inResult = resultsOf(msgs).some((r) => String(r.result ?? "").includes("REFORGE_BG_OK"));
+  return inParentText || inResult ? null : "the background agent's result never folded back into the parent turn";
+}
+
 export const M3_SCENARIOS: Scenario[] = [
   {
     // Tier 1 #1/#2: ccx settles a turn by matching result.user_message_uuid to
@@ -245,11 +308,12 @@ export const M3_SCENARIOS: Scenario[] = [
     //
     // So it grades on its substance assertion alone — which is therefore the
     // ONLY thing constraining either engine here, and has to carry the whole
-    // claim: the dispatch-time sidechannel frames (`task_started` with a
-    // tool_use_id, `background_tasks_changed` listing the dispatched task) AND
-    // that the agent's answer lands back in the parent conversation. What races
-    // is only WHERE the fold-back splices, so presence is assertable; position
-    // is not.
+    // claim: the dispatch-time sidechannel frames, correlated by their actual
+    // identifiers (`task_started` naming the Agent tool_use id and a nonempty
+    // task_id, `background_tasks_changed` listing that same task_id) AND that
+    // the agent's answer lands back in the parent conversation. What races is
+    // only WHERE the fold-back splices, so presence is assertable; position is
+    // not. See checkBackgroundTask above.
     substanceOnly:
       "backgrounded work completes concurrently with the parent turn; the splice point in the parent's conversation is a race that cannot be canonicalized without discarding real conversation ordering",
     tag: "background-task",
@@ -264,36 +328,7 @@ export const M3_SCENARIOS: Scenario[] = [
           permissionMode: "bypassPermissions",
         },
       ),
-    check: (msgs) => {
-      if (!usedTool(msgs, "Agent")) return "Agent tool never used";
-      const started = frames(msgs, "task_started")[0] as { task_id?: string; tool_use_id?: string } | undefined;
-      if (!started) return "no task_started frame";
-      if (!started.tool_use_id) return "task_started lacked tool_use_id";
-      const changed = frames(msgs, "background_tasks_changed") as { tasks?: { task_id?: string }[] }[];
-      if (changed.length === 0) return "no background_tasks_changed frame";
-      // The signal is level, not edge (REPLACE semantics), so the run also ends
-      // with an EMPTY tasks array — "some frame carried an array" is satisfied
-      // by that teardown alone. The dispatch itself has to be visible: some
-      // frame must list the task `task_started` announced.
-      if (!changed.some((c) => Array.isArray(c.tasks) && c.tasks.some((t) => t.task_id === started.task_id)))
-        return "no background_tasks_changed frame listed the dispatched task";
-      // Fold-back. A whole-transcript substring search always trips here: the
-      // dispatch prompt necessarily contains the marker (same trap as
-      // `interrupt`). The fold-back is the marker arriving as PARENT-LANE
-      // output — a top-level assistant text block, or a result — whichever side
-      // of the parent's own reply the race splices it on.
-      const inParentText = msgs.some((m) => {
-        const mm = m as { type?: string; parent_tool_use_id?: string | null; message?: { content?: unknown } };
-        if (mm.type !== "assistant" || mm.parent_tool_use_id) return false;
-        const c = mm.message?.content;
-        return (
-          Array.isArray(c) &&
-          c.some((b: { type?: string; text?: string }) => b?.type === "text" && b.text?.includes("REFORGE_BG_OK"))
-        );
-      });
-      const inResult = resultsOf(msgs).some((r) => String(r.result ?? "").includes("REFORGE_BG_OK"));
-      return inParentText || inResult ? null : "the background agent's result never folded back into the parent turn";
-    },
+    check: (msgs) => checkBackgroundTask(msgs),
   },
 
   {
