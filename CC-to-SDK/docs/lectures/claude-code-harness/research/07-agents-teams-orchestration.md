@@ -2333,7 +2333,417 @@ alias and as `appState.proactivityLevel` (used to pick the cloud agent's permiss
 `CLAUDE_CODE_GOAL_CHECKIN_MINUTES`, and the `goal-checkin` / `worker-checkin` task-notification
 origins (`:75780-75786`).
 
-<!--NEXT-->
+---
+
+## 8. Tasks and todos
+
+### 8.1 Two unrelated families sharing a prefix
+
+| tool | family | purpose |
+|---|---|---|
+| `TaskCreate` `TaskGet` `TaskUpdate` `TaskList` | **plan DAG** | the session task list, gated by `KW()` |
+| `TaskStop` `TaskOutput` | **background tasks** | renamed `KillShell` / `BashOutput`, always enabled |
+
+`TaskList` is the DAG lister (`Gkt`, `cli.pretty.js:479999`), yet the `/loop` prompts tell the model
+to use `TaskList` to find a Monitor's task id (`:704548`, `:704558`). **INFERRED:** either the
+background-task registry is surfaced through the same tool name in a code path I did not locate, or
+this is a stale cross-reference in the loop prompt. Listed as an open question.
+
+### 8.2 Model gating (`cli.pretty.js:465388-465404`)
+
+```js
+var XRn = [["opus",[4,8]], ["sonnet",[5]], ["fable",[5]], ["mythos",[5]]],
+    nne = [TodoWrite, TaskCreate, TaskGet, TaskUpdate, TaskList],
+    ZRn = "tengu_rosy_wren";
+
+function ePn(e) { return !jLe(e, XRn); }        // true when the model is NOT one of the listed families/generations
+function FL() {
+  if (nl() || EHn()) return !0;
+  let e = AMe();                                 // resolved model
+  if (e === void 0 || ePn(e)) return !0;         // unknown model, or an older model → keep the tools
+  if (a.CLAUDE_CODE_ENABLE_TODO_TOOLS === !0) return !0;
+  return I(ZRn, !1) === !0;
+}
+function KW() { return nw() && FL(); }
+```
+
+**On opus generations 4 and 8, sonnet 5, fable 5, and mythos 5 the five task/todo tools are removed by
+default.** They return via `CLAUDE_CODE_ENABLE_TODO_TOOLS=true`, GrowthBook `tengu_rosy_wren`, or the
+two unconditional escape hatches `nl()` / `EHn()`. `KW()` gates the four `Task*` DAG tools directly
+(`isEnabled()` on each, `:479700`, `:479760`, `:479870`, `:480010`).
+
+### 8.3 `TaskCreate`
+
+Input (`T0n`, `cli.pretty.js:479687`):
+```js
+ot({ subject: i().describe("A brief title for the task"),
+     description: i().describe("What needs to be done"),
+     activeForm: i().optional().describe('Present continuous form shown in spinner when in_progress (e.g., "Running tests")'),
+     metadata: De(i(), _e()).optional().describe("Arbitrary metadata to attach to the task") })
+```
+Output `{ task: { id, subject } }`. Short description: `Create a new task in the task list`. Result
+string: `Task #<id> created successfully: <subject>`. Not concurrency-safe. A `TaskCreated` hook runs
+and can block; a blocking error deletes the just-created task and throws. It also emits
+`{ type: "set_expanded_view", expandedView: "tasks" }` — creating a task opens the task pane.
+
+Prompt (`Lkt()`, `:479644-479686`) — the "When to Use" list is the familiar TodoWrite text; the
+teams-only additions (present only when `io()`):
+```
+- Include enough detail in the description for another agent to understand and complete the task
+- New tasks are created with status 'pending' and no owner - use TaskUpdate with the `owner` parameter to assign them
+```
+and, in the trigger list, `Non-trivial and complex tasks … and potentially assigned to teammates`.
+
+### 8.4 `TaskGet`
+
+Input `{ taskId: "The ID of the task to retrieve" }`; output
+`{ task: { id, subject, description, status, blocks: string[], blockedBy: string[] } | null }`.
+Short description: `Get a task by ID from the task list`. Prompt (`$kt`, `:479728`):
+
+```
+## Output
+
+Returns full task details:
+- **subject**: Task title
+- **description**: Detailed requirements and context
+- **status**: 'pending', 'in_progress', or 'completed'
+- **blocks**: Tasks waiting on this one to complete
+- **blockedBy**: Tasks that must complete before this one can start
+
+## Tips
+
+- After fetching a task, verify its blockedBy list is empty before beginning work.
+- Use TaskList to see all tasks in summary form.
+```
+
+Result rendering: `Task #<id>: <subject>` / `Status: …` / `Description: …` / `Blocked by: #a, #b` /
+`Blocks: #c`; `Task not found` when null.
+
+### 8.5 `TaskUpdate`
+
+Input (`A0n`, `:479857`):
+```js
+ot({ taskId: i().describe("The ID of the task to update"),
+     subject: i().optional().describe("New subject for the task"),
+     description: i().optional().describe("New description for the task"),
+     activeForm: i().optional().describe('Present continuous form shown in spinner when in_progress (e.g., "Running tests")'),
+     status: (pending|in_progress|completed|"deleted").optional().describe("New status for the task"),
+     addBlocks: H(i()).optional().describe("Task IDs that this task blocks"),
+     addBlockedBy: H(i()).optional().describe("Task IDs that block this task"),
+     owner: i().optional().describe("New owner for the task"),
+     metadata: De(i(), _e()).optional().describe("Metadata keys to merge into the task. Set a key to null to delete it.") })
+```
+Output `{ success, taskId, updatedFields[], error?, statusChange?: {from, to} }`.
+
+Prompt (`Hkt`, `:479781-479856`) — the status workflow and staleness rules, verbatim:
+
+```
+## Status Workflow
+
+Status progresses: `pending` → `in_progress` → `completed`
+
+Use `deleted` to permanently remove a task.
+
+## Staleness
+
+Make sure to read a task's latest state using `TaskGet` before updating it.
+```
+
+with examples for `{"taskId":"1","status":"in_progress"}`, `{"taskId":"1","status":"deleted"}`,
+`{"taskId":"1","owner":"my-name"}`, `{"taskId":"2","addBlockedBy":["1"]}`.
+
+Completion appends a nudge (`:479960`):
+`Task completed. Call TaskList now to find your next available task or see if your work unblocked others.`
+
+The DAG is **additive only** through the tool surface: `addBlocks` / `addBlockedBy` with no remove
+counterpart. No cycle-detection code was located — open question.
+
+### 8.6 `TaskList`
+
+Input `{}`; output `{ tasks: [{ id, subject, status, owner?, blockedBy: string[] }] }`.
+The implementation (`:480020-480026`) filters out tasks with `metadata._internal` and prunes
+`blockedBy` entries whose task is already `completed` — so a listed `blockedBy` is always a *live*
+blocker.
+
+Rendering: `#<id> [<status>] <subject> (<owner>) [blocked by #a, #b]`, or `No tasks found`.
+
+Prompt (`zkt()`, `:479966-479998`) adds a teams-only section:
+
+```
+## Teammate Workflow
+
+When working as a teammate:
+1. After completing your current task, call TaskList to find available work
+2. Look for tasks with status 'pending', no owner, and empty blockedBy
+3. **Prefer tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones
+4. Claim an available task using TaskUpdate (set `owner` to your name), or wait for leader assignment
+5. If blocked, focus on unblocking tasks or notify the team lead
+```
+
+### 8.7 `TodoWrite`
+
+`ME = "TodoWrite"` (`:74766`). Input `{ todos: <todo list schema> }`, output
+`{ oldTodos, newTodos }`, `strict: true`, `userFacingName()` returns `""` (it renders as a diff, not
+a tool row). Short description (`vSt`, `:476491`):
+
+```
+Update the todo list for the current session. To be used proactively and often to track progress and pending tasks. Make sure that at least one task is in_progress at all times. Always provide both content (imperative) and activeForm (present continuous) for each task.
+```
+
+Its long prompt is model-parameterized (`TSt(model)`) and includes the completion-discipline block
+`TaskUpdate` reuses:
+
+```
+3. **Task Completion Requirements**:
+   - ONLY mark a task as completed when you have FULLY accomplished it
+   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+   - When blocked, create a new task describing what needs to be resolved
+   - Never mark a task as completed if:
+     - Tests are failing
+     - Implementation is partial
+     - You encountered unresolved errors
+     - You couldn't find necessary files or dependencies
+
+4. **Task Breakdown**:
+   - Create specific, actionable items
+   - Break complex tasks into smaller, manageable steps
+   - Use clear, descriptive task names
+   - Always provide both forms:
+     - content: "Fix authentication bug"
+     - activeForm: "Fixing authentication bug"
+
+When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.
+```
+
+Relationship to the Task family: `TodoWrite` is a flat, whole-list replace with no ids, no owner, and
+no dependency edges; `TaskCreate`/`TaskUpdate` are an addressable DAG with owners. Both are gated by
+the same `nne` list, so a session has *either* both families or neither.
+
+### 8.8 `TaskStop` and `TaskOutput`
+
+`TaskStop` (`ny`, `:641639`; tool at `:473795`):
+
+```js
+ot({ task_id: i().optional().describe("The ID of the background task to stop. Agent-team teammates and named background agents are also accepted by agent ID or name."),
+     shell_id: i().optional().describe("Deprecated: use task_id instead") })
+// output: { message, task_id, task_type, command? }
+```
+Aliases `KillShell`, `KillBash`. Prompt (`VXn`, `:641639`):
+```
+- Stops a running background task by its ID
+- Takes a task_id parameter identifying the task to stop
+- To stop an agent-team teammate, pass its agent ID ("name@team") or bare teammate name as task_id
+- To stop a background agent spawned with a name, pass that name as task_id
+- Returns a success or failure status
+- Use this tool when you need to terminate a long-running task
+```
+`"name@team"` is the only place in the binary where the team-qualified agent-id form is named.
+
+`TaskOutput` (`bM`, `:74720`; tool at `:476014`), aliases `AgentOutputTool`, `BashOutputTool`,
+`AgentOutput`, `BashOutput`. Input (`MFn`, `:475971`):
+
+```js
+ot({ task_id: i().describe("The task ID to get output from"),
+     block:   q().default(!0).describe("Whether to wait for completion"),
+     timeout: v().min(0).max(600000).default(30000).describe("Max wait time in ms") })
+```
+
+Short description, literally:
+```
+[Deprecated] — for bash and remote_agent tasks, prefer Read on the output file path; for local_agent tasks, use the Agent tool result directly
+```
+Prompt:
+```
+DEPRECATED: Background tasks return their output file path in the tool result, and you receive a <task-notification> with the same path when the task completes.
+- For bash tasks: prefer using the Read tool on that output file path — it contains stdout/stderr.
+- For local_agent tasks: use the Agent tool result directly. Do NOT Read the .output file — it is a symlink to the full subagent conversation transcript (JSONL) and will overflow your context window.
+- For remote_agent tasks: prefer using the Read tool on the output file path — it contains the streamed remote session output (same as bash).
+
+- Retrieves output from a running or completed task (background shell, agent, or remote session)
+- Takes a task_id parameter identifying the task
+- Returns the task output along with status information
+- Use block=true (default) to wait for task completion
+- Use block=false for non-blocking check of current status
+- Task IDs can be found using the /tasks command
+- Works with all task types: background shells, async agents, and remote sessions
+```
+
+Note the workflow path is *not* `TaskOutput`: for `local_workflow` the model is steered to
+`journal.jsonl` and `/workflows`.
+
+Output truncation for both is governed by `TASK_MAX_OUTPUT_LENGTH`, default **32000**, max **160000**
+(`dln`/`uln`, `:475948-475952`).
+
+### 8.9 Background-agent recovery on restart
+
+`cli.pretty.js:557098-557105`, verbatim:
+
+```
+Background agent "<desc>" had no completion record after the previous Claude Code process exited, and was automatically restarted from its saved transcript. It is …
+Background agent "<desc>" had already completed before the previous Claude Code process exited — only its completion …
+Background agent "<desc>" from the previous session could not be automatically restarted: <reason>. Its transcript may still be resumable by sending it a message …
+```
+and for a user-stop during a turn (`:153623`):
+`Background agent "<name>" was stopped by the user.` /
+`N background agents were stopped by the user: "<a>", "<b>".`
+
+---
+
+### Deltas vs the February parity rows
+
+**14 — tool-agent-team**
+
+- **14.1 / 14.2** unchanged in substance, but the tool is now `Agent` with `Task` as an alias
+  (`:402072`), and the description is *runtime-assembled* from eight predicates (`wlt()`, `:467626`)
+  rather than being a fixed string. A replication that hardcodes one variant diverges on Pro plans,
+  in coordinator mode, and under the fork gate.
+- **14.4 (model)** now has a documented, non-obvious precedence: fork forces `inherit`; the
+  `agent.spawn` hook can *rewrite* the model after the tool input is read (`:468003`); and Explore is
+  capped down to opus on first-party auth (`N8()`, `:413640`). "AgentDefinition.model covers it" is
+  incomplete.
+- **14.10 (built-ins)** is materially stale. `output-style-setup` **no longer exists**. The current
+  set is `general-purpose`, `statusline-setup`, a plugin `CLAUDE_AGENT`, `Explore`, `Plan`, a gated
+  `web-fetch`, `claude-code-guide`, plus programmatic-only `comment-thread-analyst`,
+  `workflow-subagent`, `claude` (FleetView), the `fork` pseudo-agent, and a `worker` agent that
+  *replaces* the whole set in coordinator mode.
+- **14.9 (background)** — background is now the *default*, not an opt-in, in most sessions
+  (`:467944`), and `run_in_background` is stripped from the schema entirely under the fork gate.
+- **14.11 (concurrency)** now has a hard cap of 20 with an explicit refusal string plus an ultracode
+  exemption. Add a `refused: {depth_limit, concurrency_limit, budget}` counter to the model.
+- **14.17 (worktree)** should be upgraded from "no `AgentDefinition.isolation` field" — the
+  *frontmatter* schema accepts `isolation: worktree|remote` (`.claude/agents/`) and `worktree`
+  (plugins), and the Agent tool takes `isolation` directly. The mechanics are now fully documented
+  (§5.1–5.2), including the exact argv and the dirty-check.
+- **14.18 (remote)** — the February row calls this "Anthropic-internal, build-stripped." It is **not
+  stripped in 2.1.251**: `bz()` (`:467576`) is a live GrowthBook gate (`tengu_neapolitan`, default
+  off) plus a `hasUsedRemoteSession` precondition, and the whole launch path including the permission
+  relay is present. Still unreachable through the SDK, but the row's premise about the binary is
+  wrong.
+- **14.23 (auto-background)** — this exists: `CLAUDE_AUTO_BACKGROUND_TASKS` sets a 120 s demotion
+  timer (`wxn()`, `:467901`) with a 2 s `background_hint` progress event. The "🏗 build" verdict
+  should note the upstream behaviour it reproduces.
+- **New rows needed**: `cwd` as an internal-only Agent field; `requiredMcpServers` preflight with a
+  30 s wait; the `agent.spawn` hook veto; `observer` / `observerMessage` / `observeSubagents`
+  frontmatter; `initialPrompt` frontmatter; inode-based dedup across agent scopes; the
+  untrusted-origin refusal for frontmatter hooks and MCP servers.
+
+**30 — coordinator-multiagent**
+
+- **30.1 / 30.2 / 30.3** are confirmed, with the gate now precise: env
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` **or** CLI `--agent-teams`, AND GrowthBook
+  `tengu_amber_flint` (`:78472`). The "single implicit team" wording matches the schema verbatim.
+- **30.4 (coordinator)** is *not* part of the teammate system. It is an independent mode keyed on
+  `CLAUDE_CODE_COORDINATOR_MODE` (`Fs()`, `:613938`) replacing the built-in agent list with a single
+  `worker` (`maxTurns: 500`, `permissionMode: "bubble"`). The February row conflates the two.
+- **30.7 (protocol)** confirmed, plus: the *legacy* label is now in the SendMessage prompt itself,
+  `mode_set_request` is unconditionally dropped from the inbox, and `shutdown_request` is routed to
+  the model rather than executed.
+- **30.8 (task-notification)** — the exact XML is now documented verbatim (§3.5), including the four
+  `<status>` values and four `<summary>` phrasings. The reminder header
+  `[SYSTEM NOTIFICATION - NOT USER INPUT]` is load-bearing.
+- **30.12 (pane backends)** — "not-possible" is right for an SDK reimplementation, but the default has
+  moved: `teammateMode` defaults to **`in-process`** (`:603531`), so panes are the exception and a
+  harness can reach full teammate parity without any multiplexer.
+- **New rows needed**: `isolatePeerMachines` as a named circuit-breaker on `SendMessage`;
+  `notify_when_idle` one-shot subscriptions; `ListAgents` (`ListPeers`) with its `channel`/`q` fields
+  dead in this build; the cross-session permission-laundering rule; the coordinator's fresh-spawn
+  consent protocol; team storage at `<claudeDir>/teams/<team>/{config.json,inboxes/*.json}`.
+
+**31 — mode-proactive**
+
+- **31.1** — "no proactive runtime in the SDK" holds, but the *product* is `/loop` (alias
+  `proactive`), fully specified in the binary: two modes, four sentinels, two embedded preambles, a
+  `loop.md` file convention with a 25 KB cap. This is reconstructible from the leak, not
+  "missing-source."
+- **31.2 / 31.3** confirmed and now precise: clamp `[60, 3600]`, four required-unless-stop fields, the
+  `noop` streak semantics, and the cache-TTL-conditional delay guidance (three prompt variants).
+- **31.4 (autonomous system-prompt section)** — the verbatim content **is** in the leak, at
+  `modules/loopAutonomousPreamble-07qcyhv4.md` and `…Persistent-3zqtkrvg.md`, selected by
+  `CLAUDE_CODE_LOOP_PERSISTENT` / `tengu_kairos_loop_persistent`. Downgrade "🏗 build — content is
+  yours to supply" to "content available."
+- **31.7 (/goal)** — `CLAUDE_CODE_GOAL_CHECKIN_MINUTES` and the `goal-checkin` task-notification
+  origin exist (`:75780-75786`), so the surface is real; the rebuild sketch stands.
+
+**32 — mode-kairos**
+
+- **32.5 (cron)** confirmed with the full on-disk shape (§7.5). Two details the row omits: the 50-job
+  cap, and the *deterministic id-derived jitter* (up to 10 % of period, capped at 15 min for
+  recurring; up to 90 s early for one-shots on :00/:30). A replication that fires exactly on the cron
+  boundary will not match upstream.
+- **32.6 (remote triggers)** — the `RemoteTrigger` tool is present with its full seven-action API
+  surface and beta header `ccr-triggers-2026-01-30`. "Not-possible" remains correct as a conclusion,
+  but the row can now cite concrete endpoints.
+- **32.8 (push)** confirmed; add that the tool is **off by default**
+  (`tengu_kairos_push_notifications` default `false`) and that `status` is a constant `"proactive"`,
+  not an enum.
+- **32.9 (dream skill)** — no trace in this build. The kairos codename survives only in five
+  GrowthBook flag names. Mark the row historical.
+- **New row needed**: the `Monitor` tool as a first-class wake source (§7.7) — it is the primary wake
+  signal in dynamic `/loop`, with `ScheduleWakeup` demoted to a fallback heartbeat.
+
+**Cross-cutting new cluster — Workflow (no February rows at all)**
+
+The `Workflow` tool, its script API (`agent`/`parallel`/`pipeline`/`phase`/`log`/`workflow`/`args`/
+`budget`), the `meta`-literal contract, the hardened Node `vm` sandbox (`codeGeneration:{strings:
+false}`, deleted intrinsics, 4096-element boundary cap), the determinism ban, `resumeFromRunId`
+prefix-caching keyed on a chained SHA-256 with `journal.jsonl` as the record, the
+`min(16, cpus-2)` concurrency cap and 1000-agent lifetime backstop, `.claude/workflows/*.js` surfaced
+as slash commands, the `workflow-authoring` skill (a JS string constant, not a `modules/*.md`), the
+`workflow-subagent` agent with its two prompt variants, the size guideline
+(`small|medium|large` → 5/15/50 agents), and the ultracode standing-opt-in all postdate the February
+snapshot and need a cluster of their own. Note also that the entire v2 "world blackboard" engine is
+compiled in but inert.
+
+**Cross-cutting new cluster — task/todo model gating**
+
+The five-tool removal on new models (`FL()`, `:465397`) is a behavioural cliff with no February
+analogue: a replication targeting opus-4/8, sonnet-5, fable-5, or mythos-5 must decide whether to
+reproduce the removal or ship the tools unconditionally, and must expose the
+`CLAUDE_CODE_ENABLE_TODO_TOOLS` escape hatch either way.
+
+---
+
+### Open questions
+
+1. **`TaskList` ambiguity.** Only one tool binds `name: hT` = `"TaskList"` (`:479999`) and it lists
+   the plan DAG, yet the `/loop` prompts (`:704548`, `:704558`) and the `ScheduleWakeup` guidance
+   instruct the model to use `TaskList` to find a `Monitor`'s background task id. Either background
+   tasks are surfaced through the same tool via a path I did not locate, or these are stale
+   cross-references.
+2. **DAG cycle detection.** `addBlocks`/`addBlockedBy` are additive with no remove counterpart, and I
+   found no cycle check in `TaskUpdate`'s call path. Whether a cycle is rejected, silently accepted,
+   or handled at render time is unresolved.
+3. **Task persistence path.** The prompts imply a per-session store, and `zE()` /
+   `lC(listId, storageV5)` / `wJn()` are the accessors, but I did not trace them to a concrete
+   `~/.claude/tasks/<session>/` layout. `CLAUDE_CODE_TASK_LIST_ID` exists as an env var; the file
+   format is unresolved.
+4. **Task-list UI rendering.** The `set_expanded_view: "tasks"` signal and a `taskDecorations`
+   app-state slice exist (`:153153`), but I did not locate the component rendering per-status glyphs
+   or the ordering rule.
+5. **Fork gate source.** `TG()` delegates to `qmr()` → `adr()` (`:519977-519996`), which resolves a
+   `forkSubagentEnabledSource` string with values including `"disabled"`. The full set of sources
+   (setting? GrowthBook? entitlement?) was not decoded.
+6. **`Wv(model, effort, ultracode)`** — the predicate exempting a session from the concurrency cap
+   (`:467967`). Its exact conditions were not traced.
+7. **`Fn()`** — read as the subscription tier in both the Agent description (Pro anti-spawn clause,
+   `:467745`) and the workflow availability default (`:234638`). The function itself was not opened;
+   INFERRED.
+8. **`yWe`** — the default synchronous `runInContext` timeout for a workflow's top-level script
+   (`:814341`). Value not resolved. Likewise `MAX_STRUCTURED_OUTPUT_RETRIES`'s numeric default.
+9. **`iy()`** (chunk-1cz7cxv4.js) short-circuits workflow discovery to an empty or built-in-only
+   list. Likely a restricted-mode predicate; not read. INFERRED.
+10. **`Yo()`** — the cross-session gate controlling `ListAgents`' existence and `SendMessage`'s
+    cross-session vocabulary. Not decoded; distinct from `io()`.
+11. **`spawnTeammate`** (chunk-eyzf721y.js) and `startInProcessTeammate` (chunk-7dt5zrb5.js) — I read
+    the call sites and the resume path but not the full spawn implementation, so the exact tmux pane
+    argv and the iTerm2 `it2` invocation are undocumented here.
+12. **`Ev()`** (cloud session creation, `:457242`) — arguments and result shape confirmed from the
+    call site, but the function was not read, so the concrete CCR endpoint and request body for
+    *agent* sessions (as opposed to `RemoteTrigger`'s documented endpoints) are unresolved.
+13. **Workflow-run adoption across sessions** — `task_local_workflow` `adopt_*` telemetry
+    (`:150930-150968`) implies machinery for adopting a prior session's workflow, which sits oddly
+    next to the "Same-session only" claim in the `resumeFromRunId` description. Not reconciled.
+
 
 
 
