@@ -16,7 +16,25 @@
             "start": 2080686,
             "end": 2081100,
             "sha256": "7d7bcc9d7bbe7088b83e0ee0cf43a2209be8b9277369d4ebdca116497984c04b"
-          }
+          },
+          "captures": [
+            {
+              "name": "q6t",
+              "as": "freshnessSuffix",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 9155,
+              "declEnd": 9158,
+              "sha256": "8524a298871cd9e934225f489662f367326855f0d5297006a9b1637103c02813",
+              "from": {
+                "chunk": "chunk-hx5r9amq.js",
+                "exportedAs": "q6t",
+                "declStart": 1461,
+                "declEnd": 1538,
+                "sha256": "e5a4693d1b14d307012803d591ac0eec63423f2facd2d6bba6e341c9a02cb785"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -24,7 +42,8 @@
             "start": 2417355,
             "end": 2417510,
             "sha256": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce"
-          }
+          },
+          "captures": []
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -32,7 +51,18 @@
             "start": 1883074,
             "end": 1883310,
             "sha256": "519dd1b300fefabeea65cfccd03da68772b9327aa2858fe2e8b6c357553a4275"
-          }
+          },
+          "captures": [
+            {
+              "name": "APn",
+              "as": "truncationNotice",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1880885,
+              "declEnd": 1881340,
+              "sha256": "cdcb33cf59ddedcbf97b5e9712a20c0a701e2cfe7d4bfb673dd6d6a4585ee4fa"
+            }
+          ]
         }
       ],
       "evidence": [
@@ -65,7 +95,119 @@
             "start": 580343,
             "end": 580762,
             "sha256": "90f4eb8dbbe7b1bc63c80fcb3b750ac0a52f8636adb231e8ad0fe64314ff848e"
-          }
+          },
+          "captures": [
+            {
+              "name": "Vg",
+              "as": "isGitRepo",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 5383,
+              "declEnd": 5385,
+              "sha256": "e7bb84165249be7559be41a279235d05c1b86fd18db0afe3fde101b6f8049478",
+              "from": {
+                "chunk": "chunk-dckv2srq.js",
+                "exportedAs": "Vg",
+                "declStart": 21046,
+                "declEnd": 21150,
+                "sha256": "43d5a6383abe487a495f969ce3b59591ed964b01d7cf08cc0b6a932c5c1f7834"
+              }
+            },
+            {
+              "name": "tue",
+              "as": "osVersion",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 26103,
+              "declEnd": 26194,
+              "sha256": "5898bf4801e24848dd74ad1f26936b55835b7b559dfe03adc72cc175f04f29c7"
+            },
+            {
+              "name": "vU",
+              "as": "readDirectoryContext",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 29986,
+              "declEnd": 30068,
+              "sha256": "a4d323bf0b82a1aedc62f0f909ce13cc56e2e41c389692c19058714454b21de8"
+            },
+            {
+              "name": "$K",
+              "as": "primarySection",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 30068,
+              "declEnd": 30244,
+              "sha256": "1bb03c77233395248fcb26b4934328f9623bfcc223bdc2bd25f3f15df1b04f37"
+            },
+            {
+              "name": "UK",
+              "as": "secondarySection",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 30244,
+              "declEnd": 30343,
+              "sha256": "c0444d487abcdff52c41cc257fa4f2898d2f9eaae6288d42115c53f8e7095dca"
+            },
+            {
+              "name": "yBt",
+              "as": "extraEnvLines",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 10467,
+              "declEnd": 10470,
+              "sha256": "f642e4e56966643057927eab9870618b48a5d6eb470ee653837e20edf6e92b9d",
+              "from": {
+                "chunk": "chunk-rxqj92ax.js",
+                "exportedAs": "yBt",
+                "declStart": 938,
+                "declEnd": 969,
+                "sha256": "60c4d3bdd7293f8d094d522446b1e13871e52f40f1ecd905201314f22cc2a0d3"
+              }
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "e0e",
+              "as": "shellLine",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 26064,
+              "declEnd": 26103,
+              "sha256": "f96cc039668f574051f3f0778862ce58bf37e2a59638dec1fd9d53f7ee791aed"
+            },
+            {
+              "name": "a",
+              "as": "platform",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2039,
+              "declEnd": 2040,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+              "note": "derived identifier is 'a.platform'; the footprint covers its root binding 'a' (a member read has no declaration of its own)",
+              "from": {
+                "chunk": "chunk-w3k8bej2.js",
+                "exportedAs": "a",
+                "declStart": 56946,
+                "declEnd": 56955,
+                "sha256": "cc901af12ddaaf76757137cb1e4696a41411ce88e07a93458d4ed5d24e6b77d3"
+              }
+            }
+          ]
         }
       ],
       "evidence": [
@@ -133,7 +275,98 @@
             "start": 173473,
             "end": 174196,
             "sha256": "2a847b843b7edd24f60774eab00a765a186cae0425fc18ae31151ca161ddc1a7"
-          }
+          },
+          "captures": [
+            {
+              "name": "E",
+              "as": "errorCode",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2315,
+              "declEnd": 2316,
+              "sha256": "a9f51566bd6705f7ea6ad54bb9deb449f795582d6529a0e22207b8981233ec58",
+              "from": {
+                "chunk": "chunk-qr1avfxy.js",
+                "exportedAs": "E",
+                "declStart": 2527,
+                "declEnd": 2626,
+                "sha256": "a84ab0a2488aed5689416393c679dde4e7f4b29aa980e121bd56b25ab3e7b5e4"
+              }
+            },
+            {
+              "name": "$o",
+              "as": "isExpected",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2350,
+              "declEnd": 2352,
+              "sha256": "fafc58b3a60844cab8313e8f0083fd0c97b968fb0fbc2638f2bb18df354cc1d9",
+              "from": {
+                "chunk": "chunk-qr1avfxy.js",
+                "exportedAs": "$o",
+                "declStart": 3875,
+                "declEnd": 3967,
+                "sha256": "4306ca1eb578417c9c0b042ef01fefb5ccf190477c896ed29975a5a36ba46687"
+              }
+            },
+            {
+              "name": "n",
+              "as": "logLine",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2619,
+              "declEnd": 2620,
+              "sha256": "1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "n",
+                "declStart": 44725,
+                "declEnd": 44770,
+                "sha256": "944bdb6f70ef86431b84c7c7c68bce2c2ab5647cdd59053efdfbd1d74106f260"
+              }
+            },
+            {
+              "name": "l",
+              "as": "formatError",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2313,
+              "declEnd": 2314,
+              "sha256": "acac86c0e609ca906f632b0e2dacccb2b77d22b0621f20ebece1a4835b93f6f0",
+              "from": {
+                "chunk": "chunk-qr1avfxy.js",
+                "exportedAs": "l",
+                "declStart": 2467,
+                "declEnd": 2527,
+                "sha256": "2f921ed78ffeed39032d7e9c4783e05c294cba2ce61cc5ac20466ece27a81075"
+              }
+            },
+            {
+              "name": "h",
+              "as": "reportError",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1787,
+              "declEnd": 1788,
+              "sha256": "aaa9402664f1a41f40ebbc52c9993eb66aeb366602958fdfaa283b71e64db123",
+              "from": {
+                "chunk": "chunk-qpcjd2zp.js",
+                "exportedAs": "h",
+                "declStart": 10130,
+                "declEnd": 10606,
+                "sha256": "54b305c46481b959f8aee6bfaa0c756a18abec1e6afdc58989fb0d70281e5e95"
+              }
+            },
+            {
+              "name": "aw",
+              "as": "recordWriterHealth",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 132202,
+              "declEnd": 132981,
+              "sha256": "97d947c63d59bcbf115718a87e661c612b3c83ee8fa7fe06ce64f968fee7a37b"
+            }
+          ]
         }
       ],
       "evidence": [
@@ -192,7 +425,75 @@
             "start": 3182489,
             "end": 3182723,
             "sha256": "764b83f750e22ccb4d3b44299bc842c90f2294b3394a175c39bfb6a7d5c1974f"
-          }
+          },
+          "captures": [
+            {
+              "name": "Mr",
+              "as": "block",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 3181765,
+              "declEnd": 3181780,
+              "sha256": "46031a58bfde254e308ee0ae0c4f4cc0f11110242e44258a592628a0c9195150"
+            },
+            {
+              "name": "ui",
+              "as": "delta",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 3181781,
+              "declEnd": 3181792,
+              "sha256": "a4cc33dbac8e1484c05fff25515fc4de92debaed75e4511253c856bc2afcc8cd"
+            },
+            {
+              "name": "s",
+              "as": "recordStreamingError",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4719,
+              "declEnd": 4720,
+              "sha256": "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89",
+              "from": {
+                "chunk": "chunk-qw5jhqey.js",
+                "exportedAs": "s",
+                "declStart": 1332,
+                "declEnd": 1449,
+                "sha256": "06595e467f1ac955f8b81113e32cdb5b2e84936c11c78c1cd0eecbd6956d84f5"
+              }
+            },
+            {
+              "name": "w",
+              "as": "known",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2197,
+              "declEnd": 2198,
+              "sha256": "50e721e49c013f00c62cf59f2163542a9d8df02464efeb615d31051b0fddc326",
+              "from": {
+                "chunk": "chunk-9rhc0mtn.js",
+                "exportedAs": "w",
+                "declStart": 638,
+                "declEnd": 664,
+                "sha256": "0f2b891bef566e14a557693862a63d01a7c31da7a03b029c7b41ad26d2a0d0a0"
+              }
+            },
+            {
+              "name": "c",
+              "as": "describe",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2199,
+              "declEnd": 2200,
+              "sha256": "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6",
+              "from": {
+                "chunk": "chunk-9rhc0mtn.js",
+                "exportedAs": "c",
+                "declStart": 664,
+                "declEnd": 690,
+                "sha256": "d4c7342609cd0a7749fcf57a4e4890c3b5ec3da022d6e17789baa2ccb91c1a46"
+              }
+            }
+          ]
         }
       ],
       "evidence": [

@@ -27,8 +27,11 @@
 // footprint is now checked against the artifacts it points at:
 //
 //   1. SHAPE — the record agreed across C1/C2:
-//        { chunk, target: { start, end, sha256 }, captures?: [...] }
-//      `captures` is optional only during the emitter transition (see below).
+//        { chunk, target: { start, end, sha256 }, captures: [...] }
+//      `captures` is REQUIRED: a footprint that records only its target span
+//      cannot be staled when a captured declaration moves, which is half of what
+//      §5 exists to catch (see strangle/footprint.ts for the closure-surface
+//      argument). ledger/backfill-captures.ts writes it from C1's emission.
 //   2. SPAN SANITY — integer offsets, `start < end`, and within the chunk.
 //   3. UPSTREAM BYTES — with the extraction bundle present, the chunk must
 //      exist and the span's bytes must hash to `target.sha256`. Bundle absent
@@ -45,9 +48,11 @@
 //
 // SPAN BASIS: the ledger records offsets into the **upstream bundle module**
 // (`~/claude-code-bundle/<pin>/modules/<chunk>`), which is the same on every
-// machine. strangle/build.ts emits offsets into its *materialized* copy, whose
-// absolute path shifts them, so rule 3 accepts either basis and only fails when
-// neither resolves to the recorded digest.
+// machine — targets and capture declarations alike. strangle/build.ts emits
+// offsets into its *materialized* copy, whose absolute path shifts them, so rule
+// 3 accepts either basis and only fails when neither resolves to the recorded
+// digest, and `toUpstreamOffset` below is the conversion that puts a freshly
+// emitted footprint into the committed basis.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -70,15 +75,36 @@ export const FOOTPRINTS_PATH = join(REFORGE_ROOT, "build", "footprints.json");
  */
 const STRANGLED_PREFIX = join(REFORGE_ROOT, "build", "strangled") + "/";
 
-/** A closure identifier the spliced module receives from the graph (§2.4). */
+/** The far side of an imported capture: its declaration in the exporting chunk. */
+export interface FootprintCaptureSource {
+  chunk: string;
+  exportedAs: string;
+  declStart: number;
+  declEnd: number;
+  sha256: string;
+}
+
+/**
+ * A closure identifier the spliced module receives from the graph (§2.4).
+ * Mirrors strangle/footprint.ts's `CaptureFootprint`, rebased onto upstream
+ * offsets (see SPAN BASIS above).
+ */
 export interface FootprintCapture {
   /** the upstream binding the capture is derived from */
   name: string;
+  /** the owned module's parameter name for it */
+  as?: string;
+  kind?: string;
+  /** what declares it: variable / function / class / parameter / import / catch */
+  declKind?: string;
   /** span of the capture's declaration in the same chunk */
   declStart: number;
   declEnd: number;
   /** sha256 (hex) of the declaration's bytes */
   sha256: string;
+  from?: FootprintCaptureSource;
+  /** why this record is narrower than it should be, when it is */
+  note?: string;
 }
 
 /** The upstream span an owned module replaces. */
@@ -94,7 +120,7 @@ export interface Footprint {
   /** the upstream chunk this row's implementation replaces, e.g. "chunk-fy12d89p.js" */
   chunk: string;
   target: FootprintTarget;
-  /** optional ONLY during C1's emitter transition; absent draws a deprecation warning */
+  /** the closure surface the splice consumes — required; see the footprint rules above */
   captures?: FootprintCapture[];
 }
 
@@ -191,6 +217,49 @@ function readSplices(path: string, warn: (m: string) => void): SpliceRecord[] | 
   return out;
 }
 
+/**
+ * Materialized-basis offset → upstream-basis offset, for the same dual basis
+ * rule 3 above accepts by hashing both ways.
+ *
+ * prepare.ts rewrites every `/$bunfs/root/` specifier to an absolute path under
+ * build/strangled, so an offset into the materialized chunk sits `n × delta`
+ * further along than its upstream twin, where `n` is the number of specifiers
+ * that precede it. Rule 3 only has to *recognize* either basis; writing the
+ * ledger needs the conversion itself (ledger/backfill-captures.ts), which is why
+ * it lives beside the logic it mirrors rather than in a second copy.
+ *
+ * Returns null when the offset lands strictly inside a rewritten specifier —
+ * there is no upstream offset that corresponds to it, and inventing one would be
+ * a guess.
+ */
+export function toUpstreamOffset(upstream: string, offset: number): number | null {
+  const delta = STRANGLED_PREFIX.length - BUNFS.length;
+  let n = 0;
+  for (let site = upstream.indexOf(BUNFS); site >= 0; site = upstream.indexOf(BUNFS, site + BUNFS.length)) {
+    const materializedSite = site + n * delta;
+    if (offset >= materializedSite + STRANGLED_PREFIX.length) {
+      n++;
+      continue;
+    }
+    if (offset > materializedSite) return null;
+    break;
+  }
+  return offset - n * delta;
+}
+
+/** A chunk reference: a path relative to the bundle's modules dir, or null when it is not one. */
+function chunkPath(v: unknown, report: (m: string) => void, where: string): string | null {
+  if (typeof v !== "string" || v.length === 0) {
+    report(`${where}: missing`);
+    return null;
+  }
+  if (v.startsWith("/") || v.split("/").includes("..")) {
+    report(`${where}: must be a path relative to the bundle's modules dir`);
+    return null;
+  }
+  return v;
+}
+
 /** Cache of upstream chunk text and its materialized rendering, per chunk path. */
 function chunkReader() {
   const cache = new Map<string, { upstream: string; materialized: string } | null>();
@@ -231,7 +300,6 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
   const splices = footprintsPath === null ? null : readSplices(footprintsPath, warn);
   const spliceKeys = new Set((splices ?? []).map((s) => `${s.chunk} ${s.sha256}`));
   const claimedSpliceKeys = new Set<string>();
-  const capturelessFootprints: string[] = [];
 
   const owned = new Set(opts.ownedSubsystems ?? ownedSubsystems());
   const canonical = new Map(CANONICAL_ROWS.map((r) => [r.id, r]));
@@ -290,9 +358,20 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
       const fail = (msg: string): void => {
         at(`footprint[${j}]${msg}`);
       };
+      /** Rule 3, for any recorded span: the bytes it names must hash to what it recorded. */
+      const verifyBytes = (where: string, chunkName: string, start: number, end: number, digest: string): void => {
+        if (!bundlePresent) return;
+        const src = readChunk(join(bundleModules!, chunkName));
+        if (src === null) return fail(`${where}: '${chunkName}' does not exist under ${bundleModules}`);
+        if (end > src.upstream.length && end > src.materialized.length) {
+          return fail(`${where}: span [${start}, ${end}] runs past the end of ${chunkName} (${src.upstream.length} chars)`);
+        }
+        if (sha256(src.upstream.slice(start, end)) !== digest && sha256(src.materialized.slice(start, end).replaceAll(STRANGLED_PREFIX, BUNFS)) !== digest) {
+          fail(`${where}: bytes at [${start}, ${end}] of ${chunkName} do not hash to ${digest.slice(0, 12)}… — the footprint points at something the pinned bundle does not contain`);
+        }
+      };
       if (!isRecord(f)) return fail(": not an object");
-      if (typeof f.chunk !== "string" || f.chunk.length === 0) fail(".chunk: missing");
-      else if (f.chunk.startsWith("/") || f.chunk.split("/").includes("..")) fail(".chunk: must be a path relative to the bundle's modules dir");
+      const chunk = chunkPath(f.chunk, fail, ".chunk");
       if ((f as { hash?: unknown }).hash !== undefined || (f as { span?: unknown }).span !== undefined) {
         fail(": uses the retired {chunk, hash, span} shape — record {chunk, target:{start,end,sha256}, captures}");
       }
@@ -304,7 +383,10 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
       if (typeof t.sha256 !== "string" || !HASH_RE.test(t.sha256)) fail(".target.sha256: not a sha256 hex digest");
 
       if (f.captures === undefined) {
-        capturelessFootprints.push(`${String(id)}[${j}]`);
+        fail(
+          ".captures: missing — a footprint covers the target span AND its closure surface (§2.4), and a row whose captures " +
+            "are unrecorded cannot be staled when a captured declaration moves. Backfill it: npx tsx ledger/backfill-captures.ts",
+        );
       } else if (!Array.isArray(f.captures)) {
         fail(".captures: must be an array of {name, declStart, declEnd, sha256}");
       } else {
@@ -315,29 +397,37 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
           if (!isRecord(c)) return cf(": not an object");
           if (typeof c.name !== "string" || c.name.length === 0) cf(".name: missing");
           if (!isOffset(c.declStart) || !isOffset(c.declEnd)) return cf(": declStart/declEnd must be non-negative integer offsets");
-          if (c.declStart >= c.declEnd) cf(`: declaration span [${c.declStart}, ${c.declEnd}] is empty or reversed`);
-          if (typeof c.sha256 !== "string" || !HASH_RE.test(c.sha256)) cf(".sha256: not a sha256 hex digest");
+          if (c.declStart >= c.declEnd) return cf(`: declaration span [${c.declStart}, ${c.declEnd}] is empty or reversed`);
+          if (typeof c.sha256 !== "string" || !HASH_RE.test(c.sha256)) return cf(".sha256: not a sha256 hex digest");
+          // Rule 3 is not a target-only rule: a capture span nobody resolves is
+          // the same decoration, one level in.
+          if (chunk !== null) verifyBytes(`.captures[${k}]`, chunk, c.declStart, c.declEnd, c.sha256);
+
+          // The far side of an imported capture lives in another chunk — where
+          // the behaviour actually is, and where upstream is free to move it
+          // with the import site byte-identical.
+          if (c.from === undefined) return;
+          const from = c.from;
+          if (!isRecord(from)) return cf(".from: must be {chunk, exportedAs, declStart, declEnd, sha256}");
+          if (typeof from.exportedAs !== "string" || from.exportedAs.length === 0) cf(".from.exportedAs: missing");
+          const farChunk = chunkPath(from.chunk, cf, ".from.chunk");
+          if (!isOffset(from.declStart) || !isOffset(from.declEnd)) return cf(".from: declStart/declEnd must be non-negative integer offsets");
+          if (from.declStart >= from.declEnd) return cf(`.from: declaration span [${from.declStart}, ${from.declEnd}] is empty or reversed`);
+          if (typeof from.sha256 !== "string" || !HASH_RE.test(from.sha256)) return cf(".from.sha256: not a sha256 hex digest");
+          if (farChunk !== null) verifyBytes(`.captures[${k}].from`, farChunk, from.declStart, from.declEnd, from.sha256);
         });
       }
 
-      if (typeof f.chunk !== "string" || typeof t.sha256 !== "string" || !HASH_RE.test(t.sha256)) return;
+      if (chunk === null || typeof t.sha256 !== "string" || !HASH_RE.test(t.sha256)) return;
 
       // --- the span must name real upstream bytes ---
-      if (bundlePresent) {
-        const src = readChunk(join(bundleModules!, f.chunk));
-        if (src === null) fail(`.chunk: '${f.chunk}' does not exist under ${bundleModules}`);
-        else if (t.end > src.upstream.length && t.end > src.materialized.length) {
-          fail(`.target: span [${t.start}, ${t.end}] runs past the end of ${f.chunk} (${src.upstream.length} chars)`);
-        } else if (sha256(src.upstream.slice(t.start, t.end)) !== t.sha256 && sha256(src.materialized.slice(t.start, t.end).replaceAll(STRANGLED_PREFIX, BUNFS)) !== t.sha256) {
-          fail(`.target: bytes at [${t.start}, ${t.end}] of ${f.chunk} do not hash to ${t.sha256.slice(0, 12)}… — the footprint points at something the pinned bundle does not contain`);
-        }
-      }
+      verifyBytes(".target", chunk, t.start, t.end, t.sha256);
 
       // --- cross-check against C1's emission ---
-      const key = `${f.chunk} ${t.sha256}`;
+      const key = `${chunk} ${t.sha256}`;
       claimedSpliceKeys.add(key);
       if (splices !== null && state === "spliced" && !spliceKeys.has(key)) {
-        fail(`: no splice in build/footprints.json replaces ${f.chunk}@${t.sha256.slice(0, 12)}… — the ledger claims a splice the strangler build did not emit`);
+        fail(`: no splice in build/footprints.json replaces ${chunk}@${t.sha256.slice(0, 12)}… — the ledger claims a splice the strangler build did not emit`);
       }
     }
 
@@ -359,14 +449,6 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
   });
 
   for (const r of CANONICAL_ROWS) if (!seen.has(r.id)) errors.push(`missing row: ${r.id} (${r.kind}, ${r.wave})`);
-
-  if (capturelessFootprints.length > 0) {
-    warnings.push(
-      `${capturelessFootprints.length} footprint(s) record no capture list (${capturelessFootprints.join(", ")}) — these rows predate C1's ` +
-        "capture emission, so §2.4's hygiene rule is unverifiable for them. Backfill `captures` from build/footprints.json; " +
-        "the omission becomes an error once every recorded footprint carries one.",
-    );
-  }
 
   // Drift the other way: a splice that landed without a ledger row recording it.
   for (const s of splices ?? []) {

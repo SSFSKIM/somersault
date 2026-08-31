@@ -537,14 +537,30 @@ run. Footprints are checked against the artifacts they point at, not just for
 shape: span sanity, the chunk's real bytes hashing to `target.sha256` against the
 pinned bundle (absent bundle warns and skips; a mismatch fails), an evidence link
 plus an X7 registration behind every owned state, and a cross-check against
-`build/footprints.json`. Both checkers ship with paired controls (56 ledger, 30
+`build/footprints.json`. Both checkers ship with paired controls (59 ledger, 30
 reachability, 25 skeleton acceptance): every rule is watched rejecting its
 violation *and* accepting its legitimate neighbour, per §3.1's non-vacuity
 doctrine.
 
+`captures` is **required**, not advisory, and resolved the same way the target
+is: each capture's declaration span must hash to its recorded digest in the
+pinned bundle, and an imported capture is resolved on *both* sides — the import
+site in the owning chunk and the declaration in the exporting one. A footprint
+that recorded only its target could not be staled when a captured declaration
+moved, which is half of what §5 exists to catch.
+
+The ledger stores every span in the **upstream** basis (offsets into
+`~/claude-code-bundle/<pin>/modules/…`, identical on every machine), while
+`strangle/build.ts` emits them against its materialized copy, whose specifier
+rewrite shifts them. `ledger/backfill-captures.ts` is the conversion: it rebases
+each emitted capture, refuses to write any span whose bytes do not hash to the
+emitter's digest, and copies through the emitter's `note` when a capture was only
+narrowly coverable. Run it after any strangler build, then re-run the checker.
+
 ```sh
 npx tsx engine-ts/check-reachability.ts && npx tsx engine-ts/reachability.test.ts
 npx tsx engine-ts/skeleton.test.ts
+npx tsx ledger/backfill-captures.ts --check   # ledger captures == the emitted footprints
 npx tsx ledger/check.ts && npx tsx ledger/check.test.ts
 ```
 

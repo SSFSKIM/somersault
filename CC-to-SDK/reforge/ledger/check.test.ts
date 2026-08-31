@@ -10,11 +10,16 @@
 // evidence and no X7 registration, and contradict build/footprints.json — and
 // pass. Each of those is now a control.
 //
+// The W0 close-out extends the same doctrine to the CAPTURE half: captures are
+// required rather than warned about, and their declaration spans are resolved
+// against the bundle on both sides of an import — so a backfilled span that is
+// off by one, in either chunk, is rejected rather than believed.
+//
 // Run: cd reforge && npx tsx ledger/check.test.ts
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkLedger, FOOTPRINTS_PATH, LEDGER_PATH, type CheckOptions, type Footprint, type Ledger, type LedgerRow } from "./check.js";
+import { checkLedger, FOOTPRINTS_PATH, LEDGER_PATH, type CheckOptions, type Footprint, type FootprintCapture, type Ledger, type LedgerRow } from "./check.js";
 import { CANONICAL_ROWS } from "./rows.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 
@@ -31,6 +36,15 @@ const HASH = "a".repeat(64);
 const REAL_FOOTPRINT = rowOf(real, "subsystem/tool-result-formatters").footprint?.[0];
 if (!REAL_FOOTPRINT) throw new Error("fixture drift: subsystem/tool-result-formatters has no footprint");
 const realFootprint = (): Footprint => JSON.parse(JSON.stringify(REAL_FOOTPRINT)) as Footprint;
+/**
+ * A capture that really does name bytes in the pinned bundle, on BOTH sides —
+ * the import site in the owning chunk and the declaration in the exporting one.
+ * Capture spans are verified now (W0 close-out), so a fabricated one is no
+ * longer a legitimate neighbour and cannot stand in for a well-formed list.
+ */
+const REAL_CAPTURE = REAL_FOOTPRINT.captures?.[0];
+if (!REAL_CAPTURE?.from) throw new Error("fixture drift: the first tool-result-formatters capture is not an imported one");
+const realCapture = (): FootprintCapture => JSON.parse(JSON.stringify(REAL_CAPTURE)) as FootprintCapture;
 
 // A synthetic emission to cross-check against, so the controls do not depend on
 // whether this machine has run strangle/build.ts. Both emitter shapes are built:
@@ -99,7 +113,7 @@ accepts("assembled with a real footprint and evidence is accepted (no registrati
 });
 accepts("a well-formed capture list is accepted", (l) => {
   const f = realFootprint();
-  f.captures = [{ name: "q6t", declStart: 100, declEnd: 140, sha256: HASH }];
+  f.captures = [realCapture()];
   rowOf(l, "subsystem/compaction").footprint = [f];
 });
 accepts("a stale row with an adjudication note is accepted", (l) => {
@@ -201,7 +215,9 @@ rejects("a reversed capture declaration span is rejected", (l) => {
 }, /declaration span .* is empty or reversed/);
 rejects("a capture without a name is rejected", (l) => {
   const f = realFootprint();
-  f.captures = [{ name: "", declStart: 100, declEnd: 400, sha256: HASH }];
+  const c = realCapture();
+  c.name = "";
+  f.captures = [c];
   rowOf(l, "tool/Bash").footprint = [f];
 }, /captures\[0\]\.name: missing/);
 rejects("a capture list that is not an array is rejected", (l) => {
@@ -209,11 +225,35 @@ rejects("a capture list that is not an array is rejected", (l) => {
   (f.captures as unknown) = "none";
   rowOf(l, "tool/Bash").footprint = [f];
 }, /captures: must be an array/);
-warnsAbout("a footprint with no capture list warns (C1 emitter transition)", /record no capture list/, BASE, (l) => {
+rejects("a footprint with no capture list is rejected", (l) => {
   const f = realFootprint();
   delete f.captures;
   rowOf(l, "subsystem/query-loop").footprint = [f];
-});
+}, /captures: missing/);
+// The capture half of rule 3: the same "does it name real upstream bytes?"
+// question, asked of the closure surface. Without these two, a backfilled span
+// could be off by one in either chunk and nothing would notice.
+rejects("a capture span shifted off its recorded bytes is rejected", (l) => {
+  const f = realFootprint();
+  const c = realCapture();
+  c.declStart += 1;
+  f.captures = [c];
+  rowOf(l, "tool/Bash").footprint = [f];
+}, /captures\[0\]: bytes at .* do not hash to/, { ...BASE, footprintsPath: null });
+rejects("an imported capture's far-side declaration is verified in its own chunk", (l) => {
+  const f = realFootprint();
+  const c = realCapture();
+  c.from!.declEnd -= 1;
+  f.captures = [c];
+  rowOf(l, "tool/Bash").footprint = [f];
+}, /captures\[0\]\.from: bytes at .* do not hash to/, { ...BASE, footprintsPath: null });
+rejects("a far-side chunk that escapes the modules dir is rejected", (l) => {
+  const f = realFootprint();
+  const c = realCapture();
+  c.from!.chunk = "../../../etc/passwd";
+  f.captures = [c];
+  rowOf(l, "tool/Bash").footprint = [f];
+}, /from\.chunk: must be a path relative to the bundle's modules dir/);
 
 // --- evidence + X7 registration for owned states ---
 rejects("standalone-complete with no evidence is rejected", (l) => {
