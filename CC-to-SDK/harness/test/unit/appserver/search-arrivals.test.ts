@@ -20,6 +20,7 @@ import type { PeerSink } from "../../../src/appserver/peer.js";
 import { decodeOccCursor, encodeOccCursor, fingerprint } from "../../../src/appserver/searchScan.js";
 import { rawTextOf } from "../../../src/peer/address.js";
 import { ARRIVAL_LOG_CAP, contentHash16, fsArrivalStore, type ArrivalAnchor, type ArrivalEntry, type ArrivalStore } from "../../../src/peer/arrivalLog.js";
+import { ASSISTANT, ORIGIN, TS, USER, entryBuilder } from "./items/corpus.js";
 
 // ── wire harness ──────────────────────────────────────────────────────────────────────────────────────
 const mkSink = () => { const ls: string[] = []; return { lines: ls, sink: { write: (l: string) => void ls.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
@@ -61,14 +62,7 @@ const mkTmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); temps.p
 
 // ── fixtures ──────────────────────────────────────────────────────────────────────────────────────────
 const SESSION = "sess-search-arrivals";
-const TS = "2026-08-30T00:00:00.000Z";
-const ORIGIN = { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", verifiedPeerPid: 4242 };
 
-/** A persisted row, in the shapes `getSessionMessages` returns. */
-const USER = (uuid: string, text: string, over: Record<string, unknown> = {}) =>
-  ({ type: "user", uuid, session_id: "s", parent_tool_use_id: null, message: { role: "user", content: text }, timestamp: TS, ...over });
-const ASSISTANT = (uuid: string, msgId: string, text: string) =>
-  ({ type: "assistant", uuid, session_id: "s", message: { id: msgId, content: [{ type: "text", text }] }, timestamp: TS });
 /** A row with NULL search text that is nonetheless a perfectly good anchor: the reader returns it, the
  *  observer could name it, and `rowSearchText` classifies it out of the corpus. */
 const TOOL_RESULT = (uuid: string, toolId: string) =>
@@ -83,9 +77,7 @@ const anchorOf = (row: any, prev: any | null): ArrivalAnchor => ({
   fp: { type: String(row.type), hash: contentHash16(rawTextOf(row.message?.content)), ...(row.timestamp ? { timestamp: row.timestamp as string } : {}) },
 });
 
-let seq = 0;
-const ENTRY = (id: string, text: string, anchor: ArrivalAnchor | null, over: Partial<ArrivalEntry> = {}): ArrivalEntry =>
-  ({ v: 1, id, sessionId: SESSION, anchor, seq: seq++, observedAt: TS, origin: ORIGIN, text, ...over });
+const ENTRY = entryBuilder(SESSION);
 
 /** The store as Task 1 defines it, in memory. `readAll` hands the entries back in `(seq, id)` order — the
  *  order the fixture lists them in — and `counts` reports the PRE-eviction total. */

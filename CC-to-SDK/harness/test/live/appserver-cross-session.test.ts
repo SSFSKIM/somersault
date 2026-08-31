@@ -53,9 +53,13 @@
 //        still pinning `isMeta`, because the day the reader stops dropping the row the merge would
 //        double-render it and `resolveArrivals`'s dedupe guard is what has to be re-verified.
 //        AND ITS SHARPER HALF: a FOLDED arrival is persisted NOWHERE — no `isMeta` row, no row at all
-//        (LEG 4, read against a positive control on the same transcript). So a folded message has no live
-//        item, no cold row, and exactly one durable trace: its `thread/peerMessage` announcement. The
-//        announcement is therefore load-bearing rather than a convenience.
+//        (LEG 4, read against a positive control on the same transcript). So a folded message's only
+//        DURABLE trace is its `thread/peerMessage` announcement, which is what makes the announcement
+//        load-bearing rather than a convenience.
+//        BL7 (#64) gives it a live trace too, and only inside the bracket that earned it: the folded
+//        arrival is emitted as a user item of the HOST turn the engine folded it into — exactly one, on
+//        that turn's id and no later one (LEG 4's (2b) and its successor re-check). The cold half is
+//        unchanged; a live item is not a row.
 //
 // ── THE FOUR DELEGATED UNKNOWNS, AND HOW EACH IS CLOSED ────────────────────────────────────────────
 //   U1 · the healthy terminal state's NAME → `completed` (M1). LEG 1 + LEG 6.
@@ -71,12 +75,17 @@
 //        back to back produce three replay frames with three distinct uuids — and only as many distinct
 //        `origin.msg_id`/`origin.body` values as there were TURNS. The other members' attributions never
 //        appear, though their TEXT does reach the model (all three check codes come back). So
-//        `thread/peerMessage` announces the causing message N times and never announces the rest. This
-//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it.
+//        `thread/peerMessage`'s `origin` names the causing message N times and never names the rest. This
+//        server forwards `origin` verbatim by design, so the defect is the engine's; LEG 5 pins it. What
+//        BL7 (#63) changed is not that field but what travels beside it: the announcement also carries
+//        `text`, the frame's OWN resolved text, so the repeated attribution no longer costs a client the
+//        message's content.
 //
 // ── WHAT THE LEGS MAY AND MAY NOT ASSERT ───────────────────────────────────────────────────────────
-//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin }` and NOTHING else. There is no
-//     `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided.
+//   · `thread/peerMessage` params are `{ threadId, arrivalUuid, origin, text }` and NOTHING else. There is
+//     no `turnId` and there cannot be one — at arrival the message's fate is genuinely undecided. `origin`
+//     is the engine's verbatim delivery provenance and `text` is what THIS arrival says; the two
+//     deliberately disagree in a batch and neither is reconciled to the other.
 //   · an arrival's id is the FRAME's own uuid, never a minted one.
 //   · an adopted turn goes THROUGH `beginTurn`, so its `turn/started` payload is the ordinary
 //     `{ threadId, turn }` and carries NO origin field.
@@ -368,7 +377,7 @@ live("M8 cross-session, against a real engine", () => {
   let t4: Thread | undefined;
   let t5: Thread | undefined;
   /** What LEG 1 observed, read by LEGs 2 and 3. */
-  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string } | undefined;
+  let idle: { mark: number; token: string; body: string; msgId: string; arrivalUuid: string; turnId: string; announcedText: unknown } | undefined;
   /** What LEG 5 SENT, read by LEG 10. Recorded as soon as the sends land rather than at the end of that
    *  leg, and deliberately: LEG 5 pins the LIVE shape of a batch (one announcement per queued message) and
    *  LEG 10 measures the READ side of the same exchange. A run on which the engine collapses the batch
@@ -396,7 +405,7 @@ live("M8 cross-session, against a real engine", () => {
     // (1) THE ARRIVAL — the one premise no unit test can establish.
     const announced = await a.waitFor("thread/peerMessage", 180_000,
       (n) => n.method === "thread/peerMessage" && n.params.threadId === t1!.id, mark);
-    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin}").toEqual(["arrivalUuid", "origin", "threadId"]);
+    expect(Object.keys(announced.params).sort(), "thread/peerMessage's params are not exactly {threadId, arrivalUuid, origin, text}").toEqual(["arrivalUuid", "origin", "text", "threadId"]);
     const arrivalUuid = String(announced.params.arrivalUuid);
     expect(arrivalUuid, "the arrival's id is not the frame's own uuid").toMatch(UUID_RE);
     const origin = announced.params.origin;
@@ -431,7 +440,7 @@ live("M8 cross-session, against a real engine", () => {
     expect((t1.record.session as any).unmatchedResults, "the adopted turn's result was not claimed by the unclaimed-result hook").toBe(before);
     expect(a.since(mark).filter((n) => n.method === "peer/messageStatus").length, "a receipt arrived on the success path").toBe(0);
 
-    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId };
+    idle = { mark, token, body, msgId: sent.msgId, arrivalUuid, turnId, announcedText: announced.params.text };
   }, 900_000);
 
   it("LEG 2 — the live item and the persisted one are ONE row at the STORE, and (M9) history returns the arrival itself: marked, in position, and counted", async () => {
@@ -443,6 +452,11 @@ live("M8 cross-session, against a real engine", () => {
     const liveItem = itemsOf(mark, t1!.id).find((i: any) => i?.type === "userMessage" && i.id === arrivalUuid);
     expect(liveItem, `no live userMessage item carried the arrivalUuid ${arrivalUuid}`).toBeTruthy();
     expect(liveItem).toEqual({ type: "userMessage", id: arrivalUuid, text: body, origin: expect.objectContaining({ kind: "peer" }) });
+    // #63: the ANNOUNCEMENT LEG 1 captured says what this arrival says, and says it identically — one
+    // string under one `arrivalUuid` across the notification and the item, so a client that renders the
+    // announcement and a client that renders the item show the same message rather than `origin.body`,
+    // which in a batch names the CAUSING one.
+    expect(idle!.announcedText, "thread/peerMessage's text is not the arrival item's own text").toBe(liveItem.text);
 
     // (2) THE PERSISTED ROW, read raw off disk. It IS there, it IS a `type:"user"` row, and it carries the
     // very origin the live path recognised — so running the ONE reader (`peerArrival`) over it reproduces
@@ -599,9 +613,20 @@ live("M8 cross-session, against a real engine", () => {
     expect(at(arrivalUuid, "started"), "the fold's bracket opened before the host turn's").toBeGreaterThan(at(String(hostUuid), "started"));
     expect(at(arrivalUuid, "completed"), "the fold's bracket did not close inside the host turn's — the two were not nested").toBeLessThan(at(String(hostUuid), "completed"));
 
-    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the only surviving vehicle for a
-    // folded message's text: it produces no live item (there is no adopted turn to own one) and, as the
-    // block below measures, no persisted row either.
+    // (2b) THE FOLD'S OWN LIVE ITEM, AND WHOSE TURN IT IS (BL7 #64). The engine folded this message into
+    // the turn that was already running — the nested bracket above is that fold, measured — so the running
+    // turn is the only honest home for its item. EXACTLY ONE, on the HOST turn's id: before the binding
+    // this arrival was held unattributed and then emitted into whichever turn drained next, which for this
+    // very leg is the successor turn started in (4) below. The successor assertion after it is therefore
+    // not belt-and-braces; it is the defect's own signature.
+    const foldItems = (): Notif[] => a.since(mark).filter((n) =>
+      n.method === "item/completed" && n.params.threadId === t2!.id && n.params.item?.id === arrivalUuid);
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival did not become exactly one item of the host turn").toEqual([hostTurnId]);
+
+    // (3) THE MODEL ANSWERED BOTH PROMPTS — spec row 10's own wording, and the second vehicle for a folded
+    // message's text: it now also produces a live item on the host turn (2b), and, as the block below
+    // measures, still no persisted row.
     const text = agentText(mark, t2.id);
     expect(text, "the folded turn's completion does not carry the host prompt's answer").toContain("OMEGA");
     expect(text, "the folded turn's completion does not carry the peer message's token").toContain(token);
@@ -632,6 +657,11 @@ live("M8 cross-session, against a real engine", () => {
     expect(after.turn.status, "a following local turn was not accepted — the fold left an adoption holding busy").toBe("inProgress");
     await a.waitFor("the following local turn to complete", 300_000,
       (n) => n.method === "turn/completed" && n.params.threadId === t2!.id && n.params.turn?.id === String(after.turn.id), mark);
+    // …and the successor turn, now run to completion, carries NO item for the folded arrival. This is the
+    // #64 defect's exact live signature: an arrival held past its own bracket surfaced as a user item of
+    // the next turn to drain the queue — a message the client would have read as having been sent now.
+    expect(foldItems().map((n) => String(n.params.turnId)),
+      "the folded arrival was re-emitted into a turn it did not belong to").toEqual([hostTurnId]);
   }, 1_500_000);
 
   it("LEG 5 — batch (closes U3): a batched turn carries ONE bracket per queued message, and the engine attributes every one of them to the message that CAUSED the turn", async () => {

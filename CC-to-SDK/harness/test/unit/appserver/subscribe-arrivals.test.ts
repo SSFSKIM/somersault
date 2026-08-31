@@ -16,6 +16,7 @@ import { AppServer } from "../../../src/appserver/server.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import { rawTextOf } from "../../../src/peer/address.js";
 import { contentHash16, type ArrivalAnchor, type ArrivalEntry, type ArrivalStore } from "../../../src/peer/arrivalLog.js";
+import { ASSISTANT, ORIGIN, TS, USER, entryBuilder } from "./items/corpus.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -23,20 +24,12 @@ const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
 const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 const SESSION = "sess-arrivals";
-const TS = "2026-08-30T00:00:00.000Z";
-const ORIGIN = { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", verifiedPeerPid: 4242 };
 
 /** `sessionId` is passed positionally with NO default: `undefined` is a real fixture here (the thread that
  *  has never persisted), and a default parameter would silently turn it back into a session. */
 const fakeSession = (sessionId: string | undefined) =>
   ({ submit: async () => ({ result: {} }), interrupt: async () => ({}), dispose: async () => {}, onFrame: () => () => {}, sessionId });
 
-/** A persisted row, in the shapes `getSessionMessages` returns. `uuid` is the row's identity and — for a
- *  user row — the item id too, so a fixture's expected id list is readable off its rows. */
-const USER = (uuid: string, text: string, over: Record<string, unknown> = {}) =>
-  ({ type: "user", uuid, session_id: "s", parent_tool_use_id: null, message: { role: "user", content: text }, timestamp: TS, ...over });
-const ASSISTANT = (uuid: string, msgId: string, text: string, over: Record<string, unknown> = {}) =>
-  ({ type: "assistant", uuid, session_id: "s", message: { id: msgId, content: [{ type: "text", text }] }, timestamp: TS, ...over });
 /** An assistant row whose tool call never receives its result: it produces NO item at its own row and one
  *  forced completion at `finalize`, which is what makes it the straddle fixture criterion 22 names. */
 const TOOL_OPEN = (uuid: string, msgId: string, toolId: string) =>
@@ -56,9 +49,7 @@ const anchorOf = (row: any, prev: any | null, over: Partial<ArrivalAnchor> = {})
   ...over,
 });
 
-let seq = 0;
-const ENTRY = (id: string, text: string, anchor: ArrivalAnchor | null, over: Partial<ArrivalEntry> = {}): ArrivalEntry =>
-  ({ v: 1, id, sessionId: SESSION, anchor, seq: seq++, observedAt: TS, origin: ORIGIN, text, ...over });
+const ENTRY = entryBuilder(SESSION);
 
 /** The store as Task 1 defines it, in memory. `readAll` hands back the entries in `(seq, id)` order — the
  *  order the fixture lists them in — and `counts` reports the PRE-eviction total, which is what lets a

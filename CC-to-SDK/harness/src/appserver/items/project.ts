@@ -39,8 +39,35 @@ const PHANTOM_ROW_KINDS = new Set(["command_echo", "command_output", "caveat", "
  *  would be placed, and the projector would be right to place it — it was told where it goes. */
 export interface ResolvedArrivals { byRow: Map<number, ArrivalEntry[]>; atStart: ArrivalEntry[] }
 
-/** The no-arrivals case, and the left-hand side of the parity law. Shared and never mutated. */
-export const EMPTY_ARRIVALS: ResolvedArrivals = { byRow: new Map(), atStart: [] };
+/** A `Map` that refuses every mutator. `Object.freeze` cannot reach inside a Map — `set` writes through a
+ *  frozen reference exactly as it would through a live one — so the only way to make the shared empty
+ *  un-poisonable at RUNTIME rather than by convention is to replace the mutators themselves. Throwing
+ *  beats silently ignoring: a caller reaching for `set` here means to build a set of arrivals, and the
+ *  message tells it where to build one. */
+class ImmutableRowMap extends Map<number, ArrivalEntry[]> {
+  private static refuse(): never {
+    throw new TypeError("EMPTY_ARRIVALS is shared and immutable — build a fresh ResolvedArrivals instead");
+  }
+  override set(): never { return ImmutableRowMap.refuse(); }
+  override delete(): never { return ImmutableRowMap.refuse(); }
+  override clear(): never { return ImmutableRowMap.refuse(); }
+}
+
+/** Frozen as its own statement, not inline: `Object.freeze` on an array narrows it to `readonly T[]`, and
+ *  the interface's field is a plain array because every OTHER `ResolvedArrivals` is built by filling one. */
+const NO_ENTRIES: ArrivalEntry[] = [];
+Object.freeze(NO_ENTRIES);
+
+/** The no-arrivals case, and the left-hand side of the parity law. ONE shared value, and mutating it is a
+ *  runtime error rather than a rule someone has to know: the container is frozen (no swapping `byRow`),
+ *  the array is frozen (`push` throws under the module strictness every consumer here runs in), and the
+ *  map's mutators throw. The failure this closes is silent and total — a single consumer that poisoned the
+ *  shared empty would corrupt every LATER projection in the process, including the overwhelming majority
+ *  of reads that carry no arrival at all and never look at this value's contents. */
+export const EMPTY_ARRIVALS: ResolvedArrivals = Object.freeze({
+  byRow: new ImmutableRowMap(),
+  atStart: NO_ENTRIES,
+});
 
 /** ONE persisted row → the items it completes, appended to `out`.
  *

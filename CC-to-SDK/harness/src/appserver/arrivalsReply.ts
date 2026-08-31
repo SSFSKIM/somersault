@@ -60,7 +60,7 @@ const uuidOf = (row: unknown): string | null => {
  *  disagreement is exactly what this read side must withhold on.
  *
  *  The fingerprint is matched ON RECORDED FIELDS ONLY: `timestamp` is optional on a live frame, so an
- *  anchor that did not record one must not require the row to lack one — the same rule `peerInbound.ts`'s
+ *  anchor that did not record one must not require the row to lack one — the same rule `peerSeed.ts`'s
  *  `fpMatchesRow` applies on the write side, and `rawTextOf`/`contentHash16` are the same two functions
  *  both sides hash with, so the bytes cannot drift apart. */
 export function anchorMatchesRow(anchor: ArrivalAnchor, row: unknown, predecessor: unknown | null | "unknown"): boolean {

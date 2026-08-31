@@ -6,6 +6,7 @@ import { AppServer } from "../../../src/appserver/server.js";
 import { ERR } from "../../../src/appserver/rpc.js";
 import type { PeerSink } from "../../../src/appserver/peer.js";
 import type { PeerRow } from "../../../src/peer/roster.js";
+import { buildEnvelope, MAX_FRAME_CHARS } from "../../../src/peer/address.js";
 
 const mkSink = () => { const lines: string[] = []; return { lines, sink: { write: (l: string) => void lines.push(l), buffered: () => 0, end: () => {} } as PeerSink }; };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
@@ -177,6 +178,87 @@ describe("peer/send", () => {
     const msgId2 = parsed(a.lines).find((f) => f.id === 3).result.msgId;
     conn.close();
     expect(() => srv.receipts.route({ orig_msg_id: msgId2, status: "expired", from: "uds:/sock/11.sock" })).not.toThrow();
+  });
+});
+
+// THE DIFFERENTIAL MATRIX (spec criterion 8). The refusal is a TIGHTENING of `peer/send`, so the thing
+// that has to be proven is not only that the new refusal fires but that nothing else moved: for every
+// input there are exactly two admissible outcomes — the socket write is byte-identical to what the
+// un-tightened code wrote, or nothing is written at all and INVALID_PARAMS comes back. Anything between
+// (a write that differs by one byte, a refusal that still wrote, a silent acceptance of a truncating body)
+// is the failure this table exists to catch. The expected bytes are derived from `buildEnvelope` itself
+// rather than pasted, so a deliberate change to the envelope grammar updates both sides at once and only
+// an ACCIDENTAL divergence between what we send and what the framer writes can red this.
+const WRAP = buildEnvelope({ from: "uds:/sock/99.sock" });
+
+const MATRIX: Array<{ name: string; message: string; verdict: "sent" | "refused"; why: string }> = [
+  { name: "an ordinary body", message: "hello there", verdict: "sent", why: "the control: no envelope tag anywhere in it." },
+  {
+    name: "balanced same-grammar nesting", verdict: "sent",
+    message: `quoting a peer:\n<cross-session-message from="uds:/x" from-mode="prompting">\ninner\n</cross-session-message>\nend`,
+    why: "depth counting steps over a complete quoted envelope, which is the ordinary traffic the M8 scan found 52 rows of (code reviews of this very work among them) — refusing it would break more than the truncation ever did.",
+  },
+  {
+    name: "balanced mixed-grammar nesting", verdict: "sent",
+    message: `forwarding a subagent:\n<agent-message from="sub">\ninner\n</agent-message>\nend`,
+    why: "the other grammar, complete: per-tag-name depth never lets it touch our wrapper.",
+  },
+  {
+    name: "an unclosed <cross-session-message> opener", verdict: "refused",
+    message: `before <cross-session-message from="uds:/x"> after`,
+    why: "alone it decodes back intact (the decoder's last-closing-tag salvage), but BESIDE A SIBLING — the collapsed two-envelope frame probe 121 measured — that salvage swallows the neighbour's opener and both bodies come back merged. Refusing on the pair is what makes the oracle honest about the frames the receiver really builds.",
+  },
+  {
+    name: "a bare unmatched </cross-session-message> closer", verdict: "refused",
+    message: "before </cross-session-message> after",
+    why: "the tracker's own case: our decoder reads this body as `before ` and drops the rest.",
+  },
+  {
+    name: "an unbalanced <agent-message> opener alone", verdict: "sent",
+    message: `before <agent-message from="sub"> after`,
+    why: "CROSS-GRAMMAR IMMUNITY: depth is counted per tag name and the outermost open tag is ours, so a foreign grammar's tag — balanced or not — can neither open nor close our envelope. The foreign grammar is irrelevant to our wrapper, and refusing it would be a refusal with no defect behind it.",
+  },
+  {
+    name: "an unbalanced </agent-message> closer alone", verdict: "sent",
+    message: "before </agent-message> after",
+    why: "the same immunity in the closing direction: a closer that never opened anything of our name is not our terminator.",
+  },
+  { name: "a body that begins and ends with newlines", message: "\n\nedges\n\n", verdict: "sent", why: "`buildEnvelope` adds one newline each side and the decoder strips exactly one — the caller's own blank lines survive." },
+  { name: "a body at the size cap exactly", message: "x".repeat(MAX_FRAME_CHARS - WRAP("").length), verdict: "sent", why: "the cap is a `>` test, so the boundary body is still sent and must still be sent byte-for-byte." },
+];
+
+describe("peer/send round-trip refusal — the differential matrix", () => {
+  for (const cell of MATRIX) {
+    it(`${cell.verdict}: ${cell.name} — ${cell.why}`, async () => {
+      const { a, conn, sent } = boot([ROW()]);
+      send(conn, { id: 2, method: "peer/send", params: { target: "s-1", message: cell.message } });
+      await tick();
+      const frame = parsed(a.lines).find((f) => f.id === 2);
+      if (cell.verdict === "refused") {
+        expect(sent).toHaveLength(0);                                  // zero bytes: nothing between the two outcomes
+        expect(frame.result).toBeUndefined();
+        expect(frame.error.code).toBe(ERR.INVALID_PARAMS);
+        expect(frame.error.message).toContain("unbalanced <cross-session-message> tag");
+      } else {
+        expect(frame.error).toBeUndefined();
+        // Byte-identity, whole-frame: the ONLY value that may differ from a derivation is the msg_id, which
+        // is a fresh UUID by design, so it is read back off the reply rather than asserted loosely.
+        expect(sent).toEqual([{
+          socketPath: "/sock/11.sock",
+          frames: [{ type: "user", session_id: "s-1", from: "uds:/sock/99.sock", message: { content: WRAP(cell.message) }, priority: "next", msg_id: frame.result.msgId }],
+        }]);
+      }
+    });
+  }
+
+  it("still answers the size error, not the round-trip one, for an over-cap body", async () => {
+    const { a, conn, sent } = boot([ROW()]);
+    send(conn, { id: 2, method: "peer/send", params: { target: "s-1", message: `${"x".repeat(MAX_FRAME_CHARS)} </cross-session-message>` } });
+    await tick();
+    // Both refusals apply to this body. Size is answered first: it is the cheaper diagnosis and the one the
+    // caller can act on without reading their own text, and it keeps the scan off an unbounded string.
+    expect(sent).toHaveLength(0);
+    expect(parsed(a.lines).find((f) => f.id === 2).error.message).toMatch(/60000/);
   });
 });
 

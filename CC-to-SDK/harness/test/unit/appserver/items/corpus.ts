@@ -14,8 +14,39 @@
 //
 // Rows are `unknown[]` because that is what the readers take; they are deliberately RAW frame literals
 // rather than builders, so a reader of a failing case sees the exact bytes that produced it.
+//
+// THE ROW AND ENTRY BUILDERS BELOW ARE THE SECOND HALF of that job. The reply-side suites
+// (`subscribe-arrivals`, `search-arrivals`) cannot use raw fixtures — they generate rows by the dozen — so
+// they spelled their own `USER`/`ASSISTANT`/`ENTRY` instead, and two copies of a row shape drift into a
+// suite that agrees with itself about bytes the code no longer produces. They live here for the same
+// reason `TRANSCRIPT_CORPUS` does: one definition of what a persisted row looks like, edited once.
+
+import type { ArrivalAnchor, ArrivalEntry } from "../../../../src/peer/arrivalLog.js";
 
 export interface TranscriptFixture { name: string; rows: unknown[] }
+
+/** The one timestamp every built row and entry carries. A fixed value, not `new Date()`: the anchor
+ *  fingerprint includes it, so a moving clock would move what the suites are asserting about. */
+export const TS = "2026-08-30T00:00:00.000Z";
+
+/** The peer origin an entry carries — the shape `peerInbound` records verbatim off a live frame. */
+export const ORIGIN = { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", verifiedPeerPid: 4242 };
+
+/** A persisted row, in the shapes `getSessionMessages` returns. `uuid` is the row's identity and — for a
+ *  user row — the item id too, so a fixture's expected id list is readable off its rows. */
+export const USER = (uuid: string, text: string, over: Record<string, unknown> = {}) =>
+  ({ type: "user", uuid, session_id: "s", parent_tool_use_id: null, message: { role: "user", content: text }, timestamp: TS, ...over });
+export const ASSISTANT = (uuid: string, msgId: string, text: string, over: Record<string, unknown> = {}) =>
+  ({ type: "assistant", uuid, session_id: "s", message: { id: msgId, content: [{ type: "text", text }] }, timestamp: TS, ...over });
+
+/** `ENTRY`, bound to the session id the calling suite's thread runs under — the one field the two copies
+ *  genuinely differed on. The `seq` counter is PER BUILDER rather than per module, so two suites sharing
+ *  this file do not share a sequence and the order a store returns entries in stays each suite's own. */
+export const entryBuilder = (sessionId: string) => {
+  let seq = 0;
+  return (id: string, text: string, anchor: ArrivalAnchor | null, over: Partial<ArrivalEntry> = {}): ArrivalEntry =>
+    ({ v: 1, id, sessionId, anchor, seq: seq++, observedAt: TS, origin: ORIGIN, text, ...over });
+};
 
 /** A peer arrival as the CLI stamps one: `origin.kind === "peer"` is the whole recognition rule
  *  (src/peer/address.ts), and the persisted text carries the CLI's own preamble the sender never wrote. */

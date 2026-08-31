@@ -44,7 +44,11 @@ const mkSink = () => {
 };
 const send = (c: { feed(ch: string): void }, obj: object) => c.feed(JSON.stringify(obj) + "\n");
 const parsed = (lines: string[]) => lines.map((l) => JSON.parse(l));
-const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+/** The `fr-*` family's wait: POLL THE CONDITION the assertion is about to read. A fixed count of macrotask
+ *  drains says "four turns of the loop ought to be enough", which is a guess about the implementation — one
+ *  added `await` on the observer's path turns it into a flake that reads as a claim about behaviour. Every
+ *  wait below therefore names what it is waiting for: a reply frame, a grounded seed, a logged entry. */
+const waitFor = (fn: () => void | Promise<void>) => vi.waitFor(fn, { timeout: 2000 });
 
 /** peer-inbound-log.test.ts's engine fake: the test PUSHES frames, so the observer is driven by frame
  *  order rather than by promise order. `sessionId` stays undefined — the record learns its id from the
@@ -108,17 +112,22 @@ async function open(engine: any, deps: BootDeps, resume?: string) {
   send(conn, resume
     ? { id: 2, method: "thread/resume", params: { sessionId: resume, crossSessionInbound: "accept" } }
     : { id: 2, method: "thread/start", params: { crossSessionInbound: "accept" } });
-  await tick();
+  await waitFor(() => expect(parsed(lines).find((m) => m.id === 2), "no reply to the admission").toBeDefined());
   const threadId = parsed(lines).find((m) => m.id === 2)!.result.thread.id;
   send(conn, { id: 3, method: "thread/subscribe", params: { threadId } });
-  await tick();
+  await waitFor(() => expect(parsed(lines).find((m) => m.id === 3), "no reply to thread/subscribe").toBeDefined());
+  const record = srv.registry.get(threadId)!;
+  // THE SEED, not merely the reply: a record admitted WITH a session id fires its seed read at install and
+  // grounds the anchor chain when that read resolves. Every arrival this suite pushes anchors against that
+  // chain, so a wait that stopped at the reply would race the grounding and re-place the arrivals.
+  if (resume) await waitFor(() => expect(record.peerInbound?.seeded, "the seed never grounded").toBe(true));
   lines.length = 0;
 
   let reqId = 100;
   const call = async (method: string, params: Record<string, unknown>) => {
     const id = reqId++;
     send(conn, { id, method, params });
-    await tick();
+    await waitFor(() => expect(parsed(lines).find((m) => m.id === id), `no reply for ${method}`).toBeDefined());
     return parsed(lines).find((m) => m.id === id)!;
   };
   const read = async (threadOf = threadId, params: Record<string, unknown> = {}): Promise<ReadPage> =>
@@ -136,7 +145,7 @@ async function open(engine: any, deps: BootDeps, resume?: string) {
     return pages;
   };
   const announced = () => parsed(lines).filter((m) => m.method === "thread/peerMessage");
-  return { srv, conn, lines, threadId, call, read, walk, announced, record: srv.registry.get(threadId)! };
+  return { srv, conn, lines, threadId, call, read, walk, announced, record };
 }
 
 describe("(25) `thread/clear` detaches the arrivals — it does not delete them", () => {
@@ -173,7 +182,7 @@ describe("(25) `thread/clear` detaches the arrivals — it does not delete them"
 
     e.push(PEER("a-1", "first arrival"));
     e.push(PEER("a-2", "second arrival"));
-    await tick();
+    await waitFor(() => expect(store.readAll("sess-A")).toHaveLength(2));
     before = await a.read();
 
     clearReply = await a.call("thread/clear", { threadId: a.threadId });
@@ -182,12 +191,14 @@ describe("(25) `thread/clear` detaches the arrivals — it does not delete them"
 
     // The init frame reveals the new id, and from here the thread is reading a DIFFERENT transcript.
     e.push(INIT("sess-B"));
-    await tick();
+    // The init frame reveals the id AND opens the fresh conversation's own seed; the arrival below anchors
+    // against that seed, so both halves must have happened before the run moves on.
+    await waitFor(() => { expect(a.record.sessionId).toBe("sess-B"); expect(a.record.peerInbound?.seeded).toBe(true); });
     sessionIdAfterInit = a.record.sessionId;
     cleared = await a.read();
 
     e.push(PEER("b-arr", "an arrival after the clear"));
-    await tick();
+    await waitFor(() => expect(store.readAll("sess-B")).toHaveLength(1));
     entriesB = store.readAll("sess-B").map((entry: ArrivalEntry) => entry.id);
     entriesA = store.readAll("sess-A").map((entry: ArrivalEntry) => entry.id);
     afterArrival = await a.read();
@@ -258,10 +269,9 @@ describe("(13) degradation is exactly as durable as the store that records it", 
 
     e.push(PEER("d-1", "the write that failed"));
     e.push(PEER("d-2", "the write that landed"));
-    await tick();
     // The live channel reports what the ENGINE did either way: both messages were delivered, so both were
     // announced, whether or not the sidecar could record them.
-    expect(first.announced()).toHaveLength(2);
+    await waitFor(() => expect(first.announced()).toHaveLength(2));
 
     const page = await first.read();
     expect(page.arrivals).toBeNull();                              // a count it cannot vouch for is not a count
@@ -288,15 +298,13 @@ describe("(13) degradation is exactly as durable as the store that records it", 
     const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store }, "sess-E");
 
     e.push(PEER("e-1", "logged while the directory was writable"));
-    await tick();
-    expect((await live.read()).arrivals).toEqual({ logged: 1, dropped: 0 });
+    await waitFor(async () => expect((await live.read()).arrivals).toEqual({ logged: 1, dropped: 0 }));
 
     const dir = join(root, "sess-E");
     chmodSync(dir, 0o500);
     try {
       e.push(PEER("e-2", "the write that could not land, nor say so"));
-      await tick();
-      expect(live.announced().map((m) => m.params.arrivalUuid)).toEqual(["e-1", "e-2"]);
+      await waitFor(() => expect(live.announced().map((m) => m.params.arrivalUuid)).toEqual(["e-1", "e-2"]));
       expect((await live.read()).arrivals).toBeNull();             // the in-process latch, doing its job
       // NOTHING DURABLE WAS WRITTEN, and this is the assertion the fixture exists to make: the fault that
       // made the store fail is the same one that stops it recording the failure.
@@ -327,8 +335,8 @@ describe("(13) degradation is exactly as durable as the store that records it", 
     const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: degradedByAnotherProcess }, "sess-F");
 
     e.push(PEER("f-1", "an arrival whose count another process can no longer vouch for"));
-    await tick();
-    expect(inner.counts("sess-F")).toEqual({ logged: 1, dropped: 0 });   // the numbers really are available
+    // the numbers really are available
+    await waitFor(() => expect(inner.counts("sess-F")).toEqual({ logged: 1, dropped: 0 }));
     expect((await live.read()).arrivals).toBeNull();                     // …and the reply still declines to claim them
   });
 });
@@ -348,8 +356,7 @@ describe("`thread/delete` DESTROYS the arrivals, where `thread/clear` detaches t
 
     e.push(PEER("g-1", "a peer message with a body worth erasing"));
     e.push(PEER("g-2", "and a second one"));
-    await tick();
-    expect(store.readAll("sess-G")).toHaveLength(2);
+    await waitFor(() => expect(store.readAll("sess-G")).toHaveLength(2));
     expect(readFileSync(join(root, "sess-G", readdirSync(join(root, "sess-G"))[0]), "utf8")).toContain("worth erasing");
 
     // The live-guard refuses a delete on a session this server holds open, so the thread closes first —
@@ -374,7 +381,7 @@ describe("`thread/delete` DESTROYS the arrivals, where `thread/clear` detaches t
     const e = pushEngine();
     const live = await open(e.engine, { getSessionMessages: readerOver(files), arrivalStore: store, deleteSession: async () => { throw new Error("EBUSY"); } }, "sess-G");
     e.push(PEER("g-3", "an arrival on a session that survives"));
-    await tick();
+    await waitFor(() => expect(store.readAll("sess-G")).toHaveLength(1));
 
     await live.call("thread/close", { threadId: live.threadId });
     expect((await live.call("thread/delete", { threadId: "sess-G" })).error.code).toBe(-32603);
@@ -395,7 +402,7 @@ describe("`thread/delete` DESTROYS the arrivals, where `thread/clear` detaches t
     const wc = live.srv.connect(watcher.sink);
     send(wc, { id: 1, method: "initialize", params: { clientInfo: { name: "w" }, watchThreads: true } });
     e.push(PEER("g-4", "an arrival whose sidecar cannot be removed"));
-    await tick();
+    await waitFor(() => expect(inner.readAll("sess-G")).toHaveLength(1));
 
     await live.call("thread/close", { threadId: live.threadId });
     const reply = await live.call("thread/delete", { threadId: "sess-G" });
@@ -425,7 +432,7 @@ describe("(23) `arrivals.logged` equals the announcements the run made", () => {
       e.push(reply);
       for (let k = 0; k <= turn % 2; k++) e.push(PEER(`k-${turn}-${k}`, `peer message ${turn}.${k}`));
       arrivals += 1 + (turn % 2);
-      await tick();
+      await waitFor(() => expect(run.announced()).toHaveLength(arrivals));
     }
 
     const announced = run.announced().map((m) => m.params.arrivalUuid);
@@ -455,10 +462,9 @@ describe("(23) `arrivals.logged` equals the announcements the run made", () => {
     // quietly re-arithmetic itself into agreement.
     const sent = ARRIVAL_LOG_CAP + 3;
     for (let i = 0; i < sent; i++) e.push(PEER(`c-${String(i).padStart(2, "0")}`, `peer message ${i}`));
-    await tick();
+    await waitFor(() => expect(run.announced()).toHaveLength(sent));
 
     const announced = run.announced();
-    expect(announced).toHaveLength(sent);
     expect(store.readAll("sess-C")).toHaveLength(ARRIVAL_LOG_CAP);   // the log really did evict
     const page = await run.read();
     expect(page.nextCursor).toBeNull();                 // one page, so this IS the final page

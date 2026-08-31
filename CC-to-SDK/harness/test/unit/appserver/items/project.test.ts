@@ -17,7 +17,7 @@ import { TRANSCRIPT_CORPUS } from "./corpus.js";
 
 const TS = "2026-08-30T00:00:00.000Z";
 const ORIGIN = { kind: "peer", from: "uds:/a.sock", fromMode: "prompting", name: "peer", body: "hello", verifiedPeerPid: 4242 };
-/** An entry as the observer wrote it (peerInbound.ts's `logArrival`). `anchor` is irrelevant to this file
+/** An entry as the observer wrote it (peerArrivalPath.ts's `logArrival`). `anchor` is irrelevant to this file
  *  — resolving an anchor to a row index is Task 4's job, and the projector is handed the ANSWER — so these
  *  entries carry the null sentinel and say what they mean through `byRow`/`atStart` instead. */
 const ENTRY = (over: Partial<ArrivalEntry> & Pick<ArrivalEntry, "id" | "text">): ArrivalEntry => ({
@@ -46,6 +46,34 @@ describe("the parity law: with no arrivals, the projector IS the replay", () => 
       { type: "userMessage", id: "u-plain", text: "hello" },
       { type: "agentMessage", id: "msg_P#0", text: "hi back" },
     ]);
+  });
+});
+
+describe("the shared empty refuses to be poisoned", () => {
+  // `EMPTY_ARRIVALS` is handed to EVERY read that carries no arrivals — the overwhelming majority of them —
+  // so one consumer that mutated it would corrupt every LATER projection in the process, silently, in reads
+  // that never asked about arrivals at all. A shallow `Object.freeze` does NOT close that: a `Map` accepts
+  // `set` through a frozen reference, and freezing the container does not reach the array either. Hence the
+  // shape of this cell: it performs the poisoning a consumer would perform and then re-projects, rather
+  // than asserting `Object.isFrozen` — which the broken version would also have passed.
+  const rows = [{ type: "user", uuid: "p0", message: { content: "a prompt" } }];
+  const smuggled = ENTRY({ id: "poison", text: "an arrival nobody logged" });
+
+  it("every mutator throws, and a projection taken afterwards is the one taken before", () => {
+    const before = projectItems(rows, EMPTY_ARRIVALS, true);
+    expect(() => EMPTY_ARRIVALS.byRow.set(0, [smuggled])).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.byRow.delete(0)).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.byRow.clear()).toThrow(TypeError);
+    expect(() => EMPTY_ARRIVALS.atStart.push(smuggled)).toThrow(TypeError);
+    // The container too: swapping `byRow` wholesale is the poisoning a throwing Map alone would still allow.
+    expect(() => { (EMPTY_ARRIVALS as { byRow: unknown }).byRow = new Map([[0, [smuggled]]]); }).toThrow(TypeError);
+
+    // THE CLAIM — not that the calls threw, but that the projector still projects the empty case, on both
+    // values of the window flag (`atStart` is the half a frozen map would have left open).
+    expect(projectItems(rows, EMPTY_ARRIVALS, true)).toEqual(before);
+    expect(projectItems(rows, EMPTY_ARRIVALS, false)).toEqual(before);
+    expect(before.map((i) => i.id)).toEqual(["p0"]);
+    expect(itemsFromTranscript(rows)).toEqual(before);      // …and the parity law survives the attempt
   });
 });
 

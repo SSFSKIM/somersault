@@ -22,7 +22,7 @@ export function userItem(text: string, uuid: string): UserMessageItem {
  *  Its own constructor rather than an optional third parameter on `userItem`, because the two say different
  *  things: an ordinary prompt has NO origin to carry, and a call site that could pass one and didn't would
  *  be indistinguishable from one that had nothing to pass. All THREE paths an arrival reaches a client by
- *  build the item here — the live drain (peerInbound.ts), the cold replay of a persisted peer row and the
+ *  build the item here — the live drain (peerAdoption.ts), the cold replay of a persisted peer row and the
  *  projection of a logged entry (items/project.ts) — so the three cannot disagree about its shape. */
 export function arrivalItem(text: string, uuid: string, origin: Record<string, unknown>): UserMessageItem {
   return { type: "userMessage", id: uuid, text, origin };
