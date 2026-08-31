@@ -24,14 +24,15 @@
 // initializes before the chunk body that delegates into it. The banner must
 // still stay byte-first (prepending disables the bundle silently), and the build
 // boot-checks either way.
-import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { chunkAst, excise } from "./ast.js";
-import { SPLICES } from "./manifest.js";
+import { assertSignature, chunkAst, excise } from "./ast.js";
+import { spliceFootprint, type FootprintFile } from "./footprint.js";
+import { deriveCaptures, SPLICES } from "./manifest.js";
 import { bootCheck, BUILD_DIR, materializeGraph, STRANGLED_DIR, textModules } from "./prepare.js";
+import { assertCaptureInventory } from "./scope.js";
 
 // ---- CLI --------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -77,8 +78,6 @@ function injectAfterBanner(src: string, statement: string): string {
  */
 const upstreamBytes = (s: string) => s.replaceAll(`${STRANGLED_DIR}/`, BUNFS);
 
-const IDENT_EXPR = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
-
 interface Edit {
   start: number;
   end: number;
@@ -94,7 +93,7 @@ for (const path of textModules(STRANGLED_DIR)) sources.set(path, readFileSync(pa
 
 const preludesFor = new Map<string, string[]>();
 const editsFor = new Map<string, Edit[]>();
-const footprints: unknown[] = [];
+const footprints: FootprintFile["splices"] = [];
 
 for (const sp of SPLICES) {
   // Uniqueness is a whole-GRAPH property, not a per-file one: a second match in
@@ -111,33 +110,45 @@ for (const sp of SPLICES) {
 
   const path = hits[0][0];
   const src = sources.get(path)!;
-  const cut = excise(chunkAst(path, src), src.indexOf(sp.anchor), sp.target);
+  const sf = chunkAst(path, src);
+  const cut = excise(sf, src.indexOf(sp.anchor), sp.target);
   // Belt and braces: the span the AST chose must be the one the anchor named.
   if (!cut.original.includes(sp.anchor)) throw new Error(`${sp.name}: excised span does not contain the anchor`);
+  // …and it must be the node the operator verified, not a same-shaped neighbour.
+  assertSignature(sp.name, cut, sp.signature);
 
-  const captures = (sp.captures ?? []).map((c) => {
-    const identifier = c.derive(cut.original); // throws when the upstream shape moved
-    if (!IDENT_EXPR.test(identifier)) {
-      throw new Error(`${sp.name}: capture '${c.as}' derived ${JSON.stringify(identifier)}, which is not a binding`);
-    }
-    return { as: c.as, kind: c.kind, identifier };
-  });
+  const captures = deriveCaptures(sp, cut.original);
+  // The manifest is not its own witness: the body's free variables are derived
+  // from the AST and must match the declared captures exactly, either way.
+  assertCaptureInventory(sp.name, cut.node, captures.map((c) => c.identifier));
 
-  const replacement = cut.render(sp.fn, [...cut.shapeArgs, ...captures.map((c) => c.identifier)]);
+  // `owned` captures have had their §2.4 retrofit: the module implements them,
+  // so the graph's binding is footprinted but not forwarded.
+  const forwarded = captures.filter((c) => !c.owned);
+  const replacement = cut.render(sp.fn, [...cut.shapeArgs, ...forwarded.map((c) => c.identifier)]);
   editsFor.set(path, [...(editsFor.get(path) ?? []), { start: cut.start, end: cut.end, replacement }]);
 
-  const body = upstreamBytes(cut.original);
   footprints.push({
     name: sp.name,
-    target: sp.target,
+    shape: sp.target,
     fn: sp.fn,
-    chunk: relative(STRANGLED_DIR, path),
     node: cut.label,
     anchor: sp.anchor,
-    span: { start: cut.start, end: cut.end, length: body.length },
-    sha256: createHash("sha256").update(body).digest("hex"),
-    captures,
+    signature: cut.signature,
     coverage: sp.coverage,
+    ...spliceFootprint({
+      name: sp.name,
+      chunk: relative(STRANGLED_DIR, path),
+      sf,
+      cut,
+      captures,
+      resolveModule: (specifier) => {
+        const text = sources.get(specifier);
+        if (text === undefined) return null;
+        return { name: relative(STRANGLED_DIR, specifier), sf: chunkAst(specifier, text) };
+      },
+      upstream: upstreamBytes,
+    }),
   });
 
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
@@ -147,7 +158,7 @@ for (const sp of SPLICES) {
   console.log(
     `spliced ${sp.name} [${sp.target}] ${cut.label} in ${relative(STRANGLED_DIR, path)}: ` +
       `${cut.original.length} chars -> ${replacement.length}-char delegation` +
-      `${captures.length > 0 ? ` (derived: ${captures.map((c) => `${c.as}=${c.identifier}`).join(", ")})` : ""}` +
+      `${captures.length > 0 ? ` (derived: ${captures.map((c) => `${c.as}=${c.identifier}${c.owned ? "*" : ""}`).join(", ")})` : " (no free variables)"}` +
       `${sabotaged ? " [SABOTAGE]" : ""}`,
   );
 }
@@ -173,26 +184,22 @@ for (const [path, modules] of preludesFor) {
   writeFileSync(path, injectAfterBanner(sources.get(path)!, statement));
 }
 
-// The upstream-footprint ledger (§5): what each owned row replaces, content
-// hashed, so a pin bump can stale the rows whose upstream body actually moved.
+// The upstream-footprint ledger (§5): what each owned row replaces — the target
+// span AND its closure surface — content hashed, so a pin bump can stale the
+// rows whose upstream actually moved. See strangle/footprint.ts for why the
+// captures' declaration spans are part of the record and not an extra.
 const footprintFile = join(BUILD_DIR, "footprints.json");
-writeFileSync(
-  footprintFile,
-  JSON.stringify(
-    {
-      engineVersion: ENGINE_VERSION,
-      variant: sabotageTarget ?? "faithful",
-      // `span` is an offset into the MATERIALIZED chunk (prepare.ts rewrites
-      // /$bunfs/root/ specifiers, which shifts offsets); `sha256` is over the
-      // upstream bytes, so it moves only when upstream does.
-      spanBasis: "materialized-chunk",
-      hashBasis: "upstream-bytes",
-      splices: footprints,
-    },
-    null,
-    2,
-  ) + "\n",
-);
+const file: FootprintFile = {
+  engineVersion: ENGINE_VERSION,
+  variant: sabotageTarget ?? "faithful",
+  // Spans are offsets into the MATERIALIZED chunk (prepare.ts rewrites
+  // /$bunfs/root/ specifiers, which shifts offsets); every `sha256` is over the
+  // upstream bytes, so it moves only when upstream does.
+  spanBasis: "materialized-chunk",
+  hashBasis: "upstream-bytes",
+  splices: footprints,
+};
+writeFileSync(footprintFile, JSON.stringify(file, null, 2) + "\n");
 
 bootCheck([BUN, join(STRANGLED_DIR, "cli"), "--version"], "engine-strangled");
 console.log(

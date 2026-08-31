@@ -31,10 +31,53 @@ export function chunkAst(path: string, text: string): ts.SourceFile {
   return sf;
 }
 
+/**
+ * The structural fingerprint of an excision target — the guard that stops the
+ * nearest-enclosing-shape walk from silently selecting the wrong node (campaign
+ * spec W0 fix, lens 1).
+ *
+ * The walk climbs from the anchor to the NEAREST node of the declared shape, so
+ * an anchor that drifts into a same-shaped nested helper resolves to the inner
+ * node and the build proceeds happily — a wrong-but-plausible splice. The
+ * manifest therefore records what the operator VERIFIED at splice time, and the
+ * build refuses a target that no longer matches.
+ *
+ * Shape of the signature, and why this one. It is built from exactly two facts,
+ * both chosen for surviving minification churn:
+ *
+ *  - `params` — the selected callable's arity. Free of names and offsets.
+ *  - `ancestry` — the SYNTAX KINDS of the enclosing shape-forming nodes,
+ *    innermost first, up to the chunk top. Also free of names and offsets: a
+ *    release that renames every binding leaves it untouched, and code motion
+ *    within the same enclosing structure does not move it either.
+ *
+ * The two alternatives were rejected on that criterion. An enclosing NAME is
+ * minified and churns per release (`hui` → `q6t` was exactly this campaign's
+ * founding observation). A depth-from-chunk-top or an absolute AST path churns
+ * with any insertion anywhere above the target — it would fire on nearly every
+ * bump for reasons unrelated to the target.
+ *
+ * What it catches is precisely the defect: descending into a nested callable
+ * necessarily prepends at least one function-like kind to `ancestry`, and a
+ * same-shaped sibling of different arity moves `params`. What it deliberately
+ * does not attempt is proving the target is semantically the same function —
+ * that is the footprint hash's job (§5).
+ */
+export interface TargetSignature {
+  /** parameter count of the selected callable (0 for a switch case) */
+  params: number;
+  /** enclosing shape-forming syntax kinds, innermost first, ending at SourceFile */
+  ancestry: string[];
+}
+
 export interface Excision {
   shape: TargetShape;
   /** what the node is called, for the build log and the footprint ledger */
   label: string;
+  /** the selected AST node itself — the root of the capture inventory and the signature */
+  node: ts.Node;
+  /** the structural fingerprint the manifest row must agree with */
+  signature: TargetSignature;
   start: number;
   end: number;
   original: string;
@@ -77,6 +120,51 @@ function matchesShape(n: ts.Node, shape: TargetShape): boolean {
 const has = (n: ts.Node, kind: ts.SyntaxKind) =>
   ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === kind);
 
+/** The node kinds `ancestry` keeps — the ones that give a target its structural place. */
+const SHAPE_FORMING = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.ArrowFunction,
+  ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.Constructor,
+  ts.SyntaxKind.GetAccessor,
+  ts.SyntaxKind.SetAccessor,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.ObjectLiteralExpression,
+  ts.SyntaxKind.SwitchStatement,
+  ts.SyntaxKind.SourceFile,
+]);
+
+/** @see TargetSignature */
+export function signatureOf(node: ts.Node, params: number): TargetSignature {
+  const ancestry: string[] = [];
+  for (let n = node.parent; n; n = n.parent) {
+    if (SHAPE_FORMING.has(n.kind)) ancestry.push(ts.SyntaxKind[n.kind]);
+  }
+  return { params, ancestry };
+}
+
+const sameSignature = (a: TargetSignature, b: TargetSignature) =>
+  a.params === b.params && a.ancestry.length === b.ancestry.length && a.ancestry.every((k, i) => k === b.ancestry[i]);
+
+export const formatSignature = (s: TargetSignature) => `params=${s.params} ancestry=${s.ancestry.join("<")}`;
+
+/**
+ * The target-identity guard. A mismatch is never auto-healed: re-verify which
+ * node the anchor now lives in and update the manifest row deliberately.
+ */
+export function assertSignature(name: string, cut: Excision, expected: TargetSignature): void {
+  if (sameSignature(cut.signature, expected)) return;
+  throw new Error(
+    `${name}: the anchor no longer resolves to the verified target.\n` +
+      `  manifest signature: ${formatSignature(expected)}\n` +
+      `  resolved  ${cut.shape} '${cut.label}': ${formatSignature(cut.signature)}\n` +
+      `  Re-verify by hand WHICH node the anchor sits in (an anchor that drifted into a nested\n` +
+      `  same-shaped helper resolves to the inner node), then update the row's signature on purpose.`,
+  );
+}
+
 /** The original parameter list, verbatim — defaults and all still evaluate. */
 function paramText(sf: ts.SourceFile, params: ts.NodeArray<ts.ParameterDeclaration>): string {
   return params.length === 0 ? "" : sf.text.slice(params.pos, params.end);
@@ -90,6 +178,13 @@ function paramText(sf: ts.SourceFile, params: ts.NodeArray<ts.ParameterDeclarati
  * sees exactly the properties the original body named — a rest element carries
  * the remainder, but a default value or a nested pattern would change what the
  * callee observes, so those fail the build instead of being approximated.
+ *
+ * A COMPUTED property name is the same class of hazard and is refused for the
+ * same reason (campaign spec W0 fix, lens 1): re-assembling `{[k()]:v}` into an
+ * object literal puts `k()` in the delegation as well, so the key expression
+ * runs TWICE — once binding the parameter, once building the forwarded object.
+ * Reproducing it faithfully means hoisting the key to a temporary, which is an
+ * adapter, not a mechanical re-assembly.
  */
 function paramArgs(label: string, params: ts.NodeArray<ts.ParameterDeclaration>): string[] {
   return params.map((p, i) => {
@@ -100,6 +195,11 @@ function paramArgs(label: string, params: ts.NodeArray<ts.ParameterDeclaration>)
     const fields = p.name.elements.map((el) => {
       if (el.initializer) throw new Error(`${where} destructures with a default — delegation needs an explicit adapter`);
       if (!ts.isIdentifier(el.name)) throw new Error(`${where} nests a binding pattern — delegation needs an explicit adapter`);
+      if (el.propertyName && ts.isComputedPropertyName(el.propertyName)) {
+        throw new Error(
+          `${where} destructures a COMPUTED property name — forwarding it would evaluate the key expression a second time; delegation needs an explicit adapter`,
+        );
+      }
       if (el.dotDotDotToken) return `...${el.name.text}`;
       return el.propertyName ? `${el.propertyName.getText()}:${el.name.text}` : el.name.text;
     });
@@ -134,6 +234,8 @@ function exciseMethod(sf: ts.SourceFile, n: ts.MethodDeclaration, shape: TargetS
   return {
     shape,
     label: name,
+    node: n,
+    signature: signatureOf(n, n.parameters.length),
     start: n.getStart(sf),
     end: n.getEnd(),
     original: sf.text.slice(n.getStart(sf), n.getEnd()),
@@ -151,6 +253,8 @@ function exciseFunction(sf: ts.SourceFile, n: ts.FunctionDeclaration): Excision 
   return {
     shape: "free-function",
     label: name,
+    node: n,
+    signature: signatureOf(n, n.parameters.length),
     start: n.getStart(sf),
     end: n.getEnd(),
     original: sf.text.slice(n.getStart(sf), n.getEnd()),
@@ -198,6 +302,8 @@ function exciseCase(sf: ts.SourceFile, n: ts.CaseClause): Excision {
   return {
     shape: "switch-case",
     label,
+    node: n,
+    signature: signatureOf(n, 0),
     start: n.getStart(sf),
     end: n.getEnd(),
     original: sf.text.slice(n.getStart(sf), n.getEnd()),
@@ -212,9 +318,10 @@ function exciseCase(sf: ts.SourceFile, n: ts.CaseClause): Excision {
 /**
  * Resolve an anchor position to the span of its enclosing node of `shape`. The
  * walk takes the NEAREST enclosing node of that shape, so an anchor sitting
- * inside a nested callable excises the nested one — pick an anchor inside the
- * body you mean, and let the build's anchor-containment assert plus the gate's
- * solo sabotage catch it when you did not.
+ * inside a nested callable resolves to the nested one. That is not left to the
+ * gate to notice: every excision carries a {@link TargetSignature}, and the
+ * build checks it against the one the manifest row recorded at splice time
+ * ({@link assertSignature}).
  */
 export function excise(sf: ts.SourceFile, anchorIdx: number, shape: TargetShape): Excision {
   let node: ts.Node | undefined = deepestAt(sf, anchorIdx);

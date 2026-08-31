@@ -7,21 +7,36 @@
 // with. A case clause has no parameter list of its own, so EVERY value it takes
 // from its scope is a manifest-declared capture, each re-derived per build.
 //
-// All five are `effectful-port` in the §2.4 sense: two are live mutable state
-// belonging to the streaming loop, three are the engine's telemetry plumbing.
-// Their far side is W13's query loop / turn driver.
+// Three of the clause's five free variables cross the adapter as
+// `effectful-port` captures — two are live mutable state belonging to the
+// streaming loop, one is the telemetry sink. Their far side is W13's query loop
+// / turn driver:
 //
 //   block                     the content block under assembly; `.text` is appended in place
 //   delta                     the SSE delta frame ({ type:"text_delta", text })
 //   recordStreamingError(event, payload)   telemetry for a malformed stream
-//   known(value)              marks a value as a known enum, not free text, for telemetry
-//   describe(value)           coerces an untrusted value for telemetry
+//
+// The other two are OWNED here (§2.4 `pure-helper`). Upstream they are `w` and
+// `c` from chunk-9rhc0mtn.js — a chunk of one-line wrappers over
+// `function r(n){return n}`, i.e. an erased type brand: `w` marks a value as a
+// known enum rather than free text, `c` marks one as untrusted and to be
+// stringified. Both are the identity function at runtime, so per §2.4 the owned
+// module ships its own and the graph's are neither called nor identity-compared.
+// They are still derived and footprinted per build: an upstream change that
+// gave either wrapper real behaviour must stale this row rather than pass
+// silently.
 //
 // Contract detail: the telemetry call happens BEFORE the throw (upstream writes
 // it as `throw record(...), Error(...)`, whose comma operator does exactly that),
 // and the mismatch check runs against the block, not the delta.
+
+/** Telemetry brand: this value is a known enum member, not free text. */
+const known = (value) => value;
+/** Telemetry brand: this value is untrusted and reported as-is. */
+const describe = (value) => value;
+
 globalThis.__reforge = Object.assign(globalThis.__reforge ?? {}, {
-  appendTextDelta(block, delta, recordStreamingError, known, describe) {
+  appendTextDelta(block, delta, recordStreamingError) {
     if (block.type !== "text") {
       recordStreamingError("tengu_streaming_error", {
         error_type: known("content_block_type_mismatch_text"),
