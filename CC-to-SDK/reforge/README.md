@@ -24,7 +24,7 @@ loudly (exit 127) if you skip it.
 | `engine-real` | the pinned real Mach-O binary (reference / oracle) |
 | `engine-extracted` | the same payload extracted from `$bunfs` and run as plain JS under **bun** (must be bun — silent no-op under node). Identical application code to `engine-real`, different packaging: the differ's self-test pair and the substrate the strangler reimplementation will replace module-by-module |
 | `engine-strangled` | the extracted graph with every manifest method excised and delegated into reforge-owned modules |
-| `engine-ts` *(future)* | the TS reimplementation — plugs in as one more wrapper script; ccx and this harness change by zero lines |
+| `engine-ts` | the reforge-owned TS reimplementation — plugs in as one more wrapper script; ccx and this harness change by zero lines. **W0 skeleton today**: it boots, reports the pin it targets and its (empty) owned-module set, and refuses any session with a structured error naming what is unowned. Needs no `prepare.ts` step — its code is committed source, not materialized. See `engine-ts/README.md` |
 
 Wrappers are extension-less shell scripts on purpose: `sdk.mjs` treats non-`.js`
 paths as native binaries and spawns them directly, so the shebang runs.
@@ -60,6 +60,8 @@ graph boot-checks it.
 - `src/runTurn.ts` — shared driver: one prompt → one engine → captured SDK-message transcript. Determinism knobs: `settingSources: []`, fixed `sandbox/` cwd, telemetry env off.
 - `src/proxy.ts` — record/replay proxy (`ANTHROPIC_BASE_URL` seam). Record forwards + captures (auth redacted before disk); replay serves deterministically (scrubbed-body hash match, then per-path FIFO) and logs every observed request for request-level diffing.
 - `src/differ.ts` — **the normalization spec is the definition of "behaviorally equivalent"**: scrubbed keys/patterns (ids, clocks `*_ms`/`*_at`, costs) are declared incidental; everything else must match. Grow it only with justification.
+- `engine-ts/` — the reforge-owned engine (W0 skeleton: stream-json shell + module registry + static-reachability check). **Has its own `README.md`** — read it before registering a module.
+- `ledger.json` + `ledger/` — the closure ledger: one row per in-scope subsystem and per headless catalog tool, with its ownership state, dependency edges, and upstream footprint. The campaign's primary progress metric; `ledger/check.ts` validates it against the canonical row list.
 - `m0/` — milestone cells (below). `cassettes/`, `transcripts/`, `sandbox/` are generated (gitignored).
 
 ## Running
@@ -473,6 +475,50 @@ guarantee behind the match is what is weakened. Sharing normalization between
 the two layers needs a design pass (a hash wants one stateless canonical form; the
 differ deliberately wants run-scoped id *mapping*), so it is deferred rather than
 regex-patched during a bump.
+
+## W0b — the engine-ts skeleton + the closure ledger (2026-08-31)
+
+The reforge-full campaign's foundation child C2 (spec
+`docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md`, §2.4 and
+§1.1; contracts X2 and X7). Two artifacts, both machine-checked:
+
+**`engine-ts/` — the skeleton.** It exists at W0, not at the end, because of the
+dependency-direction finding: spliced modules receive closure values *from* the
+extracted graph, so without a second wire every "owned" module is secretly
+substrate-dependent and the final wave degenerates into a big-bang rewrite. Each
+wave now both splices the graph and registers its standalone-complete module
+into the skeleton. Today it boots, answers `--version` with the pin it targets,
+reports `--owned` (empty), and refuses any stream-json session with a structured
+error naming all 15 unowned subsystems — exit 3, never a synthesized `result`
+frame, never a hang. `check-reachability.ts` walks its import graph and fails on
+anything reaching the extraction bundle, the pinned binary, or `build/`
+(symlinks followed), on `/$bunfs/root/` specifiers, on computed dynamic imports,
+and on any `engine-ts/` file the walk never reached — because an unregistered
+module could otherwise carry a forbidden import invisibly. It is the static half
+only; §3.6's OS-enforced hermetic gate is the proof, and it lands at W13/W14.
+
+**`ledger.json` — the closure ledger**, the campaign's primary progress metric:
+46 rows (15 subsystems from §1.1, 31 headless catalog tools from §1.3), each with
+an ownership state, dependency edges, and an upstream-footprint slot
+(`{chunk, hash}`, `null` until its wave records one). Opening state: 45
+`unowned`, 1 `spliced` — the tool-result-formatter row, covering the three
+existing leaf splices, and `spliced` rather than `standalone-complete` precisely
+because those modules still take closure values from the graph.
+
+`ledger/check.ts` refuses a row set that is not exactly `ledger/rows.ts`'s
+canonical list, an invalid state, a dangling or self-referential edge, a
+malformed footprint, an owned state with no footprint, a `stale` row with no
+adjudication note, and an `engineVersion` that has drifted from the pin — so a
+pin bump fails the check until §5's semantic invalidation has been run. Both
+checkers ship with paired controls (28 ledger, 19 reachability, 25 skeleton
+acceptance): every rule is watched rejecting its violation *and* accepting its
+legitimate neighbour, per §3.1's non-vacuity doctrine.
+
+```sh
+npx tsx engine-ts/check-reachability.ts && npx tsx engine-ts/reachability.test.ts
+npx tsx engine-ts/skeleton.test.ts
+npx tsx ledger/check.ts && npx tsx ledger/check.test.ts
+```
 
 ## Next
 

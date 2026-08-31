@@ -1,0 +1,426 @@
+{
+  "_doc": "The closure ledger (campaign spec 2026-08-31-reforge-full-campaign-design.md, S1.1/S1.3/S5; contract X2). One row per in-scope subsystem and per headless catalog tool. Canonical row list: reforge/ledger/rows.ts. Validate: npx tsx ledger/check.ts. Every wave child updates its rows in its landing commit; pin bumps flip touched rows to 'stale'.",
+  "engineVersion": "2.1.251",
+  "rows": [
+    {
+      "id": "subsystem/tool-result-formatters",
+      "kind": "subsystem",
+      "title": "Tool result formatters + validators (Read, Edit, Bash, Grep, task family)",
+      "wave": "C4",
+      "state": "spliced",
+      "edges": [],
+      "footprint": null,
+      "evidence": [
+        "strangle/manifest.ts:write-tool-result",
+        "strangle/manifest.ts:task-create-result",
+        "strangle/manifest.ts:glob-result"
+      ],
+      "note": "Three leaf formatters (Write, TaskCreate, Glob) are excised from the graph and delegated to reforge-owned modules; the rest of the family (Read, Edit, Bash, Grep) is not. `spliced`, not `standalone-complete`: the modules still receive closure values from the extracted graph (§2.4) and carry no upstream footprint yet (C1 emits those)."
+    },
+    {
+      "id": "subsystem/tool-descriptions",
+      "kind": "subsystem",
+      "title": "Tool-description functions + their satellite chunks' other exports",
+      "wave": "C5",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/environment-and-system-prompt",
+      "kind": "subsystem",
+      "title": "Environment block + system-prompt assembly",
+      "wave": "C6",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/compaction",
+      "kind": "subsystem",
+      "title": "Compaction: summarization prompt, compact_boundary emit, trigger policy",
+      "wave": "C7",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/hook-dispatch",
+      "kind": "subsystem",
+      "title": "Hook dispatch + hooks chunks",
+      "wave": "C8",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/permissions",
+      "kind": "subsystem",
+      "title": "Permission decisions + rule matching/parsing",
+      "wave": "C9",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/control-protocol",
+      "kind": "subsystem",
+      "title": "Control-protocol switch (control_request/control_response subtypes)",
+      "wave": "C10",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/moat-tools",
+      "kind": "subsystem",
+      "title": "Moat tools: SendMessage/ListAgents, Workflow, ScheduleWakeup, TaskCreate family, Skill, plan/worktree tools",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/session-storage",
+      "kind": "subsystem",
+      "title": "Session/transcript storage; resume/fork",
+      "wave": "C12",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/bash-executor",
+      "kind": "subsystem",
+      "title": "Bash executor (exec/timeout/background) + command-safety AST",
+      "wave": "C13",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/mcp-adapter",
+      "kind": "subsystem",
+      "title": "MCP adapter (thin layer over the vendored MCP SDK)",
+      "wave": "C14",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/slash-commands-and-skills",
+      "kind": "subsystem",
+      "title": "Slash commands + skills loading",
+      "wave": "C14",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/subagent-dispatch",
+      "kind": "subsystem",
+      "title": "Agent/Task subagent dispatch",
+      "wave": "C15",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/query-loop",
+      "kind": "subsystem",
+      "title": "Query loop / turn driver (retry, 529, model fallback, compaction driver)",
+      "wave": "C16",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "subsystem/sandboxing",
+      "kind": "subsystem",
+      "title": "Sandboxing (platform launchers behind an interface)",
+      "wave": "C15",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Agent",
+      "kind": "tool",
+      "title": "Agent — subagent dispatch tool",
+      "wave": "C15",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/AskUserQuestion",
+      "kind": "tool",
+      "title": "AskUserQuestion",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Bash",
+      "kind": "tool",
+      "title": "Bash",
+      "wave": "C13",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/CronCreate",
+      "kind": "tool",
+      "title": "CronCreate",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/CronDelete",
+      "kind": "tool",
+      "title": "CronDelete",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/CronList",
+      "kind": "tool",
+      "title": "CronList",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Edit",
+      "kind": "tool",
+      "title": "Edit",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/EnterPlanMode",
+      "kind": "tool",
+      "title": "EnterPlanMode",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/ExitPlanMode",
+      "kind": "tool",
+      "title": "ExitPlanMode",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/EnterWorktree",
+      "kind": "tool",
+      "title": "EnterWorktree",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/ExitWorktree",
+      "kind": "tool",
+      "title": "ExitWorktree",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Glob",
+      "kind": "tool",
+      "title": "Glob",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Grep",
+      "kind": "tool",
+      "title": "Grep",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/ListAgents",
+      "kind": "tool",
+      "title": "ListAgents",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/NotebookEdit",
+      "kind": "tool",
+      "title": "NotebookEdit",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Read",
+      "kind": "tool",
+      "title": "Read",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/RemoteTrigger",
+      "kind": "tool",
+      "title": "RemoteTrigger",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/ReportFindings",
+      "kind": "tool",
+      "title": "ReportFindings",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/ScheduleWakeup",
+      "kind": "tool",
+      "title": "ScheduleWakeup",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/SendMessage",
+      "kind": "tool",
+      "title": "SendMessage",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Skill",
+      "kind": "tool",
+      "title": "Skill",
+      "wave": "C14",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskCreate",
+      "kind": "tool",
+      "title": "TaskCreate",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskGet",
+      "kind": "tool",
+      "title": "TaskGet",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskList",
+      "kind": "tool",
+      "title": "TaskList",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskOutput",
+      "kind": "tool",
+      "title": "TaskOutput",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskStop",
+      "kind": "tool",
+      "title": "TaskStop",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/TaskUpdate",
+      "kind": "tool",
+      "title": "TaskUpdate",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/WebFetch",
+      "kind": "tool",
+      "title": "WebFetch",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/WebSearch",
+      "kind": "tool",
+      "title": "WebSearch — server-executed; the client-side surface is formatting only (§1.2)",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Workflow",
+      "kind": "tool",
+      "title": "Workflow",
+      "wave": "C11",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    },
+    {
+      "id": "tool/Write",
+      "kind": "tool",
+      "title": "Write",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Engine D — engine-ts: the reforge-owned TypeScript reimplementation. At W0 it
+# is a skeleton (stream-json shell + module registry): it boots, reports the
+# pin it targets and the modules it owns, and refuses any session by naming what
+# is unowned. See ../engine-ts/README.md.
+#
+# Unlike the other wrappers this one needs NO `strangle/prepare.ts` step — there
+# is nothing to materialize. Its target is committed source, which is the whole
+# point of the lane: prepare.ts exists to unpack the extracted substrate, and
+# engine-ts owns its code outright.
+#
+# Extension-less like its siblings: sdk.mjs treats a non-`.js` path as a native
+# binary and spawns it directly, so this shebang runs. Run under bun (the pinned
+# compile-target runtime, §3.5) rather than tsx, so engine-ts is graded on the
+# same runtime as the extracted graph; bun executes TypeScript directly.
+BUN="${BUN:-/Users/new/.bun/bin/bun}"
+[ -x "$BUN" ] || { echo "reforge: bun not found at $BUN (set BUN=/path/to/bun)" >&2; exit 127; }
+exec "$BUN" "$(dirname "$0")/../engine-ts/main.ts" "$@"
