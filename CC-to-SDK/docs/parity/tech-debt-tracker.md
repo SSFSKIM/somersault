@@ -36,19 +36,33 @@ the commit) or when a round's scope absorbs them.
   `dist/` regenerates on any build, and the trigger needs a rebuild to fail right after an identical
   success. Fix when the script is next touched: check `cp` before `rm`, propagate rebuild failure, add a
   dist-freshness check.
-- **The D21-true branch is latent behind production callers** (bl8 Task 3 review + round review F1,
-  2026-08-30). Per-hook detail lines and the Pre/PostToolUse "N hooks ran" counter gate on
-  `projection !== "compact" || verbose`, but `projectAll` only folds under compact-nonverbose and
-  `projectPending` hardcodes non-verbose — so the branch is pinned by pure-builder tests and dead in
-  production. Detail mode now shows standalone hook ROWS (bl8 D18 weave) without those extras.
-  Activates if a verbose/fold-aware projection path ever ships; revisit beside any ctrl+O rework.
+- ~~**The D21-true branch is latent behind production callers**~~ **RESOLVED-REFUTED bl9** (R2
+  binary research: canon's verbose unfolds clusters unconditionally — a folded-and-verbose state
+  is unrepresentable; the `|| verbose` disjunct was redundant, not dormant, and bl9 T-POLISH
+  deleted it, commit in merge `4e3494927f`). Carried risk recorded at the deletion sites: a
+  future inline verbose toggle feeds fold/unfold, NEVER the extras gate. Entry kept one round
+  for the pointer, delete next close-out.
+- **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
+  2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
+  exists — drained turn content, a frame landing during the pending read. Trigger requires the
+  rewind race AND live activity; pre-bl9 behavior was stale-forever on every attach in the
+  window. Fix direction if it ever matters: a non-destructive diff-converge document primitive
+  (rejected D17-bl9 as corner-prone machinery). Revisit only on real-world reports.
+- **State-only frames inside the pending-read window abort a harmless rebuild** (bl9 wave-5
+  review, D20-bl9, 2026-08-31). `liveActivitySeq` counts turn:start/state/tasks_changed like any
+  frame, so a contentless frame in the ~ms read window costs the reconcile (bounded staleness,
+  safe direction). Only fix is a per-frame-kind allowlist — rejected for drift risk. Log-only by
+  the round's convergence rule.
+- **fake-host policy table covers 5/8 HostEvent kinds** (bl9 T-FOLLOW T3 review, 2026-08-31).
+  `decision`/`state`/`tasks_changed` have no producer in `framesFor` today; if the script ever
+  grows one, `scripts/fake-host-policy.mjs` needs a decision per kind (production replays
+  `decision` from LIVE state, not verbatim). One-line footnote fix when next touched.
+- **A2's bg-harvest sub-clause is inspection-verified only** (bl9 T-FOLLOW T4 walk, 2026-08-31).
+  `replaceFromDisk` structurally cannot reach `bgHarvest`, but no test pins it the way the D16
+  test pins task-panel survival. Add beside the D16 test when the file is next touched.
 
 ## Backlog-shaped (deferred features, not defects — live in the next round's candidate list)
 
-- ~~**Standalone hook renderer (`Qy`) + live counter (`di`)**~~ **SHIPPED bl8 (T-QY, merge
-  `ac6924cc59` + fix waves)** — standalone rows, live counter, silent-run clause-form activation all
-  landed; entry kept one round for the pointer, delete next close-out.
-- ~~**`/config` advisor-model row + model-catalog picker**~~ **RESOLVED bl8 (T-ADVCMD, merge
-  `ea0a078d9a`)** — canon research (R1) proved the /config row was never parity: canon's surface is the
-  `/advisor` command + dialog, which shipped instead. The bl7 full-or-dropped rule stands satisfied;
-  entry kept one round for the pointer, delete next close-out.
+(bl8's two shipped/resolved pointers deleted this close-out per the one-round retention rule.
+Note: pre-rebase bl8 merge hashes cited in older docs refer to objects off the rewritten main —
+the content lives on today's main under new hashes.)

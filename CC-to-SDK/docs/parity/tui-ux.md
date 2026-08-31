@@ -1058,6 +1058,39 @@ measurement, tie-break adopted as robustness) → whole-round review **ZERO find
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
 
+**bl9 close-out (2026-08-31) — the attach reconcile + three retired premises, one round.** Scope was
+bl8's carried candidates; research reshaped all three (fourth consecutive round a carried premise
+died under evidence). R1 executed the real `SessionHost` against the bl6 "follow() replay gap" entry:
+of its three named frame kinds only `rewound` was real — parks replay from live state and task frames
+ride the buffered message stream — and the "~36 ms window" was a borrowed measurement; the true
+window is attach's read-disk→follow interval (hundreds of ms, React/Ink import included), damage
+permanent because in-place rewind keeps the session id (probe 37b). R2 decoded canon 2.1.251's
+verbose path: cluster expansion is verbose-driven and unconditional (`uI` @177046212), so the
+"D21-latent activation" ticket died — bl9 DELETED the redundant `|| verbose` disjunct instead of
+building on it. R3 retired D15 (the Advising row's verbatim model id): its recorded rationale died
+when bl8 shipped `advisorModel.ts`, so the row now prints canon display names via `cs()`-equivalent
+lookup. The plan review then killed the round's own v1 design before code existed (host-side
+`rewound` replay would have deterministically re-announced a resuming client's own swap —
+`chatAdapter.ts:94`'s documented invariant — and wiped drained live state on every attach); v2 moved
+the fix to the seam that creates the window: a client-side post-follow reconcile (disk stamp from
+`prepareAttach`, one re-read after `whenReady`, rebuild only on mismatch, "resynced" divider). The
+post-merge loop ran five waves and the PRE-COMMITTED tripwire fired after wave 2, exactly as
+designed: wave 3 replaced the accumulating patch calculus (deferral, local-row carry-over, title
+refetch — all deleted, net −10 lines) with the virgin-window invariant — the reconcile aborts unless
+provably nothing non-re-derivable exists — and waves 4-5 only tightened the MEASUREMENT of virginity
+(render-time `TranscriptDocument.revision()` snapshot; a `liveActivitySeq` bumped per non-replay
+frame at the subscription choke points), each fixing its predecessor's regression, wave 5
+verify-first (streaming proved self-healing; hook-pair/agent-meta/parked-decision losses proved real,
+one bonus same-class fix). The closing review's single finding (state-only frames in the ~ms read
+window abort a harmless rebuild) was LOGGED per the convergence rule — safe-direction staleness, and
+its only fix is a frame-kind allowlist rejected for drift risk. Mid-round a concurrent session
+REBASED main under the round (~8.7k insertions of unrelated appserver/peer work); both ticket
+branches transplanted cleanly via `git rebase --onto` and cross-session messages held the merge
+window. Final battery all green (unit 4341, tui 4902+11 skips, cells 4/4+1/1+3/3, seam 79/79).
+Ledger `.doperpowers/sdd/2026-08-31-bl9-round/round.md`; spec
+`docs/superpowers/specs/2026-08-31-bl9-followreplay-polish-design.md` (v3); residuals in
+`docs/parity/tech-debt-tracker.md`.
+
 **bl8 close-out (2026-08-30) — the standalone hook story + the /advisor command, one round.** The two
 halves bl7 deferred, shipped against the SAME canon 2.1.251 (no re-anchoring needed — a first). The
 research phase opened with a stale-premise kill: the "still-unread xxt" carry-over was already fully

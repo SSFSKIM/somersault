@@ -476,6 +476,22 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl9 round close-out — attach reconcile + three retired premises (2026-08-31)** — spec
+>   `docs/superpowers/specs/2026-08-31-bl9-followreplay-polish-design.md` (v3), ledger
+>   `.doperpowers/sdd/2026-08-31-bl9-round/`. **T-FOLLOW** (merge `1fdbfb3cb6` + waves through
+>   `6de846da7b`): the bl6-recorded attach staleness defect closed — `ccx attach`/resume now runs a
+>   one-shot post-follow reconcile (disk stamp compare; virgin-window rebuild labeled "resynced";
+>   aborts by measurement — doc generation + render-time revision + live-activity counter — never by
+>   frame-kind guesswork); the refuted `decision_settled`/`task` halves pinned by guard tests;
+>   fake-host's pre-follow drain narrowed to production semantics via an extracted, unit-tested
+>   policy module. **T-POLISH** (merge `4e3494927f`): the `|| verbose` hook-extras disjunct DELETED
+>   (R2 proved canon-unrepresentable — verbose unfolds unconditionally; extras are
+>   transcript-surface strictly), the Advising row prints canon display names (D15 retired,
+>   restoring bl7's original spec intent), duration-merge divergence re-cited (item-level SUM
+>   matches canon @162920074; message-level Math.max stands as bl7 D8). Five-wave review loop,
+>   tripwire fired per its pre-commitment, converged on one logged safe-direction residue. Final
+>   battery: unit 4341, tui 4902, cells 4/4+1/1+3/3, all green. NOT pushed.
+
 > - **bl8 round close-out — standalone hook rows + /advisor command (2026-08-30)** — spec
 >   `docs/superpowers/specs/2026-08-30-bl8-qy-advisor-design.md` (v4), ledger
 >   `.doperpowers/sdd/2026-08-30-bl8-round/`. bl7's two deferrals shipped against the same canon

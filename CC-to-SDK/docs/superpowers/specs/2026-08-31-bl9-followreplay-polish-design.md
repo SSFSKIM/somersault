@@ -78,16 +78,25 @@ cheap read and no repaint.
 - `useChat` runs a one-shot **reconcile** after the session reports followed/ready (the adapter's
   `whenReady()`; skipped entirely when no disk stamp was provided — fresh sessions and
   non-attach flows). Reconcile re-reads via the existing `deps.getSessionMessages` seam, computes
-  the fresh stamp, and: match → no-op; mismatch → **narrow rebuild**.
-- The **narrow rebuild** reuses `rebuildAfterRewind`'s document core (clear + `replaceDocument`
-  of `replayDocument(rows)` + `lastAssistant` reseed) but MUST NOT reset the task panel,
-  bg-harvest, or composer prefill — the follow drain's `tasks_changed`/`turn` frames are
-  authoritative live state that the reconcile has no business clearing (review F2). Extract the
-  shared core rather than duplicating it.
-- Every code path that (re)builds the document from a disk read keeps the stamp ref honest
-  (initial seed, `resumeInto`, `rebuildAfterRewind`, the reconcile itself).
-- A live `rewound` arriving during or after reconcile follows the existing arm unchanged — the
-  two compose (last writer reads the same settled disk).
+  the fresh stamp, and: match → no-op; mismatch → rebuild, **but only while the client is still
+  provably virgin** (the final, wave-3-through-5 form — see D17/D18/D19-bl9):
+  the rebuild runs only if, at fire time, (1) the document generation is unchanged (no swap —
+  the gen bump lives in the document-swap primitive itself, so `/clear`/rewind/resume and any
+  future boundary are covered automatically), (2) `TranscriptDocument.revision()` equals a
+  snapshot captured at RENDER time (before any mount effect can mutate), and (3) a
+  `liveActivitySeq` — bumped once per non-replay frame at every event-subscription choke point —
+  is unchanged since the disk read STARTED. Any condition failing → silent, final abort: the
+  mount-time correction stands down because something it cannot re-derive may exist.
+- The virgin-mismatch rebuild reuses `rebuildAfterRewind`'s extracted document core
+  (clear + `replaceDocument` of `replayDocument(rows, {label:"resynced"})` + `lastAssistant`
+  reseed) and MUST NOT reset the task panel, bg-harvest, or composer prefill (D16).
+- Every disk-backed document build keeps the stamp ref honest (seed, `resumeInto`,
+  `rebuildAfterRewind`, the reconcile itself).
+- **Recorded limitation (accepted, tech-debt-logged):** an attach that raced a rewind AND whose
+  drain carried content of an open turn (or any live frame landing inside the pending-read
+  window) keeps its stale prefix for that mount — permanent but narrowly triggered, and strictly
+  better than the pre-bl9 state (stale-forever on EVERY attach in the window). The bias is
+  deliberate: abort loses only bounded staleness; a wrong rebuild loses content.
 
 ### 3.2 What stays out (D5-v2)
 
@@ -157,9 +166,13 @@ cheap read and no repaint.
   post-follow re-read differs: the document is rebuilt to the fresh rows under the unchanged
   session id (red on current main: no reconcile exists). A session whose re-read matches the
   stamp repaints nothing (no `clearScreen`, document identity preserved).
-- **A2 (live-state preservation):** the mismatch rebuild leaves the task panel, bg-harvest state,
-  and any drained in-flight turn intact — only the disk-backed document is replaced (review F2's
-  loss scenario, pinned).
+- **A2 (live-state preservation — v3 form):** the mismatch rebuild leaves the task panel intact
+  (D16 pin), and ANY live activity that could seed non-re-derivable state — a drained content
+  row, a mount-effect mutation, a frame landing during the pending read (hook_started,
+  task_notification, a parked decision), a document swap — ABORTS the rebuild instead
+  (regression-pinned per class in `attach-reconcile.test.tsx`). The no-content mid-turn attach
+  (turn:start drained, nothing else) still rebuilds. The content-bearing mid-turn attach keeps
+  its stale prefix — the recorded limitation in §3.1.
 - **A3 (settled-park guard):** a park settled pre-follow appears in neither the replayed
   `decision` set nor as any `decision_settled` frame (integration, real server/socket path).
 - **A4 (self-resume silence):** a client built with `opts.resume` reconciles to a no-op — the
@@ -236,6 +249,33 @@ Two worktrees, disjoint files, parallel execution; merge T-FOLLOW first (larger)
   `lastAssistant` but never touches the task panel, bg-harvest, or composer prefill — those
   belong to the follow drain's live frames. Rejected: reusing `rebuildAfterRewind` whole (review
   F2's exact loss scenario).
+- **D17-bl9 (wave 3, TRIPWIRE-MANDATED replacement — virgin-window reconcile):** after waves 1-2
+  each patched a corner of the wholesale-replacement design (deferral; local-row carry-over +
+  title refetch) and the wave-2 review returned refinements OF THOSE PATCHES, the pre-committed
+  rule fired: the reconcile became a mount-time correction that runs only against a virgin
+  document, DELETING the deferral, carry-over, and title-refetch machinery (net −10 lines).
+  Rejected: a diff-converge document primitive (non-destructive entry-level reconcile — correct
+  in principle, but a new document-engine calculus with its own corner surface, the exact
+  machinery growth the tripwire exists to stop); continuing to patch (the cascade).
+- **D18-bl9 (wave 4 — virginity measured, not approximated):** wave 3's `turn-started` +
+  entry-count conditions were an over-approximation with a real snapshot-timing bug (captured
+  after mount effects). Replaced by `TranscriptDocument.revision()` snapshotted at render time
+  (+ the kept gen guard), which RESTORED the no-content mid-turn attach case the
+  over-approximation needlessly aborted. Rejected: keeping turn-started "for safety" (it encoded
+  no invariant the revision check doesn't).
+- **D19-bl9 (wave 5 — non-document live state):** deleting turn-started reopened a loss class
+  for state living OUTSIDE the document (hook-pair stamps, agent meta, parked decisions —
+  verified live; streaming proved self-healing via the surviving LiveTurn accumulator). Guarded
+  by ONE `liveActivitySeq` counter bumped per non-replay frame at the subscription choke points,
+  captured at read start. Rejected: per-frame-kind destructive/harmless classification (an
+  enumerated allowlist that silently rots as frame kinds evolve); state preservation/reapply
+  (the cascade again).
+- **D20-bl9 (convergence — the logged residue):** the wave-5 review's sole finding (state-only
+  frames inside the read window abort a harmless rebuild → timing-dependent staleness) is REAL
+  and deliberately NOT fixed: it fails in the safe direction of the governing bias (abort loses
+  bounded staleness; a wrong rebuild loses content), and its only fix is the D19-rejected
+  allowlist. Logged in the tech-debt tracker with that framing; per the pre-committed rule, a
+  wave producing only logged debt is the convergence signal.
 
 ## 8. Surprises & Discoveries
 
@@ -259,7 +299,46 @@ Two worktrees, disjoint files, parallel execution; merge T-FOLLOW first (larger)
 
 ## 9. Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped (2026-08-31, all local, NOT pushed).** T-FOLLOW merged as `1fdbfb3cb6`, T-POLISH as
+`4e3494927f`, fix waves through `6de846da7b`. Final battery on the converged tree: typecheck,
+unit 4341/4341 (no flake), tui 4902 + 11 skips, build, pty matrices 4/4 + 1/1 + 3/3, round-seam
+spot-check 79/79 — all green.
+
+**What the round delivered.**
+- The attach staleness defect (the only real survivor of the three bl6-carried premises) is
+  closed for every attach the client can safely correct: a virgin-mount mismatch rebuilds to
+  post-rewind disk under the "resynced" divider; every unsafe case aborts by measurement, never
+  by frame-kind guesswork. The refuted `decision_settled`/`task` halves are pinned by guard
+  tests so the false premise cannot be "fixed" back in; the fake-host stand-in can no longer
+  false-green the frame kinds production drops.
+- The D21 "latent branch" is gone rather than activated — the code now states canon's actual
+  rule (transcript surface strictly), with the carried risk (a future inline verbose toggle
+  feeds fold/unfold, never the extras gate) recorded at the deletion sites.
+- The Advising row prints canon display names; D15 is retired with its original intent restored.
+
+**Process retrospective.**
+- The plan-review gate paid for the sixth consecutive round and, for the first time, killed a
+  whole design shape before code existed (v1's host-side replay — two confirmed highs).
+- The fix-wave loop ran five waves; the pre-committed tripwire fired after wave 2 exactly as
+  designed and the wave-3 replacement HELD: waves 4-5 never changed the invariant, only the
+  measurement of "virgin," each a counter-shaped deletion-or-tightening fixing its
+  predecessor's regression, and the loop converged on a logged, safe-direction residue. Compare
+  bl8: same tripwire, but bl9's post-replacement waves were strictly narrowing — evidence the
+  replace-don't-patch rule produces stable designs, not just shorter loops.
+- Mid-round, a concurrent session rebased main under the round (~8.7k insertions of unrelated
+  work). The transplant recipe (`git rebase --onto <newmain> <oldbase> <branch>` — never a plain
+  rebase, which replays patch-id-mismatched history) moved both ticket branches cleanly;
+  cross-session coordination messages prevented a second rewrite mid-merge. Total cost: minutes.
+- Two subagents stalled ending turns in background-wait states despite "foreground only"
+  instructions; the working nudge is "read the finished run's log directly — no notification is
+  coming." Dispatch prompts now carry that line preemptively.
+
+## 10. Logged residue (tech-debt tracker entries, this round)
+
+- Content-bearing mid-turn attach keeps its stale prefix per mount (D17/D19 limitation).
+- State-only frames inside the pending-read window abort a harmless rebuild (D20).
+- fake-host policy table documents 5/8 HostEvent kinds (the other 3 have no producer).
+- A2's bg-harvest sub-clause is inspection-verified, not test-pinned.
 
 ## Revision Notes
 
@@ -270,3 +349,7 @@ Pending — written at finish.
   to the reconcile claims; A6 gains the positive `hookLiveItems` detail-projection case (F3); A8
   becomes red-first via an extracted fake-host buffering policy (F4); both plans' final tasks now
   run all three pty matrices (F5). All five review findings accepted after code verification.
+- v3 (2026-08-31, close-out): §3.1 and A2 amended to the shipped wave-3/4/5 virgin-window
+  semantics (D17-D20-bl9); the mid-turn limitation recorded; §9 retrospective + §10 logged
+  residue written. The wave chain and every adjudication live in the round ledger
+  (`.doperpowers/sdd/2026-08-31-bl9-round/round.md`) and `fixwave-report.md`.
