@@ -228,10 +228,14 @@ describe("F10 S4 — HitRow carries the SOURCE range, minted at wrap time (or it
 // ── F10 T-HOVER H1: HitRow.ownerKey — the hover unit, through the real publish path ─────────────────────
 describe("hitRowsOf publishes HitRow.ownerKey — message-level, not per-row", () => {
   const proseFS = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 80, now: 0 };
+  // T-SPACE: `projectCompact` now prepends one `sep:<boundaryId>:gap` item above the message — canon's
+  // "one blank row above every top-level block" (research-spacing.md R3 §1.5, "assistant text = 1"). That row
+  // is CHROME: it deliberately carries no `ownerKey`, and `spacing-invariant.test.tsx` is what pins its shape.
+  // The claims below are about the message's own PAINTED rows, so the fixture hands back the content only.
   const proseDoc = (text: string, id: string): readonly RenderItem[] => {
     const d = new TranscriptDocument();
     d.appendSdk("host", { type: "assistant", parent_tool_use_id: null, message: { id, content: [{ type: "text", text }] } });
-    return projectCompact(d, proseFS);
+    return projectCompact(d, proseFS).filter((i) => !i.id.startsWith("sep:"));
   };
 
   it("every painted row of one multi-line message carries that message's ownerKey, and its own itemKey", () => {

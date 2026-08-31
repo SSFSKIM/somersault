@@ -57,6 +57,12 @@ const ctx = (over: Partial<ProjectionContext> = {}): ProjectionContext & { proje
   ({ cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0, projection: "detail-collapsed", ...over });
 
 const ownersOf = (items: readonly RenderItem[]) => items.map((i) => i.ownerKey ?? sourceId(i.id));
+// T-SPACE (research-spacing.md R3 §1.5): every producer now mints one leading `sep:<boundaryId>:gap` item
+// above every top-level block — canon's `marginTop: 1`, modelled as an invariant rather than a threaded prop.
+// A separator is CHROME: no `ownerKey`, no `clickable`, no `foldAnchor`. That shape is pinned once, in
+// `spacing-invariant.test.tsx`, which is where it belongs; the ownership claims in THIS file are about the
+// CONTENT rows, so the cells below filter the chrome out first, exactly as that file's `nonSeparators` does.
+const contentRows = (rows: readonly RenderItem[]) => rows.filter((r) => !r.id.startsWith("sep:"));
 const distinct = (xs: readonly string[]) => new Set(xs).size;
 let qSeq = 0;
 const qe = (value: string): QueueEntry => ({ id: `t${qSeq++}`, value, mode: "prompt" as const, priority: "now" as const, origin: "user" as const });
@@ -64,16 +70,17 @@ const qe = (value: string): QueueEntry => ({ id: `t${qSeq++}`, value, mode: "pro
 describe("H1 producer matrix — every transcript species mints ONE ownerKey per message/call", () => {
   // (a) SDK multiline message — sdkItemId(id, "block:<i>:<line>"), toolRenderer.tsx's projectMessageEntry.
   it("every line of one multi-line assistant message shares ONE ownerKey", () => {
-    const items = projectDetail(doc([prose("alpha\nbeta\ngamma", "a")]), ctx());
+    const items = contentRows(projectDetail(doc([prose("alpha\nbeta\ngamma", "a")]), ctx()));
     expect(items.length).toBeGreaterThan(2);                          // premise: it really is multi-line
     expect(distinct(ownersOf(items))).toBe(1);
     expect(distinct(items.map((i) => i.id))).toBe(items.length);      // …and the IDs are still per line
     expect(items[0]!.ownerKey).toBe(sdkOwnerKey("message:a"));
   });
 
-  // (b) adjacent messages are DISTINCT
+  // (b) adjacent messages are DISTINCT. (Each of the two also carries its own leading separator now — canon
+  //     R3 §1.5 "assistant text → assistant text (next msg) = 1" — filtered out here as chrome.)
   it("two adjacent messages never share an ownerKey", () => {
-    const items = projectDetail(doc([prose("alpha\nbeta", "a"), prose("gamma\ndelta", "b")]), ctx());
+    const items = contentRows(projectDetail(doc([prose("alpha\nbeta", "a"), prose("gamma\ndelta", "b")]), ctx()));
     expect(distinct(ownersOf(items))).toBe(2);
   });
 
@@ -81,7 +88,9 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   it("every line of one multi-line local event shares ONE ownerKey", () => {
     const d = new TranscriptDocument();
     d.appendLocal({ kind: "visual", lines: [{ text: "one" }, { text: "two" }, { text: "three" }] }, "local-1");
-    const items = projectDetail(d, ctx());
+    // Canon R3 §1.5 "any block → system notice = 1": one separator above the whole local event, none between
+    // its own lines (they are one block, not three).
+    const items = contentRows(projectDetail(d, ctx()));
     expect(items).toHaveLength(3);
     expect(distinct(ownersOf(items))).toBe(1);
     expect(items[0]!.ownerKey).toBe(localOwnerKey("local-1"));
@@ -89,7 +98,9 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
 
   // (d) gutter block — `${event.id}:result`, grouped WITH its `:call` header.
   it("a tool call's header line and its result gutter-block share ONE ownerKey", () => {
-    const items = projectDetail(doc([call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1", "one\ntwo")]), ctx());
+    // The block's leading separator is also `kind: "line"`, so filter chrome BEFORE picking the header out;
+    // canon R3 §1.5 puts 1 blank above the tool row and 0 between the header and its own `⎿` body.
+    const items = contentRows(projectDetail(doc([call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1", "one\ntwo")]), ctx()));
     const header = items.find((i) => i.kind === "line")!;
     const body = items.find((i) => i.kind === "gutter-block")!;
     expect(header.ownerKey).toBeDefined();
@@ -113,9 +124,9 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   // (f) pending vs settled — the pending projection of an open call, then the settled one: each internally
   //     grouped, and the two NOT equal to each other.
   it("an open call's pending owner and its settled owner are each internally grouped and mutually distinct", () => {
-    const pendingItems = projectPending(doc([call("read-1", "Read", { file_path: "/work/a.ts" })]), ctx());
+    const pendingItems = contentRows(projectPending(doc([call("read-1", "Read", { file_path: "/work/a.ts" })]), ctx()));
     expect(distinct(ownersOf(pendingItems))).toBe(1);
-    const settledItems = projectDetail(doc([call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1")]), ctx());
+    const settledItems = contentRows(projectDetail(doc([call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1")]), ctx()));
     expect(distinct(ownersOf(settledItems))).toBe(1);
     expect(pendingItems[0]!.ownerKey).not.toBe(settledItems[0]!.ownerKey);
   });
@@ -125,14 +136,16 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
     const child = { type: "assistant", parent_tool_use_id: "ag-1", message: { id: "mc-1", content: [{ type: "tool_use", id: "c-1", name: "Read", input: { file_path: "/work/a.ts" } }] } } as Record<string, unknown>;
     const childResult = { type: "user", uuid: "ur-c1", message: { content: [{ type: "tool_result", tool_use_id: "c-1", content: "x", is_error: false }] } } as Record<string, unknown>;
     const d = doc([call("ag-1", "Agent", { description: "do work", prompt: "p" }), child, childResult, settleAgent("ag-1")]);
-    const items = projectDetail(d, { ...ctx(), projection: "detail-all" });
+    // One separator above the Agent unit as a whole; its reid parts sit INSIDE that one block, so canon
+    // adds no gap between them (R3 §1.5 gives gaps to top-level blocks, not to a unit's own parts).
+    const items = contentRows(projectDetail(d, { ...ctx(), projection: "detail-all" }));
     expect(items.length).toBeGreaterThan(2);
     expect(distinct(ownersOf(items))).toBe(1);
   });
 
   // (h) fold group — the collapsed group row and its `pending-hint` gutter block share one owner.
   it("an active fold group's row and its pending-hint gutter-block share ONE ownerKey", () => {
-    const items = projectPending(doc([call("read-1", "Read", { file_path: "src/app.ts" })]), ctx());
+    const items = contentRows(projectPending(doc([call("read-1", "Read", { file_path: "src/app.ts" })]), ctx()));
     expect(items).toHaveLength(2);
     expect(items[0]!.id).toBe("group:read-1:pending-row");
     expect(items[1]!.id).toBe("group:read-1:pending-hint");
@@ -142,7 +155,9 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
 
   // (k) AGENT BATCH — the unit here is the MEMBER, not the batch.
   it("each agent-batch member owns its row and its ⎿ status row; the header is its own unit", () => {
-    const items = projectCompact(doc([agentBatchOf(["t1", "t2", "t3"])]), ctx());
+    // The batch is ONE top-level block: one separator above its header, none between members (R3 §1.5 has no
+    // member→member row outside the expanded-cluster case, which this collapsed batch is not).
+    const items = contentRows(projectCompact(doc([agentBatchOf(["t1", "t2", "t3"])]), ctx()));
     const owners = ownersOf(items);
     expect(distinct(owners)).toBe(4);                                              // header + three members
     expect(owners.filter((o) => o === toolOwnerKey("t2")).length).toBe(2);         // row + status
@@ -150,17 +165,16 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   });
   it("the PENDING copy of a batch shares no owner with the published one", () => {
     const ids = ["t1", "t2", "t3"];
-    const pendingOwners = new Set(ownersOf(projectPending(doc([agents(ids.map((id) => ({ id })))]), ctx())));
-    const publishedOwners = new Set(ownersOf(projectCompact(doc([agentBatchOf(ids)]), ctx())));
+    const pendingOwners = new Set(ownersOf(contentRows(projectPending(doc([agents(ids.map((id) => ({ id })))]), ctx()))));
+    const publishedOwners = new Set(ownersOf(contentRows(projectCompact(doc([agentBatchOf(ids)]), ctx()))));
     expect(pendingOwners.size).toBeGreaterThan(0);
     for (const o of pendingOwners) expect(publishedOwners.has(o)).toBe(false);
   });
 
   // (l) LIVE STREAMING — streamingItems.ts, THE REAL TIER.
   //   T-SPACE Task 2 gave this tier its own leading separator (spec §2.2/D14) — chrome, like every other
-  //   separator, carrying no `ownerKey` at all (Task 1's own established discipline). `contentRows` below is
-  //   the tier minus that one leading chrome row, which is what this cell's ownership claims are actually about.
-  const contentRows = (rows: readonly RenderItem[]) => rows.filter((r) => !r.id.startsWith("sep:"));
+  //   separator, carrying no `ownerKey` at all (Task 1's own established discipline). The file-level
+  //   `contentRows` is the tier minus that one leading chrome row — what these ownership claims are about.
   it("the leading separator ahead of the in-flight message carries no ownerKey — chrome, not a hover unit", () => {
     const rows = streamingItems([{ text: "alpha" }], 40, streamOwnerKey("msg_01"));
     expect(rows[0]!.id.startsWith("sep:")).toBe(true);
@@ -325,8 +339,11 @@ describe("H1: nothing reaches the renderer without an ownerKey", () => {
       streamingItems(STREAM_LINES, 80, streamOwnerKey("msg_01")),
       queuedTranscriptItems(QUEUE_FIXTURE, 80, "  "),
     ];
+    // T-SPACE: the one deliberate exemption is the `sep:…:gap` chrome row (R3 §1.5's "one blank above every
+    // block"), which is not a hover unit and carries no owner by design — `spacing-invariant.test.tsx` is
+    // what pins that shape. Every CONTENT item of every tier still has to name its owner.
     for (const tier of tiers)
-      for (const item of tier)
+      for (const item of contentRows(tier))
         expect(item.ownerKey, `${item.id} reached the renderer with no ownerKey`).toBeTypeOf("string");
   });
 
@@ -339,7 +356,11 @@ describe("H1: nothing reaches the renderer without an ownerKey", () => {
     const offenders = src.split("\n")
       .map((line, i) => ({ line, n: i + 1 }))
       .filter(({ line }) => /kind: ("line"|"gutter-block")( as const)?[;,]/.test(line))
-      .filter(({ line }) => !line.includes("ownerKey") && !line.includes("/* ownerKey: inherited */"));
+      .filter(({ line }) => !line.includes("ownerKey") && !line.includes("/* ownerKey: inherited */"))
+      // T-SPACE: the `separatorItemId(...)` mint site is the one literal that owns NO hover unit — canon's
+      // `marginTop: 1` stand-in (R3 §1.5) is chrome, not a row of the block it sits above. Recognising it by
+      // its id-builder keeps the guard tight: any OTHER new literal still has to mint an ownerKey.
+      .filter(({ line }) => !line.includes("separatorItemId("));
     expect(offenders.map((o) => `${o.n}: ${o.line.trim()}`)).toEqual([]);
   });
 });
