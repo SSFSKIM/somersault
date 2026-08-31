@@ -1189,10 +1189,375 @@ exhausted.</p>
 </section>
 
 
-<!-- @ch8 -->
-<!-- @ch9 -->
-<!-- @ch10 -->
-<!-- @ch11 -->
+<section id="ch8">
+<h2><span class="chapno">Chapter 8</span>Tools III: Bash, the sandbox, and background work</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>“Run a shell command” sounds like one line of code. It isn't. Claude Code spawns a
+  <b>fresh shell every single time</b> — then fakes continuity by replaying a snapshot of your
+  shell environment and reading your working directory back out of a temp file. And around
+  that shell it builds a jail: a generated macOS seatbelt profile or a Linux bubblewrap
+  container, with all network traffic forced through a proxy it controls.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/06-bash-sandbox-tasks.md</code> (2,647 lines).</p>
+
+<h3>8.1 There is no persistent shell</h3>
+<p>Every Bash call spawns <code>bash -c &lt;preamble&gt; &amp;&amp; eval &lt;command&gt; &amp;&amp; pwd -P &gt;| &lt;cwdfile&gt;</code>,
+detached into its own process group with stdin as a pipe (never a PTY). The preamble sources a
+<b>shell snapshot</b>, disables extglob, unsets a dangerous alias, and injects credential env. “Working
+directory persists” is an illusion implemented by reading that <code>pwd -P</code> file back — through
+<b>seven validation checks</b> (rejecting dot-segments, NT device paths, network paths, foreign
+automounts, non-absolute paths, network symlinks, non-directories) before the session cwd moves
+(<code>:472487</code>).</p>
+
+<div class="callout key"><div class="ct">The shell snapshot — the cleverest thing in the Bash tool</div>
+Once per session (<code>:472229</code>), the harness runs your <em>real</em> shell, sources your
+<code>.zshrc</code>/<code>.bashrc</code>, and then <b>dumps the resulting state into a flat script</b>:
+every user function (filtering completion functions but keeping <code>__double_underscore</code>
+helpers), aliases, <code>setopt</code>/<code>shopt</code>/<code>set -o</code> flags, and a
+<code>PATH</code> pinned via a heredoc with a <em>randomized terminator</em> to defeat injection. Each
+list is capped at 1,000 entries; the file is unlinked at exit. Every later command sources it — which
+is why your aliases work but your <code>export FOO=1</code> from the previous call doesn't.
+It also installs a <code>pkill</code> shim that <b>refuses to kill the Claude process itself</b>,
+printing <em>“pkill: refusing to run — this pattern matches the Claude CLI process”</em>.
+</div>
+
+<p>Timeouts are exactly as documented: <b>120,000 ms default, 600,000 ms max</b>
+(<code>BASH_DEFAULT_TIMEOUT_MS</code> / <code>BASH_MAX_TIMEOUT_MS</code>). Output caps at
+<b>30,000 chars</b> (ceiling 150,000) with an in-memory 8&nbsp;MB buffer that spills to a file, after
+which stdout/stderr <em>interleave</em> because they share one file descriptor. Exit codes are
+interpreted semantically per binary — for <code>grep</code>, <code>rg</code>, <code>find</code>,
+<code>diff</code>, <code>test</code>, <b>exit 1 is not an error</b>, only ≥2 is (<code>:515092</code>).</p>
+
+<h3>8.2 The sandbox</h3>
+<p>The sandbox is a <b>vendored library</b> — <code>@anthropic-ai/sandbox-runtime</code>, inlined at
+<code>:680300–684760</code> — with a thin Claude Code manager on top. That boundary is real and worth
+copying: the library knows nothing about Claude.</p>
+<div class="grid2">
+<div>
+<h4>macOS: generated seatbelt profile</h4>
+<p>A full SBPL program is generated <em>per command</em> and passed to <code>sandbox-exec -p</code>. It
+opens with <code>(deny default)</code> and allowlists precisely: process exec/fork, 14 named Mach
+services, POSIX shm/sem, three IOKit classes, ~55 specific sysctls. File rules are emitted in a
+<b>load-bearing order</b> (SBPL is last-match-wins): baseline allow → denies → allow-within-deny →
+glob re-denies → directory metadata always readable (so <code>ls</code> of a denied dir reports rather
+than errors) → unlink/create denies on <em>every ancestor</em> of a denied path (blocking the
+delete-and-recreate attack).</p>
+</div>
+<div>
+<h4>Linux: bubblewrap + one seccomp rule</h4>
+<p><code>bwrap --new-session --die-with-parent --unshare-net --unshare-pid --unshare-user --cap-drop ALL</code>
+with a mount plan that bind-mounts read-only over denied paths, tmpfs's denied directories, and
+<code>--ro-bind /dev/null</code> over denied <em>symlinks</em> (explicitly “to prevent symlink
+replacement attack”). The vendored seccomp filter has exactly <b>one job</b>: block
+<code>socket(AF_UNIX)</code>, because bwrap can't filter unix sockets by path. 32-bit x86 is refused
+outright because <code>socketcall()</code> would bypass it.</p>
+</div>
+</div>
+<p><b>The anti-persistence core:</b> a sandboxed command can <em>never</em> write your rc files,
+<code>.mcp.json</code>, <code>.git/hooks</code>, <code>.git/config</code>, or
+<code>.claude/commands</code>/<code>agents</code> — even inside an allowed write root
+(<code>:683275</code>). That list is the threat model in one constant.</p>
+
+<h3>8.3 Network egress: a proxy you own</h3>
+<p>With the network namespace unshared, there is no route off-box except an <b>in-process HTTP+SOCKS
+mux proxy</b> on loopback (<code>:684240</code>) that sniffs the first bytes to dispatch protocols.
+Inside a Linux sandbox, <code>socat</code> re-creates TCP <code>localhost:3128</code>/<code>:1080</code>
+inside the namespace bridged to unix sockets on the host. Decision order per connection: no config →
+deny · denylist → deny · allowlist → allow · strict → deny · else <b>ask the user</b> — and the
+approval persists as a <code>WebFetch(domain:…)</code> rule.</p>
+<div class="callout warn"><div class="ct">The undocumented coupling</div>
+The sandbox's egress allowlist is <b>merged from <code>sandbox.network.allowedDomains</code> AND your
+<code>WebFetch(domain:…)</code> permission rules</b> (<code>:687000</code>). Approving a domain for
+WebFetch silently opens it for every sandboxed shell command too. Proxy denials are attributed back to
+the exact tool call because <b>the proxy username encodes the command id</b>.
+</div>
+<p>Violations land in the model's context as a <code>&lt;sandbox_violations&gt;</code> block appended
+to stderr — sanitized first, with <code>&lt;</code> and <code>&gt;</code> stripped, because a violation
+line contains attacker-influenced path text and must not be able to open a tag.</p>
+
+<h3>8.4 The escape hatch and its politics</h3>
+<p><code>dangerouslyDisableSandbox</code> is a real input field, gated by
+<code>sandbox.allowUnsandboxedCommands</code>. Setting it forces an <code>ask</code> carrying
+<code>decisionReason: {type:"sandboxOverride"}</code> — and <b>that ask is not bypassable by
+<code>bypassPermissions</code> mode</b> (<code>:444637</code>). “YOLO mode” still prompts to leave the
+sandbox. The reason is also stripped when forwarded across the remote-worker transport, so a remote
+worker can't inherit someone else's waiver. Conversely, <code>autoAllowBashIfSandboxed</code> (default
+true) makes sandboxed sessions feel prompt-free — subject to five carve-outs including env-var
+assignments, <code>/dev/tcp</code> redirects, and destructive <code>rm</code> patterns.</p>
+
+<h3>8.5 Background work</h3>
+<p>Four paths lead to backgrounding: explicit <code>run_in_background</code>, a 2-second
+<kbd class="kbd">Ctrl+B</kbd> arming gesture, timeout expiry, and turn-abort. Notable renames:
+<b><code>BashOutput</code> and <code>KillShell</code> no longer exist</b> — they're aliases for
+<code>TaskOutput</code>/<code>TaskStop</code>, and <code>TaskOutput</code> marks itself
+<em>deprecated</em> in favor of just <code>Read</code>-ing the task's output file. Completion arrives
+as a <code>&lt;task-notification&gt;</code> wrapped in the anti-spoofing envelope from Chapter 4. A
+gated <b>Monitor</b> tool streams one notification per stdout line (or per WebSocket message) and is
+the sanctioned answer to polling — the Bash prompt actively blocks long leading <code>sleep</code>
+commands and tells the model to use Monitor's until-loop instead.</p>
+<p>Two absences worth recording: there is <b>no banned-command list</b> anywhere, and there is
+<b>no Haiku-powered command-injection classifier</b> for Bash any more — command safety is decided by
+a hand-written bash parser (mimicking tree-sitter-bash node names) plus the permission ladder in
+Chapter 10.</p>
+</section>
+
+<section id="ch9">
+<h2><span class="chapno">Chapter 9</span>Tools IV: subagents, teams, and orchestration</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>The most powerful tool in the box spawns <em>another Claude</em>. A subagent is a full
+  harness instance with its own context window, its own tool loop, and a one-way contract:
+  it works, then hands back a text report. The variations on that theme — forks that inherit
+  your entire mind, teammates you can message, workflows that orchestrate dozens
+  deterministically — are where Claude Code stops being a chat tool and becomes a fleet.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/07-agents-teams-orchestration.md</code> (2,753 lines).</p>
+
+<h3>9.1 The Agent tool</h3>
+<p>The tool is named <code>Agent</code> (<code>Task</code> is a legacy alias). Schema:
+<code>{description, prompt, subagent_type?, model?, run_in_background?, name?, isolation?}</code> —
+with <code>team_name</code> and <code>mode</code> present but documented as <em>deprecated and
+ignored</em>, and <code>cwd</code> deliberately never exposed to the model. Its description is
+<b>assembled at runtime from ~8 predicates</b> (<code>:467626</code>) — there is no single static
+string, which is why quoting “the Agent tool prompt” is always version- and account-specific. A
+striking example: <b>a Pro-plan session gets a hard “do not spawn agents unless the user asks”
+clause</b> that higher tiers never see.</p>
+<table>
+<tr><th>Built-in agent</th><th>Character</th></tr>
+<tr><td><code>general-purpose</code></td><td>all tools; prompt includes <em>“You are already the dedicated agent for this task. Do the work directly — do not re-delegate your entire assignment.”</em></td></tr>
+<tr><td><code>Explore</code></td><td>read-only preamble (<code>=== CRITICAL: READ-ONLY MODE ===</code>), model capped at opus, drops CLAUDE.md <em>and</em> git status</td></tr>
+<tr><td><code>Plan</code></td><td>architect; must end with a <code>### Critical Files for Implementation</code> section</td></tr>
+<tr><td><code>fork</code></td><td><b>empty system prompt</b> — inherits the parent's rendered prompt, full message array, and REPL replay log; starts mid-turn via a synthesized tool_result</td></tr>
+<tr><td><code>claude-code-guide</code>, <code>statusline-setup</code>, web-fetch</td><td>narrow helpers on cheap models</td></tr>
+</table>
+<p><b><code>output-style-setup</code> is gone</b> in 2.1.251 (zero occurrences). Nesting is capped at
+<b>3</b>, concurrency at <b>20</b> — though ultracode sessions are exempt from the concurrency cap
+entirely. (This lecture's own research fleet hit that cap: five of thirteen miners were refused and
+relaunched as slots freed.)</p>
+
+<h3>9.2 Isolation: worktrees and the cloud</h3>
+<p><code>isolation: "worktree"</code> runs <code>git worktree add --no-track -B worktree-&lt;name&gt;</code>
+into <code>&lt;gitRoot&gt;/.claude/worktrees/&lt;name&gt;</code>, auto-removed if a dirty/ahead check finds
+nothing changed. <code>isolation: "remote"</code> launches into a claude.ai cloud environment — and
+contra the February analysis, it is <b>not build-stripped</b>; it's a live gate requiring the user to
+have used a cloud session at least once, silently downgrading to worktree or local otherwise.</p>
+
+<h3>9.3 Teams: the experimental lane</h3>
+<p>Gated behind <code>CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS</code> (or <code>--agent-teams</code>) plus a
+flag. One implicit team; teammates are addressable by <code>name</code> via <code>SendMessage</code>;
+<code>teammateMode</code> ∈ <code>auto|tmux|iterm2|in-process</code> with <b>in-process</b> the default.
+Peer messages arrive wrapped as <code>&lt;cross-session-message&gt;</code> under the
+not-user-input envelope. <b>Coordinator mode is a separate system</b> from teams (the February rows
+conflate them): it replaces the entire built-in agent list with a single <code>worker</code> agent and
+ships an anti-prompt-injection protocol requiring a fresh worker spawn that quotes the user's exact
+approval words.</p>
+
+<h3>9.4 The workflow engine</h3>
+<p>The <code>Workflow</code> tool runs a JavaScript orchestration script — <code>agent()</code>,
+<code>parallel()</code>, <code>pipeline()</code>, <code>phase()</code> — inside a hardened Node
+<code>vm</code> context with <code>codeGeneration: {strings: false}</code>. That, not deletion, is what
+blocks <code>eval</code>; a source comment says so explicitly, because the same hardening helper is
+shared with the REPL tool where eval <em>is</em> allowed. Two design details worth stealing:</p>
+<ul>
+<li><b>Resume is content-addressed.</b> Cache keys are a <em>chained SHA-256</em> over
+<code>(prevKey, prompt, opts)</code> that deliberately excludes <code>label</code> and
+<code>phase</code> — which is what makes “the longest unchanged prefix replays instantly” literally
+true when you edit a script mid-run.</li>
+<li><b>Saved workflows are slash commands.</b> <code>.claude/workflows/*.js</code> surface as
+<code>/name</code>; <code>/deep-research</code> ships bundled. There's no YAML frontmatter — the
+<code>export const meta</code> literal <em>is</em> the frontmatter.</li>
+</ul>
+<p>A complete second engine — a <code>world</code> blackboard with pattern binding — is compiled into
+the binary but entirely inert.</p>
+
+<h3>9.5 Autonomy: loops, crons, wakeups</h3>
+<p><code>/loop</code> has two modes: cron-backed fixed intervals, and <b>dynamic self-pacing</b> where
+the model calls <code>ScheduleWakeup</code> to choose its own next check-in (clamped to
+[60, 3600] seconds), with sentinels like <code>&lt;&lt;autonomous-loop-dynamic&gt;&gt;</code> resolving to
+embedded preamble documents shipped inside the binary. <code>CronCreate</code>/<code>Delete</code>/<code>List</code>
+persist 5-field cron jobs to <code>.claude/scheduled_tasks.json</code> with a 7-day expiry — and add
+<b>deterministic jitter derived from the job id's hex prefix</b>, with the tool description explicitly
+telling the model to avoid <code>:00</code> and <code>:30</code> “because the fleet will notice”. That
+is capacity planning encoded as prompt text.</p>
+<p>The task system itself (<code>TaskCreate/Get/Update/List</code> with a blocks/blockedBy DAG and
+owner fields) is <b>removed by default on new models</b> — recoverable via
+<code>CLAUDE_CODE_ENABLE_TODO_TOOLS</code>. On current defaults the model tracks work in prose, not in
+a tool.</p>
+</section>
+
+
+<section id="ch10">
+<h2><span class="chapno">Chapter 10</span>Control: the permission system</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Before any tool runs, the harness asks: <em>is this allowed?</em> The answer comes from a
+  fixed ladder of thirteen checks. The single most important property: <b>deny is evaluated
+  first, everywhere</b> — before hooks, before modes, before allow rules, and again inside each
+  shell sub-command. Nothing in the system can un-deny something.</p>
+  <p>New in this generation: a <b>model sits inside the loop</b>. “Auto mode” routes decisions
+  that would have prompted you through a safety classifier instead — and when that classifier is
+  unavailable, it fails <em>closed</em>.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/08-permissions-policy.md</code> (1,876 lines, 363 anchors).</p>
+
+<h3>10.1 Two layers, thirteen steps</h3>
+<p>An outer layer (<code>hasPermissionsToUseTool :444272</code>) handles hooks, mode shortcuts, and the
+classifier; it wraps an inner, strict rule ladder (<code>Aon :444598</code>). Abbreviated, in exact
+order:</p>
+<pre><code> <span class="v">1</span> abort check
+ <span class="v">2</span> whole-tool <span class="k">DENY</span> rule          → deny
+ <span class="v">3</span> content <span class="k">DENY</span> rule             → deny
+ <span class="v">4</span> whole-tool <span class="k">ASK</span> rule           → ask   <span class="c">(unless sandbox auto-allow applies)</span>
+ <span class="v">5</span> tool.checkPermissions()          <span class="c">(per-tool logic; plan-mode MCP clamp)</span>
+ <span class="v">6</span> if that said deny               → deny
+ <span class="v">7</span> content <span class="k">ASK</span> rule              → ask
+ <span class="v">8</span> requiresUserInteraction()        → ask
+ <span class="v">9</span> ask-rule-driven reason           → ask
+<span class="v">10</span> MCP org ceiling == "ask"         → ask
+<span class="v">11</span> <span class="n">MODE SHORTCUT</span> (bypass/plan)      → allow  <span class="c">— but safety checks survive it</span>
+<span class="v">12</span> whole-tool <span class="k">ALLOW</span> rule          → allow
+<span class="v">13</span> otherwise: passthrough upgraded to <span class="k">ask</span></code></pre>
+<div class="callout key"><div class="ct">Hooks are not terminal</div>
+A <code>PreToolUse</code> hook returning <code>allow</code> is <b>re-run through the deny/ask rule
+check</b> (<code>Gx :444555</code>) and loses to a deny rule — the log line is literally <em>“Hook
+returned 'allow' for X, but deny rule overrides”</em>. A hook allow bypasses <em>the prompt</em>, not
+the rules. Conversely a hook <code>deny</code> <em>is</em> terminal. Any replica modeling hooks as the
+final word gets this backwards.
+</div>
+<p><code>decisionReason</code> is a closed 11-member union — <code>rule | mode | subcommandResults |
+permissionPromptTool | hook | asyncAgent | sandboxOverride | workingDir | safetyCheck | classifier |
+other</code> — and it's load-bearing, not cosmetic: several branches key off the reason <em>type</em>
+(e.g. safety checks and sandbox overrides surviving <code>bypassPermissions</code>).</p>
+
+<h3>10.2 Rule grammar</h3>
+<p><code>Tool</code> or <code>Tool(content)</code>, with backslash-escaped parens;
+<code>Tool()</code> and <code>Tool(*)</code> both degrade to bare <code>Tool</code>. Content semantics
+are <em>per tool</em>:</p>
+<table>
+<tr><th>Tool family</th><th>Matching</th></tr>
+<tr><td>Bash</td><td>three rule kinds (prefix <code>cmd:*</code>, exact, glob) across two matching rounds, with <code>xargs</code> unwrapping, launcher-wrapper stripping across ~19 binaries, an AST walk over sub-commands, and a <code>&amp;</code>-background downgrade</td></tr>
+<tr><td>Read / Edit / Write</td><td><b>gitignore semantics via the <code>ignore</code> npm package</b> — not glob. Rooted per rule source: <code>/x</code> = that source's dir, <code>~/x</code> = home, <code>//x</code> = filesystem root, bare <code>x</code> = relative</td></tr>
+<tr><td>WebFetch</td><td><code>domain:&lt;host&gt;</code></td></tr>
+<tr><td>MCP</td><td><code>mcp__server</code> / <code>mcp__server__tool</code></td></tr>
+<tr><td>everything else</td><td>generic <code>field:glob</code> against the tool's <code>ruleContentField</code></td></tr>
+</table>
+<p><b>Symlinks are handled by variant set, not realpath</b>: every rule and containment check runs
+against all symlink hops of a path, and an allow rule must cover <em>every</em> variant or the grant is
+void. Containment is <code>cwd + additionalDirectories</code> — and note that <b>Read is not free</b>:
+reading inside the workspace is, reading outside prompts; symmetrically <code>acceptEdits</code> does
+not cover out-of-workspace writes.</p>
+
+<h3>10.3 Six modes</h3>
+<p><code>default</code> · <code>acceptEdits</code> · <code>plan</code> · <code>auto</code> ·
+<code>bypassPermissions</code> · <code>dontAsk</code> (plus an internal <code>bubble</code>).
+<code>dontAsk</code> auto-<em>denies</em> anything that would prompt. <code>bypassPermissions</code>
+refuses to start as root outside a deliberate sandbox and requires a one-time typed acceptance
+persisted to settings. Plan mode is a permission regime <em>and</em> a prompt regime: the pipeline
+blocks non-read-only tools and all writes except the plan file, while a system reminder restates the
+ban in prose.</p>
+
+<h4>Auto mode: a classifier in the loop</h4>
+<p>When the ladder says “ask” in auto mode, the request goes to a <b>two-stage safety classifier
+model</b> instead of the user — but only after hard floors force a real prompt anyway (safety-check
+reasons, ask rules, plan-mode floor, org ask ceilings, sandbox overrides). Two fast paths skip the
+classifier: an <em>acceptEdits simulation</em> (would this be allowed in acceptEdits with dangerous
+rules filtered out?) and a hardcoded read-only allowlist. Outcomes are <code>allowed</code>,
+<code>blocked</code>, <code>refusedBySafeguard</code>, <code>transcriptTooLong</code> (falls back to
+asking, suggesting <code>/compact</code>), and <code>unavailable</code> — which <b>fails closed</b>.
+Consecutive-denial counters trip back to manual approval with <em>“N consecutive actions were blocked.
+Please review the transcript before continuing.”</em> The classifier's own prompt sections
+(<code>allow</code>/<code>soft_deny</code>/<code>hard_deny</code>/<code>environment</code>) are
+user-editable in settings.</p>
+
+<h3>10.4 Managed policy</h3>
+<p>Four tiers stack: remote helper &gt; MDM (macOS managed-preference plists read via
+<code>plutil</code>; Windows <code>HKLM\SOFTWARE\Policies\ClaudeCode</code>) &gt;
+<code>managed-settings.json</code> &gt; a <code>managed-settings.d/</code> drop-in directory.
+<b>Restrictive halves propagate downward always; permissive halves only while the matching
+<code>allowManaged*Only</code> lock is off.</b> Headless sessions that would need a prompt deny with a
+carefully-worded message telling the model not to claim success:</p>
+<blockquote>Permission for this tool use was denied: it requires interactive approval, and permission
+prompts are not available in this session. The action was NOT performed. Do not claim it succeeded,
+and do not retry it in this session — report the limitation to the user, or suggest an alternative.</blockquote>
+</section>
+
+<section id="ch11">
+<h2><span class="chapno">Chapter 11</span>Control: hooks — the user's code in the loop</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Hooks are how you put <em>your</em> code inside Claude's loop: shell commands (or prompts, or
+  whole agents) that fire at defined moments and can observe, block, rewrite, or answer on your
+  behalf. The February-era understanding was “about eight events.” The real number in 2.1.251
+  is <b>33</b>.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/09-hooks.md</code> (1,505 lines, 254 anchors).</p>
+
+<h3>11.1 The 33 events</h3>
+<p>
+<span class="pill on">PreToolUse</span><span class="pill">PostToolUse</span><span class="pill">PostToolUseFailure</span><span class="pill">PostToolBatch</span>
+<span class="pill">Notification</span><span class="pill on">UserPromptSubmit</span><span class="pill">UserPromptExpansion</span>
+<span class="pill on">SessionStart</span><span class="pill">SessionEnd</span><span class="pill on">Stop</span><span class="pill">StopFailure</span>
+<span class="pill">SubagentStart</span><span class="pill">SubagentStop</span><span class="pill">PreCompact</span><span class="pill">PostCompact</span>
+<span class="pill">PreModelSwitch</span><span class="pill">PostModelSwitch</span><span class="pill">PermissionRequest</span><span class="pill">PermissionDenied</span>
+<span class="pill">Setup</span><span class="pill">TeammateIdle</span><span class="pill">TaskCreated</span><span class="pill">TaskCompleted</span>
+<span class="pill">Elicitation</span><span class="pill">ElicitationResult</span><span class="pill">ConfigChange</span>
+<span class="pill">WorktreeCreate</span><span class="pill">WorktreeRemove</span><span class="pill">InstructionsLoaded</span>
+<span class="pill">CwdChanged</span><span class="pill">FileChanged</span><span class="pill">DirectoryAdded</span><span class="pill">MessageDisplay</span>
+</p>
+<p>Eighteen have no February parity row at all, and several are far from observability-only:
+<b><code>WorktreeCreate</code></b> is the required extension point for non-git VCS;
+<b><code>Elicitation</code></b> can answer an MCP server's dialog on the user's behalf;
+<b><code>MessageDisplay</code></b> rewrites what the user sees mid-stream;
+<b><code>InstructionsLoaded</code></b> fires for every CLAUDE.md/rules file with its
+<code>load_reason</code>. What the matcher matches is per-event: tool name for the tool events,
+<code>source</code> for SessionStart, <code>trigger</code> for PreCompact, canonical target model for
+the model-switch pair, <code>load_reason</code> for InstructionsLoaded, and nothing at all (every hook
+runs) for ten of them.</p>
+
+<h3>11.2 Types, timeouts, execution</h3>
+<p>Five settings-authorable types — <code>command</code>, <code>prompt</code>, <code>agent</code>,
+<code>http</code>, <code>mcp_tool</code> — plus two internal (<code>callback</code> for the SDK,
+<code>function</code> for plugin JS). <b>The default timeout is 600 seconds, not 60</b>
+(<code>:445027</code>); only UserPromptSubmit (30s), the model-switch pair (30s) and SessionEnd
+(adaptive 1.5–60s) narrow it. Hooks for one event run <b>fully parallel and unbounded</b>, deduped by
+<code>(pluginRoot, canonical-key)</code> first.</p>
+<div class="callout warn"><div class="ct">Two operational traps</div>
+<b>(1)</b> Settings hooks are <b>snapshotted at startup</b> — editing <code>settings.json</code>
+mid-session does nothing until you open <code>/hooks</code> or restart. Plugin, skill, session and agent
+hooks are read live. <b>(2)</b> <code>disableAllHooks</code> in <em>user</em> settings does not disable
+hooks — it silently promotes the session to managed-settings-only. Only the managed-policy copy is a
+real off switch.
+</div>
+<p>The <code>hooks-worker.js</code> shipped inside the binary is <em>not</em> the shell-hook runner
+(shell hooks spawn inline); it's a Bun Worker hosting <b>plugin function hooks</b> — plugin-authored
+JavaScript — over a structured-clone IPC protocol with a per-environment MessagePort for host
+callbacks.</p>
+
+<h3>11.3 The result contract</h3>
+<p>Exit <code>0</code> = success (stdout's meaning is per-event), <code>2</code> = <b>blocking
+error</b> with stderr fed to the model, anything else = non-blocking warning to the user only. JSON on
+stdout overrides all of it; a first <code>{"async": true}</code> line backgrounds the process. Across
+multiple hooks on one event, decisions fold along a strict monotone ladder — <b>deny &gt; defer &gt; ask
+&gt; allow</b> — not first-wins. Hook feedback reaches the model exclusively as
+<code>&lt;system-reminder&gt;</code>-wrapped meta messages.</p>
+<p>Newer output channels worth knowing: <code>updatedInput</code> (re-validated against the tool's
+schema; a schema failure converts the hook into a <em>deny</em>), <code>updatedToolOutput</code>,
+<code>PostToolUse.classifierContext</code> (a 2,000-char host assertion fed to the auto-mode
+classifier), <code>SessionStart.reloadSkills</code>/<code>watchPaths</code>, an OSC-allowlisted
+<code>terminalSequence</code>, and <code>asyncRewake</code> — a background hook that <em>wakes the
+model</em> when it exits 2.</p>
+</section>
+
+
 <!-- @ch12 -->
 <!-- @ch13 -->
 <!-- @ch14 -->
