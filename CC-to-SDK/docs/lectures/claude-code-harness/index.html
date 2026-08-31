@@ -792,8 +792,6 @@ tags; the <code>!</code> bash passthrough emits <code>&lt;bash-input&gt;/&lt;bas
 with a caveat block telling the model not to respond to local-command output unless asked
 (<code>:516595</code>).</p>
 </section>
-
-<!-- @ch4 -->
 <section id="ch5">
 <h2><span class="chapno">Chapter 5</span>The context lifecycle: counting, compacting, caching, costing</h2>
 
@@ -1558,11 +1556,403 @@ model</em> when it exits 2.</p>
 </section>
 
 
-<!-- @ch12 -->
-<!-- @ch13 -->
-<!-- @ch14 -->
-<!-- @ch15 -->
-<!-- @ch16 -->
+<section id="ch12">
+<h2><span class="chapno">Chapter 12</span>Extension: MCP, the IDE bridge, and LSP</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>MCP (Model Context Protocol) is how Claude Code talks to tools it doesn't ship: your
+  database, your ticket tracker, your browser. The harness is an MCP <em>client</em> — it
+  launches or connects to servers, converts their tools into its own tool objects, and defers
+  every one of them behind ToolSearch so a hundred external tools cost almost no context.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/10-mcp-ide-lsp.md</code> (1,567 lines).</p>
+
+<h3>12.1 Two client runtimes, side by side</h3>
+<p>2.1.251 ships <b>two complete MCP client implementations</b> — v1 (default) and v2 — selected by
+<code>MCP_SDK_GENERATION</code> or a remote flag, with a runtime tripwire if the wrong one loads.
+Reading only one documents half the product. v2 introduces a “modern protocol era”: a single
+<code>server/discover</code> round-trip replacing the init handshake chain, a held
+<code>subscriptions/listen</code> stream for list-changed events, server-declared <code>tools/list</code>
+cache TTLs, and era negotiation with a pre-init probe plus legacy fallback.</p>
+
+<h3>12.2 Configuration and transports</h3>
+<p>Servers are declared in <code>.mcp.json</code> (read from <b>every ancestor directory</b>,
+deepest-wins — not just the project root), in <code>~/.claude.json</code> at user/project scope, via
+<code>claude mcp add</code> (with <code>add-json</code> and <code>add-from-claude-desktop</code>), via
+<code>--mcp-config</code>, or bundled inside plugins. Project-scoped servers require approval
+(<code>enableAllProjectMcpServers</code>, <code>enabled/disabledMcpjsonServers</code>). Transports:
+stdio, SSE, streamable HTTP, and WebSocket — the last fully implemented but excluded from
+<code>claude mcp add</code>.</p>
+<div class="callout warn"><div class="ct">stdio servers inherit your whole environment</div>
+By default a stdio MCP server is spawned with the <b>full parent environment</b>, not a minimal
+allowlist — the allowlist path only runs under <code>CLAUDE_CODE_MCP_ALLOWLIST_ENV</code>. Named
+credentials are scrubbed, and <code>CLAUDE_PROJECT_DIR</code>, <code>CLAUDE_CODE_SESSION_ID</code>,
+<code>CLAUDECODE=1</code> are injected. If you run untrusted MCP servers, this is the line to read
+twice.
+</div>
+
+<h3>12.3 Surfacing, deferral, and auth</h3>
+<p>Tools appear as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and are <b>all deferred behind
+ToolSearch</b> unless <code>alwaysLoad</code> is set (config key or
+<code>_meta["anthropic/alwaysLoad"]</code>). Servers can also declare
+<code>anthropic/searchHint</code>, <code>anthropic/maxResultSizeChars</code> (clamped to 500,000), and
+<code>anthropic/requiresUserInteraction</code> per tool. OAuth for remote servers runs dynamic client
+registration + a loopback callback, and <b>tokens live in the same macOS Keychain entry as your Claude
+login</b> (file fallback <code>~/.claude/.credentials.json</code>), keyed by a SHA-256 of the server's
+type+url+headers — so editing a server's URL orphans its tokens.</p>
+<p>Three feature areas exist that no earlier analysis covers: <b>MCP tasks</b> (long-running
+<code>tools/call</code> with task-scoped input requests and auto-backgrounding); <b>channels</b>
+(<code>role: "comms"</code> servers pushing <em>unsolicited inbound messages</em> into your session,
+behind an org allowlist); and <b>XAA</b> (<code>claude mcp xaa</code>), a shared OIDC identity provider
+whose cached token lets marked servers authenticate silently.</p>
+<p>One clean spec gap worth stating: <b>Claude Code is not an MCP sampling client.</b> It declares
+exactly <code>{roots:{listChanged:true}, elicitation:{}}</code> and registers no
+<code>sampling/createMessage</code> handler anywhere.</p>
+
+<h3>12.4 The IDE bridge</h3>
+<p>IDE integration is <b>plain MCP over a loopback port discovered by lockfile</b> — where the lockfile's
+<em>filename is the port number</em>. The extension supplies selection context, open-file context,
+diagnostics, and diff-view rendering; the harness exposes them as <code>mcp__ide__</code> tools and as
+the attachments from Chapter 4. Running the relationship in reverse, <code>claude mcp serve</code> turns
+Claude Code itself into an MCP server: over stdio it exposes the <em>entire</em> live tool set,
+narrowing to an 8-tool allowlist only in HTTP mode.</p>
+</section>
+
+<section id="ch13">
+<h2><span class="chapno">Chapter 13</span>Continuity: sessions, commands, skills, plugins, memory</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Everything Claude Code remembers lives under <code>~/.claude</code>: transcripts you can
+  resume, file snapshots you can rewind to, tasks, plans, plugins, and an auto-memory store the
+  model writes to itself. This chapter is the on-disk contract — the part a replica must match
+  byte-for-byte if it wants to interoperate.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/11-sessions-commands-skills-plugins.md</code> (1,390 lines).</p>
+
+<h3>13.1 One typed storage registry</h3>
+<p>Essentially all <code>~/.claude</code> I/O routes through a single typed key registry — ~35
+namespaces resolved by one function (<code>Jo :35220</code>) that also encodes each namespace's symlink
+policy, write mode (atomic vs append), and scope-listing rule. <b>That table is the layout spec.</b></p>
+<div class="filetree">
+<span class="d">projects/&lt;projectKey&gt;/</span><br>
+&nbsp;&nbsp;<span class="f">&lt;sessionId&gt;.jsonl</span> <span class="note">← the transcript</span><br>
+&nbsp;&nbsp;<span class="d">&lt;sessionId&gt;/</span> <span class="note">← a session owns a DIRECTORY too: subagents/, tool-results/, &lt;epoch&gt;.cast</span><br>
+&nbsp;&nbsp;<span class="d">memory/</span> <span class="note">MEMORY.md index + per-fact .md files + logs/YYYY/MM/DD/</span><br>
+<span class="d">tasks/&lt;listId&gt;/&lt;taskId&gt;.json</span> · <span class="d">file-history/&lt;sessionId&gt;/&lt;sha&gt;@v&lt;n&gt;</span> · <span class="d">plans/</span> · <span class="d">scratch/</span><br>
+<span class="d">plugins/</span> <span class="note">installed_plugins.json · marketplaces/ · cache/&lt;mkt&gt;/&lt;plugin&gt;/&lt;version&gt;/ · asset-cache/&lt;sha&gt;</span><br>
+<span class="d">commands/ agents/ skills/ workflows/ output-styles/ rules/ themes/</span> <span class="note">← user-authored extensions</span><br>
+<span class="f">history.jsonl · settings.json · CLAUDE.md · keybindings.json · state/…</span>
+</div>
+<p>The project key is the cwd with every non-alphanumeric character replaced by <code>-</code>
+(truncated at 200 chars with a hash suffix). Retention is one knob — <code>cleanupPeriodDays</code>,
+default <b>30</b> — applied by ~45 named sweepers. <b><code>todos/</code>, <code>statsig/</code> and
+<code>logs/</code> are dead</b>: 2.1.251 only deletes them.</p>
+<p>The transcript JSONL envelope is written in exactly one place and carries 17 fields
+(<code>parentUuid, logicalParentUuid, isSidechain, teamName, agentName, promptId, agentId, cwd,
+sessionId, version, gitBranch, userType, entrypoint, slug…</code>) across <b>34 distinct line types</b>,
+of which only five are conversation. <em>Anything that copies a session must copy the directory, not
+just the file.</em></p>
+
+<h3>13.2 Slash commands and skills</h3>
+<p>The built-in catalog is ~120 registry entries, many of them <em>pairs</em> — an interactive
+<code>local-jsx</code> form and a headless <code>local</code> form of the same name. Several familiar
+commands are now tombstones: <code>/vim</code> and <code>/output-style</code> redirect to
+<code>/config</code>; <code>/agents</code> is a stub; <code>/pr-comments</code>,
+<code>/statusline</code>, <code>/migrate-installer</code> have no entry at all; and
+<code>/cost</code>, <code>/stats</code>, <code>/usage</code> are one object with aliases.</p>
+<div class="callout key"><div class="ct">The SlashCommand tool is now called <code>Skill</code></div>
+Permission rules key on <code>Skill(&lt;name&gt;)</code>. Its context budget is
+<code>contextWindow × 4 × 0.01</code> ≈ 8,000 chars, with a graceful-degradation strategy: when the
+listing overflows, bundled skills keep their descriptions and everything else loses them in usage
+order. Progressive disclosure is the whole point — metadata in context always, body only on invoke.
+</div>
+<p><b>40+ skills ship inside the binary</b> (<code>claude-api</code>, <code>code-review</code>,
+<code>commit</code>, <code>pr</code>, <code>doctor</code>, <code>dataviz</code>, <code>verify</code>,
+<code>simplify</code>, the <code>artifact-*</code> family), extracted to disk on demand with hardened
+<code>O_EXCL|O_NOFOLLOW</code> writes and content verification. Plugins carry commands, agents, skills,
+hooks, MCP servers, themes and output styles, resolved through a marketplace ledger with trust
+gating and <code>${CLAUDE_PLUGIN_ROOT}</code> substitution.</p>
+
+<h3>13.3 Memory, checkpoints, rewind</h3>
+<p><b>Auto-memory is a real shipping subsystem</b>, not an experiment:
+<code>projects/&lt;key&gt;/memory/</code> with a 200-line <code>MEMORY.md</code> index, per-fact files
+capped at 4,096 chars, a four-type taxonomy (<code>user | feedback | project | reference</code>), a
+daily session-log tree, per-memory staleness reminders when injected, and a background consolidation
+pass (“auto-dream”). It is the replacement for the retired <code>#</code> shortcut.</p>
+<p>File checkpointing snapshots edited files to <code>file-history/&lt;sessionId&gt;/&lt;sha&gt;@v&lt;n&gt;</code>
+before each edit, which is what makes double-ESC <b>rewind</b> able to restore code, conversation, or
+both. <code>--resume</code>/<code>--continue</code>/<code>--fork-session</code> replay the JSONL;
+<code>--rewind-files</code> restores file state at a given message and exits.</p>
+</section>
+
+
+<section id="ch14">
+<h2><span class="chapno">Chapter 14</span>Conveyance: the API client, auth, and telemetry</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Underneath everything is one HTTPS conversation with a model endpoint. This chapter is the
+  wire: which URL, which headers, which of eight providers, which of three credential flavors —
+  and what the harness reports back about itself.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/12-api-auth-telemetry-updater.md</code> (1,409 lines).</p>
+
+<h3>14.1 Eight providers, one model catalog</h3>
+<p>Beyond first-party, Bedrock, Vertex and Foundry there are <code>anthropicAws</code>,
+<code>anthropicGoogleCloud</code>, <code>mantle</code> and <code>gateway</code> — each with its own base
+URL, credential chain and skip-auth flag (Bedrock and Mantle can even be active simultaneously with
+per-model routing). The model catalog is a <b>baked object literal</b>: 17 models with per-provider ids,
+context windows, max-output, pricing tiers, capability flags, and per-provider alias overrides — so
+<code>opus</code> resolves to <code>claude-opus-5</code> first-party but <code>claude-opus-4-6</code> on
+Foundry and <code>claude-opus-4-7</code> on gateway.</p>
+<p>The harness also makes a <b>steady stream of secondary calls to the small fast model</b>: conversation
+title generation, topic detection for the terminal tab, WebFetch summarization, memory relevance
+selection, the auto-mode safety classifier, and the compaction summarizer (which runs on the main model
+but as a cache-sharing fork). A replica that only models the main loop will under-count both cost and
+latency.</p>
+<p>33 live <code>anthropic-beta</code> strings are quotable with the exact predicate that switches each
+on — and a Bedrock quirk moves three of them out of the header into
+<code>body.anthropic_beta</code>. Two stacked retry layers use <em>different</em> formulas: the vendored
+SDK's <code>0.5·2ⁿ</code> capped at 8s (disabled in practice) and the harness's own
+<code>500·2ⁿ⁻¹</code> capped at 32s, 300s for persistent 429s, 6h absolute.</p>
+
+<h3>14.2 Auth</h3>
+<table>
+<tr><th>Flavor</th><th>Mechanics</th></tr>
+<tr><td>OAuth subscription</td><td><code>claude setup-token</code> / login with PKCE; token in the macOS Keychain under service <code>Claude Code-credentials</code> (account <code>$USER</code>), written via <code>security -i</code> on <b>stdin</b> so secrets never appear in argv; suffixed with <code>-&lt;sha256(configDir)[0:8]&gt;</code> when <code>CLAUDE_CONFIG_DIR</code> is set</td></tr>
+<tr><td>API key</td><td><code>ANTHROPIC_API_KEY</code>, or an <code>apiKeyHelper</code> script re-run on an interval</td></tr>
+<tr><td>Cloud IAM</td><td>Bedrock / Vertex / Foundry credential chains with their own refresh helpers</td></tr>
+<tr><td>Workload identity federation</td><td>a third first-party flavor no earlier analysis names: <code>~/.config/anthropic</code> profiles with beta pair <code>oauth-2025-04-20,oidc-federation-2026-04-01</code></td></tr>
+</table>
+<p>Two wire details worth stealing: request bodies are <b>gzipped</b> on first-party above 4&nbsp;KiB —
+with a <em>persisted 7-day latch-off</em> if a middlebox rejects it — and the
+<code>x-anthropic-billing-header</code> from Chapter 4 is emitted as a system-prompt block, not a header,
+despite its name.</p>
+
+<h3>14.3 Telemetry, and what's been replaced</h3>
+<p>Two substitutions matter for anyone reading older writeups: <b>Statsig is gone</b> (GrowthBook
+evaluates 379 gates in remote-eval mode), and <b>Sentry is gone</b> — crash reporting now goes to
+Datadog. Error reporting is additionally refused when the session's credential came from
+<code>ANTHROPIC_AUTH_TOKEN</code> or <code>apiKeyHelper</code> (an “untaintable credential” check).
+OpenTelemetry is opt-in via <code>CLAUDE_CODE_ENABLE_TELEMETRY</code> and exports eight instruments —
+<code>claude_code.session.count</code>, <code>.lines_of_code.count</code>, <code>.commit.count</code>,
+<code>.pull_request.count</code>, <code>.cost.usage</code>, <code>.token.usage</code>,
+<code>.code_edit_tool.decision</code>, <code>.active_time.total</code> — plus a
+<code>claude_code.api_request</code> log event carrying per-request cost. Host SDKs cannot forge these:
+any event name starting with <code>claude_code.</code> is rejected. The umbrella opt-outs are
+<code>DISABLE_TELEMETRY</code>, <code>DO_NOT_TRACK</code>, and
+<code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code>.</p>
+</section>
+
+<section id="ch15">
+<h2><span class="chapno">Chapter 15</span>The face: terminal UI and interaction modes</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Everything you actually see is a React app rendering to a grid of terminal cells. Not a
+  metaphor: there is a real React 19 reconciler, a real flexbox layout engine, a double-buffered
+  cell grid with damage tracking, and a diff that emits the minimum ANSI to patch the screen.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/13-tui-modes.md</code> (1,178 lines).</p>
+
+<h3>15.1 It is not Ink (any more)</h3>
+<p>It's a heavily-forked in-house renderer that kept Ink's host-element <em>names</em>
+(<code>ink-box</code>, <code>ink-text</code>, <code>ink-link</code>, <code>ink-raw-ansi</code>) and Yoga
+layout, but replaced the entire output path with a <b>double-buffered cell grid</b>: front/back frames,
+interning pools for styles, chars and hyperlinks, per-cell diff producing a patch list flushed in a
+single <code>stdout.write</code> (<code>class B_e :376633</code>). The fork adds scroll containers,
+focus management, absolute positioning, per-node repaint debugging and an accessibility channel —
+none of which upstream Ink has. The app is compiled through the React Compiler.</p>
+<p>Output is wrapped in <b>DECSET 2026 synchronized-update markers</b> when the terminal is known to
+support them (a hand-maintained allowlist plus a tmux probe); kitty keyboard protocol,
+<code>modifyOtherKeys=2</code>, bracketed paste, focus events and theme-change notifications are pushed
+and popped explicitly. There are two renderer modes — classic scrollback and a <b>fullscreen alt-screen
+mode</b> (now the default for fresh installs and background sessions) with mouse tracking, hover, wheel
+scroll and copy-on-select — and the fullscreen path auto-disables for screen readers, tmux
+<code>-CC</code>, Windows-over-SSH, and after three crash strikes.</p>
+<p>A third render strategy exists for accessibility: <code>--ax-screen-reader</code> switches to an
+<b>append-only flat-text diff writer</b> with cursor parking, not merely a styling flag.</p>
+
+<h3>15.2 Input</h3>
+<p><b>Keybindings are user-editable JSON</b> (<code>~/.claude/keybindings.json</code>): 21 contexts,
+141 actions, chord bindings like <code>ctrl+x ctrl+e</code>, a <code>command:&lt;slash&gt;</code> escape
+hatch, and seven hard-reserved keys. Vim mode is a genuine modal editor — NORMAL/INSERT/VISUAL/VISUAL
+LINE, operators <code>d c y</code>, text objects over 15 delimiter pairs, counts,
+<code>f/F/t/T</code> with <code>;</code>/<code>,</code>, registers, <code>.</code> repeat, indent and
+case operators, and <code>jk</code>-style insert-mode remaps. Only <code>!</code> survives as a mode
+prefix; <b>the <code>#</code> memory prefix is gone</b>.</p>
+<p>The spinner draws from <b>186 verbs</b> (<em>Accomplishing</em> … <em>Zippy</em>), user-extendable
+via a <code>spinnerVerbs</code> setting, on a six-glyph ramp with a moving shimmer, carrying elapsed
+time, an eased token counter, and thinking/tool sub-status. The statusline is a user command re-run on
+an interval and fed a rich JSON payload on stdin — including the full
+<code>context_window</code>, <code>cost</code>, <code>prompt_cache</code> and <code>rate_limits</code>
+objects from Chapter 5.</p>
+
+<h3>15.3 Surfaces beyond chat</h3>
+<p><b>Voice mode ships</b>: <code>/voice hold|tap|off</code>, the bundled
+<code>audio-capture.node</code> (falling back to <code>sox rec</code>), 16&nbsp;kHz mono linear16
+streamed over a WebSocket to a speech-to-text endpoint with interim transcripts and keyterm biasing.
+Push-to-talk is just a keybinding. <code>url-handler.node</code> backs a real OS protocol handler
+(<code>claude-cli://open?cwd=&amp;repo=&amp;q=</code>) installed as a macOS <code>.app</code>, a Linux
+<code>.desktop</code> entry, or an HKCU registry key. The computer-use native modules drive real
+mouse/keyboard input.</p>
+<p>Corrections to common assumptions: <code>mermaid.min.js</code>, <code>chart.umd.min.js</code> and the
+highlight.js bundle are <b>published-artifact assets</b> injected into generated HTML, not terminal
+features (terminal syntax highlighting uses a separate lazily-registered registry that also accepts
+plugin grammars). There is <b>no <code>/bashes</code> command and no <code>claude serve</code> HTTP
+mode</b> — remote work goes through <code>/teleport</code>, <code>/remote-control</code>,
+<code>--bg</code> + <code>claude attach</code>, and the daemon. And terminal tab-status
+(<code>OSC 21337</code>) is fully implemented — encoder, decoder, three-state palette — but its emit
+gate returns a literal <code>false</code>, so it's inert in this build.</p>
+</section>
+
+
+<section id="ch16">
+<h2><span class="chapno">Chapter 16</span>Synthesis: the eleven ideas, and how to rebuild them</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Fifteen chapters of machinery come down to a handful of repeated ideas. If you're rebuilding
+  this, you're not reimplementing 881,404 lines — you're reimplementing about eleven decisions,
+  applied everywhere with unusual discipline.</p>
+</div>
+
+<h3>16.1 The recurring design principles</h3>
+<table>
+<tr><th>#</th><th>Principle</th><th>Where you see it</th></tr>
+<tr><td>1</td><td><b>Measure, don't estimate</b> — trust the server's receipts, estimate only the tail</td><td>Context accounting anchors on the last <code>usage</code> block (Ch 5)</td></tr>
+<tr><td>2</td><td><b>Deny wins, everywhere, always</b></td><td>Permission ladder, hook folding, sandbox profile ordering (Ch 10, 11, 8)</td></tr>
+<tr><td>3</td><td><b>Fail closed on safety, open on capability</b></td><td>Tool defaults (<code>isReadOnly:false</code> but <code>checkPermissions:allow</code>); classifier-unavailable → deny (Ch 6, 10)</td></tr>
+<tr><td>4</td><td><b>Treat all injected text as untrusted</b></td><td>Tag-escaping wrappers, nonce attestation, violation-line sanitizing, the compaction prompt's anti-impersonation clause (Ch 4, 5, 8)</td></tr>
+<tr><td>5</td><td><b>Never silently drop user input</b></td><td>Every mid-turn fold degradation re-queues rather than discards (Ch 3)</td></tr>
+<tr><td>6</td><td><b>Speculate when it's cheap, cache when it's not</b></td><td>Precomputed compaction at 80%; compaction as a cache-sharing fork; two system-prompt breakpoints (Ch 5)</td></tr>
+<tr><td>7</td><td><b>Push work to the server when the protocol allows</b></td><td>Deferred tool schemas, <code>context_hint</code> negotiation, server-side web search, task budgets (Ch 6, 5, 7, 3)</td></tr>
+<tr><td>8</td><td><b>Make the model's environment self-describing</b></td><td>Tool descriptions that change with TTL, plan, model and platform; system-reminders as the universal side channel (Ch 4, 9)</td></tr>
+<tr><td>9</td><td><b>Circuit-break every loop</b></td><td>Compaction failure/thrash/prefix breakers, stop-hook cap, classifier denial limits, retry watchdogs (Ch 5, 3, 10)</td></tr>
+<tr><td>10</td><td><b>Attribute everything</b></td><td>Sandbox log tags encoding the command; proxy usernames carrying the command id; cache-break cause attribution (Ch 8, 5)</td></tr>
+<tr><td>11</td><td><b>Configuration is a control plane, not a preferences file</b></td><td>Five settings tiers + 971 typed env vars + 355 server flags that reshape the product between releases (Ch 2)</td></tr>
+</table>
+
+<h3>16.2 What surprised us most</h3>
+<p>Nine findings that contradict the widely-circulated picture of Claude Code — each anchored in the
+chapters above:</p>
+<ol>
+<li><b>Glob and Grep aren't in the default tool list</b> on a normal POSIX run; the model is steered to
+<code>find</code>/<code>grep</code> through Bash.</li>
+<li><b>ultrathink is a system-reminder, not a token budget</b> — and no <code>think</code>/<code>think
+hard</code>/<code>megathink</code> tier exists at all.</li>
+<li><b>Microcompaction is server-negotiated</b> (a 422/424 rejection is the signal), not timer-driven;
+the old event name survives as a fossil.</li>
+<li><b>Tools start executing before the assistant message finishes</b>, and the live scheduler is
+uncapped — the famous concurrency limit lives in a legacy path.</li>
+<li><b>The binary is its own ripgrep</b>, re-executed with <code>argv0="rg"</code>.</li>
+<li><b>A model sits inside the permission loop</b> in auto mode, and fails closed when unavailable.</li>
+<li><b>33 hook events</b>, a 600-second default timeout, and hooks that can rewrite tool input, answer
+MCP dialogs, and wake the model.</li>
+<li><b>The system prompt has two whole shapes</b> (classic vs lean) chosen per model <em>and</em>
+provider — plus sections that live in server-side config, not in the binary.</li>
+<li><b>Statsig and Sentry are both gone</b>, replaced by GrowthBook and Datadog.</li>
+</ol>
+
+<h3>16.3 If you are rebuilding this</h3>
+<p>A dependency-ordered path, drawn from the parity work this lecture accompanies:</p>
+<div class="diagram">
+<svg width="860" height="300" viewBox="0 0 860 300" font-family="SF Mono, monospace" font-size="11.5">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8b96a5"/></marker></defs>
+  <g>
+    <rect x="20" y="20" width="170" height="52" rx="9" fill="#1c2333" stroke="#57ab5a"/>
+    <text x="105" y="41" text-anchor="middle" fill="#57ab5a">TIER 1 · the loop</text>
+    <text x="105" y="58" text-anchor="middle" fill="#8b96a5" font-size="10">turn engine · streaming · tools</text>
+
+    <rect x="230" y="20" width="170" height="52" rx="9" fill="#1c2333" stroke="#57ab5a"/>
+    <text x="315" y="41" text-anchor="middle" fill="#57ab5a">TIER 2 · context</text>
+    <text x="315" y="58" text-anchor="middle" fill="#8b96a5" font-size="10">prompt assembly · CLAUDE.md</text>
+
+    <rect x="440" y="20" width="170" height="52" rx="9" fill="#1c2333" stroke="#d4a72c"/>
+    <text x="525" y="41" text-anchor="middle" fill="#d4a72c">TIER 3 · control</text>
+    <text x="525" y="58" text-anchor="middle" fill="#8b96a5" font-size="10">permissions · hooks · sandbox</text>
+
+    <rect x="650" y="20" width="190" height="52" rx="9" fill="#1c2333" stroke="#d4a72c"/>
+    <text x="745" y="41" text-anchor="middle" fill="#d4a72c">TIER 4 · lifecycle</text>
+    <text x="745" y="58" text-anchor="middle" fill="#8b96a5" font-size="10">compaction · caching · cost</text>
+
+    <rect x="120" y="120" width="200" height="52" rx="9" fill="#1c2333" stroke="#6ca0f6"/>
+    <text x="220" y="141" text-anchor="middle" fill="#6cb6ff">TIER 5 · persistence</text>
+    <text x="220" y="158" text-anchor="middle" fill="#8b96a5" font-size="10">transcripts · resume · checkpoints</text>
+
+    <rect x="360" y="120" width="200" height="52" rx="9" fill="#1c2333" stroke="#6ca0f6"/>
+    <text x="460" y="141" text-anchor="middle" fill="#6cb6ff">TIER 6 · extension</text>
+    <text x="460" y="158" text-anchor="middle" fill="#8b96a5" font-size="10">MCP · skills · plugins · agents</text>
+
+    <rect x="600" y="120" width="200" height="52" rx="9" fill="#1c2333" stroke="#b083f0"/>
+    <text x="700" y="141" text-anchor="middle" fill="#b083f0">TIER 7 · the face</text>
+    <text x="700" y="158" text-anchor="middle" fill="#8b96a5" font-size="10">TUI · modes · statusline</text>
+
+    <rect x="230" y="220" width="400" height="46" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="430" y="241" text-anchor="middle" fill="#d6dde6">acceptance test: does an unmodified real-world workload run on it?</text>
+    <text x="430" y="257" text-anchor="middle" fill="#8b96a5" font-size="10">not "N% of the surface is wired" — end-to-end or nothing</text>
+  </g>
+  <g stroke="#8b96a5" fill="none" marker-end="url(#a2)">
+    <line x1="190" y1="46" x2="225" y2="46"/><line x1="400" y1="46" x2="435" y2="46"/><line x1="610" y1="46" x2="645" y2="46"/>
+    <line x1="315" y1="72" x2="240" y2="115"/><line x1="525" y1="72" x2="470" y2="115"/><line x1="745" y1="72" x2="710" y2="115"/>
+    <line x1="300" y1="172" x2="380" y2="215"/><line x1="480" y1="172" x2="450" y2="215"/>
+  </g>
+</svg>
+<div class="cap">Fig 16.1 — build order. Tiers 1–2 are the minimum viable agent; 3–4 make it safe and affordable; 5–7 make it a product.</div>
+</div>
+<p>Three cautions the research surfaced repeatedly:</p>
+<ul>
+<li><b>Percentage-of-surface is the wrong metric.</b> You can wire every declared option and still not
+have the product, because the parts that matter most — the interactive shell, the process registry,
+background sessions — aren't in any option list. Judge end-to-end.</li>
+<li><b>Verify premises against the live artifact, not against documentation.</b> This entire lecture
+exists because a February-era feature inventory had drifted: rows that said “provided” were
+conditional, mechanisms described in detail no longer existed, and eighteen hook events had appeared
+with no row at all.</li>
+<li><b>Some behavior isn't in the binary.</b> Per-model prompt text, reminder copy, and flag defaults
+arrive from server-side configuration. A static reconstruction is necessarily incomplete for a live
+first-party session — which is a fact about the product's architecture, not a gap in the analysis.</li>
+</ul>
+
+<h3>16.4 Where this lecture is thin</h3>
+<p>Honest limits, so you know what to re-derive yourself. Each research report ends with its own
+open-questions section; the load-bearing ones across the set:</p>
+<ul>
+<li>The Bash <b>read-only classifier</b> that decides whether shell calls run in parallel was not
+decompiled.</li>
+<li>The Edit tool's <b>desanitization matcher</b> — the single most behavior-defining piece of Edit —
+was read at its call sites but not inside.</li>
+<li>The renderer's <b>cell-level diff minimization</b> was traced at the interface, not the algorithm.</li>
+<li>The semantics of server-side <code>context_hint.target_tokens_saved</code>,
+<code>cache_control.scope: "global"</code>, and <code>evict_on_complete</code> are inferred from field
+names and guards, not from any statement.</li>
+<li>Roughly a dozen flag predicates (what flips the MCP v2 rollout, what
+<code>Xne()</code> matches in the lean/classic decision) resolve to server state.</li>
+</ul>
+
+<div class="callout key"><div class="ct">The closing thought</div>
+The model is the engine, but the harness is the car. Every chapter here is a decision someone made
+about how to hold a probabilistic system to account: measure rather than guess, deny before allow,
+circuit-break every loop, treat your own tool output as untrusted, and never lose the user's words.
+Those decisions — not the parameter count — are what makes the difference between a chat box and
+something you'd let near your repository.
+</div>
+
+<p class="meta" style="margin-top:40px">
+<b>Source corpus.</b> Thirteen domain reports totaling ~1.4&nbsp;MB and ~19,000 lines, each anchored to
+<code>cli.pretty.js</code> line numbers, live under
+<code>docs/lectures/claude-code-harness/research/</code>. They contain the verbatim prompt texts, exact
+constants, wire formats, and per-report deltas against the February inventory that this lecture
+summarizes. Where a claim here is compressed, the report is the citation.
+</p>
+</section>
+
 
 </main>
 <script>
