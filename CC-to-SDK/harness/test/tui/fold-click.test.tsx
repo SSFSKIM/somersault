@@ -38,7 +38,7 @@ import type { RenderItem } from "../../src/tui/toolRenderer.js";
 // pipeline `FullscreenViewport.tsx`'s own paint uses, per `hitRowsOf`'s own doc) rather than hand-building a
 // `HitRow[]` — the same "against the real path, not a synthetic fixture" rule `hover-owner.test.tsx`'s cell
 // (n) states for its own mounted check.
-import { projectCompact, projectionDeps, sdkOwnerKey } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectionDeps, sdkOwnerKey, TOOL_RESULT_GUTTER } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 import { wrapItemsToWidth } from "../../src/tui/wrapItems.js";
 import { pageItemSlices } from "../../src/tui/pager.js";
@@ -693,6 +693,40 @@ describe("T-LINKOPEN Task 1 (F2): a fold row's own link cell defers to the hyper
   });
 });
 
+// ══ T-CLICK Task 2 — paint extent == hit extent, row-for-row, on one frame ═══════════════════════════════
+// `band-paint.test.tsx`'s own Part 2 proves a banded row's plain-text PAINT reaches the terminal edge while
+// an unbanded row's stops at its own glyphs. This reuses that exact fact, on the exact same frame, against
+// `clickTargetAt` — the one marker (`RenderItem.band`) is supposed to drive both, so a fixture that painted
+// wide but hit narrow (Task 1 alone, pre-Task-2) would fail here.
+const EXTENT_COLS = 80;
+const extentBandedHeader: RenderItem = { kind: "line", id: "extent-band", ownerKey: "extent-band", clickable: true, band: true, line: { text: "BANDED HEADER" } };
+const extentPlainRow: RenderItem = { kind: "line", id: "extent-plain", ownerKey: "extent-plain", clickable: true, line: { text: "PLAIN SHORT ROW" } };
+const extentBandedBlock: RenderItem = { kind: "gutter-block", id: "extent-block", ownerKey: "extent-band", clickable: true, band: true, gutter: TOOL_RESULT_GUTTER, body: [{ text: "block body row" }] };
+
+describe("T-CLICK Task 2: paint extent equals hit extent, row-for-row, on one frame", () => {
+  it("a banded row's clickable extent reaches the terminal edge; an unbanded row's stops at its own painted text", async () => {
+    const hitmap = React.createRef<ViewportHitmap>();
+    const { lastFrame } = render(linkScene([extentBandedHeader, extentPlainRow, extentBandedBlock], hitmap));
+    await settleViewport();
+    const rows = rowsOf(lastFrame());
+
+    const bandedExtent = rows[0]!.length;
+    const plainExtent = rows[1]!.length;
+    const blockExtent = rows[2]!.length;
+    expect(bandedExtent).toBe(EXTENT_COLS);                         // Task 1: the band paints to the edge
+    expect(plainExtent).toBe("PLAIN SHORT ROW".length);             // unbanded stays glyph-width
+    expect(blockExtent).toBe(EXTENT_COLS);
+
+    // HIT matches PAINT on the SAME frame: clickable at the painted extent's own last column…
+    expect(hitmap.current!.clickTargetAt(bandedExtent, 1)).toBe("item:extent-band");
+    expect(hitmap.current!.clickTargetAt(plainExtent, 2)).toBe("item:extent-plain");
+    expect(hitmap.current!.clickTargetAt(blockExtent, 3)).toBe("item:extent-band");
+    // …and dead one column past the unbanded row's painted extent (there is no "one past" on screen for the
+    // banded rows: their paint, and now their hit, both already reach the terminal's own last column).
+    expect(hitmap.current!.clickTargetAt(plainExtent + 1, 2)).toBeUndefined();
+  });
+});
+
 // BLANK-TAIL: the existing `col <= at.width` bound in `clickTargetAt` already answers `undefined` past a
 // row's own painted text, which already makes a blank-tail release fall through to `caretAt` (a no-op off the
 // transcript) rather than a toggle — these two cases PIN that behaviour rather than changing it. `BLANK_COL`
@@ -711,13 +745,81 @@ describe("T-CLICKGATE Task 4 (blank-tail, unexpanded): a click past the row's ow
   });
 });
 
-describe("T-CLICKGATE Task 4 (blank-tail, expanded): a click past the row's own text never collapses it", () => {
-  it("leaves an expanded error result's block open when the release lands in the blank tail", async () => {
+// T-CLICK Task 2 (spec §2.3 D9-v2 / A5): FLIPPED from "never collapses it" — canon's own rule (research-
+// click-collapse.md §1.3) is that an EXPANDED block paints a full-width background rectangle, and every
+// cell inside that rectangle — glyph or not — is `cellIsBlank === false` (`cli.pretty.js` L372918's packed-
+// cell test, painted by L376156-376163's styled-space fill), so canon's click handler (L19399-19403 drops
+// only a BLANK-cell release) lets a click anywhere in the band through to the toggle. Task 1 gave the
+// expanded band that real full-width paint (`RenderItem.band`); this task widens the hit region to match, so
+// the blank tail INSIDE an expanded block is no longer blank in canon's sense and must collapse it — the
+// opposite of the collapsed case right above, which stays a genuinely blank (unbanded) cell and stays inert.
+describe("T-CLICK Task 2 (blank-tail, expanded): a click past the row's own text DOES collapse it", () => {
+  it("collapses an expanded error result's block when the release lands in the blank tail", async () => {
     const r = await mount(LONG_ERROR_DOC);
+    const before = r.lastFrame();
     await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 2"));   // open it
     const expanded = r.lastFrame();
     expect(clean(expanded)).toContain("err line 11");
     await tap(r, BLANK_COL, rowOf(r.lastFrame(), "err line 11"));
+    expect(r.lastFrame()).toBe(before);
+    r.unmount();
+  });
+});
+
+// T-CLICK Task 2: the same widened band applies to an expanded FOLD CLUSTER's member rows — Task 1 stamped
+// `band: true` on every `expandedMemberItems` row (except each member's own leading margin), so a member
+// row's blank tail is inside the SAME kind of full-width rectangle a single result's body is, and must
+// collapse the whole cluster exactly as the single-result case above collapses that block.
+describe("T-CLICK Task 2: an expanded cluster member row's blank tail collapses the cluster", () => {
+  it("collapses the whole run when the release lands past a member row's own text", async () => {
+    const r = await mount(SHORT_DOC);
+    const foldRow = rowOf(r.lastFrame(), COLLAPSED);
+    await tap(r, COL, foldRow);
+    expect(openMembers(r.lastFrame())).toBe(2);
+
+    await tap(r, BLANK_COL, memberRow(r.lastFrame()));
+    expect(openMembers(r.lastFrame())).toBe(0);
+    expect(clean(r.lastFrame())).toContain(COLLAPSED);
+    r.unmount();
+  });
+});
+
+// T-CLICK Task 2 (D9-v2 regression trap): a T-SPACE separator is NEVER stamped `band` (band-paint.test.tsx's
+// own Part 1 pin), so it must stay glyph-width — which for a blank separator row means zero-width, i.e. dead
+// on every column — even though it sits directly against an expanded block's band. Widening by proximity
+// (e.g. "any row touching an expanded block") rather than by the marker itself is exactly the bug this case
+// would catch: a separator is not part of the band and a click on it must toggle nothing.
+const SEP_ERROR_DOC: readonly TranscriptBootstrapEntry[] = [
+  prose("before block", "sep-before"), call("err-3", "Mystery", {}), result("err-3", errorLines(12), true), prose("after block", "sep-after"),
+];
+describe("T-CLICK Task 2 (D9-v2 regression trap): the separator rows above/below an expanded block stay dead", () => {
+  it("does nothing when the tap lands on the separator directly above the expanded header", async () => {
+    const r = await mount(SEP_ERROR_DOC);
+    const headerIdx = rowsOf(r.lastFrame()).findIndex((l) => strip(l).startsWith("⏺ Mystery"));
+    expect(headerIdx, `header row not painted in:\n${clean(r.lastFrame())}`).toBeGreaterThanOrEqual(0);
+    await tap(r, COL, headerIdx + 1);                          // open it
+    const expanded = r.lastFrame();
+    expect(clean(expanded)).toContain("err line 11");
+
+    const openHeaderIdx = rowsOf(expanded).findIndex((l) => strip(l).startsWith("⏺ Mystery"));
+    expect(openHeaderIdx).toBeGreaterThan(0);                  // needs a row above it to exist
+    const sepAboveRow = openHeaderIdx;                         // one PAST the array index === one BEFORE the 1-based header row
+    expect(strip(rowsOf(expanded)[sepAboveRow - 1])).toBe("");
+    await tap(r, BODY_COL, sepAboveRow);
+    expect(r.lastFrame()).toBe(expanded);
+    r.unmount();
+  });
+
+  it("does nothing when the tap lands on the separator directly below the expanded block, ahead of the next prose", async () => {
+    const r = await mount(SEP_ERROR_DOC);
+    await tap(r, BODY_COL, rowOf(r.lastFrame(), "err line 2"));  // open it
+    const expanded = r.lastFrame();
+    expect(clean(expanded)).toContain("err line 11");
+
+    const afterRow = rowOf(expanded, "⏺ after block");
+    const sepBelowRow = afterRow - 1;
+    expect(strip(rowsOf(expanded)[sepBelowRow - 1])).toBe("");
+    await tap(r, BODY_COL, sepBelowRow);
     expect(r.lastFrame()).toBe(expanded);
     r.unmount();
   });
