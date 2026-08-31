@@ -42,13 +42,22 @@
 //                    argument documented in the owned module's header, and is a
 //                    ledger edge to the wave that will own it.
 //
-// Classification and WIRING are separate facts. Most rows are still wired as a
-// delegation argument regardless of class; the retrofit that makes
-// `primitive`/`pure-helper` captures owned-and-asserted is W1's job (C4), and
-// the classification here is the truthful input to that work. `owned: true`
-// marks the captures where the retrofit has actually landed: the module ships
-// the implementation, the build stops forwarding the graph's value, and the
-// graph's function stops being called.
+// Classification and WIRING both follow from the class, and they are NOT the
+// same rule for the two owned classes (C4 / W1 completed this retrofit):
+//
+//   `pure-helper`    carries `owned: true`. The module ships the implementation
+//                    and uses it in both wirings, so the build derives and
+//                    FOOTPRINTS the graph's binding — §5 still has to see it
+//                    move — but does not forward it. The graph's function is
+//                    never called.
+//   `primitive`      is still FORWARDED, deliberately. The module owns the value
+//                    and uses its own copy; the graph's copy crosses only so the
+//                    adapter can equality-assert it, which is what turns every
+//                    delegation into a free micro-differential check. A value
+//                    change that leaves the name alone moves no anchor and no
+//                    target hash, so this assertion is the only cheap thing that
+//                    can see it. `owned` therefore stays UNSET on a primitive.
+//   `effectful-port` is forwarded and stays a typed delegation argument.
 import type { TargetSignature } from "./ast.js";
 
 export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case";
@@ -131,11 +140,17 @@ function pick(splice: string, as: string, re: RegExp): (body: string) => string 
 
 const ID = "[A-Za-z_$][\\w$]*";
 
+const SIBLING_METHOD: TargetSignature = { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] };
+
 export const SPLICES: Splice[] = [
+  // ---- tool-result formatters (subsystem/tool-result-formatters) -----------
+  // Ten of the graph's 44 `mapToolResultToToolResultBlockParam` methods. All
+  // share one shape and one signature; each is anchored on prose only it emits.
+
   {
     name: "write-tool-result",
     target: "sibling-method",
-    signature: { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] },
+    signature: SIBLING_METHOD,
     // the Edit tool has a sibling "has been updated successfully" template; the
     // `.${` tail disambiguates the Write tool's
     anchor: "has been updated successfully.${",
@@ -145,8 +160,8 @@ export const SPLICES: Splice[] = [
         // the freshness-suffix constant: `let s = r || n ? "" : <ident>`
         // (2.1.241 minified it `hui`; 2.1.251 `q6t` — hence derivation, not a constant)
         as: "freshnessSuffix",
-        // a module-level string constant: ownable outright, so the adapter
-        // should equality-assert it once W1 retrofits this splice.
+        // Owned as `FRESHNESS_SUFFIX` in modules/shared/file-state.js and shared
+        // with the Edit formatter; still forwarded so the adapter can assert it.
         kind: "primitive",
         derive: pick(
           "write-tool-result",
@@ -157,34 +172,306 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["file-tools"],
   },
+
+  {
+    // The Edit tool's SUCCESS formatter. Its error results ("String to replace
+    // not found in file.", "File has not been read yet.") come from a different
+    // sibling method — `validateInput`, 3,317 minified chars with filesystem,
+    // gate and telemetry captures — which is its own closure-ledger row
+    // (subsystem/tool-result-validators) and deliberately not this wave's.
+    name: "edit-tool-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: "All occurrences were successfully replaced.",
+    fn: "editToolResultBlock",
+    captures: [
+      {
+        // the same constant the Write row derives, at a DIFFERENT use site: Edit
+        // nests it in a three-way conditional, so it needs its own shape.
+        as: "freshnessSuffix",
+        kind: "primitive",
+        derive: pick("edit-tool-result", "freshnessSuffix", new RegExp(`\\?"":(${ID});if\\(`)),
+      },
+    ],
+    coverage: ["edit-tool"],
+  },
+
+  {
+    name: "read-tool-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: "PDF pages extracted: ",
+    fn: "readToolResultBlock",
+    captures: [
+      {
+        as: "notebookResultBlock",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("read-tool-result", "notebookResultBlock", new RegExp(`case"notebook":return\\s*(${ID})\\(`)),
+      },
+      {
+        // a single-export chunk (chunk-n2te6bm7.js): pure bytes -> "12.3KB".
+        // Shared with the Bash formatter, so it is owned in modules/shared/.
+        as: "formatBytes",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "read-tool-result",
+          "formatBytes",
+          new RegExp(`PDF file read: \\$\\{${ID}\\.file\\.filePath\\} \\(\\$\\{(${ID})\\(`),
+        ),
+      },
+      {
+        as: "seededUnchangedNotice",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("read-tool-result", "seededUnchangedNotice", new RegExp(`==="seeded"\\?(${ID})\\(`)),
+      },
+      {
+        as: "unchangedNotice",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("read-tool-result", "unchangedNotice", new RegExp(`:(${ID})\\(\\)\\};case"text"`)),
+      },
+      {
+        // A WeakMap + clock side channel, not an argument: upstream populates the
+        // map during the Read tool's `call` for memory-directory files and renders
+        // a day count from `Date.now()`. Stateful and time-dependent, so it stays
+        // a typed port and a ledger edge to the Read-execution wave.
+        as: "stalenessPrefix",
+        kind: "effectful-port",
+        derive: pick("read-tool-result", "stalenessPrefix", new RegExp(`\\.content\\)${ID}=(${ID})\\(`)),
+      },
+      {
+        as: "numberLines",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "read-tool-result",
+          "numberLines",
+          new RegExp(`\\+(${ID})\\(\\{\\.\\.\\.${ID}\\.file,tabAwareSeparator:`),
+        ),
+      },
+      {
+        // a feature-gate read (`tengu_tab_read_sep`), resolving to its compiled-in
+        // default under the pinned disabled-gate environment (§3.3). Kept a port
+        // rather than folded to `false` so a flip stays observable.
+        as: "tabAwareSeparator",
+        kind: "effectful-port",
+        derive: pick("read-tool-result", "tabAwareSeparator", new RegExp(`tabAwareSeparator:(${ID})\\(\\)\\}`)),
+      },
+      {
+        as: "numberOneLine",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("read-tool-result", "numberOneLine", new RegExp(`\\+(${ID})\\(""`)),
+      },
+    ],
+    coverage: ["file-tools"],
+  },
+
+  {
+    // The one row in the manifest whose anchor is NOT unique graph-wide: the
+    // same abort marker appears in the Windows/PowerShell sibling tool, in every
+    // bundle measured. Scoped by a co-occurring literal taken from the SAME
+    // object literal as the target — see strangle/anchor.ts for why that is a
+    // literal and never a chunk name.
+    name: "bash-tool-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: "<error>Command was aborted before completion</error>",
+    coLiteral: "Run shell command",
+    fn: "bashToolResultBlock",
+    captures: [
+      {
+        as: "imageResultBlock",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "bash-tool-result",
+          "imageResultBlock",
+          new RegExp(`=(${ID})\\(${ID},${ID}\\);if\\(${ID}\\)\\{let ${ID}=typeof`),
+        ),
+      },
+      {
+        as: "splitPreview",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "bash-tool-result",
+          "splitPreview",
+          new RegExp(`\\{let ${ID}=(${ID})\\(${ID},${ID}\\);${ID}=${ID}\\(\\{filepath:`),
+        ),
+      },
+      {
+        // `var $De=2000` — the persisted-output preview budget.
+        as: "previewBytes",
+        kind: "primitive",
+        derive: pick(
+          "bash-tool-result",
+          "previewBytes",
+          new RegExp(`\\{let ${ID}=${ID}\\(${ID},(${ID})\\);${ID}=${ID}\\(\\{filepath:`),
+        ),
+      },
+      {
+        as: "persistedOutputNotice",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("bash-tool-result", "persistedOutputNotice", new RegExp(`=(${ID})\\(\\{filepath:`)),
+      },
+      {
+        // `var kK = "\n"` — the separator between stderr and the abort marker.
+        as: "newline",
+        kind: "primitive",
+        derive: pick(
+          "bash-tool-result",
+          "newline",
+          new RegExp(`\\+=(${ID});${ID}\\+="<error>Command was aborted`),
+        ),
+      },
+      {
+        as: "backgroundNotice",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("bash-tool-result", "backgroundNotice", new RegExp(`=(${ID})\\(\\{backgroundTaskId:`)),
+      },
+      {
+        // `var _t="Read"` — the Read tool's name, as it appears in prose.
+        as: "readToolName",
+        kind: "primitive",
+        derive: pick("bash-tool-result", "readToolName", new RegExp(`readToolName:(${ID})\\}`)),
+      },
+      {
+        // `function FE(){return!1}` — a constant in this build, but a POLICY
+        // predicate by nature, so it is owned as a predicate and the branch it
+        // guards is kept rather than folded away.
+        as: "useTaskAck",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("bash-tool-result", "useTaskAck", new RegExp(`if\\((${ID})\\(\\)\\)return\\{tool_use_id`)),
+      },
+      {
+        // reads the live background output-path registry + session dir.
+        as: "backgroundOutputPath",
+        kind: "effectful-port",
+        derive: pick("bash-tool-result", "backgroundOutputPath", new RegExp(`outputPath:(${ID})\\(`)),
+      },
+      {
+        // reaches a gate and the configured Bash timeout through a helper.
+        as: "taskAckEnvelope",
+        kind: "effectful-port",
+        derive: pick("bash-tool-result", "taskAckEnvelope", new RegExp(`content:(${ID})\\(${ID},\\[`)),
+      },
+      {
+        as: "taskAckEnding",
+        kind: "effectful-port",
+        derive: pick("bash-tool-result", "taskAckEnding", new RegExp(`ending:(${ID})\\(`)),
+      },
+    ],
+    // Solo-sabotaging this one reddens FOUR scenarios, not one: every scenario
+    // that runs a Bash command reads its result back. All four are listed so the
+    // expected-RED set is not mistaken for a regression.
+    coverage: ["bash-tool", "hooks", "partial-tool-args", "parallel-tools"],
+  },
+
+  {
+    name: "grep-tool-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: '"occurrence":"occurrences"',
+    fn: "grepToolResultBlock",
+    captures: [
+      {
+        as: "paginationNote",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("grep-tool-result", "paginationNote", new RegExp(`"content"\\)\\{let ${ID}=(${ID})\\(`)),
+      },
+      {
+        // `k(n, singular, plural = singular + "s")` from chunk-04aem4bh.js.
+        as: "plural",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("grep-tool-result", "plural", new RegExp(`\\$\\{(${ID})\\(${ID},"file"\\)\\}`)),
+      },
+    ],
+    coverage: ["search-tools"],
+  },
+
+  {
+    name: "glob-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: 'content:"No files found"};return',
+    fn: "globResultBlock",
+    captures: [
+      {
+        // the truncation-notice function: `...e.truncated?[<ident>(e)]:[]`
+        // (2.1.241 `yzv`; 2.1.251 `APn`). Owned since C4; the corpus never
+        // truncates, so its three outputs are graded by the contract test.
+        as: "truncationNotice",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("glob-result", "truncationNotice", new RegExp(`e\\.truncated\\?\\[(${ID})\\(e\\)\\]`)),
+      },
+    ],
+    coverage: ["search-tools"],
+  },
+
   {
     name: "task-create-result",
     target: "sibling-method",
-    signature: { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] },
+    signature: SIBLING_METHOD,
     anchor: " created successfully: ",
     fn: "taskCreateResultBlock",
     // Verified zero free variables: the body reads only its own parameters.
     captures: [],
     coverage: ["todo-tool"],
   },
+
   {
-    name: "glob-result",
+    name: "task-get-result",
     target: "sibling-method",
-    signature: { params: 2, ancestry: ["ObjectLiteralExpression", "SourceFile"] },
-    anchor: 'content:"No files found"};return',
-    fn: "globResultBlock",
+    signature: SIBLING_METHOD,
+    anchor: "Blocked by: ${",
+    fn: "taskGetResultBlock",
+    captures: [],
+    coverage: ["task-family"],
+  },
+
+  {
+    name: "task-list-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: "No tasks found",
+    fn: "taskListResultBlock",
+    captures: [],
+    coverage: ["task-family"],
+  },
+
+  {
+    name: "task-update-result",
+    target: "sibling-method",
+    signature: SIBLING_METHOD,
+    anchor: "Task completed. Call TaskList now",
+    fn: "taskUpdateResultBlock",
     captures: [
       {
-        // the truncation-notice function: `...e.truncated?[<ident>(e)]:[]`
-        // (2.1.241 `yzv`; 2.1.251 `APn`)
-        as: "truncationNotice",
-        // a formatter over the tool output — side-effect free, so the owned
-        // module should ship its own copy rather than call the graph's.
-        kind: "pure-helper",
-        derive: pick("glob-result", "truncationNotice", new RegExp(`e\\.truncated\\?\\[(${ID})\\(e\\)\\]`)),
+        // the session's agent/team identity (chunk-mk4am7jk.js).
+        as: "agentTeamContext",
+        kind: "effectful-port",
+        derive: pick("task-update-result", "agentTeamContext", new RegExp(`\\?\\.to==="completed"&&(${ID})\\(\\)&&`)),
+      },
+      {
+        // env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS + the `tengu_amber_flint` gate
+        // (chunk-9rtx6cwj.js). Both ports are false headlessly, so the completion
+        // nudge they guard is DARK in the corpus — the contract test grades it.
+        as: "agentTeamsEnabled",
+        kind: "effectful-port",
+        derive: pick("task-update-result", "agentTeamsEnabled", new RegExp(`==="completed"&&${ID}\\(\\)&&(${ID})\\(\\)\\)`)),
       },
     ],
-    coverage: ["search-tools"],
+    coverage: ["task-family"],
   },
 
   // ---- W0a mechanism spikes: one real splice per new target shape ----------
@@ -219,16 +506,18 @@ export const SPLICES: Splice[] = [
       {
         // Both sections are pure formatters over the context object
         // (chunk-fy12d89p.js @ 2.1.251: `$K`/`UK` interpolate `e.marketingName`
-        // / `e.knowledgeCutoff` and return a string or null), so `pure-helper`.
-        // `readDirectoryContext` above stays `effectful-port`: it reads the
-        // model registry, which is populated at runtime.
+        // / `e.knowledgeCutoff` and return a string or null), so `pure-helper`
+        // — and owned since C4. `readDirectoryContext` above stays
+        // `effectful-port`: it reads the model registry, populated at runtime.
         as: "primarySection",
         kind: "pure-helper",
+        owned: true,
         derive: (body) => sections("primarySection", body)[0],
       },
       {
         as: "secondarySection",
         kind: "pure-helper",
+        owned: true,
         derive: (body) => sections("secondarySection", body)[1],
       },
       {
@@ -330,15 +619,16 @@ export const SPLICES: Splice[] = [
         // errorCode / isExpected / formatError are pure predicates over the
         // caught value (chunk-qr1avfxy.js @ 2.1.251: `n.code` extraction, an
         // `errno` typeof test, `n instanceof Error?n.message:String(n)`), so
-        // they are `pure-helper`. Still forwarded: owning them is W1's retrofit
-        // (C4), and the classification is that work's input.
+        // they are `pure-helper` — and owned since C4's retrofit.
         as: "errorCode",
         kind: "pure-helper",
+        owned: true,
         derive: pick("session-materialize", "errorCode", new RegExp(`\\}catch\\(t\\)\\{let ${ID}=(${ID})\\(t\\);if\\(`)),
       },
       {
         as: "isExpected",
         kind: "pure-helper",
+        owned: true,
         derive: pick("session-materialize", "isExpected", new RegExp(`\\}catch\\(t\\)\\{let ${ID}=${ID}\\(t\\);if\\((${ID})\\(t\\)\\)`)),
       },
       {
@@ -349,6 +639,7 @@ export const SPLICES: Splice[] = [
       {
         as: "formatError",
         kind: "pure-helper",
+        owned: true,
         derive: pick(
           "session-materialize",
           "formatError",

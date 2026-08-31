@@ -1,24 +1,17 @@
-// reforge-owned reimplementation of the Write tool's
-// mapToolResultToToolResultBlockParam (2.1.241, pretty line ~286390).
-// Injected as a prelude; the patched bundle delegates here, passing the
-// closure-scoped freshness-suffix constant as an argument.
+// ADAPTER — the graph-facing seam for the Write result formatter.
+//
+// Delegation signature (built by strangle/build.ts from the manifest row):
+//   writeToolResultBlock(output, toolUseId, freshnessSuffix)
+//
+// `freshnessSuffix` is a §2.4 `primitive`: the module owns the value and the
+// adapter's only job with the graph's copy is to prove they still agree.
+import { writeToolResultBlock } from "./write-tool-result/reference.js";
+import { assertGraphValue } from "./shared/assert.js";
+import { FRESHNESS_SUFFIX } from "./shared/file-state.js";
+
 globalThis.__reforge = Object.assign(globalThis.__reforge ?? {}, {
-  writeToolResultBlock({ filePath, type, userModified, memdirStamped }, toolUseId, freshnessSuffix) {
-    const modified = userModified ? " The user modified your proposed content before accepting it." : "";
-    const suffix = userModified || memdirStamped ? "" : freshnessSuffix;
-    switch (type) {
-      case "create":
-        return {
-          tool_use_id: toolUseId,
-          type: "tool_result",
-          content: `File created successfully at: ${filePath}${modified}${suffix}`,
-        };
-      case "update":
-        return {
-          tool_use_id: toolUseId,
-          type: "tool_result",
-          content: `The file ${filePath} has been updated successfully.${modified}${suffix}`,
-        };
-    }
+  writeToolResultBlock(output, toolUseId, freshnessSuffix) {
+    assertGraphValue("write-tool-result", "freshnessSuffix", freshnessSuffix, FRESHNESS_SUFFIX);
+    return writeToolResultBlock(output, toolUseId);
   },
 });

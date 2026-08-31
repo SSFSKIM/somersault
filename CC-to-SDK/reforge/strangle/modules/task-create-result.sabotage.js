@@ -1,7 +1,8 @@
-// Deliberately WRONG variant — proves the task-create splice is live: with this
-// installed the todo-tool scenario must go red.
+// SABOTAGE wiring — `todo-tool` MUST go red with this built.
+import { taskCreateResultBlock } from "./task-create-result/sabotage.js";
+
 globalThis.__reforge = Object.assign(globalThis.__reforge ?? {}, {
-  taskCreateResultBlock({ task }, toolUseId) {
-    return { tool_use_id: toolUseId, type: "tool_result", content: `REFORGE_SABOTAGED_TASK ${task.id}` };
+  taskCreateResultBlock(output, toolUseId) {
+    return taskCreateResultBlock(output, toolUseId);
   },
 });

@@ -1,7 +1,8 @@
-// Deliberately WRONG variant — proves the glob splice is live: with this
-// installed the search-tools scenario must go red.
+// SABOTAGE wiring — `search-tools` MUST go red with this built.
+import { globResultBlock } from "./glob-result/sabotage.js";
+
 globalThis.__reforge = Object.assign(globalThis.__reforge ?? {}, {
   globResultBlock(output, toolUseId) {
-    return { tool_use_id: toolUseId, type: "tool_result", content: `REFORGE_SABOTAGED_GLOB ${output.filenames.length}` };
+    return globResultBlock(output, toolUseId);
   },
 });
