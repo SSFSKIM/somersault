@@ -580,7 +580,7 @@ worktree {name, path, branch, …}?
   ` · <elapsed> · ↓ <N> tokens · <sub-status>`. Token count is `responseLength/4` with an eased
   catch-up animation (3/15%/50 chars per 50 ms tick). Sub-status is one of
   `running tool for <t>` / `ran tool for <t>` / `thinking…` / `thought for Ns`.
-- **Thinking escalation** `Yo(ms)` (cli.pretty.js:623631): `thinking` → `still thinking` (10 s) →
+- **Thinking escalation** `Yo(ms)` (cli.pretty.js:77628): `thinking` → `still thinking` (10 s) →
   `thinking more` (20 s) → `thinking some more` (30 s) → `almost done thinking` (45 s).
 - **Stall detection**: if no token for > 10 s, a `stalledIntensity` ramp dims the shimmer and
   `tengu_spinner_stalled_ui` fires at thresholds `[10 s, 45 s, 300 s]`; recovery emits
@@ -688,7 +688,7 @@ segments stay one link (cli.pretty.js:816172).
 ### 4.6 Footer, todo HUD, context meter
 
 The footer hint line (`aQ`, cli.pretty.js:158152) is a priority ladder that renders exactly one hint
-plus a `·`-joined chain of badges:
+plus a `·`-joined chain of badges (the bash-mode branch is at cli.pretty.js:158202):
 
 `exit confirmation` → `Pasting…` → `paste again to expand` → `-- MODE --` (vim) → one of
 `warmup | interrupt | interrupt_agents | memories | manage | ctrl_t | agents | voice | cycle |
@@ -697,7 +697,7 @@ session-memories badge, diff-panel badge, feedback-drafts badge, selection-copy 
 
 Verbatim hint strings: `? for shortcuts`, `hold <key> to speak`, `! for shell mode`,
 `(shift+tab to cycle)`, `esc to interrupt`, `enter to view tasks`, `↓ to manage`,
-`ctrl+t to show tasks` / `to hide tasks`.
+`ctrl+t to show tasks` / `to hide tasks`. (`! for shell mode` at cli.pretty.js:158202.)
 
 Todo HUD: `ctrl+t` (`app:toggleTodos`) renders a task list with status glyphs
 `✓ / ▪ / ▫` (`tick`, `squareSmallFilled`, `squareSmall`, cli.pretty.js:77480), capped, with an
@@ -998,7 +998,8 @@ indicate argument injection via the URL."* (cli.pretty.js:589148).
 | `/context` | "Visualize current context usage as a colored grid" |
 | `/copy` | "Copy Claude's last response to clipboard (or /copy N for the Nth-latest)" |
 
-Remote Control is a bidirectional bridge (`replBridge`, cli.pretty.js:748560) with an explicit
+Remote Control is a bidirectional bridge (`replBridgeEnabled` / `replBridgeOutboundOnly`, resolved by
+`Ln({remoteControlFlag, isRemoteThinClient})` at cli.pretty.js:748448) with an explicit
 whitelist of settings a remote peer may change: only `effortLevel` and `ultracode`
 (cli.pretty.js:206348). Outbound-only mode prints *"This session is outbound-only. Enable Remote
 Control locally to allow inbound control."* Background sessions (`--bg`) run the **same fullscreen

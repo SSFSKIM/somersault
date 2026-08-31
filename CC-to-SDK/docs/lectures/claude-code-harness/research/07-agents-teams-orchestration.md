@@ -1359,7 +1359,541 @@ Other remote-execution surfaces present but distinct from agent isolation:
 `remote-control-repl/-cli/-sdk/-auto`, `ccr-mirror`, `client-directory-sync` session tags
 (`:317919`); the `RemoteTrigger` tool (§7.6); the `CLAUDE_CODE_REMOTE*` env family.
 
+---
+
+## 6. The Workflow engine
+
+### 6.0 Chunk map
+
+| Concern | Chunk | Lines |
+|---|---|---|
+| `WorkflowTool` definition, schemas, gating, resolution | `chunk-pvkxaysh.js` | 661878–663388 (tool 663203–663386) |
+| Description + embedded authoring reference (`e`, `Atn`, `Ctn`) | `chunk-s9vr7jq9.js` | 727911–728086 |
+| Script runtime: VM context, `agent/parallel/pipeline/log/phase/workflow`, journal, spawn | `chunk-xdx612ep.js` | 812612–814550 |
+| `meta` parser (`bf`) | `chunk-s6rr3vn1.js` | 727031–727180 |
+| Determinism check (`jst`) | — | 134353–134371 |
+| Saved-workflow discovery, env vars | — | 851380–851640 |
+| Run/journal/snapshot paths (`L0`, `FBn`) | — | 817480–817580 |
+| Script persistence (`Y_t`, `um`) | `chunk-9e2ns8ty.js` | 245141–245185 |
+| Gates (`Zu`, `HTe`, `y_t`, `AJn`) | `chunk-92en3jeh.js` | 234584–234644 |
+| Saved workflows → slash commands | — | 651142–651172 |
+| `workflow-authoring` skill registration | — | 850680–850694 |
+| Bundled `deep-research` workflow | `chunk-2sytyd7x.js` | 73038–73578 |
+
+### 6.1 Gating
+
+`nu = "Workflow"` (`cli.pretty.js:266538`), alias `RunWorkflow`. `isEnabled: () => Zu()`
+(`:234584-234644`), verbatim:
+
+```js
+function HTe() {                                   // 234584 — hard kill
+  return a.CLAUDE_CODE_DISABLE_WORKFLOWS || Sw()?.settings.disableWorkflows === true;
+}
+function Zu() {                                    // 234597 — tool isEnabled()
+  if (HTe()) return false;
+  if (!y_t()) return false;                        // server policy allow_workflows
+  let { available, defaultOn } = o();
+  if (!available) return false;
+  return Sw()?.settings.enableWorkflows ?? defaultOn;
+}
+function i() {                                     // 234629 — availability resolver
+  if (a.CLAUDE_CODE_WORKFLOWS === true)  { let e = I("tengu_workflows_enabled", true); return { available: e, defaultOn: e }; }
+  if (a.CLAUDE_CODE_WORKFLOWS === false) return { available: false, defaultOn: false };
+  if (!I("tengu_workflows_enabled", true)) return { available: false, defaultOn: false };
+  return { available: true, defaultOn: Fn() !== "pro" };   // OFF by default on Pro
+}
+function __t() { return Sw()?.settings.workflowKeywordTriggerEnabled ?? true; }
+```
+
+Note the last line of `i()`: workflows are **available but default-off on the Pro tier**, on by
+default above it (`Fn()` read as the subscription tier — **INFERRED**; `Fn` itself not opened).
+
+| Env var | Type | Effect |
+|---|---|---|
+| `CLAUDE_CODE_DISABLE_WORKFLOWS` | bool | hard-disables the tool |
+| `CLAUDE_CODE_WORKFLOWS` | tri-bool | forces available on/off, bypassing the tier default |
+| `CLAUDE_WORKFLOW_NAME_ONLY` | bool | restricts invocation to `{name, args}` (`l_e()`, `:851390`) |
+| `CLAUDE_REMOTE_WORKFLOW_SCRIPT` / `_ARGS` | — | CCR carrier inputs |
+| `CLAUDE_CODE_WORKFLOW_SIZE_WARNING_AGENTS` / `_TOKENS` | int ≥1 | size-warning thresholds |
+| `CLAUDE_CODE_WORKFLOW_PREFIX_STAGGER_MS` | int ≥0 | spawn stagger |
+
+Settings keys: `disableWorkflows` (managed), `enableWorkflows` (surfaced as "Dynamic workflows" in
+`/config`), `workflowSizeGuideline`, `workflowKeywordTriggerEnabled`. Server policy key
+`allow_workflows`, denial text (`:95503`):
+``dynamic workflows are disabled for this session (org policy `allow_workflows`).``
+
+Validation refusals (`:663262-663281`), with `errorCode`:
+- 5 — ``Dynamic workflows are disabled by managed settings (`disableWorkflows`).``
+- 6 — `Dynamic workflows are not enabled for this session (org policy, launch gate, or the "Dynamic workflows" setting in /config).`
+- 8 — `This session restricts the Workflow tool to named workflows (CLAUDE_WORKFLOW_NAME_ONLY is set). Not allowed here: <fields>. Invoke as {name, args} only.`
+- 4 — `Workflow scripts must be deterministic: Date.now()/Math.random()/new Date() are unavailable (breaks resume). Stamp results after the workflow returns, or pass timestamps via args.`
+- 3 — `Workflow <runId> is still running (task <t>). Stop it first with TaskStop({taskId: "<t>"}) before resuming.`
+- 1 (resolve failure) / 2 (invalid script) / 15 (bad `scriptPath`).
+
+`checkPermissions` (`:663288`) defaults to `behavior: "ask"` with the message
+**"Review dynamic workflow before running"**. Only `{name}` invocations participate in the
+`Workflow(<name>)` rule grammar (with an allow-rule suggestion targeted at `localSettings`); a
+`scriptPath` is resolved and inlined into `updatedInput.script` so the approval dialog shows the real
+code, and a path outside the readable set is denied with reason
+`"workflow scriptPath outside the readable set"`.
+
+**Size guideline** (`:92050-92100`). Levels `unrestricted | small | medium | large`, default
+`medium`; agent budgets `{small: 5, medium: 15, large: 50}`. Appended to *every* description and
+prompt via `edn()`:
+`This session has the default workflow size guideline: medium — keep workflows under 15 agents. This is a guideline, not a hard limit — follow it unless the user's prompt calls for a different scale. The user can raise or remove it with "Dynamic workflow size" in /config.`
+
+### 6.1.1 "ultracode" — two distinct mechanisms
+
+**"ultracode" is not the workflow gate.** It is a reasoning-effort level (`"ultracode"` maps to
+`xhigh`, `:42324`, `:42360`) living in app state (`appState.ultracode`, `:88553`), which also exempts
+the session from the concurrent-subagent cap (`:467967`). Its effect on workflows is purely a
+*policy expressed in the prompt*, delivered two ways:
+
+1. **Per-turn keyword.** `Mln(e) = dMe(e, "ultracode")` (`:491977`) fuzzy-matches the literal in a
+   human-typed prompt, gated on `Zu() && isHumanTypedPrompt && !suppressWorkflowKeyword && __t()`
+   (`:492135`). Emits the `workflow_keyword_request` attachment, rendered as (`:518738`):
+   > The user included the keyword "ultracode", opting this turn into multi-agent orchestration — use the Workflow tool to fulfill the request.
+
+2. **Session mode.** `Ljt(effort, storage) = settings.ultracode === true || CTe(effort) === "ultracode"`
+   (`:232828`). Reminders (`:518738`):
+   > **full:** Ultracode is on: optimize for the most exhaustive, correct answer — not the fastest or cheapest. Use the Workflow tool on every substantive task; token cost is not a constraint. See the **Ultracode** section and quality patterns in the workflow authoring reference. Solo only on conversational/trivial turns.
+   > **sparse:** Ultracode is still on — use the Workflow tool; see the Ultracode section of the workflow authoring reference.
+   > **exit:** Ultracode is off — the Workflow tool's standard opt-in rule applies again.
+
+### 6.1.2 The dormant v2 engine
+
+`chunk-pvkxaysh.js` also carries a complete second engine — a `world` blackboard with
+`put/read/on/eval/retract`, `$var` pattern binding, `$atleast` thresholds, budget rows, and a world
+journal (`:662200-663160`) — plus `A()?.runOpFields()` hooks in the schema. In this build `A()`
+returns `undefined` (`:663163`), `cr()` returns `undefined` (`:663169`), `c_e()` hard-returns
+`false`, and `bundledWorkflowsV2` is `[]` (`:819445`). **v2 is compiled in but entirely inert**,
+which is why `runId` and the run-op fields never appear in the exposed schema.
+
+### 6.2 Input schema — verbatim (`zr`, `cli.pretty.js:663172`)
+
+```js
+ot({
+  script: i().max(um).refine(noControlChars, "script contains control characters that would be hidden in the approval dialog").optional().describe(
+    "Self-contained workflow script. Must begin with `export const meta = { name, description, phases }` (pure literal, no computed values) followed by the script body using agent()/parallel()/pipeline()/phase()."),
+  name: i().optional().describe("Name of a predefined workflow (built-in or from .claude/workflows/). Resolves to a self-contained script."),
+  description: i().optional().describe("Ignored — set the workflow description in the script's `meta` block."),
+  title: i().optional().describe("Ignored — set the workflow title in the script's `meta` block."),
+  args: _e().optional().describe("Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string — a stringified list breaks `args.filter`/`args.map` in the script. Use for parameterized named workflows (e.g. a research question)."),
+  scriptPath: i().optional().describe("Path to a workflow script file on disk. Every Workflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke Workflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`."),
+  resumeFromRunId: i().regex(/^wf_[a-z0-9-]{6,}$/).optional().describe(
+    "Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run. Same-session only. Stop the prior run first (TaskStop) before resuming."),
+  ...runOpFields()
+}).refine(e => e.script || e.name || e.scriptPath || e.runId,
+          { message: "Must provide script, name, scriptPath, or runId" })
+```
+
+`um = 524288` bytes is the maximum script size (`:245141`).
+
+Output (`Nr`, same line):
+
+```js
+f({ status: ie(["async_launched","remote_launched", <RUN_OP_STATUS>]),
+    taskId: i(),
+    taskType: ie(["local_workflow","remote_agent"]).optional().describe("TaskType of the registered background task — 'local_workflow' for in-process runs, 'remote_agent' when remote:true dispatches to CCR. Set on all new writes; absent only on transcripts written before this field existed."),
+    workflowName: i().optional().describe("meta.name from the workflow script — same value as task_started.workflow_name. …"),
+    runId: i().optional().describe("Local workflow run identifier for resumeFromRunId. Absent for remote_launched (the CCR session URL is the resume handle there) …"),
+    summary: i().optional(),
+    transcriptDir: i().optional().describe("Directory where subagent transcripts are written during execution"),
+    scriptPath: i().optional().describe("Path to the persisted workflow script for this invocation. Editable via Write/Edit; pass back as `scriptPath` to re-run without resending the script."),
+    sessionUrl: i().optional().describe("CCR session URL when status is remote_launched"),
+    warning: i().optional().describe("Non-blocking heads-up (e.g. local git state diverges from the pushed branch the cloud session will clone)"),
+    error: i().optional().describe("Set if syntax check failed") })
+```
+
+### 6.3 Tool description — the opt-in rule (`cli.pretty.js:727916-727926`)
+
+```
+Execute a workflow script that orchestrates multiple subagents deterministically. Workflows run in the background — this tool returns immediately with a task ID, and a <task-notification> arrives when the workflow completes. Use /workflows to watch live progress.
+
+ONLY call this tool when the user has explicitly opted into multi-agent orchestration. Workflows can spawn dozens of agents and consume a large amount of tokens; the user must request that scale, not have it inferred. Explicit opt-in means one of:
+- The user included the keyword "ultracode" in their prompt (you'll see a system-reminder confirming it).
+- Ultracode is on for the session (a system-reminder confirms it) — see **Ultracode** in the workflow authoring reference.
+- The user directly asked you to run a workflow or use multi-agent orchestration in their own words ("use a workflow", "run a workflow", "fan out agents", "orchestrate this with subagents"). The ask must be in the user's words — a task that would merely benefit from a workflow does not count.
+- The user invoked a skill or slash command whose instructions tell you to call Workflow.
+- The user asked you to run a specific named or saved workflow.
+
+For any other task — even one that would clearly benefit from parallelism — do NOT call this tool. Use the Agent tool (if available) for individual subagents, or briefly describe what a multi-agent workflow could do and how much it would roughly cost, and ask the user whether to run it. Mention they can ask for one with "use a workflow" in a future message to skip the ask.
+
+Every script must begin with `export const meta = {...}`: a PURE LITERAL (no variables, calls or interpolation) giving the workflow's `name`, a one-line `description` (shown in the permission dialog) and optionally `phases` — one `{ title, detail? }` per phase() call, titles matched exactly. Pass the script inline via `script` — do not Write it to a file first, and do not also set the tool's `name` input (that selects a saved workflow); it is plain JavaScript, not TypeScript.
+```
+
+…followed by the canonical `review-changes` pipeline example (`:727938-727946`).
+
+`Ctn(t)` (`:728082`) then appends **either** the full authoring reference (`Atn`) when the
+workflow-authoring skill is unavailable, **or** a one-line pointer to the skill (`:728086`):
+``Before writing a script, load the `workflow-authoring` skill — the workflow authoring reference: script API and gotchas, resume, the **Ultracode** section, quality patterns, worked examples.``
+
+### 6.4 The script API (from `Atn`, `cli.pretty.js:727927-728075`)
+
+```
+- agent(prompt: string, opts?: {label?, phase?, schema?, model?, effort?, isolation?: 'worktree', agentType?}): Promise<any>
+- pipeline(items, stage1, stage2, ...): Promise<any[]>
+- parallel(thunks: Array<() => Promise<any>>): Promise<any[]>
+- log(message: string): void
+- phase(title: string): void
+- args: any
+- budget: {total: number|null, spent(): number, remaining(): number}
+- workflow(nameOrRef: string | {scriptPath: string}, args?: any): Promise<any>
+```
+
+Verbatim on the load-bearing points:
+
+- `agent()` — "Without schema, returns its final text as a string. With schema (a JSON Schema), the
+  subagent is forced to call a StructuredOutput tool and agent() returns the validated object — no
+  parsing needed. Returns null if the user skips the agent mid-run or the subagent dies on a terminal
+  API error after retries (filter with `.filter(Boolean)`)."
+  `opts.effort` ∈ `'low'|'medium'|'high'|'xhigh'|'max'`.
+  `opts.isolation: 'worktree'` — "EXPENSIVE (~200-500ms setup + disk per agent), use ONLY when agents
+  mutate files in parallel and would otherwise conflict; the worktree is auto-removed if unchanged."
+  `opts.agentType` — "resolved from the same registry as the Agent tool; composes with schema (the
+  custom agent's system prompt gets a StructuredOutput instruction appended)."
+- `pipeline()` — "run each item through all stages independently, NO barrier between stages… Every
+  stage callback receives `(prevResult, originalItem, index)`… A stage that throws drops that item to
+  `null` and skips its remaining stages."
+- `parallel()` — "This is a BARRIER… A thunk that throws (or whose agent errors) resolves to `null`
+  in the result array — the call itself never rejects."
+- `budget` — "The target is a HARD ceiling, not advisory: once `spent()` reaches `total`, further
+  `agent()` calls throw." The pool is shared across the main loop and all workflows in the turn.
+- `workflow()` — "The child shares this run's concurrency cap, agent counter, abort signal, and token
+  budget… **Nesting is one level only: workflow() inside a child throws.**"
+
+**Caps** (verbatim): "Concurrent agent() calls are capped at min(16, available CPUs - 2) per workflow
+— excess calls queue and run as slots free up… Total agent count across a workflow's lifetime is
+capped at 1000 — a runaway-loop backstop set far above any real workflow. A single
+parallel()/pipeline() call accepts at most `<vy>` items; passing more is an explicit error, not a
+silent truncation."
+
+**Execution environment** (verbatim): "Scripts are plain JavaScript, NOT TypeScript — type
+annotations (`: string[]`), interfaces, and generics fail to parse. The script body runs in an async
+context — use await directly. Standard JS built-ins (JSON, Math, Array, etc.) are available — EXCEPT
+`Date.now()`/`Math.random()`/argless `new Date()`, which throw (they would break resume)… **No
+filesystem or Node.js API access.**"
+
+**Ultracode section** (verbatim, `:727965`):
+
+```
+**Ultracode.** When a system-reminder confirms ultracode is on, that opt-in is standing: author and run a workflow for every substantive task by default. The goal is the most exhaustive, correct answer you can produce — token cost is not a constraint. For multi-phase work (understand → design → implement → review), that often means several workflows in sequence — one per phase — so you stay in the loop between them. The quality patterns below (adversarial verify, multi-modal sweep, completeness critic, loop-until-dry) are the tools; pick what fits the task. Lean toward orchestrating with workflows and adversarially verifying your findings — unless the work is trivial or already verified. Solo only on conversational turns or trivial mechanical edits. When a reminder says ultracode is off, revert to the opt-in rule in the Workflow tool description.
+```
+
+**Resume section** (verbatim):
+
+```
+## Resume
+
+The tool result includes a runId. To resume after a pause, kill, or script edit, relaunch with Workflow({scriptPath, resumeFromRunId}) — the longest unchanged prefix of agent() calls returns cached results instantly; the first edited/new call and everything after it runs live. Same script + same args → 100% cache hit. Before diagnosing why a completed workflow returned an empty or unexpected result, Read <transcriptDir>/journal.jsonl — it records each agent's actual return value; do not assume cached results are non-empty. … Fallback when no journal is available: Read agent-<id>.jsonl files in the transcript directory and hand-author a continuation script.
+```
+
+### 6.4.1 How a script is actually evaluated — Node `vm`, hardened
+
+`u8(scriptBody)` (`cli.pretty.js:813208`) does three things:
+
+1. A syntax pre-check in the host realm:
+   `Function("async function _check(){'use strict';\n" + body + "\n}")`.
+2. Rewrites `await` / `for await` through a `Promise.resolve`-bound settle helper (`vn()`,
+   `:813120-813207`) so cross-realm awaits cross the boundary correctly.
+3. Compiles with
+   `new vm.Script(wrapped, { filename: "workflow.js", importModuleDynamically: () => { throw WJ("import() is not available in workflow scripts.") } })`.
+
+The context (`ZDt`, `:813319`):
+
+```js
+u = vm.createContext({ __proto__: null, log, phase, console, budget, setTimeout, clearTimeout },
+                     { codeGeneration: { strings: !1, wasm: !1 } });
+zt(u); yie(u);
+```
+
+`codeGeneration.strings: false` is what **blocks `eval` and `Function`**. A source comment at
+`:287153` says so explicitly: *"eval is NOT deleted here — hardenVMIntrinsics is shared with REPLTool
+(codeGeneration:{strings:true}). WorkflowTool blocks eval via codeGeneration:false."* `yie()`
+(`:287137`) additionally deletes `ShadowRealm, WebAssembly, FinalizationRegistry, WeakRef, Atomics,
+SharedArrayBuffer, queueMicrotask, $vm, gc, edenGC, fullGC, print, readFile, Loader` and applies
+SES-style enable-property-override plus frozen intrinsics. There is no `fs`, no `require`, no
+`process`.
+
+Execution is `script.runInContext(ctx, { timeout: yWe | syncTimeoutMs })` (`:814341`). Arrays crossing
+the boundary are capped at **`vy = 4096`** elements (`Mo`, chunk-apaz13kw.js `:287505+`), exceeding
+which throws
+`array length N exceeds the maximum of 4096 supported across the workflow VM boundary`.
+
+Globals bind two ways (`:814319-814333`): `log`, `phase`, `console` (log/info/debug/error/warn),
+`budget`, `setTimeout`, `clearTimeout` are context properties; `agent`, `parallel`, `pipeline`,
+`workflow` are `defineProperty`'d async-wrapped host functions; `args` is injected as
+`vm.runInContext("JSON.parse(<json>)", ctx)` so it is a genuine guest-realm object. `budget` is
+`Object.freeze({ total, spent(), remaining() })` with `remaining() === Infinity` when `total == null`.
+
+### 6.4.2 The `meta` parser (`bf`, `cli.pretty.js:727031`)
+
+`meta` must be the **first statement**, of the exact form `export const meta = { … }` with an
+`ObjectExpression`. Literal evaluation (`:727110+`) admits only `Literal`, `ArrayExpression`,
+`ObjectExpression`, non-interpolated `TemplateLiteral`, and negative-number unary. Rejections:
+`spread not allowed in meta`, `template interpolation not allowed in meta`,
+`computed keys not allowed in meta`, `methods/accessors not allowed in meta`,
+`sparse arrays not allowed`, `non-literal node type in meta: <type>`,
+`reserved key name not allowed in meta: <k>`.
+
+Validated fields (`g`, `:727163`): `name` (non-empty string, **required**), `description` (non-empty
+string, **required**), `title?`, `whenToUse?`, `phases?` (array of `{title, detail?}`; the prose also
+documents a per-phase `model`). Parse failures render a caret-pointer excerpt plus (`:727083`):
+`Workflow scripts must be plain JavaScript — common causes are TypeScript syntax (type annotations, interfaces, generics) and broken string quoting or escaping.`
+
+A fast path (`validateBody: false`) parses only the `meta` expression, so listing saved workflows
+never compiles bodies.
+
+The determinism gate is a separate AST walk, `jst()` (`:134353`), rejecting `Date.now`,
+`Math.random`, and argless `new Date()`.
+
+### 6.4.3 `agent()` options the runtime actually reads
+
+Beyond the seven documented in the reference, `:813786-813950` reads three more:
+
+- **`disallowedTools`** — array of tool-name / permission-rule strings, unioned with the workflow
+  subagent's own deny list. Malformed input is a hard refusal, not a degraded spawn:
+  `agent() opts.disallowedTools must be an array of non-empty tool-name strings (e.g. ['Bash', 'Write']) … Refusing the spawn rather than running it un-narrowed.`
+- **`bashCommandClamp`** — array of `Bash(<prefix>)` rules, installed as an extra permission layer
+  `{ kind: "bash_command_clamp", rules }` (`:813997`).
+- **`stallMs`** — default `er = 180000`.
+
+`isolation: 'remote'` is present but **disabled in this build** (`:813825`):
+`agent({isolation:'remote'}) is not available in this build`. The description's remote-related
+interpolations are all empty strings (`:727915`), so remote is stripped from the prompt too.
+
+Caps (`:813583-813598`): per-workflow concurrency `Vn(cpus) = Math.min(16, Math.max(2, cpus - 2))`;
+lifetime cap `Go = 1000` with
+`Workflow agent() call cap reached (1000). This usually means a loop using budget.remaining() never terminates because no token budget was set — remaining() returns Infinity when budget.total is null. Add a hard iteration cap to the loop, or pass a token budget.`;
+and `WorkflowBudgetExceededError`:
+`Workflow token budget exceeded (X / Y output tokens). Stopping further agent() calls. In-flight agents will complete; their results are preserved.`
+
+`parallel()` / `pipeline()` (`:814238-814292`) both use `Promise.allSettled`; a rejected slot becomes
+`null`, budget-dropped slots are counted (`parallel: N slots dropped — token budget exceeded`).
+
+`workflow()` (`$o`, `:813270`) resolves a name via the same registry or `{scriptPath}` (blocked under
+`CLAUDE_WORKFLOW_NAME_ONLY`). The child's `workflow` global is replaced by a rejecting stub
+(`:813309`):
+`workflow() cannot be called from within a child workflow — nesting is limited to one level. Inline the inner script or call its agents directly.`
+The child also gets a no-op `phase` and a `[<name>] ` log prefix.
+
+Before each spawn, when the permission mode is `auto`, `Tt()` (`:813711`) runs the prompt (plus a
+≤4096-char schema serialisation) through the safety classifier; a block records
+`[<label>] blocked by safety classifier: <reason>` and returns `null` to the script.
+
+### 6.4.4 Resume cache key and on-disk layout
+
+Run id: `W = e.resumeFromRunId ?? "wf_" + Lr().slice(0, 12)` (`:663336`) — hence the
+`^wf_[a-z0-9-]{6,}$` regex.
+
+Cache key (`jo`, `:813431`; version tag `In = "v2"`, `:813383`):
+
+```js
+jo(prompt, opts, prevKey) = "v2:" + sha256(prevKey \0 prompt \0 Wn(opts)).hex
+```
+
+`Wn(opts)` (`:813400`) serialises **only** `schema, model, effort, isolation, agentType,
+disallowedTools, bashCommandClamp` — `label` and `phase` are deliberately excluded, so re-labelling
+does not bust the cache. Because `prevKey` chains, the key encodes the entire preceding `agent()`
+sequence; that is what makes "longest unchanged prefix replays" literally true.
+
+Journal replay (`Lo`, `:813392`) folds the JSONL into `{results: Map, started: Map<key, entry[]>,
+failed: Set}`. On a hit while still in prefix mode the runtime emits a `cached: true` progress event
+and returns the stored result without spawning (`:813810`). A `started` record with no matching
+`result` — a crash mid-agent — ends prefix mode. Entry types appended (`:813806-813815`):
+`{type:"started",key,agentId}`, `{type:"failed",key,agentId}`, `{type:"result",key,agentId,result}`.
+
+Paths. Let `PROJ = ~/.claude/projects/<mangled-cwd>` (`Ml()`/`Sl()`, `:44182`/`:44203`) and `SID` the
+session id:
+
+| Artifact | Path | Anchor |
+|---|---|---|
+| Transcript dir (returned as `transcriptDir`) | `PROJ/SID/subagents/workflows/<runId>/` | `L0`, `:817488` |
+| Journal | `PROJ/SID/subagents/workflows/<runId>/journal.jsonl` | `:813448` |
+| Per-agent transcripts | `…/<runId>/agent-<agentId>.jsonl` | `:44231`, `:814012` |
+| Persisted script | `PROJ/SID/workflows/scripts/<slug>-<runId>.js` | `Y_t`, `:245145-245170` |
+| Run snapshot | `PROJ/SID/workflows/<runId>.json` | `FBn`, `:817482-817505` |
+
+Slug: `n6(name) = name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "workflow"`
+(`:245142`). Directories `0700`, files `0600`.
+
+Snapshot JSON shape (`d()`, `:817513`):
+
+```jsonc
+{ "runId", "taskId", "timestamp", "script", "scriptPath", "args", "result", "agentCount", "logs",
+  "durationMs", "error", "summary", "workflowName", "title",
+  "status": "completed" | "failed" | …,
+  "startTime", "phases", "defaultModel", "workflowProgress": [], "totalTokens", "totalToolCalls" }
+```
+
+A storage-v5 sidecar mirrors both journal and snapshot.
+
+Resume prompts emitted to the model:
+- launch result (`:663380`): `Run ID: … / To resume after editing the script: Workflow({scriptPath: "…", resumeFromRunId: "…"}) — completed agents return cached results (cached results may themselves be empty — inspect journal.jsonl before assuming there is something to recover).`
+- completion `<diagnostics>` (`:613603`): `Per-agent results: <dir>/journal.jsonl — one {"type":"result",...} line per completed agent with its full return value.`
+- paused run (`:613552`): `Resume the paused workflow by calling: Workflow({scriptPath, resumeFromRunId}) — completed agents return cached results.`
+- cross-session orphan (`:557172`): `No completion record was found for background workflow "<name>" from the previous session. It may have been stopped (via the UI or TaskStop — these leave no transcript marker), or it may have been running when the previous Claude Code process exited. To pick up where it left off, relaunch with Workflow({scriptPath, resumeFromRunId: "<id>"}) — completed agent() calls return cached.`
+
+### 6.4.5 Saved workflows: discovery and surfacing
+
+Discovery (`cli.pretty.js:851380-851640`) merges four sources, later overriding earlier by name
+(`j()`, `:851620`):
+
+1. **built-in** — `wWe()` (`:136186`), registered by `initBundledWorkflows()` (`:73577`). Exactly one
+   ships: **`deep-research`** (metadata `:73060`, script `:73145+`).
+2. **plugin** — `<plugin>/workflows/*.js` plus `workflowsPaths` entries; names namespaced
+   `"<plugin>:<meta.name>"` (`:851415`).
+3. **projectSettings** — `.claude/workflows/*.js` for every project dir (`:851540`).
+4. **userSettings** — `~/.claude/workflows/*.js` (`RHe()`, `:851531`).
+
+Rules: **`.js` only** — a `.mjs`/`.cjs`/`.ts` sibling is counted as `nearMissExt` and skipped;
+≤ 512 KiB; `meta` must parse. Skips log `Workflow <path> has invalid meta: … — skipping` and
+telemeter `workflow_discover` with `skipped_invalid_meta / oversize / unreadable / near_miss_ext`.
+Records are `{source, name, description, whenToUse, phases, script, filePath}` (+ plugin fields),
+cached per `${iy()}:${l_e()}:${cwd}` and sorted by name. **There is no YAML frontmatter** — the
+`export const meta` literal *is* the frontmatter.
+
+**Saved workflows surface as slash commands** (`:651145-651172`). Each becomes a `type:"prompt"`
+command with `kind:"workflow"`, `progressMessage:"running dynamic workflow"`, and
+`loadedFrom: "bundled"|"plugin"|"skills"`, honouring `disableModelInvocation`. Expansion:
+
+```
+Run the "<name>" workflow.
+
+<description>
+
+<whenToUse>
+
+Phases:
+- <title>: <detail>
+
+Invoke: Workflow({ name: "<name>", args: "<user args>" })
+
+If the user asks you to modify this workflow or write a new script, load the `workflow-authoring` skill first.
+```
+
+So `/deep-research <question>` is a real slash command. The `/workflows` viewer's save dialog writes
+to `.claude/workflows/<slug>.js` (project) or `~/.claude/workflows/<slug>.js` (user), toggled with
+Tab, with an overwrite confirmation (`:825808-825860`).
+
+### 6.4.6 The `workflow-authoring` skill
+
+`IE = "workflow-authoring"` (`:756712`). Registration (`:850689`):
+
+```js
+Zr({ name: IE,
+     description: "Reference for writing a Workflow tool script (script API and gotchas, resume, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.",
+     menuDescription: "Load the reference for writing Workflow tool scripts",
+     userInvocable: true, isEnabled: () => Zu() && !c_e(),
+     getPromptForCommand: () => [{ type: "text", text: Atn }] })
+```
+
+Its body is **not** a `modules/*.md` file — it is the JS string constant `Atn` in
+`modules/chunk-s9vr7jq9.js` (21,295 bytes), mirrored at `cli.pretty.js:727946-728086`. The only match
+for the string `workflow-authoring` under `modules/` is the name constant in `chunk-twnw06x3.js:11`.
+Contents in order: title; why-a-workflow framing; the hybrid scout-then-orchestrate rule; five
+single-phase archetypes (Understand / Design / Review / Research / Migrate); the **Ultracode**
+paragraph (`:727961`); `meta` requirements plus a `find-flaky-tests` example; the script-body hook
+reference; the MCP-via-ToolSearch note; "plain JavaScript, not TypeScript" and the determinism
+prohibition; `DEFAULT TO pipeline()` with the barrier smell test; concurrency and agent caps; four
+worked patterns (barrier-then-verify, loop-until-count, loop-until-budget, exhaustive-review
+composition); seven named quality patterns (adversarial verify, perspective-diverse verify, judge
+panel, loop-until-dry, multi-modal sweep, completeness critic, no silent caps); scale-to-the-ask
+guidance; and `## Resume`.
+
+### 6.5 How workflow agents map onto the subagent runtime
+
+`workflow-subagent` (`Ft`, `cli.pretty.js:813631`):
+
+```js
+{ agentType: "workflow-subagent",
+  whenToUse: "Internal subagent for workflow script orchestration.",
+  tools: ["*"], disallowedTools: [SendUserMessage, Agent, Workflow],
+  source: "built-in", baseDir: "built-in", getSystemPrompt: () => Gn }
+```
+
+So a workflow subagent cannot message the user, cannot spawn `Agent`, and cannot nest `Workflow`.
+
+Two prompt variants — plain text return (`Gn`) and structured (`Xn`, used when `schema` is set):
+
+```
+You are a subagent spawned by a workflow orchestration script. Use the tools available to complete the task.
+
+CRITICAL: Your final text response is returned **verbatim** as a string to the calling script — it is your return value, not a message to a human.
+- Output the literal result (data, JSON, text). Do NOT output confirmations like "Done." or "Sent."
+- If asked for JSON, return ONLY the raw JSON — no code fences, no prose, no markdown.
+- Do NOT use SendUserMessage to deliver your answer. Put your answer in your final text response.
+- Be concise. The script will parse your output.
+```
+
+```
+You are a subagent spawned by a workflow orchestration script. Use the tools available to complete the task.
+
+CRITICAL: You MUST call the StructuredOutput tool exactly once to return your final answer. The tool's input schema defines the required shape.
+- Do your work (Read files, run commands, etc.), then call StructuredOutput with your answer.
+- Do NOT put your answer in a text response. The script reads ONLY the StructuredOutput tool call.
+- If the schema validation fails, read the error and call StructuredOutput again with a corrected shape.
+- After calling StructuredOutput successfully, end your turn. No acknowledgment needed.
+```
+
+When `opts.agentType` names a *custom* agent, the corresponding NOTE block (`Yn` / `qn`,
+`:813627-813630`) is **appended** to that agent's own system prompt rather than replacing it.
+
+**Workflow agents use exactly the same spawn machinery as the Agent tool.** The call (`:814000`):
+
+```js
+for await (let ev of Bb({ agentDefinition: Se, promptMessages: [...], toolUseContext: wn,
+    session, canUseTool, isAsync: false, querySource: qW(Se.agentType, ja(Se)),
+    availableTools: Pt, requiresStructuredOutput: pe !== void 0,
+    transcriptSubdir: `workflows/${runId}`, spawnedByWorkflowRunId: runId,
+    override: { agentId, agentContext }, model: opts.model, worktreePath })) { … }
+```
+
+`Bb` is the shared subagent generator defined at `:464827` and used identically by the Agent tool
+(`:468178`), forks (`:205411`), teammates (`:72184`), agent resume (`:556053`), and cron (`:587906`).
+
+`opts.agentType` is resolved against `toolUseContext.options.agentDefinitions.activeAgents` via
+`JNt(..., Agent)` (`:813841`) — literally the Agent tool's registry — with permission-rule awareness
+(`agent({agentType}): '<x>' is denied by permission rule 'Agent(<x>)' from <source>.`) and a fallback
+listing of available types. The chosen definition's `disallowedTools` are unioned with the workflow
+subagent's, and `StructuredOutput` is appended to its tool list when a schema is present.
+
+`opts.schema` compiles the JSON Schema into a `StructuredOutput` tool (`Jwe`, `:813866`) replacing any
+existing one in the pool. Retries are capped by `MAX_STRUCTURED_OUTPUT_RETRIES` (env-overridable,
+`:814009`); exceeding it throws
+`agent({schema}): StructuredOutput retry cap (N) exceeded — M failed calls with no valid output`.
+
+`isolation: 'worktree'` (`:813943`) allocates a worktree named `wf-<idx>` (or `<runId>-<idx>`) via the
+shared helper and appends a paragraph to the agent's prompt explaining the isolated working copy.
+Permission mode defaults to `acceptEdits` unless the agent definition specifies one (`:813900`).
+
+Each workflow agent's context carries two extra fields (`:813957`):
+
+```js
+{ agentId, parentAgentId, depth: parentDepth + 1, parentSessionId,
+  agentType: "subagent", subagentName: <def>.agentType,
+  workflowRunId: <runId>, workflowName: <meta.name>,
+  isAsync: false, isBuiltIn, isBackgroundAgent: true, invocationKind: "spawn", … }
+```
+
+and a per-agent progress event `{ type: "workflow_agent", index, label, phaseIndex, phaseTitle,
+agentId, agentType, isolation, model, fallbackModel, state, startedAt, queuedAt, attempt,
+lastAttemptReason, lastToolName, lastToolSummary, promptPreview, lastProgressAt }` under
+`toolUseID: "workflow_agent_<index>_<agentId>"`.
+
+The run itself is registered as a `local_workflow` task (id prefix `"w"`, `:92052`), rendered in
+`/workflows` and `/tasks` with `<n> agents` / `done` / `, unread` decorations (`:119407-119425`).
+`TaskStop` on it flips it to `paused` (`:613544`), producing the resume hint above; per-agent
+skip/retry inside a live run go through separate controllers (`:613576`) aborting with `"user-skip"`
+/ `"user-retry"`, and a user-skipped `agent()` resolves to `null` rather than throwing.
+
+`workflows` is one of the six synced config subdirectories (`n9n`, `:429471`) and one of the eight
+plugin component directories (`lgn`, `:31928`). `CLAUDE_REMOTE_WORKFLOW_SCRIPT` /
+`CLAUDE_REMOTE_WORKFLOW_ARGS` carry a workflow into a CCR session.
+
 <!--NEXT-->
+
+
 
 
 
