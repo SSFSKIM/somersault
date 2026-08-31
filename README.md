@@ -9,7 +9,7 @@ binary and library, plus the reference material that informs it.
 | Path | What it is |
 |---|---|
 | `CC-to-SDK/` | **The product.** `harness/` (the `ccx` binary + library), `app-server/` (codex-app-server-protocol front-end for the harness), live-SDK `probes/`, `reforge/` (differential engine harness), parity scorecard (`docs/parity/`), design specs (`docs/superpowers/`). |
-| `codex/` | Git **submodule** → [`SSFSKIM/codex`](https://github.com/SSFSKIM/codex): OpenAI's Codex (a production Rust agent harness) plus per-crate agent navigation docs — kept as a worked example of a coding-agent harness, not built here. |
+| `codex/` | Git **submodule** → [`openai/codex`](https://github.com/openai/codex), pinned to an upstream commit: OpenAI's Codex, a production Rust agent harness — kept as a worked example of a coding-agent harness, not built here. Per-crate navigation maps: [`docs/codex-maps/`](docs/codex-maps/). |
 | `ptc-surface/` | Programmatic-tool-calling (PTC) research surface — persistent-IPython-kernel tool calling for Claude Code. |
 | `docs/` | Repo-level docs; start at [`docs/repo-overview.md`](docs/repo-overview.md). |
 

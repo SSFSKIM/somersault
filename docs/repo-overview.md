@@ -15,24 +15,21 @@ adjacent research surface. The product has its own `CLAUDE.md`/`AGENTS.md` hiera
 | Path | What it is | Build? |
 |---|---|---|
 | `CC-to-SDK/` | **The product.** `harness/` (the `ccx` binary + library), `app-server/` (codex-app-server-protocol front-end), live-SDK `probes/`, `reforge/` (differential engine harness), `docs/parity/` (scorecard + drift ritual), `docs/superpowers/` (specs/plans). | Yes (npm per package) |
-| `codex/` | **Submodule** → [`SSFSKIM/codex`](https://github.com/SSFSKIM/codex): OpenAI's Codex, a production Rust agent harness (~90-crate Cargo workspace), plus per-crate agent navigation docs (`codex-rs/{core,tui,app-server}/CLAUDE.md`). A worked example to study and compare against — the SQ/EQ loop, per-OS sandboxing, the app-server JSON-RPC hub. | Not here (in its own repo) |
+| `codex/` | **Submodule** → [`openai/codex`](https://github.com/openai/codex), pinned to an upstream commit: OpenAI's Codex, a production Rust agent harness (~90-crate Cargo workspace). A worked example to study and compare against — the SQ/EQ loop, per-OS sandboxing, the app-server JSON-RPC hub. Navigation maps: `docs/codex-maps/`. | Not here (upstream) |
 | `ptc-surface/` | Programmatic-tool-calling (PTC) research surface — persistent-IPython-kernel tool calling for Claude Code. | No |
 | `docs/` | Repo-level docs (this file). Product docs live under `CC-to-SDK/docs/`. | — |
 
 ## The codex submodule
 
 - Populate on demand: `git submodule update --init codex` (it is large; skip unless you need it).
-- **Work on codex happens in its own repo**, not through the submodule: `SSFSKIM/codex` is a
-  standalone copy of `openai/codex` (not a GitHub fork — the fork slot is held by the archived
-  `codex_somersault`). It carries exactly one commit on top of upstream: the per-crate agent docs.
-- Upstream sync (in a clone of `SSFSKIM/codex`): `git remote add upstream
-  https://github.com/openai/codex.git && git fetch upstream && git merge upstream/main`, resolve
-  (the doc commit rarely conflicts), push — then bump the submodule pin here.
-- Inside the submodule, upstream's `AGENTS.md` is canonical for Rust conventions; the per-crate
-  `CLAUDE.md`/`AGENTS.md` pairs are byte-identical mirrors — edit both together, verify with
-  `for c in core tui app-server; do cmp codex-rs/$c/CLAUDE.md codex-rs/$c/AGENTS.md; done`.
-- After an upstream merge that moves files or reshapes crates, refresh the navigation maps — a
-  stale map is worse than none.
+- The submodule points **directly at `openai/codex`**, pinned to an upstream-main commit — there is
+  no intermediate fork to maintain. To advance it: `cd codex && git fetch origin && git checkout
+  <newer upstream sha>`, then commit the updated gitlink here.
+- The submodule is read-only reference — never commit changes inside it. Rust conventions inside
+  it are upstream's own `AGENTS.md`.
+- Per-crate navigation maps for reading the codex source live in **`docs/codex-maps/`**
+  (`core.md`, `tui.md`, `app-server.md`). They are written against the pinned commit — refresh
+  them when a pin bump moves files or reshapes crates; a stale map is worse than none.
 
 ## History
 

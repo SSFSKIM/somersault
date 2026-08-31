@@ -13,11 +13,11 @@ working conventions live there, not here.
 
 - **`CC-to-SDK/`** — the product (own `CLAUDE.md`): `harness/` (`ccx`), `app-server/`, `probes/`,
   `reforge/`, `docs/parity/`, `docs/superpowers/`.
-- **`codex/`** — git submodule → [`SSFSKIM/codex`](https://github.com/SSFSKIM/codex): OpenAI's Codex
-  (Rust agent harness) + per-crate agent docs. A reference example, not built here; usually **not
-  checked out** — run `git submodule update --init codex` only when you need to read it. Changes to
-  codex happen in its own repo (see the overview's submodule section), never as edits inside the
-  submodule here.
+- **`codex/`** — git submodule → [`openai/codex`](https://github.com/openai/codex), pinned to an
+  upstream commit. A reference example, not built here; usually **not checked out** — run
+  `git submodule update --init codex` only when you need to read it. Never edit inside the
+  submodule; to move it forward, bump the pin (see the overview). Crate navigation maps:
+  `docs/codex-maps/`.
 - **`ptc-surface/`** — programmatic-tool-calling research surface.
 - `docs/` — repo-level docs only; product docs belong under `CC-to-SDK/docs/`.
 
