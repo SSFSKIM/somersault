@@ -8,7 +8,11 @@
       "title": "Tool result formatters (Read, Edit, Bash, Grep, Glob, Write, task family)",
       "wave": "C4",
       "state": "spliced",
-      "edges": [],
+      "edges": [
+        "tool/Read",
+        "subsystem/bash-executor",
+        "subsystem/subagent-dispatch"
+      ],
       "footprint": [
         {
           "chunk": "chunk-fy12d89p.js",
@@ -475,7 +479,7 @@
         "scenario:edit-tool",
         "scenario:task-family"
       ],
-      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks)."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (§2.4), one per effectful-port capture that leaves this row: `tool/Read` — the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` — the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery §1.1 files under the Bash executor; `subsystem/subagent-dispatch` — TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (§3.3), so it is a port with no edge."
     },
     {
       "id": "subsystem/tool-result-validators",
