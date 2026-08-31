@@ -1,21 +1,18 @@
-// tui/select/Tabs.tsx — the `Tabs` strip (F6 T2): the tab HEADER every tabbed dialog paints, written once so
-// that the chip styling and the `tab`/`shift+tab`/`←`/`→` cycling arrive everywhere at the same time.
-// Transcribed from 2.1.220's `Jx` (L434983 — the container, whose header row is L435073-435076) and its item `awr`
-// (L435094-435110). The panel half of upstream's component (`tp`, L435119: render the child whose id === selectedTab)
-// is deliberately NOT reproduced — our two tabbed dialogs already switch their own bodies on the active tab
-// and route through `onTabChange` into hook state that must survive a sub-dialog round trip
-// (SettingsDialog's header explains why the active tab lives there and not here).
+// tui/select/Tabs.tsx — the tab shell (F6 T2 chip strip; T-MENU task 1 adds the pane half): canon `Pg`
+// (L122645, the shell), `pnt` (L122703, the chip) and `Zi` (L122728, the pane) in one module. The chip
+// styling and the `tab`/`shift+tab`/`←`/`→` cycling are transcribed unchanged from 2.1.220's `Jx`/`awr` — this
+// task retires the old header comment recording the pane half as a deliberate skip, since it is what follows.
 //
-// Two details that are the whole point of transcribing rather than eyeballing:
-//   · A chip is `" " + title + " "` — the padding spaces are on EVERY tab, not just the current one — and the
-//     current chip is `inverse` + `bold` (L435109). The strip is a `flexDirection:"row"` box with `gap:1`
-//     (L435073): one space between chips, no separator glyph.
-//   · Keys are the F2 machinery: `co({ "tabs:next", "tabs:previous" }, { context: "Tabs", isActive })`
-//     (L435049) is exactly `useKeyScope("Tabs")` + `useKeyActions`, and the `Tabs` context in our table
-//     (bindings.ts, matching upstream's own at L186118) already binds tab/shift+tab/right/left to them.
-//     `disableNavigation` (upstream's `nwr`, folded into that `isActive`) registers NO handlers, so the
-//     actions fall through to whatever owns the keyboard instead — which is how a host dialog keeps a text
-//     surface of its own from losing keys to the strip.
+// TWO CALLING CONVENTIONS, not one replacing the other:
+//   · EXPLICIT (unchanged): `<Tabs tabs={...} active={...} onChange={...} />` — a caller supplies the tab
+//     list and switches its own body on the active id. Every dialog not yet migrated onto the shell keeps
+//     using this, byte-identical to before this task.
+//   · SHELL (new, canon `Pg`): `<Tabs defaultTab="…">` or `<Tabs selectedTab={…} onTabChange={…}>` wrapping
+//     `<Tab title id?>` children — the tab list is DERIVED from the children (`id ?? title`, canon's own
+//     rule) and the matching child's content renders below the strip, so a migrated dialog deletes its own
+//     TABS/TAB_SPECS array and body switch (D2-bl10's whole point) instead of wrapping it.
+// A caller supplying BOTH `tabs` and `<Tab>` children gets the children's derived list — the more specific
+// instruction wins, and it is the one that also has a pane to show.
 import React from "react";
 import { Box, Text } from "ink";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
@@ -24,10 +21,20 @@ import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js
 export interface TabSpec { id: string; title: string }
 
 export interface TabsProps {
-  tabs: readonly TabSpec[];
-  /** The active tab's id. An id that is not in `tabs` reads as the first tab, like `Jx`'s own `-1` guard. */
-  active: string;
-  onChange: (id: string) => void;
+  /** Explicit tab list (the EXPLICIT calling convention). Ignored when `children` supplies `<Tab>` elements. */
+  tabs?: readonly TabSpec[];
+  /** The active tab's id, EXPLICIT-mode controlled (the pre-existing name). An id that is not in `tabs` reads
+   *  as the first tab, like `Jx`'s own `-1` guard. */
+  active?: string;
+  /** EXPLICIT-mode controlled callback (the pre-existing name). */
+  onChange?: (id: string) => void;
+  /** SHELL-mode controlled active id (canon `Pg`'s own prop name). */
+  selectedTab?: string;
+  /** SHELL-mode controlled callback (canon `Pg`'s own prop name). */
+  onTabChange?: (id: string) => void;
+  /** SHELL-mode UNCONTROLLED initial tab — internal state owns it from here. Only consulted once, the first
+   *  time this component mounts with neither `active` nor `selectedTab` supplied. */
+  defaultTab?: string;
   /** Upstream's `color` (`IIH`): with one set, the current chip becomes a filled BADGE (`T_`, L422149 —
    *  background `color`, foreground `inverseText`, bold) instead of the inverse chip. Upstream gates that on
    *  its header-focus mode, which we do not ship (see SettingsDialog's recorded divergence), so here it is
@@ -35,19 +42,73 @@ export interface TabsProps {
   color?: ThemeTokenName;
   /** No key handlers registered — the strip renders but does not steer (upstream's `nwr`, folded into that isActive at L435043). */
   disableNavigation?: boolean;
+  /** `<Tab>` children (SHELL mode). Present ⇒ the tab list is derived from them and the active one's content
+   *  renders below the strip; absent ⇒ EXPLICIT mode, unchanged from before this task. */
+  children?: React.ReactNode;
+}
+
+export interface TabProps {
+  title: string;
+  /** Canon `Zi`'s own key (`id ?? title`) — set it when two tabs could share a title, or when the id must
+   *  outlive a title rename. */
+  id?: string;
+  children?: React.ReactNode;
+}
+
+/** What `Tab` reads to know whether it is the active pane — published by `Tabs` in SHELL mode only. Absent
+ *  (EXPLICIT mode, or a bare `<Tab>` with no `<Tabs>` shell above it) reads as "never active": a pane
+ *  primitive nobody is driving must not guess itself visible. */
+const ActiveTabContext = React.createContext<string | undefined>(undefined);
+
+/** Canon `Zi`, L122728: renders `children` only when `selectedTab === (id ?? title)`. */
+export function Tab({ title, id, children }: TabProps): React.ReactElement | null {
+  const active = React.useContext(ActiveTabContext);
+  if (active === undefined || active !== (id ?? title)) return null;
+  return <>{children}</>;
 }
 
 const NO_ACTIONS = {};
 
-export function Tabs({ tabs, active, onChange, color, disableNavigation = false }: TabsProps) {
+/** `<Tab>` children → their derived `TabSpec` list, canon's own `id ?? title` rule. A non-`Tab` child
+ *  (whitespace, a caller's stray fragment) is silently skipped — the shell only knows how to chip a `Tab`. */
+function tabsFromChildren(children: React.ReactNode): TabSpec[] {
+  const specs: TabSpec[] = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child) || child.type !== Tab) return;
+    const props = child.props as TabProps;
+    specs.push({ id: props.id ?? props.title, title: props.title });
+  });
+  return specs;
+}
+
+export function Tabs({
+  tabs: explicitTabs, active: activeProp, onChange, selectedTab, onTabChange, defaultTab,
+  color, disableNavigation = false, children,
+}: TabsProps) {
+  const shell = children !== undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const derivedTabs = React.useMemo(() => (shell ? tabsFromChildren(children) : undefined), [shell, children]);
+  const tabs = derivedTabs ?? explicitTabs ?? [];
+
+  // Controlled id: EXPLICIT mode's `active` wins if given (the pre-existing precedent), then SHELL mode's
+  // `selectedTab`; neither present ⇒ UNCONTROLLED, seeded once from `defaultTab` (else the first tab).
+  const controlledId = activeProp ?? selectedTab;
+  const [uncontrolledId, setUncontrolledId] = React.useState<string | undefined>(() => defaultTab ?? tabs[0]?.id);
+  const active = controlledId ?? uncontrolledId ?? tabs[0]?.id ?? "";
   const at = Math.max(0, tabs.findIndex((t) => t.id === active));
+
+  const select = (id: string) => {
+    onChange?.(id);
+    onTabChange?.(id);
+    if (controlledId === undefined) setUncontrolledId(id);
+  };
   // L435040-435042: cycling is modular over the tab list, in BOTH directions.
-  const cycle = (delta: number) => { if (tabs.length > 0) onChange(tabs[(at + delta + tabs.length) % tabs.length]!.id); };
+  const cycle = (delta: number) => { if (tabs.length > 0) select(tabs[(at + delta + tabs.length) % tabs.length]!.id); };
 
   useKeyScope("Tabs");
   useKeyActions(disableNavigation ? NO_ACTIONS : { "tabs:next": () => cycle(1), "tabs:previous": () => cycle(-1) });
 
-  return (
+  const strip = (
     <Box flexDirection="row" gap={1}>
       {tabs.map((t, i) => {
         const current = i === at;
@@ -62,5 +123,13 @@ export function Tabs({ tabs, active, onChange, color, disableNavigation = false 
         );
       })}
     </Box>
+  );
+
+  if (!shell) return strip;
+  return (
+    <ActiveTabContext.Provider value={active}>
+      {strip}
+      {children}
+    </ActiveTabContext.Provider>
   );
 }

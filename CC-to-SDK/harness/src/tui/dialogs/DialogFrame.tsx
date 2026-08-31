@@ -26,6 +26,9 @@ import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
 import { truncateLabel } from "../select/selectModel.js";
+import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
+import { useKeyHints, CANCEL_HINT_ENTRY } from "./keyhints.js";
+import type { KeyContextName } from "../keys/types.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 
@@ -58,10 +61,26 @@ export interface DialogFrameProps {
   workflowName?: string;
   /** Right-hand side of the header row, opposite the title (L438004). */
   titleRight?: React.ReactNode;
+  /** `me`'s `titleEnd` (L568952/568975): a plain-string right edge, dim + `truncate-start`, opposite the
+   *  title — canon's own styled slot, as opposed to `titleRight`'s arbitrary node. When both are given,
+   *  `titleRight` wins (the more specific, hand-styled instruction). */
+  titleEnd?: string;
+  /** `me`'s `onCancel` (L568954/568981): binds `confirm:no → onCancel` under a `Confirmation` scope the
+   *  frame claims for itself, i.e. Esc closes the dialog. Absent (every caller before this task) leaves that
+   *  scope registered but INACTIVE, so nothing about an unmigrated dialog's own Escape handling changes. */
+  onCancel?: () => void;
+  /** `Ye`/`Z`'s auto keyhint bar (L568825/568835): up to `MAX_HINTS` `"<key> <description>"` entries, deduped
+   *  by description, read from the named scope(s)' own default bindings (`dialogs/keyhints.ts`) and rendered
+   *  BELOW the body — replacing a hand-written footer string. Absent ⇒ no bar at all, so a dialog not yet
+   *  migrated keeps its own footer untouched. When `onCancel` is also given, its `confirm:no` hint is folded
+   *  in ahead of these scopes' own entries. */
+  hintScope?: KeyContextName | readonly KeyContextName[];
   /** `Ed`'s `innerPaddingX`, default 1 (L437993). */
   innerPaddingX?: number;
   children?: React.ReactNode;
 }
+
+const NO_ACTIONS = {};
 
 /** `BAe` L437937-986. Exported because the plan/pause dialogs reuse the header without the rule. */
 export function DialogHeader({ title, subtitle, color = "permission", subagentType, workflowName }:
@@ -82,11 +101,19 @@ Pick<DialogFrameProps, "title" | "subtitle" | "subagentType" | "workflowName"> &
   );
 }
 
-/** `Ed` L437992-438014. */
+/** `Ed` L437992-438014, extended by `me`'s `titleEnd`/`onCancel`/auto keyhint bar (L568952). */
 export function DialogFrame({
-  title, subtitle, color = "permission", titleColor, subagentType, workflowName, titleRight,
-  innerPaddingX = 1, children,
+  title, subtitle, color = "permission", titleColor, subagentType, workflowName, titleRight, titleEnd,
+  onCancel, hintScope, innerPaddingX = 1, children,
 }: DialogFrameProps) {
+  // `me`: claims a `Confirmation` scope and binds `confirm:no → onCancel` — INACTIVE (out of resolution
+  // entirely) when no caller passes onCancel, so an unmigrated dialog's own Escape handling is unaffected.
+  useKeyScope("Confirmation", { active: onCancel !== undefined });
+  useKeyActions(onCancel ? { "confirm:no": onCancel } : NO_ACTIONS);
+  const hints = useKeyHints(hintScope, onCancel !== undefined ? CANCEL_HINT_ENTRY : undefined);
+
+  const rightSlot = titleRight ?? (titleEnd !== undefined ? <Text dimColor wrap="truncate-start">{titleEnd}</Text> : null);
+
   return (
     <Box
       flexDirection="column"
@@ -97,10 +124,13 @@ export function DialogFrame({
       <Box paddingX={1} flexDirection="column">
         <Box justifyContent="space-between">
           <DialogHeader title={title} subtitle={subtitle} color={titleColor} subagentType={subagentType} workflowName={workflowName} />
-          {titleRight}
+          {rightSlot}
         </Box>
       </Box>
       <Box flexDirection="column" paddingX={innerPaddingX}>{children}</Box>
+      {hintScope !== undefined && hints.length > 0
+        ? <Box paddingX={innerPaddingX}><Text dimColor>{hints.join(" · ")}</Text></Box>
+        : null}
     </Box>
   );
 }

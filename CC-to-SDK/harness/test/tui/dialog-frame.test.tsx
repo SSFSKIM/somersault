@@ -5,11 +5,12 @@
 // `·` is dimmed. Colour claims read the RAW SGR frame — bold and dim are attributes and nothing else
 // distinguishes the title from the suffix.
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { Text } from "ink";
 import { DialogFrame } from "../../src/tui/dialogs/DialogFrame.js";
 import { themeTokens } from "../../src/tui/theme.js";
+import { renderWithKeymap, tick } from "./keysTestUtil.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 /** The raw token is `rgb(r,g,b)`; ink paints it as a truecolor SGR. (`resolveThemeColor` hands ink a hex,
@@ -112,5 +113,63 @@ describe("DialogFrame — the attribution suffix (DG21, `BAe` L437941-957)", () 
     const out = plain(frameOf(<DialogFrame title="Bash command" titleRight={<Text>esc to cancel</Text>}>{body}</DialogFrame>));
     const line = out.split("\n").find((l) => l.includes("esc to cancel"));
     expect(line).toMatch(/^ Bash command\s+esc to cancel/);
+  });
+});
+
+describe("DialogFrame — `titleEnd` (canon `me`, L568952/568975)", () => {
+  it("puts `titleEnd` on the header row, opposite the title, DIMMED", () => {
+    const f = frameOf(<DialogFrame title="Manage MCP servers" titleEnd="3 servers">{body}</DialogFrame>);
+    const line = plain(f).split("\n").find((l) => l.includes("3 servers"));
+    expect(line).toMatch(/^ Manage MCP servers\s+3 servers/);
+    expect(f).toContain("\x1b[2m3 servers");
+  });
+
+  it("`titleRight` wins when a caller somehow supplies both (the more specific, hand-styled instruction)", () => {
+    const out = plain(frameOf(
+      <DialogFrame title="t" titleEnd="dim text" titleRight={<Text>node text</Text>}>{body}</DialogFrame>,
+    ));
+    expect(out).toContain("node text");
+    expect(out).not.toContain("dim text");
+  });
+});
+
+describe("DialogFrame — `onCancel` (canon `me`, L568954/568981: Esc binds confirm:no)", () => {
+  it("fires onCancel when Esc resolves to confirm:no", async () => {
+    const onCancel = vi.fn();
+    const r = renderWithKeymap(<DialogFrame title="t" onCancel={onCancel}>{body}</DialogFrame>);
+    await tick();
+    r.stdin.write("\x1b");
+    await tick();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing on Esc when onCancel is absent (backward compatible: no new behaviour for unmigrated dialogs)", async () => {
+    const r = renderWithKeymap(<DialogFrame title="t">{body}</DialogFrame>);
+    await tick();
+    expect(() => r.stdin.write("\x1b")).not.toThrow();
+    await tick();
+  });
+});
+
+describe("DialogFrame — auto keyhint bar (canon `Ye`/`Z`, L568825/568835)", () => {
+  it("renders nothing when hintScope is absent — a caller keeps its own hand-written footer", () => {
+    const out = plain(frameOf(<DialogFrame title="t" onCancel={() => {}}>{body}</DialogFrame>));
+    expect(out).not.toContain("cancel");
+  });
+
+  it("derives hints from the named scope, deduping two actions that read the same (`tabs:next`/`tabs:previous` → \"switch tab\")", () => {
+    const out = plain(frameOf(<DialogFrame title="t" hintScope="Tabs">{body}</DialogFrame>));
+    expect(out).toContain("Tab switch tab");
+    expect(out.match(/switch tab/g)).toHaveLength(1);
+  });
+
+  it("caps the bar at 4 hints (canon `Pe = 4`), still deduping by description", () => {
+    const out = plain(frameOf(<DialogFrame title="t" hintScope="Confirmation">{body}</DialogFrame>));
+    expect(out).toContain("⏎ confirm · Esc cancel · ↑ navigate · ⇧Tab cycle mode");
+  });
+
+  it("folds the onCancel hint in ahead of the named scope's own entries", () => {
+    const out = plain(frameOf(<DialogFrame title="t" onCancel={() => {}} hintScope="Tabs">{body}</DialogFrame>));
+    expect(out).toContain("Esc cancel · Tab switch tab");
   });
 });
