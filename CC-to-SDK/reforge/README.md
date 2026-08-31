@@ -56,7 +56,9 @@ graph boot-checks it.
 
 - `src/pin.ts` — the pinned version + derived paths. Bumping the pin is: extract the new version, edit one constant, re-prepare, re-record cassettes, re-gate.
 - `strangle/prepare.ts` — materializes + boot-checks the engine set (`build/graph`, `build/real-binary`).
-- `strangle/manifest.ts` — the splice manifest, in its own module so reading it never runs a build.
+- `strangle/manifest.ts` — the splice manifest, in its own module so reading it never runs a build. Also the schema: target shapes + the capture taxonomy (below).
+- `strangle/ast.ts` — anchor position → the span of its enclosing node, per declared target shape.
+- `strangle/perturb.ts` — the derivation non-vacuity check (below); reads the pinned bundle, touches nothing under `build/`.
 - `src/runTurn.ts` — shared driver: one prompt → one engine → captured SDK-message transcript. Determinism knobs: `settingSources: []`, fixed `sandbox/` cwd, telemetry env off.
 - `src/proxy.ts` — record/replay proxy (`ANTHROPIC_BASE_URL` seam). Record forwards + captures (auth redacted before disk); replay serves deterministically (scrubbed-body hash match, then per-path FIFO) and logs every observed request for request-level diffing.
 - `src/differ.ts` — **the normalization spec is the definition of "behaviorally equivalent"**: scrubbed keys/patterns (ids, clocks `*_ms`/`*_at`, costs) are declared incidental; everything else must match. Grow it only with justification.
@@ -406,6 +408,9 @@ identifiers **from the matched body**, and the corpus scenarios that cover it.
 Adding a splice is now: write the module + its sabotage twin, add a manifest
 row, name its covering scenarios. Nothing else changes.
 
+*(As of W0a below, the row also declares a `target` shape, and `deriveArgs` has
+become a list of taxonomy-classified `captures`.)*
+
 ### The gate sabotages one splice at a time
 
 **An all-at-once sabotage is not a liveness proof.** If every splice were
@@ -519,6 +524,152 @@ npx tsx engine-ts/check-reachability.ts && npx tsx engine-ts/reachability.test.t
 npx tsx engine-ts/skeleton.test.ts
 npx tsx ledger/check.ts && npx tsx ledger/check.test.ts
 ```
+
+## W0a — splice mechanics generalized (2026-08-31): GATE PASS on six splices
+
+The reforge-full campaign's foundation wave for the splice transform (campaign
+spec C1; `docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md`).
+The transform knew exactly **one** syntactic shape — a method named
+`mapToolResultToToolResultBlockParam` sitting in an object literal, found by
+searching backwards for that name and then scanning for balanced braces. Three
+things changed, and the manifest grew a row per new shape to prove each.
+
+### The anchor still locates; the AST now delimits
+
+Anchoring stays a true-substring-unique **string literal** — that is the
+versioning bet, and it has now survived ten versions and a bundler rewrite. What
+moved is span-finding: the owning chunk is parsed (the TypeScript parser eats the
+4.0 MB engine chunk in ~0.5 s with zero diagnostics), the anchor's position is
+resolved to its deepest node, and the walk climbs parents until it reaches the
+shape the manifest declares. The excised span is exactly that node's span — where
+a brace scan approximates and can truncate silently.
+
+Each shape carries its own delegation:
+
+| `target` | node | replacement |
+|---|---|---|
+| `sibling-method` | method in an object literal | `name(params){return globalThis.__reforge.fn(args)}` |
+| `class-method` | method in a class | same, with `this` as the first argument |
+| `free-function` | function declaration | `function name(params){return …}`, `async` preserved |
+| `switch-case` | one `case` clause | `case X:{…;break}` or `case X:{return …}`, per how the clause exits |
+
+The existing three splices are **byte-identical** under the new path — same
+sha256 for the owning chunk — so the generalization is provably a no-op on what
+was already green.
+
+### Captures are classified, not just derived
+
+A splice's row now declares every value the excised body took from its enclosing
+scope, each with a §2.4 class saying what an adapter may do with it:
+`primitive` (own it and equality-assert the graph's), `pure-helper` (own it and
+use ours in both wirings), `effectful-port` (an explicitly typed delegation
+argument and a ledger edge to the wave that will own its far side). Today all
+six rows wire every capture as a delegation argument; the retrofit that makes
+the first two classes owned-and-asserted is W1's. The classification is the
+truthful input to that work, not a claim that it has happened.
+
+### Module layout and ownership hygiene
+
+The rule the classification exists to serve: **no minified identifier crosses
+into owned code**. What crosses the adapter boundary is data and typed ports,
+never the graph's symbols — so an owned module names every value it receives in
+its own vocabulary and documents the contract in its header, and a capture whose
+far side this wave does not own is an explicitly named delegation argument, not
+a mystery. Each splice is a pair under `strangle/modules/`: `<name>.js` (the
+faithful implementation the gate grades) and `<name>.sabotage.js` (the liveness
+twin). The third layer — a `custom` overlay for deliberate deviations, kept
+apart from the parity implementation so the first real customization is not
+indistinguishable from a bug — arrives with the first customization, not
+speculatively.
+
+A sabotage twin should be wrong in a way that is **loud and cheap**. Dropping a
+value outright is loud but can leave the engine flailing (the first `text-delta`
+twin returned empty assistant text, and the engine then retried the turn a dozen
+times against an exhausted cassette — minutes of gate time for the same one-bit
+answer). Corrupting the value while keeping the shape gets the same red in
+seconds.
+
+`npx tsx strangle/perturb.ts` is the non-vacuity check behind derivation. Per
+capture, against the real span in the pinned bundle: **tracking** — rename the
+identifier upstream and the derivation must return the new name (a hardcoded
+derivation fails here) — and **loudness** — destroy the identifier and the
+derivation must THROW rather than return something plausible. 44 checks, all
+green at this pin.
+
+### Every build emits an upstream footprint
+
+`build/footprints.json` records, per splice, the owning chunk, the node, the
+span, and a **sha256 of the excised upstream bytes** (taken after undoing
+prepare.ts's `/$bunfs/root/` rewrite, so the hash moves only when upstream does).
+That is what lets a pin bump invalidate owned rows *semantically*: an export
+inventory cannot see a changed branch inside a body it still exports.
+
+### The three spikes, and the two suggested targets that did not survive contact
+
+| splice | shape | anchor | covered by |
+|---|---|---|---|
+| `env-block` | `free-function` | `"Is directory a git repo: "` | `subagent` |
+| `text-delta` | `switch-case` | `"content_block_type_mismatch_text"` | `plain` |
+| `session-materialize` | `class-method` | `"Session file materialize failed ("` | `resume` |
+
+Each is a permanent owned splice on a real subsystem, not a throwaway. The env
+block is covered by `subagent` rather than by everything, because the main
+headless system prompt carries no `<env>` block — a dispatched Agent's does
+(measured in the recorded request bodies).
+
+Two of the census's suggested targets were **measured wrong** and replaced:
+
+- **The control protocol is not a `switch` headlessly.** The first switch-case
+  candidate was the engine's `interrupt` intent clause. It excised and
+  boot-checked cleanly and its sabotage stayed **GREEN** — that switch belongs to
+  the interactive engine driver, while headless `Query.interrupt()` lands in
+  print mode's `if / else if` chain over `request.subtype`. A splice nothing
+  reaches is dead code, so it was dropped rather than kept as an ungated row.
+  W7 needs an if/else-arm shape, or a different seam.
+- **The Bash executor cannot be delegated method-by-method.** Its command class
+  keeps essentially all state in ECMAScript *private* fields, which are
+  unreachable from outside the class body: a whole-body excision cannot be
+  delegated unless the adapter left behind in the class marshals every private
+  field the body touches. W10 must budget that adapter, or take the executor at
+  S-module granularity.
+
+Both are recorded as Revision Notes on the campaign spec, because they change
+what a later wave has to budget.
+
+### Gate
+
+The perturbation check runs as the gate's first phase — cheap, build-free, and a
+precondition for believing any of the rest.
+
+```
+━━━ derivation: every capture tracks its rename and throws when destroyed ━━━
+  === derivation perturbation: 44 check(s) ===
+  PASS — every capture tracks its rename and fails loudly when destroyed
+...
+━━━ equivalence: FAITHFUL build → full acceptance surface must be GREEN ━━━
+  PASS  corpus (22 scenarios)
+  PASS  faults (5 injections)
+  PASS  partials (stream shape)
+  PASS  cross-resume (store)
+  PASS  raw protocol (no sdk)
+
+=== strangler gate ===
+  PASS  derivation perturbation
+  PASS  liveness write-tool-result
+  PASS  liveness task-create-result
+  PASS  liveness glob-result
+  PASS  liveness env-block
+  PASS  liveness text-delta
+  PASS  liveness session-materialize
+  PASS  equivalence (faithful)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+Closure-ledger movement: `subsystem/environment-and-system-prompt`,
+`subsystem/session-storage` and `subsystem/query-loop` move `unowned` →
+`spliced`, and all four spliced rows now carry the upstream footprint hashes the
+build emits (`ledger.json`, 46 rows, `spliced=4 unowned=42`).
 
 ## Next
 

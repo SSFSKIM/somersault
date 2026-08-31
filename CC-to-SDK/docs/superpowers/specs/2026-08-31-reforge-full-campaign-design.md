@@ -841,6 +841,36 @@ Pending — written at finish.
   round over a one-predicate change would be review for its own sake. The background-task check's
   five successive hardenings (`98d9553d`, `908275d0`, `6c9ad4b6`, `3a5edd9a`, `f5e1efe7`) stand
   as the measured case study behind §3.1's non-vacuity doctrine.
+- 2026-08-31 (C1 / W0a — splice mechanics): the mechanism generalization landed
+  (manifest `target` shapes + capture taxonomy per §2.1/§2.4, AST-span excision,
+  per-splice upstream-footprint hashes per §5, one spike per new shape). Two
+  **advisory** target assignments in §2.1 and §6 were overturned with measured
+  evidence; both change what a later wave must budget for:
+  - **The control protocol is not a `switch` on the headless path.** §2.1 and
+    §6's W7 row assign the switch-case shape to the control protocol. The
+    `control_request` subtype dispatch headless traffic actually reaches (print
+    mode, `chunk-dvbbv89q`) is an `if / else if` chain over `request.subtype`;
+    the one switch carrying an `interrupt` case (`chunk-g461tywa`) belongs to
+    the interactive engine driver. Measured: that clause excised, boot-checked
+    and sabotaged alone left the `interrupt` scenario GREEN — a dead splice, so
+    it was dropped rather than kept as an ungated row. The switch-case spike
+    moved to the streaming assembler's `text_delta` arm, which every turn
+    traverses. **W7 needs an if/else-arm shape (or a different seam) for the
+    control protocol; the switch-case shape does not reach it.**
+  - **The Bash executor cannot be delegated method-by-method.** §2.1 and §6's
+    W10 row assign the class-method shape to it. Its command class keeps
+    essentially all state in ECMAScript *private* fields (`#e`, `#g`, …), which
+    are unreachable from outside the class body, so a whole-body excision cannot
+    be delegated unless the adapter left in the class marshals every private
+    field the body touches. The class-method spike moved to the transcript
+    store's `materializeSessionFile` (public receiver, covered by `resume`).
+    **W10 must budget a declared private-field accessor adapter, or take the
+    executor at S-module granularity instead.**
+  Also recorded: the AST rewrite is byte-identical to the old name-search +
+  balanced-brace path on the three original splices (same owning-chunk sha256),
+  and `strangle/perturb.ts` makes the derivation claim machine-checkable —
+  every capture must track an upstream rename and must throw when its shape is
+  destroyed (44 checks at this pin).
 - 2026-08-31 (composite): the decomposing run extended this document in place with
   "## Roadmap — the cut" — grounding baseline, children C1–C17 (W0 trisected; binding detail at
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The

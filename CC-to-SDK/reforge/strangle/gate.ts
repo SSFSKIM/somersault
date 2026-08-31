@@ -1,5 +1,9 @@
 // M3-B gate — the acceptance ritual for a MANIFEST of splices:
 //
+//   derivation : every capture must track an upstream rename and must throw
+//                when its shape is destroyed (strangle/perturb.ts). A splice
+//                whose derivation silently returns something plausible would
+//                wire a delegation to a binding that no longer exists.
 //   per splice : build with ONLY that splice sabotaged → its covering corpus
 //                scenario(s) must go RED. Proves each splice is individually
 //                live in the execution path — an all-at-once sabotage would
@@ -32,6 +36,16 @@ function buildAndBoot(buildArgs: string[]): boolean {
 }
 
 const results: { label: string; pass: boolean }[] = [];
+
+// ---- derivation: re-derivation must track renames and fail loudly ----------
+console.log("━━━ derivation: every capture tracks its rename and throws when destroyed ━━━");
+{
+  const r = run("npx", ["tsx", "strangle/perturb.ts"]);
+  const summary = (r.stdout ?? "").split("\n").filter((l) => l.trim().startsWith("===") || l.startsWith("PASS") || l.startsWith("FAIL"));
+  for (const line of summary) console.log(`  ${line.trim()}`);
+  if (r.status !== 0) console.log(`  ${(r.stdout ?? "").split("\n").filter((l) => l.includes("FAIL")).join(" | ")}`);
+  results.push({ label: "derivation perturbation", pass: r.status === 0 });
+}
 
 // ---- per-splice liveness: sabotage exactly one, its coverage must go red ----
 for (const sp of SPLICES) {

@@ -9,13 +9,17 @@
       "wave": "C4",
       "state": "spliced",
       "edges": [],
-      "footprint": null,
+      "footprint": [
+        { "chunk": "chunk-fy12d89p.js", "hash": "7d7bcc9d7bbe7088b83e0ee0cf43a2209be8b9277369d4ebdca116497984c04b" },
+        { "chunk": "chunk-fy12d89p.js", "hash": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce" },
+        { "chunk": "chunk-fy12d89p.js", "hash": "519dd1b300fefabeea65cfccd03da68772b9327aa2858fe2e8b6c357553a4275" }
+      ],
       "evidence": [
         "strangle/manifest.ts:write-tool-result",
         "strangle/manifest.ts:task-create-result",
         "strangle/manifest.ts:glob-result"
       ],
-      "note": "Three leaf formatters (Write, TaskCreate, Glob) are excised from the graph and delegated to reforge-owned modules; the rest of the family (Read, Edit, Bash, Grep) is not. `spliced`, not `standalone-complete`: the modules still receive closure values from the extracted graph (§2.4) and carry no upstream footprint yet (C1 emits those)."
+      "note": "Three leaf formatters (Write, TaskCreate, Glob) are excised from the graph and delegated to reforge-owned modules; the rest of the family (Read, Edit, Bash, Grep) is not. `spliced`, not `standalone-complete`: the modules still receive closure values from the extracted graph (§2.4). Footprints are the three excised spans in manifest order, emitted by the build to build/footprints.json (C1)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -31,9 +35,16 @@
       "kind": "subsystem",
       "title": "Environment block + system-prompt assembly",
       "wave": "C6",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        { "chunk": "chunk-fy12d89p.js", "hash": "90f4eb8dbbe7b1bc63c80fcb3b750ac0a52f8636adb231e8ad0fe64314ff848e" }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:env-block",
+        "scenario:subagent"
+      ],
+      "note": "C1's free-function mechanism spike, kept as a permanent splice: the <env> block itself is owned, the surrounding system-prompt assembly is not. `spliced`, not `standalone-complete` — all nine interpolated values are `effectful-port` captures still supplied by the graph (cwd, git/OS reads, directory-context sections, platform). No edges recorded: those captures read process and session state rather than another ledger row's subsystem; C6 designs their ports."
     },
     {
       "id": "subsystem/compaction",
@@ -85,9 +96,16 @@
       "kind": "subsystem",
       "title": "Session/transcript storage; resume/fork",
       "wave": "C12",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        { "chunk": "chunk-fy12d89p.js", "hash": "2a847b843b7edd24f60774eab00a765a186cae0425fc18ae31151ca161ddc1a7" }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:session-materialize",
+        "scenario:resume"
+      ],
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design."
     },
     {
       "id": "subsystem/bash-executor",
@@ -130,9 +148,16 @@
       "kind": "subsystem",
       "title": "Query loop / turn driver (retry, 529, model fallback, compaction driver)",
       "wave": "C16",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        { "chunk": "chunk-fy12d89p.js", "hash": "764b83f750e22ccb4d3b44299bc842c90f2294b3394a175c39bfb6a7d5c1974f" }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:text-delta",
+        "scenario:plain"
+      ],
+      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures."
     },
     {
       "id": "subsystem/sandboxing",
