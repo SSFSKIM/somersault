@@ -39,13 +39,13 @@ maps the minified names to readable ones. Everything here is Claude Code the CLI
    verdict (cli.pretty.js:495878–:495900).
 8. Hook feedback reaches the model exclusively as `<system-reminder>`-wrapped meta user messages
    (`hl`, cli.pretty.js:518353; mappers at cli.pretty.js:518670).
-9. Settings hooks are **snapshotted at startup** (`TX`, cli.pretty.js:7255; captured in `setup`,
+9. Settings hooks are **snapshotted at startup** (`TX`, cli.pretty.js:7253; captured in `setup`,
    cli.pretty.js:326280) — later edits to `settings.json` do not take effect until `/hooks` is
    opened or the session restarts. Plugin/skill/device hooks are read live.
 10. Kill switches, in precedence order: `--bare` → `policySettings.disableAllHooks` →
     `policySettings.allowManagedHooksOnly` → safe mode → `strictPluginOnlyCustomization` →
     user `disableAllHooks` (which *promotes* the session to managed-only, not to off) — all in
-    `l()`, cli.pretty.js:7190.
+    `l()`, cli.pretty.js:7192.
 
 ---
 
@@ -313,7 +313,7 @@ The `matchQuery` — the string the matcher is compared against — is per-event
   the schema note "Payloads may omit it while the field rolls out."
 - **Honoured output**: `additionalContext`, `sessionTitle`, `suppressOriginalPrompt`, plus
   `decision:"block"` + `reason`, `continue:false` + `stopReason`.
-- **Blocking rendering** — `Q7` (cli.pretty.js:495365):
+- **Blocking rendering** — `Q7` (cli.pretty.js:495470):
   ```
   UserPromptSubmit operation blocked by hook:
   {blockingError}
@@ -359,7 +359,7 @@ The `matchQuery` — the string the matcher is compared against — is per-event
   hook are usable in the same session — cli.pretty.js:453595 calls `sT(); bD(); Tv.emit()`).
 - **Special**: HTTP hooks are **skipped** for SessionStart and Setup —
   `` `Skipping HTTP hook ${url} — HTTP hooks are not supported for ${event}` `` (cli.pretty.js:495436).
-  `CLAUDE_ENV_FILE` is set for SessionStart/Setup/CwdChanged/FileChanged (cli.pretty.js:494825).
+  `CLAUDE_ENV_FILE` is set for SessionStart/Setup/CwdChanged/FileChanged (cli.pretty.js:494796).
   `SessionStart` and `Setup` are the only two events whose stream-json `hook_started`/`hook_response`
   system messages are always emitted (`SJt = ["SessionStart","Setup"]`, cli.pretty.js:433264).
 - **De-duplication on resume**: `frt`/`Zke` (cli.pretty.js:454054) hash SessionStart hook
@@ -705,7 +705,7 @@ callbacks are excluded from telemetry counts (`iMt`, cli.pretty.js:495287).
 
 **`function`** (internal): `{type:"function", id, timeout, callback, errorMessage}`, created by
 `sessionHooksRegistry.addFunctionHook` with a **5000 ms default timeout**
-(cli.pretty.js:431624). These are the plugin hooks-module handlers.
+(cli.pretty.js:431623). These are the plugin hooks-module handlers.
 
 ### 3.3 The `if` condition
 
@@ -763,7 +763,7 @@ function IE(e) {
                          && !(u && ("deviceOwner" in d))) ];
 }
 ```
-- `TX()` = `initialHooksConfig` snapshot (cli.pretty.js:7255) — see §7.4.
+- `TX()` = `initialHooksConfig` snapshot (cli.pretty.js:7253) — see §7.4.
 - `die()` = `getMainThreadAgentHooks` — hooks from the active agent definition
   (`$Ct`, cli.pretty.js:727426).
 - `zO()` = `getRegisteredHooks` — plugin hooks (`pluginRoot`/`pluginId`/`pluginName`), skill hooks
@@ -780,7 +780,7 @@ if (o?.managedHooksOnly) {
 }
 ```
 
-The settings-file hook set itself is chosen by `l()` (cli.pretty.js:7190), which is where the kill
+The settings-file hook set itself is chosen by `l()` (cli.pretty.js:7192), which is where the kill
 switches live:
 
 ```js
@@ -856,7 +856,7 @@ On Windows without Git Bash: `` `Hook "${cmd}" requires bash but Git Bash was no
 
 ### 4.2 Environment passed to command hooks
 
-Built at cli.pretty.js:494807–:494828. Base is the harness's own env (`Na()`), or a per-device
+Built at cli.pretty.js:494777–:494796. Base is the harness's own env (`Na()`), or a per-device
 override base with an `omit` list for served calls, then:
 
 | variable | source |
@@ -878,7 +878,7 @@ override base with an `omit` list for served calls, then:
 | `CLAUDE_CODE_CLOUD_SESSION_ID` | device-forwarded hooks for cloud sessions (cli.pretty.js:94061) |
 
 A global `CLAUDE_CODE_SHELL_PREFIX` (or a per-device `shellPrefix`) is prepended to shell-form
-commands (cli.pretty.js:494805).
+commands (cli.pretty.js:494776).
 
 ### 4.3 Working directory
 
@@ -906,9 +906,9 @@ back through `originalCwd`, `projectRoot`, home, warning once per host:
   `` `[Hook ${kind} truncated at ${threshold} chars — persist-to-disk failed: ${err}]` ``.
   Applied to `stdout`, `additionalContext`, `systemMessage`, and `initialUserMessage`.
 - **classifierContext**: hard cap 2000 UTF-16 code units (`fP`, cli.pretty.js:433152).
-- **`rewakeSummary`**: 300 chars (`k5n`, cli.pretty.js:494389).
+- **`rewakeSummary`**: 300 chars (`k5n`, cli.pretty.js:494382).
 - **Plugin `metrics`**: first 20 entries, booleans and numbers only (`a6n = 20`,
-  cli.pretty.js:495341).
+  cli.pretty.js:495339).
 - **Launcher (CCR) hooks**: script size limited to `is = 131072` bytes (cli.pretty.js:124362).
 
 ### 4.6 Async hooks
@@ -939,7 +939,7 @@ HO({ summary: rewakeSummary ?? "Stop hook feedback",
      body: `${rewakeMessage ?? `Stop hook blocking error from command "${name}":`} ${stderr || stdout}`,
      priority: "next", stopHookActive: !0 });
 ```
-`ASYNC_REWAKE_FLUSH_TIMEOUT_MS = 30000` (`Uhr`, cli.pretty.js:494386); pending rewakes are drained by
+`ASYNC_REWAKE_FLUSH_TIMEOUT_MS = 30000` (`Uhr`, cli.pretty.js:494382); pending rewakes are drained by
 `flushPendingAsyncRewakeHooks` (`iun`, cli.pretty.js:494394).
 
 ---
@@ -1090,7 +1090,7 @@ Attachment → model-content mappers (cli.pretty.js:518670, :518981):
 | `async_hook_response` | `systemMessage` and `hookSpecificOutput.additionalContext` as plain meta messages |
 | `hook_non_blocking_error`, `hook_error_during_execution`, `hook_cancelled`, `hook_deferred_tool` | **nothing** — user-facing only |
 
-For `Stop`/`SubagentStop` specifically, `oGe` = `getStopHookMessage` (cli.pretty.js:495348) wraps the
+For `Stop`/`SubagentStop` specifically, `oGe` = `getStopHookMessage` (cli.pretty.js:495455) wraps the
 blocking error via `WU("Stop", …)`, and the result is injected as a meta user message that restarts
 the turn.
 
@@ -1113,7 +1113,7 @@ UI renderers at cli.pretty.js:192615–:192710. Key strings:
 - Stop/SubagentStop: all suppressed; instead a per-turn row `Ran N PreToolUse hooks (Nms)`
   (cli.pretty.js:193426) and a `stop`/`subagent stop` summary (cli.pretty.js:168636).
 - On PreToolUse/PermissionRequest failure the spinner picks up a one-line note via `sk.noteHookFailure`
-  built by `Wxt` (cli.pretty.js:494056): `` `${event} hook output invalid: …` `` /
+  built by `Wxt` (cli.pretty.js:494054): `` `${event} hook output invalid: …` `` /
   `` `${event} hook failed: ${firstNonEmptyLine}` `` / `` `${event} hook failed to run` ``.
 
 ### 5.7 Stream-JSON surface
@@ -1203,7 +1203,7 @@ first-class payload** rather than a transcript-only artifact.
 ### 6.7 SessionStart context, watchPaths, and reloadSkills
 
 Covered in §2.11. `watchPaths` from SessionStart/CwdChanged/FileChanged all feed the same
-`srt(paths)` watcher registration (cli.pretty.js:453598), which is what makes FileChanged hooks
+`srt(paths)` watcher registration (cli.pretty.js:453596), which is what makes FileChanged hooks
 usable at all — the watcher starts empty.
 
 ### 6.8 Device-forwarded hooks (cloud sessions driven from this machine)
@@ -1297,13 +1297,13 @@ line rides the same spawn path.
 
 Both runners refuse outright when the workspace is untrusted:
 `` `Skipping ${event} hook execution - workspace trust not accepted` `` (`shouldSkipHookDueToTrust`
-= `J7`, cli.pretty.js:494928 / used at :495539 and :495961).
+= `J7`, cli.pretty.js:494442 / used at :495539 and :495961).
 
 ### 7.4 Startup snapshot semantics
 
-`d` class at cli.pretty.js:7167 holds `{initialHooksConfig: null}` per snapshot key. `TX()`
-(cli.pretty.js:7255) lazily fills it from `l()` and never refreshes on its own; `Qpn()`/`avr()`/`OD()`
-(cli.pretty.js:7233) explicitly re-`store()` it. Startup captures it in the boot sequence
+`d` class at cli.pretty.js:7161 holds `{initialHooksConfig: null}` per snapshot key. `TX()`
+(cli.pretty.js:7253) lazily fills it from `l()` and never refreshes on its own; `Qpn()`/`avr()`/`OD()`
+(cli.pretty.js:7231) explicitly re-`store()` it. Startup captures it in the boot sequence
 (cli.pretty.js:326280) with telemetry `setup_hooks_snapshot_ms` / `setup_hooks_captured`.
 
 Practical consequence for a re-implementer: **settings-file hooks are frozen at process start**;
@@ -1416,19 +1416,19 @@ Function-hook errors surface as `hook_error_during_execution` with content
 | `C7e` | `5000` ms | 445027 |
 | `oun` — SessionEnd floor | `1500` ms | 494390 |
 | `b5n` — SessionEnd ceiling | `60000` ms | 494390 |
-| prompt-hook default timeout | `30000` ms | 493534 |
+| prompt-hook default timeout | `30000` ms | 493532 |
 | agent-hook default timeout | `60000` ms | 493704 |
-| function-hook default timeout | `5000` ms | 431624 |
+| function-hook default timeout | `5000` ms | 431623 |
 | async default timeout | `15000` ms | 433397 |
-| `Uhr` — async-rewake flush | `30000` ms | 494386 |
+| `Uhr` — async-rewake flush | `30000` ms | 494382 |
 | `Z8n` — persist-to-disk threshold | `10000` chars | 128009 |
 | `fP` — classifierContext cap | `2000` UTF-16 units | 433152 |
-| `k5n` — rewakeSummary cap | `300` chars | 494389 |
+| `k5n` — rewakeSummary cap | `300` chars | 494382 |
 | `RMe` — task/cron description cap | `1000` chars | 494267 |
-| `a6n` — plugin metrics entries | `20` | 495341 |
-| `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` | default `8` | 487347 |
-| agent-hook max turns | `50` | 493723 |
-| hook progress poll interval | `1000` ms | 433299 |
+| `a6n` — plugin metrics entries | `20` | 495339 |
+| `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` | default `8` | 487337 |
+| agent-hook max turns | `50` | 493724 |
+| hook progress poll interval | `1000` ms | 433300 |
 | env vars | `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`, `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`, `CLAUDE_CODE_SHELL_PREFIX` | 494392 / 487347 / 494805 |
 
 ---
