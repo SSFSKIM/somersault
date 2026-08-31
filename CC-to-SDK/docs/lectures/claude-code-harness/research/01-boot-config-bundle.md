@@ -317,7 +317,119 @@ subcommand accepts a hidden `--cowork` ("Use cowork_plugins directory").
 
 | flag | modifiers | help text |
 |---|---|---|
-<<FLAGTABLE>>
+| `-d, --debug [filter]` |  | Enable debug mode with optional category filtering (e.g., "api,hooks" or "!1p,!file") |
+| `-d2e, --debug-to-stderr` | **hidden** | (deprecated) Enable debug mode (to stderr) |
+| `--debug-file <path>` |  | Write debug logs to a specific file path (implicitly enables debug mode) |
+| `--verbose` |  | Override verbose mode setting from config |
+| `-p, --print` |  | Print response and exit (useful for pipes). Note: The workspace trust dialog is skipped when Claude is run in non-interactive mode (via -p, or when stdout is not a TTY, e.g. piped or redirected output). Only use this in directo… |
+| `--bare` |  | Minimal mode: skip hooks, LSP, plugin sync, attribution, auto-memory, background prefetches, keychain reads, and CLAUDE.md auto-discovery. Sets CLAUDE_CODE_SIMPLE=1. Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper … |
+| `--safe-mode` |  | Start with all customizations (CLAUDE.md, skills, plugins, hooks, MCP servers, custom commands and agents, output styles, workflows, custom themes, keybindings, and more) disabled — useful for troubleshooting a broken configura… |
+| `--init` | **hidden** | Run Setup hooks with init trigger, then continue |
+| `--init-only` | **hidden** | Run Setup and SessionStart:startup hooks, then exit |
+| `--maintenance` | **hidden** | Run Setup hooks with maintenance trigger, then continue |
+| `--output-format <format>` | choices [`text`, `json`, `stream-json`] | Output format (only works with --print): "text" (default), "json" (single result), or "stream-json" (realtime streaming) |
+| `--json-schema <schema>` |  | JSON Schema for structured output validation. Example: {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]} |
+| `--include-hook-events` |  | Include all hook lifecycle events in the output stream (only works with --output-format=stream-json) |
+| `--include-partial-messages` |  | Include partial message chunks as they arrive (only works with --print and --output-format=stream-json) |
+| `--forward-subagent-text` |  | Forward subagent text and thinking blocks as assistant/user messages with parent_tool_use_id set (only works with --print and --output-format=stream-json) |
+| `--session-mirror` | **hidden** | Emit transcript_mirror frames on stdout (SDK-internal; set by ProcessTransport when sessionStore is configured) |
+| `--input-format <format>` | choices [`text`, `stream-json`] | Input format (only works with --print): "text" (default), or "stream-json" (realtime streaming input) |
+| `--dangerously-skip-permissions` |  | Bypass all permission checks. Recommended only for sandboxes with no internet access. |
+| `--allow-dangerously-skip-permissions` |  | Enable bypassing all permission checks as an option, without it being enabled by default. Recommended only for sandboxes with no internet access. |
+| `--thinking <mode>` | choices [`enabled`, `adaptive`, `disabled`] · **hidden** | Thinking mode: enabled (equivalent to adaptive), disabled |
+| `--thinking-display <display>` | choices [`summarized`, `omitted`] · **hidden** | How thinking content appears in the response |
+| `--max-thinking-tokens <tokens>` | **hidden** | [DEPRECATED. Use --thinking instead for newer models] Maximum number of thinking tokens (only works with --print) |
+| `--max-turns <turns>` | **hidden** | Maximum number of agentic turns in non-interactive mode. This will early exit the conversation after the specified number of turns. (only works with --print) |
+| `--max-budget-usd <amount>` |  | Maximum dollar amount to spend on API calls (only works with --print) |
+| `--task-budget <tokens>` | **hidden** | API-side task budget in tokens (output_config.task_budget) |
+| `--replay-user-messages` |  | Re-emit user messages from stdin back on stdout for acknowledgment (only works with --input-format=stream-json and --output-format=stream-json) |
+| `--prompt-suggestions [value]` | choices [`true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`] | Enable prompt suggestions. In print/SDK mode, emits a prompt_suggestion message after each turn with a predicted next user prompt |
+| `--enable-auth-status` | **hidden** | Enable auth status messages in SDK mode |
+| `--allowedTools, --allowed-tools <tools...>` |  | Comma or space-separated list of tool names to allow (e.g. "Bash(git *) Edit") |
+| `--tools <tools...>` |  | Specify the list of available tools from the built-in set. Use "" to disable all tools, "default" to use all tools, or specify tool names (e.g. "Bash,Edit,Read"). |
+| `--restricted` |  | Restricted mode: removes the built-in tools that run commands or code (Bash, PowerShell, REPL and the other code-running tools) and WebFetch unless --tools names them, and ignores user, project and local settings files (managed… |
+| `--disallowedTools, --disallowed-tools <tools...>` |  | Comma or space-separated list of tool names to deny (e.g. "Bash(git *) Edit") |
+| `--mcp-config <configs...>` |  | Load MCP servers from JSON files or strings (space-separated) |
+| `--permission-prompt-tool <tool>` | **hidden** | MCP tool to use for permission prompts (only works with --print) |
+| `--system-prompt <prompt>` |  | System prompt to use for the session |
+| `--system-prompt-file <file>` | **hidden** | Read system prompt from a file |
+| `--append-system-prompt <prompt>` |  | Append a system prompt to the default system prompt |
+| `--append-system-prompt-file <file>` | **hidden** | Read system prompt from a file and append to the default system prompt |
+| `--append-subagent-system-prompt <prompt>` | **hidden** | Append a system prompt to every Task-tool subagent's system prompt, propagated to nested subagents (only works with --print). Implies CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1. |
+| `--plan-mode-instructions <instructions>` | **hidden** | Custom workflow body for plan mode. Replaces the default code-implementation phases in the plan-mode system reminder; the read-only enforcement preamble and ExitPlanMode protocol footer are always kept. |
+| `--exclude-dynamic-system-prompt-sections` |  | Move per-machine sections (cwd, env info, memory paths, git status) from the system prompt into the first user message. Improves cross-user prompt-cache reuse. Only applies with the default system prompt (ignored with --system-… |
+| `--permission-mode <mode>` |  | Permission mode to use for the session |
+| `-c, --continue` |  | Continue the most recent conversation in the current directory |
+| `-r, --resume [value]` |  | Resume a conversation by session ID, or open interactive picker with optional search term |
+| `--fork-session` |  | When resuming, create a new session ID instead of reusing the original (use with --resume or --continue) |
+| `--watch-artifact <artifact>` | **hidden** | Watch a Claude artifact (id or URL) in this session and hear about new versions and comments |
+| `--watch-artifact-no-autoreact <artifact>` | **hidden** |  |
+| `--prefill <text>` | **hidden** | Pre-fill the prompt input with text without submitting it |
+| `--deep-link-origin` | **hidden** | Signal that this session was launched from a deep link |
+| `--deep-link-repo <slug>` | **hidden** | Repo slug the deep link ?repo= parameter resolved to the current cwd |
+| `--deep-link-last-fetch <ms>` | **hidden** | FETCH_HEAD mtime in epoch ms, precomputed by the deep link trampoline |
+| `--prefill-b64 <b64>` | **hidden** | Base64url-encoded --prefill value (deep-link shell-safe launch paths) |
+| `--deep-link-cwd-b64 <b64>` | **hidden** | Base64url-encoded working directory (deep-link shell-safe launch paths) |
+| `--from-pr [value]` |  | Resume a session linked to a PR by PR number/URL, or open interactive picker with optional search term |
+| `--no-session-persistence` |  | Disable session persistence - sessions will not be saved to disk and cannot be resumed (only works with --print) |
+| `--resume-session-at <message id>` | **hidden** | When resuming, only messages up to and including the chain entry with <message.id> — any chain-entry UUID, typically the kept turn's last entry (use with --resume in print mode) |
+| `--resume-drops-turn <message id>` | **hidden** | With --resume-session-at in print mode: declare the prompt uuid of the turn the truncating resume intends to discard; the resume is refused if the discarded range contains anything not attributable to that turn (absorbed queued… |
+| `--reply-on-resume` | **hidden** | When resuming, immediately query if the loaded transcript ends in a user-role message (set by /background mid-turn so the fork continues the in-flight turn). |
+| `--rewind-files <user-message-id>` | **hidden** | Restore files to state at the specified user message and exit (requires --resume) |
+| `--model <model>` |  | Model for the current session. Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a model's full name (e.g. 'claude-fable-5'). |
+| `--effort <level>` |  |  |
+| `--agent <agent>` |  | Agent for the current session. Overrides the 'agent' setting. |
+| `--betas <betas...>` |  | Beta headers to include in API requests (API key users only) |
+| `--fallback-model <model>` |  | Enable automatic fallback to specified model(s) when the default model is overloaded or not available. Accepts a comma-separated list to try each in order. Re-tries the primary at the start of each user turn. (only works with -… |
+| `--workload <tag>` | **hidden** | Workload tag for billing-header attribution (cc_workload). Process-scoped; set by SDK daemon callers that spawn subprocesses for cron work. (only works with --print) |
+| `--settings <file-or-json>` |  | Path to a settings JSON file or a JSON string to load additional settings from |
+| `--managed-settings <json>` | **hidden** | Policy-tier settings JSON from a spawning parent process (SDK use only) |
+| `--add-dir <directories...>` |  | Additional directories to allow tool access to |
+| `--ide` |  | Automatically connect to IDE on startup if exactly one valid IDE is available |
+| `--strict-mcp-config` |  | Only use MCP servers from --mcp-config, ignoring all other MCP configurations |
+| `--session-id <uuid>` |  | Use a specific session ID for the conversation (must be a valid UUID) |
+| `-n, --name <name>` |  | Set a display name for this session (shown in the prompt box, /resume picker, and terminal title) |
+| `--agents <json>` |  |  |
+| `--setting-sources <sources>` |  | Comma-separated list of setting sources to load (user, project, local). |
+| `--plugin-dir <path>` |  | Load a plugin from a directory or .zip for this session only (repeatable: --plugin-dir A --plugin-dir B.zip) |
+| `--plugin-dir-no-mcp <path>` | **hidden** | Like --plugin-dir but the engine will not read this plugin's .mcp.json (caller owns its MCP connections) |
+| `--plugin-url <url>` |  | Fetch a plugin .zip from a URL for this session only (repeatable: --plugin-url A --plugin-url B) |
+| `--disable-slash-commands` |  | Disable all skills |
+| `--chrome` |  | Enable Claude in Chrome integration |
+| `--no-chrome` |  | Disable Claude in Chrome integration |
+| `--file <specs...>` |  | File resources to download at startup. Format: file_id:relative_path (e.g., --file file_abc:doc.txt file_def:img.png) |
+| `-w, --worktree [name]` |  | Create a new git worktree for this session (optionally specify a name) |
+| `--tmux` |  | Create a tmux session for the worktree (requires --worktree). Uses iTerm2 native panes when available; use --tmux=classic for traditional tmux. |
+| `--advisor <model>` | **hidden** | Enable the server-side advisor tool with the specified model (alias or full ID). |
+| `--autocompact <auto|tokens>` |  | Auto-compact window size (auto, or 100k–1M tokens) |
+| `--enable-auto-mode` | **hidden** | (deprecated) Opt in to auto mode |
+| `--bg, --background` |  | Start the session in the background and return immediately. Prints the id that `claude attach`, `logs`, `stop` and `rm` take; `claude agents` lists them |
+| `--messaging-socket-path <path>` | **hidden** | Cross-session messaging server path: a Unix domain socket on Mac/Linux, a \\.\pipe\ name on Windows (defaults to an auto-generated path) |
+| `--brief` |  | Enable SendUserMessage tool for agent-to-user communication |
+| `--ax-screen-reader` |  | Render screen-reader friendly output (flat text, no decorative borders or animations). |
+| `--channels <servers...>` | **hidden** | MCP servers whose channel notifications (inbound push) should register this session. Space-separated server names. |
+| `--dangerously-load-development-channels <servers...>` | **hidden** | Load channel servers not on the approved allowlist. For local channel development only. Shows a confirmation dialog at startup. |
+| `--agent-id <id>` | **hidden** | Teammate agent ID |
+| `--agent-name <name>` | **hidden** | Teammate display name |
+| `--team-name <name>` | **hidden** | Team name for teammate coordination |
+| `--agent-color <color>` | **hidden** | Teammate UI color |
+| `--plan-mode-required` | **hidden** | Require plan mode before implementation |
+| `--parent-session-id <id>` | **hidden** | Parent session ID for analytics correlation |
+| `--teammate-mode <mode>` | choices [`auto`, `tmux`, `iterm2`, `in-process`] · **hidden** | How to spawn teammates: "tmux", "iterm2", "in-process", or "auto" |
+| `--agent-type <type>` | **hidden** | Custom agent type for this teammate |
+| `--sdk-url <url>` | **hidden** | Use remote WebSocket endpoint for SDK I/O streaming (only with -p and stream-json format) |
+| `--teleport [session]` |  | Resume a teleport session, optionally specify session ID |
+| `--cloud [description|session_id|url]` |  | Create a cloud session with the given description, or attach to an existing one by session ID or claude.ai/code URL |
+| `--forward-home-settings <true|false>` | choices [`true`, `false`, `1`, `0`] · **hidden** | Whether this launch sends this machine's settings (CLAUDE.md, rules, output styles, preferences, portable permission rules) into the cloud session it creates or attaches to: false = not this launch; true = yes for this launch, … |
+| `--remote [description|session_id|url]` | **hidden** | Deprecated alias for --cloud |
+| `--environment <environment_id>` |  | Create a new cloud session that runs on the given self-hosted environment (ccpool_...). |
+| `--pool <pool_id>` | **hidden** | Deprecated alias for --environment |
+| `--correlation-id <id>` | **hidden** | Opaque id echoed back to the environment orchestrator on the work order (requires --environment). |
+| `--ref <ref>` | **hidden** | Branch, tag, or SHA to check out in the remote session; defaults to local current branch. Requires --cloud or --environment. |
+| `--on-branch <branch>` | **hidden** | Work directly on <branch> in the remote session (checkout and push to it). On self-hosted environments this includes pushing to the default branch when it is not protected — use GitHub branch protection to restrict. Mutually ex… |
+| `--remote-control [name]` |  | Start an interactive session with Remote Control enabled (optionally named) |
+| `--rc [name]` | **hidden** | Alias for --remote-control |
+| `--remote-control-session-name-prefix <prefix>` |  | Prefix for auto-generated Remote Control session names (default: hostname) |
 
 Three flags whose description is a computed expression rather than a literal:
 `--watch-artifact-no-autoreact <artifact>` (hidden sibling of `--watch-artifact`),
@@ -674,7 +786,171 @@ Definition at 111638. Types abbreviated (`string`, `boolean`, `number`, `array`,
 
 | key | type | description (verbatim, truncated) |
 |---|---|---|
-<<SETTINGSTABLE>>
+| `$schema` | string | JSON Schema reference for Claude Code settings |
+| `apiKeyHelper` | string | Path to a script that outputs authentication values |
+| `proxyAuthHelper` | string | Shell command that outputs a Proxy-Authorization header value (EAP) |
+| `awsCredentialExport` | string | Path to a script that exports AWS credentials |
+| `awsAuthRefresh` | string | Path to a script that refreshes AWS authentication |
+| `gcpAuthRefresh` | string | Command to refresh GCP authentication (e.g., gcloud auth application-default login) |
+| `processWrapper` | string | Corporate launcher argv prefix for the background-agent supervisor, the sessions and workers it hosts, and the other covered background processes listed in the Claude Code corporate-launcher docume… |
+| `policyHelper` | object | Executable that computes managed settings at startup. Honored only from admin-controlled policy sources. |
+| `policyHelpers` | object |  |
+| `fileSuggestion` | object | Custom file suggestion configuration for @ mentions |
+| `respectGitignore` | boolean | Whether file picker should respect .gitignore files (default: true). Note: .ignore files are always respected. |
+| `breakReminder` | object | Show a friendly nudge after sustained continuous use (default false). Must be true for the reminder to fire. |
+| `quietHours` | object | Show a one-time nudge when you start or keep using the CLI inside your quiet-hours window (default false). |
+| `cleanupPeriodDays` | number | Number of days to retain chat transcripts before automatic cleanup (default: 30). Minimum 1. Use a large value for long retention; use --no-session-persistence to disable transcript writes entirely. |
+| `desktopSessionCleanupPeriodDays` | number | Retention ceiling in days for session transcripts created or last written by a desktop-host surface (Claude Desktop, Cowork), which are otherwise exempt from the cleanupPeriodDays sweep. 0 (the def… |
+| `syncClaudeAiSkills` | boolean | Set to false to turn off syncing of the skills you have enabled on claude.ai. In your user settings (or managed settings): nothing more is downloaded, previously synced skills (~/.claude/skills/syn… |
+| `syncClaudeAiPlugins` | boolean | Set to false to turn off syncing of the plugins you have enabled on claude.ai. In your user settings (or managed settings): nothing more is downloaded, previously synced plugins (~/.claude/plugins/… |
+| `skillListingMaxDescChars` | number | Per-skill description character cap in the skill listing sent to Claude (default: 1536). Descriptions longer than this are truncated. Raise to opt in to higher per-turn context cost. |
+| `skillListingBudgetFraction` | number | Fraction of the context window (in characters) reserved for the skill listing sent to Claude (default: 0.01 = 1%). When the listing exceeds this, descriptions are shortened to fit. Raise to opt in … |
+| `wslInheritsWindowsSettings` | boolean | When set to true in either admin-only Windows source \u2014 the HKLM SOFTWARE/Policies/ClaudeCode registry key or C:/Program Files/ClaudeCode/managed-settings.json \u2014 WSL reads managed settings… |
+| `env` | record<string,string> | Environment variables to set for Claude Code sessions |
+| `attribution` | object | Attribution text for git commits, including any trailers. Empty string hides attribution. |
+| `includeCoAuthoredBy` | boolean | Deprecated: Use attribution instead. Whether to include Claude's co-authored by attribution in commits and PRs (defaults to true) |
+| `includeGitInstructions` | boolean | Include built-in commit and PR workflow instructions in Claude's system prompt (default: true) |
+| `permissions` | permissions | Tool usage permissions configuration |
+| `model` | string | Override the default model used by Claude Code |
+| `fallbackModel` | array |  |
+| `availableModels` | array |  |
+| `enforceAvailableModels` | boolean | When true and availableModels is a non-empty array, the Default model selection is also constrained: if the default model for the user tier is not in availableModels, Default resolves to the first … |
+| `modelOverrides` | record |  |
+| `modelPicker` | object | Rows to show in the /model picker, in order. |
+| `modelPricing` | object | Price usage at your organization's contracted rates instead of list price. " + "Affects every spend figure Claude Code reports \u2014 /cost, the status line, the SDK total_cost_usd, " + "--max-budg… |
+| `enableAllProjectMcpServers` | boolean | Whether to automatically approve all MCP servers in the project |
+| `enabledMcpjsonServers` | array | List of approved MCP servers from .mcp.json |
+| `disabledMcpjsonServers` | array | List of rejected MCP servers from .mcp.json |
+| `disableClaudeAiConnectors` | boolean | When true in any settings source, claude.ai MCP cloud connectors are not auto-fetched or connected. " + "Only gates auto-fetched connectors \u2014 a claudeai-proxy server passed explicitly " + "(e.… |
+| `skillOverrides` | record |  |
+| `disableBundledSkills` | boolean | Disable the skills and workflows that ship with Claude Code: bundled skills and workflows are removed entirely; built-in slash commands stay typable but are hidden from the model. Plugins, .claude/… |
+| `allowedMcpServers` | array | Enterprise allowlist of MCP servers that can be used. Applies to all scopes including enterprise servers from managed-mcp.json. If undefined, all servers are allowed. If empty array, no servers are… |
+| `deniedMcpServers` | array | Enterprise denylist of MCP servers that are explicitly blocked. If a server is on the denylist, it will be blocked across all scopes including enterprise. Denylist takes precedence over allowlist -… |
+| `hooks` | hooks | Custom commands to run before/after tool executions |
+| `worktree` | object | Directories to include when creating worktrees, via git sparse-checkout (cone mode). " + "Dramatically faster in large monorepos \u2014 only the listed paths are written to disk. |
+| `disableAllHooks` | boolean | Disable all hooks and statusLine execution |
+| `disableAgentView` | boolean | Disable agent view (`claude agents`, `--bg`, /background, the on-demand daemon). Typically set in managed settings. Equivalent to CLAUDE_CODE_DISABLE_AGENT_VIEW=1. |
+| `disableRemoteControl` | boolean | Disable Remote Control (claude.ai/code, `claude remote-control`, `--remote-control`/`--rc`, auto-start, and the in-session toggle). Typically set in managed settings. |
+| `disableWorkflows` | boolean | Disable the Workflows feature (also via CLAUDE_CODE_DISABLE_WORKFLOWS). |
+| `disableArtifact` | boolean | Deprecated: use enableArtifact: false. Still honored \u2014 true disables the Artifact tool; false is ignored. |
+| `enableArtifact` | boolean | Turn the Artifact tool on or off. Off in any of managed, --settings, or user settings wins; project and local settings can only turn it off. Unset defaults to on once the feature is available. |
+| `enableWorkflows` | boolean | Enable or disable the Workflows feature for this user. Unset = default by plan once the feature is available. |
+| `workflowSizeGuideline` | enum |  |
+| `workflowKeywordTriggerEnabled` | boolean |  |
+| `disableSkillShellExecution` | boolean | Disable inline shell execution in skills and custom slash commands from user, project, or plugin sources. Commands are replaced with a placeholder instead of being run. |
+| `defaultShell` | enum | Default shell for input-box ! commands. Defaults to 'bash' on all platforms (no Windows auto-flip). |
+| `respondToBashCommands` | boolean | Whether Claude responds after an input-box ! bash command runs. Set to false to add the command output to context without a response. Default: true. |
+| `allowManagedHooksOnly` | boolean | When true (and set in managed settings), only hooks from managed settings run. User, project, and local hooks are ignored. |
+| `allowedHttpHookUrls` | array |  |
+| `httpHookAllowedEnvVars` | array | Allowlist of environment variable names HTTP hooks may interpolate into headers. When set, each hook's effective allowedEnvVars is the intersection with this list. If undefined, no restriction is a… |
+| `allowManagedPermissionRulesOnly` | boolean | When true (and set in managed settings), only permission rules (allow/deny/ask) from managed settings are respected. User, project, local, and CLI argument permission rules are ignored. |
+| `allowManagedMcpServersOnly` | boolean | When true (and set in managed settings), allowedMcpServers is only read from managed settings. deniedMcpServers still merges from all sources, so users can deny servers for themselves. Users can st… |
+| `allowAllClaudeAiMcps` | boolean | When true (and set in managed settings), claude.ai cloud MCP connectors load alongside managed-mcp.json instead of being suppressed by its exclusive-control lockdown. Default off preserves the lock… |
+| `strictPluginOnlyCustomization` | preprocess |  |
+| `statusLine` | object | Re-run the status line command every N seconds in addition to event-driven updates |
+| `prUrlTemplate` | string |  |
+| `footerLinksRegexes` | array | Extra clickable footer badges that appear when a regex matches turn output (tool results and assistant responses). Read from user, flag, and managed settings only; ignored in project .claude/settin… |
+| `subagentStatusLine` | object | Custom per-subagent status line shown in the agent panel; receives row context as JSON on stdin |
+| `enabledPlugins` | record |  |
+| `extraKnownMarketplaces` | record | Additional marketplaces to make available for this repository. Typically used in repository .claude/settings.json to ensure team members have required plugin sources. |
+| `additionalMarketplaces` | record | Alias for extraKnownMarketplaces: this key is read exactly as if it were spelled " + "extraKnownMarketplaces. Do not set both in one file \u2014 if both appear, this key is ignored " + "with a warn… |
+| `strictKnownMarketplaces` | array |  |
+| `allowedMarketplaces` | array | Alias for strictKnownMarketplaces (managed settings only): this key is read exactly as if it " + "were spelled strictKnownMarketplaces. Do not set both in one file \u2014 if both appear, this key "… |
+| `blockedMarketplaces` | array |  |
+| `disableCommandPluginSources` | boolean | Controls the `command` plugin source, whose plugin directory is produced by running a marketplace-declared command on this machine. true: command-sourced plugins are never installed, updated, or re… |
+| `disableSideloadFlags` | boolean | When true (and set in managed settings), rejects the --plugin-dir, --plugin-url, --agents, and non-sdk --mcp-config CLI flags at startup. Closes the CLI-flag bypass of strictKnownMarketplaces. Pair… |
+| `pluginSuggestionMarketplaces` | array | Marketplace names whose plugins may surface as contextual install suggestions (relevance-based tips). No marketplace-declared suggestions surface without this allowlist; the built-in first-party fr… |
+| `forceLoginMethod` | enum |  |
+| `forceLoginGatewayUrl` | string |  |
+| `parentSettingsBehavior` | enum |  |
+| `managedSourcesBehavior` | enum |  |
+| `forceLoginOrgUUID` | union | Organization UUID to require for OAuth login. Accepts a single UUID string or an array of UUIDs (any one is permitted). When set in managed settings, login fails if the authenticated account does n… |
+| `forceRemoteSettingsRefresh` | boolean | When set in managed settings, the CLI blocks startup until remote managed settings are freshly fetched, and exits if the fetch fails |
+| `otelHeadersHelper` | string | Path to a script that outputs OpenTelemetry headers |
+| `outputStyle` | string | Controls the output style for assistant responses |
+| `viewMode` | enum | Default transcript view mode on startup |
+| `language` | string |  |
+| `skipWebFetchPreflight` | boolean | Skip the WebFetch blocklist check for enterprise environments with restrictive security policies |
+| `sandbox` | sandbox |  |
+| `feedbackSurveyRate` | number | Probability (0\u20131) that the session quality survey appears when eligible. 0.05 is a reasonable starting point. |
+| `feedbackDrafts` | enum |  |
+| `spinnerTipsEnabled` | boolean | Whether to show tips in the spinner |
+| `spinnerVerbs` | object |  |
+| `spinnerTipsOverride` | object | Absolute or ~/ local path to a JSON file holding an array of tips (same shapes as `tips`); honored from user, --settings and on-disk managed settings only. Read once per CLI process (restart to pic… |
+| `syntaxHighlightingDisabled` | boolean | Whether to disable syntax highlighting in diffs |
+| `spellcheck` | object | Turn on spell checking of the prompt input (default: false) |
+| `terminalTitleFromRename` | boolean | Whether /rename updates the terminal tab title (defaults to true). Set to false to keep auto-generated topic titles. |
+| `promptCacheTtl` | enum |  |
+| `subagentPromptCacheTtl` | enum |  |
+| `alwaysThinkingEnabled` | boolean | When false, thinking is disabled. When absent or true, thinking is enabled automatically for supported models. |
+| `effortLevel` | enum | Persisted effort level for supported models. |
+| `modelSettings` | preprocess | Persisted effort level for this model. |
+| `ultracode` | boolean | Enable ultracode for the session: xhigh effort plus standing dynamic-workflow orchestration. " + "Session-scoped \u2014 typically provided via --settings or the apply_flag_settings control request;… |
+| `autoCompactWindow` | auto\|number | Auto-compact window size |
+| `advisorModel` | string | Advisor model for the server-side advisor tool. |
+| `fastMode` | boolean | When true, fast mode is enabled. When absent or false, fast mode is off. |
+| `fastModePerSessionOptIn` | boolean | When true, fast mode does not persist across sessions. Each session starts with fast mode off. |
+| `promptSuggestionEnabled` | boolean | When false, prompt suggestions are disabled. When absent or true, prompt suggestions are enabled. |
+| `emojiCompletionEnabled` | boolean | When false, the :emoji: shortcode typeahead (the suggestion popup and the :name: inline replacement) is disabled. When absent or true, it is enabled. |
+| `awaySummaryEnabled` | boolean | @internal When false, the session recap (shown when you return after being away for 5+ minutes) is disabled. When absent or true, recap is enabled. Hidden from public SDK types until external launch. |
+| `showClearContextOnPlanAccept` | boolean |  |
+| `askUserQuestionTimeout` | enum | Idle time before Claude's questions auto-continue with any answers " + "selected so far. Defaults to never \u2014 auto-continue only runs " + "when explicitly set to 60s/5m/10m. |
+| `dialogExpiry` | enum |  |
+| `agent` | string | Name of an agent (built-in or custom) to use for the main thread. Applies the agent's system prompt, tool restrictions, and model. |
+| `modelProposedGoals` | enum | @internal Controls the ProposeGoal tool (model-proposed session goals). 'auto' (the default when absent) lets the model choose per proposal whether to ask for approval via its ask_user parameter; '… |
+| `companyAnnouncements` | array | Company announcements to display at startup (one will be randomly selected if multiple are provided) |
+| `pluginConfigs` | record | User configuration values for MCP servers keyed by server name |
+| `remote` | object | Default environment ID to use for cloud sessions |
+| `autoUpdatesChannel` | enum | Release channel for auto-updates (latest or stable) |
+| `minimumVersion` | string | Minimum version to stay on - prevents downgrades when switching to stable channel |
+| `requiredMinimumVersion` | string | Minimum Claude Code version required to start. If the running version is older, Claude Code exits at startup with instructions to update. Only enforced from managed (policy) settings. |
+| `requiredMaximumVersion` | string | Maximum Claude Code version allowed to start. If the running version is newer, Claude Code exits at startup with instructions to install an approved version. Only enforced from managed (policy) set… |
+| `plansDirectory` | string | Custom directory for plan files, relative to project root. If not set, defaults to ~/.claude/plans/ |
+| `tui` | enum |  |
+| `voice` | object | 'hold' (default): hold to talk. 'tap': tap to start, tap to stop+submit. |
+| `channelsEnabled` | boolean | Managed-org opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). claude.ai Teams/Enterprise: default off. Console: default on unless managed s… |
+| `allowedChannelPlugins` | array | Managed-org allowlist of channel plugins. When set, " + "replaces the default Anthropic allowlist \u2014 admins decide which " + "plugins may push inbound messages. Undefined falls back to the defa… |
+| `prefersReducedMotion` | boolean | Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.) |
+| `doneMeansMerged` | boolean | @internal When true, Claude keeps working until the PR is ready for you to merge, a cron/Monitor is armed to resume later, or it hands you a self-contained next step. |
+| `totalTokensReminder` | enum | @internal Emit a <total_tokens>N tokens left</total_tokens> block in the system prompt, after each tool result, and (when totalTokensReminderAfterUserTurn is on) after each regular user prompt. 'in… |
+| `totalTokensReminderBudget` | number | @internal Starting budget (tokens) for totalTokensReminder 'padded-countdown' mode. Defaults to 15000000. Server-controlled via GrowthBook; env var CLAUDE_CODE_TOTAL_TOKENS_REMINDER_BUDGET overrides. |
+| `totalTokensReminderAfterUserTurn` | boolean | @internal When true, emit the totalTokensReminder block after each regular user prompt and (for 'padded-countdown') re-anchor the task budget to the full configured value at the start of each user … |
+| `autoMemoryEnabled` | boolean | Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory. |
+| `autoMemoryDirectory` | string | Custom directory path for auto-memory storage. Supports ~/ prefix for home directory expansion. Ignored if set in projectSettings (checked-in .claude/settings.json) for security. When unset, defaul… |
+| `autoDreamEnabled` | boolean | Enable background memory consolidation (auto-dream). When set, overrides the server-side default. |
+| `showThinkingSummaries` | boolean | Request API-side thinking summaries and show them in the conversation and in the transcript view (ctrl+o). Set explicitly to override the default for your install. |
+| `skipDangerousModePermissionPrompt` | boolean | Whether the user has accepted the bypass permissions mode dialog |
+| `skipWorkflowUsageWarning` | boolean | @internal Whether the user has accepted the multi-agent workflow usage warning. Until set, auto permission mode prompts before running a workflow. |
+| `disableAutoMode` | enum | Disable auto mode |
+| `sshConfigs` | array | Unique identifier for this SSH config. Used to match configs across settings sources. |
+| `claudeMd` | string | CLAUDE.md-style instructions injected as organization-managed memory. Only honored from managed/policy settings. |
+| `claudeMdExcludes` | array |  |
+| `pluginTrustMessage` | string |  |
+| `theme` | union | Color theme for the UI |
+| `editorMode` | enum | Key binding mode for the prompt input |
+| `keybindingFlavor` | enum |  |
+| `vimInsertModeRemaps` | record |  |
+| `verbose` | boolean | Show full tool output instead of truncated summaries |
+| `preferredNotifChannel` | enum | Preferred OS notification channel |
+| `autoCompactEnabled` | boolean | Automatically compact conversation when context fills |
+| `precomputeCompactionEnabled` | boolean | Precompute the compaction summary in the background before it is needed. Only applies when auto-compact is on. |
+| `switchModelsOnFlag` | boolean | When safeguards flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead. |
+| `autoContinueAtUsageLimit` | boolean | When a claude.ai usage limit stops your session, wait for the limit to reset and continue the task automatically. When off, the limit dialog offers the wait as a choice instead. |
+| `autoScrollEnabled` | boolean | Auto-scroll the conversation view to bottom (fullscreen mode only) |
+| `wheelScrollAccelerationEnabled` | boolean | Ramp mouse-wheel scroll speed during fast scrolls (fullscreen mode only) |
+| `fileCheckpointingEnabled` | boolean | Snapshot files before edits so /rewind can restore them |
+| `showTurnDuration` | boolean |  |
+| `showMessageTimestamps` | boolean | Stamp each message with its arrival time |
+| `terminalProgressBarEnabled` | boolean | Emit OSC 9;4 progress sequences during long operations |
+| `todoFeatureEnabled` | boolean | Enable the todo / task tracking panel |
+| `teammateMode` | enum | How spawned teammates execute (tmux, iterm2, in-process, auto) |
+| `remoteControlAtStartup` | boolean | Start Remote Control bridge automatically each session |
+| `isolatePeerMachines` | boolean | Require explicit approval before SendMessage can reach a peer session on another machine via Remote Control |
+| `daemonColdStart` | enum | When no background service is running: 'transient' spawns one for this login session; 'ask' offers to install it persistently |
+| `crossSessionInbound` | enum | Inbound cross-session peer messages (SendMessage from your other sessions): 'accept' delivers them, 'hold' parks them for your review without letting Claude act, 'refuse' opts this session out. An … |
+| `autoUploadSessions` | boolean | Mirror local sessions to claude.ai as view-only (no remote control) |
+| `inputNeededNotifEnabled` | boolean | Push to mobile when a permission prompt or question is waiting |
+| `agentPushNotifEnabled` | boolean | Allow Claude to push proactive mobile notifications |
 
 Five feature-module shapes are spread in conditionally (`rt(e)` over `xn = ["autoMode","deepLink",
 "voice","briefView","screenReader"]`, 111232–111240), contributing:
@@ -872,7 +1148,11 @@ Extracted by matching `"tengu_*"` first-arguments followed by a literal default.
 names share the `tengu_` prefix and were filtered out by requiring a boolean/number/null/string
 default. Values shown are the compiled fallbacks.
 
-<<GATELIST>>
+**Default `false` (220):** `tengu_alder_compass`, `tengu_amber_anchor`, `tengu_amber_creek`, `tengu_amber_kestrel`, `tengu_amber_lark`, `tengu_amber_lynx`, `tengu_amber_packet`, `tengu_amber_prism`, `tengu_amber_quill_moth`, `tengu_amber_relay`, `tengu_amber_sentinel`, `tengu_auto_mode_worktree_fast_path`, `tengu_basalt_meadow`, `tengu_basalt_scarp`, `tengu_basalt_spur`, `tengu_birch_kettle`, `tengu_bracken_sluice`, `tengu_brass_plover`, `tengu_brass_sled`, `tengu_brick_follow`, `tengu_bridge_attestation_enforce`, `tengu_bridge_initialize_commands`, `tengu_bridge_partial_messages`, `tengu_bridge_requires_action_details`, `tengu_bridge_subagent_text`, `tengu_bridge_vivid`, `tengu_brindle_causeway`, `tengu_c4e_slash_upsell`, `tengu_ccr_bridge`, `tengu_ccr_delta_rehydrate`, `tengu_ccr_handoff_metadata`, `tengu_ccr_idle_heartbeat`, `tengu_ccr_reactivation_beat`, `tengu_ccr_reconnect_beat`, `tengu_ccr_subagent_lazy_hydrate`, `tengu_ccr_subagent_skip_on_delta`, `tengu_ccr_v2_session_crud_cli`, `tengu_cedar_lattice`, `tengu_cedar_marsh`, `tengu_cedar_plume`, `tengu_cedar_transom`, `tengu_chair_sermon`, `tengu_chomp_inflection`, `tengu_chrome_auto_enable`, `tengu_chrome_install_upsell`, `tengu_classifier_summary_kill`, `tengu_classifier_summary_llm_emit`, `tengu_clever_orbit`, `tengu_cobalt_harbor`, `tengu_cobalt_plinth_alder`, `tengu_cobalt_plinth_aspen`, `tengu_cobalt_plinth_bracken`, `tengu_cobalt_plinth_campion`, `tengu_cobalt_plinth_dataviz`, `tengu_cobalt_plinth_fennel`, `tengu_cobalt_plinth_larch`, `tengu_cobalt_plinth_laurel`, `tengu_cobalt_plinth_osier`, `tengu_cobalt_plinth_sedge`, `tengu_cobalt_plinth_tansy`, `tengu_cobalt_plinth_thistle`, `tengu_cobalt_plinth_thrift`, `tengu_cobalt_plinth_yew`, `tengu_cobalt_ridge`, `tengu_cobalt_wren`, `tengu_copper_lantern`, `tengu_copper_thistle`, `tengu_coral_beacon`, `tengu_cowork_auto_mode_include_allowed_write_mcp`, `tengu_cowork_chrome_automode_default`, `tengu_crimson_vector`, `tengu_dapper_dawn`, `tengu_destructive_command_warning`, `tengu_disable_live_host_context`, `tengu_disable_streaming_to_non_streaming_fallback`, `tengu_dreamy_frost`, `tengu_drift_lantern`, `tengu_edit_minimalanchor_jrn`, `tengu_ember_latch`, `tengu_expressive_whistle`, `tengu_fgts`, `tengu_fleet_past_sessions`, `tengu_fleetview_peers`, `tengu_fleetview_simple`, `tengu_flint_harbor_share`, `tengu_gable_onyx_sluice`, `tengu_gb_eval_authed_enable`, `tengu_gleaming_fair`, `tengu_gorse_fathom`, `tengu_gorse_pylon`, `tengu_gorse_sill`, `tengu_gypsum_kite`, `tengu_harbor`, `tengu_harbor_kite_cloud`, `tengu_harbor_kite_pacing_off`, `tengu_harbor_moth`, `tengu_harbor_permissions`, `tengu_harbor_willow`, `tengu_hawthorn_steeple`, `tengu_haze_glass`, `tengu_hazel_osprey`, `tengu_hazel_quire`, `tengu_hover_rest`, `tengu_ide_rc_auto_enable`, `tengu_idle_amber_finch`, `tengu_import`, `tengu_jade_anvil_4`, `tengu_jiggly_mochi`, `tengu_juniper_bassoon`, `tengu_juniper_relay`, `tengu_kairos_brief`, `tengu_kairos_input_needed_push`, `tengu_kairos_loop_persistent`, `tengu_kairos_push_notifications`, `tengu_lantern_prism`, `tengu_lantern_sconce`, `tengu_lantern_spool`, `tengu_larch_pavise`, `tengu_linen_orbit`, `tengu_loggia_denkbild`, `tengu_maple_pier`, `tengu_maple_rung`, `tengu_maple_sundial`, `tengu_marbled_teal`, `tengu_marlin_porch`, `tengu_mcp_claudeai_eligibility_gate`, `tengu_mcp_directory_bff`, `tengu_mcp_issuer_strict_echo`, `tengu_mcp_protocol_negotiation_ccr`, `tengu_mcp_protocol_negotiation_claudeai`, `tengu_mcp_protocol_negotiation_http`, `tengu_mcp_skills`, `tengu_mcp_strip_trailing_xml_tags`, `tengu_mcp_subagent_prompt`, `tengu_medlar_quoin`, `tengu_melodic_wolf`, `tengu_mill_orange`, `tengu_mint_lanes`, `tengu_misty_anchor`, `tengu_moonlit_panda`, `tengu_moss_anchor`, `tengu_moth_copse`, `tengu_nankeen_kestrel`, `tengu_native_cursor`, `tengu_neapolitan`, `tengu_ochre_finch`, `tengu_ochre_wren`, `tengu_onyx_sluice`, `tengu_osier_pylon_trace`, `tengu_paper_halyard`, `tengu_passport_quail`, `tengu_pencil_farmer`, `tengu_pewter_brook`, `tengu_pewter_canteen`, `tengu_plugin_autoupdate_allow_credential_helper`, `tengu_plugin_binary_assets`, `tengu_plum_vx3`, `tengu_pr_footer_surface_suffix`, `tengu_print_engine_loop`, `tengu_propose_goal`, `tengu_quiet_harbor`, `tengu_quiet_slate_wren`, `tengu_reactive_compact_remote`, `tengu_read_dedup_killswitch`, `tengu_record_created_pr_to_ccr`, `tengu_remote_auto_mode_include_destructive_mcp`, `tengu_remote_backend`, `tengu_rename_full_session_fork`, `tengu_saffron_picker_dim`, `tengu_satchel_banjo`, `tengu_scratch`, `tengu_send_file`, `tengu_sepia_moth`, `tengu_shale_finch`, `tengu_shining_fractals`, `tengu_silent_harbor`, `tengu_silk_hinge`, `tengu_skills_dashboard_enabled`, `tengu_slate_finch`, `tengu_slate_harbor`, `tengu_slate_harbor_experiment`, `tengu_slate_lantern`, `tengu_slate_lantern_ember`, `tengu_slate_quoin`, `tengu_slate_thimble`, `tengu_smooth_harbor`, `tengu_sorrel_trellis`, `tengu_stone_shell`, `tengu_structured_output_strict`, `tengu_subagent_cache_evict`, `tengu_tab_read_sep`, `tengu_teal_corbel`, `tengu_teleport_send_to_cloud`, `tengu_terminal_sidebar`, `tengu_thinking_block_resumption`, `tengu_thinking_display_updates`, `tengu_ticklish_whisper`, `tengu_tool_memory_cgroup`, `tengu_tool_pear`, `tengu_trace_lantern`, `tengu_transcript_local_gc`, `tengu_tussock_oriole`, `tengu_umber_lattice`, `tengu_umber_petrel`, `tengu_umber_sluice`, `tengu_vellum_anchor`, `tengu_vellum_siding`, `tengu_velvet_tide`, `tengu_verified_vs_assumed`, `tengu_violin_amati`, `tengu_violin_strad`, `tengu_violin_wood`, `tengu_virtual_knuth`, `tengu_vscode_feedback_survey`, `tengu_vscode_onboarding`, `tengu_vscode_review_upsell`, `tengu_walnut_sconce`, `tengu_walnut_spire`, `tengu_watchdog_skip_nonstreaming_fallback`, `tengu_willow_crate`
+
+**Default `true` (96):** `tengu_amber_flint`, `tengu_amber_sextant`, `tengu_async_goblet`, `tengu_bg_attach_upgrade`, `tengu_bg_binary_takeover`, `tengu_bg_leftarrow_inprocess`, `tengu_bg_revival_guard`, `tengu_bg_spare_enable`, `tengu_bg_worker_ctty`, `tengu_bridge_auth_revive`, `tengu_bridge_host_declined_end`, `tengu_bridge_owner_pinned_end`, `tengu_bridge_placeholder_sweep`, `tengu_bridge_recovery_patience`, `tengu_bridge_repl_v2_cse_shim_enabled`, `tengu_bridge_resume_respects_local_owner`, `tengu_bridge_selfheal_heartbeats`, `tengu_bridge_signed_out_neutral`, `tengu_bridge_subagent_frames`, `tengu_bridge_unarchive_on_resume`, `tengu_ccr_orphan_restore_wake`, `tengu_ccr_orphan_restore_wake_shells`, `tengu_ccr_v2_send_events_cli`, `tengu_cedar_lantern`, `tengu_chrome_tab_group_close`, `tengu_cobalt_harbor_notice`, `tengu_cobalt_plinth_fern`, `tengu_cobalt_plinth_madder`, `tengu_cobalt_plinth_moss`, `tengu_cobalt_plinth_sorrel`, `tengu_cobalt_plinth_teasel`, `tengu_cobalt_thicket`, `tengu_compact_cache_prefix`, `tengu_composed_quail`, `tengu_concurrent_shore`, `tengu_coordinator_panel`, `tengu_copper_kestrel`, `tengu_coral_anchor`, `tengu_cuddly_willow`, `tengu_daemon_refuse_stale_upgrade`, `tengu_daemon_upgrade_defer_busy`, `tengu_dazzling_garden`, `tengu_deep_feather`, `tengu_deferred_stub_tool`, `tengu_ethereal_mist`, `tengu_ethereal_nova`, `tengu_fleetview_pr_batch`, `tengu_foamy_spring`, `tengu_glimmering_glade`, `tengu_harbor_kite`, `tengu_harbor_kite_mode_emit`, `tengu_harbor_kite_win`, `tengu_jade_compass`, `tengu_kairos_cron`, `tengu_kairos_cron_durable`, `tengu_kairos_loop_keepalive`, `tengu_kestrel_moor`, `tengu_keybinding_customization_release`, `tengu_left_arrow_editing_guard`, `tengu_linear_brook`, `tengu_luminous_seal`, `tengu_mcp_auto_background`, `tengu_mcp_connect_timeout_retry`, `tengu_mcp_listen_reopen_park`, `tengu_mcp_proxy_needs_approval_retry`, `tengu_mcp_server_policy_bypass_exempt`, `tengu_mcp_singleton_unwrap`, `tengu_mcp_startup_policy_seed`, `tengu_mcp_stateless_skip_init`, `tengu_memory_bulk_inflate`, `tengu_memory_stream_list`, `tengu_observer_agents_enabled`, `tengu_observer_subagent_fanout`, `tengu_playful_lobster`, `tengu_plugin_command_source_refresh`, `tengu_plugin_official_mkt_git_fallback`, `tengu_ptc_enabled`, `tengu_quartz_pipit`, `tengu_quartz_thimble`, `tengu_repl_mcp_error_throw`, `tengu_saffron_wren`, `tengu_send_user_file`, `tengu_sequential_puffin`, `tengu_session_name_uniqueness`, `tengu_sharded_beacon`, `tengu_static_title_under_mux`, `tengu_stream_watchdog_default_on`, `tengu_surface_failed_mcp_servers`, `tengu_teal_corbel_finial`, `tengu_truncated_response_recovery`, `tengu_turtle_carbon`, `tengu_ultrareview_post_enabled`, `tengu_vscode_resume_precheck`, `tengu_wobbly_pinwheel`, `tengu_workflows_enabled`, `tengu_xterm_atlas_reset`
+
+**Non-boolean defaults (39):** `tengu_amber_redwood2` = "", `tengu_amber_redwood3` = "", `tengu_bg_low_mem_mb` = 1024, `tengu_bg_prewarm_burst_concurrency` = 3, `tengu_bg_prewarm_burst_delay_ms` = 15000, `tengu_bg_prewarm_per_sweep` = 3, `tengu_birch_lantern` = "off", `tengu_bramble_lintel` = null, `tengu_ccr_bundle_max_bytes` = null, `tengu_ccr_no_subscriber_flush_ms` = 0, `tengu_cicada_nap_ms` = 0, `tengu_cinder_plover` = "", `tengu_cinder_wren` = "", `tengu_classifier_disabled_surfaces` = "", `tengu_gb_refresh_interval_minutes` = null, `tengu_hearth_resolved_rows` = "off", `tengu_heron_brook` = "", `tengu_juniper_sundial` = null, `tengu_kairos_brief_stop_hook_text` = "", `tengu_kairos_ready_nudge` = null, `tengu_kestrel_arch` = "off", `tengu_mcp_discovery_cache_enable` = null, `tengu_mcp_listen_reopen_park_tuning` = null, `tengu_mcp_memory_cgroup` = null, `tengu_mem_push_delete_mode` = "corroborate", `tengu_non_deferrable_builtins` = null, `tengu_onyx_plover` = null, `tengu_penguins_off` = null, `tengu_pewter_kite_ms` = 0, `tengu_pewter_owl_model` = "", `tengu_rc_long_turn_nudge` = null, `tengu_saffron_ladder` = null, `tengu_sepia_cormorant` = null, `tengu_soft_slate_nudge` = "baseline", `tengu_startup_notice` = "", `tengu_tool_cgroup_exclude_classes` = null, `tengu_tool_search_unsupported_models` = null, `tengu_ultraplan_config` = null, `tengu_ultraplan_timeout_seconds` = 5400
 
 Flags whose effect I read directly:
 

@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Claude Code Harness — A Complete Technical Lecture</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2333;
+    --fg: #d6dde6;
+    --fg-dim: #8b96a5;
+    --accent: #d97757;       /* anthropic clay */
+    --accent2: #6ca0f6;      /* blue */
+    --green: #57ab5a;
+    --yellow: #d4a72c;
+    --red: #e5534b;
+    --purple: #b083f0;
+    --border: #2d333b;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--sans); font-size: 16px; line-height: 1.65;
+  }
+  /* ---------- layout ---------- */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 300px;
+    background: var(--bg2); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 18px 14px 40px; font-size: 13.5px;
+  }
+  #sidebar h1 { font-size: 15px; color: var(--accent); margin: 4px 6px 14px; line-height: 1.4; }
+  #sidebar a {
+    display: block; color: var(--fg-dim); text-decoration: none;
+    padding: 4px 8px; border-radius: 6px; margin: 1px 0;
+  }
+  #sidebar a:hover { background: var(--bg3); color: var(--fg); }
+  #sidebar a.active { background: var(--bg3); color: var(--accent); }
+  #sidebar a.h3 { padding-left: 22px; font-size: 12.5px; }
+  main { margin-left: 300px; max-width: 1020px; padding: 40px 56px 120px; }
+  @media (max-width: 900px) { #sidebar { display: none; } main { margin-left: 0; padding: 24px 20px 80px; } }
+
+  /* ---------- typography ---------- */
+  h1.title { font-size: 42px; line-height: 1.15; margin: 10px 0 6px; }
+  h1.title .thin { font-weight: 300; color: var(--fg-dim); }
+  h2 { font-size: 30px; margin: 90px 0 6px; padding-top: 24px; border-top: 1px solid var(--border); }
+  h2 .chapno { color: var(--accent); font-family: var(--mono); font-size: 20px; display: block; margin-bottom: 4px; }
+  h3 { font-size: 21px; margin: 44px 0 10px; color: #e8eef5; }
+  h4 { font-size: 16.5px; margin: 30px 0 8px; color: var(--accent2); }
+  p { margin: 12px 0; }
+  a { color: var(--accent2); }
+  code {
+    font-family: var(--mono); font-size: .86em; background: var(--bg3);
+    padding: 1.5px 5px; border-radius: 4px; color: #dbe6f2;
+  }
+  pre {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; overflow-x: auto; font-family: var(--mono);
+    font-size: 12.8px; line-height: 1.55; margin: 16px 0;
+  }
+  pre code { background: none; padding: 0; }
+  pre .c  { color: #768390; }
+  pre .s  { color: #96d0a0; }
+  pre .k  { color: #f47067; }
+  pre .n  { color: #6cb6ff; }
+  pre .v  { color: #dcbdfb; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th { text-align: left; color: var(--fg-dim); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; }
+  th, td { border-bottom: 1px solid var(--border); padding: 8px 12px 8px 0; vertical-align: top; }
+  td code { white-space: nowrap; }
+  td.wrap code { white-space: normal; }
+  blockquote {
+    margin: 16px 0; padding: 2px 18px; border-left: 3px solid var(--accent);
+    background: var(--bg2); border-radius: 0 8px 8px 0; color: var(--fg-dim);
+  }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+
+  /* ---------- pedagogical boxes ---------- */
+  .eli5 {
+    background: linear-gradient(135deg, #1a2233, #16202b);
+    border: 1px solid #2b3a55; border-radius: 12px;
+    padding: 18px 22px; margin: 22px 0;
+  }
+  .eli5 .tag { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent2); font-weight: 700; }
+  .eli5 p { margin: 8px 0 4px; font-size: 16.5px; }
+  .deep { border-left: 3px solid var(--purple); padding-left: 18px; margin: 20px 0; }
+  .evidence {
+    font-size: 12.5px; color: var(--fg-dim); font-family: var(--mono);
+    margin-top: -6px; margin-bottom: 14px;
+  }
+  .evidence::before { content: "⚓ "; }
+  .callout {
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin: 18px 0;
+    background: var(--bg2);
+  }
+  .callout.warn { border-color: #5a4a1a; background: #211d10; }
+  .callout.key  { border-color: #274a2c; background: #12211a; }
+  .callout .ct { font-weight: 700; font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase; }
+  .callout.warn .ct { color: var(--yellow); }
+  .callout.key .ct { color: var(--green); }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 11.5px;
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; margin: 2px;
+    color: var(--fg-dim); background: var(--bg2);
+  }
+  .pill.on { color: var(--green); border-color: #2c4a30; }
+  .pill.off { color: var(--red); border-color: #4a2c2c; }
+
+  /* ---------- diagrams ---------- */
+  .diagram {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin: 22px 0; overflow-x: auto;
+  }
+  .diagram svg { display: block; margin: 0 auto; }
+  .diagram .cap { text-align: center; color: var(--fg-dim); font-size: 13px; margin-top: 10px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin: 18px 0; }
+  .flow .box {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 14px; font-family: var(--mono); font-size: 12.5px; text-align: center;
+  }
+  .flow .box.hot { border-color: var(--accent); color: var(--accent); }
+  .flow .arr { color: var(--fg-dim); font-size: 18px; }
+
+  .filetree { font-family: var(--mono); font-size: 12.8px; line-height: 1.7; }
+  .filetree .d { color: var(--accent2); }
+  .filetree .f { color: var(--fg); }
+  .filetree .note { color: var(--fg-dim); }
+
+  .kbd {
+    font-family: var(--mono); font-size: 12px; background: var(--bg3);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+    padding: 1px 6px;
+  }
+  .meta { color: var(--fg-dim); font-size: 14px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<nav id="sidebar"><h1>The Claude Code Harness<br><span style="color:var(--fg-dim);font-weight:400">a complete technical lecture</span></h1><div id="toc"></div></nav>
+<main>
+
+<header>
+  <h1 class="title">The Claude Code Harness<br><span class="thin">everything around the model</span></h1>
+  <p class="meta">
+    A multi-chapter internals lecture, mined from the shipping binary — Claude Code
+    <code>v2.1.251</code> (extracted 2026-08-31, 197&nbsp;MB Mach-O, 1,792 ESM chunks,
+    881,404 beautified lines) — cross-checked against a 551-row feature taxonomy and live
+    SDK probes. Written for an engineer who wants to <em>rebuild</em> it, not just use it.
+  </p>
+  <p class="meta">Every load-bearing claim is anchored to <code>cli.pretty.js:LINE</code> in the
+  extracted bundle at <code>~/claude-code-bundle/2.1.251/</code>. Where behavior was verified by a
+  live probe rather than static reading, the text says so.</p>
+</header>
+
+<!-- ================================================================ -->
+<section id="ch0">
+<h2><span class="chapno">Chapter 0</span>Orientation: what a “harness” even is</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>The model — Claude — is a brain in a jar. It can only do one thing: read text and
+  emit text. It cannot open files, run commands, remember yesterday, or even know what
+  time it is.</p>
+  <p>The <b>harness</b> is everything wrapped around that jar to turn “text in, text out”
+  into a working software engineer: hands (tools), eyes (file readers), a conscience
+  (permissions), a memory (sessions + CLAUDE.md), a phone line (the API client), and a
+  face (the terminal UI).</p>
+</div>
+
+<div class="diagram">
+<svg width="860" height="430" viewBox="0 0 860 430" font-family="SF Mono, monospace" font-size="12">
+  <rect x="10" y="10" width="840" height="410" rx="16" fill="none" stroke="#d97757" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="30" y="34" fill="#d97757" font-size="14" font-weight="bold">THE HARNESS (a Bun-compiled terminal app)</text>
+
+  <circle cx="430" cy="215" r="72" fill="#1c2333" stroke="#b083f0" stroke-width="2"/>
+  <text x="430" y="208" text-anchor="middle" fill="#b083f0" font-weight="bold">THE MODEL</text>
+  <text x="430" y="226" text-anchor="middle" fill="#8b96a5">tokens in →</text>
+  <text x="430" y="241" text-anchor="middle" fill="#8b96a5">tokens out</text>
+
+  <g>
+    <rect x="60"  y="60"  width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="135" y="82" text-anchor="middle" fill="#6cb6ff">CONTEXT ASSEMBLY</text>
+    <text x="135" y="99" text-anchor="middle" fill="#8b96a5" font-size="10.5">system prompt · CLAUDE.md</text>
+
+    <rect x="650" y="60"  width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="725" y="82" text-anchor="middle" fill="#6cb6ff">TOOL RUNTIME</text>
+    <text x="725" y="99" text-anchor="middle" fill="#8b96a5" font-size="10.5">Read · Edit · Bash · Agent…</text>
+
+    <rect x="60"  y="180" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="135" y="202" text-anchor="middle" fill="#6cb6ff">API CLIENT</text>
+    <text x="135" y="219" text-anchor="middle" fill="#8b96a5" font-size="10.5">auth · retries · streaming</text>
+
+    <rect x="650" y="180" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="725" y="202" text-anchor="middle" fill="#6cb6ff">PERMISSIONS</text>
+    <text x="725" y="219" text-anchor="middle" fill="#8b96a5" font-size="10.5">rules · modes · sandbox</text>
+
+    <rect x="60"  y="300" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="135" y="322" text-anchor="middle" fill="#6cb6ff">PERSISTENCE</text>
+    <text x="135" y="339" text-anchor="middle" fill="#8b96a5" font-size="10.5">sessions · checkpoints</text>
+
+    <rect x="650" y="300" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="725" y="322" text-anchor="middle" fill="#6cb6ff">EXTENSION BUSES</text>
+    <text x="725" y="339" text-anchor="middle" fill="#8b96a5" font-size="10.5">MCP · hooks · plugins · IDE</text>
+
+    <rect x="355" y="360" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="430" y="382" text-anchor="middle" fill="#6cb6ff">TERMINAL UI</text>
+    <text x="430" y="399" text-anchor="middle" fill="#8b96a5" font-size="10.5">React → ANSI renderer</text>
+
+    <rect x="355" y="30" width="150" height="52" rx="9" fill="#161b22" stroke="#2d333b"/>
+    <text x="430" y="52" text-anchor="middle" fill="#6cb6ff">CONTEXT LIFECYCLE</text>
+    <text x="430" y="69" text-anchor="middle" fill="#8b96a5" font-size="10.5">caching · compaction · cost</text>
+  </g>
+
+  <g stroke="#2d333b" stroke-width="1.2">
+    <line x1="210" y1="100" x2="372" y2="170"/>
+    <line x1="650" y1="100" x2="488" y2="170"/>
+    <line x1="210" y1="206" x2="358" y2="213"/>
+    <line x1="650" y1="206" x2="502" y2="213"/>
+    <line x1="210" y1="316" x2="372" y2="260"/>
+    <line x1="650" y1="316" x2="488" y2="260"/>
+    <line x1="430" y1="360" x2="430" y2="287"/>
+    <line x1="430" y1="82"  x2="430" y2="143"/>
+  </g>
+</svg>
+<div class="cap">Fig 0.1 — the harness is the ring, not the core. Every chapter of this lecture is one satellite.</div>
+</div>
+
+<h3>0.1 Why “harness” is the right word</h3>
+<p>Anthropic's API gives you a stateless function: <code>messages[] → message</code>. Claude Code's
+entire value is the <em>stateful, side-effectful loop</em> built around that function — what the
+industry has settled on calling the <b>agentic harness</b>. Concretely, the harness is responsible
+for five irreducible jobs:</p>
+<table>
+<tr><th>Job</th><th>Question it answers</th><th>Chapters</th></tr>
+<tr><td><b>Context construction</b></td><td>What does the model get to see this turn?</td><td>4, 5</td></tr>
+<tr><td><b>Capability</b></td><td>What can the model <em>do</em>, and how are its actions executed?</td><td>6–9</td></tr>
+<tr><td><b>Control</b></td><td>Which actions are permitted, by whom, under what policy?</td><td>10, 11</td></tr>
+<tr><td><b>Continuity</b></td><td>What survives between turns, sessions, machines?</td><td>13</td></tr>
+<tr><td><b>Conveyance</b></td><td>How do model, user, and services talk (UI, API, telemetry)?</td><td>3, 14, 15</td></tr>
+</table>
+
+<p>Everything Claude Code does — every feature in its 551-row capability inventory — slots into
+one of those five. The model itself is a commodity accessed over HTTPS; the harness is the
+product.</p>
+
+<h3>0.2 The specimen under the microscope</h3>
+<p>This lecture is grounded in a specific artifact: the <b>v2.1.251</b> release binary
+(2026-08-31). It is a <b>Bun</b>-compiled single executable — a JavaScript application frozen
+into a 197&nbsp;MB Mach-O binary together with its runtime, 1,792 precompiled ES-module chunks,
+five native addons, a vendored ripgrep, and (new in this generation) a library of embedded
+markdown documentation the harness feeds to itself at runtime. Chapter 1 dissects the artifact;
+the chapters after it dissect the machine inside.</p>
+
+<div class="callout key"><div class="ct">Method</div>
+Claims here come from three evidence tiers, in order of authority:
+<b>(1)</b> the beautified bundle source (<code>cli.pretty.js</code>, cited by line),
+<b>(2)</b> live behavioral probes run against the harness/SDK (cited as probes),
+<b>(3)</b> the February-snapshot feature taxonomy (used as a checklist, never as truth —
+several of its rows are provably stale, and the deltas are called out where they matter).
+</div>
+
+<h3>0.3 How to read this lecture</h3>
+<p>Each chapter opens with a <b>plain-language box</b> — the mental model in three sentences —
+then descends into the machinery: data structures, exact constants, verbatim prompt text, wire
+formats, and the design rationale you can infer from the code. Skim the boxes on a first pass;
+return for the deep sections when you need to build the thing.</p>
+</section>
+
+<!-- @ch1 -->
+<!-- @ch2 -->
+<section id="ch3">
+<h2><span class="chapno">Chapter 3</span>The engine: the agentic loop, turn by turn</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>The engine is one loop: <em>send the conversation to the model → stream its reply →
+  the moment the reply asks for a tool, start running it → feed results back → repeat</em>.
+  Everything else in this chapter is what makes that loop industrial-grade: it starts tools
+  <b>before the model finishes talking</b>, it lets you <b>steer mid-turn</b> without breaking
+  anything, and it <b>self-heals</b> from a dozen failure classes without bothering you.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/02-query-engine-turns.md</code>. The whole engine lives in one
+chunk spanning <code>cli.pretty.js:411873–520034</code>.</p>
+
+<h3>3.1 One generator, one state object, two loops</h3>
+<p>The engine is a single async generator — entry <code>Kx :486327</code> wrapping the real loop
+<code>DAt :486427</code> (~1,120 lines) — that serves <em>every</em> face of the product: the interactive
+REPL, <code>-p</code> headless mode, <code>stream-json</code>, the SDK transport, subagents
+(<code>querySource: "agent:…"</code>), even hook-agents. Loop state is one object <code>Pe</code>
+(<code>{messages, toolUseContext, turnCount, transition, …}</code>), and the real state machine is the
+<code>transition.reason</code> enum — 8 continuation reasons:</p>
+<p>
+<span class="pill on">next_turn</span> <span class="pill">malformed_tool_use_retry</span>
+<span class="pill">max_output_tokens_recovery</span> <span class="pill">truncated_response_recovery</span>
+<span class="pill">thinking_only_retry</span> <span class="pill">stop_hook_blocking</span>
+<span class="pill">reactive_compact_retry</span> <span class="pill">precomputed_compact_swap</span>
+</p>
+<p>…and 19 terminal reasons (<code>Zw :306736</code>), of which <code>completed</code> is only one:
+<code>blocking_limit, rapid_refill_breaker, prompt_too_long, image_error, model_error, api_error,
+malformed_tool_use_exhausted, aborted_streaming, aborted_tools, stop_hook_prevented, hook_stopped,
+tool_deferred, max_turns, background_requested, completed</code> + 4 driver-level
+(<code>budget_exhausted, structured_output_retry_exhausted, …</code>).</p>
+<p>Inside each turn hides a <em>second</em> loop (<code>while(Ol) :486706</code>) that can re-dispatch the
+same turn against a <em>different model</em> — refusal fallback, consent fallback, availability-chain
+advance — without ever advancing <code>turnCount</code>.</p>
+
+<div class="diagram">
+<svg width="880" height="240" viewBox="0 0 880 240" font-family="SF Mono, monospace" font-size="11.5">
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8b96a5"/></marker></defs>
+  <g>
+    <rect x="15"  y="30" width="120" height="44" rx="8" fill="#1c2333" stroke="#2d333b"/><text x="75" y="49" text-anchor="middle" fill="#d6dde6">absorb queued</text><text x="75" y="64" text-anchor="middle" fill="#8b96a5">input + polls</text>
+    <rect x="165" y="30" width="120" height="44" rx="8" fill="#1c2333" stroke="#2d333b"/><text x="225" y="49" text-anchor="middle" fill="#d6dde6">autocompact?</text><text x="225" y="64" text-anchor="middle" fill="#8b96a5">assemble msgs</text>
+    <rect x="315" y="30" width="120" height="44" rx="8" fill="#1c2333" stroke="#6ca0f6"/><text x="375" y="49" text-anchor="middle" fill="#6cb6ff">API request</text><text x="375" y="64" text-anchor="middle" fill="#8b96a5">SSE stream</text>
+    <rect x="465" y="30" width="150" height="44" rx="8" fill="#1c2333" stroke="#d97757"/><text x="540" y="49" text-anchor="middle" fill="#d97757">tools start EARLY</text><text x="540" y="64" text-anchor="middle" fill="#8b96a5">per content_block_stop</text>
+    <rect x="645" y="30" width="110" height="44" rx="8" fill="#1c2333" stroke="#2d333b"/><text x="700" y="49" text-anchor="middle" fill="#d6dde6">drain results</text><text x="700" y="64" text-anchor="middle" fill="#8b96a5">completion order</text>
+    <rect x="785" y="30" width="80" height="44" rx="8" fill="#1c2333" stroke="#2d333b"/><text x="825" y="49" text-anchor="middle" fill="#d6dde6">hooks +</text><text x="825" y="64" text-anchor="middle" fill="#8b96a5">mid-turn fold</text>
+  </g>
+  <g stroke="#8b96a5" fill="none" marker-end="url(#arr)">
+    <line x1="135" y1="52" x2="160" y2="52"/><line x1="285" y1="52" x2="310" y2="52"/><line x1="435" y1="52" x2="460" y2="52"/><line x1="615" y1="52" x2="640" y2="52"/><line x1="755" y1="52" x2="780" y2="52"/>
+    <path d="M 825 74 L 825 130 L 75 130 L 75 74"/>
+  </g>
+  <text x="440" y="122" text-anchor="middle" fill="#8b96a5">transition.reason = "next_turn" — tool results feed the next iteration</text>
+  <g>
+    <rect x="315" y="165" width="120" height="40" rx="8" fill="#161b22" stroke="#5a4a1a"/><text x="375" y="182" text-anchor="middle" fill="#d4a72c">inner while(Ol)</text><text x="375" y="197" text-anchor="middle" fill="#8b96a5" font-size="10">model fallback</text>
+    <text x="530" y="190" fill="#8b96a5" font-size="11">same turn re-dispatched on another model — turnCount frozen</text>
+  </g>
+  <path d="M 375 75 L 375 160" stroke="#5a4a1a" fill="none" marker-end="url(#arr)" stroke-dasharray="4 3"/>
+</svg>
+<div class="cap">Fig 3.1 — one iteration of the turn loop. The load-bearing surprise is the orange box: tool execution overlaps response streaming.</div>
+</div>
+
+<h3>3.2 Streaming: complete-message-per-block, then retro-patch</h3>
+<p>The engine folds SSE events itself (the vendored Anthropic SDK's accumulator exists but is off the hot
+path, and its retries are disabled — every client is built with <code>maxRetries: 0</code>
+<code>:498036</code>). The fold yields <b>one complete assistant message per content block</b> at each
+<code>content_block_stop</code> (<code>:499122</code>), then <em>back-patches</em>
+<code>usage</code>/<code>stop_reason</code> onto all of them when <code>message_delta</code> arrives
+(<code>:499166</code>). Tool-use inputs accumulate as plain strings (<code>input_json_delta</code> concat, no
+incremental parse); a healer at block close JSON-parses them, substituting a raw sentinel on failure
+(<code>Uq :517784</code>). Notable negatives: <b>no fine-grained tool streaming beta</b> anywhere — the
+eager-tool-start effect comes purely from per-block emission — and <code>citations_delta</code> is ignored
+by the engine fold entirely.</p>
+<p>Liveness machinery: synthetic pings when raw bytes flow but no SSE event decodes for 10s (max 30); a
+30s stall telemetry threshold; stream-idle timeouts (5-minute floor); and a <b>non-streaming fallback</b> —
+if a stream dies before any complete data, the turn is tombstoned, the tool executor rebuilt, and the
+request re-issued without streaming, telling the user to <em>“check any proxy or gateway between Claude
+Code and your model provider”</em> (<code>:486980</code>).</p>
+
+<h3>3.3 Tool scheduling: an uncapped executor with barriers</h3>
+<p>The live scheduler (<code>ORe :484328</code>) admits a tool the moment its block closes. Admission
+policy, verbatim logic:</p>
+<pre><code><span class="k">canExecuteTool</span>(isSafe) {
+  <span class="k">let</span> executing = tools.filter(t =&gt; t.status === <span class="s">"executing"</span>);
+  <span class="k">return</span> executing.length === <span class="v">0</span> || (isSafe &amp;&amp; executing.every(t =&gt; t.isConcurrencySafe));
+}</code></pre>
+<ul>
+<li><b>No concurrency cap on this path.</b> 30 concurrency-safe tool calls → 30 run at once. (The famous
+<code>CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY ?? 10</code> lives in a <em>second</em>, legacy batch scheduler
+reached only from two replay paths — <code>:459780</code>.)</li>
+<li>A concurrency-<em>unsafe</em> tool is a <b>barrier in both directions</b>: nothing starts while it runs,
+and it won't start until everything running finishes.</li>
+<li>A schema-parse failure makes a tool <em>unsafe</em> (serializing it), not rejected.</li>
+<li>Results are yielded in <b>completion order</b> within a safe batch — the wire normalizer later hoists
+all <code>tool_result</code> blocks to the front of the merged user message rather than pairing positionally
+(<code>:517707</code>), with a repair pass injecting <code>[Tool result missing due to internal error]</code>
+for any gap.</li>
+<li><b>No sibling cancellation on failure.</b> The string “Sibling tool uses failed” has zero hits in
+2.1.251: a failed tool returns an <code>is_error</code> result and its siblings finish. Whole-batch discard
+happens only on fallback/abort events.</li>
+</ul>
+<p>Aborts propagate through a <b>tree of linked AbortControllers</b>: each tool gets a child controller
+whose abort escalates to the parent — one tool's fatal abort tears down the turn — and on any abort the
+executor still drains, so every <code>tool_use</code> id gets exactly one result (real or synthetic).
+Unknown tool name? A synthetic completed result: <code>&lt;tool_use_error&gt;Error: No such tool available:
+{name}&lt;/tool_use_error&gt;</code>.</p>
+
+<h3>3.4 Steering: the queue, the fold, and two kinds of “stop”</h3>
+<p>Typing while the model works enqueues a command into a priority queue
+(<code>now/next/later</code>, <code>:421832</code>). At turn start <em>and after every tool batch</em>, the
+engine folds eligible queued input into the <em>running</em> turn — landing alongside the next tool results,
+wrapped verbatim (<code>:519795</code>):</p>
+<pre><code>The user sent a new message while you were working:
+&lt;text&gt;
+
+This is how Claude Code surfaces messages the user sends mid-turn — within the running turn,
+often alongside the next tool result, rather than as a separate conversation turn. Address the
+message above as you continue this turn.</code></pre>
+<p>Fold rules: slash commands are never absorbed mid-turn; at most one <code>prompt</code>-mode command per
+fold; and the code refuses to drop input — every degradation path re-queues rather than discards
+(<code>:487516–487525</code>).</p>
+<div class="callout key"><div class="ct">The load-bearing distinction</div>
+There are eight pre-allocated abort reasons (<code>:742382</code>), and two matter constantly:
+<code><b>user-cancel</b></code> (ESC) records <code>[Request interrupted by user]</code> — or
+<code>…for tool use]</code> if tools had started — plus synthetic per-tool results; whereas
+<code><b>interrupt</b></code> (a <code>now</code>-priority queued message arriving) aborts the API call
+<em>silently</em> — no marker, no synthetic results — because the queued message itself is the signal.
+Both <code>SV() :742394</code> and <code>dG() :480620</code> special-case it. Collapse the two and you
+either double-inject interruption noise during steering or lose the record on ESC.
+</div>
+<p>Related chords: Ctrl+C also reaps background agents (plain ESC spares them); double-ESC opens the
+<b>Rewind</b> message selector; Enter can fire the queued backlog immediately by aborting with
+<code>user-cancel</code>. When a turn is aborted <em>before</em> tool results and the transcript ends on a
+user message, resume-repair either drops the unresolved assistant turn entirely (fabricating nothing) or
+splices a synthetic <code>No response requested.</code> assistant message so roles alternate
+(<code>:453878, :517988</code>).</p>
+
+<h3>3.5 Self-healing: retries, fallbacks, recoveries</h3>
+<p><b>Retry is harness-owned.</b> <code>kQ :445990</code> is an async generator (so it can yield countdown
+notices into the transcript while sleeping): 10 attempts default (env-clampable to 15;
+<code>CLAUDE_CODE_RETRY_WATCHDOG</code> swaps in 300 attempts / 5-min caps), backoff 500ms·2ⁿ⁻¹ capped 32s
+with +25% additive jitter, <code>Retry-After</code> honored as a <em>floor</em>. Subscription users don't
+retry 429s (their limit won't un-hit itself). 401 retries <em>and</em> invalidates the credential first.</p>
+<p><b>Model fallback is two mechanisms.</b> Server-side: the API itself can serve a different model
+(“pennant” blocks with reasons <code>refusal/sticky</code>, refusal categories
+<code>cyber/bio/frontier_llm/reasoning_extraction</code> <code>:487843</code>) — declined if the target isn't
+in the org's <code>availableModels</code>. Client-side: a fallback chain advanced on 404/403/5xx/3×529, with
+a subtle branch that <em>collapses back onto the failed model with a fresh retry budget</em> when the chain
+runs out (<code>:487124</code>). <code>CLAUDE_CODE_NO_MODEL_FALLBACK</code> pins the chain to one entry with
+a throwing tripwire.</p>
+<p><b>Recovery nudges</b> — synthetic <code>isMeta</code> user messages, each capped at 3 attempts: output-token
+overflow (<em>“Resume directly — no apology, no recap… Pick up mid-thought”</em>), mid-stream truncation,
+malformed tool call (<em>“Please retry the tool call now.”</em>), and a thinking-only response with no visible
+text. Context overflow has two distinct paths: a silent <code>max_tokens</code> shrink inside the retry loop
+(parsing the server's arithmetic out of the error string), and reactive compaction (Chapter 5) for
+<code>Prompt is too long</code>.</p>
+
+<h3>3.6 Budgets, effort, thinking</h3>
+<table>
+<tr><th>Limit</th><th>Enforced where</th><th>Detail</th></tr>
+<tr><td><code>--max-turns</code></td><td>engine, pre-emptive</td><td>turn N+1 is never dispatched; result <code>num_turns</code> comes from the attachment (<code>:487487</code>)</td></tr>
+<tr><td><code>--max-budget-usd</code></td><td>driver, post-hoc</td><td>checked against the session cost ledger after every yielded message; trips to <code>error_max_budget_usd</code>, stops background agents</td></tr>
+<tr><td><code>--task-budget</code></td><td><b>server-side</b></td><td><code>task_budget: {type:"tokens", total, remaining}</code> on the body + beta; the harness <em>decrements remaining on compaction</em> since the server already counted the discarded tokens (<code>:486536</code>)</td></tr>
+<tr><td>Stop-hook loop cap</td><td>engine</td><td><code>CLAUDE_CODE_STOP_HOOK_BLOCK_CAP ?? 8</code> consecutive blocks → forcibly end turn</td></tr>
+</table>
+<p>Thinking budget = clamp(<code>[1024, max_tokens − 1]</code>), from effort levels
+(<code>low/medium/high/xhigh/max</code>, degrading gracefully per model) or adaptive thinking; a permission
+layer (skill, agent definition, <code>/model</code>) can override it mid-session. And a genuine
+myth-buster:</p>
+<div class="callout warn"><div class="ct">ultrathink is not a token budget anymore</div>
+In 2.1.251, <code>ultrathink</code> is the <em>only</em> magic phrase left (no think/think hard/megathink
+tiers), and it maps to a <code>&lt;system-reminder&gt;</code> attachment — <em>“The user included the keyword
+"ultrathink", requesting deeper reasoning on this turn. Reason as thoroughly as the task warrants.”</em> —
+not to a 31,999-token budget (<code>:492482 → :518738</code>). Its sibling keyword is <code>ultracode</code>
+(workflow opt-in).
+</div>
+
+<h3>3.7 Envelopes: what leaves the engine</h3>
+<p>The engine's internal vocabulary is far richer than any consumer sees — 22 event types never reach the
+SDK (<code>tombstone</code>, <code>command_lifecycle</code>, <code>set_in_progress_tool_use_ids</code>,
+<code>server_fallback</code>…). Three serializations share the one generator (<code>:358127</code>):
+<code>text</code> (prints the final result), <code>json</code> (one object — or, with
+<code>--verbose</code>, silently an <em>array of every message</em>), and <code>stream-json</code>
+(NDJSON, one object per line — and it hard-requires <code>--verbose</code> or the process exits 1). The
+bundled SDK spawns the CLI with exactly
+<code>--output-format stream-json --verbose --input-format stream-json</code>.</p>
+<p>Transcript records (the JSONL on disk) wrap each message with
+<code>parentUuid/isSidechain/sessionId/version/gitBranch/cwd/userType:"external"/…</code>; attachments
+(84 subtypes) render into <code>&lt;system-reminder&gt;</code> text — or, notably, into <b>synthetic
+tool_use/tool_result pairs</b>: an attached directory becomes a fake <code>Bash ls</code> call, an attached
+file a fake <code>Read</code> call (<code>:518784</code>). Untrusted content gets a hardened wrapper that
+escapes nested <code>&lt;/system-reminder&gt;</code> closers (<code>umn :74703</code>) — a small but real
+prompt-injection defense.</p>
+</section>
+
+<!-- @ch4 -->
+<section id="ch5">
+<h2><span class="chapno">Chapter 5</span>The context lifecycle: counting, compacting, caching, costing</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>The model's context window is a whiteboard of fixed size. Every turn writes more on it.
+  The harness runs four background disciplines around that whiteboard: an <b>accountant</b>
+  (how full is it, exactly?), a <b>janitor</b> (when it's nearly full, photograph it, wipe it,
+  and pin the photo in the corner — compaction), an <b>archivist</b> (keep the unchanged prefix
+  cheap to re-send — prompt caching), and a <b>cashier</b> (price every token that crossed the
+  wire).</p>
+  <p>Almost none of this is guesswork: the harness measures context from the API's own
+  <code>usage</code> receipts, and only estimates the little tail that arrived since.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/04-context-lifecycle-cost.md</code> (1,925 lines, fully anchored).
+All line numbers are into <code>~/claude-code-bundle/2.1.251/cli.pretty.js</code>.</p>
+
+<h3>5.1 The accountant: measured, not estimated</h3>
+<p>The core trick: the newest assistant message carries the API's authoritative <code>usage</code> block.
+The harness anchors on it and treats</p>
+<pre><code><span class="n">context</span> = <span class="v">input_tokens</span> + <span class="v">cache_creation_input_tokens</span> + <span class="v">cache_read_input_tokens</span> + <span class="v">output_tokens</span>
+        + <span class="c">estimate(messages after the anchor)</span></code></pre>
+<div class="evidence">YW cli.pretty.js:435829 · anchor walk Ih/OYe :435922/:435929</div>
+<p>Only the post-anchor tail is estimated, at <b>4 characters per token</b> for known Claude models
+(<b>3</b> for unknown ones — deliberately pessimistic), a flat <b>2,000 tokens</b> per image or document
+block, and <b>2</b> chars/token for JSON-ish content (<code>:706178, :305780, :706164</code>). A true
+token count exists too — <code>/context</code> calls the real <code>count_tokens</code> endpoint, falling
+back to a <code>max_tokens: 1</code> Haiku request and reading its usage (<code>:489704</code>).</p>
+
+<div class="callout key"><div class="ct">Replication detail</div>
+The CLI shows <em>two different percentages</em> on purpose: the statusline percent
+(<code>w3t :306240</code>) <b>excludes</b> <code>output_tokens</code> and divides by the window; the
+context-low warning percent (<code>Zge :435633</code>) <b>includes</b> them and divides by the
+<em>compact threshold</em>. A replica showing one number where the CLI shows two looks wrong to users.
+</div>
+
+<h4>Window resolution</h4>
+<p>The window is a function of model × betas × provider (<code>jw :306203</code>): default
+<b>200,000</b>; <b>1,000,000</b> if the model id carries a <code>[1m]</code> suffix, the
+<code>context-1m-2025-08-07</code> beta is on and the model supports it, or the model has
+<code>native_1m</code> capability. <code>CLAUDE_CODE_MAX_CONTEXT_TOKENS</code> can override — but only
+for non-<code>claude-*</code> models. Claude 3.x, Opus 4.0/4.1/4.5 and Haiku 4.5 are hard-excluded from
+the 1M beta (<code>:306169</code>).</p>
+<p>Inside the model window lives a second, narrower window that actually governs compaction: the
+<b>auto-compact window</b> (<code>GA :435719</code>), resolved by precedence
+<span class="pill">env CLAUDE_CODE_AUTO_COMPACT_WINDOW</span> <span class="pill">setting autoCompactWindow (/autocompact)</span>
+<span class="pill">server client-data</span> <span class="pill">experiment</span> <span class="pill">model default</span>.
+Crucially, a 1M-window model does <em>not</em> get a 1M compact window: Sonnet 4.6 and Opus 4.6/4.8/5 are
+clamped back to 200k for compaction unless explicitly configured (<code>xZt :435700</code>) — Sonnet 5
+alone defaults to 1M (500k on cowork surfaces, <code>CYe :435674</code>).</p>
+
+<h3>5.2 The four bands</h3>
+<p>Subtract the model's max-output reserve (capped at <b>20,000</b>) to get the
+<b>effective window</b>; then a small state machine (<code>Zge :435633</code>) classifies every turn:</p>
+
+<div class="diagram">
+<svg width="820" height="150" viewBox="0 0 820 150" font-family="SF Mono, monospace" font-size="12">
+  <rect x="20" y="45" width="560" height="34" rx="6" fill="#12211a" stroke="#2c4a30"/>
+  <rect x="580" y="45" width="90" height="34" fill="#332b10" stroke="#5a4a1a"/>
+  <rect x="670" y="45" width="60" height="34" fill="#33201c" stroke="#6b3a30"/>
+  <rect x="730" y="45" width="70" height="34" rx="6" fill="#3a1512" stroke="#e5534b"/>
+  <text x="300" y="66" text-anchor="middle" fill="#57ab5a">ok</text>
+  <text x="625" y="66" text-anchor="middle" fill="#d4a72c">warn</text>
+  <text x="700" y="66" text-anchor="middle" fill="#d97757">compact</text>
+  <text x="765" y="66" text-anchor="middle" fill="#e5534b">blocked</text>
+  <g fill="#8b96a5">
+    <text x="580" y="106" text-anchor="middle">threshold − 20,000</text>
+    <text x="580" y="122" text-anchor="middle">(147k)</text>
+    <text x="670" y="30" text-anchor="middle">effWindow − 13,000</text>
+    <text x="670" y="14" text-anchor="middle">(167k)</text>
+    <text x="742" y="106" text-anchor="middle">rawWindow − reserve − 3,000</text>
+    <text x="742" y="122" text-anchor="middle">(177k)</text>
+  </g>
+  <g stroke="#8b96a5" stroke-width="1"><line x1="580" y1="79" x2="580" y2="92"/><line x1="670" y1="41" x2="670" y2="34"/><line x1="730" y1="79" x2="730" y2="92"/></g>
+</svg>
+<div class="cap">Fig 5.1 — the bands for a 200k window, 32k max-output model (effective window = 180k).
+<code>blocked</code> short-circuits the turn with “Prompt is too long” <em>before any request is sent</em> (:486685).</div>
+</div>
+
+<p>Test overrides exist for both interesting edges: <code>CLAUDE_AUTOCOMPACT_PCT_OVERRIDE</code>
+(percentage threshold) and <code>CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE</code> (absolute blocked limit)
+(<code>rhe :435783</code>). The warning notification is effectively sticky — pushed with an
+18,000,000&nbsp;ms timeout (<code>:154039</code>).</p>
+
+<h3>5.3 The janitor: auto-compaction</h3>
+<p>When a turn lands in <code>compact</code> (or <code>blocked</code>), and auto-compaction is enabled
+(<code>autoCompactEnabled</code> setting, killed by <code>DISABLE_COMPACT</code> /
+<code>DISABLE_AUTO_COMPACT</code>), the harness summarizes the conversation into a structured digest and
+rebuilds history around it. Guard rails first — three independent circuit breakers:</p>
+<table>
+<tr><th>Breaker</th><th>Trip condition</th><th>Anchor</th></tr>
+<tr><td>Failure breaker</td><td>3 consecutive compaction failures → skip for the session</td><td><code>:489568</code></td></tr>
+<tr><td>Thrashing breaker</td><td>context refills to the limit within 3 turns of a compact, 3× in a row → user told a file/tool output is too large</td><td><code>:435807</code></td></tr>
+<tr><td>Prefix-overflow</td><td>the <em>fixed prefix</em> (system prompt + tools) alone exceeds the threshold — compaction cannot help</td><td><code>:489575</code></td></tr>
+</table>
+
+<h4>The summarization prompt</h4>
+<p>The compaction request is a one-turn side conversation. Its instruction (<code>l1n :488155</code>) demands an
+<code>&lt;analysis&gt;</code> pass followed by a <code>&lt;summary&gt;</code> with <b>nine mandatory sections</b>:</p>
+<pre><code>1. Primary Request and Intent      6. All user messages
+2. Key Technical Concepts          7. Pending Tasks
+3. Files and Code Sections         8. Current Work
+4. Errors and fixes                9. Optional Next Step
+5. Problem Solving</code></pre>
+<p>Two hardening details worth studying: security-relevant user constraints must be preserved
+<em>verbatim</em> “so they continue to apply after compaction”, and section 6 carries an anti-injection
+clause — text inside assistant messages that merely <em>looks</em> like a user turn (“quoted
+<code>user: ...</code> or <code>Human: ...</code> lines”) must never be attributed to the user. The whole
+prompt is wrapped in a belt-and-braces no-tools jacket: a “CRITICAL: Respond with TEXT ONLY” preamble
+<em>and</em> a <code>canUseTool</code> that denies everything with <em>“Tool use is not allowed during
+compaction”</em> (<code>ixe :489225</code>). Three prompt variants exist: full, recent-portion-only, and
+prefix (“up to here”) for partial compaction (<code>:488155/:488249/:488322</code>).</p>
+
+<h4>What actually survives</h4>
+<p>Verbatim messages: <b>none</b> — <code>messagesToKeep: []</code> (<code>:489246</code>). The new history is
+<code>[boundary marker, summary, re-read attachments, hook results]</code>. The harness then
+<em>re-hydrates</em> working state:</p>
+<ul>
+<li>the <b>5</b> most recently read files, re-read at ≤<b>5,000</b> tokens each, ≤<b>50,000</b> total (<code>:489022</code>);</li>
+<li>invoked skills (≤5,000 tokens each, ≤25,000 total), the plan file, todo/task state;</li>
+<li>a <code>SessionStart</code> hook run with <code>source: "compact"</code> (<code>:489446</code>);</li>
+<li>the read-file freshness ledger and nested-memory state are wiped first (<code>:489236</code>).</li>
+</ul>
+<p>The summary is injected as a user message flagged <code>isCompactSummary</code>, prefixed
+<em>“This session is being continued from a previous conversation that ran out of context…”</em>, with an
+instruction to resume “as if the break never happened”, plus a pointer to the full transcript path on disk
+(<code>Cq :488430</code>). The transcript records a <code>compact_boundary</code> system message carrying
+<code>preTokens/postTokens/durationMs</code> and a running <code>cumulativeDroppedTokens</code> (<code>:519243</code>).</p>
+
+<div class="callout key"><div class="ct">Design pattern worth stealing</div>
+By default (gate on, <code>:489266</code>) the summarization request is issued as a <b>fork of the live
+conversation</b> — the entire history prefix is a prompt-cache <em>hit</em>, so the expensive compaction
+call costs little more than its output tokens (<code>skipCacheWrite: true</code>, <code>maxTurns: 1</code>).
+</div>
+
+<h4>Two more lanes: reactive and speculative</h4>
+<p><b>Reactive compaction</b> (<code>vte :488500</code>) is the recovery path when the API itself rejects with
+“Prompt is too long”: it parses the reported token gap out of the error string and summarizes
+<em>just enough</em> turn-groups to close the gap (falling back to dropping 20% at a time), retrying up to 3
+times, stripping images as a last resort. <b>Precomputed compaction</b> (<code>YRe :488808</code>) is
+speculative: when ~80% of the window is used (fraction is gate-tunable), a background summarization starts;
+the result is held ready — and even persisted to a sidecar file, rehydratable for <b>7 days</b> — so that
+when the threshold finally trips, the swap is instant and everything that arrived meanwhile is appended to
+the preserved tail.</p>
+
+<h3>5.4 Microcompaction: server-negotiated tool-result eviction</h3>
+<p>Distinct from full compaction, microcompaction elides <em>old tool results in place</em>. The 2.1.251
+mechanism is <b>server-negotiated</b>, not timer-based: on main-thread interactive turns the client
+advertises, under the <code>context-hint-2026-04-09</code> beta, a body field
+<code>context_hint: {enabled, target_tokens_saved}</code> — but only if elision could free ≥
+<b>20,000</b> tokens. If the server answers <b>422/424</b>, that is the signal: the client clears all but
+the last <b>5</b> eligible tool results and retries (<code>createContextHintController :564553</code>).</p>
+<p>Exactly <b>9 tools are eligible</b>: Read, Bash, PowerShell, Grep, Glob, WebSearch, WebFetch, Edit,
+Write (<code>:483538</code>). Agent/MCP/Todo results are never elided. Text-only results are replaced by a
+pointer — <code>&lt;persisted-output&gt;Tool result saved to: {path} … Use Read to view&lt;/persisted-output&gt;</code> —
+while results containing images are flatly replaced with <code>[Old tool result content cleared]</code>
+(images are never persisted). A related but separate mechanism persists any <em>single</em> oversized tool
+result (default cap 50,000 chars) to disk at write time, leaving a 2,000-char preview inline
+(<code>:242565</code>).</p>
+
+<h3>5.5 The archivist: prompt caching</h3>
+<p>Cache-breakpoint placement is deterministic and frugal (≤4 total):</p>
+<table>
+<tr><th>Region</th><th>Breakpoints</th><th>Mechanics</th></tr>
+<tr><td>System prompt</td><td>exactly 2</td><td>identity line · rest-of-prompt. With <code>--exclude-dynamic-system-prompt-sections</code>, a <code>__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__</code> marker splits static (scope <code>"global"</code>, cross-user-cacheable) from per-machine dynamic sections (<code>:497173</code>)</td></tr>
+<tr><td>Tools array</td><td>0</td><td>capability exists in code but the main loop never uses it (<code>:498377</code>)</td></tr>
+<tr><td>Message tail</td><td>≤2</td><td>last cacheable message (skipping thinking-final assistants and ephemeral messages) + optionally a fork-point pin; <code>skipCacheWrite</code> steps back one (<code>lIt :497557</code>)</td></tr>
+</table>
+<p><b>TTL selection</b> (<code>FIt :497846</code>): 1-hour TTL (the <code>extended-cache-ttl-2025-04-11</code> beta)
+is granted automatically only to an <em>OAuth subscriber, not in overage, on an allowlisted query source</em>
+(<code>repl_main_thread*</code>, <code>sdk</code>, <code>auto_mode</code>…); everyone else gets the default 5 minutes.
+Overridable by env (<code>CLAUDE_CODE_PROMPT_CACHE_TTL</code> / <code>…_SUBAGENT_…</code>), settings
+(<code>promptCacheTtl</code>), or agent frontmatter <code>cacheTtl</code>. Subagents default to 5m.</p>
+<p>The harness is unusually instrumented about cache health: a per-turn hit/miss ledger with an
+“expected miss” category so compaction doesn't count as failure (<code>Che :438187</code>); a warmth predicate
+that feeds <code>prompt_cache_likely_expired</code> and an estimated re-cache cost in USD into the
+SessionStart/ModelSwitch hook payloads (<code>:453637</code>) — and even a <b>confirmation dialog before a
+model switch that would forfeit a warm cache</b>. A cache-break attributor hashes request shapes and names
+the cause when reads drop (<em>“cache_control changed (scope or TTL)”</em>, <em>“possible 1h TTL expiry”</em>…,
+<code>:460744</code>), and a coverage watchdog detects proxies that silently strip
+<code>cache_control</code> (<code>:845374</code>). Even the model is coached: the ScheduleWakeup tool's
+description text changes depending on the session's TTL, warning against 300-second wakeups on a 5-minute
+cache (<code>:182876</code>).</p>
+
+<h3>5.6 The cashier: cost</h3>
+<p>Pricing is a hand-maintained catalog baked into the binary (<code>pricing_tiers :876976</code>), USD per
+million tokens; cache-write multipliers are uniform (5m = 1.25×, 1h = 2× input; reads 0.1×):</p>
+<table>
+<tr><th>Tier</th><th>In</th><th>Out</th><th>Models</th></tr>
+<tr><td><code>tier_2_10</code></td><td>2</td><td>10</td><td>Sonnet 5</td></tr>
+<tr><td><code>tier_3_15</code></td><td>3</td><td>15</td><td>Sonnet 3.5 → 4.6</td></tr>
+<tr><td><code>tier_5_25</code></td><td>5</td><td>25</td><td>Opus 4.5 → Opus 5</td></tr>
+<tr><td><code>tier_10_50</code></td><td>10</td><td>50</td><td>Fable 5 / Mythos 5</td></tr>
+<tr><td><code>tier_15_75</code></td><td>15</td><td>75</td><td>Opus 4.0 / 4.1</td></tr>
+<tr><td><code>haiku_45</code></td><td>1</td><td>5</td><td>Haiku 4.5</td></tr>
+</table>
+<p>The formula (<code>UEe :304013</code>) adds a <b>1.1× surcharge when <code>inference_geo === "us"</code></b>
+(data residency), with web-search priced per-request ($0.01) <em>outside</em> that multiplier. Enterprises can
+re-price everything via the managed-only <code>modelPricing</code> setting (per-model overrides + a global
+multiplier ∈ (0,1]); the harness then reports <code>costBasis: "managed"</code> everywhere. Session totals
+live in an in-process ledger (cost, API/wall durations, lines added/removed, per-model usage) that is
+serialized per-session and restored on <code>--resume</code> (<code>:449589</code>) — and notably
+<em>not</em> reset by <code>/clear</code>. <code>--max-budget-usd</code> is a hard stop against that ledger.</p>
+<p>Subscription limits are reconciled from two sources — <code>anthropic-ratelimit-unified-*</code> response
+headers and <code>GET /api/oauth/usage</code> (5-minute cache, 1-hour staleness tolerance) — covering the
+5-hour session window, 7-day all-model and per-model weekly windows, and overage credit. At the limit's
+edge, a gated grace-window reminder is injected into the prompt: <em>“Wrap up: finish or checkpoint; don't
+start subagents or long work.”</em> (<code>:436621</code>).</p>
+
+<div class="callout warn"><div class="ct">Three stale beliefs this chapter corrects</div>
+<b>(1)</b> Microcompaction is not time-based anymore — the timer mechanism described in Feb-era analyses is
+gone; only the telemetry event name survives as a fossil. <b>(2)</b> <code>/cost</code>, <code>/usage</code>
+and <code>/stats</code> are one command with aliases, not three. <b>(3)</b> Server-side context editing
+(<code>clear_tool_uses</code>) is <em>not</em> wired in 2.1.251 — the only <code>context_management</code>
+edit sent is <code>clear_thinking_20251015</code>; tool-result clearing is done client-side via the
+<code>context_hint</code> negotiation instead.
+</div>
+
+<h3>5.7 <code>/clear</code> and <code>/context</code></h3>
+<p><code>/clear</code> is a <b>fork to empty</b>, not a truncation: it fires SessionStart(source
+<code>"clear"</code>), wipes message state, read-file ledger, session env and file-history, aborts running
+tasks, restores the original cwd, and <em>mints a new session id</em> — the old transcript stays on disk,
+resumable (<code>BJt :564645</code>). <code>/context</code> renders a colored 20×10 grid of the window
+budget, itemized as: System prompt · System tools · MCP tools (± deferred) · Custom agents · Memory files ·
+Skills · Messages · Autocompact buffer · Free space — where “Autocompact buffer” is precisely
+<code>window − compactThreshold</code> (<code>:489891</code>).</p>
+</section>
+
+<!-- @ch6 -->
+<!-- @ch7 -->
+<!-- @ch8 -->
+<!-- @ch9 -->
+<!-- @ch10 -->
+<!-- @ch11 -->
+<!-- @ch12 -->
+<!-- @ch13 -->
+<!-- @ch14 -->
+<!-- @ch15 -->
+<!-- @ch16 -->
+
+</main>
+<script>
+  // Build sidebar TOC from h2/h3
+  const toc = document.getElementById('toc');
+  document.querySelectorAll('main h2, main h3').forEach(h => {
+    const sec = h.closest('section');
+    if (!h.id) h.id = (h.tagName === 'H2' && sec ? sec.id + '-t' : 'h-' + Math.random().toString(36).slice(2, 8));
+    const a = document.createElement('a');
+    if (h.tagName === 'H2') {
+      const no = h.querySelector('.chapno');
+      a.textContent = (no ? no.textContent.replace('Chapter ', 'Ch ') + ' · ' : '') + h.childNodes[h.childNodes.length - 1].textContent;
+    } else {
+      a.textContent = h.textContent;
+      a.className = 'h3';
+    }
+    a.href = '#' + (sec && h.tagName === 'H2' ? sec.id : h.id);
+    toc.appendChild(a);
+  });
+  // active highlight
+  const links = [...toc.querySelectorAll('a')];
+  addEventListener('scroll', () => {
+    let best = null;
+    links.forEach(l => {
+      const t = document.querySelector(l.hash === '' ? 'body' : l.hash);
+      if (t && t.getBoundingClientRect().top < 120) best = l;
+    });
+    links.forEach(l => l.classList.toggle('active', l === best));
+  }, { passive: true });
+</script>
+</body>
+</html>

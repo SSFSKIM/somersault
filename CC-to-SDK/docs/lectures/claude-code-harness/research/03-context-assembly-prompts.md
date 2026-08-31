@@ -1356,3 +1356,97 @@ the merge that lets pasted images ride along with a bash-mode or slash-command i
 Audience note (`518630`): `Only you see that command's output — the user's terminal shows at most a few lines of it. If the user needs to read any of it, put it in your reply.`
 
 ---
+
+## 9. Cross-cutting: what the model is told about all of this
+
+Three system-prompt lines are the model's only map of the machinery above, and they disagree with each
+other by design:
+
+- `430508` (standard): `Tool results and user messages may include <system-reminder> or other tags. Tags contain information from the system. They bear no direct relation to the specific tool results or user messages in which they appear.`
+- `430508` (lean): `` `<system-reminder>` tags in messages and tool results are injected by the harness, not the user. ``
+- `430504` (mid-conv-system models): `The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results.`
+
+Tool descriptions also reference the mechanism without producing it: `Agent` (`467741`,
+`Available agent types are listed in <system-reminder> messages in the conversation.`), `Skill`
+(`470282`), `ToolSearch` (`559632`), `Workflow` (`727919`).
+
+---
+
+### Deltas vs the February parity rows
+
+**05-context-assembly**
+
+| row | February claim | 2.1.251 reality |
+|---|---|---|
+| 05.1 | "System prompt composition (default + custom + append)" — treated as one string | It is a `string[]` of up to ~35 sections, and three of them (attribution header, identity line, `# Reporting outcomes`) are added **after** the composer, so `--system-prompt` does *not* remove them. `K_n` (`451916`) also has an unmodelled fourth input: a main-thread **agent definition** whose prompt replaces the default unless the definition sets `appendSystemPrompt`. |
+| 05.2 | "CLAUDE.md memory injection into **user context**" — correct, and the wording has aged well | Still a user-message `<system-reminder>`, key `claudeMd`, banner unchanged. New since Feb: `.claude/rules/*.md` with `paths:` frontmatter (glob-scoped, loaded on demand), `.claude/CLAUDE.md` at every ancestor level, a 4 MiB hard cap, a 40k-char soft warning, `claudeMdExcludes`, and the `InstructionsLoaded` hook. `--add-dir` no longer loads CLAUDE.md unless `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` is set. |
+| 05.3 | "Git-status and current-date dynamic context blocks" — grouped together | They live in **different channels**. `currentDate` is in the user-message envelope (`userContext`); `gitStatus` is a **system-prompt block** appended by `NAt` as `gitStatus: …`. Only `--exclude-dynamic-system-prompt-sections` moves the latter. Git status is also stripped for `Explore` and `Plan` subagents by a hardcoded name check (`464835`). |
+| 05.4 | "Disable git instructions / CLAUDE.md / dynamic sections" | Confirmed and expanded: `includeGitInstructions` / `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` (`496974`), `CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `CLAUDE_CODE_SIMPLE` (collapses the whole prompt to `CWD:`/`Date:`), `CLAUDE_CODE_DISABLE_ATTACHMENTS`, and the `tengu_paper_halyard` experiment that silently drops all Project/Local memory. |
+| 05.5 | "Additional working directories for context/CLAUDE.md" | The *directories* propagate; the *CLAUDE.md loading* is now env-gated off by default. Row overstates it. |
+| 05.6 | "Static/dynamic split boundary sentinel" — marked `inferred` | **Confirmed.** `wO = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"` (`183061`), consumed by `tOe` (`497173`), gated on `Kde()` (`306508`). The static half gets `cache_control.scope: "global"` — a cross-**user** cache — and the dynamic half org scope. `L_` (`530803`) strips the sentinel when flattening a `string[]` back to a string. |
+| 05.9 | "`<system-reminder>` meta context message injection" — marked `inferred` | **Confirmed and much larger than modelled**: ~90 attachment types, three injection paths (user message, mid-conversation `role:"system"` turn, prepended envelope), and a per-model gate deciding which. |
+
+**38-output-styles**
+
+| row | February claim | 2.1.251 reality |
+|---|---|---|
+| 38.1 | Built-ins listed as "default / Explanatory / Learning" | There are **five**: `default`, **`Proactive`**, **`Concise`**, `Explanatory`, `Learning` (`429867`). `Proactive` and `Concise` are new and both carry a `turnReminder` that is re-injected as a per-turn `<system-reminder>` — a mechanism the row does not model at all. |
+| 38.1 | "append the style's prompt fragment via preset-append" as the bridge | Insufficient. A style does three things: swaps the identity sentence (`iKe`), inserts `# Output Style: <name>`, **and deletes the whole `# Doing tasks` block** unless `keep-coding-instructions` is true. Append-only cannot reproduce the deletion. |
+| 38.1/38.2 | discovery = settings + `outputStyle` key | Also: `output-styles/*.md` under each settings dir, **plugin-provided styles** namespaced `<plugin>:<style>`, and `force-for-plugin: true` which overrides the user's choice outright (`429895`). Precedence: builtin < plugin < user < project < policy. |
+
+**29-service-memory / 40-persistent-memory**
+
+| row | February claim | 2.1.251 reality |
+|---|---|---|
+| 29.1 | "Layered CLAUDE.md project/user memory injection" | Now a **six-tier** chain with the managed/policy tier split three ways (managed file, policy-helper stdout, `policySettings.claudeMd`) plus managed `.claude/rules`. Managed files cannot be excluded by `claudeMdExcludes`. |
+| 29.2 | "Auto-extraction is build-time gated (`EXTRACT_MEMORIES`)" | The gate has moved: auto-memory is now a first-class, settings-driven subsystem (`autoMemoryEnabled`, `autoMemoryDirectory`, `autoDreamEnabled`) with its own `# auto memory` prompt section (`244937`), a pinned-memory sub-block, per-file staleness reminders, and a `memory_update` attachment for background consolidation. |
+| 40.1/40.3 | "four-type memory taxonomy" | The rendered suffixes are now five: Project / Local / AutoMem / Managed / User (`496859`), and pinned entries get their own `# Pinned memories (apply to every conversation)` group with `<pinned-memory path="…">` elements. |
+| 40.2 | "relevance-selection side-query is runtime-internal" | Confirmed: `K2n` (`492056`) is a sub-model call selecting the top 5, emitted as `relevant_memories`. |
+
+**Not covered by any February row, and load-bearing**
+
+1. The **billing-attribution system block** with its first-user-message checksum (`846252`, `481681`).
+2. The **`# Reporting outcomes`** block, gated on first-party auth plus two GrowthBook flags.
+3. The **lean-vs-classic prompt fork** — the single largest per-model variation, and the reason a
+   Claude 5 session's system prompt looks nothing like a Claude 4 session's.
+4. **Carved slate** (`tengu_carved_slate`): a whole alternative regime where env, model identity,
+   output style, language, and session context leave the system prompt and become refreshable
+   attachments.
+5. The **mid-conversation `role:"system"` turn** as a third injection channel, per-model gated.
+6. **AGENTS.md is not supported** at all, despite an in-binary comment claiming it is.
+7. The **`# ` memory shortcut has been removed**.
+
+### Open questions
+
+1. **`Xne(e)`, the first guard in `w(e)`** (`651355`) — the only remaining unresolved predicate in the
+   lean/classic decision. Everything else in that function is now traced (see §1.9), but a model that
+   `Xne` matches goes classic regardless of provider, and I do not know what it matches. Worth a live
+   probe: run `ccx` against Opus 5 and Sonnet 4.5 and diff the rendered prompt.
+2. **`Jk()` (`301530`) has at least three values** — `default`, `counter_steer`, and something
+   returned by `zx(e)` with `source: "model"`. I only read two of the three prompt branches. The
+   `counter_steer` branch injects the `## Delegating to subagents` anti-overspawn block; what selects
+   it (per-model? per-experiment?) is unresolved.
+3. **`hp()` / `iy()`** — the permission-mode-aware runtime model and the `session_guidance` cache-key
+   discriminator. Both feed section selection; neither was traced.
+4. **`getCoordinatorSystemPrompt`** (`chunk-qn5m7cx5`) — the Projects/coordinator mode replaces the
+   entire prompt (`451920`). Its content was out of scope here and is a separate domain.
+5. **The `brook_heron` GrowthBook table** (`430384`) can inject arbitrary per-model, per-effort prompt
+   text at runtime, and the `batching_reminder` / `secondary_reminder` texts live *entirely* in
+   GrowthBook client data (`483923`). Nothing about their contents is in the binary, so any
+   reconstruction of "the" system prompt or reminder set is necessarily incomplete for a live
+   first-party session. This is the single biggest limit on static analysis of this domain.
+6. **Whether `H8t`'s bulleted `# Environment` is actually what ships interactively**, or whether the
+   `<env>` form is still reachable on some main-thread path. The code is unambiguous, but a live
+   capture would settle it — and the answer matters for anyone reproducing prompt-cache-identical
+   requests. (The `<env>` form is confirmed live for subagents: it matches this session's own prompt.)
+7. **`Kde()` requires `uw() && jo()`** — `jo()` is "first-party base URL" (`877212`) and
+   `uw() = As() && !OV()` (`303341`), which I read as prompt-caching-enabled-and-not-disabled but did
+   not confirm. So the exact arming condition for the `global` cache scope, and therefore for the
+   boundary sentinel appearing at all, is one predicate short of verified.
+8. **`_Ke` (`430504`) combines `NMe(model) && !T3t(model) && !ZQn(model)`** — all three are now
+   resolved (`306450`, `306468`, `651235`: `ZQn` is exactly `claude-opus-4-8`), but the memo is keyed
+   `"latch"` and cleared by `kxn`, so *when* it re-evaluates mid-session is unverified. This decides
+   whether the model is told about "mid-conversation system turns" or about `<system-reminder>` tags.
+9. **The `attachedProject` block** (`195663`) fetches claude.ai Project context over the network with a
+   5 s timeout on every session start when `CLAUDE_PROJECT_UUID` is set. Its rendered shape
+   (`formatProjectContext`, `195693`) was not read; it is a separate domain (Projects/connectors).
