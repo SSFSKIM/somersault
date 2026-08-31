@@ -10,6 +10,10 @@ are **Waves**
 bundle, incl. its 2026-08-31 correction) · `reforge/research/2026-08-31-gate-blob-resolution.md`
 (how gates actually resolve offline) · `reforge/README.md` (harness + gate doctrine) · cassette
 measurement of the headless tool catalog (31 native tools, §1.3) · measured runtime skew (§3.5)
+· `docs/lectures/claude-code-harness/research/` (2026-09-01, a parallel session's 13 reports +
+17-chapter lecture mined from the same 2.1.251 bundle — secondary reference for wave briefs:
+bash/sandbox→W10, orchestration→W12, permissions/hooks→W5–W6, MCP→W11, persistence→W9, service
+layer→W13; cross-check against the census and probes before relying on any claim)
 
 ## Purpose
 
@@ -815,7 +819,13 @@ initiative, not this campaign.
   the package-traversal gap.
 - **The shared working tree is a real hazard**: a concurrent session's `git reset` wiped two
   workers' uncommitted state mid-wave (both recovered). Standing mitigation: workers commit
-  incrementally; at most one code-writing worker in the tree at a time.
+  incrementally; at most one code-writing worker in the tree at a time. **[Closed 2026-09-01:
+  the lectures session's `strangle-scope` worktree turned out to hold a frozen 02:25 pre-reset
+  snapshot; cross-session diff confirmed every reforge draft in it was strictly superseded by
+  the landed fix wave (hypothesis "orphaned draft", not parallel work). Forensic branch
+  `snapshot/strangle-scope-0225` preserved; drafts discarded; zero divergence remains on
+  campaign paths. Cross-lane conventions since agreed: merge-preserving pulls
+  (`--rebase=merges`), campaign paths main-authoritative, path-disjoint lanes stated.]**
 
 ## Outcomes & Retrospective
 
