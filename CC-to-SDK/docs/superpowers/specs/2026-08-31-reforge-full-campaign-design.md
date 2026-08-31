@@ -622,11 +622,11 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 
 | child | wave | spec | status |
 |---|---|---|---|
-| C1 | W0a | — (cites this doc at dispatch) | not-dispatched — dispatchable now |
-| C2 | W0b | — | not-dispatched — dispatchable now |
-| C3 | W0c | — | not-dispatched — dispatchable now |
-| C4 | W1 | — | not-dispatched — blocked-by C1, C2 |
-| C5 | W2 | — | not-dispatched — blocked-by C1, C2 |
+| C1 | W0a | commit `2621aad3` (direct execution vs this doc) | **landed** — 4 target shapes, AST spans, 3 spike splices, footprints; gate 6-live PASS |
+| C2 | W0b | commit `453f5952` | **landed** — skeleton boots, ledger 46 rows + checker, reachability + 72 negative controls |
+| C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed** — env allowlist (2 oracle-steering vars caught), 439-gate fixture, flip-liveness via `tengu_cobalt_ridge`, Bun 1.4.1 pin, zero-fallback corpus, fatal rule (caught 2 latent harness defects) |
+| C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | not-dispatched — scouted; awaiting W0 boundary review |
+| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; awaiting W0 boundary review |
 | C6–C10 | W3–W7 | — | not-dispatched — blocked-by W0 trio |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
