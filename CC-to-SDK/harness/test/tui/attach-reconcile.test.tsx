@@ -563,4 +563,132 @@ describe("useChat: post-follow attach reconcile (bl9 D14)", () => {
     expect(frame(lastFrame)).not.toContain("the fresh tail reply");
     expect(frame(lastFrame)).not.toContain("resynced");
   });
+
+  // rereview4 P2 (wave 5): a live stream_event/hook/task frame arriving WHILE the reconcile's disk read is
+  // pending does not move `revision()`, so (pre-fix) the virgin mismatch rebuild still fired and
+  // `replaceDocument` wiped `hookTrackerRef`/`agentMetaRef`/`streaming` state that frame had just written.
+  // Fixed by virgin condition 3 (`liveActivitySeq`, see useChat.ts): now the SAME race aborts the rebuild
+  // instead, exactly like conditions 1/2 already do. Held-open reads (`resolveRead`), same idiom as
+  // D14-fix-1/F2 above, so the event genuinely lands DURING the pending window and not before it starts.
+  const hookFrame = (subtype: "hook_started" | "hook_response", fields: Record<string, unknown>) =>
+    ({ kind: "message" as const, data: { type: "system", subtype, ...fields } });
+
+  it("condition 3 (hook): a hook_started ingested while the read is pending aborts the rebuild — the pairing survives for its later response", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let reads = 0;
+    let resolveRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => { reads++; return new Promise<unknown[]>((r) => { resolveRead = r; }); } };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();                          // the follow ack lands → the reconcile's read starts, held open
+    await waitFor(() => reads === 1);
+    // A Stop hook starts (standalone, unbounded — no tool_use anchor needed) WHILE the read is pending:
+    // `hook_started` never touches `documentRef` (useChat.ts's own comment: "nothing here mutates the
+    // document for it to react to"), so conditions 1/2 alone would let the mismatch rebuild through.
+    session.pushEvent(hookFrame("hook_started", { hook_id: "h1", hook_event: "Stop" }) as any);
+    resolveRead(freshRows);
+    await new Promise((r) => setTimeout(r, 30));      // long enough for the read to resolve, if it were going to rebuild
+    expect(frame(lastFrame)).not.toContain("resynced");             // condition 3 held: no rebuild ran
+    expect(frame(lastFrame)).toContain("the stale tail reply");     // untouched — the same abort A2/F1 already pin
+    // The pairing response arrives later, live — the tracker that survived (no rebuild ever touched it) pairs it.
+    session.pushEvent(hookFrame("hook_response", { hook_id: "h1", hook_name: "Stop", hook_event: "Stop", exit_code: 2, stderr: "boom" }) as any);
+    await waitFor(() => frame(lastFrame).includes("stop hook"));
+  });
+
+  it("condition 3 (streaming): a stream_event partial mid-read aborts the rebuild — the live line is never blanked", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let reads = 0;
+    let resolveRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => { reads++; return new Promise<unknown[]>((r) => { resolveRead = r; }); } };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.pushEvent({ kind: "turn", phase: "start", seq: 1 });   // pre-read drain: outside the window, by design
+    session.resolveReady();
+    await waitFor(() => reads === 1);
+    // A partial streams WHILE the read is pending — `stream_event` "changes NOTHING outside the live turn"
+    // (useChat.ts's own comment), so `revision()` alone would let the mismatch rebuild through.
+    session.pushEvent({ kind: "message", data: { type: "stream_event", event: { type: "message_start", message: { id: "m1" } } } } as any);
+    session.pushEvent({ kind: "message", data: { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } } } as any);
+    session.pushEvent({
+      kind: "message",
+      data: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "LIVE-STREAM-CHUNK" } } },
+    } as any);
+    await waitFor(() => frame(lastFrame).includes("LIVE-STREAM-CHUNK"));
+    resolveRead(freshRows);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("resynced");              // condition 3 held: no rebuild ran
+    expect(frame(lastFrame)).toContain("LIVE-STREAM-CHUNK");         // never blanked — the live line was never at risk
+    expect(frame(lastFrame)).not.toContain("the fresh tail reply");
+  });
+
+  it("condition 3 (agentMeta): a live task_notification mid-read aborts the rebuild — the enrichment survives", async () => {
+    const agentCall = { type: "assistant", parent_tool_use_id: null, uuid: "a-agent-call", message: { content: [{ type: "tool_use", id: "agent-1", name: "Agent", input: { description: "review the diff", prompt: "go" } }] } };
+    const agentResult = { type: "user", uuid: "u-agent-result", message: { content: [{ type: "tool_result", tool_use_id: "agent-1", content: "the report" }] } };
+    const staleRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "the first prompt" }] } },
+      agentCall, agentResult,
+      { type: "assistant", parent_tool_use_id: null, uuid: "a-stale", message: { content: [{ type: "text", text: "the stale tail reply" }] } },
+    ];
+    const freshRows = [
+      { type: "user", uuid: "u1", message: { content: [{ type: "text", text: "the first prompt" }] } },
+      agentCall, agentResult,
+      { type: "assistant", parent_tool_use_id: null, uuid: "a-fresh", message: { content: [{ type: "text", text: "the fresh tail reply" }] } },
+    ];
+    let reads = 0;
+    let resolveRead!: (rows: unknown[]) => void;
+    const session = fakeAttachSession({ sessionId: "sess-1" });
+    const deps = { getSessionMessages: async () => { reads++; return new Promise<unknown[]>((r) => { resolveRead = r; }); } };
+    const { lastFrame } = render(
+      <Host makeSession={() => session} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();
+    await waitFor(() => reads === 1);
+    // The task sidechannel (P83 rung 2) arrives WHILE the read is pending — live-only enrichment keyed by
+    // tool_use id, never persisted to disk, and never touching `documentRef` either.
+    session.pushEvent({ kind: "task", data: { type: "system", subtype: "task_started", task_id: "t1", tool_use_id: "agent-1", subagent_type: "reviewer", task_type: "local_agent", description: "review the diff" } } as any);
+    session.pushEvent({ kind: "task", data: { type: "system", subtype: "task_notification", task_id: "t1", tool_use_id: "agent-1", status: "completed", usage: { total_tokens: 4195, tool_uses: 2, duration_ms: 4484 } } } as any);
+    await waitFor(() => frame(lastFrame).includes("4.2k tokens"));
+    resolveRead(freshRows);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("resynced");         // condition 3 held: no rebuild ran
+    expect(frame(lastFrame)).toContain("4.2k tokens");          // the enrichment survives — never at risk
+  });
+
+  // condition 3's own boundary pin, the mirror of the "boundary pin" test above: a decision parked WHILE the
+  // read is pending must abort too — `pendingStateRef` (the decision-dialog surface) is reset unconditionally
+  // by `replaceDocument`, same rule as the hook tracker and agent meta, and it does not route through
+  // `onSessionEvent` at all (`session.onDecision`, a separate subscription this hook owns).
+  it("condition 3 (decision): a decision parked mid-read aborts the rebuild", async () => {
+    const staleRows = diskRows("a-stale", "the stale tail reply");
+    const freshRows = diskRows("a-fresh", "the fresh tail reply");
+    let reads = 0;
+    let resolveRead!: (rows: unknown[]) => void;
+    let onDecisionCb: ((entry: unknown) => void) | undefined;
+    const session = {
+      ...fakeAttachSession({ sessionId: "sess-1" }),
+      onDecision: (cb: (entry: unknown) => void) => { onDecisionCb = cb; return () => {}; },
+      onDecisionSettled: () => () => {},
+    };
+    const deps = { getSessionMessages: async () => { reads++; return new Promise<unknown[]>((r) => { resolveRead = r; }); } };
+    const { lastFrame } = render(
+      <Host makeSession={() => session as any} initialEntries={entriesFrom(staleRows)} initialDiskStamp={diskStampOf(staleRows)} deps={deps} />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    session.resolveReady();
+    await waitFor(() => reads === 1);
+    onDecisionCb!({ toolUseID: "t1", kind: "permission", request: {} });
+    resolveRead(freshRows);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(frame(lastFrame)).not.toContain("resynced");         // condition 3 held: no rebuild ran
+    expect(frame(lastFrame)).toContain("the stale tail reply");
+  });
 });

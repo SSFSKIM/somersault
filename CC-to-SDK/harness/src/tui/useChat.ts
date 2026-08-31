@@ -954,6 +954,20 @@ export function useChat(
   // deferral, re-arm or merge-after-turn-end to reach for it is exactly the complexity wave 3 deleted.
   const seedRevisionRef = useRef<number | null>(null);
   if (seedRevisionRef.current === null) seedRevisionRef.current = documentRef.current!.revision();
+  // rereview4 P2 (wave 5): virgin condition 3 — `revision()` only sees the RETAINED DOCUMENT, but the reconcile
+  // also has to protect LIVE state that never touches it: a hook pairing (`hookTrackerRef`), a Task subagent's
+  // sidechannel enrichment (`agentMetaRef`), a pending decision, a streaming partial — every one of them is
+  // reset unconditionally by `replaceDocument` (bl7 T-HOOKBLOCK, P82/P83, W-S5's own rebuild-boundary rule),
+  // and a frame that only writes one of them (a `hook_started`, a `task_notification`, a `stream_event` delta)
+  // is BY DESIGN invisible to `revision()` — useChat.ts's own comments on those ingest arms say so verbatim
+  // ("nothing here mutates the document", "changes NOTHING outside the live turn"). Probes confirmed the gap
+  // is real: a `hook_started`/`hook_response` pair straddling the read is permanently unpaired (the tracker
+  // that would have matched them is gone), and a live `task_notification`'s usage detail is permanently
+  // discarded the same way. ONE counter, bumped once per non-replay frame at every subscription boundary
+  // (below), closes all of them at once — no per-kind enumeration, no reconstruction: a bump during the
+  // window means live content is en route, full stop, and the mount-time correction stands down exactly like
+  // it already does for conditions 1/2.
+  const liveActivitySeq = useRef(0);
   // THE REWIND WIPE: screen AND scrollback (`ESC[2J ESC[3J ESC[H`) — upstream's `Rms()`, bundle L176982. It is
   // deliberately harsher than `/clear`'s (next line), and only rewind may use it: a rewind TRUNCATES the
   // conversation, and Ink's app.clear() cannot reach rows that have already scrolled out of the viewport, so
@@ -1528,6 +1542,11 @@ export function useChat(
     followGen.current++;
     const off = session.onSessionEvent((ev) => {
       if (disposed.current) return;
+      // rereview4 P2 (wave 5), virgin condition 3's choke point: EVERY non-replay frame this router ever
+      // delivers counts as live activity, whatever it does or does not touch — see `liveActivitySeq`'s own
+      // comment. `replay` only exists on `message` frames (host/wire.ts); every other kind is by construction
+      // never a replay.
+      if (!(ev.kind === "message" && ev.replay)) liveActivitySeq.current++;
       if (ev.kind === "turn" && ev.phase === "start") {
         // The host has TWO truncated start shapes and they mean opposite things (host.ts's follow()).
         // A BARE `{truncated:true}` with no seq is the completed idle tail: it must never open a LiveTurn,
@@ -1822,8 +1841,11 @@ export function useChat(
         if (ev.status.permissionMode && ev.status.permissionMode !== modeRef.current) setMode(ev.status.permissionMode);
       }
     });
-    const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) pushPending(entry); }) : undefined;
-    const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) dropPending(s.toolUseID, s.by, s.decision); }) : undefined;
+    // Same choke-point rule, at the OTHER subscription this hook owns: `pendingStateRef` (decision dialogs)
+    // is reset by `replaceDocument` exactly like the hook tracker and agent meta are, and neither of these two
+    // callbacks routes through `onSessionEvent` above.
+    const offDecision = hasDecisionFeed(session) ? session.onDecision((entry) => { if (!disposed.current) { liveActivitySeq.current++; pushPending(entry); } }) : undefined;
+    const offSettled = hasDecisionFeed(session) ? session.onDecisionSettled((s) => { if (!disposed.current) { liveActivitySeq.current++; dropPending(s.toolUseID, s.by, s.decision); } }) : undefined;
     return () => { off(); offDecision?.(); offSettled?.(); };
   }, [session]);
   // Launch-time resume: run once on mount if an initialResume intent was passed.
@@ -1847,10 +1869,11 @@ export function useChat(
   // `typeof` guard), re-read disk and compare its stamp against `diskStampRef.current` (read AT FIRE TIME,
   // not the frozen `opts.initialDiskStamp` this effect closed over at mount).
   //
-  // THE GOVERNING RULE (wave 3, refined wave 4 — rereview3 P1/P2): this reconcile may replace the document
-  // ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed, untouched by anything since. It
-  // aborts SILENTLY AND FINALLY (no retry, no re-arm) the moment EITHER of two virgin conditions fails by
-  // the time its disk read resolves:
+  // THE GOVERNING RULE (wave 3, refined wave 4 — rereview3 P1/P2 — and wave 5 — rereview4 P2): this reconcile
+  // may replace the document ONLY WHILE IT IS STILL VIRGIN — exactly the attach-time mount seed, untouched by
+  // anything since, AND only while nothing live outside the document has moved either. It aborts SILENTLY AND
+  // FINALLY (no retry, no re-arm) the moment ANY of three virgin conditions fails by the time its disk read
+  // resolves:
   //   1. `diskGenRef` moved (any document SWAP since mount: a live rewind, `/clear`, a resume) — the
   //      pre-existing generation guard (bl9 F2). Complementary to condition 2, not redundant with it:
   //      `replaceDocument` installs a brand-new `TranscriptDocument` whose own `rev` restarts at 0, so a
@@ -1861,6 +1884,11 @@ export function useChat(
   //      earliest honest capture point): ANY retained mutation of the SAME document instance since then —
   //      a local visual, a live-appended SDK row, a duplicate-sidecar upgrade, a supersede+append pair that
   //      nets to the same entry count — means the document is no longer provably the mount seed.
+  //   3. `liveActivitySeq` moved past its own read-issue snapshot — see its own comment. Conditions 1/2 only
+  //      see the RETAINED DOCUMENT; a hook pairing, a Task subagent's sidechannel enrichment, a pending
+  //      decision and a streaming partial all live OUTSIDE it and are reset by `replaceDocument` all the
+  //      same, so a frame that touches only one of them (rereview4 P2: a `hook_started`/`hook_response` pair
+  //      straddling the read, a `task_notification`'s usage detail) needs its own signal.
   // Wave 3's third condition (`turnStartedSinceMountRef`, a turn having started at all, ever) is DELETED: a
   // turn that has drained ANY content by read-resolve time already trips condition 2 (every retained append
   // bumps `rev`), so the flag was only ever deciding for a turn that opened but drained NOTHING — and
@@ -1890,10 +1918,12 @@ export function useChat(
       const id = session.sessionId;
       if (!id) return;
       const gen = diskGenRef.current;                        // virgin condition 1: captured AT READ-ISSUE
+      const activity = liveActivitySeq.current;              // virgin condition 3: captured AT READ-ISSUE (see its own comment)
       const rows = await getSessionMessages(id).catch(() => null);
       if (cancelled || disposed.current || rows === null) return;
       if (diskGenRef.current !== gen) return;                                          // condition 1: a swap already landed
       if (documentRef.current!.revision() !== seedRevisionRef.current) return;         // condition 2: the document mutated since render
+      if (liveActivitySeq.current !== activity) return;                                // condition 3: live activity arrived during the read
       const fresh = diskStampOf(rows);
       const live = diskStampRef.current;
       if (live && fresh.count === live.count && fresh.lastUuid === live.lastUuid) return;
