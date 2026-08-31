@@ -1023,8 +1023,172 @@ Skills · Messages · Autocompact buffer · Free space — where “Autocompact 
 <code>window − compactThreshold</code> (<code>:489891</code>).</p>
 </section>
 
-<!-- @ch6 -->
-<!-- @ch7 -->
+<section id="ch6">
+<h2><span class="chapno">Chapter 6</span>Tools I: the tool abstraction &amp; the deferral machine</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>A “tool” is a plain object with ~50 optional fields, built by one factory. The interesting
+  engineering is around it: which tools even make it into the list (a surprisingly political
+  question, decided per model, per platform, per feature flag), and how the harness keeps dozens
+  of tool schemas from bloating the prompt — by <b>deferring</b> them server-side and letting
+  the model fetch schemas on demand with ToolSearch.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/05-tools-infra-files-search-web.md</code> (1,598 lines).</p>
+
+<h3>6.1 The interface</h3>
+<p>The factory (<code>kt :763244</code>) merges each spec over a defaults object that is
+<b>fail-closed on capability, fail-open on permission</b>: <code>isReadOnly</code>/<code>isConcurrencySafe</code>/<code>isDestructive</code>
+default false, but <code>checkPermissions</code> defaults to allow — permission safety lives in the caller
+pipeline (deny rules run first), not in the tool. It merges via property <em>descriptors</em> so schemas
+stay lazy getters (Zod construction off the startup path). Beyond the obvious fields
+(<code>name, prompt(), inputSchema, call(), checkPermissions</code>), the surface includes:</p>
+<table>
+<tr><th>Field family</th><th>Purpose</th></tr>
+<tr><td><code>coerceInput / validationErrorSteer</code></td><td>pre-Zod repair of common model mistakes (unwrap 1-element arrays, map <code>length</code>→<code>limit</code>); extra hints on schema failures</td></tr>
+<tr><td><code>isReadOnly / isConcurrencySafe / isDestructive / enablesCodeExecution</code></td><td>scheduler + sandbox-policy classification (per-<em>input</em> predicates, not constants)</td></tr>
+<tr><td><code>ruleContentField / getPath / preparePermissionMatcher / toAutoClassifierInput</code></td><td>permission-rule matching hooks (which input field a rule like <code>Read(src/**)</code> matches)</td></tr>
+<tr><td><code>maxResultSizeChars / skipAggregateToolResultBudget</code></td><td>output-budget contract (§6.4)</td></tr>
+<tr><td><code>stripForStorage / inputsEquivalent / backfillObservableInput</code></td><td>transcript hygiene: blank bulky payloads, dedupe identical pending calls, absolutize logged paths</td></tr>
+<tr><td><code>shouldDefer / alwaysLoad / searchHint</code></td><td>the deferral protocol (§6.3)</td></tr>
+<tr><td><code>renderToolUse*</code></td><td><b>moved off the tool object</b> into a separate UI registry keyed by name (<code>:190345</code>) — the headless path never loads React</td></tr>
+</table>
+
+<h3>6.2 The registry: who's actually in the list</h3>
+<p>One function builds the pool (<code>Y0 :480074</code>), then layered gates filter it. The gates are
+where 2.1.251 diverges hard from received wisdom:</p>
+<div class="callout warn"><div class="ct">Two headline removals</div>
+<b>(1) Glob and Grep are NOT in the default tool list</b> on a normal POSIX run: when a shell is
+available they're stripped (<code>lle :413592</code>) and the harness steers the model to
+<code>find</code>/<code>grep</code> via Bash; they return only if Bash itself is missing/disabled.
+<b>(2) TodoWrite is off on new models</b> (Opus ≥4.8, Sonnet 5, Fable 5, Mythos 5 — <code>FL
+:465392</code>); the TaskCreate/TaskGet/TaskUpdate/TaskList quartet replaces it by default. And
+<b>MultiEdit no longer exists at all</b> — only legacy name references survive in permission-migration
+code.
+</div>
+<p>Other gates: deny-rules strip tools from the list <em>before the model ever sees them</em>
+(whole-tool rules only — <code>Bash(git *)</code> never removes Bash); <code>CLAUDE_CODE_SIMPLE</code>
+collapses the pool to <code>[Bash, Read, Edit]</code>-ish; plan mode is enforced at permission time,
+not registry time; WebFetch vanishes entirely when an Artifact surface is present. MCP tools merge in
+as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> (NFC-normalized), built-ins concatenated first and
+deduped by name.</p>
+
+<h3>6.3 Deferral: schemas on demand</h3>
+<p>Deferral is an <b>API feature, not a client trick</b>: deferrable tools serialize with
+<code>defer_loading: true</code> under the <code>advanced-tool-use-2025-11-20</code> beta, ToolSearch
+results are <code>{type:"tool_reference", tool_name}</code> content blocks, and <em>the server</em>
+expands them into a <code>&lt;functions&gt;</code> block at the point in the conversation where the
+reference appeared (<code>:497157, :577848</code>). Key mechanics:</p>
+<ul>
+<li><b>All MCP tools are deferred by default</b>; ~25 built-ins mark <code>shouldDefer</code>
+(NotebookEdit, WebFetch, WebSearch, BashOutput, cron tools, worktree tools…). Core tools and the three
+memory tools never defer.</li>
+<li>A tool never ToolSearch'd is <b>absent from the request entirely</b>; once discovered, its name
+persists in the transcript (and across compaction via <code>preCompactDiscoveredTools</code> on the
+boundary marker) and it's sent with <code>defer_loading: true</code>.</li>
+<li>A <code>DeferredToolPlaceholder</code> pseudo-tool (“Reserved placeholder that keeps deferred tool
+loading active; never call this tool.”) keeps the machinery armed when nothing is currently deferred
+(<code>:497518</code>).</li>
+<li><code>ENABLE_TOOL_SEARCH=auto:N</code> mode defers only when deferred schemas would exceed N%
+(default 10%) of the context window — measured by actually token-counting the schemas, memoized.</li>
+<li>The model learns available names from a system-reminder listing; calling an unloaded tool fails with
+a schema-teaching error: <em>“This tool's schema was not sent to the API… Load the tool first: call
+ToolSearch with query "select:&lt;name&gt;", then retry.”</em></li>
+<li>ToolSearch's ranking: <code>select:</code> exact fetch; keyword scoring over tokenized names
+(+10 exact part, +12 for MCP), <code>searchHint</code> regex (+4), description (+2); <code>+term</code>
+requires a match.</li>
+</ul>
+
+<h3>6.4 Output budgets</h3>
+<p>Three nested limits govern tool results: per-result overflow-to-disk at
+<code>min(maxResultSizeChars, 50000)</code> chars (replaced by a <code>&lt;persisted-output&gt;</code>
+envelope with a 2,000-char preview and a file path); a <b>per-assistant-turn aggregate budget of
+200,000 chars</b> that retroactively persists the <em>largest</em> results in the turn until it fits
+(<code>:242737</code>); and tool-specific caps — Read is <code>Infinity</code> (never persisted),
+Grep is a strikingly tight <b>20,000</b>, most tools 100,000, MCP tools read theirs from
+<code>_meta["anthropic/maxResultSizeChars"]</code> clamped to 500,000. Results containing images are
+never truncated or persisted.</p>
+</section>
+
+<section id="ch7">
+<h2><span class="chapno">Chapter 7</span>Tools II: files, search, and the web</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>The file tools look boring — read, write, edit, search — but each hides a discipline:
+  Read keeps a <b>freshness ledger</b> so the harness knows exactly which version of every file
+  the model has seen; Edit refuses to touch anything the model hasn't read; and both search
+  tools are fronts for the ripgrep hiding inside the binary itself.</p>
+</div>
+
+<h3>7.1 Read</h3>
+<p>Caps: <b>2,000 lines</b> default, <b>256&nbsp;KiB</b>, <b>25,000 tokens</b> — and per-line character
+truncation is <em>gone</em>; over-token reads now <b>auto-paginate</b> with a
+<code>[Truncated: PARTIAL view — …]</code> banner instructing offset/limit paging (you saw a live one
+earlier in this very lecture's production). Output is <code>cat -n</code> format with <em>no</em>
+left-padding — literally <code>&lt;n&gt;\t&lt;content&gt;</code> (separator switches to <code>:</code>
+for tab-indented files under a flag). Images resize to 2000×2000/≤5MB base64 with JPEG-recompression
+fallbacks; PDFs over 10 pages require the <code>pages</code> param (max 20/request, extracted via
+poppler); notebooks flatten to cells-with-outputs. Empty files, offsets past EOF, and missing files
+each get a distinct system-reminder or error — missing files even get a <em>“Did you mean X?”</em>
+sibling search.</p>
+<p>The <b><code>readFileState</code> ledger</b> is the load-bearing structure:
+<code>{content, timestamp: floor(mtimeMs), offset, limit, isPartialView?, seededFromContext?}</code>
+per absolute path. Read/Write set it; CLAUDE.md files are pre-seeded at startup (enabling <em>“This
+file is already in your context”</em> dedup); Edit/Write stale-check against it — and a repeat Read of
+an unchanged file returns <em>“Wasted call — file unchanged since your last Read”</em> instead of
+content.</p>
+
+<h3>7.2 Write &amp; Edit</h3>
+<p>Write enforces read-before-overwrite <b>twice</b>: a soft <code>validateInput</code> check and a hard
+re-check inside the write lock after opening the file (a TOCTOU guard, <code>:471165</code>). It
+auto-creates parent directories, forces LF endings (Edit, by contrast, preserves the file's detected
+encoding <em>and</em> CRLF), and verifies on-disk size after writing to catch silently-truncating
+network drives. Blocked writes include: subagent report files
+(<code>/^(REPORT|SUMMARY|FINDINGS|ANALYSIS).*\.md$/i</code> when an agentId is set — <em>“Subagents
+should return findings as text”</em>), secrets scanned on writes into shared memory directories, and
+Perforce read-only files (with advice to <code>p4 edit</code>, never chmod).</p>
+<p>Edit's contract is exact-string replacement with a <b>13-code failure taxonomy</b> (unique-match
+enforcement, stale-file, notebook redirect, 1&nbsp;GiB cap…). Two details a replica always gets wrong:
+matching is <em>not</em> naive <code>indexOf</code> — a desanitization layer (<code>vle :512858</code>)
+finds the <em>actual</em> file substring modulo curly quotes/<code>\uXXXX</code>/whitespace and
+re-sanitizes the replacement to match the file's conventions; and the application <b>reads from disk,
+not the ledger</b>, so an externally-modified-but-still-matching file applies cleanly with an advisory
+note.</p>
+
+<h3>7.3 Glob &amp; Grep: fronts for the embedded ripgrep</h3>
+<p>Glob = <code>rg --files --null --glob P --sort=modified --no-ignore --hidden</code>, capped at 100
+results — note the defaults: <b>.gitignore ignored and dotfiles included</b> unless env-overridden.
+Grep maps its schema onto an explicit rg argv (<code>--hidden</code>, VCS-dir excludes,
+<code>--max-columns 500</code> — where the old line-truncation moved — <code>--json</code> in content
+mode, always <code>-n</code> with client-side stripping if unwanted), default <code>head_limit</code>
+250, permission-deny filtering applied <em>after</em> rg returns. Spawn envelope: 20s timeout (60s on
+WSL), 20&nbsp;MB buffers, exit code 1 = no-matches-success. Security refusals worth studying: a
+bare-name PATH rg can't enforce Read deny-rules so out-of-tree searches are refused; and a
+<b>symlink re-resolution race check</b> refuses if link targets changed between permission check and
+execution.</p>
+
+<h3>7.4 The web tools</h3>
+<p><b>WebFetch</b> is a pipeline: URL validation (≤2000 chars, no userinfo, dotted hostname) → 15-min
+50&nbsp;MB LRU cache → http→https upgrade → a <b>domain preflight</b> against
+<code>api.anthropic.com/api/web/domain_info</code> (skippable by enterprise setting) → GET with
+<code>maxRedirects: 0</code> — redirects are followed only same-origin (protocol + port + no-userinfo +
+<code>www.</code>-stripped host equality, max 10 hops); cross-host redirects come back to the model as a
+structured “REDIRECT DETECTED” message with defensively-truncated URLs → Turndown HTML→markdown (1&nbsp;MiB
+cap) → and finally the caller's <code>prompt</code> is answered by a <b>side-call to the small/fast
+model</b> whose template enforces a 125-char quote limit and no-song-lyrics rules
+(<code>:696029</code>). Raw surfaces skip summarization and wrap the page in an untrusted-content
+envelope instead.</p>
+<p><b>WebSearch</b> is a <b>nested side-query, not a client HTTP call</b>: a second API request with
+<code>toolChoice: {type:"tool", name:"web_search"}</code> and the server-side
+<code>web_search_20250305</code> tool (<code>max_uses: 8</code> per call), results converted to
+title/URL blocks with a mandatory “Sources:” instruction. A session-wide budget of <b>200 searches</b>
+applies (<code>CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION</code>), with a graceful refusal message when
+exhausted.</p>
+</section>
+
+
 <!-- @ch8 -->
 <!-- @ch9 -->
 <!-- @ch10 -->

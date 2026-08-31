@@ -22,22 +22,25 @@ local to their chunk; they are cited as navigation aids, not as stable API.
 4. **The model-facing tool description now has two variants**: a long legacy one and a terse "lean"
    one chosen per-model by `leanPrompt(model)` (`515565`). The git-commit/PR playbook with the
    heredoc examples still exists but only in the long variant (`515425`).
-5. **Sandboxing is on by default where supported**; macOS uses a generated `sandbox-exec` SBPL
-   profile (`683431`), Linux uses bubblewrap plus a local filtering HTTP/SOCKS proxy (`680421`).
-   Violations are appended to stderr inside a `<sandbox_violations>` block (`684717`).
-6. **`dangerouslyDisableSandbox`** is a first-class input field (`515719`) gated by
-   `sandbox.allowUnsandboxedCommands` (`111182`); using it forces an `ask` permission decision
-   (`515928`).
-7. **Permission analysis runs on a hand-written tree-sitter-bash-shaped parser** compiled into the
+5. **The sandbox is a vendored library**, `@anthropic-ai/sandbox-runtime`, inlined at
+   `680300`–`684760` (`ct`, `684740`) with a Claude Code manager on top (`pt`, `688045`). macOS
+   generates a `sandbox-exec` SBPL profile (`683431`); Linux uses bubblewrap plus a vendored seccomp
+   shim and `socat` bridges (`683140`).
+6. **Network egress goes through an in-process HTTP+SOCKS mux proxy** (`684240`) whose allowlist is
+   merged from `sandbox.network.allowedDomains` *and* the session's `WebFetch(domain:…)` permission
+   rules. Denials land in a `<sandbox_violations>` block appended to stderr (`684717`).
+7. **`dangerouslyDisableSandbox`** is a first-class input field (`515719`) gated by
+   `sandbox.allowUnsandboxedCommands` (`111182`); using it forces an `ask` that even
+   `bypassPermissions` cannot skip (`515928`, `444637`).
+8. **Permission analysis runs on a hand-written tree-sitter-bash-shaped parser** compiled into the
    bundle (`chunk-fgwne0fb.js`, `ZE()` at `398569`). No Haiku-powered command classifier remains for
    Bash; the LLM path is now the generic "auto mode" classifier.
-8. **Background work is unified under a task registry.** `BashOutput`/`KillShell` are now *aliases*
+9. **Background work is unified under a task registry.** `BashOutput`/`KillShell` are now *aliases*
    for `TaskOutput`/`TaskStop` (`402072`), and `TaskOutput` is explicitly marked DEPRECATED in favour
    of `Read` on the task's output file (`476029`).
-9. **Three distinct auto-background paths** exist: 2 s "armed for Ctrl+B", timeout-triggered, and
-   turn-abort-triggered (`516108`–`516250`). `assistantAutoBackgrounded` is gone from the codebase.
-10. A **`Monitor` tool** (feature-gated on `tengu_amber_sentinel`) streams one notification per
-    stdout line from a long-running command or a WebSocket (`233682`, `187475`).
+10. **Four backgrounding paths** exist — explicit, 2 s Ctrl+B arming, timeout, turn-abort
+    (`516108`–`516250`); `assistantAutoBackgrounded` is gone. A gated **`Monitor` tool** streams one
+    notification per stdout line from a command or a WebSocket (`233682`, `187475`).
 
 ---
 
@@ -2626,19 +2629,19 @@ content block (`515935`, `y1t`). The reader caps at `kre` bytes when reading fro
 1. **`jjt` and `ZOe`** — the background output-file size cap constants referenced at `414785` and
    `472604` were not resolved to numbers. `ZOe` is the default `#u` on `Pde`; its value determines
    when a background command is killed for output volume.
-3. **The `Htn` destructive-pattern table for POSIX shell** (`439365`) was inferred from its
+2. **The `Htn` destructive-pattern table for POSIX shell** (`439365`) was inferred from its
    PowerShell twin (`443660`). The bash table's exact patterns and categories are unread.
-4. **`I8`** (`443440` call site) — the path-level redirect/rm permission layer — was not read. It is
+3. **`I8`** (`443440` call site) — the path-level redirect/rm permission layer — was not read. It is
    the piece that decides whether `> /etc/passwd` or `rm -rf ~` is denied outright.
-5. **`H$t`/`Flr`** (`515033`) — a per-(tool, command) dedupe used only when sandboxing; its purpose
+4. **`H$t`/`Flr`** (`515033`) — a per-(tool, command) dedupe used only when sandboxing; its purpose
    (suppressing repeated sandbox prompts for an identical command?) is inferred, not confirmed.
-6. **`FE()`** (`75056`) gates whether a background shell's result is delivered as a tool result
+5. **`FE()`** (`75056`) gates whether a background shell's result is delivered as a tool result
    (`GMt`, `515967`) versus only as a notification. The gate's condition is unread and it changes the
    observable protocol.
-7. **Whether the lean description is the default for current production models.** `td(e)` →
+6. **Whether the lean description is the default for current production models.** `td(e)` →
    `leanPrompt(model)` (`651364`) resolves through a gate table (`651290`–`651360`) using obfuscated
    experiment names (`CLAUDE_CODE_GORSE_PLOVER`, `tengu_velvet_tide`, `opus_5_prompt_bundle`). A live
    probe against the real CLI would settle it faster than reading further.
-8. **`b2e(storageV5)`** (`472449`) injects a credential block into every command's preamble. What it
+7. **`b2e(storageV5)`** (`472449`) injects a credential block into every command's preamble. What it
    contains — and therefore what a sandboxed command can read from its own environment — was not
    traced. Related: `sandbox.credentials.envVars` `deny`/`mask` modes and `eor(...)` (`472461`).
