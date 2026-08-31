@@ -1,8 +1,11 @@
 # Reforge-full campaign — ratchet the extracted engine into owned TypeScript until engine-ts assembles
 
-**Status:** approved 2026-08-31; rev 1 + rev 2 same day after adversarial review rounds 1–2 and an
-external architecture assessment (see Revision Notes) · **Track:** decomposing (campaign-scale;
-this spec is the parent design that `doperpowers:decomposing` cuts into the goal tree)
+**Status:** approved 2026-08-31; revised through 5 adversarial review rounds (converged — see
+Revision Notes); **composite spec** as of the same day — the roadmap cut lives in
+"## Roadmap — the cut" below, per `doperpowers:decomposing` (design up top, roadmap below, one
+document) · **Parent:** root — the north star in `CC-to-SDK/CLAUDE.md` ("A fully ownable, fully
+customizable harness of Claude Code quality"), reforge lane · **Level name:** Campaign; children
+are **Waves**
 **Grounding:** `reforge/research/2026-08-31-engine-census.md` (subsystem census of the 2.1.251
 bundle, incl. its 2026-08-31 correction) · `reforge/research/2026-08-31-gate-blob-resolution.md`
 (how gates actually resolve offline) · `reforge/README.md` (harness + gate doctrine) · cassette
@@ -459,6 +462,179 @@ ones).
 | W13 | Query loop / turn driver (`ModelTransportPort`); **inversion milestone** — engine-ts becomes primary with extracted compatibility islands; **hermetic isolation substrate built** (§3.6) | S-module (fable) | controlled retry/interleaving + long-horizon traces; synthetic corpus required |
 | W14 | engine-ts closure: **OS-enforced hermetic** ownership gate (§3.6) with all four delegation-route negative controls; static reachability; full acceptance surface with engine-ts as engineB under strict replay | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
 
+## Roadmap — the cut (2026-08-31)
+
+The campaign fails the ownability gate (no single agent context can own fifteen waves), so it
+divides along §6's wave seams. Per the frontier discipline, **binding detail concentrates on the
+children nearest execution** (the W0 trio and W1/W2); distant waves stay deliberately coarse —
+purpose, acceptance, and edges from §6's table, with their precise cuts made at dispatch. Every
+child spec opens by citing this document (path + child id). §6's wave table remains the design
+view; the sections below are the commitment view.
+
+### Grounding baseline (measured this session)
+
+3 splices owned (leaf formatters, 1 anchor each; 805 minified chars excised); corpus 22
+scenarios + 5 acceptance suites, all green at pin 2.1.251; strangler gate PASS; 3 live anchors;
+positional fallbacks: 9 across 3 corpus scenarios plus 3 on `background-task` (the §3.4 W0
+target is zero); Bun skew 1.3.14 external vs 1.4.1 embedded; load-bearing denominator ~5–6 MB
+minified; headless tool catalog 31; `substanceOnly` contract hardened through 5 commits with 24
+negative-control assertions.
+
+### Children
+
+Waves W3–W14 map to C6–C17; the W0 foundation divides into three parallel children (different
+deliverable types, verification strategies, and no shared files — the split signals), and W1/W2
+follow as C4/C5.
+
+#### C1: Splice mechanics (W0a) — autonomous
+- **Purpose:** generalize the splice transform: manifest `target` shapes
+  (`sibling-method | free-function | class-method | switch-case`), AST-span excision (§2.1),
+  capture-taxonomy fields (§2.4), per-splice upstream-footprint hash emission (§5); one mechanism
+  spike per new shape.
+- **Acceptance:** the W0 spike bullets in "## Acceptance" — each shape: excise → boot →
+  solo-sabotage RED → faithful GREEN → derivation-perturbation fails loudly, on a trivial target;
+  manifest schema documented in `strangle/manifest.ts`; builds emit footprint hashes.
+- **Edges:** blocked-by: —; blocks: C4, C5, and every splice-bearing wave.
+- **Contracts:** owns X3, X4; participates X1, X5.
+- **Design inheritance:** §2.1, §2.4 taxonomy **[binding]**; AST tooling choice (TypeScript
+  parser, measured 0.6 s) advisory.
+- **Required.** Status: not-dispatched (dispatchable now).
+
+#### C2: Skeleton & closure ledger (W0b) — autonomous
+- **Purpose:** the engine-ts skeleton (stream-json shell + module registry + static-reachability
+  check, §2.4) and the closure-ledger artifact (§1.1): machine-checkable rows for every in-scope
+  subsystem and all 31 catalog tools, with states, dependency edges, footprint hashes, and a
+  checker.
+- **Acceptance:** skeleton boots and reports its (near-empty) owned set; reachability check runs
+  green on it; ledger materialized with every §1.1 row + 31 tool rows, checker rejects invalid
+  states/edges/missing rows.
+- **Edges:** blocked-by: —; blocks: every wave child (registration + ledger rows) and C17.
+- **Contracts:** owns X2, X7; participates X1.
+- **Design inheritance:** §2.4 dual-wiring, §1.1 ledger definition **[binding]**; ledger file
+  format (JSON + tsx checker suggested) advisory.
+- **Required.** Status: not-dispatched (dispatchable now).
+
+#### C3: Determinism & strictness (W0c) — autonomous
+- **Purpose:** the §3.3 environment lockdown (allowlist, record/replay credential schemas,
+  five-case test matrix, gate-defaults fixture, flip-liveness, override negative control), the
+  §3.5 Bun pin assert, and §3.4 strict replay: proxy/differ normalization sharing to a
+  zero-fallback corpus, then fallback-fatal for every non-extracted engineB.
+- **Acceptance:** the W0 determinism bullets in "## Acceptance" (env matrix green, flip observed,
+  fixture committed and `ENGINE_VERSION`-keyed, `prepare.ts` refuses mismatched Bun, corpus
+  replays with zero positional fallbacks, fatal mode active thereafter).
+- **Edges:** blocked-by: —; blocks: the *gate* of C4 and every later wave (X1 strictness).
+- **Contracts:** owns X6 and X1's strictness clause; participates X5.
+- **Design inheritance:** §3.3, §3.4, §3.5 **[binding]**. Advisory: canonicalization will likely
+  change recorded body hashes — plan for one corpus re-record (record-freely posture covers it);
+  Bun 1.4.1 must be installed pinned, not by upgrading the default toolchain.
+- **Required.** Status: not-dispatched (dispatchable now).
+
+#### C4: W1 — tool-result formatters + retrofit — autonomous
+- **Purpose:** own the remaining tool-result formatters (Read, Edit, Bash, Grep, task family) on
+  the proven shape; retrofit the existing 3 splices to standalone-complete + taxonomy-classified
+  adapters + reference/custom/sabotage layout; cheap state-surface diff (sandbox fs tree + exit
+  codes).
+- **Acceptance:** per-wave bullets in "## Acceptance"; every new formatter's covering scenario
+  goes RED under solo sabotage; ledger rows move to `spliced`/`standalone-complete`.
+- **Edges:** blocked-by: C1 (X3 schema), C2 (X7 registration); gate blocked-by C3.G(strict).
+  Scenario authoring may start immediately (advisory).
+- **Contracts:** X1, X3, X4, X5, X6, X2 (row updates).
+- **Design inheritance:** §2.4 module layout, §2.5 layers **[binding]**; census formatter
+  locations advisory.
+- **Required.** Status: not-dispatched (blocked-by C1/C2).
+
+#### C5: W2 — descriptions + S-chunk pilot — autonomous
+- **Purpose:** description functions via generalized S-method; the S-chunk mechanism debut on
+  `y30v0ja7` (3 exports) with a full export-and-consumer inventory (§2.2); coverage attestation
+  debut (§3.1).
+- **Acceptance:** S-chunk bullets in "## Acceptance" (per-export coverage + sabotage, loud
+  derivation perturbation, attestation shows branch execution).
+- **Edges:** blocked-by: C1, C2; gate blocked-by C3.G(strict).
+- **Contracts:** X1–X7 as C4.
+- **Required.** Status: not-dispatched (blocked-by C1/C2).
+
+#### C6–C10: W3–W7 (prompt assembly · compaction · hooks · permissions · control protocol) — autonomous at dispatch
+- One child per §6 wave row; purpose/acceptance/corpus families as tabled. Each is blocked-by
+  C1/C2/C3; the W3→W7 sequence is priority order, not hard edges — the orchestrator sequences
+  them by recording/gate serialization (X5). Their fine structure is cut at dispatch.
+- **Required.** Status: not-dispatched (blocked-by W0 trio).
+
+#### C11: W8 — moat tools — decomposing at dispatch
+- Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
+  for one owned unit). Blocked-by C2 (ledger rows), C3. **Required** (rows may resolve to
+  evidence-backed exclusions). Status: not-dispatched.
+
+#### C12: W9 — session storage (`SessionPort`) — controlled (fable)
+- First S-module; its design pass owns the behavioral-partition matrix, dirty-state matrix, and
+  brings the synthetic response corpus + full state-surface diff online (§3.1–3.2). Blocked-by
+  C1/C2/C3. **Required.** Status: not-dispatched.
+
+#### C13–C14: W10–W11 (bash executor + safety AST · MCP adapter + slash/skills) — autonomous at dispatch
+- Per §6 rows; C13 needs C1's class-method shape. **Required.** Status: not-dispatched.
+
+#### C15: W12 — subagent dispatch + sandbox (`ToolRuntimePort`) — controlled (fable)
+- Per §6 row; mutation battery per §3.1. **Required.** Status: not-dispatched.
+
+#### C16: W13 — query loop + inversion + hermetic substrate — controlled (fable)
+- `ModelTransportPort`; the inversion milestone (§2.4) and the §3.6 isolation substrate build
+  here. Blocked-by: substantially all of C4–C15 (the inversion needs the owned set to carry the
+  shell). **Required.** Status: not-dispatched (deliberately late).
+#### C17: W14 — engine-ts closure — controlled
+- The hermetic ownership gate with its four delegation-route negative controls; the campaign's
+  recomposition verification follows its landing. Blocked-by: all. **Required.** Status:
+  not-dispatched (deliberately late).
+
+### Cross-child contracts
+
+- **X1 — The gate** *(binding: the campaign's correctness definition)*: two-phase gate (solo
+  sabotage RED + faithful GREEN on `m2/all.ts`), strict replay per §3.4 (owner of strictness:
+  C3), non-vacuity contracts per §3.1. Binds every wave child; no child re-litigates.
+- **X2 — The closure ledger** *(binding schema authority; owner C2)*: the ledger artifact +
+  checker; every wave child updates its rows in its landing commit; pin bumps stale rows per §5.
+- **X3 — The manifest schema** *(binding; owner C1)*: target shapes, capture taxonomy, footprint
+  hashes; consumed by every splice-bearing child.
+- **X4 — Module layout & hygiene** *(binding; owner C1 documents it)*: standalone-complete +
+  adapter per taxonomy; `reference`/`custom`/`sabotage` files; no minified identifier crosses
+  into owned code (§2.4–2.5).
+- **X5 — Serialization** *(binding)*: gate runs and cassette recordings serialize through the
+  orchestrator; workers never run either concurrently (§4).
+- **X6 — Environment & credentials** *(binding; owner C3)*: all engine spawns go through the
+  allowlisted env + credential schemas; no child adds env vars outside the schema.
+- **X7 — Skeleton registration** *(binding interface; owner C2)*: the module-registry API every
+  wave child registers its standalone-complete modules through.
+
+### Ordering & dependency map
+
+C1 ∥ C2 ∥ C3 run in parallel now (disjoint files; C3's corpus re-record serializes through the
+orchestrator per X5). C4's implementation starts when C1+C2 land; its gate waits for C3. C5
+follows C1/C2 the same way. C6–C10 run in §6 priority order under orchestrator capacity, C11–C15
+after their bloc, C16 deliberately late (needs the owned set), C17 last. Scenario authoring for
+wave N+1 overlaps implementation of wave N throughout (§6 note).
+
+### Deferred / out of scope
+
+- **Deferred (may return):** custom-delta gate machinery (ships with the first real
+  customization, §2.5); platform/runtime matrix (pre-W14, per delegated unknowns); SDK-shim
+  ownership (post-campaign, "## Beyond the campaign").
+- **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
+
+### Tracking map
+
+| child | wave | spec | status |
+|---|---|---|---|
+| C1 | W0a | — (cites this doc at dispatch) | not-dispatched — dispatchable now |
+| C2 | W0b | — | not-dispatched — dispatchable now |
+| C3 | W0c | — | not-dispatched — dispatchable now |
+| C4 | W1 | — | not-dispatched — blocked-by C1, C2 |
+| C5 | W2 | — | not-dispatched — blocked-by C1, C2 |
+| C6–C10 | W3–W7 | — | not-dispatched — blocked-by W0 trio |
+| C11 | W8 | — | not-dispatched (decomposing at dispatch) |
+| C12 | W9 | — | not-dispatched (controlled, fable) |
+| C13–C14 | W10–W11 | — | not-dispatched |
+| C15 | W12 | — | not-dispatched (controlled, fable) |
+| C16 | W13 | — | not-dispatched — deliberately late |
+| C17 | W14 | — | not-dispatched — deliberately late |
+
 ## Acceptance (behavior-phrased)
 
 - **Per wave:** every new splice sabotaged alone turns its own covering scenarios RED; the faithful
@@ -592,6 +768,14 @@ initiative, not this campaign.
   Rejected: a new standalone tracker doc (one more thing to rot).
 - **Spec location: `docs/superpowers/specs/`** per project convention, overriding the skill
   default path.
+- **The cut: W0 trisected (C1 mechanics ∥ C2 skeleton+ledger ∥ C3 determinism); waves as
+  children; distant waves coarse per the frontier** (decomposing run). Rejected: one monolithic
+  W0 child (three deliverable types with disjoint files and different verification strategies —
+  the split signals — and trisection buys immediate 3-way parallelism); fully detailed cuts for
+  W3–W14 now (distant commitments go stale; §6's design view suffices until dispatch).
+- **No board materialization: the tracking map + closure ledger are the progress record**
+  (decomposing run). Rejected: registering wave tickets on an issue board (this repo does not run
+  the board pipeline; a second registry would be new substrate the tree doctrine forbids).
 
 ## Surprises & Discoveries
 
@@ -657,3 +841,8 @@ Pending — written at finish.
   round over a one-predicate change would be review for its own sake. The background-task check's
   five successive hardenings (`98d9553d`, `908275d0`, `6c9ad4b6`, `3a5edd9a`, `f5e1efe7`) stand
   as the measured case study behind §3.1's non-vacuity doctrine.
+- 2026-08-31 (composite): the decomposing run extended this document in place with
+  "## Roadmap — the cut" — grounding baseline, children C1–C17 (W0 trisected; binding detail at
+  the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
+  design sections above are unchanged; authority grades on inherited content are marked in the
+  child sections and contracts.
