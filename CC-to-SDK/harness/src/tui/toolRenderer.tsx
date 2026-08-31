@@ -97,13 +97,28 @@ const HINT_MAX_LINES = 10;
  *  text, and the `interrupted`/`rejected`/`running`/`suppressed` result surfaces — never carries it; absent
  *  means "not clickable", the same way `foldAnchor`'s absence means "not a cluster". A later task projects
  *  this bit into the mouse hitmap, so like `foldAnchor`/`expanded` it must survive `wrapItems` — it does, for
- *  the same reason: every `wrapOne` arm spreads the source item. */
+ *  the same reason: every `wrapOne` arm spreads the source item.
+ *
+ *  `band` (T-CLICK Task 1, spec §2.3 D9) is the ONE marker that drives BOTH the full-width paint AND (a later
+ *  task) the widened hit region — deliberately NOT derived from `expanded`, because `expanded` alone is a
+ *  wider set than "this row is part of the painted band": the absorbed-thinking margin blank and a cluster
+ *  member's own leading margin row (`thinkingRowItems`/`expandedMemberItems` below) carry `expanded: true` for
+ *  hover suppression but sit OUTSIDE canon's background rectangle (canon's margins are `Box{marginTop}`, drawn
+ *  above the box, never inside it) — banding them would paint a gap that is supposed to stay a gap. Set on the
+ *  tool-result owner's header line and its gutter-block body (`toolEventItems`, together with `expanded`) and
+ *  on every row `expandedMemberItems` produces except that leading margin, so the WHOLE visual band — header,
+ *  body, the trailing pad row `withExpandedMarker` mints, and every absorbed cluster row — is one contiguous
+ *  marked run. `RenderItemView`/`Line` read it (with the painter's own `columns`) to force the row's
+ *  background to the band colour and pad it to the full terminal width, canon's `cli.pretty.js:376156-376163`
+ *  styled-space rectangle. Absent means "ordinary row, `bg` paints at text width as it always has" — the same
+ *  default-off convention as `clickable`. Must survive `wrapItems` for the same reason as its siblings — it
+ *  does, since every `wrapOne` arm spreads the source item. */
 export type RenderItem =
-  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean; clickable?: boolean }
+  | { kind: "line"; id: string; ownerKey?: string; line: RenderLine; wrap?: "truncate-end"; foldAnchor?: string; expanded?: boolean; clickable?: boolean; band?: boolean }
   // `gutterStyle` styles the CONNECTOR cells themselves (the five-column sibling Box), which is otherwise
   // plain text. Only the active group's hint gutter uses it today: the tracked 2.1.220 golden renders
   // `  ⎿  src/app.ts` as ONE dim `#999999` run across connector and path alike, with no artifact in it.
-  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean; clickable?: boolean };
+  | { kind: "gutter-block"; id: string; ownerKey?: string; gutter: typeof TOOL_RESULT_GUTTER | typeof GROUP_HINT_GUTTER; body: readonly RenderLine[]; gutterStyle?: { color?: string; dim?: boolean }; foldAnchor?: string; expanded?: boolean; clickable?: boolean; band?: boolean };
 /** How much of a result a surface wants: the transcript's three-row compact form, a fully expanded pager view, or
  *  the detail view's own collapsed form (which offers ctrl+e rather than ctrl+o). F3 Task 5 moved the type and the
  *  fold itself into `outputFold.ts` (so `toolSummaries.ts` can fold a Bash stdout body without importing this
@@ -563,7 +578,7 @@ function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, opti
   // F9 T-MOUSE Task 3) already suppresses hover for any item carrying it, and reusing that one field is what
   // makes suppression cover the WHOLE owner — header included — with no new term for the viewport to read.
   const isExpandedOwner = options.expandedItems?.has(ownerKey) === true;
-  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, ownerKey, line: headerLine(event, normalized.status, options), wrap: "truncate-end", ...(isExpandedOwner ? { expanded: true } : {}) }];
+  const items: RenderItem[] = [{ kind: "line", id: `${event.id}:call`, ownerKey, line: headerLine(event, normalized.status, options), wrap: "truncate-end", ...(isExpandedOwner ? { expanded: true, band: true } : {}) }];
   if (normalized.status === "running") {
     const hint = backgroundHintItem(event, options);
     if (hint !== undefined) items.push(hint);
@@ -584,7 +599,7 @@ function toolEventItems(event: ToolEvent, normalized: NormalizedToolResult, opti
   // very item is exactly what an unclickable result could never have received.
   const { body, clickable } = resultBody(event, normalized, isExpandedOwner ? { ...options, projection: "detail-all", verbose: true } : options);
   const finalBody = isExpandedOwner && body.length ? withExpandedMarker(body) : body;
-  if (finalBody.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey, gutter: TOOL_RESULT_GUTTER, body: finalBody, ...(clickable ? { clickable: true } : {}), ...(isExpandedOwner ? { expanded: true } : {}) });
+  if (finalBody.length) items.push({ kind: "gutter-block", id: `${event.id}:result`, ownerKey, gutter: TOOL_RESULT_GUTTER, body: finalBody, ...(clickable ? { clickable: true } : {}), ...(isExpandedOwner ? { expanded: true, band: true } : {}) });
   return items;
 }
 
@@ -1121,8 +1136,11 @@ export function clampHintText(text: string, width: number, maxLines: number): st
 function thinkingRowItems(thought: AbsorbedThinking, anchorId: string, options: ProjectionOptions): readonly RenderItem[] {
   const message = { type: "assistant", message: { content: [{ type: "thinking", thinking: thought.body }] } };
   const lines = renderMessage(message, { width: options.columns, showThinking: true, cwd: options.cwd });
+  // T-CLICK Task 1 — index 0 is the leading margin blank (canon's `Box{marginTop:1}` above the row, not
+  // inside it); every real content row after it is part of the painted band.
   return [{ text: "" } as RenderLine, ...lines].map((line, index): RenderItem => ({
     kind: "line", id: sdkItemId(thought.key, `thinking:${index}`), ownerKey: sdkOwnerKey(thought.key), line, foldAnchor: anchorId, expanded: true,
+    ...(index > 0 ? { band: true } : {}),
   }));
 }
 function expandedMemberItems(group: FoldGroup, anchorId: string, options: ProjectionOptions, emitted: ReadonlySet<string> | undefined): readonly RenderItem[] {
@@ -1156,7 +1174,11 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     // `expanded` onto it exactly like every other row in this cluster.
     const sequence = event.result ? event.result.resultSequence : "pending";
     const margin: RenderItem = { kind: "line", id: toolItemId(event.id, sequence, "margin"), ownerKey: toolOwnerKey(event.id, sequence), line: { text: "" } };
-    const tagged = [margin, ...reid(items, event.id, sequence)].map((item): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true }));
+    // T-CLICK Task 1 — the margin at index 0 stays unbanded (it is the SAME `marginTop` device
+    // `thinkingRowItems` above carries, drawn above canon's background rectangle, not inside it); every
+    // other row this member contributes — its header and, for a member whose own call has one, its result
+    // gutter-block — is part of the painted band.
+    const tagged = [margin, ...reid(items, event.id, sequence)].map((item, index): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true, ...(index > 0 ? { band: true } : {}) }));
     entries.push({ key: event.callSequence, rank: 1, items: tagged });
   }
   for (const thought of group.absorbedThinking ?? []) entries.push({ key: thought.messageSequence, rank: 0, items: thinkingRowItems(thought, anchorId, options) });
@@ -1178,12 +1200,12 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
   const hookHeader: RenderItem = {
     kind: "line", id: toolGroupItemId(group.memberIds, "expanded-hooks-header"), ownerKey: groupOwnerKey(group.memberIds),
     line: { text: `${GROUP_HINT_GUTTER}${hookHeaderText(group.counts.hookCount ?? group.hookInfos.length, group.counts.hookTotalMs ?? 0)}`, dim: true, color: grey },
-    foldAnchor: anchorId, expanded: true,
+    foldAnchor: anchorId, expanded: true, band: true,
   };
   const hookLines: RenderItem[] = group.hookInfos.map((hook, index) => ({
     kind: "line", id: toolGroupItemId(group.memberIds, `expanded-hook-${index}`), ownerKey: groupOwnerKey(group.memberIds),
     line: { text: `${HOOK_LINE_GUTTER}${hook.name} (${hookSeconds(hook.durationMs)})`, dim: true, color: grey },
-    foldAnchor: anchorId, expanded: true,
+    foldAnchor: anchorId, expanded: true, band: true,
   }));
   return [...memberItems, hookHeader, ...hookLines];
 }
@@ -1948,22 +1970,42 @@ export function projectPending(document: TranscriptDocument, options: Projection
  *  a `"line"` item, `body.length` for a `"gutter-block"` one — mirroring `FullscreenViewport.hitRowsOf`'s own
  *  per-slice row count exactly, since it is built from that identical flattening. `undefined` (every call site
  *  outside `FullscreenViewport`, and any frame with no live selection) paints nothing, matching every row's
- *  behaviour before this task existed. */
-export function RenderItemView({ item, start, end, showGutter = true, rowSelections }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean; rowSelections?: readonly (LineSelection | undefined)[] }): React.ReactElement {
+ *  behaviour before this task existed.
+ *    `columns` (T-CLICK Task 1) is the live painter's own terminal width — passed by `FullscreenViewport`,
+ *  the one surface a `band` row can ever appear addressably on (mouse click/hover is fullscreen-only, spec
+ *  §2.3). `undefined` (every other call site: `Transcript`, `TranscriptPager`, `ResumeTranscriptView`) means
+ *  "no live width to paint a rectangle against", so a `band` row there keeps its EXISTING text-width tint
+ *  (`withExpandedMarker`'s own `bg`) rather than guessing a width — an intentional, narrower fallback, not a
+ *  gap, since none of those surfaces can dispatch the click the band exists to advertise. */
+export function RenderItemView({ item, start, end, showGutter = true, rowSelections, columns }: { item: RenderItem; start?: number; end?: number; showGutter?: boolean; rowSelections?: readonly (LineSelection | undefined)[]; columns?: number }): React.ReactElement {
+  const banded = columns !== undefined && item.band === true;
   // LT10: a tool header truncates at the terminal edge (upstream `wrap:"truncate-end"`) — an MCP-length name
   // must never wrap one header into several transcript rows. Ordinary line items (assistant text, local
   // notices, dividers) carry no `wrap` and keep wrapping; body rows keep wrapping, fold already sized them.
-  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} selection={rowSelections?.[0]} />;
+  if (item.kind === "line") return <Line l={item.line} wrap={item.wrap} selection={rowSelections?.[0]} bandWidth={banded ? columns : undefined} />;
   const body = item.body.slice(start ?? 0, end ?? item.body.length);
   // F9 T-MOUSE Task 3 — the gutter-block's own LEADING connector column (`⎿`) is the one dimmed run this
   // component paints OUTSIDE `Line.tsx` (every body row already goes through it, and un-dims there). Read
   // straight off the same context `FullscreenViewport` provides around the whole slice, so a hovered block's
   // connector brightens with its body rather than staying dim beside un-dimmed text underneath it.
   const hovered = useContext(HoverContext);
+  // The block's own five-column connector is a SIBLING Box (`item.gutter.length` wide, always — even on a
+  // continuation page where `showGutter` blanks its glyph, the column itself still occupies the width), so a
+  // banded body row's OWN available width is `columns` minus that sibling, mirroring `wrapOne`'s identical
+  // `inner` subtraction for the same block.
+  const bodyBandWidth = banded ? Math.max(1, columns - item.gutter.length) : undefined;
+  // Task 1 fix wave (review Important finding): this Box sits OUTSIDE `Line.tsx`'s own band paint (it is the
+  // gutter-block's SIBLING connector column, not a `RenderLine`), so a banded row's rectangle never reached
+  // it — column 1 stayed unpainted underneath the `⎿`/hint glyph. Banded rows now carry the same `expandedBg()`
+  // background here, and — since `showGutter={false}` (a pager continuation row) blanks the glyph to "" with
+  // nothing left for a background prop to paint — pad that blank to the column's own width with spaces so the
+  // rectangle still spans it; unbanded rows keep the exact `""` they always rendered.
+  const gutterBg = banded ? expandedBg() : undefined;
+  const gutterText = showGutter ? item.gutter : (banded ? " ".repeat(item.gutter.length) : "");
   return (
     <Box flexDirection="row">
-      <Box width={item.gutter.length}><Text color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{showGutter ? item.gutter : ""}</Text></Box>
-      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} selection={rowSelections?.[i]} />)}</Box>
+      <Box width={item.gutter.length}><Text backgroundColor={gutterBg} color={item.gutterStyle?.color} dimColor={hovered ? false : item.gutterStyle?.dim}>{gutterText}</Text></Box>
+      <Box flexDirection="column">{body.map((line, i) => <Line key={i} l={line} selection={rowSelections?.[i]} bandWidth={bodyBandWidth} />)}</Box>
     </Box>
   );
 }

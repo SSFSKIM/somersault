@@ -270,7 +270,13 @@ export interface FullscreenViewportProps {
 // F10 S4 — `fallback` is the `{start, end}` this row's source range takes when `l.source` is absent: the
 // identity arm of `wrapLine`/`wrapOne` mints no `source` at all for a row it never wrapped, so the caller
 // (which knows the row's position — a single `HitRow` does not) supplies the whole-item range instead.
-const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, ownerKey: string, columns: number, fallback: { start: number; end: number }): HitRow => {
+// T-CLICK Task 2 (spec §2.3 D9-v2): `band` is the SAME `RenderItem.band` marker Task 1 paints the full-
+// width rectangle from — a banded row's hit `width` becomes the full `columns`, canon's own rule that an
+// expanded block's background rectangle makes every cell inside it non-blank (research-click-collapse.md
+// §1.3, `cli.pretty.js` L372918 + L376156-376163). An unbanded row keeps the exact glyph-width bound it
+// always had. `clickTargetAt`'s existing `col > at.width` guard then answers both states correctly with no
+// branch of its own — this is the ONLY place that decides which bound a row gets.
+const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string, ownerKey: string, columns: number, fallback: { start: number; end: number }, band: boolean): HitRow => {
   const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
   const linkRanges = linkRangesOf(l);
   const text = stripSgr(l.text);
@@ -279,7 +285,7 @@ const hitRowOfLine = (l: RenderLine, anchor: string | undefined, itemKey: string
   // this line-level helper has no access to) — `false` here is a placeholder, never the final answer.
   return { itemKey, ownerKey, anchor, kind: "line", gutterWidth, text, softWrap: l.continuation === true ? "continuation" : "hard",
     charStart: source.start, charEnd: source.end, textStart: source.pad, clickable: false,
-    width: Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
+    width: band ? columns : Math.min(gutterWidth + stringWidth(l.text), columns), ...(linkRanges ? { linkRanges } : {}) };
 };
 /** The window's painted rows, one entry each, in paint order — derived from the slices being rendered, so
  *  the map cannot describe a frame other than the one on screen. A gutter block contributes one entry per
@@ -302,7 +308,7 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
       // T-CLICKGATE Task 2 — the row-level projection of `RenderItem.clickable` (`item.clickable === true`,
       // never a bare `item.clickable`: `HitRow.clickable` is required, and an absent source bit must read
       // `false`, not `undefined`).
-      out.push({ ...hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns, { start: 0, end: stripSgr(item.line.text).length }), clickable: item.clickable === true });
+      out.push({ ...hitRowOfLine(item.line, item.foldAnchor, itemKey, ownerKey, columns, { start: 0, end: stripSgr(item.line.text).length }, item.band === true), clickable: item.clickable === true });
       continue;
     }
     // F10 S4 — the cumulative fallback base walks the block's ORIGINAL body order from row 0 regardless of
@@ -316,8 +322,8 @@ export function hitRowsOf(slices: readonly RenderItemSlice[], columns: number): 
       if (row >= start)
         // T-CLICKGATE Task 2 — same row-level projection as the `line` arm above, off the BLOCK's own bit
         // (every body row of one result shares the one `clickable` its producer stamped on the item).
-        out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, ownerKey, columns, { start: base, end: base + body.text.length }), kind: "gutter-block",
-          gutterWidth: item.gutter.length, width: Math.min(item.gutter.length + stringWidth(body.text), columns), clickable: item.clickable === true });
+        out.push({ ...hitRowOfLine(body, item.foldAnchor, itemKey, ownerKey, columns, { start: base, end: base + body.text.length }, item.band === true), kind: "gutter-block",
+          gutterWidth: item.gutter.length, width: item.band === true ? columns : Math.min(item.gutter.length + stringWidth(body.text), columns), clickable: item.clickable === true });
       base += item.body[row]!.text.length + 1;
     }
   }
@@ -925,7 +931,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
       // than `sourceId(item.id)` alone — the hover unit is the whole message/call `ownerKey` names, not this
       // one item, so every slice sharing that owner lights up together.
       <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && (s.item.ownerKey ?? sourceId(s.item.id)) === hoveredKey && s.item.expanded !== true}>
-        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} />
+        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} columns={columns} />
       </HoverContext.Provider>
     ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&

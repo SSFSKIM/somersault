@@ -3,6 +3,7 @@
 // the gutter view — so leaving `Line` in Transcript.tsx would make the two import each other.
 import React, { useContext } from "react";
 import { Text } from "ink";
+import stringWidth from "string-width";
 import type { RenderLine, Segment } from "./render.js";
 import { resolveThemeColor, themeTokens } from "./theme.js";
 import { HoverContext } from "./mouse/hoverContext.js";
@@ -64,6 +65,13 @@ function splitBySelection(text: string, runStart: number, sel: LineSelection | u
 const pieceBg = (bg: string | undefined, selected: boolean): string | undefined =>
   selected ? selectionBg() : bg;
 
+/** T-CLICK Task 1 (spec §2.3 D9) — the SAME token `toolRenderer.ts`'s `expandedBg()` resolves, read here too
+ *  rather than imported: `toolRenderer.tsx` already imports THIS module (`Line`), so the reverse import would
+ *  cycle, and it is one theme lookup, not a policy either file owns more than the other. `Line` calls it only
+ *  when a caller hands it `bandWidth` (an item's `RenderItem.band`, computed one level up) — see `Line`'s own
+ *  header for what that buys. */
+const bandBg = (): string => resolveThemeColor(themeTokens().userMessageBackgroundHover);
+
 /** `\x1b[48;2;r;g;bm` … `\x1b[49m` wrapped around a `preStyled` segment's RAW bytes — the one shape this file
  *  cannot reach with an ordinary `backgroundColor` prop, because a preStyled segment is a bare `<Text>`
  *  around bytes Ink is told not to touch (F3 Task 1's exact-bytes contract). Wrapping OUTSIDE those bytes is
@@ -90,8 +98,14 @@ function wrapPreStyledSelection(raw: string): string {
  *  subtract). A `preStyled` segment's plain LENGTH is `stripSgr(s.text).length`, never `s.text.length` (raw
  *  bytes) — the same byte-vs-plain distinction `hitmap.ts`'s own `linkRangesOf` draws for the identical
  *  reason. With no selection touching this segment, the single-piece branch reproduces EXACTLY the `<Text>`
- *  this file emitted before this task — same props, same key, same child. */
-function renderSegment(s: Segment, key: number, runStart: number, hovered: boolean, sel: LineSelection | undefined): { node: React.ReactNode; length: number } {
+ *  this file emitted before this task — same props, same key, same child.
+ *    `rowBg` (T-CLICK Task 1) is `bandBg()` when the ROW carries `bandWidth`, `undefined` otherwise — it wins
+ *  over the segment's own `s.bg` (canon's background rectangle sits BEHIND every segment's own colour
+ *  regardless of what that segment already carried), except a preStyled run, which is left exactly as
+ *  before: its bytes are opaque raw SGR this file cannot recolor without corrupting them (see the header
+ *  above `wrapPreStyledSelection`), a narrower, documented limitation rather than a gap in the ordinary
+ *  banding path. */
+function renderSegment(s: Segment, key: number, runStart: number, hovered: boolean, sel: LineSelection | undefined, rowBg: string | undefined): { node: React.ReactNode; length: number } {
   if (s.preStyled === true) {
     const plainLength = stripSgr(s.text).length;
     const overlaps = sel !== undefined && sel.charEnd > sel.charStart && sel.charStart < runStart + plainLength && sel.charEnd > runStart;
@@ -100,8 +114,8 @@ function renderSegment(s: Segment, key: number, runStart: number, hovered: boole
   }
   const pieces = splitBySelection(s.text, runStart, sel);
   const node = pieces.length === 1
-    ? <Text key={key} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), pieces[0]!.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{s.text}</Text>
-    : <Text key={key}>{pieces.map((p, i) => <Text key={i} color={ink(s.color)} backgroundColor={pieceBg(ink(s.bg), p.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{p.text}</Text>)}</Text>;
+    ? <Text key={key} color={ink(s.color)} backgroundColor={pieceBg(rowBg ?? ink(s.bg), pieces[0]!.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{s.text}</Text>
+    : <Text key={key}>{pieces.map((p, i) => <Text key={i} color={ink(s.color)} backgroundColor={pieceBg(rowBg ?? ink(s.bg), p.selected)} dimColor={hovered ? false : s.dim} bold={s.bold} italic={s.italic} strikethrough={s.strikethrough} underline={s.underline}>{p.text}</Text>)}</Text>;
   return { node, length: s.text.length };
 }
 
@@ -113,23 +127,40 @@ function renderSegment(s: Segment, key: number, runStart: number, hovered: boole
  *  gutter (`l.gutter`) NEVER receives `selection` — it is a separate field, not part of `l.text`'s character
  *  coordinates, and `selection.ts`'s own column clamp (`gutterWidth + 1`) guarantees a `RowSpan` never
  *  describes a gutter column in the first place, so "gutter chars unpainted" holds by construction on both
- *  sides of this boundary. */
-export const Line = ({ l, wrap, selection }: { l: RenderLine; wrap?: "wrap" | "truncate-end"; selection?: LineSelection }) => {
+ *  sides of this boundary.
+ *    `bandWidth` (T-CLICK Task 1, spec §2.3 D9) is the row's target width in TERMINAL COLUMNS — set by
+ *  `RenderItemView` only when its `columns` prop is known (the fullscreen painter) AND the item carries
+ *  `RenderItem.band`, `undefined` on every other call and every other row (the identity default: no target
+ *  width, no forced colour, no trailing pad — byte-for-byte what this file painted before this task). When
+ *  set, the row's WHOLE background — every existing segment's own `bg`/`l.bg` included, not just the gap past
+ *  it — becomes the band colour (canon's Box rectangle sits BEHIND all of a row's content, `cli.pretty.js`'s
+ *  `MS` wrapper, research §1.3). Task 1 fix wave (review Important finding): `l.gutter` (e.g. the absorbed-
+ *  thinking `"∴ "` bullet) is INSIDE the rectangle too — it renders in column 1, so leaving it unpainted would
+ *  gap the band's own leading edge — hence `backgroundColor={rowBg}` on the gutter `<Text>` above, same `rowBg`
+ *  the segments/plain-text branches already take. And a trailing styled-space run pads the row out to `bandWidth`, canon's own
+ *  `" ".repeat(width)` rectangle (`cli.pretty.js:376156-376163`). `stringWidth`, not `.length`, measures both
+ *  the gutter and the text — the same convention `wrapItems.ts`'s `wrapLine` uses for the identical reason
+ *  (a wide glyph is more than one column). */
+export const Line = ({ l, wrap, selection, bandWidth }: { l: RenderLine; wrap?: "wrap" | "truncate-end"; selection?: LineSelection; bandWidth?: number }) => {
   const hovered = useContext(HoverContext);
+  const rowBg = bandWidth !== undefined ? bandBg() : undefined;
   let cursor = 0;
   const segmentNodes = l.segments?.map((s, i) => {
-    const { node, length } = renderSegment(s, i, cursor, hovered, selection);
+    const { node, length } = renderSegment(s, i, cursor, hovered, selection, rowBg);
     cursor += length;
     return node;
   });
   const displayText = l.text || " ";
   const plainPieces = l.segments ? null : splitBySelection(displayText, 0, selection);
+  const gutterWidth = l.gutter ? stringWidth(l.gutter.text) : 0;
+  const pad = bandWidth !== undefined ? Math.max(0, bandWidth - gutterWidth - stringWidth(displayText)) : 0;
   return (
     <Text wrap={wrap}>
-      {l.gutter ? <Text color={ink(l.gutter.color)} dimColor={hovered ? false : l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
+      {l.gutter ? <Text color={ink(l.gutter.color)} backgroundColor={rowBg} dimColor={hovered ? false : l.gutter.dim} italic={l.gutter.italic}>{l.gutter.text}</Text> : null}
       {segmentNodes ?? (plainPieces!.length === 1
-        ? <Text color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), plainPieces![0]!.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{plainPieces![0]!.text}</Text>
-        : plainPieces!.map((p, i) => <Text key={i} color={ink(l.color)} backgroundColor={pieceBg(ink(l.bg), p.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{p.text}</Text>))}
+        ? <Text color={ink(l.color)} backgroundColor={pieceBg(rowBg ?? ink(l.bg), plainPieces![0]!.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{plainPieces![0]!.text}</Text>
+        : plainPieces!.map((p, i) => <Text key={i} color={ink(l.color)} backgroundColor={pieceBg(rowBg ?? ink(l.bg), p.selected)} dimColor={hovered ? false : l.dim} bold={l.bold} italic={l.italic} strikethrough={l.strikethrough} underline={l.underline}>{p.text}</Text>))}
+      {pad > 0 ? <Text backgroundColor={rowBg}>{" ".repeat(pad)}</Text> : null}
     </Text>
   );
 };
