@@ -950,6 +950,16 @@ Pending — written at finish.
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
   design sections above are unchanged; authority grades on inherited content are marked in the
   child sections and contracts.
+- 2026-09-01 (W1 boundary review): one consolidated Codex lens over C4's nine commits. Verdict:
+  formatter translations faithful to upstream, the destructuring-defaults overturn and coLiteral
+  scoping both sound. Two findings, both fixed (commits `65f5f000`…`16a5ccf98`): **pure-helper
+  footprints now cover the transitive closure of their upstream callees** (15 declarations
+  resolved across 8 helpers, depth ≤2, hashes independently verified; bounded walk with a
+  conservative whole-chunk fallback that was never needed; `closure: []` is a positive claim) —
+  closing the last known blind spot in §5's staleness contract; and **the state surface records
+  the sandbox root's own existence and kind** (lstat-based, so a dangling-symlink root is a
+  symlink), distinguishing a deleted working directory from a clean empty one. Gate 23/23 after
+  fixes.
 - 2026-09-01 (W0 boundary review): three parallel Codex `gpt-5.6-sol` lenses over the whole wave
   diff returned **11 findings (all confirmed, none dismissed)** — every one an
   enforcement-integrity gap in W0's own machinery rather than a behavior defect: compact-syntax
