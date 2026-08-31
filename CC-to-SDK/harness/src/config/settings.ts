@@ -15,6 +15,8 @@ function mergeSettings(config: HarnessConfig): Record<string, unknown> | undefin
   const base: Record<string, unknown> = config.settings ? { ...config.settings } : {};
   if (config.autoCompactEnabled !== undefined) base.autoCompactEnabled = config.autoCompactEnabled;
   if (config.autoCompactWindow !== undefined) base.autoCompactWindow = config.autoCompactWindow;
+  if (config.promptCacheTtl !== undefined) base.promptCacheTtl = config.promptCacheTtl;
+  if (config.subagentPromptCacheTtl !== undefined) base.subagentPromptCacheTtl = config.subagentPromptCacheTtl;
   if (config.advisorModel !== undefined) base.advisorModel = config.advisorModel;
   return Object.keys(base).length ? base : undefined;
 }

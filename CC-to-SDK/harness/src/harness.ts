@@ -1,6 +1,6 @@
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { HarnessConfig } from "./config/types.js";
-import { resolveOptions } from "./config/resolveOptions.js";
+import { resolveOptions, stampMcpTimeouts } from "./config/resolveOptions.js";
 import { validateHarnessConfig } from "./config/validate.js";
 import { TaskStore } from "./tasks/store.js";
 import { createTaskMcpServer } from "./tasks/server.js";
@@ -64,6 +64,11 @@ export function createHarness(config: HarnessConfig = {}, deps: HarnessDeps = {}
     const dis = (options.disallowedTools as string[] | undefined) ?? [];
     options.disallowedTools = [...new Set([...dis, ...NATIVE_TASK_TOOLS])];
   }
+  // Re-stamp AFTER cc-swarm/cc-tasks joined and BEFORE cc-context does: the injected introspection
+  // tools are exempt from `mcpToolTimeoutMs` by design (see the knob's jsdoc); a server that already
+  // carries a timeout — including everything resolveOptions stamped — keeps it.
+  if (config.mcpToolTimeoutMs !== undefined && options.mcpServers)
+    options.mcpServers = stampMcpTimeouts(options.mcpServers as Record<string, unknown>, config.mcpToolTimeoutMs);
   if (config.contextTool) {
     ctxHolder = {};
     const merged = withContextTool(options, ctxHolder);

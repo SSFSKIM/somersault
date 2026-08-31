@@ -110,6 +110,7 @@ describe("public API", () => {
       "applyAssistantPersona",
       "assembleUserContent",
       "blockTool",
+      "buildModelSwitchHooks",
       "classifyLimitMessage",
       "classifyLimitText",
       "collect",

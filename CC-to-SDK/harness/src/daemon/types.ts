@@ -4,6 +4,7 @@ import { proactiveConfig } from "../proactive/types.js";
 import type { ProactiveStatus } from "../proactive/types.js";
 import type { LimitState } from "../limits/classify.js";
 import type { TelemetryConfig } from "../config/telemetry.js";
+import type { ModelSwitchPolicy } from "../hooks/modelSwitch.js";
 import type { AssertType, ExactType, PermissionDecision } from "../permissions/types.js";
 
 export class DaemonError extends Error {}
@@ -45,6 +46,7 @@ export interface DaemonOptions {
   sharedTasks?: boolean | { dir?: string; listId?: string };       // wire a shared cc-tasks store into every session (D3)
   contextTool?: boolean;   // daemon-wide: expose the cc-context GetContextUsage tool to every session's agent (D6)
   telemetry?: TelemetryConfig; // daemon-wide OTel env gates — every session's subprocess exports (W3.1)
+  modelSwitchPolicy?: ModelSwitchPolicy; // daemon-wide model-switch governance — every session's setModel is governed by this policy
   warmPool?: { size?: number }; // pre-warm default-config subprocesses; spawns matching the default cfg skip startup latency (W3.2). Warm path requires NO sessionOptions/sharedTasks/contextTool/compactTool (those mutate per-session Options, which a warm handle ignores).
   compactTool?: boolean;   // daemon-wide: expose the cc-compact RequestCompaction tool to every session's agent (Spec B)
   permissionTimeoutMs?: number; // parked permission-request lifetime before auto-deny (default 30_000)
@@ -76,6 +78,7 @@ const compactOp = z.object({ op: z.literal("compact"), id: z.string() });
 const forkOp = z.object({ op: z.literal("fork"), id: z.string() });
 const rewindOp = z.object({ op: z.literal("rewind"), id: z.string(), messageId: z.string(), fork: z.boolean().optional() });
 const usageOp = z.object({ op: z.literal("usage"), id: z.string() });
+const stopTaskOp = z.object({ op: z.literal("stop_task"), id: z.string(), taskId: z.string() });
 const initOp = z.object({ op: z.literal("init"), id: z.string() });
 const applyFlagSettingsOp = z.object({ op: z.literal("apply_flag_settings"), id: z.string(), settings: z.record(z.string(), z.unknown()) });
 const renameSessionOp = z.object({ op: z.literal("rename"), id: z.string(), title: z.string(), cwd: z.string().optional() });
@@ -103,7 +106,7 @@ const mcpToggleOp = z.object({ op: z.literal("mcp_toggle"), id: z.string(), name
 const mcpReconnectOp = z.object({ op: z.literal("mcp_reconnect"), id: z.string(), name: z.string() });
 const mcpModeOverrideOp = z.object({ op: z.literal("mcp_mode_override"), id: z.string(), name: z.string(), mode: z.string().nullable() });
 
-export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, submitContentOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp, mcpStatusOp, mcpSetServersOp, mcpToggleOp, mcpReconnectOp, mcpModeOverrideOp]);
+export const daemonOp = z.discriminatedUnion("op", [spawnOp, submitOp, submitContentOp, listOp, stopOp, shutdownOp, controlOp, startProactiveOp, stopProactiveOp, sessionsOp, messagesOp, compactOp, forkOp, rewindOp, usageOp, stopTaskOp, initOp, applyFlagSettingsOp, renameSessionOp, tagSessionOp, deleteSessionOp, pendingPermissionsOp, permissionResponseOp, mcpStatusOp, mcpSetServersOp, mcpToggleOp, mcpReconnectOp, mcpModeOverrideOp]);
 export type DaemonOp = z.infer<typeof daemonOp>;
 
 /** Inbound frame cap, DERIVED FROM THE CANONICAL CONTENT MAXIMUM (round-2 F9 + round-3 F3):

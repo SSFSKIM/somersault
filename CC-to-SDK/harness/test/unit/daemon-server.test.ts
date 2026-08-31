@@ -106,6 +106,27 @@ describe("DaemonServer over a real UDS", () => {
     await server.closed;
   });
 
+  it("stop_task op delegates to the live session's stopTask with the task id (Wave C, probes 126/126b)", async () => {
+    const d = tmp(); const sock = join(d, "sock");
+    const stopped: string[] = [];
+    const stopFakeQuery = ({ prompt }: any) => {
+      const it: any = (async function* () { for await (const t of prompt) { yield { type: "system", subtype: "init", session_id: "sdk-1" }; yield { type: "result", subtype: "success", user_message_uuid: t.uuid, result: "did:" + t.message.content }; } })();
+      it.stopTask = async (taskId: string) => { stopped.push(taskId); };
+      return it;
+    };
+    const sup = new DaemonSupervisor({ query: stopFakeQuery }, { dir: join(d, "sessions") });
+    const server = new DaemonServer(sup, sock);
+    await server.listen();
+    const id = (await daemonRequest(sock, { op: "spawn" }))[0].id;
+    await daemonRequest(sock, { op: "submit", id, prompt: "hi" }, () => {}); // open transport
+    expect((await daemonRequest(sock, { op: "stop_task", id, taskId: "bg-1" }))[0]).toEqual({ ok: true });
+    expect(stopped).toEqual(["bg-1"]);
+    const missing = (await daemonRequest(sock, { op: "stop_task", id: "nope", taskId: "bg-1" }))[0];
+    expect(missing.ok).toBe(false);
+    await daemonRequest(sock, { op: "shutdown" });
+    await server.closed;
+  });
+
   it("teardown: a second close() is a safe no-op (idempotent)", async () => {
     const sup = new DaemonSupervisor({ query: fakeQuery }, { dir: tmp() });
     const sock = join(tmp(), "s");

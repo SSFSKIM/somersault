@@ -51,10 +51,11 @@ export { runStructured, StructuredRunError } from "./structured/run.js";
 export { classifyLimitText, classifyLimitMessage } from "./limits/classify.js";
 export type { LimitState, LimitKind } from "./limits/classify.js";
 export { validateHarnessConfig, HarnessConfigError } from "./config/validate.js";
-export { injectContext, guardTool, blockTool, observe, mergeHooks } from "./hooks/index.js";
+export { injectContext, guardTool, blockTool, observe, mergeHooks, buildModelSwitchHooks } from "./hooks/index.js";
 export type {
   HooksMap, HookDecision, HookEvent, HookInput, HookCallback, HookJSONOutput, HookCallbackMatcher,
   PreToolUseHookInput, PostToolUseHookInput, UserPromptSubmitHookInput, StopHookInput, SubagentStopHookInput,
+  ModelSwitchPolicy, PreModelSwitchHookInput, PostModelSwitchHookInput,
 } from "./hooks/index.js";
 export { createPermissionGate } from "./permissions/gate.js";
 export type { PermissionBroker, PermissionDecision, PermissionRequest, DecisionKind, DecisionOutcome } from "./permissions/types.js";

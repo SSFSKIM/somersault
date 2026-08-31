@@ -78,6 +78,12 @@ describe("createHarness", () => {
     const h = createHarness({}, { query: fakeQuery });
     expect((h.options as any).mcpServers?.["cc-context"]).toBeUndefined();
   });
+  it("mcpToolTimeoutMs stamps cc-tasks but leaves the injected cc-context exempt (Wave C, probe 124)", () => {
+    const h = createHarness({ taskTools: true, contextTool: true, mcpToolTimeoutMs: 30_000 }, { query: fakeQuery });
+    const servers = (h.options as any).mcpServers;
+    expect(servers["cc-tasks"].timeout).toBe(30_000);
+    expect(servers["cc-context"]).not.toHaveProperty("timeout");
+  });
   it("createHarness rejects a malformed config with HarnessConfigError", async () => {
     const { createHarness } = await import("../../src/harness.js");
     const { HarnessConfigError } = await import("../../src/config/validate.js");

@@ -148,6 +148,22 @@ describe("daemon warm path (W3.2)", () => {
     await sup.shutdown();
   });
 
+  // The warm base IS a default spawn's resolveOptions input — anything makeSession bakes in must be
+  // warmed in too, or a warm lease silently runs with different frozen Options than a cold session.
+  it("the warm base matches a cold makeSession: perTaskStopAffordance, and the daemon-wide modelSwitchPolicy hooks", async () => {
+    const log = { options: [] as Record<string, unknown>[], handles: [] as FakeHandle[] };
+    const sup = new DaemonSupervisor(
+      { query: coldQuery([]) as any, startup: fakeStartup(log) },
+      { dir: dir(), warmPool: { size: 1 }, modelSwitchPolicy: { allowModels: ["sonnet"] } },
+    );
+    await tick();
+    expect(log.options[0].perTaskStopAffordance).toBe(true);
+    const hooks = log.options[0].hooks as any;
+    expect(hooks.PreModelSwitch).toHaveLength(1);
+    expect(hooks.PostModelSwitch).toHaveLength(1);
+    await sup.shutdown();
+  });
+
   it("a non-default model spawns cold; shutdown closes remaining warm slots", async () => {
     const log = { options: [] as Record<string, unknown>[], handles: [] as FakeHandle[] };
     const cold: string[] = [];

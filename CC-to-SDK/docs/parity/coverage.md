@@ -9,6 +9,30 @@
 > the exhaustive capability map (~150 rows) + the waved roadmap to 100% of the reachable envelope.
 >
 > **Shipped since first draft:**
+> - **The 0.3.251 catch-up round** (2026-08-30, branch `engine-core`, waves A–D): **A** adopted SDK
+>   0.3.237→0.3.251 (drift ritual run 4 — the settings advisory grew 149→158 keys by paste; all gates
+>   green; the TUI suite's 61 red were control-verified environment artifacts, COLORTERM + SSH_*).
+>   **B** probed every filed premise live (probes 121–127): Pre/PostModelSwitch hooks ALIVE headless
+>   with the full cost payload (deny cancels + rejects `setModel()`, ask refuses); per-server MCP
+>   `timeout` enforced to the decimal (<1000ms ignored); interrupt SPARES background tasks with or
+>   without `perTaskStopAffordance` and `stopTask()` works; `queued_turn_count` present (fold-limited);
+>   `task_started` gains live `is_backgrounded`/`spawn_depth` (agent spawns are background-by-default
+>   on the SDK transport); SessionStart stays dead at startup AND resume, so the 0.3.251
+>   resume-staleness fields are out of reach; **2.1.233 removed the five task/todo tools on new
+>   models** (since-february 15.x corrected — the harness TaskStore is now the load-bearing default).
+>   **C** shipped the passthroughs: `mcpToolTimeoutMs` (stamped onto config-carried servers, declared
+>   values win, injected introspection tools exempt), `promptCacheTtl`/`subagentPromptCacheTtl`
+>   knobs, `TurnOutcome.queuedTurnCount`, and the daemon `stop_task` op; `default_to_no` marked
+>   unreachable (CanUseTool doesn't forward it), `costBasis` free-flowing. **D** shipped
+>   **model-switch governance**: `HarnessConfig.modelSwitchPolicy` + `buildModelSwitchHooks` —
+>   allowModels family/exact pinning, a warm-cache forfeiture cap in USD, `decide()` under deny-wins,
+>   `annotate()` briefing the new model, an `onSwitch` observability tap; merged after user hooks in
+>   resolveOptions, so it governs harness, lib Session, and daemon sessions uniformly. Spec/plan
+>   `2026-08-30-model-switch-governance`; live 2/2. Closed by a **3-round codex review loop** (12
+>   findings, all verified and fixed across three subagent fix waves — daemon-wide policy + per-task
+>   stop affordance on cold/warm/restart paths alike, five-shape MCP timeout stamping, validation at
+>   both front doors, awaited observers, capped annotations); full unit suite 4178/4178 and live 2/2
+>   re-verified on the post-loop code.
 > - **Wave 4 — knob completion + drift watch** (2026-07-17, spec/plan `2026-07-17-wave4-knob-completion`,
 >   probes 53/53b/54): **the Options long tail closed** — 27 new first-class `HarnessConfig` fields
 >   (sessionId/title/agent/continueSession/abortController/additionalDirectories/skills/toolConfig/

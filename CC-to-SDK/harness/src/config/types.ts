@@ -3,6 +3,7 @@ import type {
   SdkBeta, ToolConfig, OnElicitation, OnUserDialog, SpawnOptions, SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { HooksMap } from "../hooks/types.js";
+import type { ModelSwitchPolicy } from "../hooks/modelSwitch.js";
 import type { PermissionBroker } from "../permissions/types.js";
 import type { TelemetryConfig } from "./telemetry.js";
 
@@ -111,6 +112,11 @@ export interface HarnessConfig {
   // compaction (Spec B): tune/disable the SDK's native auto-compaction (these are SDK Settings fields)
   autoCompactEnabled?: boolean;            // false disables the native ~167k safety net
   autoCompactWindow?: number;              // tokens of headroom before auto-compaction
+  // prompt-cache TTLs (0.3.251, SDK Settings fields): "5m" | "1h". Unset = automatic (1h on a
+  // subscription within limits, 5m on API key/Bedrock/Vertex/Foundry; subagents 5m). 1h writes bill
+  // at a higher rate but survive long idle gaps — the pair a headless service tunes independently.
+  promptCacheTtl?: "5m" | "1h";            // main conversation + inline helpers
+  subagentPromptCacheTtl?: "5m" | "1h";    // subagents, workflows, background/helper requests
   // task tools (Phase 2 A1): durable Task* MCP server
   taskTools?: boolean | { dir?: string; listId?: string; agentName?: string };
   // swarm / coordinator (Phase 2 A2): peer teammate orchestration over an in-process bus
@@ -121,7 +127,17 @@ export interface HarnessConfig {
   // Build with the src/hooks builders + mergeHooks. NOTE: SessionStart/SessionEnd do NOT fire via
   // this programmatic path (verified) — no builder exists for them; raw passthrough is the user's choice.
   hooks?: HooksMap;
+  // model-switch governance (Wave D, probe 121): declarative Pre/PostModelSwitch policy —
+  // allowModels families/ids, warm-cache forfeiture cap, decide()/annotate()/onSwitch(). Merged
+  // AFTER `hooks` (both run; deny wins across callbacks). Spec 2026-08-30-model-switch-governance.
+  modelSwitchPolicy?: ModelSwitchPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  // Default per-server tool-call timeout (ms) for MCP servers this config carries — mcpServers,
+  // taskTools/swarm's cc-tasks/cc-swarm, and the M7 dynamic overlay — stamped onto each server that
+  // does not declare its own `timeout` (a declared one always wins). Probe 124: enforced as a hard
+  // wall clock to the decimal; the SDK IGNORES values <1000. The Session-injected cc-context /
+  // cc-compact introspection tools are exempt by design (sub-ms calls; a cap could never fire).
+  mcpToolTimeoutMs?: number;
   /** M7, and NOT a caller knob: the in-process MCP servers a thread's CLIENT-DECLARED tools are published
    *  under. The app server owns it end to end — it writes this onto the transient config of one engine
    *  build (never onto the record it rebuilds from) and refuses any client that sets it — so the value is
@@ -150,15 +166,15 @@ export interface HarnessConfig {
   onElicitation?: OnElicitation;           // MCP elicitation handler (probe 43b ✅ stdio round-trip)
   onUserDialog?: OnUserDialog;             // request_user_dialog handler (probe 43: wireable, NO deterministic headless trigger)
   supportedDialogKinds?: string[];         // dialog kinds onUserDialog actually renders — CLI fails closed on absence
-  /** Declares that this consumer renders a per-task stop control wired to the `stop_task` control request
-   *  (0.3.250). Structural, not behavioural-on-our-side: the CLI reads it off the `initialize` request and,
-   *  when declared, an interrupt on an open-input session aborts only the turn and leaves running background
-   *  agents/workflows alive to be stopped one at a time. ABSENCE FAILS CLOSED — an interrupt kills them —
-   *  so this is the difference between our Stop killing background work and sparing it. Truthful for the
-   *  bundled TUI, whose Background panel stops a single row (`BgTasksPanel onStop` → `stopBgTask` →
-   *  `session.stopTask`); a library caller that ships no such control must leave it unset. First-attached-
-   *  client wins on multi-client sessions, and a closed-input one-shot run (`-p`) kills hold-back tasks
-   *  regardless. */
+  /** Declares that this consumer renders a per-task stop control wired to the `stop_task` control request:
+   *  the CLI reads it off the `initialize` request and, when declared, an interrupt on an open-input session
+   *  aborts only the turn and SPARES running background agents/workflows, each stopped individually instead.
+   *  Documented as failing closed on absence (an interrupt kills them), but probes 126/126b measured the
+   *  sparing already holding undeclared on this transport — setting it pins the documented contract rather
+   *  than relying on that observation. Truthful for the bundled TUI, whose Background panel stops a single
+   *  row (`BgTasksPanel onStop` → `stopBgTask` → `session.stopTask`); a library caller that ships no such
+   *  control must leave it unset. First-attached-client wins on multi-client sessions, and a closed-input
+   *  one-shot run (`-p`) kills hold-back tasks regardless. */
   perTaskStopAffordance?: boolean;
   spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess; // custom CLI child placement (probe 50 ✅ end-to-end)
   // process plumbing

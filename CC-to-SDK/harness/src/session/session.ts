@@ -63,8 +63,12 @@ export function oneShotUserTurn(input: UserTurnInput): SDKUserMessage {
 }
 
 /** What one turn settles to. `error` (Wave T Task 14) is ADDITIVE — a turn that reached a terminal result
- *  frame and reported failure still resolves, so every `{result}`-only consumer is unaffected. */
-export interface TurnOutcome { result: unknown; structuredOutput?: unknown; error?: TurnFailure; }
+ *  frame and reported failure still resolves, so every `{result}`-only consumer is unaffected.
+ *  `queuedTurnCount` (0.3.251, probe 123): user sends still queued when this result was produced — >0
+ *  promises more turns without further input (sends may COALESCE into fewer turns, and a send arriving
+ *  mid-turn can FOLD into the running one instead of queueing at all); absent on older CLIs and on
+ *  fatal-startup results. A consumer deciding "is the session idle now" should key on it over timing. */
+export interface TurnOutcome { result: unknown; structuredOutput?: unknown; error?: TurnFailure; queuedTurnCount?: number; }
 
 interface Waiter { uuid: UserMessageUUID; origin: SubmittedOrigin; kind: TurnKind; compactLifecycle: boolean; onMessage: (m: unknown) => void; resolve: (r: TurnOutcome) => void; reject: (e: Error) => void; }
 
@@ -401,7 +405,7 @@ export class Session implements ControllableSession {
         if (waiter) {
           this.waiters.splice(this.waiters.indexOf(waiter), 1);
           const failure = turnFailureOf(mm);   // is_error / api_error_status — never subtype (probe 96)
-          waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output, ...(failure ? { error: failure } : {}) });
+          waiter.resolve({ result: mm.result, structuredOutput: mm.structured_output, ...(typeof mm.queued_turn_count === "number" ? { queuedTurnCount: mm.queued_turn_count } : {}), ...(failure ? { error: failure } : {}) });
           if (this.compactRequested && !this.ended) { this.compactRequested = false; void this.enqueueCompact("auto-continuation", () => {}).catch(() => {}); }
         } else if (mm.type === "result") {                   // no waiter owns it — offer it, then trace what nobody took
           let claimed = false;

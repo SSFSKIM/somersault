@@ -9,6 +9,8 @@ import { resolveAgents } from "./agents.js";
 import { resolveAutoModel } from "./autoModel.js";
 import { resolveModelAlias } from "./models.js";
 import { createPermissionGate } from "../permissions/gate.js";
+import { mergeHooks } from "../hooks/merge.js";
+import { buildModelSwitchHooks } from "../hooks/modelSwitch.js";
 
 /** The four keys `extraOptions` may NOT overwrite once this function has computed one.
  *
@@ -101,7 +103,10 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   if (config.sessionStore) options.sessionStore = config.sessionStore;
   if (config.sessionStoreFlush) options.sessionStoreFlush = config.sessionStoreFlush;
   if (config.sessionStoreLoadTimeoutMs !== undefined) options.loadTimeoutMs = config.sessionStoreLoadTimeoutMs;
-  if (config.hooks) options.hooks = config.hooks;
+  // Model-switch governance (Wave D): the policy's Pre/PostModelSwitch fragment joins the user's own
+  // hooks — user fragments first, policy appended; both run and a deny from either wins at the SDK.
+  if (config.modelSwitchPolicy) options.hooks = mergeHooks(config.hooks ?? {}, buildModelSwitchHooks(config.modelSwitchPolicy));
+  else if (config.hooks) options.hooks = config.hooks;
   // Wave-4 knob sweep — one-line passthroughs (probe verdicts in types.ts jsdoc).
   if (config.sessionId) options.sessionId = config.sessionId;
   if (config.title) options.title = config.title;
@@ -151,7 +156,28 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
     const base = typeof merged.env === "object" && merged.env !== null ? merged.env as Record<string, unknown> : process.env;
     merged.env = { ...base, [MCP_NO_PREFIX_ENV]: "" };
   }
+  // Stamped LAST so it covers whatever `mcpServers` ended up being — the typed field, an
+  // `extraOptions` replacement, or the M7 overlay just merged above. `harness.ts` re-stamps after it
+  // attaches cc-tasks/cc-swarm, which join the map after this function returns.
+  if (config.mcpToolTimeoutMs !== undefined && merged.mcpServers)
+    merged.mcpServers = stampMcpTimeouts(merged.mcpServers as Record<string, unknown>, config.mcpToolTimeoutMs);
   return merged;
+}
+
+/** Stamp `timeout` onto every MCP server config that does not declare its own (a declared value always
+ *  wins). New objects throughout — no caller's map or server config is mutated. The SDK declares
+ *  `timeout` on all five server shapes, so all five are stamped: `type:"sdk"` instances, stdio configs
+ *  (explicit `type:"stdio"` or the type-less `command` form), and `type:"http"` / `type:"sse"` remotes. */
+export function stampMcpTimeouts(servers: Record<string, unknown>, timeoutMs: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, cfg] of Object.entries(servers)) {
+    const c = cfg as Record<string, unknown> | null;
+    const stampable = c && typeof c === "object" && c.timeout === undefined
+      && (c.type === "sdk" || c.type === "stdio" || c.type === "http" || c.type === "sse"
+        || (c.type === undefined && typeof c.command === "string"));
+    out[name] = stampable ? { ...c, timeout: timeoutMs } : cfg;
+  }
+  return out;
 }
 
 /** The permission mode the engine will ACTUALLY start in for this config — the host's initial mode
