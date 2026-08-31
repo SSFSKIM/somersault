@@ -132,14 +132,19 @@ describe("<HelpDialog> — the footers", () => {
     expect(showsFeedbackLine(CATALOG, HELP_TALL_ROWS)).toBe(false);
   });
 
+  // T-MENU task 2 fix wave: the hand-written `{escChord} to cancel` line is gone, replaced by DialogFrame's
+  // auto keyhint bar (`hintScope={["Help","Tabs"]}`) — still derived from the LIVE table, just through the
+  // registry (`help:dismiss` → "dismiss") instead of this component's own `chord()` helper, so a rebind still
+  // moves the printed chord.
   it("prints the dismiss chord from the live table, so a rebind moves it", async () => {
     const a = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} />);
-    await waitFor(() => flat(a.lastFrame).includes("esc to cancel"));
+    await waitFor(() => flat(a.lastFrame).includes("Esc dismiss"));
+    expect(flat(a.lastFrame)).not.toContain("esc to cancel");
     a.unmount();
     const b = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} />,
       { userLayers: [{ context: "Help", bindings: { "escape": null, "ctrl+q": "help:dismiss" } }] });
-    await waitFor(() => flat(b.lastFrame).includes("ctrl + q to cancel"));
-    expect(flat(b.lastFrame)).not.toContain("esc to cancel");
+    await waitFor(() => flat(b.lastFrame).includes("Ctrl-Q dismiss"));
+    expect(flat(b.lastFrame)).not.toContain("Esc dismiss");
     b.unmount();
   });
 

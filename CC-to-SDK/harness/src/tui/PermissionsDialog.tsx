@@ -95,6 +95,10 @@ const AUTO_MODE_EMPTY = "This section has no configured rules, so the built-ins 
 // "Enter to select"/"↑/↓ to navigate" over a permanently EMPTY list would be exactly the false affordance
 // RECENT_FOOTER's own divergence note (below) already exists to avoid — so this tab gets an Esc-only footer
 // instead of falling through to DEFAULT_FOOTER.
+//   T-MENU task 2 fix wave: this is also why Auto mode (like Recently denied) keeps this LITERAL rather than
+// adopting DialogFrame's auto keyhint bar — the bar derives from the `Settings`/`Tabs` scopes' own bindings
+// with no notion of "this tab's list is permanently empty", so switching it on here would print exactly the
+// false "navigate"/"select" affordance this string exists to avoid (see the `hintScope` computation below).
 const AUTO_MODE_FOOTER = "Esc to cancel";
 const DELETE_LABEL: Record<Behavior, string> = { allow: "allowed", ask: "ask", deny: "denied" };
 const DEST_OPTIONS: { label: string; desc: (cwd: string) => string; target: SettingsTarget }[] = [
@@ -109,8 +113,13 @@ const RULE_FLOW_FOOTER = "Enter to submit · Esc to cancel";     // covers BOTH 
 // the useInput denial-branch comment below): there is no live park left once a decision has settled, so
 // Enter/r are no-ops. A rendered, user-visible footer advertising two keys that do nothing is a false
 // affordance — worse than an unused string, because the user SEES it and tries the keys. Dropped the two
-// dead chords; kept the two that work.
+// dead chords; kept the two that work. Same reason it keeps this literal rather than DialogFrame's auto
+// keyhint bar in the T-MENU task 2 fix wave: the bar cannot express "select does nothing on this read-only
+// log" (see `AUTO_MODE_FOOTER`'s note and the `hintScope` computation below).
 const RECENT_FOOTER = "↑/↓ to navigate · Esc to cancel";
+// DEFAULT_FOOTER/MANAGED_DIR_FOOTER are no longer RENDERED directly (T-MENU task 2: DialogFrame's auto
+// keyhint bar takes their slot on every tab except Recently denied/Auto mode) — both stay as the literals
+// `tabFooters`/`permissionsWrapRows` measure their WIDTH against, which is unaffected by what actually paints.
 const DEFAULT_FOOTER = "↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel";
 const MANAGED_DIR_FOOTER = "↑/↓ to navigate · ←/→ to switch · Esc to cancel";
 // Not pinned by Global Constraints (which gives only "header"/"recent"/"default" — "header" belongs to an
@@ -487,14 +496,13 @@ export function PermissionsDialog({
     : activeTab === "Workspace" ? [{ kind: "addDir" }, ...dirList.map((d, i): Item => ({ kind: "dir", d, line: dirLines[i] }))]
     : behavior ? [{ kind: "addRule" }, ...ruleRows(settings, behavior).map((row): Item => ({ kind: "rule", row }))]
     : [];
-  // ONE call per render, shared by the options array and the footer's cursor — `itemValues` walks the whole
-  // list and its occurrence suffixes have to be the SAME numbering both readers see.
+  // ONE call per render, shared by the options array — `itemValues` walks the whole list and its occurrence
+  // suffixes have to be the SAME numbering every reader sees.
+  //   T-MENU task 2 fix wave removed this dialog's only other reader, `selectedItem` (which fed
+  // `MANAGED_DIR_FOOTER` vs `DEFAULT_FOOTER`) — the footer for every tab but Recently denied/Auto mode is
+  // DialogFrame's auto keyhint bar now, which has no per-row notion to distinguish a managed directory from
+  // any other.
   const values = itemValues(items);
-  /** The row the FOOTER reads (`MANAGED_DIR_FOOTER` vs `DEFAULT_FOOTER`). `?? items[0]` is load-bearing:
-   *  `focusValue` is `undefined` until `Select`'s mount-time `onFocus` fires, and the footer renders before
-   *  that — and a value whose row a refetch has just removed lands here too, one render before `Select`'s
-   *  clamp reports the replacement. Both degenerate to the top row, which is what the pre-6a clamp did. */
-  const selectedItem = items[focusValue === undefined ? -1 : values.indexOf(focusValue)] ?? items[0];
 
   /** The six sub-views, verbatim from the pre-review handler and deliberately still PHYSICAL (final review):
    *  two of them are text entry (the rule name), and the other four are modal prompts whose only keys are the
@@ -655,10 +663,17 @@ export function PermissionsDialog({
   );
 
   const loading = activeTab === "Workspace" ? dirs === undefined : activeTab !== "Recently denied" && settings === undefined;
+  // T-MENU task 2 fix wave: only Recently denied/Auto mode still print a hand-written footer literal (see
+  // their own docblocks — the auto keyhint bar cannot express either tab's false-affordance carve-out).
+  // Allow/Ask/Deny/Workspace render nothing here; DialogFrame's `hintScope` (below) fills that same footer
+  // slot for them instead, so `DEFAULT_FOOTER`/`MANAGED_DIR_FOOTER` are no longer read for DISPLAY, only for
+  // the `tabFooters`/`permissionsWrapRows` width budget.
   const footerText = activeTab === "Recently denied" ? RECENT_FOOTER
     : activeTab === "Auto mode" ? AUTO_MODE_FOOTER
-    : activeTab === "Workspace" && selectedItem?.kind === "dir" && selectedItem.d.source !== "session" ? MANAGED_DIR_FOOTER
-    : DEFAULT_FOOTER;
+    : undefined;
+  // Same carve-out, read by the `DialogFrame` call below: Recently denied/Auto mode keep their OWN literal
+  // footer (just above) instead of the derived bar.
+  const hintScope = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : (["Settings", "Tabs"] as const);
 
   /** T-MENU task 2: ONE shared body, computed once per render from the already tab-scoped variables above
    *  (`items`/`loading`/`INTRO[activeTab]`/`footerText`) — unlike Settings/Help, this dialog never had a
@@ -670,7 +685,9 @@ export function PermissionsDialog({
     <>
       <Text dimColor>{INTRO[activeTab]}</Text>
       {activeTab === "Recently denied" && denials.length === 0 ? <Text dimColor>{RECENT_EMPTY}</Text> : null}
-      {activeTab === "Auto mode" && items.length === 0 ? <Text dimColor>{AUTO_MODE_EMPTY}</Text> : null}
+      {/* T-MENU task 2 review, nit: canon renders this line `italic` (`e(t,{italic:!0,...})`), not
+          `dimColor` — text stays verbatim, only the style token changes. */}
+      {activeTab === "Auto mode" && items.length === 0 ? <Text italic>{AUTO_MODE_EMPTY}</Text> : null}
       <Text> </Text>
       {/* WAVE S t6b — the list is the shared `Select`, windowed from `rows`, with upstream's counted overflow
           indicators OUTSIDE it (select/overflow.ts) because the window lives in the list's own reducer.
@@ -708,12 +725,15 @@ export function PermissionsDialog({
         </>
       )}
       <Text> </Text>
-      <Text dimColor>{footerText}</Text>
+      {/* T-MENU task 2: Allow/Ask/Deny/Workspace render nothing here any more — DialogFrame's auto keyhint
+          bar (`hintScope`, below) fills this same footer row for them. Recently denied/Auto mode still
+          print their own literal (see `footerText`'s docblock). */}
+      {footerText !== undefined ? <Text dimColor>{footerText}</Text> : null}
     </>
   );
 
   return (
-    <DialogFrame title="Permissions" color="permission">
+    <DialogFrame title="Permissions" color="permission" hintScope={hintScope}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) replaces the deleted `TABS`/`TAB_SPECS`-fed explicit
           `<Tabs tabs active onChange>` call. `Tabs` is CONTROLLED via `selectedTab`+`onTabChange` (the tab id
           already lives in `useChat`'s hook state, the same reason SettingsDialog is controlled). The blank

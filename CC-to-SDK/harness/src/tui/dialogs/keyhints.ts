@@ -32,6 +32,14 @@ export const KEY_HINT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "select:cancel": "cancel",
   "tabs:next": "switch tab",
   "tabs:previous": "switch tab",
+  // T-MENU task 2 review finding 1: `/` is a bound, validated action in the `Settings` context
+  // (`bindings.ts:400`), not a raw fallback key — SettingsDialog's own `/`-search affordance was simply
+  // missing its description row, which is what kept it out of every auto-derived bar.
+  "settings:search": "search",
+  // Named "optionally" by the same finding: HelpDialog's `Help` context binds nothing else this table
+  // describes (`app:interrupt` has no dialog-facing hint), so without this row its own scope would
+  // contribute nothing to the bar beyond `Tabs`' "switch tab".
+  "help:dismiss": "dismiss",
 };
 
 /** Canon `Pe`, L568834 — the bar never shows more than this many hints. */

@@ -566,7 +566,17 @@ describe("PermissionsDialog — the chrome's wrap allowance is what the frame re
     for (const tab of ["Allow", "Workspace", "Recently denied"]) {
       const base = await heightAt(tab, 100);
       for (const cols of [80, 70, 60]) {
-        expect([tab, cols, await heightAt(tab, cols) - base]).toEqual([tab, cols, permissionsWrapRows(tab, cols)]);
+        const actual = await heightAt(tab, cols) - base;
+        const budgeted = permissionsWrapRows(tab, cols);
+        // T-MENU task 2 fix wave: Recently denied still renders its own literal `RECENT_FOOTER` — exact
+        // equality holds unchanged. Allow/Workspace render DialogFrame's auto keyhint bar instead of
+        // `DEFAULT_FOOTER`/`MANAGED_DIR_FOOTER` now, and the bar (~49 columns under default bindings) wraps
+        // LATER than those wider literals did — `permissionsWrapRows` still models the old, wider ones (a
+        // pure function with no live-table access to derive the bar's real text), so it now OVER-reserves
+        // rather than under. That is the safe direction for the invariant this budget exists for (never let
+        // the composed frame reach the pane) — bound it rather than pin an equality the fix deliberately loosened.
+        if (tab === "Recently denied") expect([tab, cols, actual]).toEqual([tab, cols, budgeted]);
+        else expect([tab, cols, actual <= budgeted]).toEqual([tab, cols, true]);
       }
     }
   }, 20000);
@@ -729,5 +739,46 @@ describe("PermissionsDialog — the six-tab order and the Auto mode tab (T-MENU 
       expect([cols, h + 1 < 16]).toEqual([cols, true]);
       r.unmount();
     }
+  });
+});
+
+// ── T-MENU TASK 2 FIX WAVE — THE AUTO KEYHINT BAR REPLACES THE HAND-WRITTEN BROWSING FOOTER ────────────────
+// Review finding 1: `DialogFrame`'s `hintScope` (never `onCancel` — this dialog's own Escape routing through
+// `route(() => onDone())` stays authoritative) derives the footer from the `Settings`/`Tabs` scopes this
+// dialog already registers (PermissionsDialog.tsx:569-570), instead of the hand-typed `DEFAULT_FOOTER`/
+// `MANAGED_DIR_FOOTER`. `RECENT_FOOTER`/`AUTO_MODE_FOOTER` stay exactly as they render today — both exist
+// BECAUSE their tabs cannot honestly claim "navigate"/"select" (a permanently empty list, a read-only log),
+// and the scope-derived bar has no per-tab awareness to reproduce that carve-out, so those two tabs keep
+// their own literal footer instead of adopting the bar.
+describe("PermissionsDialog — the auto keyhint bar replaces the browsing footer (T-MENU task 2 fix wave)", () => {
+  it("derives the Allow-tab footer from the registry instead of the hand-written DEFAULT_FOOTER", async () => {
+    const { lastFrame } = render(<PermissionsDialog {...props({ tab: "Allow" })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
+    const f = plain(lastFrame);
+    // The old literal is gone outright...
+    expect(f).not.toContain("↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel");
+    // ...replaced by the derived bar: `confirm:no`'s "cancel", `select:previous`'s "navigate" and
+    // `select:accept`'s "select" — `tabs:next`'s "switch tab" is bumped past the 4-hint cap by these three
+    // plus `settings:search`'s "search", exactly MAX_HINTS' own dedup-by-description rule at work.
+    expect(f).toContain("cancel");
+    expect(f).toContain("navigate");
+    expect(f).toContain("select");
+  });
+
+  it("leaves Recently denied's and Auto mode's own false-affordance-safe footers untouched", async () => {
+    const recent = render(<PermissionsDialog {...props({ tab: "Recently denied" })} />);
+    await waitFor(() => plain(recent.lastFrame).includes("Commands recently denied"));
+    expect(plain(recent.lastFrame)).toContain("↑/↓ to navigate · Esc to cancel");
+    recent.unmount();
+
+    const auto = render(<PermissionsDialog {...props({ tab: "Auto mode" })} />);
+    await waitFor(() => plain(auto.lastFrame).includes("Extra rules for the auto mode classifier."));
+    const f = plain(auto.lastFrame);
+    expect(f).toContain("Esc to cancel");
+    // The bar must not leak "navigate"/"select" onto a permanently empty list — the exact false affordance
+    // AUTO_MODE_FOOTER exists to avoid, which is why this tab's hintScope stays off.
+    expect(f).not.toContain("navigate");
+    expect(f).not.toContain("select");
+    auto.unmount();
   });
 });

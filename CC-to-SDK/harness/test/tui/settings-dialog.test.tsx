@@ -307,3 +307,45 @@ describe("SettingsDialog — the Thinking warning is charged to the window's bud
     r.unmount();
   });
 });
+
+// ── T-MENU TASK 2 FIX WAVE — THE AUTO KEYHINT BAR REPLACES THE HAND-WRITTEN BROWSING FOOTERS ────────────────
+// Review finding 1: `DialogFrame`'s `hintScope` (never `onCancel` — this dialog's own `route(() => onDone())`
+// Escape handling stays authoritative) derives the footer from the `Settings`/`Tabs` scopes this dialog
+// already registers (SettingsDialog.tsx:448-449). `NORMAL_FOOTER`/`READONLY_FOOTER` are the two hand-written
+// strings that stood in for exactly that derivation and are deleted; `SEARCH_FOOTER` stays untouched — the
+// `/` text-entry mode it describes ("Type to filter…") is not an action the registry can express, and the
+// existing "leaves the / search surface exactly as it was" test above already pins it.
+describe("SettingsDialog — the auto keyhint bar replaces the browsing footers (T-MENU task 2 fix wave)", () => {
+  it("derives the Config-tab footer from the registry instead of the hand-written NORMAL_FOOTER", async () => {
+    const r = render(<SettingsDialog {...props()} rows={40} columns={100} />);
+    await waitFor(() => frame(r.lastFrame).includes("Theme"));
+    const f = plain(frame(r.lastFrame));
+    expect(f).not.toContain("Enter/Space to change · / to search · Esc to close");
+    // `confirm:no` → "cancel", `settings:search` → "search" (the row this fix adds to KEY_HINT_DESCRIPTIONS).
+    expect(f).toContain("cancel");
+    expect(f).toContain("search");
+    r.unmount();
+  });
+
+  it("derives the read-only tabs' footer from the registry instead of the hand-written READONLY_FOOTER", async () => {
+    // `Tabs` is CONTROLLED (`selectedTab`/`onTabChange`), and `props()`'s `onTabChange` is a no-op — every
+    // other test in this file that exercises tab switching does so through `ChatApp` (chat.test.tsx), where
+    // `useChat`'s own state closes the loop. Rendering `tab: "Usage"` directly is this file's own way of
+    // reaching a read-only tab without a stateful wrapper.
+    const r = render(<SettingsDialog {...props()} tab="Usage" rows={40} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    const f = plain(frame(r.lastFrame));
+    expect(f).not.toContain("Tab/←/→ to switch tabs · Esc to close");
+    expect(f).toContain("cancel");
+    r.unmount();
+  });
+
+  it("still shows SEARCH_FOOTER's own text while a query is open — the bar does not replace it", async () => {
+    const r = render(<SettingsDialog {...props()} rows={40} columns={100} />);
+    await waitFor(() => frame(r.lastFrame).includes("Theme"));
+    r.stdin.write("/");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("Search settings…"));
+    expect(plain(frame(r.lastFrame))).toContain("Type to filter · Enter/↓ to select · Esc to clear");
+    r.unmount();
+  });
+});

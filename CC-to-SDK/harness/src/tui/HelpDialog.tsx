@@ -184,7 +184,13 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
   // `dei = rows < _Hf` (L459651): a short terminal loses the outer padding and the gap between the blocks.
   const compact = rows < HELP_TALL_ROWS;
   return (
-    <DialogFrame title="Help" color="permission">
+    <DialogFrame title="Help" color="permission" hintScope={["Help", "Tabs"]}>
+      {/* T-MENU task 2 fix wave: the old hand-written `{escChord} to cancel` line (L459757's `<esc> to
+          cancel`) is gone — `hintScope` derives the same "esc dismiss" from the `Help`/`Tabs` scopes this
+          dialog already registers (`help:dismiss` needed its own `KEY_HINT_DESCRIPTIONS` row, added by this
+          fix; `Help`'s only other bound action, `app:interrupt`, has none and stays silent). Still LIVE off
+          the same table `escChord` reads — a rebind still moves the printed chord, just through the registry
+          now instead of this component's own `chord()` helper. */}
       {/* T-MENU task 2: the SHELL calling convention (canon `Pg`/`Zi`) — the tab list is DERIVED from the
           `<Tab>` children below (`id ?? title`) instead of a separately maintained array, and each pane
           renders only while active. `tab`/`changeTab` are unchanged: this component still owns the active id
@@ -208,9 +214,6 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
       </Tabs>
       <Box marginTop={1} flexShrink={0}><Text>{HELP_DOCS_LABEL} {HELP_DOCS_URL}</Text></Box>
       {showsFeedbackLine(commands, rows) ? <Box marginTop={1} flexShrink={0}><Text dimColor>{HELP_FEEDBACK_LINE}</Text></Box> : null}
-      {/* L459757: `<esc> to cancel`, italic and dim, with the chord resolved from the table like every other
-          hint in this package — upstream's own `pc("help:dismiss","Help","esc")` (L459697). */}
-      <Box marginTop={1} flexShrink={0}><Text dimColor italic>{escChord} to cancel</Text></Box>
     </DialogFrame>
   );
 }

@@ -1639,7 +1639,9 @@ describe("<ChatApp>", () => {
     expect(f).toContain("Default permission mode");
     expect(f).toContain("Thinking mode");
     expect(f).toContain("Show turn duration");                           // W-C T7's row
-    expect(f).toContain("Enter/Space to change · / to search · Esc to close");
+    // T-MENU task 2 fix wave: the hand-written NORMAL_FOOTER is gone — DialogFrame's auto keyhint bar
+    // (hintScope=["Settings","Tabs"]) derives the same footer row from the live table instead.
+    expect(f).toContain("Esc cancel · ↑ navigate · Space select · / search");
   });
 
   it("Config: toggling the Thinking-mode row shows the warning and Esc summarizes 'Set Thinking mode to false' (sabotage-checked — see task report)", async () => {
@@ -1709,7 +1711,8 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("sess-1"));       // formatStatus's session-id row — unique to the Status tab
     const f = frame(lastFrame);
     expect(f).not.toContain("Default permission mode");             // Config's rows are gone
-    expect(f).toContain("Tab/←/→ to switch tabs · Esc to close");
+    // T-MENU task 2 fix wave: the hand-written READONLY_FOOTER is gone — same auto keyhint bar as Config's.
+    expect(f).toContain("Esc cancel · ↑ navigate · Space select · / search");
   });
 
   // F6 T11 (DG46), end to end through the app rather than the component: the two ways out of the picker
@@ -1954,7 +1957,7 @@ describe("<ChatApp>", () => {
     stdin.write("\r");
     await waitFor(() => frame(lastFrame).includes("isn't a /config setting"));
     expect(frame(lastFrame)).toContain(`bogus isn't a /config setting. Run /config to see what's available.`);
-    expect(frame(lastFrame)).not.toContain("Enter/Space to change · / to search · Esc to close");   // the Config-tab footer never rendered — no dialog opened
+    expect(frame(lastFrame)).not.toContain("Default permission mode");   // the Config tab never rendered — no dialog opened
   });
 
   it("Config: '/config thinking=maybe' prints the boolean-domain error", async () => {
@@ -2020,7 +2023,7 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Settings"));
     const f = frame(lastFrame);
     expect(f).toContain("Default permission mode");                             // Config tab's rows, same as /config
-    expect(f).toContain("Enter/Space to change · / to search · Esc to close");
+    expect(f).toContain("Esc cancel · ↑ navigate · Space select · / search");
   });
 
   it("/output-style prints the redirect line then opens Settings at the Config tab (not the picker directly)", async () => {
@@ -2790,8 +2793,8 @@ describe("<ChatApp> — the paneOwned gate hides the task panel behind every pan
    *  dialog") and every other case in the file stays green. */
   it("/config — the task panel unmounts while the Settings dialog is up and comes back when it closes", async () => {
     await gateCycle("/config", {}, {},
-      async (r) => { r.stdin.write("/config"); await waitFor(() => frame(r.lastFrame).includes("/config")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Enter/Space to change")); },
-      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Enter/Space to change")); });
+      async (r) => { r.stdin.write("/config"); await waitFor(() => frame(r.lastFrame).includes("/config")); r.stdin.write("\r"); await waitFor(() => frame(r.lastFrame).includes("Default permission mode")); },
+      async (r) => { r.stdin.write("\x1b"); await waitFor(() => !frame(r.lastFrame).includes("Default permission mode")); });
   });
 
   /** WAVE S t6b ADDED THIS MEMBER — the EIGHTH of the class ChatApp's gate comment counts, the SEVENTH

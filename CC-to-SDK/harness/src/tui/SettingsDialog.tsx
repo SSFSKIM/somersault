@@ -73,13 +73,17 @@ import type { SelectView } from "./select/selectModel.js";
 
 const TABS = ["Status", "Config", "Usage", "Stats"] as const;
 type Tab = typeof TABS[number];
-const NORMAL_FOOTER = "Enter/Space to change · / to search · Esc to close";
+// T-MENU task 2 fix wave (review finding 1): the old `NORMAL_FOOTER`/`READONLY_FOOTER` hand-written strings
+// are gone — `DialogFrame`'s auto keyhint bar (`hintScope={["Settings","Tabs"]}`) derives the same
+// information (`confirm:no`/`select:*`/`settings:search`/`tabs:*`) from the live binding table instead.
 // DELIBERATE DIVERGENCE, same class as PermissionsDialog's RECENT_FOOTER (W3 final review Finding 5):
 // upstream's search footer promises "↑ to tabs" — a header-focus mode this wave doesn't ship (line 86's
 // own comment). key.upArrow below just exits search, identically to Esc — dropped the dead "↑ to tabs"
 // chord so the footer never advertises a focus move that doesn't happen.
+//   SEARCH_FOOTER stays a hand-written literal, not folded into the bar: while the query is open every key
+// is TEXT ("Type to filter…"), not a bound action — there is no registry entry a text-entry mode could derive
+// from, so this is the one footer the auto bar genuinely cannot express.
 const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
-const READONLY_FOOTER = "Tab/←/→ to switch tabs · Esc to close";
 
 /** WAVE S t5, ROW-CLIP ROUND — THE HORIZONTAL HALF OF THE WINDOW, and the same repair (and the same reasoning)
  *  as `PERMISSIONS_ROW_INSET` (PermissionsDialog.tsx — by SYMBOL, the form both files settled on after two of
@@ -156,7 +160,8 @@ function RowBody({ row, width }: { row: SettingsRow; width: number }) {
  *        4    the `<Tabs>` strip
  *        5    the blank spacer under the strip
  *        6    the blank spacer above the footer
- *        7    `NORMAL_FOOTER`
+ *        7    the footer row (T-MENU task 2: `DialogFrame`'s auto keyhint bar now, the same one row
+ *             `NORMAL_FOOTER`/`READONLY_FOOTER` used to spend)
  *    · +2 — the two COUNTED INDICATOR rows, `↑ N more above` and `↓ N more below`. BOTH of them and
  *      UNCONDITIONALLY, even though a window at either end of the list draws only one, for the reason the
  *      rewind and permissions budgets reserve their own pair: the indicators toggle as a consequence of
@@ -474,13 +479,15 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   const readOnlyTabBody = (t: Exclude<Tab, "Config">) => (
     <>
       {tabLines[t] === undefined ? <Text dimColor>Loading…</Text> : tabLines[t]!.map((l, i) => <Line key={i} l={l} />)}
+      {/* T-MENU task 2: the old `READONLY_FOOTER` line is gone — the blank spacer stays so the row this
+          dialog's chrome budget reserves for the footer is spent the same way, now by DialogFrame's own
+          auto keyhint bar (`hintScope`, below) instead of a hand-written string in this slot. */}
       <Text> </Text>
-      <Text dimColor>{READONLY_FOOTER}</Text>
     </>
   );
 
   return (
-    <DialogFrame title="Settings" color="permission">
+    <DialogFrame title="Settings" color="permission" hintScope={["Settings", "Tabs"]}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) — the tab list is derived from the `<Tab>` children below
           instead of the deleted `TABS`/`TAB_SPECS` array, and `Tabs` is CONTROLLED via `selectedTab`+
           `onTabChange` because `activeTab` already lives in `useChat`'s hook state (it must survive the
@@ -543,7 +550,9 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
             </>
           )}
           <Text> </Text>
-          <Text dimColor>{search !== null ? SEARCH_FOOTER : NORMAL_FOOTER}</Text>
+          {/* T-MENU task 2: NORMAL_FOOTER is gone (DialogFrame's auto keyhint bar takes its slot below).
+              SEARCH_FOOTER stays — see its own docblock for why a text-entry mode is not the bar's to derive. */}
+          {search !== null ? <Text dimColor>{SEARCH_FOOTER}</Text> : null}
         </TabPane>
         <TabPane title="Usage">{readOnlyTabBody("Usage")}</TabPane>
         <TabPane title="Stats">{readOnlyTabBody("Stats")}</TabPane>
