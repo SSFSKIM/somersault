@@ -646,3 +646,14 @@ Pending — written at finish.
   chunk-level fallback + bump negative control; §3.4 strict replay moved to W0/W1 (zero-fallback
   corpus is W0 acceptance; fatal for non-extracted engines from W1); §3.1 non-vacuity contracts
   with binding minimums; §3.3 record/replay credential schemas + test matrix.
+- 2026-08-31 (rounds 4–5, code-only — no spec change beyond this note): round 4 declared the
+  spec free of new non-delegated blockers and found one demonstrated code hole (the
+  `substanceOnly` check accepted a second complete Agent lifecycle → fixed `3a5edd9a`,
+  transcript-wide multiplicity counts, 22 assertions); round 5 verified that fix sound and found
+  one medium strictness nit (falsy-vs-explicit-`null` parent-lane marker → fixed `f5e1efe7`,
+  verified against the real transcript's explicit `null`, 24 assertions). **Loop declared
+  converged after round 5**: five rounds, seventeen findings, zero rejected as false — each
+  either fixed with negative controls or adopted with its rejected alternative logged; a sixth
+  round over a one-predicate change would be review for its own sake. The background-task check's
+  five successive hardenings (`98d9553d`, `908275d0`, `6c9ad4b6`, `3a5edd9a`, `f5e1efe7`) stand
+  as the measured case study behind §3.1's non-vacuity doctrine.
