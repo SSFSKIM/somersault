@@ -145,10 +145,14 @@ describe("the platform bullet survives the anchored-entry cache", () => {
     const base = { cwd: "/work", home: "/home/me", columns: 100, now: 0 };
     const mac = projectCompact(doc, { ...base, platform: "darwin" });
     const linux = projectCompact(doc, { ...base, platform: "linux" });
-    expect((mac[0] as { line: { gutter?: { text: string } } }).line.gutter!.text).toBe("⏺ ");
-    expect((linux[0] as { line: { gutter?: { text: string } } }).line.gutter!.text).toBe("● ");
+    // Index 1, not 0: bl10 T-SPACE puts one blank separator row above every top-level block, the opening one
+    // included (research-spacing.md §1.5, assistant-text row = 1 blank, canon `zp` marginTop at
+    // cli.pretty.js:189046/189059; `addMargin` ignores index). The bullet lives on the block's own first row.
+    const bullet = (items: readonly RenderItem[]) => (items[1] as { line: { gutter?: { text: string } } }).line.gutter!.text;
+    expect(bullet(mac)).toBe("⏺ ");
+    expect(bullet(linux)).toBe("● ");
     // and back again, to prove the second projection did not simply evict the first
-    expect((projectCompact(doc, { ...base, platform: "darwin" })[0] as { line: { gutter?: { text: string } } }).line.gutter!.text).toBe("⏺ ");
+    expect(bullet(projectCompact(doc, { ...base, platform: "darwin" }))).toBe("⏺ ");
   });
 });
 
@@ -172,10 +176,13 @@ describe("the same band on every surface", () => {
     await new Promise((r) => setTimeout(r, 20));
     api.run!("hello there");
     await waitFor(() => (api.items ?? []).length > 0);
-    // The local echo is the FIRST published item and its id names the local entry that minted it — the
-    // assistant reply that follows it is the fake's own, and is here only to prove the two are distinct rows.
+    // The local echo's id names the local entry that minted it — the assistant reply that follows it is the
+    // fake's own, and is here only to prove the two are distinct rows. `sep:` items are skipped: bl10 T-SPACE
+    // puts a blank separator above every block (research-spacing.md §1.5, "any block → user prompt echo = 1",
+    // canon `us` marginTop at cli.pretty.js:191456), and it is minted as `sep:<boundaryId>:gap` — so it
+    // matches the same `includes("user-echo")` probe while carrying an empty line.
     const items = (api.items ?? []).filter((i): i is Extract<RenderItem, { kind: "line" }> => i.kind === "line");
-    const echo = items.find((i) => i.id.includes("user-echo"))!.line;
+    const echo = items.find((i) => i.id.includes("user-echo") && !i.id.startsWith("sep:"))!.line;
     expect(echo.text).toBe("❯ hello there" + " ".repeat(23 - 13));
     expect(echo.bg).toBe(tok("userMessageBackground"));
     expect(echo.segments![0]).toEqual({ text: "❯ ", color: tok("subtle"), bg: tok("userMessageBackground") });

@@ -51,14 +51,24 @@ describe("transcriptItems — canon's full-screen /resume window (T-RESUME T1, D
     expect(JSON.stringify(compact)).toContain("+5 lines");
   });
 
-  it("tail-anchors to the budget: 300 single-line messages at budget 200 start no earlier than message 100", () => {
+  // ROW-BUDGET DERIVATION (bl10 T-SPACE). Each top-level block now costs one blank separator row on top of
+  // its own row (research-spacing.md §1.5, "assistant text → assistant text = 1", canon `zp` marginTop at
+  // cli.pretty.js:189059) — and the invariant does not skip the window's opening block, since canon's
+  // `addMargin` ignores index. So a one-line assistant message paints 2 rows, not 1: a 200-row budget holds
+  // 200/2 = 100 messages, where it used to hold 200. Tail-anchored on message 299, the window therefore opens
+  // at message 299 - 99 = 200, and its very first ITEM is that message's separator, not its text.
+  it("tail-anchors to the budget: 300 single-line messages at budget 200 start no earlier than message 200", () => {
     const msgs = Array.from({ length: 300 }, (_, i) => assistantText(`reply number ${i}`));
     const { items } = transcriptItems(msgs, { width: 60, budget: 200 });
-    const first = items.find((i): i is Extract<RenderItem, { kind: "line" }> => i.kind === "line");
+    expect(paintedRows(items)).toBe(200);                                  // the budget is spent exactly, 100 × (sep + text)
+    const opening = items[0]!;
+    expect(opening.kind).toBe("line");
+    expect((opening as Extract<RenderItem, { kind: "line" }>).line.text).toBe("");  // the opening block's own separator
+    const first = items.find((i): i is Extract<RenderItem, { kind: "line" }> => i.kind === "line" && i.line.text !== "");
     expect(first).toBeDefined();
     const match = first!.line.text.match(/reply number (\d+)/);
     expect(match).not.toBeNull();
-    expect(Number(match![1])).toBeGreaterThanOrEqual(100);
+    expect(Number(match![1])).toBeGreaterThanOrEqual(200);
     // The tail is anchored on the true LAST message — never blind before it, unlike the raw-window cut.
     expect(JSON.stringify(items)).toContain("reply number 299");
   });

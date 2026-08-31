@@ -65,8 +65,11 @@ describe("F4 Task 5 — projectMessageEntry forwards the projection's knobs", ()
     const doc = built(prose(TABLE));
     const wide = lineTexts(projectCompact(doc, context));
     const narrow = lineTexts(projectCompact(doc, { ...context, columns: 40 }));
-    expect(wide[0]).toContain("┌"); expect(narrow[0]).toContain("┌");
-    expect(wide[0]!.length).toBeGreaterThan(narrow[0]!.length);
+    // Row 0 is the block's blank separator (bl10 T-SPACE; research-spacing.md §1.5, assistant text = 1 blank
+    // above, canon `zp` marginTop at cli.pretty.js:189046/189059), so the table's top rule is row 1.
+    expect(wide[0]).toBe(""); expect(narrow[0]).toBe("");
+    expect(wide[1]).toContain("┌"); expect(narrow[1]).toContain("┌");
+    expect(wide[1]!.length).toBeGreaterThan(narrow[1]!.length);
   });
 });
 

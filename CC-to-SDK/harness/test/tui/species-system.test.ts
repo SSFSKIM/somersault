@@ -86,9 +86,12 @@ describe("compactSummaryLines — `XWo` shape B (L422282–422305)", () => {
     doc.appendLocal({ kind: "notice", lines: [{ text: "plain notice (ctrl+o to expand)", dim: true }] }, "notice:n1");
     const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
     const rows = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: { text: string } }).line.text);
-    expect(rows(projectCompact(doc, ctx))).toEqual(["Compact summary (ctrl+o to expand)", "plain notice (ctrl+o to expand)"]);
+    // The leading `""` ahead of each notice is bl10 T-SPACE's separator invariant (research-spacing.md §1.5,
+    // "any block → system notice = 1", canon `Xy` marginTop at cli.pretty.js:194161). Two notices ⇒ two blanks,
+    // and the FIRST one is present too: canon's `addMargin` ignores index, so even the opening block gets it.
+    expect(rows(projectCompact(doc, ctx))).toEqual(["", "Compact summary (ctrl+o to expand)", "", "plain notice (ctrl+o to expand)"]);
     for (const projection of ["detail-all", "detail-collapsed"] as const)
-      expect(rows(projectDetail(doc, { ...ctx, projection }))).toEqual(["Compact summary", "plain notice (ctrl+o to expand)"]);
+      expect(rows(projectDetail(doc, { ...ctx, projection }))).toEqual(["", "Compact summary", "", "plain notice (ctrl+o to expand)"]);
   });
 
   // E2, from the external whole-branch review. The chip was BAKED at ingest against the renderer that
@@ -106,24 +109,27 @@ describe("compactSummaryLines — `XWo` shape B (L422282–422305)", () => {
   };
   const ctx = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
   const rows = (items: readonly RenderItem[]) => items.filter((i) => i.kind === "line").map((i) => (i as { line: { text: string } }).line.text);
+  // Every expectation below leads with `""`: bl10 T-SPACE's one-blank-above-every-block invariant
+  // (research-spacing.md §1.5, "any block → system notice = 1", canon `Xy` marginTop at cli.pretty.js:194161).
+  // A one-notice document is still two rows — the separator does not depend on having a predecessor.
 
   it("re-derives the chip from the LIVE projection, not from the renderer that baked the row", () => {
     // Compacted in CLASSIC, then `/tui fullscreen`: the surviving chip §3.4 forbids.
-    expect(rows(projectCompact(boundary(EXPAND_HINT_FALLBACK), { ...ctx, fullscreen: true, expandHint: "" }))).toEqual(["Compact summary"]);
+    expect(rows(projectCompact(boundary(EXPAND_HINT_FALLBACK), { ...ctx, fullscreen: true, expandHint: "" }))).toEqual(["", "Compact summary"]);
     // Compacted in FULLSCREEN, then `/tui default`: the chip classic is owed comes back.
-    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: EXPAND_HINT_FALLBACK }))).toEqual(["Compact summary (ctrl+o to expand)"]);
+    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: EXPAND_HINT_FALLBACK }))).toEqual(["", "Compact summary (ctrl+o to expand)"]);
     // A rebind moves it too, from either bake — the row is derived, so there is no second copy to go stale.
-    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: "(ctrl+t to expand)" }))).toEqual(["Compact summary (ctrl+t to expand)"]);
+    expect(rows(projectCompact(boundary(""), { ...ctx, expandHint: "(ctrl+t to expand)" }))).toEqual(["", "Compact summary (ctrl+t to expand)"]);
     // …and no hint threaded at all is still the literal fallback (`pA`'s no-keymap arm), from either bake.
     for (const baked of [EXPAND_HINT_FALLBACK, ""])
-      expect(rows(projectCompact(boundary(baked), ctx))).toEqual(["Compact summary (ctrl+o to expand)"]);
+      expect(rows(projectCompact(boundary(baked), ctx))).toEqual(["", "Compact summary (ctrl+o to expand)"]);
   });
 
   it("keeps the ctrl+o pager hintless from either bake, under either renderer", () => {
     for (const baked of [EXPAND_HINT_FALLBACK, ""])
       for (const expandHint of [EXPAND_HINT_FALLBACK, "", "(ctrl+t to expand)"])
         for (const projection of ["detail-all", "detail-collapsed"] as const)
-          expect(rows(projectDetail(boundary(baked), { ...ctx, projection, expandHint }))).toEqual(["Compact summary"]);
+          expect(rows(projectDetail(boundary(baked), { ...ctx, projection, expandHint }))).toEqual(["", "Compact summary"]);
   });
 });
 
