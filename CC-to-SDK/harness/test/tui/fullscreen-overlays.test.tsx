@@ -278,10 +278,18 @@ describe("ChatApp routes the two mechanisms", () => {
     fake.parkPermission(permissionEntry());
     await waitFor(() => frameOf(r.lastFrame).includes("Edit file"));
     await settle();
-    const before = strip(rowsOf(r.lastFrame())[0]);
+    // T-SPACE (R3 §1.1: every block now leads with its own blank row, so a fixed probe row can
+    // legitimately land on a blank separator both before and after a scroll) — compare the whole
+    // transcript band above the dialog rule, not a single fixed row.
+    const bandOf = (frame: string) => {
+      const lines = rowsOf(frame);
+      const rule = lines.findIndex(isDialogRule);
+      return lines.slice(0, rule).map(strip).join("\n");
+    };
+    const before = bandOf(r.lastFrame());
     r.stdin.write("\x15");                                            // ctrl+u — SelectDecision's scroll:halfPageUp
     await settle();
-    const after = strip(rowsOf(r.lastFrame())[0]);
+    const after = bandOf(r.lastFrame());
     expect(after).not.toBe(before);
     expect(after).toMatch(/ALPHA-/);
     r.unmount();

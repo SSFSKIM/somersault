@@ -254,7 +254,10 @@ describe("D10 — the command palette is hoisted above the dock in fullscreen", 
     await typeInto(r, "/mode");                                       // exactly one match: `/model`
     const lines = rowsOf(r.lastFrame());
     expect(ruleRow(lines) - popupRow(lines)).toBe(1);                 // the rule sits directly under the one row
-    expect(alphaRows(lines)).toBe(18);                                // …and the transcript keeps the rest
+    // T-SPACE (R3 §1.1): the transcript viewport's own row budget is unchanged (18 rows — the popup/rule
+    // chrome above it didn't grow), but each one-line ALPHA message now costs 2 physical rows (its own
+    // leading blank separator + content), so only floor(18/2)=9 of those rows carry "ALPHA-" text.
+    expect(alphaRows(lines)).toBe(9);                                 // …and the transcript keeps the rest
     r.unmount();
   });
 
@@ -263,7 +266,8 @@ describe("D10 — the command palette is hoisted above the dock in fullscreen", 
     await typeInto(r, "/");                                           // the whole catalog
     const lines = rowsOf(r.lastFrame());
     expect(ruleRow(lines) - popupRow(lines)).toBe(5);
-    expect(alphaRows(lines)).toBe(14);
+    // T-SPACE (R3 §1.1): viewport budget unchanged at 14 rows; floor(14/2)=7 rows now carry ALPHA text.
+    expect(alphaRows(lines)).toBe(7);
     r.unmount();
   });
 

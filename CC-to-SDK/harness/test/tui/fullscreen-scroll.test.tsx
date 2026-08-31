@@ -445,7 +445,10 @@ describe("ChatApp routes Ctrl-O to the region in fullscreen", () => {
     // is still 23 rows, the title is still on row 1, the composer is still gone, and the duplicate's own hint
     // row is clipped off the bottom), but it takes the dock's twelve-row cap out of the region and the label
     // says so: `lines 55–60` instead of `44`. Twenty-two granted rows minus five of chrome is seventeen.
-    expect(strip(lines[1])).toContain("lines 44–60 of 60");
+    // T-SPACE (R3 §1.1): each of the 60 one-line ALPHA messages now costs 2 physical rows (its own leading
+    // blank separator + content), so the pager's total doubles 60→120 while its window height (17) is
+    // unchanged — bottom-anchored offset is total−h: 120−17=103, i.e. "104–120 of 120".
+    expect(strip(lines[1])).toContain("lines 104–120 of 120");
     expect(strip(lines[21])).toMatch(/^╰/);                             // …the pager's own bottom border, and
     expect(strip(lines[22])).not.toContain("│");                        // the dock's one footer row below it
     expect(r.lastFrame()).not.toContain(PROMPT);                        // the composer's slot is empty
