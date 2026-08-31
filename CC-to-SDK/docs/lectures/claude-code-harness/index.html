@@ -271,8 +271,164 @@ formats, and the design rationale you can infer from the code. Skim the boxes on
 return for the deep sections when you need to build the thing.</p>
 </section>
 
-<!-- @ch1 -->
-<!-- @ch2 -->
+<section id="ch1">
+<h2><span class="chapno">Chapter 1</span>The artifact: one binary, many programs</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>What installs on your machine is a single 197&nbsp;MB executable. Inside it: a JavaScript
+  runtime (Bun), 1,792 precompiled code modules, five native macOS/Linux plugins, 157 embedded
+  documentation files — and, astonishingly, <b>a complete copy of ripgrep</b>. The same file is
+  the chat app, the search engine, the MCP server, the background daemon, and the updater,
+  depending on how you invoke it.</p>
+</div>
+
+<p class="meta">Evidence base: <code>research/01-boot-config-bundle.md</code> (1,231 lines).</p>
+
+<h3>1.1 Packaging</h3>
+<p>Claude Code is a <b>Bun standalone executable</b> (Bun 1.4.1): a Mach-O/ELF binary whose
+<code>__BUN</code> section carries an ESM chunk graph — a 19&nbsp;KB entry stub plus 1,792
+<code>chunk-*.js</code> modules, each paired with <b>precompiled JS bytecode</b> (why the binary
+<em>shrank</em> 325→197&nbsp;MB while gaining modules). Modules address each other by virtual path
+(<code>/$bunfs/root/chunk-….js</code>); embedded text assets are zstd-compressed and sniffed by magic
+bytes at load (<code>:742317</code>).</p>
+<table>
+<tr><th>Embedded payload</th><th>What it is</th></tr>
+<tr><td>5 native addons</td><td><code>audio-capture</code> (voice dictation), <code>computer-use-input</code> + <code>computer-use-swift</code> (synthetic input + a macOS CFRunLoop bridge with an Esc kill-hotkey), <code>image-processor</code> (replaces sharp), <code>url-handler</code> (the <code>claude-cli://</code> deep-link app)</td></tr>
+<tr><td>157 markdown/text docs</td><td>the whole <code>claude-api</code> skill corpus (7 languages + curl), managed-agents docs, dataviz/design/run/artifact skill bundles, loop preambles, artifact HTML templates</td></tr>
+<tr><td>Vendored JS</td><td><code>chart.umd.min.js</code>, <code>hljs</code>, <code>mermaid.min.js</code> — artifact rendering</td></tr>
+<tr><td>ripgrep 14.1.1</td><td>see below</td></tr>
+</table>
+
+<div class="callout key"><div class="ct">The binary is its own rg</div>
+Grep-tool search resolution returns <code>{command: process.execPath, args:["--no-config"],
+argv0:"rg"}</code> (<code>:685293</code>) — the harness <b>re-executes itself with
+<code>argv[0]="rg"</code></b> and becomes ripgrep (verified live: it prints <code>ripgrep 14.1.1</code>).
+<code>USE_BUILTIN_RIPGREP=0</code> forces a system rg instead; a PATH-resolved rg is refused for
+searches outside the working directory because Read deny-rules can't be enforced through it.
+</div>
+
+<h3>1.2 Boot: eighteen fast paths before the CLI parser exists</h3>
+<p>The entry stub hand-parses argv <em>before</em> loading commander, dispatching whole sub-programs:
+<code>--claude-in-chrome-mcp</code>, <code>--chrome-native-host</code>, <code>--computer-use-mcp</code>,
+<code>--daemon-worker</code>, <code>--bg-pty-host</code>, <code>--bg-spare</code> (pre-warmed spares!),
+<code>remote-control</code>, <code>daemon</code>, background verbs (<code>attach/logs/stop/respawn/rm</code>,
+<code>--bg</code>), the FleetView <code>agents</code> view, <code>self-hosted-runner</code>, a
+tmux-worktree exec path, and the deep-link handler (with an argument-injection guard that rejects
+anything after <code>--handle-uri &lt;uri&gt;</code>). Even on the normal path, <b>commander skips
+registering the entire ~19-subcommand tree</b> unless a positional or <code>--help</code> is present —
+a deliberate boot-latency optimization (<code>:748552</code>). Keystrokes typed during boot are
+captured so they aren't lost, and MDM + keychain reads start in parallel before <code>main</code> is
+even imported.</p>
+<p>Boot then runs an ordered, checkpointed pipeline (~50 named spans from <code>cli_entry</code> to
+<code>after_processUserInput</code>): config load → remote/managed settings → credentials → GrowthBook
+→ migrations → trust → sandbox init → MCP → first prompt. Non-interactive mode triggers on
+<code>-p</code>, <code>--sdk-url</code>, <em>or simply stdout not being a TTY</em> — piping output
+alone makes it headless, which is why the trust dialog warns about it.</p>
+
+<h3>1.3 The command surface</h3>
+<p>19 top-level subcommands (<code>gateway</code>, <code>auth</code>, <code>project</code>,
+<code>mcp</code>, <code>plugin</code>, <code>setup-token</code>, <code>agents</code>,
+<code>ultrareview</code>, <code>auto-mode</code>, <code>remote-control</code>, <code>doctor</code>,
+<code>sandbox</code>, <code>update</code>, <code>install</code>, <code>import</code>,
+<code>import-conversations</code>, <code>self-hosted-runner</code>, <code>daemon</code>, plus the
+background verbs), and <b>113 flags on the main command, 43 of them hidden</b> — the hidden set
+(<code>--managed-settings</code>, <code>--resume-session-at</code>, <code>--task-budget</code>,
+<code>--teammate-mode</code>, <code>--agent-id/-name/-color/-type</code>, <code>--workload</code>…)
+is effectively the SDK's private ABI. Notable dead commands: <code>claude config</code> and
+<code>claude migrate-installer</code> <b>no longer exist</b> in 2.1.251.</p>
+<p>Boot postures worth knowing: <code>--bare</code> (sets <code>CLAUDE_CODE_SIMPLE=1</code> — minimal
+mode, no hooks/plugins/CLAUDE.md, prompt collapses to <code>CWD:/Date:</code>), <code>--safe-mode</code>
+(all customizations disabled, for debugging broken configs), and <code>--restricted</code> (removes
+code-execution tools + WebFetch <em>and</em> ignores user/project/local settings entirely).</p>
+
+<h3>1.4 Versions and self-update</h3>
+<p>Native installs live under <code>~/.local/share/claude/versions/&lt;v&gt;</code> with staging in
+<code>~/.cache/claude/staging</code> and locks in <code>~/.local/state/claude/locks</code>;
+<code>~/.local/bin/claude</code> is a <b>bare symlink</b> into the versions dir, swapped atomically
+(symlink-to-tmp + rename), and the installer refuses to overwrite a launcher it didn't create.
+Updates: poll <code>https://downloads.claude.ai/claude-code-releases/&lt;channel&gt;</code> every
+30&nbsp;min → fetch manifest → SHA-256-verified zstd download → staged rename with EBUSY retries →
+“Update installed · Restart to apply”. Enterprise policy can pin versions both ways
+(<code>requiredMinimumVersion</code>/<code>requiredMaximumVersion</code> block startup). Channels are
+<code>stable</code>/<code>latest</code> (the schema's <code>rc</code> is rejected by the installer and
+relabeled “slow” in the UI — a genuine internal inconsistency).</p>
+</section>
+
+<section id="ch2">
+<h2><span class="chapno">Chapter 2</span>Configuration: five tiers, one truth</h2>
+
+<div class="eli5">
+  <div class="tag">The picture first</div>
+  <p>Every knob has five places it can be set, and they stack in a fixed order:
+  <b>user &lt; project &lt; local &lt; flag &lt; policy</b>. Your IT department's tier (policy)
+  always wins, and some of its keys can only <em>tighten</em>, never loosen. Alongside the settings
+  files live two other control planes: ~1,000 typed environment variables, and ~355 server-side
+  feature flags that can reshape the product between releases.</p>
+</div>
+
+<h3>2.1 Sources and precedence</h3>
+<pre><code>userSettings      ~/.claude/settings.json
+projectSettings   &lt;cwd&gt;/.claude/settings.json          <span class="c">(checked in)</span>
+localSettings     &lt;cwd&gt;/.claude/settings.local.json    <span class="c">(gitignored)</span>
+flagSettings      --settings &lt;file-or-json&gt;
+policySettings    MDM plist ×2 · HKLM+HKCU registry · managed-settings.json
+                  · managed-settings.d/*.json · remote org settings   <span class="c">(five-way union!)</span></code></pre>
+<div class="evidence">order :209440, :80769 · policy tier :207818–:210268</div>
+<p>The policy tier even has a WSL bridge that shells out to
+<code>/mnt/c/Windows/System32/reg.exe</code> to inherit Windows-side policy. ~30 keys are
+enterprise-governance: <code>allowManagedPermissionRulesOnly</code>, <code>allowManagedHooksOnly</code>,
+<code>allowedMcpServers</code>/<code>deniedMcpServers</code>, <code>strictKnownMarketplaces</code>,
+<code>disableSideloadFlags</code>, <code>modelPricing</code>… — and path-valued keys (scripts the
+harness will execute, like <code>apiKeyHelper</code> or <code>statusLine</code>) are honored only from
+trusted sources. Validation is <em>forgiving by construction</em>: every field is wrapped in a catch so
+one bad value drops rather than poisoning the file — except security-relevant keys which fail
+<em>closed</em> (an invalid <code>allowedMcpServers</code> becomes an empty allowlist). The full schema
+is <b>165 top-level keys</b>; the research report tables them all verbatim.</p>
+<p>Alongside settings sits the legacy <code>~/.claude.json</code> global config: onboarding state,
+per-project trust flags + MCP approvals, usage counters, the auto-updater result, OAuth account info —
+and (surprise) the <b>feature-flag cache</b>. <code>CLAUDE_CONFIG_DIR</code> relocates everything, and
+even suffixes the keychain service name with a hash so different config dirs don't share credentials
+(<code>:650790</code>). Schema migrations are an ordered set of 12 behind
+<code>migrationVersion = 13</code>, with an all-or-nothing version bump so a failed write re-runs the
+whole set next startup.</p>
+
+<h3>2.2 Trust</h3>
+<p>Workspace trust is per-directory in <code>~/.claude.json</code>
+(<code>projects[&lt;dir&gt;].hasTrustDialogAccepted</code>) with an <b>ancestor walk up to the git
+root</b> — trusting a repo trusts its subdirectories (<code>:311176</code>).
+<code>CLAUDE_CODE_SANDBOXED</code> short-circuits it. Untrusted workspaces get their project settings
+ignored with an explanatory warning.</p>
+
+<h3>2.3 Environment variables: a typed registry</h3>
+<p>Env vars aren't read ad-hoc: a registry declares <b>971 variables across 8 namespaces</b> (auth,
+providers/base-URLs, model selection, feature toggles, HTTP/transport, OS/terminal, telemetry,
+session/config) with zod-style coercions (<code>bool</code> = <code>{1,true,yes,on}</code>,
+<code>triBool</code>, clamped ints, enums) and per-variable memoization (<code>:770014</code>).
+Scrub-sets govern what crosses process boundaries: secrets (<code>ANTHROPIC_API_KEY</code>,
+<code>CLAUDE_CODE_OAUTH_TOKEN</code>, AWS keys…) are stripped from sandboxes; background workers strip
+everything starting with <code>CLAUDE_</code> except a three-item allowlist plus <code>OTEL_*</code>.</p>
+
+<h3>2.4 Feature flags: GrowthBook, not Statsig</h3>
+<p>Statsig is <b>gone</b> — only the legacy <code>~/.claude/statsig</code> directory name survives in
+cleanup sweeps. Flags are <b>GrowthBook</b>: ~355 <code>tengu_&lt;codename&gt;</code> flags with
+compiled-in defaults (220 default-false, 96 default-true, 39 valued), cached in
+<code>~/.claude.json</code> under <code>cachedGrowthBookFeatures</code>, refreshed every 360 minutes
+with jitter. The accessor names encode their staleness contract honestly:
+<code>getFeatureValue_CACHED_MAY_BE_STALE</code>, <code>_SESSION_PINNED</code> (first read memoized so
+a mid-session refresh can't flip behavior), <code>_BLOCKS_ON_INIT</code>. Offline degrades to the
+per-call defaults.</p>
+<div class="callout key"><div class="ct">The universal override pattern</div>
+<pre style="margin:8px 0"><code>resolve = envVar || bundleOptIn || serverPerConversationOverride || growthbookFlag(name, false)</code></pre>
+Every <code>CLAUDE_CODE_&lt;TWO_WORD_CODENAME&gt;</code> env var is a local force-on for the
+identically-named <code>tengu_&lt;codename&gt;</code> flag (<code>:651299</code>). If you see
+<code>CLAUDE_CODE_CARVED_SLATE</code> in the wild, it's someone turning on the
+<code>tengu_carved_slate</code> experiment locally. For a replica this means: the flag layer is part of
+the product's configuration surface, not just telemetry plumbing.
+</div>
+</section>
+
+
 <section id="ch3">
 <h2><span class="chapno">Chapter 3</span>The engine: the agentic loop, turn by turn</h2>
 
