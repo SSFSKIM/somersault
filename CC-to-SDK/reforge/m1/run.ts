@@ -295,11 +295,21 @@ for (const s of SCENARIOS) {
     eOk = report("events", eFind, variance?.events);
     rOk = report("requests", rFind, variance?.requests);
   }
-  // substance check — guards the hollow-pass class (identical-but-empty behavior)
-  const failure = s.check?.(a.messages, a.events) ?? null;
-  if (failure) console.log(`    substance: FAIL — ${failure}`);
-  else if (s.check) console.log("    substance: ok");
-  verdicts.push({ tag: s.tag, pass: tOk && eOk && rOk && !failure });
+  // substance check — guards the hollow-pass class (identical-but-empty
+  // behavior). Run against BOTH engines, not just the oracle: a normally-graded
+  // scenario constrains B through the three-surface diff against A, but a
+  // substanceOnly scenario skips those surfaces, so an A-only check leaves
+  // NOTHING asserting anything about B — an engine that omitted the behavior
+  // outright would pass. A failure on either side fails the scenario.
+  const substance = s.check
+    ? ([
+        ["A", s.check(a.messages, a.events)],
+        ["B", s.check(b.messages, b.events)],
+      ] as const).filter(([, failure]) => failure !== null)
+    : [];
+  for (const [side, failure] of substance) console.log(`    substance: FAIL [${side}] — ${failure}`);
+  if (s.check && substance.length === 0) console.log("    substance: ok");
+  verdicts.push({ tag: s.tag, pass: tOk && eOk && rOk && substance.length === 0 });
 }
 
 console.log("\n=== M1 corpus verdicts ===");

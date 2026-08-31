@@ -243,13 +243,17 @@ export const M3_SCENARIOS: Scenario[] = [
     // timing. Ending the turn early does not help either: the two engines then
     // stop at different frame counts.
     //
-    // So it grades on its substance assertion alone: the dispatch-time
-    // sidechannel frames (`task_started` with a tool_use_id, and
-    // `background_tasks_changed` carrying a tasks array), which ARE deterministic.
+    // So it grades on its substance assertion alone — which is therefore the
+    // ONLY thing constraining either engine here, and has to carry the whole
+    // claim: the dispatch-time sidechannel frames (`task_started` with a
+    // tool_use_id, `background_tasks_changed` listing the dispatched task) AND
+    // that the agent's answer lands back in the parent conversation. What races
+    // is only WHERE the fold-back splices, so presence is assertable; position
+    // is not.
     substanceOnly:
       "backgrounded work completes concurrently with the parent turn; the splice point in the parent's conversation is a race that cannot be canonicalized without discarding real conversation ordering",
     tag: "background-task",
-    title: "backgrounded Agent emits task_started and background_tasks_changed at dispatch",
+    title: "backgrounded Agent emits task_started + background_tasks_changed and folds its result back",
     run: (ctx) =>
       drive(
         "Use the Agent tool with run_in_background set to true to dispatch one subagent (subagent_type 'general-purpose') whose entire task is: reply with the single word REFORGE_BG_OK. Do not wait for it; immediately reply with exactly DISPATCHED.",
@@ -262,13 +266,33 @@ export const M3_SCENARIOS: Scenario[] = [
       ),
     check: (msgs) => {
       if (!usedTool(msgs, "Agent")) return "Agent tool never used";
-      const started = frames(msgs, "task_started");
-      const changed = frames(msgs, "background_tasks_changed");
-      if (started.length === 0) return "no task_started frame";
+      const started = frames(msgs, "task_started")[0] as { task_id?: string; tool_use_id?: string } | undefined;
+      if (!started) return "no task_started frame";
+      if (!started.tool_use_id) return "task_started lacked tool_use_id";
+      const changed = frames(msgs, "background_tasks_changed") as { tasks?: { task_id?: string }[] }[];
       if (changed.length === 0) return "no background_tasks_changed frame";
-      const tasks = (changed[0] as { tasks?: { task_id?: string; task_type?: string }[] }).tasks;
-      if (!Array.isArray(tasks)) return "background_tasks_changed carried no tasks array";
-      return (started[0] as { tool_use_id?: string }).tool_use_id ? null : "task_started lacked tool_use_id";
+      // The signal is level, not edge (REPLACE semantics), so the run also ends
+      // with an EMPTY tasks array — "some frame carried an array" is satisfied
+      // by that teardown alone. The dispatch itself has to be visible: some
+      // frame must list the task `task_started` announced.
+      if (!changed.some((c) => Array.isArray(c.tasks) && c.tasks.some((t) => t.task_id === started.task_id)))
+        return "no background_tasks_changed frame listed the dispatched task";
+      // Fold-back. A whole-transcript substring search always trips here: the
+      // dispatch prompt necessarily contains the marker (same trap as
+      // `interrupt`). The fold-back is the marker arriving as PARENT-LANE
+      // output — a top-level assistant text block, or a result — whichever side
+      // of the parent's own reply the race splices it on.
+      const inParentText = msgs.some((m) => {
+        const mm = m as { type?: string; parent_tool_use_id?: string | null; message?: { content?: unknown } };
+        if (mm.type !== "assistant" || mm.parent_tool_use_id) return false;
+        const c = mm.message?.content;
+        return (
+          Array.isArray(c) &&
+          c.some((b: { type?: string; text?: string }) => b?.type === "text" && b.text?.includes("REFORGE_BG_OK"))
+        );
+      });
+      const inResult = resultsOf(msgs).some((r) => String(r.result ?? "").includes("REFORGE_BG_OK"));
+      return inParentText || inResult ? null : "the background agent's result never folded back into the parent turn";
     },
   },
 

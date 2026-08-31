@@ -98,6 +98,14 @@ read-only Bash commands *without consulting canUseTool*, so both engines
 agreed on an empty event log. Two engines agreeing on nothing still diff as
 identical; only an assertion catches that.
 
+**The check runs against BOTH engines, and reports which side failed.** A
+normally-graded scenario constrains the engine under test through the diff
+against the oracle, so checking the oracle alone is *nearly* enough there — but
+a `substanceOnly` scenario skips those surfaces, so an oracle-only check leaves
+nothing at all asserting the engine under test. That is the same hollow pass one
+level up: an engine that omitted `background-task`'s behavior outright would have
+passed.
+
 ```sh
 npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
 ```
@@ -256,7 +264,7 @@ The five surfaces the ccx inventory ranked highest, in `m3/scenarios.ts`:
 | uuid-correlation | caller-minted `uuid` echoes on `result.user_message_uuid`; origin survives only for `human` | PASS |
 | interrupt | `interrupt()` cuts a running tool short and the turn reaches a definite end | PASS |
 | permission-bag | `canUseTool` gets a populated bag (`toolUseID`, `signal`); `updatedInput` actually changes what runs | PASS |
-| background-task | a backgrounded `Agent` emits `task_started` + `background_tasks_changed` | recording blocked (rate limit) |
+| background-task | a backgrounded `Agent` emits `task_started` + a `background_tasks_changed` listing that task, and folds its result back into the parent turn | recording blocked (rate limit) |
 | fork-session | `forkSession` mints a new id and keeps the parent's context | recording blocked (rate limit) |
 
 **The origin contract is narrower than the types suggest** — and the probe
@@ -365,7 +373,9 @@ same timing, and ending the turn early just makes the two engines stop at
 different frame counts. So `Scenario.substanceOnly` opts that scenario out of
 diff grading **with a required written reason**, the runner prints the exemption
 and the ungraded difference counts every run, and the scenario grades strictly
-less than the others. The alternative — stretching normalization until it went
+less than the others. Its substance check therefore carries the whole claim, on
+both engines: the dispatch frames *and* the fold-back — presence only, since what
+races is where the fold-back splices, not whether it arrives. The alternative — stretching normalization until it went
 green — would have bought a passing gate by deleting a real contract.
 
 ## M3-B — the splice manifest (2026-08-25)
