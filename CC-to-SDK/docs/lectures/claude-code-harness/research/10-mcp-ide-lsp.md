@@ -597,7 +597,7 @@ Retriable network errors (`$n`, `cli.pretty.js:113613`): `AbortError`, `ECONNRES
 `connected` | `cached` | `failed` | `needs-auth` | `disabled` | `needs-approval` (derived) | `pending`.
 `Zo(client)` = `connected || cached`.
 
-The connect-error taxonomy is a 50-value enum at `cli.pretty.js:115071` (`os`), covering OAuth
+The connect-error taxonomy is a 50-value enum at `cli.pretty.js:115070` (`os`), covering OAuth
 errors (`invalid_grant`, `access_denied`, …), transport errors (`CONNECT_TIMEOUT`, `ENOENT`,
 `EACCES`, `EADDRINUSE`, `ERR_INVALID_URL`), and protocol errors (`ERA_NEGOTIATION_FAILED`,
 `METHOD_NOT_SUPPORTED_BY_PROTOCOL_VERSION`, `LIST_PAGINATION_EXCEEDED`,
@@ -755,14 +755,14 @@ onChanged:()=>{}`) for listen-denylisted servers (`Yr`, `cli.pretty.js:114332`).
 
 ## 9. Tool surfacing
 
-The builder is `kr` (v1, `cli.pretty.js:30217–30400`) / `cli.pretty.js:115290+` (v2). It is the
+The builder is `kr` (v1, `cli.pretty.js:30217–30400`) / `cli.pretty.js:115252+` (v2). It is the
 densest function in the domain; the pipeline is:
 
 ### 9.1 Name
 
 ```js
 ln(s)          = s.replace(/[^a-zA-Z0-9_-]/g, "_")      // cli.pretty.js:241539
-Ul(server)     = `mcp__${ln(server)}__`                  // cli.pretty.js:111260
+Ul(server)     = `mcp__${ln(server)}__`                  // cli.pretty.js:111261
 xc(server,tool)= `${Ul(server)}${ln(tool)}`              // cli.pretty.js:111264
 ya(name)       = name.split("__") → { serverName, toolName }   // cli.pretty.js:111254
 ```
@@ -834,7 +834,7 @@ Anthropic-private `_meta` keys (index at `cli.pretty.js:818237`):
   `{behavior:"ask", suppressAlwaysAllowRule:true}` — the user can never "always allow" it.
 
 `_meta` on a **text content block** is stripped before the result reaches the model
-(`Nq`, `cli.pretty.js:34322`).
+(`Nq`, `cli.pretty.js:34320`).
 
 ### 9.4 Deferral behind ToolSearch
 
