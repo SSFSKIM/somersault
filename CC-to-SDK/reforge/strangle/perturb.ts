@@ -33,6 +33,7 @@
 import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
+import { resolveAnchor } from "./anchor.js";
 import { chunkAst, excise } from "./ast.js";
 import { deriveCaptures, SPLICES } from "./manifest.js";
 import { textModules } from "./prepare.js";
@@ -53,9 +54,15 @@ const failures: string[] = [];
 console.log(`derivation perturbation + capture inventory @ ${ENGINE_VERSION}`);
 
 for (const sp of SPLICES) {
-  const owner = [...sources].find(([, s]) => s.includes(sp.anchor));
-  if (!owner) {
-    failures.push(`${sp.name}: anchor not found in the pinned bundle`);
+  // Same resolver the build uses, so a `coLiteral`-scoped row is perturbed
+  // against the chunk it will actually be spliced in rather than whichever
+  // sibling happens to be scanned first.
+  let owner: [string, string];
+  try {
+    const r = resolveAnchor(sources, sp, (p) => relative(BUNDLE_MODULES, p));
+    owner = [r.path, r.source];
+  } catch (e) {
+    failures.push(`${sp.name}: ${(e as Error).message}`);
     continue;
   }
   const [path, src] = owner;

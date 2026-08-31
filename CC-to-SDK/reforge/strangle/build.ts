@@ -6,7 +6,10 @@
 //
 // Anchoring rules (measured in M2a, re-confirmed by the 2.1.241 → 2.1.251 bump):
 //  - anchors are TRUE-SUBSTRING-unique across the WHOLE graph ("grep -c" counts
-//    lines and lies on these effectively-one-line chunks — count substrings)
+//    lines and lies on these effectively-one-line chunks — count substrings).
+//    A row whose target carries no graph-unique literal may declare a
+//    `coLiteral` and be unique among the chunks holding both — see
+//    strangle/anchor.ts for why that is a literal and never a chunk name
 //  - closure identifiers a target captures are RE-DERIVED from the matched body,
 //    never hardcoded. This is what makes a version catch-up mechanical: across
 //    the bump all three method bodies were byte-identical modulo minified names
@@ -28,6 +31,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
+import { resolveAnchor } from "./anchor.js";
 import { assertSignature, chunkAst, excise } from "./ast.js";
 import { spliceFootprint, type FootprintFile } from "./footprint.js";
 import { deriveCaptures, SPLICES } from "./manifest.js";
@@ -55,8 +59,6 @@ if (sabotageIdx >= 0) {
 }
 
 // ---- helpers ----------------------------------------------------------------
-const countSubstring = (haystack: string, needle: string) => haystack.split(needle).length - 1;
-
 /** Place a statement after the leading banner//comment block, never before it. */
 function injectAfterBanner(src: string, statement: string): string {
   let i = 0;
@@ -97,19 +99,10 @@ const footprints: FootprintFile["splices"] = [];
 
 for (const sp of SPLICES) {
   // Uniqueness is a whole-GRAPH property, not a per-file one: a second match in
-  // another chunk would make "which node did we excise?" a coin flip.
-  const hits = [...sources].map(([p, s]) => [p, countSubstring(s, sp.anchor)] as const).filter(([, c]) => c > 0);
-  const total = hits.reduce((a, [, c]) => a + c, 0);
-  if (total === 0) {
-    throw new Error(`${sp.name}: anchor not found anywhere in the ${ENGINE_VERSION} graph — re-anchor it`);
-  }
-  if (total > 1) {
-    const where = hits.map(([p, c]) => `${relative(STRANGLED_DIR, p)}x${c}`).join(", ");
-    throw new Error(`${sp.name}: anchor is not unique — ${total} matches (${where})`);
-  }
-
-  const path = hits[0][0];
-  const src = sources.get(path)!;
+  // another chunk would make "which node did we excise?" a coin flip. A row that
+  // declares a `coLiteral` narrows the scope to the chunks carrying both, and
+  // still has to be unique inside it (strangle/anchor.ts).
+  const { path, source: src } = resolveAnchor(sources, sp, (p) => relative(STRANGLED_DIR, p));
   const sf = chunkAst(path, src);
   const cut = excise(sf, src.indexOf(sp.anchor), sp.target);
   // Belt and braces: the span the AST chose must be the one the anchor named.

@@ -83,6 +83,14 @@ export interface Splice {
   signature: TargetSignature;
   /** true-substring-unique anchor inside the target node */
   anchor: string;
+  /**
+   * Optional SCOPE for an anchor that is not unique graph-wide: a second literal
+   * that must occur in the same chunk, after which the anchor must be unique
+   * among the chunks carrying both. Deliberately not a chunk NAME — chunk names
+   * churn per pin and would break mechanical catch-up. See strangle/anchor.ts
+   * for the full argument and the failure modes.
+   */
+  coLiteral?: string;
   /** delegation export name on globalThis.__reforge */
   fn: string;
   /** EVERY closure value the body takes from its scope, classified per §2.4 */

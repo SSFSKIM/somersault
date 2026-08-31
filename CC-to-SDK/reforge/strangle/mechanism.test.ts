@@ -24,11 +24,14 @@
 //   defaults   a destructuring DEFAULT must forward by its bound name and
 //              evaluate exactly once (in the adapter's own parameter list),
 //              while a nested pattern stays refused.
+//   anchoring  a `coLiteral`-scoped anchor must still resolve to exactly one
+//              node, and every way of mis-declaring the scope must throw.
 //
 // Plus the §2.4 contract test for the one capture pair whose ownership retrofit
 // has landed: text-delta's telemetry brands.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { resolveAnchor } from "./anchor.js";
 import { assertSignature, chunkAst, excise, formatSignature } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
@@ -240,11 +243,52 @@ function footprintOf(owner: string, helper: string) {
     }));
 }
 
+// ---- FINDING 6: co-literal anchor scoping (C4 / contract X3) ----------------
+// The Bash formatter's only distinctive literal occurs in TWO chunks, so a row
+// may name a second literal that must occur in the same chunk. Every way of
+// getting that wrong has to be loud — a scope that silently selects one of two
+// candidates is worse than no scope at all.
+{
+  const engine = `var tool={fmt(){return"AMBIGUOUS_ANCHOR"},hint:"execute shell commands"};\n`;
+  const sibling = `var other={fmt(){return"AMBIGUOUS_ANCHOR"},hint:"run powershell"};\n`;
+  const solo = `var third={fmt(){return"SOLO_ANCHOR"}};\n`;
+  const graph = new Map([["/g/engine.js", engine], ["/g/sibling.js", sibling], ["/g/third.js", solo]]);
+
+  check("an unscoped, graph-unique anchor resolves",
+    resolveAnchor(graph, { name: "solo", anchor: "SOLO_ANCHOR" }).path === "/g/third.js");
+  throws("an unscoped AMBIGUOUS anchor is refused, and the message says how to scope it",
+    () => resolveAnchor(graph, { name: "amb", anchor: "AMBIGUOUS_ANCHOR" }),
+    /not unique in the graph — 2 matches.*coLiteral/s);
+  check("a co-occurring literal selects the intended chunk",
+    resolveAnchor(graph, { name: "amb", anchor: "AMBIGUOUS_ANCHOR", coLiteral: "execute shell commands" }).path ===
+      "/g/engine.js");
+  throws("a coLiteral that occurs NOWHERE fails loudly instead of degrading to no scope",
+    () => resolveAnchor(graph, { name: "amb", anchor: "AMBIGUOUS_ANCHOR", coLiteral: "no such literal" }),
+    /occurs nowhere in the graph/);
+  throws("a coLiteral that never co-occurs with the anchor fails loudly",
+    () => resolveAnchor(graph, { name: "amb", anchor: "AMBIGUOUS_ANCHOR", coLiteral: "var third" }),
+    /never co-occur/);
+  throws("a coLiteral present in BOTH candidates leaves the anchor ambiguous, and is refused",
+    () => resolveAnchor(graph, { name: "amb", anchor: "AMBIGUOUS_ANCHOR", coLiteral: "hint:" }),
+    /not unique in chunks containing/);
+  throws("an anchor that occurs twice in ONE chunk is refused even inside a scope",
+    () =>
+      resolveAnchor(new Map([["/g/engine.js", engine + engine]]), {
+        name: "amb",
+        anchor: "AMBIGUOUS_ANCHOR",
+        coLiteral: "execute shell commands",
+      }),
+    /not unique in chunks containing/);
+  throws("a missing anchor is still the first failure",
+    () => resolveAnchor(graph, { name: "gone", anchor: "NOT_PRESENT", coLiteral: "hint:" }),
+    /anchor not found anywhere/);
+}
+
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;
