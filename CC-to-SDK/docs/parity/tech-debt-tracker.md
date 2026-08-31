@@ -6,6 +6,16 @@ the commit) or when a round's scope absorbs them.
 
 ## Open
 
+- **Plain-object env copies lose Windows' case-insensitive variable semantics** (found by bl12's round-4
+  codex review, 2026-09-01). On win32 a child process sees `Claude_Config_Dir` as `CLAUDE_CONFIG_DIR`
+  (env names are case-insensitive and Node's live `process.env` mirrors that), but every plain-object env
+  this codebase builds — `resolveOptions`' `{...process.env, ...env}` SDK spawn merge, `effectiveEngineEnv`,
+  `claudeConfigDir(env)` reads, the config domain's `userLayerDir` — does case-SENSITIVE key lookups, so a
+  noncanonically-cased variable resolves differently than the engine child would see it. Class predates
+  bl12; bl12 added one more consumer (the roster `configDir` mint). Currently unreachable where it was
+  found: the attach transport is POSIX-only (UDS socket files, `ps -o lstart=` liveness), so no Windows
+  attach exists to mis-derive for. Fix when a Windows fleet story exists: a `canonicalEnv()` helper that
+  upcases-dedupes keys on win32, applied at the few env-copy seams.
 - **`test/live/image-submit.e2e.test.ts` unresolved-mkdtemp symlink bug** (found bl7, 2026-08-30). Line ~92
   uses `mkdtempSync` without `realpathSync`, the exact macOS `/var` → `/private/var` storage-key mismatch
   the bl7 advisor live cell hit and fixed locally (`test/live/advisor.e2e.test.ts:126`). The suite passed
