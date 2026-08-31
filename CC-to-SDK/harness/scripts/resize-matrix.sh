@@ -280,7 +280,7 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   # the settings key and the default, so either pin holds no matter what a cell writes into its prefs file.
   # Every caller but `run_f1_cell` omits the argument and therefore gets classic; f1 passes `1` and is the one
   # cell in this file whose subject is the fullscreen renderer.
-  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=$pin node $BIN"
+  cmd="env HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CI=false CLAUDE_CODE_NO_FLICKER=$pin node $BIN --permission-mode default"
   # THE CREDENTIAL, WHEN THERE IS ONE (task 6's A3 cell), GOES THROUGH `-e` AND NOT THROUGH `$cmd`. Appending
   # it there would put it in the argv of the shell tmux runs, visible in `ps` for the whole life of the
   # session; with `-e` the child's argv is the `env … node bin.js` line and nothing else (measured). What `-e`
@@ -301,15 +301,21 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   fi
   SESSIONS="$SESSIONS $s"
   tmux set-option -t "$s" remain-on-exit on >/dev/null
-  # READY-NEEDLE, AND IT HAS DRIFTED TWICE NOW. It was qa-driver.md §2.1's `⇧Tab to cycle`, which Wave R
+  # READY-NEEDLE, AND IT HAS DRIFTED THREE TIMES NOW. It was qa-driver.md §2.1's `⇧Tab to cycle`, which Wave R
   # replaced with `⏎ send` — the composer's own hint row. Wave C task 2 then DELETED that whole row (the
   # one-row footer: `ChatComposer.tsx:1091`, "HINT ROW 1 … was a ccx invention"), so from that commit every
   # cell here burned its full 60 s and reported "never reached the ready frame" — the matrix has been failing
-  # closed ever since, which is how W2 t7 found it. `⏸ manual mode on` is the footer's home state
-  # (`Footer.tsx`, annex §C4.c `⏸ manual mode on · ? for shortcuts · ← for agents`): it is printed by the
-  # first interactive frame at every width in the matrix, it does not depend on a draft or a turn, and the
-  # matrix never changes mode. The `? for shortcuts` tail is NOT in the needle — the footer suppresses it
-  # whenever a statusLine is configured, and an isolated HOME is the only reason it is on screen here.
+  # closed ever since, which is how W2 t7 found it. `⏸ manual mode on` (the DEFAULT permission mode's own
+  # `modeTable.ts` label) was the second needle, and it drifted a third time when `DEFAULTS.permissionMode`
+  # became `"auto"` (an unrelated product default change, pre-dating T-SPACE) — the isolated-HOME launch this
+  # matrix used to boot into manual now boots into `⏵⏵ auto mode on`, so T-SPACE Task 4 found the whole matrix
+  # failing closed again. The durable fix is the `--permission-mode default` pin in `launch`'s cmd line above:
+  # the matrix's cells were AUTHORED against manual-mode frames (a3's permission prompt depends on it), so the
+  # mode is now pinned rather than inherited from a movable product default, and the original needle holds.
+  # (`(shift+tab to cycle)` was briefly tried as a mode-agnostic needle and is IMPOSSIBLE here by
+  # construction: `modeTable.ts`'s `isHomeMode` makes default the ONE mode whose chip carries no
+  # parenthetical.) The needle is printed by the first interactive frame at every width in the matrix, it
+  # does not depend on a draft or a turn, and the matrix never changes mode.
   local i=0
   while [ "$i" -lt 120 ]; do
     tmux capture-pane -t "$s" -p 2>/dev/null | grep -qF '⏸ manual mode on' && return 0
@@ -990,7 +996,7 @@ run_m1_cell() {
 #     Measured on a healthy build at 120x40, 80x24 and 120x24: the footer sits at `rows − 1` on every leg with
 #     the terminal's bottom row untouched, which is the `rows − 1` budget the fullscreen frame is given.
 F1_MARKS=24                                 # 48 rows of transcript: taller than the 40-row pane, asserted below
-F1_FOOTER='⏸ manual mode on'                # the dock's last row — `launch`'s ready-needle, reused as a POSITION
+F1_FOOTER='⏸ manual mode on'             # the dock's last row — `launch`'s ready-needle, reused as a POSITION
 # The 1-based row the dock's last line occupies, or 0 when it is not on screen at all (which is itself a
 # failure: a frame that lost its footer is not a frame that fills the pane).
 dock_row() { LC_ALL=C grep -n -F "$F1_FOOTER" "$1" | tail -1 | cut -d: -f1 | grep -E '^[0-9]+$' || echo 0; }
