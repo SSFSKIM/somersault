@@ -15,6 +15,10 @@ import { checkBackgroundTask } from "./scenarios.js";
 
 const TOOL_USE_ID = "toolu_01Wep5xk6suYMYvaBG71xjyV";
 const TASK_ID = "ad6fafa416f93578c";
+// The ids a DOUBLE-DISPATCHING engine would mint for its second run of the same
+// work: distinct from the first pair, and internally consistent with each other.
+const TOOL_USE_ID_2 = "toolu_02Sec0ndD1spatchXXXXXXX";
+const TASK_ID_2 = "be7fbb527a04689d0";
 
 interface NotificationSpec {
   task_id?: string;
@@ -34,6 +38,8 @@ interface Overrides {
   notifications?: NotificationSpec[];
   /** Splice the notifications ahead of task_started instead of after it. */
   notifyBeforeStart?: boolean;
+  /** Extra frames appended after the terminal bookend — e.g. a cloned lifecycle. */
+  append?: unknown[];
 }
 
 const notification = (n: NotificationSpec) => ({
@@ -127,6 +133,7 @@ const transcript = (o: Overrides = {}): unknown[] => {
       session_id: "s",
     },
     ...(o.notifyBeforeStart ? [] : notifications),
+    ...(o.append ?? []),
     {
       type: "assistant",
       parent_tool_use_id: null,
@@ -136,6 +143,42 @@ const transcript = (o: Overrides = {}): unknown[] => {
     { type: "result", subtype: "success", is_error: false, result: "Background agent completed with result: REFORGE_BG_OK" },
   ];
 };
+
+/**
+ * A SECOND, fully-valid lifecycle: the well-formed run's own dispatch and task
+ * frames, cloned with every id rewritten to the second pair. This is what a
+ * double-dispatching engine emits — each lifecycle is internally consistent, so
+ * every per-task assertion passes on either one taken alone; only counting the
+ * landmarks across the whole transcript catches the duplication.
+ */
+const cloneLifecycle = (): unknown[] =>
+  transcript()
+    .filter((m) => {
+      const mm = m as {
+        type?: string;
+        subtype?: string;
+        parent_tool_use_id?: string | null;
+        message?: { content?: unknown };
+      };
+      if (mm.type === "system")
+        return (
+          mm.subtype === "task_started" ||
+          mm.subtype === "task_notification" ||
+          (mm.subtype === "background_tasks_changed" && (mm as { tasks?: unknown[] }).tasks!.length > 0)
+        );
+      if (mm.type === "assistant" && !mm.parent_tool_use_id)
+        return (
+          Array.isArray(mm.message?.content) &&
+          (mm.message!.content as { name?: string }[]).some((b) => b?.name === "Agent")
+        );
+      return false;
+    })
+    .map((m) =>
+      JSON.parse(JSON.stringify(m).split(TOOL_USE_ID).join(TOOL_USE_ID_2).split(TASK_ID).join(TASK_ID_2)),
+    );
+
+const onlyStarted = (frames: unknown[]) =>
+  frames.filter((m) => (m as { subtype?: string }).subtype === "task_started");
 
 let failures = 0;
 const check = (name: string, cond: boolean, detail = "") => {
@@ -230,7 +273,25 @@ rejects(
   transcript({ notifications: [], runInBackground: false, isBackgrounded: false }),
 );
 
-// (h) the real shape must still pass, or the check is merely strict, not correct.
+// (h) multiplicity. The scenario claims ONE background dispatch, so duplication
+// is a failure and not a detail: an engine that runs the work twice pays for it
+// twice and repeats its side effects. Per-task uniqueness cannot see this —
+// each cloned lifecycle is internally consistent — so the landmarks are counted
+// across the whole transcript.
+rejects(
+  "the round-4 mutation (a second, fully-valid lifecycle under distinct ids) is rejected",
+  transcript({ append: cloneLifecycle() }),
+);
+rejects(
+  "an extra task_started with no second dispatch or notification is rejected",
+  transcript({ append: onlyStarted(cloneLifecycle()) }),
+);
+rejects(
+  "an extra completed task_notification for a different task_id is rejected",
+  transcript({ notifications: [{}, { task_id: TASK_ID_2, tool_use_id: TOOL_USE_ID_2 }] }),
+);
+
+// (i) the real shape must still pass, or the check is merely strict, not correct.
 const wellFormed = checkBackgroundTask(transcript());
 check("well-formed transcript passes", wellFormed === null, wellFormed ?? "");
 

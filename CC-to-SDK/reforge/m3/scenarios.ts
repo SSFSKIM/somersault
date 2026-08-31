@@ -28,19 +28,26 @@ function trackedUserMessage(text: string, uuid: string, originKind: "human" | "a
 const frames = (msgs: unknown[], subtype: string) =>
   msgs.filter((m) => (m as { type?: string; subtype?: string }).type === "system" && (m as { subtype?: string }).subtype === subtype);
 
-/** The Agent tool_use block — the dispatch every task frame must name. */
-function agentToolUse(msgs: unknown[]): { id?: string; input?: { run_in_background?: unknown } } | undefined {
+/**
+ * Every PARENT-LANE Agent tool_use block — the dispatches whose task frames the
+ * sidechannel must name. Lanes are marked by `parent_tool_use_id`: the parent
+ * turn's frames carry null, a subagent's own frames carry the id of the tool
+ * call that spawned them. A background child may dispatch agents of its own, and
+ * those are its business, not this scenario's — so they are not counted here.
+ */
+function topLevelAgentDispatches(msgs: unknown[]): { id?: string; input?: { run_in_background?: unknown } }[] {
+  const out: { id?: string; input?: { run_in_background?: unknown } }[] = [];
   for (const m of msgs) {
-    const mm = m as { type?: string; message?: { content?: unknown } };
-    if (mm.type !== "assistant") continue;
+    const mm = m as { type?: string; parent_tool_use_id?: string | null; message?: { content?: unknown } };
+    if (mm.type !== "assistant" || mm.parent_tool_use_id) continue;
     const c = mm.message?.content;
     if (!Array.isArray(c)) continue;
-    const block = (c as { type?: string; name?: string; id?: string }[]).find(
-      (b) => b?.type === "tool_use" && b?.name === "Agent",
-    );
-    if (block?.id) return block as { id?: string; input?: { run_in_background?: unknown } };
+    for (const b of c as { type?: string; name?: string; id?: string }[]) {
+      if (b?.type === "tool_use" && b?.name === "Agent")
+        out.push(b as { id?: string; input?: { run_in_background?: unknown } });
+    }
   }
-  return undefined;
+  return out;
 }
 
 /** Indices of the system frames of one subtype, in transcript order. */
@@ -77,16 +84,33 @@ function frameIndices(msgs: unknown[], subtype: string): number[] {
  * frame. `task_notification` is itself the terminal edge (its declared statuses
  * are completed | failed | stopped; `task_progress` carries the running ones),
  * so a second one for the same task is a double-settle, not progress.
+ *
+ * MULTIPLICITY is part of the claim too, and it is asserted over the WHOLE
+ * transcript rather than over the first matching frame. The scenario dispatches
+ * ONE background task; an engine that ran it twice duplicates its cost and its
+ * side effects. A check that selects the first dispatch and the first
+ * `task_started` and then enforces uniqueness only among the frames correlated
+ * to those accepts exactly that engine — two internally consistent lifecycles
+ * under distinct ids each satisfy every per-task assertion. So each of the three
+ * lifecycle landmarks — parent-lane Agent dispatch, `task_started`,
+ * `task_notification` — must occur exactly once in the transcript.
  */
 export function checkBackgroundTask(msgs: unknown[]): string | null {
   if (!usedTool(msgs, "Agent")) return "Agent tool never used";
-  const dispatch = agentToolUse(msgs);
-  const toolUseId = dispatch?.id;
+  const dispatches = topLevelAgentDispatches(msgs);
+  if (dispatches.length === 0) return "the Agent tool was used, but never dispatched from the parent lane";
+  if (dispatches.length > 1)
+    return `saw ${dispatches.length} top-level Agent dispatches; the scenario dispatches exactly one background task`;
+  const dispatch = dispatches[0];
+  const toolUseId = dispatch.id;
   if (!toolUseId) return "the Agent tool_use block carried no id";
-  if (dispatch?.input?.run_in_background !== true)
-    return `the Agent dispatch did not request background (input.run_in_background = ${JSON.stringify(dispatch?.input?.run_in_background)})`;
-  const startedIdx = frameIndices(msgs, "task_started")[0];
-  if (startedIdx === undefined) return "no task_started frame";
+  if (dispatch.input?.run_in_background !== true)
+    return `the Agent dispatch did not request background (input.run_in_background = ${JSON.stringify(dispatch.input?.run_in_background)})`;
+  const startedIdxs = frameIndices(msgs, "task_started");
+  if (startedIdxs.length === 0) return "no task_started frame";
+  if (startedIdxs.length > 1)
+    return `saw ${startedIdxs.length} task_started frames for a single dispatch; the background task started more than once`;
+  const startedIdx = startedIdxs[0];
   const started = msgs[startedIdx] as { task_id?: string; tool_use_id?: string; is_backgrounded?: unknown };
   const taskId = started.task_id;
   if (!taskId) return "task_started carried no nonempty task_id";
@@ -107,18 +131,18 @@ export function checkBackgroundTask(msgs: unknown[]): string | null {
   // notification's position relative to the parent's reply/result is the same
   // race the scenario's substanceOnly note describes, so nothing is asserted
   // across lanes.
-  const notifIdx = frameIndices(msgs, "task_notification").filter(
-    (i) => (msgs[i] as { task_id?: string }).task_id === taskId,
-  );
-  if (notifIdx.length === 0) return `no task_notification frame settled the dispatched task (${taskId})`;
-  if (notifIdx.length > 1)
-    return `saw ${notifIdx.length} terminal task_notification frames for task ${taskId}; a task settles exactly once`;
-  const notif = msgs[notifIdx[0]] as { tool_use_id?: string; status?: string };
+  const notifIdxs = frameIndices(msgs, "task_notification");
+  if (notifIdxs.length === 0) return `no task_notification frame settled the dispatched task (${taskId})`;
+  if (notifIdxs.length > 1)
+    return `saw ${notifIdxs.length} terminal task_notification frames; one background task settles exactly once`;
+  const notif = msgs[notifIdxs[0]] as { task_id?: string; tool_use_id?: string; status?: string };
+  if (notif.task_id !== taskId)
+    return `the task_notification settled ${JSON.stringify(notif.task_id)}, not the dispatched task (${taskId})`;
   if (notif.tool_use_id !== toolUseId)
     return `task_notification.tool_use_id (${JSON.stringify(notif.tool_use_id)}) did not match the Agent tool_use id (${toolUseId})`;
   if (notif.status !== "completed")
     return `task_notification settled the task as ${JSON.stringify(notif.status)}, not "completed"`;
-  if (notifIdx[0] <= startedIdx) return "the completion task_notification did not follow task_started";
+  if (notifIdxs[0] <= startedIdx) return "the completion task_notification did not follow task_started";
   // Fold-back. A whole-transcript substring search always trips here: the
   // dispatch prompt necessarily contains the marker (same trap as
   // `interrupt`). The fold-back is the marker arriving as PARENT-LANE
@@ -354,7 +378,9 @@ export const M3_SCENARIOS: Scenario[] = [
     //
     // So it grades on its substance assertion alone — which is therefore the
     // ONLY thing constraining either engine here, and has to carry the whole
-    // claim: the work was actually BACKGROUNDED (the dispatch asked for it and
+    // claim: the work was dispatched exactly ONCE from the parent lane (a
+    // double-dispatch duplicates the task's cost and side effects), it was
+    // actually BACKGROUNDED (the dispatch asked for it and
     // task_started registered it), the dispatch-time sidechannel frames are
     // correlated by their actual identifiers (`task_started` naming the Agent
     // tool_use id and a nonempty task_id, `background_tasks_changed` listing
