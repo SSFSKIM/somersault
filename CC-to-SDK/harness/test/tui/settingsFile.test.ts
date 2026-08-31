@@ -29,6 +29,25 @@ describe("settingsPath", () => {
   it("userSettings honors the injected home", () => {
     expect(settingsPath("userSettings", "/repo", { home: "/fake/home" })).toBe("/fake/home/.claude/settings.json");
   });
+  it("userSettings honors CLAUDE_CONFIG_DIR — it REPLACES ~/.claude outright, no .claude segment (BL12, claudeHome.ts's rule)", () => {
+    expect(settingsPath("userSettings", "/repo", { env: { CLAUDE_CONFIG_DIR: "/tenant/cfg", HOME: "/fake/home" } }))
+      .toBe("/tenant/cfg/settings.json");
+  });
+  it("an exported-but-EMPTY CLAUDE_CONFIG_DIR is a value, not an absence — the engine reads ./settings.json, so this path must say the same", () => {
+    // `??` semantics, verbatim from claudeConfigDir: `CLAUDE_CONFIG_DIR="$SOMETHING_UNSET"` exports ''.
+    expect(settingsPath("userSettings", "/repo", { env: { CLAUDE_CONFIG_DIR: "", HOME: "/fake/home" } }))
+      .toBe("settings.json");
+  });
+  it("an injected home stays hermetic — a real CLAUDE_CONFIG_DIR in the test runner's shell cannot reach it", () => {
+    // deps.home builds a HOME-only env, so whatever process.env carries is out of the picture entirely.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = "/leaked/from/shell";
+    try {
+      expect(settingsPath("userSettings", "/repo", { home: "/fake/home" })).toBe("/fake/home/.claude/settings.json");
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  });
 });
 
 // The READ side (Wave C Task 9): `resolveStatusLineConfig` needs the parsed user settings, and this module —

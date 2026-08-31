@@ -15,7 +15,11 @@ export function mintShortId(rand: () => number = Math.random): string {
 export function isShortId(s: string): boolean { return SHORT_RE.test(s); }
 
 /** Our fleet state root. CCX_FLEET_ROOT overrides it so tests never touch the real fleet.
- *  resolve()d so a relative override doesn't depend on the reading process's cwd. */
+ *  resolve()d so a relative override doesn't depend on the reading process's cwd.
+ *  Deliberately NOT `claudeConfigDir` (BL12, closing parked #37's second site): that variable scopes the
+ *  ENGINE's per-user state, and everything under this root — roster, run/, prefs, paste cache — is ccx's
+ *  own. A roster scoped per tenant would hide running hosts from `ccx attach`, which is machine-global by
+ *  design; a caller that wants isolation here says so in this root's own vocabulary, CCX_FLEET_ROOT. */
 export function fleetRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCX_FLEET_ROOT) return resolve(env.CCX_FLEET_ROOT);
   return join(env.HOME || homedir(), ".claude", "ccx");
