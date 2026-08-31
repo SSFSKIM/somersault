@@ -551,7 +551,11 @@ is: each capture's declaration span must hash to its recorded digest in the
 pinned bundle, and an imported capture is resolved on *both* sides — the import
 site in the owning chunk and the declaration in the exporting one. A footprint
 that recorded only its target could not be staled when a captured declaration
-moved, which is half of what §5 exists to catch.
+moved, which is half of what §5 exists to catch. An **owned** capture additionally
+carries `closure` — the transitive callees of the helper the module reimplemented,
+each validated span by span against whichever chunk it names, and rebased into the
+upstream basis the same way (W1 boundary review; see "Every build emits an
+upstream footprint" below).
 
 The ledger stores every span in the **upstream** basis (offsets into
 `~/claude-code-bundle/<pin>/modules/…`, identical on every machine), while
@@ -684,6 +688,26 @@ byte-identical. An imported capture is covered on both sides: the import site,
 which is what breaks if the export is renamed or dropped, and the declaration in
 the exporting chunk, which is where the behaviour lives. When the far side is out
 of reach the record carries a `note` saying so rather than narrowing silently.
+
+An **owned** capture goes one level further, and has to (W1 boundary review). The
+module reimplements it, and a reimplementation replaces not just the helper but
+everything the helper delegates to: Read's owned notebook formatter is upstream's
+`hyt`, whose entire body is `e.flatMap(UDn)` — `UDn` calls `NDn`/`$Dn`, where
+notebook cell and output formatting actually live; Bash's `y1t` delegates to
+`iyt` (data-URI parsing) and `$v` (magic-byte image sniffing, in another chunk).
+Hashing only `hyt` and `y1t` let a pin bump rewrite image sniffing or notebook
+output formatting with every recorded span byte-identical — a green ledger over
+stale owned behaviour, on branches no scenario renders. So each owned capture also
+records the **transitive closure** of what its declaration references, resolved
+declaration by declaration (same chunk, or across an import) and recursed
+breadth-first with the depth kept. On this pin the walks resolve **15 transitive
+declarations across 8 owned helpers**, max depth 2. The walk is bounded at 6
+levels / 20 declarations; when the bound is hit, or a callee resolves somewhere
+the graph cannot follow, the enumeration is abandoned for hashing every chunk it
+reached **whole**, with a note saying why — that stales the row on edits it does
+not depend on, which is the right way to be wrong. A closure recorded as complete
+when it is not is a false green, and a false green is the failure the record
+exists to prevent.
 
 ### The target-identity guard
 
@@ -1184,6 +1208,15 @@ the full surface at W9. `src/state.test.ts` is the non-vacuity control: a same-l
 a stray file, a missing file, a symlink target and each exit class are all caught, and an mtime
 change is ignored — exactly what the canonicalization claims.
 
+The snapshot starts at the sandbox **root itself** (the entry `"."`, carrying its existence and
+kind), which the W1 boundary review found missing: listing only the children made an *absent* root
+and an existing but *empty* one the same empty array, so an engine that deleted its working
+directory graded identical to one that correctly left it clean — on the surface whose entire job is
+seeing what a run did to the machine. A missing root now reports `kind: "missing"` and diffs against
+the `"dir"` an empty one reports; a root replaced by a file is its own difference; two existing empty
+roots still match. `lstat`, not `existsSync`, so a dangling symlink root is a symlink rather than an
+absence.
+
 ### Dual-wiring is now two importers of one file
 
 There is **one** owned implementation per module, at `strangle/modules/<name>/reference.js` — plain
@@ -1254,6 +1287,25 @@ command reads its result back — and all four are listed in its manifest row so
 is not mistaken for a regression.
 
 Corpus **24/24**, full acceptance **5/5**, **13** liveness phases, zero positional fallbacks.
+
+### Two ways a green gate could still be lying (W1 boundary review)
+
+Both findings were the same shape as W0's: a check that passes because it cannot see the thing it
+claims to watch.
+
+- **Transitive pure-helper footprints.** The footprint covered each owned helper's own declaration
+  and stopped. But an owned helper is *reimplemented*, and Read's and Bash's owned helpers are both
+  one-line delegations — `hyt` is `e.flatMap(UDn)`, `y1t` is `iyt` then `$v`. Every byte that decides
+  their behaviour lives one level out, in declarations nothing recorded, so a pin bump could rewrite
+  notebook output formatting or image sniffing with the whole ledger green. The emitter now walks the
+  transitive closure (details under "Every build emits an upstream footprint"); the control is a
+  fixture whose transitive callee is perturbed length-preservingly with the helper, the import site
+  and the target all byte-identical — the footprint has to move, and with the walk disabled ten
+  controls fail.
+- **The state surface could not see a deleted sandbox.** `treeOf` returned the same empty array for
+  an absent root and an existing empty one, so an engine that deleted its working directory graded
+  identical to one that left it clean. The snapshot now opens with the root itself (details under
+  "The fourth diff surface").
 
 ## Next
 
