@@ -50,16 +50,32 @@ Three owner observations, post-research:
 - `/status`, `/usage`, `/cost`, `/stats` open `SettingsDialog` on their tab (`Status`/`Usage`/`Usage`/
   `Stats`; `/config` + `/settings` keep `Config`), mirroring canon where all six commands open one
   dialog (`gq` L762665, `/status` entry `defaultTab:"Status"` L594062). The text formatters
-  (`formatStatus` etc.) remain as library functions (canon keeps `local` text twins for headless;
-  our TUI arms switch to the dialog).
-- `/permissions` gains the missing **Auto mode** tab and adopts canon's tab order:
-  Workspace · Allow · Ask · Deny · Recently denied · Auto mode (L829960).
+  (`formatStatus` etc.) remain as library functions. **Information-equivalence gate (D13,
+  plan-review F3):** an arm switches from text to dialog only when the dialog loader preserves the
+  arm's semantics — Status re-measures context freshly on open (today's tab reads possibly stale
+  `ctxPct`), the Stats tab carries `/stats`'s in-flight staleness disclaimer, and `/cost`'s
+  cost/duration/per-model detail must be present in the Usage/Stats panes before its text arm is
+  removed (where canon's pane lacks a field our text shows, keep the field as a recorded additive
+  divergence — information preservation outranks strict pane parity). Equivalence tests precede arm
+  removal.
+- `/permissions` gains the missing **Auto mode** tab, inserted before Workspace. Canon's true order
+  (verified at L829914-829953 against a wrong R1 reading, plan-review F5) is
+  Recently denied · Allow · Ask · Deny · Auto mode · Workspace — our existing five tabs already match;
+  **no reorder**. Auto mode ships **display-only** this round (D12): render the auto-mode rule data our
+  model exposes, else canon's empty state; no add/edit mutations (canon's tab is conditional on
+  `isAutoModeAvailable` and carries a builtins/search UI we have no data contract for yet).
 - **`/mcp` browser**: a view-stack dialog (canon's second idiom, router L582270) —
   `list → server-menu → server-tools → server-tool-detail`. Root: frame titled "Manage MCP servers",
   subtitle `N servers`, grouped rows, windowed list with `↑ N more above`/`↓ N more below`, keyhint
   footer. Enter drills in; Esc pops one level (root Esc closes). Server menu shows the
-  Type/URL/Command/Status field block. **Skipped** (D5): `agent-server-menu` branch, OAuth/authenticate
-  flow, the "Show all connectors" toggle — no corresponding surface in our session model.
+  Type/URL/Command/Status field block. **Data source (D5 amended, plan-review F4):** a typed
+  normalization of `session.mcpServerStatus()` rows — the SDK already returns per-server `tools`
+  (`{name, description?, annotations?}`, `sdk.d.ts:1141-1151`) plus config/scope; the drill-downs
+  derive from that, NOT from a flattened `mcp__<server>__` catalog (no such session inventory
+  exists). **Geometry (F6):** the MCP dialog joins `paneOwned` so transcript/task-panel/spinner
+  unmount beside it, like every rows-dependent overlay. **Skipped** (D5): `agent-server-menu`
+  branch, OAuth/authenticate flow, the "Show all connectors" toggle — no corresponding surface in
+  our session model.
 - **No dialog-registry refactor this round** (D4): dialogs keep mounting through the existing
   `overlayChain`/`useChat` state-field pattern. The three-files-per-dialog tax is real (R1 §3.5) but
   this round adds only one new dialog; the `oj`-style table pays off when `/plugin`/`/hooks`/`/skills`
@@ -67,9 +83,14 @@ Three owner observations, post-research:
 
 ### 2.2 T-SPACE — the spacing invariant
 
-- **The invariant: one blank row above every top-level transcript block.** Implemented as the
+- **The invariant: one blank row above every top-level RENDERED block.** Implemented as the
   established stand-in device (a `kind:"line"` item with empty text and a stable id —
-  `toolRenderer.tsx:1061-1065` documents it), emitted **above each anchor** at the four concat sites:
+  `toolRenderer.tsx:1061-1065` documents it), emitted **above each realized non-empty render unit**
+  (plan-review F1: raw `Anchored` entries are NOT visible blocks — `buildAnchoredEntries` retains
+  empty carriers whose content was filtered or absorbed, and the visible completed-tool anchor is
+  added separately — so a separator gates on the unit actually contributing items, and each carries
+  a unique durable boundary id, pairwise-distinct so `publishedIds` can never silently dedup two).
+  Emission happens at the four concat sites:
   `weaveStandaloneHooksFlat` fast path (:1582) and interleave loop (:1587), `foldAnchored`'s out-loop
   arms (:1747-1763), and `projectPending`'s items loop (:1845-1857). Above-not-between is what makes
   the Static/window/pending region boundaries work without cross-region lookback, and reproduces
@@ -83,9 +104,19 @@ Three owner observations, post-research:
   consecutive-text-blocks rule (the plan pins the exact interaction).
 - **[BUG] fix**: `expandedMemberItems` member arm (:1097) gets the leading blank that
   `thinkingRowItems` (:1069) already has — canon `LC` is unconditional `marginTop:1` (L193259).
+- **Live streaming joins the invariant** (plan-review F8): the streaming paths bypass the anchor
+  concat sites (`Transcript.tsx:27-32` classic; `streamingItems.ts` → `FullscreenViewport.tsx:371`
+  fullscreen), so a live assistant block would stay glued to its predecessor until finalized. One
+  stable, unbanded separator is added to the shared streaming representation; the
+  streaming→finalized transition keeps exactly one gap (no jump, no accumulation).
 - **Chrome**: the spinner slot (`TurnSpinner`, shared with `RetryRow`/`CompactionRow` at
   `ChatApp.tsx:1985-1987`) gets `marginTop:1` on the slot (canon `Gn` L77727, unconditional);
-  the composer gets `marginTop:1` dropped to 0 while the suggestion palette is open (canon L160599).
+  the composer gets `marginTop:1` dropped to 0 while the suggestion palette is open (canon L160599;
+  the authoritative palette state lives in `ChatComposer.tsx` and must be wired from there).
+  **Dock budgets are remeasured, not left** (plan-review F2): `MAIN_DOCK_ROWS` (`liveWindow.ts:38-56`,
+  currently the measured 14 incl. spinner=1, composer=3) becomes 16 with the two new margin rows,
+  and `dockDialogRows` re-derived; tall-write tests at short/normal heights for spinner, retry,
+  compaction, and palette-open states guard the Ink `outputHeight >= rows` clear/replay cliff.
 - **Skipped** (D8): the REPL block's trailing `marginBottom:1` (no REPL tool surface) and canon's
   brief-layout composer condition (no brief layout).
 - **Risk under management**: every block grows one painted row — live-window and pager **row budgets**
@@ -94,13 +125,17 @@ Three owner observations, post-research:
 
 ### 2.3 T-CLICK — the asymmetric hit region (lands after T-SPACE merges)
 
-- Carry `expanded` into the hitmap rows the way `clickable`/`ownerKey` already travel; an **expanded**
-  row's hit width becomes the full column count (canon's background rectangle, R2 §1.3), while a
-  **collapsed** row keeps the glyph-width bound (canon's blank-cell drop). `clickTargetAt`'s existing
-  `col > at.width` guard then answers correctly in both states — no new branch in the mouse layer (D9).
-- Paint the expanded band full-width (canon paints a rectangle of styled spaces, L376156) and extend
-  the band to `expandedMemberItems`, so an expanded fold cluster looks open and advertises the widened
-  region. Hover suppression on expanded items stays (canon-faithful; the band replaces hover feedback).
+- **One explicit band marker drives both paint and hit width** (D9 as revised by plan-review F7:
+  `item.expanded` is NOT a valid proxy for painted cells — the absorbed-thinking margin row already
+  carries `expanded:true` + `foldAnchor`, and expanded headers are tagged expanded while only result
+  bodies get `withExpandedMarker`). A row-level marker (`band`) is set exactly on the rows that
+  belong to the visual band — header, body, padding — and **never** on spacing separators/margins
+  (canon-faithful: canon's margins sit outside the background box). The hitmap widens a row to full
+  column count iff it carries the marker; the renderer paints the full-width band from the same
+  marker. `clickTargetAt`'s existing `col > at.width` guard then answers correctly in both states.
+- The band extends to `expandedMemberItems` rows, so an expanded fold cluster looks open and
+  advertises the widened region. Hover suppression on expanded items stays (canon-faithful; the band
+  replaces hover feedback).
 - Flip `test/tui/fold-click.test.tsx:707` to assert the expanded blank tail **does** collapse; keep
   :696 (collapsed blank tail inert) — the asymmetry is the point. Update the `docs/parity/tui-ux.md`
   blank-tail rule to the asymmetric form.
@@ -110,35 +145,52 @@ Three owner observations, post-research:
 
 ## 3. Ticket/merge topology
 
-Wave 1: **T-MENU** and **T-SPACE** in parallel worktrees (disjoint hot files except trivial
-`useChat.ts` command arms vs. none — T-SPACE lives in `toolRenderer.tsx`/chrome; T-MENU in
-dialogs/`useChat` switch arms). Sequential `--no-ff` merges with reconciliation gates. **T-CLICK**
-branches from post-T-SPACE main because its fold-click frames sit atop changed spacing. Whole-round
-codex review + fix waves under the ledger's pre-committed convergence rule.
+Wave 1: **T-MENU** and **T-SPACE** in parallel worktrees. They are NOT fully disjoint (plan-review
+F6): T-MENU's `/mcp` arm and T-SPACE's dock geometry both touch `ChatApp.tsx`, which is hereby a
+**declared reconciliation seam** — the second wave-1 merge re-runs the first ticket's ChatApp-adjacent
+tests, and the merge battery adds a combined short-terminal + maximum-dock integration test (MCP
+dialog open, spinner ticking, palette open) that neither branch can run alone. **T-CLICK** branches
+from post-both-merges main because its fold-click frames sit atop changed spacing and its band marker
+must see T-SPACE's separators. Whole-round codex review + fix waves under the ledger's pre-committed
+convergence rule.
 
 ## 4. Acceptance (behavior-phrased)
 
 - **A1** `/status` opens the Settings dialog on the Status tab; `/usage` and `/cost` on Usage; `/stats`
   on Stats; `/config`//`/settings` unchanged on Config. Esc closes. No text dump in the transcript.
+  Information-equivalence holds per D13: Status re-measures context on open; Stats carries the
+  staleness disclaimer; every field `/cost`'s text form shows today is visible in the dialog
+  (equivalence tests prove it before an arm is removed).
 - **A2** `/mcp` opens "Manage MCP servers" with grouped server rows and windowed scrolling; Enter
   drills list → server-menu → server-tools → server-tool-detail; Esc pops exactly one level; root Esc
   closes; the dialog reflects the session's live MCP data (same source `formatMcpStatus` reads today).
-- **A3** The Permissions dialog shows six tabs in canon order ending with a functional Auto mode tab.
+- **A3** The Permissions dialog shows six tabs in canon's true order (Recently denied · Allow · Ask ·
+  Deny · Auto mode · Workspace — the existing five keep their positions, Auto mode inserts before
+  Workspace); the Auto mode tab renders real data where our model has it, else canon's empty state,
+  and is explicitly display-only (D12). Tab-order and keyboard-cycling pins updated deliberately.
 - **A4** SettingsDialog/PermissionsDialog/HelpDialog render through the shared shell (tab pane + frame
   + auto keyhint bar); the per-dialog TABS/TAB_SPECS/body-switch boilerplate is gone; each frame's
   keyhint bar derives from the action registry, not a hand-written string.
 - **A5** Clicking the blank tail of an **expanded** block (past end-of-text, inside the band)
   collapses it; clicking the blank tail of a **collapsed** block still does nothing; the expanded band
-  spans the full terminal width; an expanded fold cluster shows the band. Existing 27 fold-click tests
-  still pass with :707 flipped.
+  spans the full terminal width and its painted extent equals the widened hit extent row-for-row (one
+  marker drives both); spacing separators above/below an expanded block are neither banded nor
+  clickable; an expanded fold cluster shows the band. Existing 27 fold-click tests still pass with
+  :707 flipped.
 - **A6** Rendered frames show exactly one blank row above every top-level block (prompt echo,
   assistant text, tool row, thinking, system notice, next turn's prompt), one above the spinner slot
   and the composer (0 while the suggest palette is open), one between expanded-cluster members; tool
   header → its `⎿` body stays 0; markdown paragraph gap stays 1. Verified against the recorded canon
   frame fixture (`test/fixtures/upstream-frames/f1-tool-rendering/01-read-complete.ansi` seam rows
-  14-21).
+  14-21). A LIVE-streaming assistant block shows its gap from the first delta, the gap does not
+  accumulate across deltas, and finalization keeps exactly one gap (no geometry jump). Empty anchor
+  carriers (filtered tool content, absorbed thinking, suppressed notices, coalesced entries) emit NO
+  separator — no phantom or double gaps.
 - **A7** Full battery green: unit + tui suites, resize matrix, and the existing pty cells; live-window
-  and pager row-budget tests re-verified against the +1-row-per-block geometry.
+  and pager row-budget tests re-verified against the +1-row-per-block geometry; `MAIN_DOCK_ROWS`
+  remeasured to 16 (and `dockDialogRows` re-derived) with tall-write tests covering spinner, retry,
+  compaction, and palette-open at short and normal terminal heights; the combined post-merge geometry
+  test (§3) green.
 
 ## 5. Deferred (recorded, not silent)
 
@@ -172,12 +224,36 @@ argument, cloud/account/setup family (out of reach).
 - **D7-bl10** Model canon as the invariant "one blank above every block", not as `addMargin`
   threading — canon's header modes move the margin between elements but never change the visible gap.
 - **D8-bl10** Skip REPL trailing margin + brief-layout composer condition (no such surfaces). Logged.
-- **D9-bl10** Click fix = asymmetric hit width (expanded → full columns; collapsed → glyph width).
-  Rejected: emulating canon's `cellIsBlank` screen-buffer test (we have no packed cell buffer to ask;
-  the rectangle rule reproduces canon's observable behavior exactly because canon's band is what
-  makes those cells non-blank).
+- **D9-bl10** (v2) Click fix = asymmetric hit width driven by an explicit row-level **band marker**
+  set on exactly the rows composing the visual band, never on separators/margins; hit width AND
+  full-width paint derive from the same marker. v1's `expanded`-flag proxy was killed by plan-review
+  F7 (the absorbed-thinking margin row carries `expanded:true`; headers are tagged expanded without a
+  band). Rejected: emulating canon's `cellIsBlank` screen-buffer test (no packed cell buffer to ask);
+  rejected: the expanded-flag proxy.
 - **D10-bl10** Double-click word-select eating a fast re-click is canon parity — untouched, noted as
   UX residue. Ctrl+o remains the global toggle; no per-block key added (canon has none).
+- **D11-bl10** (plan review F1) Separators attach to realized non-empty render units, not raw
+  `Anchored` entries (empty carriers exist by design: filtered tool content, absorbed thinking,
+  coalesced entries); each separator has a unique durable boundary id. Rejected: per-anchor emission
+  (phantom/double gaps); rejected: stability-only id tests (publishedIds dedup hides collisions).
+- **D12-bl10** (plan review F5) R1's permissions tab order was a misread — canon is Recently denied ·
+  Allow · Ask · Deny · Auto mode · Workspace (L829914-829953), so our five existing tabs already
+  match and Auto mode simply inserts before Workspace. Auto mode ships display-only; its
+  add/edit/builtins contract is deferred. Rejected: the reorder (a regression); rejected: "functional"
+  acceptance without a data contract.
+- **D13-bl10** (plan review F3) Information-equivalence gate: a text arm converts to a dialog arm
+  only when the dialog preserves its semantics (fresh context measurement, staleness disclaimer,
+  cost detail). Where canon's pane lacks a field our text shows, keep the field as recorded additive
+  divergence. Rejected: silent rerouting (regresses correctness and information).
+- **D14-bl10** (plan review F8) The spacing invariant covers LIVE streaming via one stable unbanded
+  separator in the shared streaming representation, with a jump-free streaming→finalized transition.
+  Rejected: finalization-only spacing (visible geometry jump per turn).
+- **D15-bl10** (plan review F6) `ChatApp.tsx` is a declared reconciliation seam for wave 1; the MCP
+  dialog joins `paneOwned`; a combined max-dock/short-terminal geometry test runs post-merge; T-CLICK
+  branches from post-BOTH-merges main. Rejected: "disjoint worktrees" as originally claimed.
+- **D16-bl10** (plan review F2) Dock budgets are remeasured, not inherited: `MAIN_DOCK_ROWS` 14 → 16,
+  `dockDialogRows` re-derived, tall-write tests guard the Ink clear/replay cliff. Rejected: leaving
+  the measured constant and spending the safety slack silently.
 
 ## 7. Surprises & Discoveries
 
@@ -199,3 +275,8 @@ Pending — written at finish.
 ## 9. Revision Notes
 
 - v1 (2026-08-31): authored from R1/R2/R3 verdicts.
+- v2 (2026-08-31): all eight codex plan-review findings verified and adopted (F1 separators→realized
+  units D11; F2 dock budgets D16; F3 information-equivalence D13; F4 /mcp data from
+  `mcpServerStatus().tools` normalization; F5 permissions order corrected, Auto mode display-only
+  D12; F6 ChatApp seam + paneOwned + T-CLICK rebase D15; F7 band marker D9v2; F8 streaming separator
+  D14). R1's permissions-order claim corrected in place per the bundle (L829914-829953).
