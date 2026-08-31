@@ -19,16 +19,13 @@ separate file and not in `~/.claude/statsig`:
 | Server "client data" bootstrap blob | `clientDataCacheSlots` (keyed by entrypoint/model/org), legacy `clientDataCache` | 141154, 141163, 312566-312572 |
 
 `statsig` appears **only** as a directory-name string in two housekeeping lists — the known-config-
-entries allowlist (124150) and a cleanup sweep (722608). No Statsig SDK, no reader, no writer.
-That literal is a vestige of a retired provider.
+entries allowlist (124150) and a cleanup sweep (722608). No SDK, no reader, no writer: a vestige.
 
-`reforge/config/` contents (verified by `ls -laR`): `.claude.json`, `.last-cleanup`,
+`reforge/config/` (verified by `ls -laR`) holds `.claude.json`, `.last-cleanup`,
 `policy-limits.json`, `remote-settings.json` (literally `{}`), `backups/`, `projects/`,
 `session-env/`, `sessions/`, `shell-snapshots/`, `tasks/`. **No statsig dir, no gate cache.**
 `grep -rl 'cachedGrowthBookFeatures|clientDataCacheSlots|clientDataCache|cachedExperimentFeatures'
-config/` → no matches. `.claude.json` holds only `firstStartTime`, `firstStartVersion`, `machineID`,
-two migration booleans, `seenNotifications`, `migrationVersion`, `userID`,
-`cachedExtraUsageDisabledReason`.
+config/` → no matches; `.claude.json` carries only install/migration identity fields.
 
 ## 2. What the resolver does with no cache and no network (Q2)
 
@@ -108,16 +105,13 @@ telemetry is `tengu_client_data_stale_refetch` (**497758**), throttled by
 
 Ran `npx tsx m1/run.ts --scenario plain` with `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-REPLAY-DUMMY`
 (a bogus value, only to clear the runner's `process.exit(1)` auth guard at `m1/run.ts:37-40`).
-Result: `cassette exists — reusing` → `ALL PASS` (transcripts/events/requests identical, substance
-ok). A garbage token producing a clean pass is itself proof no gate/bootstrap call reaches the
-network.
+Result: `cassette exists — reusing` → `ALL PASS`. A garbage token producing a clean pass is itself
+proof no gate/bootstrap call reaches the network. `find config -exec stat` before/after: the **only**
+changes are two new session `.jsonl` files under `config/projects/-…-reforge-sandbox/` and that
+dir's + `config/sessions/`'s mtimes. `.claude.json` was not rewritten and still has no gate keys.
 
-`find config -exec stat` before/after: the **only** changes are two new session `.jsonl` files under
-`config/projects/-…-reforge-sandbox/` and the mtimes of that dir and `config/sessions/`.
-`.claude.json` was **not** rewritten (mtime unchanged) and still has no gate keys.
-
-Answer to "cache, defaults, or silent fetch failure": **defaults** — and not by fetch failure but by
-an explicit, deliberate short-circuit two levels above the network.
+Answer to "cache, defaults, or silent fetch failure": **defaults** — not by fetch failure but by an
+explicit short-circuit two levels above the network.
 
 ## 4. Kill-switches and override knobs (Q4)
 
