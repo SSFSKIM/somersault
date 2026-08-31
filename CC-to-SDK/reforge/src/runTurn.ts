@@ -9,6 +9,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { engineEnv, type EngineEnvKnobs, type EnvMode } from "./env.js";
+import { BUN } from "./pin.js";
 
 export const REFORGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SANDBOX = join(REFORGE_ROOT, "sandbox");
@@ -29,7 +31,23 @@ export interface TurnOptions {
   model?: string;
   maxTurns?: number;
   allowedTools?: string[];
-  env?: Record<string, string>; // extra env for the engine subprocess (e.g. ANTHROPIC_BASE_URL)
+  /** Which credential schema the child gets (X6). Live turns record; offline turns replay. */
+  mode?: EnvMode;
+  /** The record/replay proxy seam. */
+  baseUrl?: string;
+  /** Deliberate, schema-checked child-env knobs. Arbitrary env passing is gone by design (X6). */
+  knobs?: EngineEnvKnobs;
+}
+
+/**
+ * X6 — build the engine subprocess environment for an SDK-driven run.
+ *
+ * `Options.env` REPLACES the subprocess env (sdk-options-gotchas), which used to
+ * mean "spread process.env and add knobs". It now means the opposite and better
+ * thing: nothing is inherited, everything is declared.
+ */
+export function sdkEnv(mode: EnvMode, baseUrl?: string, knobs?: EngineEnvKnobs): Record<string, string> {
+  return engineEnv({ mode, baseUrl, knobs, bun: BUN, configDir: CONFIG_DIR });
 }
 
 export interface TurnCapture {
@@ -54,16 +72,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnCapture> {
       allowedTools: opts.allowedTools ?? [],
       permissionMode: "bypassPermissions",
       settingSources: [],
-      // Options.env REPLACES the subprocess env (sdk-options-gotchas), so
-      // rebuild it: parent env + determinism knobs + caller extras.
-      env: {
-        ...(process.env as Record<string, string>),
-        CLAUDE_CONFIG_DIR: CONFIG_DIR,
-        DISABLE_TELEMETRY: "1",
-        DISABLE_ERROR_REPORTING: "1",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        ...opts.env,
-      },
+      env: sdkEnv(opts.mode ?? "record", opts.baseUrl, opts.knobs),
     },
   });
   for await (const m of q) messages.push(m);

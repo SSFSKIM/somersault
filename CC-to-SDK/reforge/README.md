@@ -54,14 +54,19 @@ graph boot-checks it.
 
 ## Layout
 
-- `src/pin.ts` — the pinned version + derived paths. Bumping the pin is: extract the new version, edit one constant, re-prepare, re-record cassettes, re-gate.
+- `src/pin.ts` — the pinned version + derived paths, **and the pinned bun** (§3.5). Bumping the pin is: extract the new version, edit one constant, re-provision the runtime, re-prepare, regenerate the gate-defaults fixture, re-record cassettes, re-gate.
+- `src/env.ts` — **the allowlisted child environment and its record/replay credential schemas** (X6). Every engine spawn goes through it; nothing is inherited.
+- `src/canonical.ts` — **the normalization spec**, shared by the differ and the replay proxy's match hash (§3.4). Grow it only with justification, and only with a paired regression test.
+- `src/leakcheck.ts` — the gate-cache leak check run after every record and replay.
+- `strangle/toolchain.ts` — re-derives the binary's embedded bun version and installs it into `toolchain/` (gitignored).
+- `research/tools/extract-gate-defaults.ts` + `research/fixtures/` — the `ENGINE_VERSION`-keyed feature-gate defaults table and the per-gate env-override inventory.
 - `strangle/prepare.ts` — materializes + boot-checks the engine set (`build/graph`, `build/real-binary`).
 - `strangle/manifest.ts` — the splice manifest, in its own module so reading it never runs a build. Also the schema: target shapes + the capture taxonomy (below).
 - `strangle/ast.ts` — anchor position → the span of its enclosing node, per declared target shape.
 - `strangle/perturb.ts` — the derivation non-vacuity check (below); reads the pinned bundle, touches nothing under `build/`.
 - `src/runTurn.ts` — shared driver: one prompt → one engine → captured SDK-message transcript. Determinism knobs: `settingSources: []`, fixed `sandbox/` cwd, telemetry env off.
-- `src/proxy.ts` — record/replay proxy (`ANTHROPIC_BASE_URL` seam). Record forwards + captures (auth redacted before disk); replay serves deterministically (scrubbed-body hash match, then per-path FIFO) and logs every observed request for request-level diffing.
-- `src/differ.ts` — **the normalization spec is the definition of "behaviorally equivalent"**: scrubbed keys/patterns (ids, clocks `*_ms`/`*_at`, costs) are declared incidental; everything else must match. Grow it only with justification.
+- `src/proxy.ts` — record/replay proxy (`ANTHROPIC_BASE_URL` seam). Record forwards + captures (auth redacted before disk); replay serves deterministically (shared-canonical-form hash match, then per-path FIFO — a fallback is FATAL for any engine that is not the identical-code pair, §3.4) and logs every observed request for request-level diffing.
+- `src/differ.ts` — **the definition of "behaviorally equivalent"**: scrubbed keys/patterns (ids, clocks `*_ms`/`*_at`, costs) are declared incidental; everything else must match. Its value-level scrubs now live in `src/canonical.ts`, shared with the proxy.
 - `engine-ts/` — the reforge-owned engine (W0 skeleton: stream-json shell + module registry + static-reachability check). **Has its own `README.md`** — read it before registering a module.
 - `ledger.json` + `ledger/` — the closure ledger: one row per in-scope subsystem and per headless catalog tool, with its ownership state, dependency edges, and upstream footprint. The campaign's primary progress metric; `ledger/check.ts` validates it against the canonical row list.
 - `m0/` — milestone cells (below). `cassettes/`, `transcripts/`, `sandbox/` are generated (gitignored).
@@ -70,11 +75,18 @@ graph boot-checks it.
 
 ```sh
 cd reforge && npm install --omit=optional
+npx tsx strangle/toolchain.ts     # install the pinned bun into toolchain/ (once per pin)
 npx tsx strangle/prepare.ts       # materialize + boot-check the engine set (required first)
-set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY   # OAuth token, no API-key shadowing
+set -a; . ../.env; set +a         # RECORDING only — replays need no credential at all
 npx tsx m0/02-handshake.ts        # live: one turn per engine
 npx tsx m0/06-selftest.ts         # records cassettes once (live), then replays OFFLINE
 ```
+
+`unset ANTHROPIC_API_KEY` is no longer part of the recipe: the env schema
+(`src/env.ts`, W0c) **selects** exactly one credential rather than inheriting
+both, so the API key can no longer shadow the OAuth token. Replays are handed a
+fixed non-secret placeholder, so grading the whole corpus offline needs no
+credential in the shell.
 
 Replays are fully offline — record once, grade forever at zero API cost. That
 property is what makes a long-running reimplementation fleet affordable: the
@@ -670,6 +682,215 @@ Closure-ledger movement: `subsystem/environment-and-system-prompt`,
 `subsystem/session-storage` and `subsystem/query-loop` move `unowned` →
 `spliced`, and all four spliced rows now carry the upstream footprint hashes the
 build emits (`ledger.json`, 46 rows, `spliced=4 unowned=42`).
+
+## W0c — determinism & strict replay (2026-08-31): zero positional fallbacks
+
+The reforge-full campaign's third foundation child (campaign spec C3; §3.3 gate
+determinism, §3.4 replay strictness, §3.5 runtime pinning). Everything below
+exists to answer one question honestly: **when two engines differ, is that the
+engine, or is it the machine the harness happens to be running on?**
+
+### The child environment is constructed, never inherited (`src/env.ts`, X6)
+
+Every engine spawn — `runTurn`, `baseOptions`, the raw stream-json driver, the
+origin probe, `prepare.ts`'s boot checks — now receives an **allowlisted** env.
+Nothing from the operator's shell reaches the engine unless the schema names it,
+and `assertSchema` re-checks that as a postcondition so a future caller cannot
+quietly widen it.
+
+The motive was a measured mechanism, not tidiness: the bundle carries ~200
+`CLAUDE_CODE_*` knobs and at least one *per-gate* override that reaches the
+resolver ahead of the compiled-in default. **Turning the allowlist on
+immediately found two operator variables that had been steering the oracle all
+along:**
+
+| leaked variable | what it was doing |
+|---|---|
+| `CLAUDE_CODE_ENTRYPOINT` | stamped into every request body as `cc_entrypoint`. Cassettes recorded from inside a Claude Code session carried `sdk-cli`; the same recording from a plain terminal would have carried `sdk-ts`. The corpus's match key depended on which shell recorded it. Now pinned (`PINNED_ENTRYPOINT`), which also makes the SDK-driven and raw drivers agree — they share cassettes. |
+| `ENABLE_PROMPT_CACHING_1H` | forced `cache_control.ttl:"1h"` on every prompt-cache breakpoint. Without it the engine falls back to per-scope resolution and the subagent/compaction lanes take `5m`. So the corpus had a **cost-bearing** behavior baked in from a shell export. Three cassettes were re-recorded rather than normalizing it away — prompt-cache TTL is behavior. |
+
+**Credentials are selected, not inherited** (§3.3's round-3 interlock). Record
+mode passes exactly one deliberately chosen credential, OAuth preferred; replay
+mode passes a fixed non-secret placeholder, because replays are served entirely
+by the local proxy and should not depend on the operator being logged in. That
+replaces upstream's own precedence, where `ANTHROPIC_API_KEY` silently *shadows*
+the OAuth token — the reason every run recipe here had to say `unset
+ANTHROPIC_API_KEY` by hand. `src/env.test.ts` grades the five-case matrix
+(OAuth-only / key-only / both / missing / seeded-override), each case watched
+rejecting its violation *and* accepting its legitimate neighbour: 59 checks.
+
+### Gate determinism: pin the disabled state, snapshot the defaults
+
+- `DISABLE_GROWTHBOOK=1` joins the two telemetry kill-switches. All three trip
+  the provider's `isEnabled()` off through *different* predicates; this is the
+  narrowest and does not depend on the telemetry chain keeping its current shape.
+- `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF` — the one opt-in that would let
+  a cached gate blob override a compiled default — cannot arrive by inheritance
+  (not in the allowlist) *or* by hand (`FORBIDDEN_VARS`, refused even when a
+  caller declares it as a deliberate override).
+- **Leak check** (`src/leakcheck.ts`): after every record *and* every replay, the
+  five GrowthBook/client-data cache keys must be absent from
+  `reforge/config/.claude.json`. It fails the scenario; the H1 lesson is that a
+  check which only sets `process.exitCode` gets overwritten by the final verdict.
+
+**The defaults fixture** (`research/tools/extract-gate-defaults.ts` →
+`research/fixtures/gate-defaults-2.1.251.json`, `ENGINE_VERSION`-keyed). Since
+every gate resolves to its **call-site default** under these switches, the
+effective gate configuration is those literals — and they are baked per build, so
+a pin bump can change behavior silently. The extraction derives itself: it finds
+functions whose body *shape* is the resolver alias (`return g(a,b).value`, or the
+`getFeatureValueWithSource` primitive), resolves them through the ESM
+export/import graph to each chunk's local binding, and collects call sites by AST
+so a telemetry call taking the same `tengu_*` literal cannot be mistaken for one.
+
+```
+call sites: 505  distinct gates: 439  chunks: 120
+default shapes: 392×boolean, 24×string, 21×null, 22×object, 3×array, 11×number, 32×computed
+plausibility: 439 inline sites vs the research census of 431 (1.9%) — OK; +66 named through a const
+```
+
+Corroboration rather than coincidence: the research censused the pretty rendering
+by text-grepping one alias for inline literals and got **431**; this AST walk
+finds **439** on the comparable population. The extra 66 are call sites that name
+their gate through a top-level `var X = "tengu_…"` const, which a literal grep
+cannot see — and one of them is `tengu_luminous_whistle`, the single gate the
+campaign spec names by hand. Gate reads whose default is a *computed* expression
+are kept as their own section rather than dropped: engine-ts cannot serve those
+from a constant table.
+
+### Flip-liveness: an override does reach the engine, and the allowlist is what stops it
+
+`m3/flip-liveness.ts` sweeps the fixture's own per-gate override inventory (13
+entries at this pin), flipping each one *inside* the allowlist and diffing
+against a baseline that is first proved self-consistent.
+
+```
+FLIP tengu_cobalt_ridge via CLAUDE_CODE_USE_POWERSHELL_TOOL="1" (default false) → transcripts 26, requests 50
+       msg[1].body.tools[10].name: "Read" != "PowerShell"
+```
+
+**An override changes the headless tool catalog itself** — `Read` leaves the
+presented tool array and `PowerShell` takes its place. That lands directly on
+§1.3's moat surface, and it settles the precedence question empirically: the env
+override is consulted *before* the compiled-in default, so the defaults fixture
+describes reality only because the environment is locked.
+
+The other twelve produced no observable difference on a headless replay,
+including `CLAUDE_CODE_LUMINOUS_WHISTLE` — the one the spec names. That is not a
+null result, it is the static analysis confirmed: its reader short-circuits on a
+first-party-base-URL predicate (`cli.pretty.js:497713`) that a run pointed at the
+local record/replay proxy can never satisfy, so the override is unreachable here
+by construction.
+
+**The negative control is what carries the claim either way**: the same 13
+variables seeded into the *parent* process produce **zero** difference in the
+child, on both surfaces. The allowlist, not luck, is what stands between an
+operator's shell and the oracle.
+
+### The runtime is pinned to what the binary embeds (§3.5)
+
+The pinned Mach-O carries `Bun/1.4.1`; the external bun running the extracted
+graph was **1.3.14**, a whole minor behind, and the gate was green on runtime
+luck. `strangle/toolchain.ts` re-derives the embedded version *from the binary*
+(two independent strings, which must agree), installs the matching bun into
+`reforge/toolchain/` (gitignored, `~/.bun` untouched), and `prepare.ts` now
+**refuses** a mismatch:
+
+```
+Error: runtime skew: /Users/new/.bun/bin/bun is 1.3.14, the pinned binary embeds 1.4.1.
+```
+
+Provenance, stated plainly: **1.4.1 has no tagged upstream release** (latest is
+1.4.0). The only public build reporting `1.4.1` today is the rolling `canary`
+asset, installed here as `1.4.1-canary.1+d9b769812`. The version string matches
+the binary exactly; the underlying commit is not provably the one Anthropic
+compiled against. Recorded rather than rounded up — and still far closer than a
+minor version of skew. **Nothing went red under the matched runtime.**
+
+### Strict replay: one canonical form, shared (`src/canonical.ts`, §3.4)
+
+The proxy's match hash and the differ had drifted apart, so requests carrying a
+run-scoped `agentId` or an inline clock missed the hash and were served
+POSITIONALLY. Both layers now read one module, in tiers, because they are
+comparing different things: the differ compares **two contemporaneous runs** and
+can afford a stateful id *map* (an engine using two ids where the oracle used one
+still diffs); the hash compares **a run against a recording from the past** and
+needs the stateless equivalent.
+
+| tier | used by | contents |
+|---|---|---|
+| run values | differ + hash | proxy port, inline `*_ms` in prose *and* XML, `cc_version` process suffix, `cc-socks` pid, plan-file random suffix |
+| run id shapes | hash only | agent ids (`a` + exactly 16 hex), RFC-4122 uuids — the differ maps these instead |
+| host state | hash only | the `gitStatus` block's `Status:`/`Recent commits:` sections |
+| structural | differ + hash | `tool_result` ordering, with the cache breakpoint kept as a count |
+
+The host-state tier is the one asymmetry, and the asymmetry is the point: the
+differential sandbox lives inside this repository, so the `<env>` block a
+dispatched Agent receives embedded the working tree and commit log — which rotted
+the `subagent` and `background-task` cassettes at *every commit*. The hash
+ignores it; the differ still grades it, so an engine that stopped emitting the
+git block still fails the request diff. (Rejected: making the sandbox
+git-invisible. `GIT_CEILING_DIRECTORIES` only half-worked — `status` and `log`
+went quiet but the is-a-repo flag, branch and global `user.name` survived — and a
+sandbox-owned repository would drop a `.git` directory and a seed commit into a
+directory `search-tools` greps and `file-tools` writes into.)
+
+`src/canonical.test.ts` is the non-vacuity control: 55 checks, every pattern
+watched catching its value **and** sparing a deliberately adjacent neighbour — a
+40-hex sha, a `toolu_` id, a *configured* `timeout_ms`, a different plan prompt,
+a different branch name. Widening the agent-id pattern to `[0-9a-f]{16,}` turns
+four of them red, which is how we know the suite is looking at something.
+
+**A fallback is now FATAL for every `engineB` that is not `engine-extracted`.**
+Warning-only survives solely on the identical-code self-test pair, which makes no
+equivalence claim about a different implementation.
+
+### What strictness caught the first time it ran
+
+Both of these were pre-existing, both were invisible while fallbacks were a
+warning, and both were real:
+
+- **The engine downgrades out of SSE after a mid-stream failure.** A truncated or
+  malformed stream makes it retry the *same* request with `"stream": false` — a
+  one-character body difference. The derived fault cassettes had no entry for
+  that request, so the retry was served the streaming entry positionally and both
+  engines "failed identically" on a response neither had matched. `src/faults.ts`
+  now derives the downgraded variant explicitly.
+- **The raw stream-json driver was replaying the SDK corpus's cassette.** Print
+  mode driven raw builds a materially different prompt from the same prompt text
+  driven through `sdk.mjs` (106 KB vs 77 KB at this pin — the raw path also
+  injects the Agent tool's agent-type catalog), so *every* raw replay had been
+  served positionally. It now records and replays its own cassette. Replay
+  topology must match recording topology; `cross-resume` taught the same lesson
+  from the other direction.
+
+### Result
+
+```
+=== strangler gate ===
+  PASS  env schema + credential matrix
+  PASS  canonicalization scrubs
+  PASS  gate-defaults fixture matches the pin
+  PASS  derivation perturbation
+  PASS  liveness write-tool-result / task-create-result / glob-result
+  PASS  liveness env-block / text-delta / session-materialize
+  PASS  equivalence (faithful)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+Corpus **22/22**, full acceptance **5/5**, gate **PASS** — all under the pinned
+1.4.1 runtime, the allowlisted environment, and **zero `served POSITIONALLY`
+lines anywhere in the run**, with the strangled build graded under the fatal
+rule.
+
+```sh
+npx tsx strangle/toolchain.ts --check        # embedded vs external runtime
+npx tsx src/env.test.ts                      # X6 credential/allowlist matrix
+npx tsx src/canonical.test.ts                # per-scrub regression + strictness
+npx tsx research/tools/extract-gate-defaults.ts --check
+npx tsx m3/flip-liveness.ts                  # override sweep + negative control
+```
 
 ## Next
 

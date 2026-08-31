@@ -14,7 +14,7 @@
 //
 // Both halves are mandatory: either alone is satisfiable by a no-op splice.
 //
-// Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx strangle/gate.ts
+// Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { SPLICES } from "./manifest.js";
@@ -36,6 +36,24 @@ function buildAndBoot(buildArgs: string[]): boolean {
 }
 
 const results: { label: string; pass: boolean }[] = [];
+
+// ---- determinism: the environment the whole gate runs under (W0c / §3.3) ----
+// First, and build-free. Every phase below spawns engines through the
+// allowlisted env and grades them under strict replay, so if the schema, the
+// shared canonicalization, or the pinned gate defaults are wrong, everything
+// after this is measuring the wrong engine.
+console.log("━━━ determinism: env schema, canonicalization, pinned gate defaults ━━━");
+for (const [label, argv] of [
+  ["env schema + credential matrix", ["src/env.test.ts"]],
+  ["canonicalization scrubs", ["src/canonical.test.ts"]],
+  ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
+] as [string, string[]][]) {
+  const r = run("npx", ["tsx", ...argv]);
+  const tail = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+plausibility)/.test(l)).slice(-2);
+  for (const l of tail) console.log(`  ${l.trim()}`);
+  if (r.status !== 0) for (const l of (r.stdout ?? "").split("\n").filter((l) => l.includes("FAIL")).slice(0, 5)) console.log(`  ${l.trim()}`);
+  results.push({ label, pass: r.status === 0 });
+}
 
 // ---- derivation: re-derivation must track renames and fail loudly ----------
 console.log("━━━ derivation: every capture tracks its rename and throws when destroyed ━━━");

@@ -13,6 +13,6 @@
 # binary and spawns it directly, so this shebang runs. Run under bun (the pinned
 # compile-target runtime, §3.5) rather than tsx, so engine-ts is graded on the
 # same runtime as the extracted graph; bun executes TypeScript directly.
-BUN="${BUN:-/Users/new/.bun/bin/bun}"
-[ -x "$BUN" ] || { echo "reforge: bun not found at $BUN (set BUN=/path/to/bun)" >&2; exit 127; }
+BUN="${BUN:-$(dirname "$0")/../toolchain/bun}"
+[ -x "$BUN" ] || { echo "reforge: pinned bun missing at $BUN — run 'npx tsx strangle/toolchain.ts'" >&2; exit 127; }
 exec "$BUN" "$(dirname "$0")/../engine-ts/main.ts" "$@"

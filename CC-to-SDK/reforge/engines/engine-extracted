@@ -7,4 +7,9 @@
 # only resolve inside the binary, so prepare.ts materializes a rewritten copy.
 GRAPH="$(dirname "$0")/../build/graph/cli"
 [ -e "$GRAPH" ] || { echo "reforge: graph not materialized — run 'npx tsx strangle/prepare.ts'" >&2; exit 127; }
-exec /Users/new/.bun/bin/bun "$GRAPH" "$@"
+# The runtime is PINNED to the version the oracle binary embeds (src/pin.ts,
+# spec §3.5); BUN arrives through the allowlisted child env (X6). The fallback
+# is the project-local toolchain, never the operator's ~/.bun.
+BUN="${BUN:-$(dirname "$0")/../toolchain/bun}"
+[ -x "$BUN" ] || { echo "reforge: pinned bun missing at $BUN — run 'npx tsx strangle/toolchain.ts'" >&2; exit 127; }
+exec "$BUN" "$GRAPH" "$@"

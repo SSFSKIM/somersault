@@ -4,7 +4,7 @@
 // This is what any future engine-ts must satisfy, and what every strangler
 // replacement is gated on.
 //
-// Run: cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m2/all.ts [--engineB <name>]
+// Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/all.ts [--engineB <name>]
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 

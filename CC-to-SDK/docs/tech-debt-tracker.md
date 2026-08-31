@@ -46,6 +46,36 @@ to scheduled work — the normalization-sharing design pass lands W0-adjacent, a
 becomes a hard gate failure at engine-ts acceptance (diagnostic-only remains the posture while grading the
 identical-code pair). Kept here for the record; the campaign spec owns the obligation now.
 
+**CLOSED 2026-08-31 (campaign spec C3 / W0c).** `reforge/src/canonical.ts` now owns the normalization spec
+for both layers: the differ keeps its run-scoped id MAP, the replay hash gets the stateless equivalent plus
+the structural tool-result canonicalization, and each pattern ships a regression test with a must-survive
+neighbour. The whole acceptance surface replays with zero positional fallbacks, and a fallback is now fatal
+for every `engineB` that is not `engine-extracted`. The predicted over-scrubbing hazard was handled by
+keeping the id map on the differ side and anchoring every hash-only pattern to an exact value shape.
+
+---
+
+## 2026-08-31 — reforge pins `CLAUDE_CODE_ENTRYPOINT` to `sdk-cli` to stay compatible with the recorded corpus
+
+**Source:** campaign spec C3 (W0c), `reforge/src/env.ts` (`PINNED_ENTRYPOINT`).
+
+**What:** the engine stamps its entrypoint label into every request body as `cc_entrypoint=<value>`. That
+variable used to be INHERITED, so the corpus was recorded from inside a Claude Code session and carries
+`sdk-cli`; the same recording made from a plain terminal would have carried `sdk-ts`. The env allowlist now
+pins it — which fixes the determinism problem — but it pins it to `sdk-cli`, the value the existing
+cassettes hold, rather than to `sdk-ts`, which is what `sdk.mjs` chooses on its own and is arguably the
+truthful label for the SDK-driven lane.
+
+**Cost:** every recorded request body says the engine was driven by the Claude Code CLI when it was driven
+by the SDK. Nothing downstream reads the field today; the risk is that a future gate or server-side
+behavior keys on entrypoint and the corpus then measures the wrong lane.
+
+**Why deferred:** changing the constant is one character, but it changes every request body and therefore
+costs a full 22-scenario live re-record. The next pin bump re-records the corpus anyway, so the change is
+free then and merely expensive now. Flip `PINNED_ENTRYPOINT` to `sdk-ts` as part of that bump.
+
+---
+
 ## 2026-08-31 — a fork's inherited peer history is invisible, as is every pre-M9 session's
 
 **Source:** M9 branch external review, round 3 (finding 2) · `src/peer/arrivalLog.ts` (the store is keyed by

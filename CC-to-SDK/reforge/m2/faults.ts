@@ -4,18 +4,21 @@
 // This is the path a reimplementation is most likely to get wrong and the
 // happy-path corpus can never see.
 //
-// Run: cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m2/faults.ts [--engineB <name>]
+// Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/faults.ts [--engineB <name>]
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts, normalizeValue } from "../src/differ.js";
 import { deriveFaultCassette, type FaultKind } from "../src/faults.js";
 import { resetSandbox, type ScenarioContext } from "../src/harness.js";
-import { scrubRequestBody, startReplayProxy } from "../src/proxy.js";
+import { fallbackVerdict, startReplayProxy } from "../src/proxy.js";
+import { scrubRequestBody } from "../src/canonical.js";
 import { enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
 import { SCENARIOS } from "../m1/scenarios.js";
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
+/** §3.4 — set false by any fatal positional fallback; folded into the final verdict. */
+let replayStrictnessOk = true;
 const KINDS: FaultKind[] = ["overloaded", "rate-limited", "server-error", "truncated-stream", "malformed-event"];
 const BASE_TAG = "plain"; // simplest healthy cassette to derive from
 const scenario = SCENARIOS.find((s) => s.tag === BASE_TAG)!;
@@ -41,19 +44,21 @@ async function replay(engine: string, cassette: string, tag: string, side: strin
     engine: enginePath(engine),
     baseUrl: `http://127.0.0.1:${proxy.port}`,
     collect: (e, p) => events.push({ event: e, payload: p }),
+    mode: "replay",
+    // X6: the retry bound is a DECLARED knob on the child env. It used to be
+    // smuggled through a mutation of the parent's process.env, which only
+    // worked because baseOptions spread the whole parent environment — the
+    // exact inheritance this schema removes.
+    knobs: { maxRetries: MAX_RETRIES },
   };
   resetSandbox();
-  const savedRetries = process.env.CLAUDE_CODE_MAX_RETRIES;
-  process.env.CLAUDE_CODE_MAX_RETRIES = MAX_RETRIES; // reaches the engine via baseOptions' env spread
   let messages: unknown[];
   try {
     messages = await scenario.run(ctx);
   } catch (e) {
     messages = [{ type: "reforge-exception", name: (e as Error).name, message: String((e as Error).message).slice(0, 200) }];
-  } finally {
-    if (savedRetries === undefined) delete process.env.CLAUDE_CODE_MAX_RETRIES;
-    else process.env.CLAUDE_CODE_MAX_RETRIES = savedRetries;
   }
+  if (!fallbackVerdict(engineB, `${tag}/${side}`, proxy.fallbackServed())) replayStrictnessOk = false;
   await proxy.close();
   const requests = existsSync(observed)
     ? readFileSync(observed, "utf8")
@@ -111,6 +116,6 @@ for (const kind of KINDS) {
 
 console.log("\n=== M2/H2 fault-injection verdicts ===");
 for (const v of verdicts) console.log(`  ${v.pass ? "PASS" : "FAIL"}  ${v.kind.padEnd(17)} ${v.note}`);
-const allPass = verdicts.every((v) => v.pass);
+const allPass = replayStrictnessOk && verdicts.every((v) => v.pass);
 console.log(allPass ? "\nALL PASS" : "\nFAILURES");
 process.exitCode = allPass ? 0 : 1;

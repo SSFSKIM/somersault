@@ -5,6 +5,7 @@
 // is behavior and must match. Grow this list only with justification — each
 // addition widens what the harness cannot see.
 import { readFileSync } from "node:fs";
+import { canonicalizeToolResultOrder, RUN_VALUE_SCRUBS } from "./canonical.js";
 
 export const SCRUB_KEYS = new Set([
   // identity / entropy
@@ -42,36 +43,12 @@ const isScrubbedKey = (k: string) => SCRUB_KEYS.has(k) || SCRUB_KEY_PATTERNS.som
 // Whole message types that are pure environment telemetry, not engine behavior.
 const DROP_MESSAGE_TYPES = new Set(["rate_limit_event"]);
 
-/**
- * Value-level scrubs. The replay proxy binds an EPHEMERAL port per run, and the
- * engine echoes its base URL into user-facing error text ("check your inference
- * gateway (127.0.0.1:64277)"). That port is assigned by the harness, so it is
- * incidental — but it is embedded in a string, where key-based scrubbing cannot
- * reach it. Found by the H2 fault suite: two engines produced byte-identical
- * error messages that differed only in the port each was handed.
- */
-const VALUE_SCRUBS: [RegExp, string][] = [
-  [/127\.0\.0\.1:\d+/g, "127.0.0.1:<port>"],
-  // Clock values rendered INTO prose, where key scrubbing cannot reach them:
-  // the subagent tool result carries "<usage>…duration_ms: 26</usage>".
-  [/\b(\w*_ms): \d+/g, "$1: <ms>"],
-  // The billing header's cc_version carries a per-PROCESS suffix
-  // ("2.1.241.b71" vs "2.1.241.12d"); the version is behavior, the suffix is not.
-  [/(cc_version=\d+\.\d+\.\d+)\.[0-9a-z]+/g, "$1.<proc>"],
-  // The engine opens a per-PROCESS unix socket for its messaging channel and
-  // reports the path on system:init ("/tmp/cc-socks/68386.sock"). The pid is
-  // drawn fresh every run, so oracle sampling can never certify it — the same
-  // reason the proxy port is scrubbed rather than triaged. That it opens a
-  // socket, and where, stays behavior; which pid drew it does not.
-  // (Surfaced by the 2.1.241 → 2.1.251 pin bump: the field is new.)
-  [/(\/cc-socks\/)\d+\.sock/g, "$1<pid>.sock"],
-  // Plan-mode file names end in two RANDOM words
-  // (".../plans/reply-with-exactly-still-here-toasty-fiddle.md" vs
-  // "…-spicy-candy.md"). The prompt-derived prefix is behavior — the engine
-  // names the file after the request — so keep it and scrub only the suffix.
-  // Drawn from a large space, so triage-by-sampling can never certify it.
-  [/(\/plans\/[a-z0-9-]+?)-[a-z]+-[a-z]+\.md/g, "$1-<rand>.md"],
-];
+// Value-level scrubs live in src/canonical.ts, shared with the replay proxy's
+// match hash (§3.4). Key-based scrubbing cannot reach a value embedded in a
+// string — the engine echoes its base URL into user-facing error text, and
+// renders clocks into tool-result prose — so these are matched by shape, each
+// one justified where it is declared and regression-tested in canonical.test.ts.
+const VALUE_SCRUBS = RUN_VALUE_SCRUBS;
 
 /**
  * Keys whose values are identifiers minted LOCALLY BY THE ENGINE (not replayed
@@ -110,50 +87,10 @@ function makeScrubString(ids: Map<string, string>) {
   };
 }
 
-/**
- * Canonicalize an ordering that is NOT a contract.
- *
- * Parallel tool calls come back in COMPLETION order, which races: the oracle
- * disagrees with itself run to run. Sampling the oracle twice only observes two
- * of the possible orderings, so an engine producing a third *valid* ordering
- * still diffs. Remove the nondeterminism at its source instead: within one
- * message, sort tool_result blocks by `tool_use_id`.
- *
- * This is safe precisely because the ids come from the cassette's assistant
- * message, so they are identical across engines — and it discards only the
- * arrival order, never the set of results or their contents. Ordering that IS a
- * contract (the sequence of messages, of content blocks the model authored) is
- * untouched.
- */
-function canonicalizeArray(items: unknown[]): unknown[] {
-  const allToolResults =
-    items.length > 1 &&
-    items.every(
-      (x) =>
-        x !== null &&
-        typeof x === "object" &&
-        (x as { type?: string }).type === "tool_result" &&
-        typeof (x as { tool_use_id?: unknown }).tool_use_id === "string",
-    );
-  if (!allToolResults) return items;
-  const sorted = [...items].sort((a, b) =>
-    String((a as { tool_use_id: string }).tool_use_id).localeCompare(String((b as { tool_use_id: string }).tool_use_id)),
-  );
-  // The prompt-cache breakpoint is attached POSITIONALLY (to the last block of
-  // the message), so which tool_result carries it is decided by the same racy
-  // arrival order we just sorted away. Whether the engine sets a breakpoint at
-  // all is real behavior (it drives cost), so keep the COUNT as an explicit
-  // element and drop the positional attachment.
-  let breakpoints = 0;
-  const stripped = sorted.map((x) => {
-    const o = x as Record<string, unknown>;
-    if (!("cache_control" in o)) return x;
-    breakpoints++;
-    const { cache_control: _drop, ...rest } = o;
-    return rest;
-  });
-  return breakpoints > 0 ? [...stripped, { type: "reforge-cache-breakpoints", count: breakpoints }] : stripped;
-}
+// The tool_result ordering canonicalization is shared with the replay hash —
+// the racy completion order lands in request BODIES too, so a hash that did not
+// apply it missed `parallel-tools` by construction.
+const canonicalizeArray = canonicalizeToolResultOrder;
 
 function normalizeWith(v: unknown, scrub: (s: string) => string): unknown {
   if (typeof v === "string") return scrub(v);

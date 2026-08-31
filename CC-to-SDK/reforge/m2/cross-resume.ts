@@ -6,16 +6,18 @@
 //   2. filesystem equivalence: after the same workload, both engines must leave
 //      structurally identical session records
 //
-// Run: cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m2/cross-resume.ts [--engineB <name>]
+// Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/cross-resume.ts [--engineB <name>]
 import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts, normalizeValue } from "../src/differ.js";
 import { baseOptions, CONFIG_DIR, drive, resetSandbox, resultsOf, type ScenarioContext } from "../src/harness.js";
-import { startReplayProxy } from "../src/proxy.js";
+import { fallbackVerdict, startReplayProxy } from "../src/proxy.js";
 import { enginePath, REFORGE_ROOT } from "../src/runTurn.js";
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
+/** §3.4 — set false by any fatal positional fallback; folded into the final verdict. */
+let replayStrictnessOk = true;
 const cassette = join(REFORGE_ROOT, "cassettes", "m1-resume.jsonl");
 if (!existsSync(cassette)) {
   console.error("ABORT: resume cassette missing — run: npx tsx m1/run.ts --scenario resume");
@@ -52,12 +54,11 @@ function storeShape(file: string): unknown {
  */
 async function withSharedProxy<T>(tag: string, fn: (mk: () => ScenarioContext) => Promise<T>): Promise<T> {
   const proxy = await startReplayProxy(cassette, join(REFORGE_ROOT, "cassettes", `m2-xresume-observed-${tag}.jsonl`));
-  const mk = (): ScenarioContext => ({ engine: "", baseUrl: `http://127.0.0.1:${proxy.port}`, collect: () => {} });
+  const mk = (): ScenarioContext => ({ engine: "", baseUrl: `http://127.0.0.1:${proxy.port}`, collect: () => {}, mode: "replay" });
   try {
     return await fn(mk);
   } finally {
-    const fb = proxy.fallbackServed();
-    if (fb > 0) console.log(`  WARN ${tag}: ${fb} request(s) served POSITIONALLY (body hash missed — cassette may be stale)`);
+    if (!fallbackVerdict(engineB, tag, proxy.fallbackServed())) replayStrictnessOk = false;
     await proxy.close();
   }
 }
@@ -134,6 +135,6 @@ console.log(`  store shape identical:              ${okShape ? "PASS" : "FAIL"}`
 console.log(`  engine-real resumes ${engineB.padEnd(18)} ${okCrossA ? "PASS" : "FAIL"}`);
 console.log(`  ${engineB} resumes engine-real${" ".repeat(Math.max(1, 12 - engineB.length))} ${okCrossB ? "PASS" : "FAIL"}`);
 console.log(`  both cross-resumes transcript-equal: ${okXDiff ? "PASS" : "FAIL"}`);
-const ok = okShape && okCrossA && okCrossB && okXDiff;
+const ok = replayStrictnessOk && okShape && okCrossA && okCrossB && okXDiff;
 console.log(ok ? "\nALL PASS — the store format is interchangeable across engines" : "\nFAILURES");
 process.exitCode = ok ? 0 : 1;

@@ -6,14 +6,17 @@
 // On the identical-code pair every diff is a harness/normalization defect; once
 // engine-ts exists, every diff is a reimplementation defect.
 //
-// Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
+// Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
-import { scrubRequestBody, startRecordProxy, startReplayProxy } from "../src/proxy.js";
-import { enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
+import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
+import { gateCacheCheck } from "../src/leakcheck.js";
+import { scrubRequestBody } from "../src/canonical.js";
+import { CONFIG_DIR, enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
+import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
 import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
@@ -35,16 +38,19 @@ const rerecord = args.includes("--rerecord");
 // engine under test (side B). A is always engine-real, the oracle.
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
 
-if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-  console.error("ABORT: no auth in env — source CC-to-SDK/.env first.");
-  process.exit(1);
-}
+// Only RECORDING needs a credential. Replays are served offline by the proxy
+// under a non-secret placeholder, so an unauthenticated operator can still grade
+// the whole corpus — which is the property that makes the replay lane free.
+const willRecord = rerecord || SCENARIOS.some((s) => (only ? s.tag === only : true) && !existsSync(join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`)));
+if (willRecord) requireRecordCredential();
 mkdirSync(join(REFORGE_ROOT, "cassettes"), { recursive: true });
 
 interface RunResult {
   messages: unknown[];
   events: unknown[];
   observedFile: string;
+  /** false when this run hit a fatal positional fallback or a gate-cache leak. */
+  ok: boolean;
 }
 
 async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string): Promise<RunResult> {
@@ -57,6 +63,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
     engine: enginePath(engineName),
     baseUrl: `http://127.0.0.1:${proxy.port}`,
     collect: (event, payload) => events.push({ event, payload }),
+    mode, // X6: record passes the one selected credential; replay passes the placeholder
   };
   resetSandbox();
   let messages: unknown[];
@@ -71,10 +78,13 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   await proxy.close();
   if (unmatched.length > 0) console.log(`    WARN ${side}: ${unmatched.length} request(s) matched no cassette entry`);
   if (unserved.length > 0) console.log(`    WARN ${side}: ${unserved.length} cassette entr(ies) never served`);
-  // Silent degradation: positional matching is usually right, so a rotted
-  // cassette keeps "passing" until a suite depends on exactness.
-  if (fallback > 0) console.log(`    WARN ${side}: ${fallback} request(s) served POSITIONALLY (body hash missed — cassette may be stale)`);
-  return { messages, events, observedFile };
+  // §3.4: a positional fallback is a warning only on the identical-code pair;
+  // for any other engineB it fails the scenario.
+  const fallbackOk = fallbackVerdict(engineB, side, fallback);
+  // §3.3: the gate caches must never appear in the harness config dir, after
+  // EITHER mode — a record writes config, and so does a replay.
+  const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
+  return { messages, events, observedFile, ok: fallbackOk && gateOk };
 }
 
 /**
@@ -224,6 +234,12 @@ for (const s of SCENARIOS) {
     rmSync(staged, { force: true });
     console.log("  recording live via engine-real ...");
     const rec = await runOnce(s, "engine-real", "record", staged, "record");
+    if (!rec.ok) {
+      rmSync(staged, { force: true });
+      console.log("    DISCARDED: recording failed its determinism checks — nothing promoted");
+      verdicts.push({ tag: s.tag, pass: false });
+      continue;
+    }
     saveTranscript(`m1-${s.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
     const entries = existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean).length : 0;
     console.log(`  recorded ${entries} API exchange(s)`);
@@ -259,6 +275,7 @@ for (const s of SCENARIOS) {
   console.log(`  replaying offline: A=engine-real, B=${engineB} ...`);
   const a = await runOnce(s, "engine-real", "replay", cassette, "A");
   const b = await runOnce(s, engineB, "replay", cassette, "B");
+  const replayOk = a.ok && b.ok;
   saveTranscript(`m1-${s.tag}-A`, { engine: "engine-real", messages: a.messages, durationMs: 0 });
   saveTranscript(`m1-${s.tag}-B`, { engine: engineB, messages: b.messages, durationMs: 0 });
 
@@ -309,7 +326,7 @@ for (const s of SCENARIOS) {
     : [];
   for (const [side, failure] of substance) console.log(`    substance: FAIL [${side}] — ${failure}`);
   if (s.check && substance.length === 0) console.log("    substance: ok");
-  verdicts.push({ tag: s.tag, pass: tOk && eOk && rOk && substance.length === 0 });
+  verdicts.push({ tag: s.tag, pass: replayOk && tOk && eOk && rOk && substance.length === 0 });
 }
 
 console.log("\n=== M1 corpus verdicts ===");

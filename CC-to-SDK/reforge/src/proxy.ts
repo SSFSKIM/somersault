@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import { canonicalizeForHash } from "./canonical.js";
 
 export interface CassetteEntry {
   seq: number;
@@ -34,25 +35,12 @@ export interface CassetteEntry {
 
 const REDACT_HEADERS = new Set(["authorization", "x-api-key", "cookie", "host", "content-length", "accept-encoding"]);
 
-// Scrub volatile fields from a request body before hashing so record-time and
-// replay-time requests with identical behavior hash identically.
-export function scrubRequestBody(body: string): string {
-  // The engine stamps the current date into its system prompt, so an unscrubbed
-  // cassette ROTS AT MIDNIGHT: the live body stops hash-matching the recording.
-  // Measured — a cassette recorded 2026-08-24 stopped matching on 2026-08-25 and
-  // every replay silently degraded to positional matching.
-  const dated = body.replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
-  try {
-    const o = JSON.parse(dated);
-    if (o?.metadata) o.metadata = "<scrubbed>";
-    return JSON.stringify(o);
-  } catch {
-    return dated;
-  }
-}
-
+// The match key's canonical form lives in src/canonical.ts, SHARED with the
+// differ (§3.4). It used to be a two-line scrub local to this file, which is how
+// the two layers drifted far enough apart that multi-request scenarios matched
+// positionally instead of exactly.
 const bodyHash = (method: string, path: string, body: string) =>
-  createHash("sha256").update(`${method} ${path}\n${scrubRequestBody(body)}`).digest("hex");
+  createHash("sha256").update(`${method} ${path}\n${canonicalizeForHash(body)}`).digest("hex");
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -77,6 +65,37 @@ export interface ProxyHandle {
    * Callers must surface this.
    */
   fallbackServed(): number;
+}
+
+/**
+ * §3.4 — how a positional fallback is graded.
+ *
+ * `engine-extracted` is the identical-code self-test pair: real binary vs the
+ * same payload unpacked. A fallback there is a HARNESS diagnostic (a stale
+ * cassette, a normalization gap) and stays a warning, because that pair makes no
+ * equivalence claim about a different implementation.
+ *
+ * Every other `engineB` — every strangled build, and engine-ts — is a genuinely
+ * different implementation, and for those a fallback is FATAL. Serving in
+ * arrival order when the body hash misses can hand a DRIFTED request the
+ * response that belonged to a different one, and the run then grades green on a
+ * comparison that never happened. `cross-resume` hit exactly that once: a
+ * fallback served the first turn's response to the resume turn.
+ */
+export const strictReplay = (engineB: string): boolean => engineB !== "engine-extracted";
+
+/**
+ * Report a fallback count and return whether the run may still pass.
+ * Callers must fold the result into their verdict — printing alone is not a gate.
+ */
+export function fallbackVerdict(engineB: string, side: string, count: number): boolean {
+  if (count === 0) return true;
+  const strict = strictReplay(engineB);
+  console.log(
+    `    ${strict ? "FAIL" : "WARN"} ${side}: ${count} request(s) served POSITIONALLY (body hash missed` +
+      (strict ? ` — FATAL for engineB=${engineB}: a drifted request may have been served another request's response)` : " — cassette may be stale)"),
+  );
+  return !strict;
 }
 
 export async function startRecordProxy(cassettePath: string, upstream = "https://api.anthropic.com"): Promise<ProxyHandle> {

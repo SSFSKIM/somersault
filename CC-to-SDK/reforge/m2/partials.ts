@@ -8,16 +8,18 @@
 // semantics), so this grades the two things that are: the ordered sequence of
 // stream_event TYPES, and the reassembled text those deltas add up to.
 //
-// Run: cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m2/partials.ts [--engineB <name>]
+// Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/partials.ts [--engineB <name>]
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts } from "../src/differ.js";
 import { baseOptions, drive, resetSandbox, type ScenarioContext } from "../src/harness.js";
-import { startReplayProxy } from "../src/proxy.js";
+import { fallbackVerdict, startReplayProxy } from "../src/proxy.js";
 import { enginePath, REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
+/** §3.4 — set false by any fatal positional fallback; folded into the final verdict. */
+let replayStrictnessOk = true;
 const cassette = join(REFORGE_ROOT, "cassettes", "m1-plain.jsonl");
 if (!existsSync(cassette)) {
   console.error("ABORT: plain cassette missing — run: npx tsx m1/run.ts --scenario plain");
@@ -32,6 +34,7 @@ async function run(engine: string, side: string): Promise<unknown[]> {
     engine: enginePath(engine),
     baseUrl: `http://127.0.0.1:${proxy.port}`,
     collect: () => {},
+    mode: "replay",
   };
   resetSandbox();
   try {
@@ -43,6 +46,7 @@ async function run(engine: string, side: string): Promise<unknown[]> {
       includePartialMessages: true,
     });
   } finally {
+    if (!fallbackVerdict(engineB, side, proxy.fallbackServed())) replayStrictnessOk = false;
     await proxy.close();
   }
 }
@@ -99,6 +103,6 @@ const fullDiff = diffTranscripts(a, b);
 console.log(`  full transcript (partials included): ${fullDiff.length === 0 ? "identical" : `${fullDiff.length} difference(s)`}`);
 for (const f of fullDiff.slice(0, 6)) console.log(`    ${f.path}: ${JSON.stringify(f.a)?.slice(0, 70)} != ${JSON.stringify(f.b)?.slice(0, 70)}`);
 
-const ok = substantive && shapeDiff.length === 0 && textA === textB && coherentA && fullDiff.length === 0;
+const ok = replayStrictnessOk && substantive && shapeDiff.length === 0 && textA === textB && coherentA && fullDiff.length === 0;
 console.log(ok ? "\nPASS — partial streams are equivalent and coherent" : "\nFAIL");
 process.exitCode = ok ? 0 : 1;

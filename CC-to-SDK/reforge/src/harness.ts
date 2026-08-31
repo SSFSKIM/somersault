@@ -4,7 +4,8 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { CONFIG_DIR, SANDBOX } from "./runTurn.js";
+import { CONFIG_DIR, SANDBOX, sdkEnv } from "./runTurn.js";
+import type { EngineEnvKnobs, EnvMode } from "./env.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
@@ -18,6 +19,15 @@ export interface ScenarioContext {
   baseUrl: string;
   /** behavioral side-channel: harness-side observations (hook fires, permission consults). Diffed. */
   collect(event: string, payload?: unknown): void;
+  /**
+   * X6 — which credential schema the engine child gets. A live recording needs
+   * the one selected real credential; an offline replay gets the non-secret
+   * placeholder. The runner knows which it is doing, so it says so here rather
+   * than letting the schema guess from what happens to be in the shell.
+   */
+  mode: EnvMode;
+  /** Deliberate, schema-checked child-env knobs (retry bound, config dir, seeded gate overrides). */
+  knobs?: EngineEnvKnobs;
 }
 
 export interface Scenario {
@@ -60,21 +70,18 @@ export const hasThinking = (msgs: unknown[]): boolean =>
     return Array.isArray(c) && c.some((b: { type?: string }) => b?.type === "thinking");
   });
 
-/** Deterministic defaults every scenario builds on. Options.env REPLACES the subprocess env. */
+/**
+ * Deterministic defaults every scenario builds on. `Options.env` REPLACES the
+ * subprocess env, and under X6 that replacement is CONSTRUCTED: no operator
+ * variable reaches the engine unless the schema names it.
+ */
 export function baseOptions(ctx: ScenarioContext): Options {
   mkdirSync(CONFIG_DIR, { recursive: true });
   return {
     pathToClaudeCodeExecutable: ctx.engine,
     cwd: SANDBOX,
     settingSources: [],
-    env: {
-      ...(process.env as Record<string, string>),
-      CLAUDE_CONFIG_DIR: CONFIG_DIR,
-      DISABLE_TELEMETRY: "1",
-      DISABLE_ERROR_REPORTING: "1",
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      ANTHROPIC_BASE_URL: ctx.baseUrl,
-    },
+    env: sdkEnv(ctx.mode, ctx.baseUrl, ctx.knobs),
   };
 }
 

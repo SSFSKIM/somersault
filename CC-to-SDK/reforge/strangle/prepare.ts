@@ -16,8 +16,10 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUN, BUNDLE_MODULES, BUNFS, ENGINE_VERSION, REAL_BINARY } from "../src/pin.js";
+import { BUN, BUNDLE_MODULES, BUNFS, ENGINE_VERSION, PINNED_BUN, REAL_BINARY } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
+import { engineEnv } from "../src/env.js";
+import { embeddedBunVersion, externalBunVersion } from "./toolchain.js";
 
 export const BUILD_DIR = join(REFORGE_ROOT, "build");
 export const GRAPH_DIR = join(BUILD_DIR, "graph");
@@ -60,7 +62,14 @@ export function materializeGraph(dest: string): { files: number; specifiers: num
  * error), so every path that writes a graph boot-checks it.
  */
 export function bootCheck(cmd: string[], label: string): void {
-  const r = spawnSync(cmd[0], cmd.slice(1), { encoding: "utf8" });
+  // Boot checks spawn the engine, so they go through the SAME allowlisted
+  // environment every graded run uses (X6). A boot check run under the
+  // operator's inherited env would be checking a different engine than the one
+  // the gate grades.
+  const r = spawnSync(cmd[0], cmd.slice(1), {
+    encoding: "utf8",
+    env: engineEnv({ mode: "replay", bun: BUN, configDir: join(REFORGE_ROOT, "config") }),
+  });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
   if (!out.includes(ENGINE_VERSION)) {
     throw new Error(`${label}: boot check failed — expected ${ENGINE_VERSION}, got ${out.slice(0, 200) || "<no output>"}`);
@@ -75,8 +84,37 @@ export function linkRealBinary(): void {
   symlinkSync(REAL_BINARY, REAL_LINK);
 }
 
+/**
+ * §3.5 — refuse a runtime that is not the one the oracle was compiled against.
+ *
+ * Loud rather than advisory: an equivalence claim between `engine-real` (a
+ * bun-compiled binary) and `engine-extracted` (the same JS under an external
+ * bun) is only as strong as the runtime match, and a skewed runtime is exactly
+ * the kind of difference that hides until it produces one inexplicable diff.
+ */
+export function assertRuntimePin(): void {
+  const embedded = embeddedBunVersion();
+  if (embedded !== PINNED_BUN) {
+    throw new Error(`runtime pin stale: src/pin.ts says ${PINNED_BUN}, the pinned binary embeds ${embedded}. Update PINNED_BUN and re-provision.`);
+  }
+  let external: string;
+  try {
+    external = externalBunVersion(BUN);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}\n  Provision the pinned runtime: npx tsx strangle/toolchain.ts`);
+  }
+  if (external !== embedded) {
+    throw new Error(
+      `runtime skew: ${BUN} is ${external}, the pinned binary embeds ${embedded}. ` +
+        `Run 'npx tsx strangle/toolchain.ts' to install the matching bun project-locally (do NOT upgrade ~/.bun).`,
+    );
+  }
+  console.log(`  runtime ok: ${BUN} is ${external} — matches the binary's embedded runtime`);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`pin: ${ENGINE_VERSION}`);
+  assertRuntimePin();
   linkRealBinary();
   bootCheck([REAL_LINK, "--version"], "engine-real");
   const { files, specifiers } = materializeGraph(GRAPH_DIR);

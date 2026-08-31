@@ -9,12 +9,14 @@
 //   2. replay : engine-real → replay proxy (offline)    ⇒ transcript A
 //   3. replay : engine-extracted → replay proxy         ⇒ transcript B
 //   4. diff   : transcripts A vs B  +  requests-emitted A vs B
-// Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m0/06-selftest.ts
+// Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m0/06-selftest.ts
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts, normalizeValue } from "../src/differ.js";
-import { scrubRequestBody, startRecordProxy, startReplayProxy } from "../src/proxy.js";
+import { startRecordProxy, startReplayProxy } from "../src/proxy.js";
+import { scrubRequestBody } from "../src/canonical.js";
 import { REFORGE_ROOT, runTurn, saveTranscript, type TurnCapture } from "../src/runTurn.js";
+import { requireRecordCredential, type EnvMode } from "../src/env.js";
 
 interface Scenario {
   tag: string;
@@ -38,19 +40,19 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
-if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-  console.error("ABORT: no auth in env — source CC-to-SDK/.env first.");
-  process.exit(1);
-}
+// Recording needs a credential; replay does not. The guard asks the SCHEMA
+// which credential it would select, so guard and schema can never disagree.
+requireRecordCredential();
 mkdirSync(join(REFORGE_ROOT, "cassettes"), { recursive: true });
 
-async function proxiedTurn(engine: string, port: number, s: Scenario): Promise<TurnCapture> {
+async function proxiedTurn(engine: string, port: number, s: Scenario, mode: EnvMode): Promise<TurnCapture> {
   return runTurn({
     engine,
     prompt: s.prompt,
     allowedTools: s.allowedTools,
     maxTurns: s.maxTurns,
-    env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` },
+    mode, // X6
+    baseUrl: `http://127.0.0.1:${port}`,
   });
 }
 
@@ -91,7 +93,7 @@ for (const s of SCENARIOS) {
     rmSync(cassette, { force: true });
     const rec = await startRecordProxy(cassette);
     console.log(`recording via 127.0.0.1:${rec.port} → api.anthropic.com ...`);
-    const aRecord = await proxiedTurn("engine-real", rec.port, s);
+    const aRecord = await proxiedTurn("engine-real", rec.port, s, "record");
     await rec.close();
     saveTranscript(`m06-${s.tag}-A-record`, aRecord);
     const entries = readFileSync(cassette, "utf8").split("\n").filter(Boolean).length;
@@ -105,7 +107,7 @@ for (const s of SCENARIOS) {
     rmSync(observed, { force: true });
     observedOf[side] = observed;
     const rp = await startReplayProxy(cassette, observed);
-    const capture = await proxiedTurn(engine, rp.port, s);
+    const capture = await proxiedTurn(engine, rp.port, s, "replay");
     const unmatched = rp.unmatched();
     const unserved = rp.unserved();
     await rp.close();

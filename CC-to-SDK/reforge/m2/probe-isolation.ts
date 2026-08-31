@@ -6,13 +6,14 @@
 // Decisive comparison: same cassette, same engine, shared-config vs isolated
 // config. If the transcripts and emitted requests match, isolation is free.
 //
-// Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m2/probe-isolation.ts
+// Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m2/probe-isolation.ts
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, normalizeValue } from "../src/differ.js";
 import { resetSandbox, type ScenarioContext } from "../src/harness.js";
-import { scrubRequestBody, startReplayProxy } from "../src/proxy.js";
+import { startReplayProxy } from "../src/proxy.js";
+import { scrubRequestBody } from "../src/canonical.js";
 import { enginePath, REFORGE_ROOT } from "../src/runTurn.js";
 import { SCENARIOS } from "../m1/scenarios.js";
 
@@ -40,18 +41,18 @@ async function run(label: string, configDir: string | null) {
     engine: enginePath("engine-real"),
     baseUrl: `http://127.0.0.1:${proxy.port}`,
     collect: (e, p) => events.push({ event: e, payload: p }),
+    mode: "replay",
+    // X6: `null` is how this probe asks for the UNISOLATED child env — the whole
+    // point of the probe is to measure what leaks when CLAUDE_CONFIG_DIR is
+    // absent, so the schema exposes omission as a declared knob rather than
+    // leaving it to a mutation of the parent process.
+    knobs: { configDir: configDir ?? null },
   };
-  // inject CLAUDE_CONFIG_DIR by wrapping the scenario's env through process.env
-  const savedEnv = process.env.CLAUDE_CONFIG_DIR;
-  if (configDir) process.env.CLAUDE_CONFIG_DIR = configDir;
-  else delete process.env.CLAUDE_CONFIG_DIR;
   resetSandbox();
   let messages: unknown[];
   try {
     messages = await scenario.run(baseCtx);
   } finally {
-    if (savedEnv === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = savedEnv;
     await proxy.close();
   }
   const requests = readFileSync(observed, "utf8")

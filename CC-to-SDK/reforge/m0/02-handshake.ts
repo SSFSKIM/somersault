@@ -3,18 +3,16 @@
 // against a real binary? Decisive signals:
 //   1. system:init arrives (stream-json handshake works) and reports the engine identity
 //   2. the turn completes with a result carrying the expected text + usage
-// Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m0/02-handshake.ts
+// Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m0/02-handshake.ts
 import { runTurn, saveTranscript } from "../src/runTurn.js";
+import { requireRecordCredential } from "../src/env.js";
 
 const TOKEN_PHRASE = "HANDSHAKE_OK";
 
 const engines = process.argv.slice(2);
 const targets = engines.length > 0 ? engines : ["engine-extracted", "engine-real"];
 
-if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-  console.error("ABORT: no CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY in env — source CC-to-SDK/.env first.");
-  process.exit(1);
-}
+requireRecordCredential(); // live turns — needs the one selected credential (X6)
 
 for (const engine of targets) {
   console.log(`\n=== M0.2 handshake: ${engine} ===`);

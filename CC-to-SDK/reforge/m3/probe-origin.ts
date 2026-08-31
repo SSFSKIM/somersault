@@ -5,13 +5,12 @@
 // implement peer attribution at all; if the ENGINE strips it, engine-ts must
 // reproduce the stripping (it is a trust boundary, not a cosmetic field).
 //
-// Run: cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx m3/probe-origin.ts
+// Run: cd reforge && set -a; . ../.env; set +a; npx tsx m3/probe-origin.ts
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_DIR } from "../src/harness.js";
 import { startReplayProxy } from "../src/proxy.js";
-import { enginePath, REFORGE_ROOT, SANDBOX } from "../src/runTurn.js";
+import { enginePath, REFORGE_ROOT, SANDBOX, sdkEnv } from "../src/runTurn.js";
 
 const cassette = join(REFORGE_ROOT, "cassettes", "m1-plain.jsonl");
 if (!existsSync(cassette)) {
@@ -35,14 +34,7 @@ async function rawTurn(origin: unknown): Promise<{ origin: unknown; uuid: unknow
      "--dangerously-skip-permissions", "--max-turns", "1", "--setting-sources", ""],
     {
       cwd: SANDBOX,
-      env: {
-        ...process.env,
-        CLAUDE_CONFIG_DIR: CONFIG_DIR,
-        ANTHROPIC_BASE_URL: `http://127.0.0.1:${proxy.port}`,
-        DISABLE_TELEMETRY: "1",
-        DISABLE_ERROR_REPORTING: "1",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      },
+      env: sdkEnv("replay", `http://127.0.0.1:${proxy.port}`), // X6
       stdio: ["pipe", "pipe", "pipe"],
     },
   );

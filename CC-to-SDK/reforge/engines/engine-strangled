@@ -4,4 +4,9 @@
 # `npx tsx strangle/build.ts [--sabotage <name>]`; graded by the same corpus.
 GRAPH="$(dirname "$0")/../build/strangled/cli"
 [ -e "$GRAPH" ] || { echo "reforge: no strangled build — run 'npx tsx strangle/build.ts'" >&2; exit 127; }
-exec /Users/new/.bun/bin/bun "$GRAPH" "$@"
+# The runtime is PINNED to the version the oracle binary embeds (src/pin.ts,
+# spec §3.5); BUN arrives through the allowlisted child env (X6). The fallback
+# is the project-local toolchain, never the operator's ~/.bun.
+BUN="${BUN:-$(dirname "$0")/../toolchain/bun}"
+[ -x "$BUN" ] || { echo "reforge: pinned bun missing at $BUN — run 'npx tsx strangle/toolchain.ts'" >&2; exit 127; }
+exec "$BUN" "$GRAPH" "$@"

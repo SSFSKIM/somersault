@@ -58,6 +58,33 @@ export function deriveFaultCassette(source: string, dest: string, kind: FaultKin
       break;
     }
   }
+
+  // THE ENGINE DOWNGRADES OUT OF SSE AFTER A MID-STREAM FAILURE.
+  //
+  // Measured at 2.1.251: a truncated or malformed stream makes the engine retry
+  // the SAME request with `"stream": false` — a one-character body difference
+  // and a real behavioral contract a reimplementation must reproduce. The
+  // derived cassette had no entry for that request, so the retry was served the
+  // streaming entry POSITIONALLY: both engines then "failed identically" on a
+  // response that was never matched to what they asked for. Invisible until
+  // §3.4 made fallbacks fatal.
+  //
+  // So the derivation answers the downgraded retry explicitly, with the same
+  // injected fault: the suite's claim is that both engines fail the same way on
+  // the same fault, and that claim is only meaningful if each request is served
+  // the response it actually matched.
+  if (kind === "truncated-stream" || kind === "malformed-event") {
+    try {
+      const asked = JSON.parse(target.requestBody) as Record<string, unknown>;
+      if (asked.stream === true) {
+        entries.push({ ...target, seq: entries.length, requestBody: JSON.stringify({ ...asked, stream: false }), repeat: true });
+      }
+    } catch {
+      // A non-JSON body cannot be downgraded; leave the cassette as derived and
+      // let the fallback report itself rather than guessing at a variant.
+    }
+  }
+
   writeFileSync(dest, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
   return entries;
 }
