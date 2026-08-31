@@ -2,7 +2,7 @@
 // popup, measured where Ink decides it.
 //
 // THE DEFECT (Task 4 §5). `popupHeight(rows) = max(1, min(max(6, rows/2), rows − 3))` — HALF THE TERMINAL —
-// and that region is none of `mainWindowCap`'s fourteen dock rows. Window + dock + popup therefore cleared
+// and that region is none of `mainWindowCap`'s sixteen dock rows. Window + dock + popup therefore cleared
 // the pane at every size, so `ink.js:121`'s `outputHeight >= stdout.rows` branch fired on the keystrokes of
 // EVERY slash command, and each one appends a full copy of the committed transcript to scrollback. Measured
 // on a real terminal at 80x40: six `/status` submissions took scrollback from 78 rows to 2035 — past tmux's
@@ -36,6 +36,14 @@ async function waitFor(cond: () => boolean, timeout = 3000) {
   const start = Date.now();
   for (;;) { if (cond()) { await new Promise((r) => setTimeout(r, 0)); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
+/** T-SPACE REBASELINE — the unit conversion every count below now needs. A row budget is in ROWS; `say(n)`
+ *  is one MESSAGE, and since Task 1 a message is TWO physical rows: canon's `addMargin` puts one blank
+ *  separator row above every top-level block (research-spacing.md §1.5, pair "assistant text above
+ *  anything" = 1 blank), which the projection emits as its own zero-content `sep:…:gap` item ahead of the
+ *  content line. The window cuts between WHOLE items and never inside a message, so a budget of `B` rows
+ *  holds `floor(B / 2)` messages and an odd leftover row buys nothing. */
+const MSG_ROWS = 2;
+const liveMsgs = (rowBudget: number): number => Math.floor(Math.max(0, rowBudget) / MSG_ROWS);
 /** Ink's throttled log write is on a 32 ms leading/trailing timer; a settle has to outlast it. */
 const settle = () => new Promise((r) => setTimeout(r, 120));
 const ESC = "\x1b";
@@ -68,18 +76,21 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
     await settle();
   }
 
-  // The two geometries the resize matrix's red cells run at. 24 is where the popup is BIGGER than the whole
-  // window (12 rows of popup against 24 − 14 − 2 = 8 of window, so the window yields all of it); 40 is where
-  // it is bigger than half of it (20 against 24) and the yield is partial — the case that distinguishes a
-  // budgeted subtraction from a blanket blanking.
+  // The two geometries the resize matrix's red cells run at, re-derived for the 16-row dock (T-SPACE Task 3,
+  // `MAIN_DOCK_ROWS` 14 → 16): the window budget is `rows − 16 − SLACK(2)`, i.e. 6 rows at 24 and 22 at 40.
+  // 24 is where the popup is BIGGER than the whole window (12 rows of popup against 6 of window, so the
+  // window yields all of it); 40 is where it is bigger than most of it (20 against 22) and the yield is
+  // partial — one message survives, which is the case that distinguishes a budgeted subtraction from a
+  // blanket blanking.
   for (const rows of [24, 40] as const) {
     it(`typing, filtering and closing a slash popup at 80x${rows} writes NO tall frame`, async () => {
       const geo = { columns: 80, rows };
       const { fake, tty } = mount(geo);
       await fill(fake, tty);
       // The window is FULL before the popup opens — otherwise every zero below is satisfied for the wrong
-      // reason. `rows − 16` items are live, so the first one that is NOT committed is a positive control.
-      const firstLive = 40 - (mainWindowCap(rows) - WINDOW_SLACK) + 1;
+      // reason. `floor((rows − 18) / 2)` MESSAGES are live (two rows each), so the oldest one that is NOT
+      // committed is a positive control: 24 rows → floor(6/2) = 3 live → ALPHA-38; 40 → floor(22/2) = 11 → ALPHA-30.
+      const firstLive = 40 - liveMsgs(mainWindowCap(rows) - WINDOW_SLACK) + 1;
       expect(screen(tty)).toContain(`ALPHA-${firstLive}`);
 
       const mark = tty.mark();
@@ -97,7 +108,10 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
       // BUDGETED, NOT BLANKED (the I2 lesson): the window gave up exactly the popup's rows and no more, so
       // whatever is left of it is still on screen. At 24 rows the popup is taller than the window and the
       // whole of it yields, which is the honest arithmetic rather than an exception.
-      const live = Math.max(0, mainWindowCap(rows) - WINDOW_SLACK - popupHeight(rows));
+      //     24 rows: 6 − popupHeight(24)=12 → 0 rows → 0 messages live, so not even ALPHA-40 is drawn.
+      //     40 rows: 22 − popupHeight(40)=20 → 2 rows → floor(2/2) = 1 message, i.e. ALPHA-40 alone (its
+      //              separator is the second of those two rows); ALPHA-39 would need rows 3 and 4.
+      const live = liveMsgs(mainWindowCap(rows) - WINDOW_SLACK - popupHeight(rows));
       if (live > 0) expect(screen(tty)).toContain(`ALPHA-${40 - live + 1}`);
       if (live < 40) expect(screen(tty)).not.toContain(`ALPHA-${40 - live}`);
 
@@ -129,7 +143,7 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
       const geo = { columns: 80, rows: 40 };
       const { fake, tty } = mount(geo, (r) => r, dir);
       await fill(fake, tty);
-      const firstLive = 40 - (mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;
+      const firstLive = 40 - liveMsgs(mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;   // 40 − floor(22/2) + 1 = 30
       expect(screen(tty)).toContain(`ALPHA-${firstLive}`);            // the window is FULL before the popup
 
       const mark = tty.mark();
@@ -140,8 +154,9 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
       expect(screen(tty)).toContain("zebra-01.md");
       expect(tty.tallWritesSince(mark)).toBe(0);                      // reviewer measured 6 without the subtraction
 
-      // …and it is a budgeted yield here too, released whole on Escape.
-      const live = Math.max(0, mainWindowCap(geo.rows) - WINDOW_SLACK - popupHeight(geo.rows));
+      // …and it is a budgeted yield here too, released whole on Escape: 22 − 20 = 2 rows → 1 message live,
+      // so ALPHA-39 (the next one up, which would need two more rows) must be gone.
+      const live = liveMsgs(mainWindowCap(geo.rows) - WINDOW_SLACK - popupHeight(geo.rows));
       if (live < 40) expect(screen(tty)).not.toContain(`ALPHA-${40 - live}`);
       tty.stdin.write(ESC);
       await settle();
@@ -155,7 +170,7 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
     const geo = { columns: 80, rows: 40 };
     const { fake, tty } = mount(geo);
     await fill(fake, tty);
-    const firstLive = 40 - (mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;
+    const firstLive = 40 - liveMsgs(mainWindowCap(geo.rows) - WINDOW_SLACK) + 1;    // 40 − floor(22/2) + 1 = 30
     expect(screen(tty)).toContain(`ALPHA-${firstLive}`);
 
     const mark = tty.mark();

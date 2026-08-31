@@ -76,22 +76,32 @@ function mountMovableSpy(fake: FakeRemote, geo: { columns: number; rows: number 
 }
 
 describe("FSW T3 — commit is settle-driven, the window is render-time", () => {
-  // rows − dock(14) − SLACK(2) is the live budget: 15 → −1 → 0 live rows, 24 → 8, 40 → 24.
-  // Twelve one-row items therefore publish 12, 4 and 0 of themselves respectively.
-  for (const [rows, expectedPublished] of [[15, 12], [24, 4], [40, 0]] as const) {
-    it(`at ${rows} rows, ${expectedPublished} of twelve one-row items have left the window and been committed`, async () => {
+  // T-SPACE REBASELINE (Tasks 1–3). Two independent effects move every number below.
+  //   · THE DOCK grew 14 → 16 (`liveWindow.ts`'s `MAIN_DOCK_ROWS`: the live-turn slot's `marginTop` and the
+  //     composer's, both previously uncharged). Live budget B = rows − 16 − SLACK(2) = rows − 18.
+  //         15 → max(0, −3) = 0 · 24 → 6 · 40 → 22.
+  //   · EVERY BLOCK NOW LEADS WITH A SEPARATOR ROW (canon `addMargin`, research-spacing.md §1.5 — pair
+  //     "assistant text above anything" = 1 blank). `say(n)` therefore projects to TWO items of one row
+  //     each, `sep:…:gap` (blank) then the content line, so twelve messages are 24 items / 24 rows, and
+  //     `published.length` counts ITEMS, not messages.
+  // The selector admits whole one-row items from the tail until the budget is spent, so published = 24 − B:
+  //     15 rows → 24 − 0  = 24 published (nothing is live at all)
+  //     24 rows → 24 − 6  = 18 published (three whole messages, six rows, stay live)
+  //     40 rows → 24 − 22 =  2 published (eleven whole messages stay live)
+  for (const [rows, expectedPublished] of [[15, 24], [24, 18], [40, 2]] as const) {
+    it(`at ${rows} rows, ${expectedPublished} of twenty-four projected items (twelve messages × separator + content) have left the window and been committed`, async () => {
       const fake = fakeRemote();
       const spy = mountSpy(fake, rows);
       await new Promise((r) => setTimeout(r, 0));
       for (let n = 1; n <= 12; n++) { fake.pushEvent({ kind: "message", data: say(n) }); await new Promise((r) => setTimeout(r, 0)); }
-      await waitFor(() => spy.last().finalized.length === 12);
+      await waitFor(() => spy.last().finalized.length === 24);   // 12 messages × (separator + content)
 
       const { published, finalized } = spy.last();
       expect(published.length).toBe(expectedPublished);
       // Projection order, and a PREFIX of it: what is committed is always the head of the transcript.
       expect(ids(published)).toEqual(ids(finalized).slice(0, expectedPublished));
       // The unpublished tail is what ChatApp will window, and it fits the budget by construction.
-      expect(rowsOf(finalized.slice(expectedPublished))).toBeLessThanOrEqual(rows - 14 - 2 < 0 ? 0 : rows - 14 - 2);
+      expect(rowsOf(finalized.slice(expectedPublished))).toBeLessThanOrEqual(rows - 16 - 2 < 0 ? 0 : rows - 16 - 2);
 
       // Append-only, exactly once: every recorded render's published list is a prefix of the next.
       const seen = new Set<string>();
@@ -147,7 +157,7 @@ describe("FSW T3 — commit is settle-driven, the window is render-time", () => 
     await waitFor(() => flat(app.lastFrame).includes("ALPHA-6"));
     expect(flat(app.lastFrame)).toContain("ALPHA-1");
 
-    rows = 15; fire();                                    // 15 − 14 − 2 → no live rows at all
+    rows = 15; fire();                                    // 15 − 16 − 2 → no live rows at all
     await waitFor(() => !flat(app.lastFrame).includes("ALPHA-6"));
     const shrunk = flat(app.lastFrame);
     for (let n = 1; n <= 6; n++) expect(shrunk).not.toContain(`ALPHA-${n}`);
@@ -245,8 +255,14 @@ const echoRows = (items: readonly RenderItem[]) => items.filter((i) => i.kind ==
 
 describe("FSW T4 — a settled column change re-projects the live tail", () => {
   it("re-wraps the unpublished tail at the new width and leaves every committed row byte-identical", async () => {
-    // 24 rows → 24 − 14 − 2 = 8 live rows. Six one-row prose items plus a three-row echo is nine rows, so
-    // exactly one item is committed at 80 columns and the other eight are the window.
+    // T-SPACE REBASELINE. 24 rows → 24 − 16 − 2 = 6 live rows (dock 14 → 16, `MAIN_DOCK_ROWS`).
+    // AND EVERY BLOCK LEADS WITH A SEPARATOR ROW (canon `addMargin`): each `say(n)` is 2 items / 2 rows
+    // (`sep:…:gap` + content), and the echo is 1 separator + its wrapped content rows — the continuation
+    // rows are the SAME block and get none of their own, which is the per-pair distinction canon draws.
+    //     at 80 columns: 6 × 2 + (1 + 3) = 16 items / 16 rows
+    // The selector fills the 6-row window from the tail with whole items — echo content ×3 (3), echo
+    // separator (4), say-6 content (5), say-6 separator (6) — and stops: say-5's content would be row 7.
+    // So 6 items are live and 16 − 6 = 10 are committed at 80 columns.
     const geo = { columns: 80, rows: 24 };
     const fake = fakeRemote();
     const spy = mountMovableSpy(fake, geo);
@@ -256,7 +272,7 @@ describe("FSW T4 — a settled column change re-projects the live tail", () => {
     await waitFor(() => spy.last().finalized.some((i) => i.kind === "line" && i.line.text.includes("W40")));
     expect(echoRows(spy.last().finalized)).toBe(3);
     const committedAt80 = spy.last().published.map((i) => JSON.parse(JSON.stringify(i)));
-    expect(committedAt80.length).toBe(1);
+    expect(committedAt80.length).toBe(10);
 
     // A WIDENING first, because it is the direction that cannot be confused with a commit: the tail gets
     // SHORTER, so nothing new can leave the window and `staticItems` must come through untouched.
@@ -266,7 +282,7 @@ describe("FSW T4 — a settled column change re-projects the live tail", () => {
     expect(spy.last().published).toEqual(committedAt80);      // byte-identical, not merely the same length
 
     // …and a narrowing, which is where the two halves are visible at once: the echo costs a fourth row, the
-    // tail no longer fits the eight-row budget, and one more item commits. What was already committed is
+    // tail (7 items / 7 rows) no longer fits the six-row budget, and one more item commits. What was committed is
     // still exactly what it was — the ratchet APPENDS, it never re-writes (and never re-wraps) its head.
     geo.columns = 50; spy.rerender();
     await settled();
