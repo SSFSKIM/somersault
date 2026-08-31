@@ -11,7 +11,7 @@
 // nothing under it.
 import { describe, expect, it } from "vitest";
 import { welcomeBanner } from "../../src/tui/banner.js";
-import { projectCompact, projectDetail, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
 
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
@@ -180,6 +180,47 @@ describe("T-SPACE Task 1: the banner→prompt seam composes to 2 (banner's own t
     let leading = 0;
     for (let i = 0; i < transcriptLines.length && transcriptLines[i]!.trim() === ""; i++) leading++;
     expect(trailing + leading).toBe(2);
+  });
+});
+
+// bl10 T-SPACE Task 1 fix wave (review concern-3 adjudication, task-1-report.md): `projectPending` has
+// three trailing pushes after its main dynamic loop. Two are top-level rendered blocks the invariant missed
+// (the advisor tail row, and the withheld-hooks-slice — the SAME `hooksItemRows` unit `foldAnchored` already
+// wraps in `withLeadingSeparator` a few lines away in this same diff); the third (the live hook counter) is
+// correctly exempt per canon (`di`, cli.pretty.js:189434-189486, carries no `marginTop` in either branch).
+describe("T-SPACE Task 1 fix wave: projectPending's three trailing pushes (review concern-3)", () => {
+  const pendingCtx = { ...context, expandHint: "" };
+  const advisorConsult = (toolUseId = "srv1") =>
+    ({ type: "assistant", parent_tool_use_id: null, message: { id: "adv-consult", content: [{ type: "server_tool_use", id: toolUseId, name: "advisor", input: {} }] } }) as Record<string, unknown>;
+
+  it("the unresolved advisor tail row gets exactly one leading separator", () => {
+    const doc = built(prose("hi"), advisorConsult());
+    const items = projectPending(doc, pendingCtx);
+    // "hi" already publishes to compact/Static; the advisor tail row is the ONLY thing pending renders here.
+    expect(lineTexts(items).some((t) => t.includes("Advising"))).toBe(true);
+    expect(separators(items)).toHaveLength(1);
+    expect(items[0]!.id.startsWith("sep:")).toBe(true);
+  });
+
+  it("the withheld hooks slice gets exactly one leading separator — the same hooksItemRows unit foldAnchored wraps elsewhere in this diff", () => {
+    // The call+result+"done" fully settle and publish to Static/compact (no growable run left); the trailing
+    // SessionEnd hook — positioned past everything (`afterSequence` beyond every anchored sequence) — is the
+    // one thing left GROWABLE, so `trailingRunCut` withholds it and `projectPending` draws it as a genuine
+    // standalone `{kind:"hooks"}` item off `settled.slice(hookCut)` (:1920), not absorbed into any group.
+    const doc = built(call("read-1", "Read", { file_path: "/work/a.ts" }), result("read-1"), prose("done"));
+    const hookRuns = [{ id: "h1", name: "SessionEnd", durationMs: 5, afterSequence: 999_999, event: "SessionEnd" }];
+    const items = projectPending(doc, { ...pendingCtx, hookRuns });
+    const ids = items.map((i) => i.id);
+    const hooksIndex = ids.indexOf("hooks:h1");
+    expect(hooksIndex).toBeGreaterThan(-1);
+    expect(ids[hooksIndex - 1]).toBe("sep:hooks:h1:gap");
+    expect(separators(items)).toHaveLength(1);
+  });
+
+  it("the always-last live hook counter stays CORRECTLY exempt — no leading separator (canon's di carries no marginTop)", () => {
+    const items = projectPending(built(), { ...pendingCtx, hookLive: new Map([["Stop", 1]]) });
+    expect(lineTexts(items)).toEqual(["Running Stop hook…"]);
+    expect(separators(items)).toHaveLength(0);
   });
 });
 

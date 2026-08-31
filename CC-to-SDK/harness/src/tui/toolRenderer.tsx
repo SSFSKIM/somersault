@@ -1914,13 +1914,21 @@ export function projectPending(document: TranscriptDocument, options: Projection
   // this keeps the "Advising…" row live in the dynamic region, re-rendered every reconcile (correctly
   // colored once `advisor.resolved` catches up) until it flows through the ordinary compact path exactly once.
   const tail = anchored.at(-1);
-  if (tail?.atom === "breaker" && tail.openAdvisor === true) items.push(...tail.items);
+  // Task 1 fix wave (review concern-3, finding 1): a top-level rendered block like any other pushed here —
+  // gets the same leading separator `foldAnchored`'s identical passthrough-arm push already carries.
+  if (tail?.atom === "breaker" && tail.openAdvisor === true) items.push(...withLeadingSeparator(tail.items));
   // bl8 T-QY Task 3 (plan-review F2): the withheld hooks item(s) `hookCut` excluded from `published` above —
   // rendered from `settled` itself (see that variable's own comment for why, not `dynamic`).
-  for (const item of settled.slice(hookCut)) if (item.kind === "hooks") items.push(...hooksItemRows(item, full));
+  // Task 1 fix wave (review concern-3, finding 2): the SAME `hooksItemRows` unit `foldAnchored`'s `out` loop
+  // wraps in `withLeadingSeparator` a few lines away (:1808) — wrapping it here too closes that inconsistency.
+  for (const item of settled.slice(hookCut)) if (item.kind === "hooks") items.push(...withLeadingSeparator(hooksItemRows(item, full)));
   // D6: the live in-progress counter, appended last and ALWAYS dynamic (bl7 D20's rule: never Static) — a
   // count here is a hook that STARTED but has not yet paired into a `HookRunEntry`, so it can never be one of
   // the `settled` items just rendered above.
+  // Task 1 fix wave (review concern-3, finding 3 — CORRECTLY EXEMPT, do not wrap): canon's live counter `di`
+  // (cli.pretty.js:189434-189486) carries no `marginTop` in either return branch (PreToolUse/PostToolUse
+  // ~189460, or the generic "Running {Event} hook(s)…" branch ~189483) — unlike `hooksItemRows`' completed-run
+  // summary above, this row never gets a leading blank in canon.
   items.push(...hookLiveItems(full.hookLive, full));
   return items;
 }
