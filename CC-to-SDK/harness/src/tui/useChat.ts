@@ -133,7 +133,13 @@ export interface ChatState { sessionId?: string; staticItems: readonly RenderIte
    *  like `effortDialog` (`openAdvisorDialog` below): `current` is the ref value in force when it opened
    *  (a resolved id, or undefined for off) and `mainModel` is the live model, for the dialog's own
    *  unsupported-model warning row. */
-  advisorDialog: { open: boolean; current?: string; mainModel?: string }; bypassConsent: { open: boolean }; settings: { open: boolean; tab?: string }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
+  advisorDialog: { open: boolean; current?: string; mainModel?: string }; bypassConsent: { open: boolean };
+  /** `openSeq` (T-MENU task 3) bumps on every EXPLICIT open call (`openSettings`, below) — never on a plain
+   *  tab-arrow while the dialog is already up. It exists purely so `SettingsDialog`'s per-tab fetch cache can
+   *  tell "the user just re-issued /status/​/usage/​/cost/​/stats while my dialog was already open on that
+   *  tab" (re-fetch: the whole point of a typed command is a FRESH read) from "the user is just browsing
+   *  tabs with the arrow keys" (keep the cache: that is what the cache is FOR). */
+  settings: { open: boolean; tab?: string; openSeq?: number }; outputStyle: string; showTurnDuration: boolean; /** F8 T6 — the `prefersReducedMotion` setting half; `motion.ts`'s `reducedMotion()` is the OR against the screen-reader signal readers actually want. */ prefersReducedMotion: boolean; /** T-CH34 — the `terminalProgressBarEnabled` setting; `ChatApp`'s progress-bar effect ANDs it with `busy` (canon's `m6h`). */ terminalProgressBarEnabled: boolean; /** F9 T-MOUSE Task 7 — the `copyOnSelect` setting; ChatApp's auto-copy latch reads it live on every selection change, never captured once. */ copyOnSelect: boolean;
   /** W-C T12 (EP-C5): the follow-up suggestion's four-state slice (`suggester.ts`). It lives HERE and not in
    *  the composer for two reasons that are the same reason: the composer is unmounted behind every dialog,
    *  and Ctrl-C clears its buffer — a suggestion owned there would die of both, where upstream's survives
@@ -669,7 +675,7 @@ export function useChat(
   // bl8 T-ADVCMD Task 3: /advisor overlay, snapshotted at open time exactly like `effortDialog`.
   const [advisorDialog, setAdvisorDialog] = useState<{ open: boolean; current?: string; mainModel?: string }>({ open: false });
   const [bypassConsent, setBypassConsent] = useState<{ open: boolean }>({ open: false });   // Wave-T T15: /yolo's consent gate
-  const [settings, setSettings] = useState<{ open: boolean; tab?: string }>({ open: false });   // W3 T5: /config overlay
+  const [settings, setSettings] = useState<{ open: boolean; tab?: string; openSeq?: number }>({ open: false });   // W3 T5: /config overlay
   // Baseline SettingsRowCtx captured the moment /config opens, diffed against a fresh snapshot when it
   // closes (closeSettings). A ref, not a local ref inside SettingsDialog: the Model row reuses the
   // EXISTING top-level modelPicker overlay (chain order, ChatApp.tsx), which UNMOUNTS SettingsDialog while
@@ -2250,25 +2256,32 @@ export function useChat(
           break;
         }
         case "context": append(formatContext(summarizeUsage((await session.getContextUsage()) as RawContextUsage))); break;
-        case "cost": append(formatCost((await session.usage()) as SessionUsage)); break;
+        // T-MENU task 3 (spec A1, D13) — `/cost` and `/usage` now OPEN the Settings dialog on the Usage tab
+        // instead of printing a text dump; `fetchSettingsUsage` (below) is what renders there, and it carries
+        // BOTH formatters' fields (D13 information-equivalence: no field either text arm showed may be lost).
+        case "cost": openSettings("Usage"); break;
         case "status": {
-          // W2 T6 FIX / SPEC D-W11 — `/status` MEASURES FOR ITSELF, beside the `usage()` call it already
-          // makes. `ctxPct` has one other writer, the turn-end refresh, so before the first turn (and after
-          // every `/clear`, resume and rewind, which drop it by Wave S's rule) the context row was simply
-          // missing from a command whose entire job is to answer "what is the state of this session right
+          // W2 T6 FIX / SPEC D-W11 — `/status` MEASURES FOR ITSELF, beside the `usage()` call `fetchSettingsStatus`
+          // makes for the dialog. `ctxPct` has one other writer, the turn-end refresh, so before the first turn
+          // (and after every `/clear`, resume and rewind, which drop it by Wave S's rule) the context row was
+          // simply missing from a command whose entire job is to answer "what is the state of this session right
           // now" — and it was missing or not depending on whether a status line happened to be configured,
           // since that mount effect was the only other reader. This is MEASURE-THEN-SHOW and therefore
           // Wave S's rule rather than an exception to it: what W-S5 forbids is a number that outlived the
           // conversation it described, and this is a fresh reading of the conversation on screen. It costs
           // one control round-trip on an explicitly-typed command.
-          //   The Settings dialog's Status tab (`fetchSettingsStatus`) still renders the last measurement
-          // instead of taking its own; only `/status` was the filed surface, and the divergence is recorded
-          // there rather than fixed by drive-by.
-          const [u, measured] = await Promise.all([session.usage().catch(() => undefined), refreshCtx()]);
-          append(formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined }));
+          //   T-MENU task 3 (D13): `fetchSettingsStatus` now takes this SAME fresh reading on its own, so the
+          // Status tab re-measures on EVERY entry (a typed `/status`, or an arrow into the tab from Config) —
+          // not only the one this arm keeps here. Both call `refreshCtx()` because this arm's own reading
+          // updates `ctxPct` (and pokes the status-line chip) the instant the command runs, without waiting on
+          // the dialog to mount; `fetchSettingsStatus` repeats it so a tab-arrow entry (which never goes
+          // through this arm at all) is equally fresh. Two round trips on one explicit command is the accepted
+          // cost of both entry points being independently correct.
+          await refreshCtx();
+          openSettings("Status");
           break;
         }
-        case "usage": append(formatUsage(await session.usage())); break;
+        case "usage": openSettings("Usage"); break;
         // Live-feedback fix (2026-08-06): /clear was UI-only — screen wiped, document replaced, ENGINE
         // CONTEXT KEPT — so the model still remembered everything, which read as "/clear doesn't work".
         // The engine half is a fresh-conversation swap (host `clear` op, busy-gated like resume). It runs
@@ -2399,13 +2412,11 @@ export function useChat(
         }
         // Terminal stand-in for CC's diff dialog: status for the shape, stat for the sizes.
         case "diff": append(formatBashOutput(await runBash("git status --short; git diff --stat", cwd))); break;
-        case "stats": {
-          const u = (await session.usage().catch(() => ({}))) as SessionUsage;
-          const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
-          append(formatStats(u, msgs));
-          staleTurnNote();
-          break;
-        }
+        // T-MENU task 3 (spec A1, D13) — `/stats` now OPENS the Settings dialog on the Stats tab.
+        // `fetchSettingsStats` (below) carries the in-flight staleness disclaimer INTO the tab's own body
+        // (D13) rather than as a separate `staleTurnNote()` transcript notice — a dialog arm leaves no text
+        // dump behind, so the disclaimer has to live where the rest of `/stats`' answer now lives.
+        case "stats": openSettings("Stats"); break;
         case "session": {
           const id = session.sessionId;
           if (!id) { notice("no session yet — send a first prompt"); break; }
@@ -2939,10 +2950,14 @@ export function useChat(
   // thinkLevel, so both the open-time baseline and the close-time snapshot are always accurate regardless
   // of how many times the Model/Theme/Output-style sub-flows ran in between.
   function currentSettingsCtx(): SettingsRowCtx { return { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion: prefersReducedMotion, progressBar: terminalProgressBarEnabled, promptSuggestionEnabled, copyOnSelect }; }
-  function openSettings() {
+  // T-MENU task 3: `tab` defaults to "Config" — /config, /settings and /output-style's redirect keep opening
+  // there unchanged. /status, /usage, /cost and /stats (below) are the new callers that pass their own tab
+  // (spec A1: `/status`→Status, `/usage`/`/cost`→Usage, `/stats`→Stats). `openSeq` always bumps — see its
+  // own field comment for why an explicit open, unlike a tab-arrow, must never satisfy the dialog's cache.
+  function openSettings(tab: string = "Config") {
     if (disposed.current) return;
     settingsBaselineRef.current = currentSettingsCtx();
-    setSettings({ open: true, tab: "Config" });
+    setSettings((s) => ({ open: true, tab, openSeq: (s.openSeq ?? 0) + 1 }));
   }
   function setSettingsTab(tab: string) { if (!disposed.current) setSettings((s) => ({ ...s, tab })); }
   function closeSettings() {
@@ -3072,22 +3087,37 @@ export function useChat(
     try { mergeSettingsFile("localSettings", cwd, (current) => ({ ...(current && typeof current === "object" ? current : {}), outputStyle: id }), deps.settingsFileDeps); } catch { /* best-effort — no visible error line, mirrors theme's own silent persistence */ }
     if (hasSettingsOps(session)) await session.setOutputStyle(id).catch(() => {});
   }
-  // The Settings dialog's Status/Usage/Stats tabs — mirror the /status, /usage, /stats cases
-  // (formatStatus/formatUsage/formatStats), just returning lines instead of appending them: the dialog
-  // renders them itself, read-only.
-  //   ONE DIFFERENCE SINCE W2 T6's FIX ROUND: `/status` re-measures the context (D-W11) and this tab does
-  // not — it renders whatever `ctxPct` last measured, so pre-first-turn its context row is absent where
-  // `/status`' is present. `/status` was the filed surface and the only one adjudicated; extending the extra
-  // round-trip to the dialog is a decision of its own, not a consistency chore to do in passing.
+  // The Settings dialog's Status/Usage/Stats tabs — the read-only bodies `/status`, `/usage`/`/cost` and
+  // `/stats` now open onto (T-MENU task 3, spec A1) instead of printing a text dump. Each fetcher is the
+  // dialog's ONLY path to that formatter's data now, so each carries every field its retired text arm
+  // used to show (spec D13, information-equivalence) rather than the arm's own now-deleted `append(...)`.
+  //   `/status` FIX (D13): this tab used to render whatever `ctxPct` last measured — stale or absent before
+  // the first turn — while `/status` took a fresh reading beside it (D-W11 above). It now takes the SAME
+  // fresh reading itself, via the same `refreshCtx()` the command arm calls, so the tab is correct on ANY
+  // entry (a typed `/status`, or a tab-arrow in from Config), not only the one the command arm covers.
   async function fetchSettingsStatus(): Promise<RenderLine[]> {
-    const u = await session.usage().catch(() => undefined);
-    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
+    const [u, measured] = await Promise.all([session.usage().catch(() => undefined), refreshCtx()]);
+    return formatStatus({ model, mode, thinkLevel, ...statusEffort(), ...statusRenderer(), ctxPct: measured ?? ctxPct, sessionId: session.sessionId, cwd: opts.cwd, usage: u ? usageSummaryLine(u) : undefined });
   }
-  async function fetchSettingsUsage(): Promise<RenderLine[]> { return formatUsage(await session.usage()); }
+  // `/cost` FIX (D13): `/cost`'s cost/duration/code-change/per-model detail (`formatCost`, commands.ts)
+  // had no home in the plan-rate-limit bars `formatUsage` draws — both `/usage` and `/cost` open THIS tab
+  // (spec A1), so both formatters' output is concatenated here rather than either one being dropped. This
+  // is the recorded additive divergence D13 allows: canon's own Usage pane carries no cost breakdown, but
+  // information preservation outranks strict pane parity.
+  async function fetchSettingsUsage(): Promise<RenderLine[]> {
+    const u = await session.usage();
+    return [...formatUsage(u), { text: "" }, ...formatCost(u as SessionUsage)];
+  }
+  // `/stats` FIX (D13): the in-flight staleness disclaimer `/stats` used to post as a SEPARATE transcript
+  // notice (`staleTurnNote()`) is appended to the tab's own lines instead — a dialog arm leaves nothing in
+  // the transcript, so the disclaimer has to travel with the rest of the answer or it would simply vanish.
   async function fetchSettingsStats(): Promise<RenderLine[]> {
     const u = (await session.usage().catch(() => ({}))) as SessionUsage;
     const msgs = session.sessionId ? await getSessionMessages(session.sessionId).catch(() => [] as any[]) : [];
-    return formatStats(u, msgs);
+    const lines = formatStats(u, msgs);
+    return liveTurnRef.current
+      ? [...lines, { text: "  (the in-flight turn isn't included — the transcript is written at turn end)", dim: true }]
+      : lines;
   }
 
   // W3 T7: /permissions. Default tab is decided HERE (not in the component), mirroring openSettings's own

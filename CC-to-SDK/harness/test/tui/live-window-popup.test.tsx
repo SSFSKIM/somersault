@@ -91,7 +91,8 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
 
       for (const ch of "status") { tty.stdin.write(ch); await settle(); }
       expect(tty.tallWritesSince(mark)).toBe(0);                     // measured 7 before the fix
-      expect(screen(tty)).toContain("show model");
+      // T-MENU task 3: /status's summary now says it opens the dialog (commands.ts), not "show model …".
+      expect(screen(tty)).toContain("Settings dialog (Status tab)");
 
       // BUDGETED, NOT BLANKED (the I2 lesson): the window gave up exactly the popup's rows and no more, so
       // whatever is left of it is still on screen. At 24 rows the popup is taller than the window and the
@@ -106,7 +107,7 @@ describe.skipIf(isInCi)("FSW popup budget — the live window pays for the sugge
       await settle();
       expect(tty.tallWritesSince(mark)).toBe(0);
       const back = screen(tty);
-      expect(back).not.toContain("show model");
+      expect(back).not.toContain("Settings dialog (Status tab)");
       expect(back).toContain(`ALPHA-${firstLive}`);
     });
   }

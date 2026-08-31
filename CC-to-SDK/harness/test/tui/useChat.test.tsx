@@ -1086,18 +1086,33 @@ describe("useChat", () => {
     expect(frame(lastFrame)).not.toContain("noted in");
   });
 
-  it("dispatches /cost (session.usage) and /status (local state) locally", async () => {
+  // T-MENU task 3 (spec A1): `/cost` and `/status` OPEN the Settings dialog now (on Usage and Status
+  // respectively) instead of printing a text dump — a bare `useChat` mount never renders the dialog
+  // component itself (that is `ChatApp`'s job; see chat.test.tsx/effort.test.tsx for the full-stack
+  // version), so this asserts the hook's own two halves of the contract: the state field the dialog reads
+  // its tab from, and the fetcher the dialog calls for that tab's body.
+  it("dispatches /cost and /status by opening the Settings dialog (Usage/Status tabs) locally", async () => {
     let submitted = 0;
     const fake = fakeRemote({
       submit: async () => { submitted++; return { result: "x" }; },
       usage: () => ({ session: { total_cost_usd: 0.0123, total_duration_ms: 4200, model_usage: { "claude-opus-4-8": { inputTokens: 1200, outputTokens: 340, costUSD: 0.0123 } } }, subscription_type: null }),
     });
-    const api: { run?: (s: string) => void } = {};
-    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    const api: { run?: (s: string) => void; state?: any; fetchUsage?: () => Promise<{ text: string }[]>; fetchStatus?: () => Promise<{ text: string }[]> } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; api.state = c.state; api.fetchUsage = c.fetchSettingsUsage; api.fetchStatus = c.fetchSettingsStatus;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
-    api.run!("/cost");    await waitFor(() => frame(lastFrame).includes("$0.0123"));
-    api.run!("/status");  await waitFor(() => frame(lastFrame).includes("Status"));
-    expect(frame(lastFrame)).toContain("sess-1".slice(0, 8));   // /status shows the session id
+    api.run!("/cost");
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Usage");
+    const usageLines = (await api.fetchUsage!()).map((l) => l.text).join("\n");
+    expect(usageLines).toContain("$0.0123");
+    api.run!("/status");
+    await waitFor(() => api.state!.settings.tab === "Status");
+    const statusLines = (await api.fetchStatus!()).map((l) => l.text).join("\n");
+    expect(statusLines).toContain("sess-1".slice(0, 8));   // /status shows the session id
     expect(submitted).toBe(0);
   });
 
@@ -1108,31 +1123,38 @@ describe("useChat", () => {
   // appeared in one place and not the other would be the same defect in a new field.
   it("threads the boot renderer decision into /status AND the Settings status tab, identically", async () => {
     const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
-    const api: { run?: (s: string) => void; tab?: () => Promise<{ text: string }[]> } = {};
+    const api: { run?: (s: string) => void; state?: any; tab?: () => Promise<{ text: string }[]> } = {};
     function H() {
       const c = useChat(() => fake, { rendererChoice: { mode: "fullscreen", reason: "settings_on" } });
-      api.run = c.submit; api.tab = c.fetchSettingsStatus;
+      api.run = c.submit; api.state = c.state; api.tab = c.fetchSettingsStatus;
       return <Text>{c.state.busy ? "BUSY" : "IDLE"} {allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("/status");
-    await waitFor(() => flat(lastFrame).includes("renderer fullscreen (settings_on)"));
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Status");
+    // Both surfaces are ONE surface now (T-MENU task 3: /status opens this exact tab), so there is only one
+    // reading left to pin — the tab's own fetcher, which is what a real `/status` invocation now renders.
+    const tab = (await api.tab!()).map((l) => l.text);
     // FSW T9 retired T5's placeholder: the stack named here is now derived from the mode, and a fullscreen
     // launch constructs none of the main-screen machinery this line used to claim for it.
-    expect(flat(lastFrame)).toContain("corrections: alt-screen repaint contract");
-    const tab = (await api.tab!()).map((l) => l.text);
     expect(tab.at(-1)).toBe("  renderer   fullscreen (settings_on) · corrections: alt-screen repaint contract");
   });
 
   it("a hook mounted with no renderer decision reports none rather than guessing one", async () => {
     const fake = fakeRemote({ usage: () => ({ session: { total_cost_usd: 0, model_usage: {} }, subscription_type: null }) });
-    const api: { run?: (s: string) => void } = {};
-    const { lastFrame } = render(<CmdHost makeSession={() => fake} api={api} />);
+    const api: { run?: (s: string) => void; state?: any; tab?: () => Promise<{ text: string }[]> } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; api.state = c.state; api.tab = c.fetchSettingsStatus;
+      return <Text>{c.state.busy ? "BUSY" : "IDLE"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
     await waitFor(() => frame(lastFrame).includes("IDLE"));
     api.run!("/status");
-    await waitFor(() => frame(lastFrame).includes("Status"));
-    expect(frame(lastFrame)).not.toContain("renderer");
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Status");
+    const tab = (await api.tab!()).map((l) => l.text).join("\n");
+    expect(tab).not.toContain("renderer");
   });
 
   it("submit sets turnStartedAt and busy during the turn", async () => {
@@ -2175,7 +2197,10 @@ describe("U5b: /rename /tag /session /stats", () => {
       usage: () => ({ session: { total_cost_usd: 0.5, total_duration_ms: 65000, model_usage: {
         "claude-opus-5": { inputTokens: 1000, outputTokens: 200, costUSD: 0.5 } } } }),
     });
-    const api: { run?: (s: string) => void } = {};
+    // T-MENU task 3 (spec A1): `/stats` OPENS the Settings dialog (Stats tab) now — a bare `useChat` mount
+    // never renders the dialog, so this reads the tab's own fetcher directly, exactly as the /status
+    // rewrite above does.
+    const api: { run?: (s: string) => void; state?: any; fetchStats?: () => Promise<{ text: string }[]> } = {};
     function H() {
       const c = useChat(() => fake, {}, {
         getSessionMessages: async () => [
@@ -2186,13 +2211,16 @@ describe("U5b: /rename /tag /session /stats", () => {
           ] } },
         ],
       });
-      api.run = c.submit; return <Text>{allText(c)}</Text>;
+      api.run = c.submit; api.state = c.state; api.fetchStats = c.fetchSettingsStats;
+      return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/stats");
-    await waitFor(() => frame(lastFrame).includes("claude-opus-5"));
-    expect(frame(lastFrame)).toContain("prompts");
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Stats");
+    const lines = (await api.fetchStats!()).map((l) => l.text).join("\n");
+    expect(lines).toContain("claude-opus-5");
+    expect(lines).toContain("prompts");
   });
 });
 
@@ -2333,32 +2361,41 @@ describe("U3: the Tab ladder's `auto` rung only ever switches a model it knows",
 });
 
 describe("U5b: transcript-reading commands admit when a turn is still open", () => {
+  // T-MENU task 3 (spec D13): the disclaimer used to be a SEPARATE transcript notice (`staleTurnNote()`)
+  // appended after `/stats`' own text dump; now that `/stats` opens a dialog and leaves no text dump behind,
+  // `fetchSettingsStats` carries the disclaimer INTO the Stats tab's own lines instead (see useChat.ts).
   it("/stats says the in-flight turn is missing (the SDK does not write the transcript mid-turn)", async () => {
     const fake = fakeRemote({ sessionId: "s1" });
-    const api: { run?: (s: string) => void } = {};
+    const api: { run?: (s: string) => void; state?: any; fetchStats?: () => Promise<{ text: string }[]> } = {};
     function H() {
       const c = useChat(() => fake, {}, { getSessionMessages: async () => [] });
-      api.run = c.submit; return <Text>{allText(c)}</Text>;
+      api.run = c.submit; api.state = c.state; api.fetchStats = c.fetchSettingsStats;
+      return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     fake.pushEvent({ kind: "turn", phase: "start" } as any);       // a turn is now streaming
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/stats");
-    await waitFor(() => frame(lastFrame).includes("in-flight turn isn't included"));
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Stats");
+    const lines = (await api.fetchStats!()).map((l) => l.text).join("\n");
+    expect(lines).toContain("in-flight turn isn't included");
   });
 
   it("stays quiet when no turn is open", async () => {
-    const api: { run?: (s: string) => void } = {};
+    const api: { run?: (s: string) => void; state?: any; fetchStats?: () => Promise<{ text: string }[]> } = {};
     function H() {
       const c = useChat(() => fakeRemote({ sessionId: "s1" }), {}, { getSessionMessages: async () => [] });
-      api.run = c.submit; return <Text>{allText(c)}</Text>;
+      api.run = c.submit; api.state = c.state; api.fetchStats = c.fetchSettingsStats;
+      return <Text>{allText(c)}</Text>;
     }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
     api.run!("/stats");
-    await waitFor(() => frame(lastFrame).includes("Session stats"));
-    expect(frame(lastFrame)).not.toContain("in-flight turn");
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Stats");
+    const lines = (await api.fetchStats!()).map((l) => l.text).join("\n");
+    expect(lines).toContain("Session stats");
+    expect(lines).not.toContain("in-flight turn");
   });
 });
 
@@ -3121,6 +3158,12 @@ describe("W-S5: the context percentage never outlives the conversation it measur
   // number 5, measured before the wipe, surviving it. A freshly measured 42 is the new conversation's own
   // answer, and asserting on the VALUE is a strictly stronger pin than asserting the row is absent: a build
   // that resurrected the stale reading fails here naming the number it wrongly kept.
+  // T-MENU task 3: `/status` no longer prints its reading into the transcript — it opens the Settings
+  // dialog on the Status tab (spec A1) — but it still calls `refreshCtx()` ITSELF before opening (kept
+  // alongside `fetchSettingsStatus`'s own re-measurement, see useChat.ts's `case "status"`), so `ctxPct`
+  // still updates synchronously off the command exactly as it did before this task. That state is what this
+  // test asserts on directly now instead of scraping "context N% used" out of a transcript dump that no
+  // longer exists; the dialog's OWN reading is covered separately (settings-dialog-status-family.test.tsx).
   it("/clear hides the measured percentage — /status re-measures rather than resurrecting it — and the next turn end measures its own (A8)", async () => {
     let ctx = { totalTokens: 5, maxTokens: 100 };
     const fake = fakeRemote({ getContextUsage: async () => ctx, submitMessages: reply });
@@ -3131,14 +3174,12 @@ describe("W-S5: the context percentage never outlives the conversation it measur
     api.run!("hi");                                                     // a real turn — its end is what measures the context
     await waitFor(() => frame(lastFrame).includes("ctx:5"));
     api.run!("/status");
-    await waitFor(() => flat(lastFrame).includes("context 5% used"));   // the conversation's own reading
+    await waitFor(() => frame(lastFrame).includes("ctx:5"));            // /status's own re-measurement agrees
     ctx = { totalTokens: 42, maxTokens: 100 };                          // the NEXT measurement differs from the stale one
     api.run!("/clear");
-    await waitFor(() => !frame(lastFrame).includes("Status"));          // the document wipe landed
-    expect(frame(lastFrame)).toContain("ctx:-");                        // half one: the chip is gone
+    await waitFor(() => frame(lastFrame).includes("ctx:-"));            // half one: the chip is gone
     api.run!("/status");
-    await waitFor(() => flat(lastFrame).includes("context 42% used"));  // …and /status answers with a NEW reading
-    expect(flat(lastFrame)).not.toContain("context 5% used");           // never the wiped conversation's
+    await waitFor(() => frame(lastFrame).includes("ctx:42"));           // …and /status answers with a NEW reading
     ctx = { totalTokens: 73, maxTokens: 100 };                          // a third value, so the turn's own measurement is named
     api.run!("second");
     await waitFor(() => frame(lastFrame).includes("re: second"));       // the second turn's REPLY, then the measurement
@@ -3821,14 +3862,19 @@ describe("useChat: the statusLine payload and cadence (W2 T6, canon Q3/Q4)", () 
 // read was the only other producer, and it only runs when a status line happens to be configured.
 // Measure-then-show, which is Wave S's rule rather than an exception to it (see the W-S5 block above).
 describe("/status takes its own context measurement (W2 T6 fix, D-W11)", () => {
-  it("shows a context row on a FRESH mount — no statusLine configured, no turn yet", async () => {
+  // T-MENU task 3: /status prints nothing to the transcript any more (it opens the Settings dialog), so
+  // "was: no context row at all pre-turn" is now read off `ctxPct` itself — the state the command's own
+  // `refreshCtx()` call updates — rather than off a text dump. `ctxPct` starting undefined on a fresh mount
+  // and landing at 25 only after `/status` runs is the same fact the original assertion pinned.
+  it("measures a context percentage on a FRESH mount — no statusLine configured, no turn yet", async () => {
     const fake = fakeRemote({ getContextUsage: async () => ({ totalTokens: 25, maxTokens: 100 }) });
     const api: { run?: (s: string) => void } = {};
-    function H() { const c = useChat(() => fake, {}, { clearViewport: () => {} }); api.run = c.submit; return <Text>{allText(c)}</Text>; }
+    function H() { const c = useChat(() => fake, {}, { clearViewport: () => {} }); api.run = c.submit; return <Text>ctx:{c.state.ctxPct ?? "-"} {allText(c)}</Text>; }
     const { lastFrame } = render(<H />);
     await new Promise((r) => setTimeout(r, 20));
+    expect(frame(lastFrame)).toContain("ctx:-");                     // nothing measured yet
     api.run!("/status");                                              // the first thing this session ever does
-    await waitFor(() => flat(lastFrame).includes("context 25% used"));  // was: no context row at all pre-turn
+    await waitFor(() => frame(lastFrame).includes("ctx:25"));         // was: no context row at all pre-turn
   });
 });
 

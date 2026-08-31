@@ -322,9 +322,15 @@ export function settingsWrapRows(columns?: number): number {
 export const settingsVisibleRows = (rows: number = process.stdout.rows ?? 24, columns?: number, thinkingTouched: boolean = false): number =>
   Math.max(1, rows - SETTINGS_CHROME_ROWS - (thinkingTouched ? settingsWrapRows(columns) : 0));
 
-export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outputStyle, showTurnDuration, reduceMotion, progressBarEnabled, promptSuggestionEnabled, copyOnSelect, onDone, applyMode, setThink, setShowTurnDuration, setReduceMotion, setProgressBarEnabled, setPromptSuggestionEnabled, setCopyOnSelect, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
+export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLevel, outputStyle, showTurnDuration, reduceMotion, progressBarEnabled, promptSuggestionEnabled, copyOnSelect, onDone, applyMode, setThink, setShowTurnDuration, setReduceMotion, setProgressBarEnabled, setPromptSuggestionEnabled, setCopyOnSelect, applyOutputStyle, fetchStatus, fetchUsage, fetchStats, onOpenModelPicker, savePrefs = realSavePrefs, rows, columns }: {
   tab: string;
   onTabChange: (tab: string) => void;
+  /** T-MENU task 3 — bumps on every EXPLICIT open (`useChat`'s `openSettings`), never on a plain tab-arrow.
+   *  A typed `/status`/`/usage`/`/cost`/`/stats` re-opening this dialog while it is already up on that same
+   *  tab must re-fetch (the whole point of a typed command is a fresh read — spec D13); browsing tabs with
+   *  the arrow keys must NOT (that is what the per-tab cache below exists to avoid). Optional so every
+   *  existing bare-rendered test (no caller passes it) keeps its current one-fetch-per-mount behaviour. */
+  openSeq?: number;
   model?: string;
   mode: string;
   thinkLevel: string;
@@ -378,17 +384,23 @@ export function SettingsDialog({ tab, onTabChange, model, mode, thinkLevel, outp
   const [sub, setSub, subRef] = useRefState<"none" | "theme" | "outputStyle">("none");
   const [thinkingTouched, setThinkingTouched] = useState(false);      // THINKING_WARNING shows once toggled, for THIS MOUNT (a Model-row detour remounts — see `settingsWrapRows`)
   const [tabLines, setTabLines] = useState<Partial<Record<Tab, RenderLine[]>>>({});
+  // T-MENU task 3 — which `openSeq` each cached tab's lines were fetched AT, so a bumped `openSeq` (an
+  // explicit re-open, not a tab-arrow — see the prop's own comment) can force a re-fetch even though
+  // `tabLines[activeTab]` is already populated. Undefined `openSeq` (every existing bare-rendered test, and
+  // a caller that never passes it) reads as one constant value throughout, so behaviour there is unchanged:
+  // fetch once per tab-entry, exactly as before this task.
+  const [fetchedAt, setFetchedAt] = useState<Partial<Record<Tab, number | undefined>>>({});
 
-  // Fetch a read-only tab's lines once per entry (not on every render) — Status/Usage/Stats only.
+  // Fetch a read-only tab's lines once per entry, and again whenever `openSeq` bumps — Status/Usage/Stats only.
   useEffect(() => {
-    if (activeTab === "Config" || tabLines[activeTab] !== undefined) return;
+    if (activeTab === "Config" || (tabLines[activeTab] !== undefined && fetchedAt[activeTab] === openSeq)) return;
     const fetcher = activeTab === "Status" ? fetchStatus : activeTab === "Usage" ? fetchUsage : fetchStats;
     let cancelled = false;
     void fetcher()
-      .then((lines) => { if (!cancelled) setTabLines((t) => ({ ...t, [activeTab]: lines })); })
-      .catch((e) => { if (!cancelled) setTabLines((t) => ({ ...t, [activeTab]: [{ text: `✗ ${(e as Error).message}`, color: "red" }] })); });
+      .then((lines) => { if (!cancelled) { setTabLines((t) => ({ ...t, [activeTab]: lines })); setFetchedAt((f) => ({ ...f, [activeTab]: openSeq })); } })
+      .catch((e) => { if (!cancelled) { setTabLines((t) => ({ ...t, [activeTab]: [{ text: `✗ ${(e as Error).message}`, color: "red" }] })); setFetchedAt((f) => ({ ...f, [activeTab]: openSeq })); } });
     return () => { cancelled = true; };
-  }, [activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, openSeq]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ctx: SettingsRowCtx = { theme: currentTheme(), model, outputStyle, mode, thinkLevel, showTurnDuration, reduceMotion, progressBar: progressBarEnabled, promptSuggestionEnabled, copyOnSelect };
   // NOT `rows` any more (Wave S t5): that name is the TERMINAL HEIGHT prop now, and two things called `rows`

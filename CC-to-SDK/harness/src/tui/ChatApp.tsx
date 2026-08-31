@@ -1847,7 +1847,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
               // own header comment) rather than reaching for the top-level state.addDir slot below, which
               // sits AFTER this arm and so would otherwise be unreachable while permissions stays open.
               : state.settings.open
-                ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab}
+                ? <SettingsDialog tab={state.settings.tab ?? "Config"} onTabChange={setSettingsTab} openSeq={state.settings.openSeq}
                     model={state.model} mode={state.mode} thinkLevel={state.thinkLevel} outputStyle={state.outputStyle}
                     showTurnDuration={state.showTurnDuration} setShowTurnDuration={setShowTurnDuration}
                     reduceMotion={state.prefersReducedMotion} setReduceMotion={setPrefersReducedMotion}

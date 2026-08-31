@@ -469,6 +469,11 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
     await settle();
     h.stdin.write(CTRL_K);
     await waitFor(() => frame(h.lastFrame).includes("Status"));
+    // T-MENU task 3 (spec A1): `/status` now OPENS the Settings dialog, which occludes the composer while
+    // it's up (ChatApp's `inputOwnerRef` — "overlay") — so the draft is invisible here, not gone. Close the
+    // dialog first and confirm it survived underneath; that is what proves the editor never saw the key.
+    h.stdin.write("\x1b");
+    await waitFor(() => !frame(h.lastFrame).includes("Settings"));
     // stripAnsi, because the cursor now sits ON the `k`: Ink's inverse-video escape splits the raw frame's
     // "keep me" in two, and a raw `toContain` would report the buffer as gone when it is intact.
     expect(stripAnsi(frame(h.lastFrame))).toContain("keep me");      // the editor never saw the key

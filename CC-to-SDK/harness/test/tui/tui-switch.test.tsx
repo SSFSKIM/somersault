@@ -211,6 +211,11 @@ describe("/tui — the live flip", () => {
     await tick();
     await runSlash(stdin, lastFrame, "/status");
     expect(text(lastFrame)).toContain("renderer classic (default_off)");
+    // T-MENU task 3 (spec A1): `/status` now opens the Settings dialog — a modal that owns every keystroke
+    // (ChatApp's `inputOwnerRef`, "overlay") until Esc closes it, exactly like `/config`'s. The composer
+    // cannot see `/tui fullscreen` while it is still up, so close it first, as a real user would.
+    stdin.write("\x1b");
+    await waitFor(() => !text(lastFrame).includes("Settings"));
     await runSlash(stdin, lastFrame, "/tui fullscreen");
     await runSlash(stdin, lastFrame, "/status");
     await waitFor(() => text(lastFrame).includes("renderer fullscreen"));
