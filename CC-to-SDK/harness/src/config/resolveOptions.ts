@@ -164,6 +164,17 @@ export function resolveOptions(config: HarnessConfig): Record<string, unknown> {
   return merged;
 }
 
+/** The environment the ENGINE actually runs under, by this module's own rules and no copy of them: the
+ *  resolved options' `env` when one was computed (the typed merge, or an `extraOptions.env` wholesale
+ *  replacement), and `process.env` when none was — the SDK's inherit default. Exists for the one consumer
+ *  that must answer env questions ABOUT the engine without opening one (bl12: the roster row's `configDir`,
+ *  which an attach client trusts as where this engine reads its user settings) — deriving it from the host
+ *  process env instead let a `config.env`-overridden engine advertise a root it does not use. */
+export function effectiveEngineEnv(config: HarnessConfig): NodeJS.ProcessEnv {
+  const env = resolveOptions(config).env;
+  return (typeof env === "object" && env !== null ? env : process.env) as NodeJS.ProcessEnv;
+}
+
 /** Stamp `timeout` onto every MCP server config that does not declare its own (a declared value always
  *  wins). New objects throughout — no caller's map or server config is mutated. The SDK declares
  *  `timeout` on all five server shapes, so all five are stamped: `type:"sdk"` instances, stdio configs

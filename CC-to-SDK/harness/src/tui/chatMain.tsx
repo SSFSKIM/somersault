@@ -992,7 +992,12 @@ export async function runChatClient(opts: ChatClientOpts): Promise<void> {
           initialTodosOpen={prefs.showExpandedTodos ?? true}
           renderer={renderer} aroundSubprocess={altGuard.aroundSubprocess} altHandoff={altGuard.handoff}
           {...(opts.name ? { name: opts.name } : {})} terminalTitle={title} progressBar={progressBar}
-          deps={{ notifier, ...(settingsFileDeps ? { settingsFileDeps } : {}) }} />
+          deps={{ notifier, ...(settingsFileDeps ? { settingsFileDeps } : {}),
+            // Round-3 review: the statusLine COMMAND (loaded from the host's file) must also EXECUTE in
+            // the host's namespace — `useChat` runs it with `deps.env ?? process.env`, so a command that
+            // reads $CLAUDE_CONFIG_DIR would otherwise land back in this shell's. Merged, not replaced:
+            // PATH, TMUX and the rest stay this process's own.
+            ...(opts.configDir !== undefined ? { env: { ...process.env, CLAUDE_CONFIG_DIR: opts.configDir } } : {}) }} />
       </UserKeymap>,
       { exitOnCtrlC: false, stdout: output.stdout },
     );
