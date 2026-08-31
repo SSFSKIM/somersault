@@ -7,12 +7,22 @@
 // Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/all.ts [--engineB <name>]
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
+// Derived, not written down: the label used to carry a hardcoded scenario count,
+// which was already stale the first time the corpus grew (22 -> 24 at C4). A
+// number in a gate transcript that nobody recomputes is a number nobody can
+// trust.
+import { SCENARIOS as M1_SCENARIOS } from "../m1/scenarios.js";
+import { M2C_SCENARIOS } from "../m2c/scenarios.js";
+import { M3_SCENARIOS } from "../m3/scenarios.js";
+import { W1_SCENARIOS } from "../w1/scenarios.js";
+
+const CORPUS_SIZE = M1_SCENARIOS.length + M2C_SCENARIOS.length + M3_SCENARIOS.length + W1_SCENARIOS.length;
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
 
 const SUITES: [string, string[]][] = [
-  ["corpus (22 scenarios)", ["m1/run.ts", "--engineB", engineB]],
+  [`corpus (${CORPUS_SIZE} scenarios)`, ["m1/run.ts", "--engineB", engineB]],
   ["faults (5 injections)", ["m2/faults.ts", "--engineB", engineB]],
   ["partials (stream shape)", ["m2/partials.ts", "--engineB", engineB]],
   ["cross-resume (store)", ["m2/cross-resume.ts", "--engineB", engineB]],

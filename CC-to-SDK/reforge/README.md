@@ -422,7 +422,11 @@ row, name its covering scenarios. Nothing else changes.
 
 *(As of W0a below, the row also declares a `target` shape, a structural
 `signature` for the node that shape resolves to, and `deriveArgs` has become an
-exhaustive list of taxonomy-classified `captures`.)*
+exhaustive list of taxonomy-classified `captures`. As of W1 the module is a
+DIRECTORY — `<name>/reference.js` plus `<name>/sabotage.js`, wired by the two
+thin adapters `<name>.js` and `<name>.sabotage.js` — and a row may carry a
+`coLiteral` when its anchor is not unique graph-wide. Manifest table below is the
+M3-B snapshot; the current thirteen are tabulated in the W1 section.)*
 
 ### The gate sabotages one splice at a time
 
@@ -634,7 +638,11 @@ faithful implementation the gate grades) and `<name>.sabotage.js` (the liveness
 twin). The third layer — a `custom` overlay for deliberate deviations, kept
 apart from the parity implementation so the first real customization is not
 indistinguishable from a bug — arrives with the first customization, not
-speculatively.
+speculatively. *(W1 moved the pair into a directory: `<name>/reference.js` is the
+parity layer and `<name>/sabotage.js` the twin, with `<name>.js` and
+`<name>.sabotage.js` as the thin wirings that install them into the graph. The
+reference file is also what `engine-ts/modules/index.ts` imports, so one file
+serves both wirings — see the W1 section.)*
 
 A sabotage twin should be wrong in a way that is **loud and cheap**. Dropping a
 value outright is loud but can leave the engine flailing (the first `text-delta`
@@ -1061,8 +1069,200 @@ npx tsx src/credential-leak.test.ts          # X6 end-to-end, fake credential + 
 npx tsx strangle/toolchain.test.ts           # the runtime pin is the bytes
 ```
 
+## W1 — the tool-result formatter family + the standalone-complete retrofit (2026-09-01)
+
+Campaign child **C4** (spec `docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md`,
+§2.4 dual-wiring, §2.5 layers, §3.2's state surface). The manifest went from **6 splices to 13**,
+and — the part that matters more than the count — every owned module became **standalone-complete**:
+it ships its own constants and pure helpers, and the only things still crossing the adapter are
+typed ports and the primitives it deliberately asserts.
+
+| splice | anchor | captures owned / ported | covered by |
+|---|---|---|---|
+| `write-tool-result` | `has been updated successfully.${` | 1 primitive / — | `file-tools` |
+| `edit-tool-result` | `All occurrences were successfully replaced.` | 1 primitive / — | **`edit-tool`** |
+| `read-tool-result` | `PDF pages extracted: ` | 6 helpers / 2 ports | `file-tools` |
+| `bash-tool-result` | `<error>Command was aborted…` + `coLiteral` | 5 helpers, 3 primitives / 3 ports | `bash-tool`, `hooks`, `partial-tool-args`, `parallel-tools` |
+| `grep-tool-result` | `"occurrence":"occurrences"` | 2 helpers / — | `search-tools` |
+| `glob-result` | `content:"No files found"};return` | 1 helper / — | `search-tools` |
+| `task-create-result` | `" created successfully: "` | none | `todo-tool` |
+| `task-get-result` | `Blocked by: ${` | none | **`task-family`** |
+| `task-list-result` | `No tasks found` | none | **`task-family`** |
+| `task-update-result` | `Task completed. Call TaskList now` | — / 2 ports | **`task-family`** |
+
+Ten of the graph's **44** `mapToolResultToToolResultBlockParam` methods, 6,568 minified chars. Plus
+the three W0a spikes (`env-block`, `text-delta`, `session-materialize`), retrofitted the same way.
+
+### Coverage led, and it had to: four of the seven had none
+
+The W1 anchor scout measured the corpus before any code was written and found **no Edit scenario and
+no TaskGet/TaskUpdate/TaskList scenario at all**. A splice with no covering scenario is ungated by
+construction — the gate's solo-sabotage phase fails it outright — so two scenarios were written and
+recorded live *first* (`reforge/w1/scenarios.ts`), taking the corpus to **24**:
+
+- **`edit-tool`** drives both formatter arms in one walk: Write a three-line file, Edit one
+  occurrence, then Edit with `replace_all`. The recorded results carry
+  `The file <p> has been updated successfully.<suffix>` and
+  `The file <p> has been updated. All occurrences were successfully replaced.<suffix>`.
+- **`task-family`** walks TaskList (empty) → TaskCreate ×2 → TaskList → TaskGet → TaskUpdate, so
+  `"No tasks found"`, `#1 [pending] REFORGE_TASK_ONE`, TaskGet's three-line block and
+  `Updated task #1 status` are all observable. Its substance check asserts TaskList ran **before**
+  the first TaskCreate, because otherwise the empty-list arm is never rendered.
+
+### The retrofit: `primitive` and `pure-helper` do not wire the same way
+
+§2.4 reads as though both classes simply become "owned". They cannot share one wiring, and the
+difference is the whole value of the primitive class:
+
+- **`pure-helper` → owned and NOT forwarded.** The module ships the implementation and uses it in
+  both wirings; the graph's function is never called and never identity-compared. The build still
+  derives and footprints the graph's binding, so §5 can stale the row when upstream moves it.
+- **`primitive` → owned AND still forwarded, on purpose.** The module uses its own copy; the
+  graph's copy crosses only so the adapter can equality-assert it, on every single delegation. That
+  is not ceremony. A constant whose *value* changes while its name stays put moves no anchor and no
+  target-span hash — the assertion is the cheapest thing that can see it, and it costs a comparison.
+
+So `owned: true` marks pure helpers only. The Write and Edit formatters share **one** owned constant
+(`strangle/modules/shared/file-state.js`), asserted from both adapters — the coordination point the
+W2 scout named, closed before it could become two independently transcribed strings.
+
+What stayed a port is stated in each module's header rather than implied: Read's staleness prefix is
+a WeakMap **plus a clock**, Bash's background output path reads a live registry, TaskUpdate's two
+agent-team predicates reach a gate and an env var. Those are ledger edges, not leftovers.
+
+### Two mechanism gaps, found by real targets
+
+- **Grep was unspliceable.** Its first parameter is `{mode:e="files_with_matches", …}`, and
+  `strangle/ast.ts` refused every parameter-destructuring default. The refusal was
+  over-conservative: the delegation reproduces the original parameter list verbatim, so the default
+  applies exactly once — in the adapter — before the bound name is forwarded, and the owned module
+  sees precisely what the excised body saw. Defaults forward now; a default inside a *nested*
+  pattern is still refused, because the nested pattern is.
+- **Bash has no graph-unique literal.** Its only distinctive string,
+  `"<error>Command was aborted before completion</error>"`, occurs **twice in every bundle from
+  2.1.220 to 2.1.251** — the engine chunk and the Windows/PowerShell sibling. Extending the anchor
+  in either direction reaches a minified local name, the bet this project has watched lose twice in
+  one bump. A row may now declare a **`coLiteral`**: a second literal that must occur in the same
+  chunk, after which the anchor must be unique among the chunks carrying both. Deliberately a
+  literal and **never a chunk name** — chunk names are content-addressed and churn per pin (2.1.241
+  was one `cli` file; 2.1.251 is 400+ `chunk-<hash>.js`), so name scoping would turn every bump into
+  a manual re-anchoring pass and destroy exactly the property literal anchors exist for. Bash's is
+  `"Run shell command"`, taken from the same object literal as the target, so it names the tool
+  rather than the packaging. Every way of mis-declaring the scope throws
+  (`strangle/mechanism.test.ts`).
+
+### A green gate says less about an owned module than about a spliced one
+
+Sabotaging a whole method reddens its scenario even when the corpus touches one branch of six — and
+after this retrofit the *implementation* of those other five is ours. Measured: the corpus renders
+**one of Read's six** result arms, **one of Grep's three**, the plain stdout path of **Bash's six**,
+and **never truncates a Glob result at all**.
+
+So §2.4's second clause stops being optional. `strangle/contracts.test.ts` is a new gate phase —
+**135 checks**, every expectation written out in full rather than recomputed from the
+implementation: Glob's three truncation outputs, `formatBytes` across four unit bands and both
+boundaries, Read's numbering helpers and all six result arms (including both ports), the notebook
+text-merge with an image breaking the run, Bash's preview splitter and its strict halfway test, the
+magic-byte image sniff, Grep's content and count arms, Edit's two arms × three suffix states, the
+whole task family — including TaskUpdate's completion nudge with its two ports stubbed **true**, the
+branch a headless corpus cannot reach.
+
+### The fourth diff surface (§3.2, cheap subset)
+
+Transcripts, events and requests all describe what the engine *said*. `src/state.ts` adds what it
+*did*: the sandbox filesystem tree, recursive and content-hashed, plus the engine's termination —
+graded per scenario, failing on any difference, and graded even on `substanceOnly` scenarios, since
+that exemption is about transcript nondeterminism and says nothing about what an engine left on
+disk. The per-scenario line prints the entry count, so an "identical" over two empty trees reads as
+the weak claim it is.
+
+The exit half is **derived**, and says so: capturing a real exit status needs either an env var
+outside the X6 schema or dropping `exec` from the engine wrappers — and dropping `exec` puts a shell
+between the SDK and the engine, so an aborted run (the corpus has two) would signal the shell and
+orphan the engine. It reads the outcome the runner can already see. Process supervision arrives with
+the full surface at W9. `src/state.test.ts` is the non-vacuity control: a same-length content change,
+a stray file, a missing file, a symlink target and each exit class are all caught, and an mtime
+change is ignored — exactly what the canonicalization claims.
+
+### Dual-wiring is now two importers of one file
+
+There is **one** owned implementation per module, at `strangle/modules/<name>/reference.js` — plain
+ESM, no `globalThis`, no minified identifier anywhere in it. Two wirings import that same file: the
+strangler adapter (`strangle/modules/<name>.js`), which installs it into the extracted graph and
+asserts the primitives, and `engine-ts/modules/index.ts`, which registers it. Importing it in the
+skeleton is not decoration — `check-reachability.ts` walks that graph, so all thirteen reference
+modules are proven statically, per run, to reach no extraction chunk, no pinned binary and no
+`build/` artifact.
+
+The refusal frame got more careful in the same commit. With ten of 44 formatters registered, three
+subsystems now have an owned module, and the old wording would have read "engine-ts owns 3/15
+in-scope subsystems" — a claim ten formatters do not support. It now reports the two populations
+separately and says in words that **registration is per module and partial ownership is not
+ownership**.
+
+### Ledger: one row became two, and none of them moved to `standalone-complete`
+
+§1.1's first row was "Tool result formatters **+ validators**". C4 subdivided it with evidence: the
+Edit tool's error results are not produced by the formatter at all but by a sibling
+`async validateInput` — 3,317 minified chars against the formatters' 155–1,590, with filesystem
+reads, `readFileState` access, telemetry and gate reads. Keeping both halves in one row would make
+"the formatters are owned" and "the validators are owned" indistinguishable states. The new
+`subsystem/tool-result-validators` row is `unowned`, filed under C4 because C4 is what subdivided
+it, with an open note recording that **C4 does not close it**.
+
+And the formatter row stays **`spliced`**, not `standalone-complete`: ten owned modules against 34
+formatters still in the graph is not an owned family. Same for the three spike rows — one `<env>`
+function is not prompt assembly, one delta arm is not the turn driver, one materializer is not the
+`SessionPort`. Per-module ownership is real and is recorded through the registry; per-subsystem
+ownership is what the ledger grades, and it has not happened yet.
+
+### Gate
+
+```
+=== strangler gate ===
+  PASS  env schema + credential matrix
+  PASS  canonicalization scrubs
+  PASS  state surface catches what it claims
+  PASS  gate-defaults fixture matches the pin
+  PASS  splice mechanism
+  PASS  owned-implementation contracts
+  PASS  derivation perturbation
+  PASS  liveness write-tool-result
+  PASS  liveness edit-tool-result
+  PASS  liveness read-tool-result
+  PASS  liveness bash-tool-result
+  PASS  liveness grep-tool-result
+  PASS  liveness glob-result
+  PASS  liveness task-create-result
+  PASS  liveness task-get-result
+  PASS  liveness task-list-result
+  PASS  liveness task-update-result
+  PASS  liveness env-block
+  PASS  liveness text-delta
+  PASS  liveness session-materialize
+  PASS  equivalence (faithful)
+  PASS  credential leak (end-to-end, X6)
+  PASS  runtime pin is the bytes (§3.5)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+Twenty-three phases, up from fourteen: thirteen liveness lines instead of six, plus the two new
+non-vacuity phases (owned-implementation contracts, state surface). `bash-tool-result` is the row
+whose solo sabotage reddens **four** scenarios rather than one — every scenario that runs a Bash
+command reads its result back — and all four are listed in its manifest row so the expected-RED set
+is not mistaken for a regression.
+
+Corpus **24/24**, full acceptance **5/5**, **13** liveness phases, zero positional fallbacks.
+
 ## Next
 
-Continue widening the manifest, ordered by what the corpus already covers —
-each new splice needs a covering scenario before it can be gated, so coverage
-leads reimplementation rather than trailing it.
+**C5 / W2** — tool-description functions on the generalized S-method, and the S-chunk mechanism
+debut on `chunk-y30v0ja7` with its full export-and-consumer inventory
+(`reforge/research/2026-08-31-w2-schunk-scout.md`). Coverage still leads: the scout already measured
+that a Glob or Grep description sabotage reddens exactly one scenario (`search-tools`), and that
+Glob's lean branch is unreachable at its only call site — so W2 either adds a lean-branch variant or
+records a reviewed exclusion, rather than letting a green gate imply coverage it does not have.
+
+Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It
+is filed under C4 because C4 subdivided it; the roadmap owes it an assignment.

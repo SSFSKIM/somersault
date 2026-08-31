@@ -625,8 +625,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C1 | W0a | commit `2621aad3` (direct execution vs this doc) | **landed + boundary-reviewed** — 4 target shapes, AST spans, 3 spike splices, closure-surface footprints, free-variable inventory, structural signatures (fix commits `97701dc6`/`dd260620`/`2f057702`) |
 | C2 | W0b | commit `453f5952` | **landed + boundary-reviewed** — skeleton boots, ledger 46 rows evidence-backed, AST-based reachability w/ package allowlist (fix commits `bedff4b8`/`080e8dfd`/`cadb2e66`) |
 | C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed + boundary-reviewed** — env allowlist + credential injection (engine never holds a live secret), collision-fatal replay keys, SHA-pinned Bun, month-rot scrub (fix commits `64318463`…`fa8009d0`); gate 12/12, zero fallbacks |
-| C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | not-dispatched — scouted; W0 boundary closed, dispatchable now |
-| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; blocked-by C4 (gate/tree serialization) |
+| C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | **landed** — 13 splices (10 tool-result formatters), corpus 24, every owned module standalone-complete + registered, contract tests and the cheap state surface online; validator row split out `unowned` |
+| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; C4 landed, dispatchable now |
 | C6–C10 | W3–W7 | — | not-dispatched — blocked-by W0 trio |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
@@ -951,3 +951,55 @@ Pending — written at finish.
   refused with bundle evidence: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` force-resets the permission
   mode to `default` (cli.pretty.js:233080), which would silently grade a different engine — the
   variable is forbidden instead and the leak closed at its source.
+- 2026-09-01 (C4 / W1 — tool-result formatters + retrofit): the manifest went from 6 splices to
+  13 and every owned module became standalone-complete. Corpus 24 (two new scenarios,
+  `edit-tool` and `task-family`, recorded live and replaying offline with zero fallbacks); the
+  ten owned tool-result formatters cover 6,568 of the 44 formatter methods' minified chars.
+  Five items change what later waves inherit:
+  - **§1.1's first row is now two rows.** "Tool result formatters **+ validators**" was one row;
+    C4 subdivided it with measured evidence. The Edit tool's error results
+    ("String to replace not found in file.", "File has not been read yet.", the stale-read and
+    match-count messages) are not produced by `mapToolResultToToolResultBlockParam` at all — they
+    are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters'
+    155–1,590, carrying filesystem reads, `readFileState` access, `tengu_edit_tool_stale_read`
+    telemetry and gate reads, i.e. mostly `effectful-port` captures. It needs its own scenario (a
+    deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than
+    smuggling a validator in behind a formatter wave. The new
+    `subsystem/tool-result-validators` row is `unowned` and filed under C4 because C4 is what
+    subdivided it — **C4 does not close it, and the roadmap owes it a wave assignment** (20
+    `validateInput` methods exist in `chunk-fy12d89p.js`; the natural home is whichever wave takes
+    the file tools' execution path).
+  - **The `primitive` and `pure-helper` classes wire DIFFERENTLY, and §2.4 did not say so.** The
+    taxonomy reads as if both become "owned", but they cannot share one wiring: a `pure-helper` is
+    owned and NOT forwarded (the graph's function is never called), while a `primitive` must stay
+    forwarded — the module uses its own copy, and the graph's copy crosses only so the adapter can
+    equality-assert it. That assertion is not ceremony: a constant whose VALUE changes while its
+    name stays put moves no anchor, no target hash and no capture hash shape that any other
+    mechanism watches, so the per-delegation comparison is the only cheap thing that can see it.
+    `owned: true` therefore marks pure helpers only. Later waves should read §2.4's "the adapter
+    equality-asserts the graph's value" as *requiring* the forward, not as an alternative to it.
+  - **Two mechanism gaps surfaced on real targets, both fixed in-wave.** (1) `strangle/ast.ts`
+    refused any parameter-destructuring DEFAULT, which made the Grep formatter
+    (`{mode:e="files_with_matches", …}`) unspliceable; the refusal was over-conservative, since the
+    delegation reproduces the original parameter list verbatim and so applies the default exactly
+    once before forwarding the bound name. Defaults now forward; nested patterns are still refused.
+    (2) The Bash formatter carries **no graph-unique literal at all** — its only distinctive one
+    occurs twice in every bundle from 2.1.220 to 2.1.251 (engine chunk + Windows/PowerShell
+    sibling). The manifest gained an optional `coLiteral` scope, deliberately a co-occurring
+    LITERAL and never a chunk name: chunk names are content-addressed and churn per pin, so name
+    scoping would convert every bump into a manual re-anchoring pass. Waves facing an anchorless
+    target should reach for this rather than for an identifier-tainted anchor.
+  - **A green gate says less about an owned module than it did about a spliced one.** Sabotaging a
+    whole method reddens its scenario even when the corpus touches one branch of six, and after
+    this retrofit the *implementation* of those five other branches is ours. The corpus renders one
+    of Read's six result arms, one of Grep's three, the plain stdout path of Bash's six, and never
+    truncates a Glob result. §2.4's second clause — a contract test over partitioned inputs — is
+    therefore load-bearing from W1 onward, not optional: `strangle/contracts.test.ts` (135 checks)
+    is a gate phase, and every wave that owns a helper wider than its corpus owes one.
+  - **§3.2's state surface is live in its cheap form, with one half honestly weaker.** The sandbox
+    filesystem tree (recursive, content-hashed) is a direct fourth graded surface on every
+    scenario, including `substanceOnly` ones — that exemption is about transcript nondeterminism
+    and says nothing about what an engine left on disk. The exit-code half is DERIVED from the
+    error the SDK throws, because a true exit status needs either an env var outside X6 or dropping
+    `exec` from the engine wrappers, and dropping `exec` would orphan the engine when an aborted
+    run signals the shell. Process supervision belongs with the full surface at W9.
