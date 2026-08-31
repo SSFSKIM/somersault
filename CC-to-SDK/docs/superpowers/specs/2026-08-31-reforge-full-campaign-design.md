@@ -54,8 +54,8 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Tool-description functions (Read, Glob, Grep, WebFetch) + their satellite chunks' other exports | high — but the chunks are multi-export grab-bags, NOT single-function seams (census correction) | `hx5r9amq` (15 exports), `y30v0ja7` (3), `hdmehzg7` (17), `qe0j59w7` (4) |
 | Environment block + system-prompt assembly | high (env block is one 12-line fn) | `fy12d89p` @336–350, @85.3k |
 | Compaction: summarization prompt, `compact_boundary` emit, trigger policy (reactive + microcompact) | high | `fy12d89p` @45–48k, @70k, @76.3k |
-| Hook dispatch + hooks chunks | high (event names are unique literals) | `7g4v1yq9` + 4 small chunks + `fy12d89p` @30–33k, @70–74k |
-| Permission decisions + rule matching/parsing | high (decision fns return plain objects) | `hw8qz4q5`, `8c6qx8qp`, `fy12d89p` @30–37k |
+| Hook dispatch + hooks chunks | high (event names are unique literals) — **corrected 2026-09-01: dispatchers are `async function*` free functions in the engine chunk; the satellite "hooks chunks" are shared-constant/barrel chunks, not owned units** | `fy12d89p` @30–33k, @70–74k (scout: `…w5-w7-anchor-scout.md`) |
+| Permission decisions + rule matching/parsing | high (decision fns return plain objects) — **corrected 2026-09-01: `hw8qz4q5` is the PowerShell tool (W10), not permissions; `8c6qx8qp` is a 500-consumer constants chunk; the chain lives in the engine chunk, pure S-method** | `fy12d89p` @30–37k |
 | Control-protocol switch (`control_request`/`control_response` subtypes) | high (one `switch` with literal cases) | `fy12d89p` @38.7k + `mfkbzdqf`, `kje2nmp8` |
 | Moat tools: `SendMessage`/`ListAgents`, `Workflow`, `ScheduleWakeup`, TaskCreate family, `Skill`, plan/worktree tools | per-tool (scenario-led) | `fy12d89p` various |
 | Session/transcript storage; resume/fork | module-level (Result-monad fs layer) | `d78hxkfm`, `trstwd25`, `fy12d89p` @4–10k |
@@ -557,11 +557,47 @@ follow as C4/C5.
 - **Contracts:** X1–X7 as C4.
 - **Required.** Status: not-dispatched (blocked-by C1/C2).
 
+#### C5x: mechanism round 2 (scout flow-back) — autonomous
+- **Purpose:** close the four transform gaps the W3–W7 scouts measured before the bloc runs:
+  (a) `yield*` delegation for `async function*` targets (all 8 hook dispatchers — W5's hard
+  blocker); (b) an `arrow-initializer` shape for arrows inside multi-declarator `var`s (W6);
+  (c) a `variable-declarator` shape for top-level prompt-text constants (W3/W4 — the
+  summarization prompt is one); (d) same-chunk sibling disambiguation for identical anchor
+  literals (blocking `nie`/`r6`/`U8n`/`NAt` — structural-signature-based selection at splice
+  time, extending the existing signature mechanism). Plus (e) **the symbol map as a committed,
+  pin-keyed artifact**: the W5–W7 scout found 387 chunks re-exporting engine symbols under
+  source-level names (832 minified→semantic names for the engine chunk); generate it, commit it
+  under research/fixtures/, regenerate per pin bump (a §5 staleness signal nothing else sees).
+- **Acceptance:** one gated spike per new shape/mechanism (the W0 ritual: excise → boot →
+  solo-sabotage RED → faithful GREEN → perturbation loud); symbol-map artifact committed with a
+  `--check` mode; gate stays green end-to-end.
+- **Edges:** blocked-by: C5 (lock); blocks: C6–C10. **Required.** Status: not-dispatched.
+
 #### C6–C10: W3–W7 (prompt assembly · compaction · hooks · permissions · control protocol) — autonomous at dispatch
 - One child per §6 wave row; purpose/acceptance/corpus families as tabled. Each is blocked-by
-  C1/C2/C3; the W3→W7 sequence is priority order, not hard edges — the orchestrator sequences
-  them by recording/gate serialization (X5). Their fine structure is cut at dispatch.
-- **Required.** Status: not-dispatched (blocked-by W0 trio).
+  C1/C2/C3 **and C5x**; the W3→W7 sequence is priority order, not hard edges — the orchestrator
+  sequences them by recording/gate serialization (X5). Their fine structure is cut at dispatch,
+  from the scouted groundwork (`reforge/research/2026-09-01-w3-w4-anchor-scout.md`,
+  `…-w5-w7-anchor-scout.md`).
+- **Scout-driven corrections to §6's table (2026-09-01, binding for the bloc's cuts):** W6 and
+  W5 are **pure S-method** — no S-chunk candidates exist (the census's `hw8qz4q5` row is
+  actually the PowerShell tool, W10's domain; the other candidate chunks are 500-consumer
+  shared-constant chunks or barrels). W7 **drops the switch/arm approach entirely**: the
+  headless seam is a 55-arm `else if` chain whose arms bind loop control + ~40 locals; the wave
+  splices the named whole-function handlers instead, and extends `m2/raw-protocol.ts` into a
+  control-subtype driver — grading validation branches and response constructors with zero new
+  live recordings. W3 notes: `xMt` is telemetry-only (never splice); the main system-prompt
+  preset is **dark on the current corpus** (`settingSources: []`, no `systemPrompt`) — C6's cut
+  decides preset-enabled scenario vs. reviewed exclusion. W4 notes: reactive compaction's
+  natural trigger is ≈167k tokens — never record it; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is
+  approved for the X6 allowlist (C3 sign-off recorded here) to make compaction-depth recordable
+  cheaply; **microcompaction is headlessly unreachable** (`createContextHintController` returns
+  null unless querySource starts with `repl_main_thread`; the SDK path sends `"sdk"`) — a
+  reviewed exclusion with evidence, not a scenario debt. Coverage debts quantified: ~5 hook
+  recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
+  short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
+  pinned defaults.
+- **Required.** Status: not-dispatched (blocked-by C5x).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -636,7 +672,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed + boundary-reviewed** — env allowlist + credential injection (engine never holds a live secret), collision-fatal replay keys, SHA-pinned Bun, month-rot scrub (fix commits `64318463`…`fa8009d0`); gate 12/12, zero fallbacks |
 | C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | **landed** — 13 splices (10 tool-result formatters), corpus 24, every owned module standalone-complete + registered, contract tests and the cheap state surface online; validator row split out `unowned` |
 | C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; C4 landed, dispatchable now |
-| C6–C10 | W3–W7 | — | not-dispatched — blocked-by W0 trio |
+| C5x | mech r2 | scouts (flow-back) | not-dispatched — blocked-by C5 (lock); blocks the bloc |
+| C6–C10 | W3–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; blocked-by C5x |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
