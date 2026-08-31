@@ -5,7 +5,10 @@
 //
 // The claims (campaign spec §2.4, C2 acceptance):
 //   - it BOOTS and reports the pinned engine version it targets;
-//   - `--owned` reports the registered owned-module set;
+//   - `--owned` reports the registered owned-module set — which is a set of
+//     MODULES, and the refusal must not let that read as a set of subsystems
+//     (C4 registered ten of the graph's 44 tool-result formatters, so three
+//     subsystems now have an owned module and none of them is done);
 //   - a stream-json line produces a structured refusal naming what is unowned —
 //     not a hang, not a crash, and NOT a synthesized `result` frame;
 //   - the registry (contract X7) accepts a valid registration and refuses the
@@ -16,6 +19,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { SUBSYSTEM_IDS } from "../ledger/rows.js";
+import { SPLICES } from "../strangle/manifest.js";
 import { lookup, ownedSet, register, resetRegistryForTests, unownedSubsystems } from "./registry.js";
 
 const WRAPPER = join(import.meta.dirname, "..", "engines", "engine-ts");
@@ -48,12 +52,21 @@ check("--version names itself, so nothing mistakes it for the real binary", /eng
 
 const owned = run(["--owned"]);
 check("--owned exits 0", owned.code === 0, `exit=${owned.code} ${owned.err}`);
-let ownedDoc: { owned_modules?: unknown; unowned_subsystems?: unknown; targets_engine_version?: unknown } = {};
+let ownedDoc: { owned_modules?: unknown; owned_subsystems?: unknown; unowned_subsystems?: unknown; targets_engine_version?: unknown } = {};
 check("--owned emits parseable JSON", threw(() => (ownedDoc = JSON.parse(owned.out))) === null, owned.out.slice(0, 200));
-check("--owned reports the owned-module set (empty at W0)", Array.isArray(ownedDoc.owned_modules) && ownedDoc.owned_modules.length === 0, JSON.stringify(ownedDoc.owned_modules));
+// The registry is the OTHER half of dual-wiring (§2.4): every spliced module has
+// to be registered here, or half the wiring is a claim nobody checks. Comparing
+// against the manifest rather than a literal keeps the two in step by force.
+const ownedNames = Array.isArray(ownedDoc.owned_modules) ? (ownedDoc.owned_modules as { name?: string }[]).map((m) => m.name) : [];
+const missing = SPLICES.map((sp) => sp.name).filter((n) => !ownedNames.includes(n));
+check("--owned reports one registered module per manifest splice", missing.length === 0 && ownedNames.length === SPLICES.length,
+  `registered ${ownedNames.length}/${SPLICES.length}; missing ${missing.join(", ") || "none"}`);
 check(
-  `--owned names all ${SUBSYSTEM_IDS.length} unowned subsystems`,
-  Array.isArray(ownedDoc.unowned_subsystems) && ownedDoc.unowned_subsystems.length === SUBSYSTEM_IDS.length,
+  "--owned partitions the subsystems: with an owned module vs with none, and the two are disjoint and complete",
+  Array.isArray(ownedDoc.owned_subsystems) &&
+    Array.isArray(ownedDoc.unowned_subsystems) &&
+    (ownedDoc.owned_subsystems as string[]).length + (ownedDoc.unowned_subsystems as string[]).length === SUBSYSTEM_IDS.length &&
+    (ownedDoc.owned_subsystems as string[]).every((id) => !(ownedDoc.unowned_subsystems as string[]).includes(id)),
   JSON.stringify(ownedDoc.unowned_subsystems),
 );
 check("--owned reports the engine version it targets", ownedDoc.targets_engine_version === ENGINE_VERSION);
@@ -66,7 +79,13 @@ let frame: Record<string, unknown> = {};
 check("the refusal is one parseable JSON frame on stdout", threw(() => (frame = JSON.parse(session.out.trim()))) === null, session.out.slice(0, 200));
 check("the refusal is a reforge-namespaced error, not a faked turn", frame.type === "reforge_engine_ts_error" && frame.is_error === true, JSON.stringify(frame.type));
 check("the refusal does not emit a result frame", !/"type"\s*:\s*"result"/.test(session.out));
-check("the refusal names every unowned subsystem", Array.isArray(frame.unowned_subsystems) && (frame.unowned_subsystems as string[]).length === SUBSYSTEM_IDS.length);
+check("the refusal names every subsystem with no owned module",
+  Array.isArray(frame.unowned_subsystems) &&
+    Array.isArray(frame.partially_owned_subsystems) &&
+    (frame.unowned_subsystems as string[]).length + (frame.partially_owned_subsystems as string[]).length === SUBSYSTEM_IDS.length);
+check("the refusal reports the owned MODULE count, and says partial ownership is not ownership",
+  frame.owned_module_count === SPLICES.length && /PARTIALLY owned/.test(String(frame.message)),
+  String(frame.message).slice(0, 200));
 check("the refusal records what triggered it", frame.trigger === "stream-json-input", String(frame.trigger));
 check("the refusal is also human-readable on stderr", session.err.includes("engine-ts"), session.err.slice(0, 120));
 

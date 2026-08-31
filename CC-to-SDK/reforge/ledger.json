@@ -5,7 +5,7 @@
     {
       "id": "subsystem/tool-result-formatters",
       "kind": "subsystem",
-      "title": "Tool result formatters + validators (Read, Edit, Bash, Grep, task family)",
+      "title": "Tool result formatters (Read, Edit, Bash, Grep, Glob, Write, task family)",
       "wave": "C4",
       "state": "spliced",
       "edges": [],
@@ -39,11 +39,338 @@
         {
           "chunk": "chunk-fy12d89p.js",
           "target": {
-            "start": 2417355,
-            "end": 2417510,
-            "sha256": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce"
+            "start": 3738179,
+            "end": 3738851,
+            "sha256": "ca2c244bcea0cb0a972fdbf35f8bf8d2f43e9f1189e398f4c8e4083a6c5e3f01"
           },
-          "captures": []
+          "captures": [
+            {
+              "name": "q6t",
+              "as": "freshnessSuffix",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 9155,
+              "declEnd": 9158,
+              "sha256": "8524a298871cd9e934225f489662f367326855f0d5297006a9b1637103c02813",
+              "from": {
+                "chunk": "chunk-hx5r9amq.js",
+                "exportedAs": "q6t",
+                "declStart": 1461,
+                "declEnd": 1538,
+                "sha256": "e5a4693d1b14d307012803d591ac0eec63423f2facd2d6bba6e341c9a02cb785"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2876986,
+            "end": 2878576,
+            "sha256": "8e21623a02b320ea95b1bd93ecacd90867c14ca2875b869fddda05f823184789"
+          },
+          "captures": [
+            {
+              "name": "hyt",
+              "as": "notebookResultBlock",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 2141922,
+              "declEnd": 2142159,
+              "sha256": "b311f4e1aa3376c9dd6a3d39e245f55cb0d003aafa245a9d528ba34e19d21fe7"
+            },
+            {
+              "name": "Ft",
+              "as": "formatBytes",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 22458,
+              "declEnd": 22460,
+              "sha256": "02865293eebe1d3b2cce0655bdcce3557fa678264947269436f356cf3e11afeb",
+              "from": {
+                "chunk": "chunk-n2te6bm7.js",
+                "exportedAs": "Ft",
+                "declStart": 615,
+                "declEnd": 844,
+                "sha256": "c86d391255ddc497a4c1a91a2931de2c42ae705f8866e3328b164b60421133a4"
+              }
+            },
+            {
+              "name": "oYn",
+              "as": "seededUnchangedNotice",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 9163,
+              "declEnd": 9166,
+              "sha256": "4387897fe04305ae6d89fd8dc3e98025402719a6de76decdc3079c3a3c0b26c4",
+              "from": {
+                "chunk": "chunk-hx5r9amq.js",
+                "exportedAs": "oYn",
+                "declStart": 1888,
+                "declEnd": 2035,
+                "sha256": "295d42939347ed184e7a2633f2a357e598f6dc40eb1f2121f3f2caa8b047042c"
+              }
+            },
+            {
+              "name": "rYn",
+              "as": "unchangedNotice",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 9159,
+              "declEnd": 9162,
+              "sha256": "44c552d75154ed1822d0ce043f46f5e030ac62dd2030b9f204d0581a93c9d4e2",
+              "from": {
+                "chunk": "chunk-hx5r9amq.js",
+                "exportedAs": "rYn",
+                "declStart": 1864,
+                "declEnd": 1888,
+                "sha256": "4a01c9ec326f76b7925e1b6bcea622f3f9432af746d8666e097ba07fc2b53853"
+              }
+            },
+            {
+              "name": "_Pt",
+              "as": "stalenessPrefix",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 2880776,
+              "declEnd": 2880846,
+              "sha256": "7ec77e91a2970d46071a0363b911a083709f53300e3dca18e3bd64711a1b55ed"
+            },
+            {
+              "name": "tVt",
+              "as": "numberLines",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6305,
+              "declEnd": 6308,
+              "sha256": "7c2823d7f22cfa7362b40b2dba5205502cb6d7a8703a71564a2512c0633fcf92",
+              "from": {
+                "chunk": "chunk-vvj94wew.js",
+                "exportedAs": "tVt",
+                "declStart": 10913,
+                "declEnd": 11193,
+                "sha256": "69544239f4e7bf5fb6ea79abe37235b9896bb4a3a42a56d8a2573d84976b2aa8"
+              }
+            },
+            {
+              "name": "XDe",
+              "as": "tabAwareSeparator",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 15637,
+              "declEnd": 15640,
+              "sha256": "8b2698cba84f680ba0be94041e544db094f82c240119ddb5cb552864b29ca58e",
+              "from": {
+                "chunk": "chunk-raebvt7y.js",
+                "exportedAs": "XDe",
+                "declStart": 41488,
+                "declEnd": 41539,
+                "sha256": "77c12cd766bb6e9cf9b568c1c124c54bc297940374bc6982e778ddf9f69009d3"
+              }
+            },
+            {
+              "name": "nVt",
+              "as": "numberOneLine",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 6309,
+              "declEnd": 6312,
+              "sha256": "5c94eb79cb0a3646b2607284278cc2f86b8c1c68e46909d7855f3b2e08f60879",
+              "from": {
+                "chunk": "chunk-vvj94wew.js",
+                "exportedAs": "nVt",
+                "declStart": 11193,
+                "declEnd": 11273,
+                "sha256": "fa31a047616dd93be329572fd76fe9764cf5d5c7c744327b1bfaf9d39a73f44c"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3842253,
+            "end": 3843522,
+            "sha256": "a0d999a052d9da3f8f0fa93038791e2f0fef5a12b9626d81319bc578d2232131"
+          },
+          "captures": [
+            {
+              "name": "y1t",
+              "as": "imageResultBlock",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 2134697,
+              "declEnd": 2134923,
+              "sha256": "495f0f4fd49a1d369493d4bf613f10bc22bc5e20f5d6f2c25c033d8e678abf05"
+            },
+            {
+              "name": "Vze",
+              "as": "splitPreview",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 16515,
+              "declEnd": 16518,
+              "sha256": "7642cbe0d78df61cc33acaaff63d67ab961a3689b6cd26f52b0940d11483e056",
+              "from": {
+                "chunk": "chunk-9bs8dvhj.js",
+                "exportedAs": "Vze",
+                "declStart": 4150,
+                "declEnd": 4302,
+                "sha256": "d50b63b59f2c3140af44898fb1b69916ac8285699a6ccbba65e0b3cfde4be139"
+              }
+            },
+            {
+              "name": "$De",
+              "as": "previewBytes",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 16492,
+              "declEnd": 16495,
+              "sha256": "625d083e9355a13fbf6e96624c2e9ff20cb2c65fb5facbe53531b585cd264ad1",
+              "from": {
+                "chunk": "chunk-9bs8dvhj.js",
+                "exportedAs": "$De",
+                "declStart": 1939,
+                "declEnd": 1947,
+                "sha256": "918050479ba42d693b6e0e4bb1f46dc276422871755114ee7475e9d311b73060"
+              }
+            },
+            {
+              "name": "rue",
+              "as": "persistedOutputNotice",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 16503,
+              "declEnd": 16506,
+              "sha256": "1b0460762c0b89da3455ebb7f746785149182bd129f46b0a6ab5146720335003",
+              "from": {
+                "chunk": "chunk-9bs8dvhj.js",
+                "exportedAs": "rue",
+                "declStart": 2897,
+                "declEnd": 3102,
+                "sha256": "c76ca1ed2e071809a2e96a723ce3387b594f415f05df657d1777b0d66fc5dda7"
+              }
+            },
+            {
+              "name": "kK",
+              "as": "newline",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3830987,
+              "declEnd": 3830993,
+              "sha256": "65d3d32dbbd9437c2dd41eaf0f08d0e5aba0c4369f7b23e5647b66b616466421"
+            },
+            {
+              "name": "b1t",
+              "as": "backgroundNotice",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 2135843,
+              "declEnd": 2136962,
+              "sha256": "31b60cb14e19a207b692d26b5cbca38fdc8346d602793cbeba1785159b8e9449"
+            },
+            {
+              "name": "_t",
+              "as": "readToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3986,
+              "declEnd": 3988,
+              "sha256": "f44b6f48ee1c4c4ccbdba60aab4e4aa2292231ecbe1302da92643dd1699f43dd",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "_t",
+                "declStart": 573699,
+                "declEnd": 573708,
+                "sha256": "47bd62f12a7e8997448300392a5f5306a581d2603dc802c2b724491e5d07a2c8"
+              }
+            },
+            {
+              "name": "FE",
+              "as": "useTaskAck",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2962,
+              "declEnd": 2964,
+              "sha256": "9a1954243a3851247769c8525d22faf6addfb36cd3fb347449b14c1e18a98214",
+              "from": {
+                "chunk": "chunk-2z83fvw5.js",
+                "exportedAs": "FE",
+                "declStart": 19171,
+                "declEnd": 19194,
+                "sha256": "cf298d11f567cbe9d89835aae1c164e99b5117ac7eb17f88b04656b17680b2e2"
+              }
+            },
+            {
+              "name": "yl",
+              "as": "backgroundOutputPath",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13107,
+              "declEnd": 13109,
+              "sha256": "d8f5a4e22eab4d17babacec1aeba331ebe2eae98344d73213f79cebd2d4cb07f",
+              "from": {
+                "chunk": "chunk-13d9rycm.js",
+                "exportedAs": "yl",
+                "declStart": 9601,
+                "declEnd": 9705,
+                "sha256": "a8e248048575fa5c18153871841f7981d43460c389c09b4f91983e597a36ced6"
+              }
+            },
+            {
+              "name": "GMt",
+              "as": "taskAckEnvelope",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 64133,
+              "declEnd": 64787,
+              "sha256": "1c8e4d82abc9e045318c38ee3ef80244f127d315022583a70ef9e92d328f0f72"
+            },
+            {
+              "name": "qMt",
+              "as": "taskAckEnding",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 63568,
+              "declEnd": 63633,
+              "sha256": "9ba785f892e9dadd30b3fb5c4f7f4aad07261b36c790bad0e8fcc382fa84548b"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1888042,
+            "end": 1889006,
+            "sha256": "8ae3028ec9593bd8d9428a84fcd373823f4edc8630003f9d90dd7f818e045b11"
+          },
+          "captures": [
+            {
+              "name": "iEe",
+              "as": "paginationNote",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1886042,
+              "declEnd": 1886153,
+              "sha256": "352a7bc808646c03762404bbe5f13266694b2032957ec64360f6056eaff901cc"
+            },
+            {
+              "name": "k",
+              "as": "plural",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2739,
+              "declEnd": 2740,
+              "sha256": "8254c329a92850f6d539dd376f4816ee2764517da5e0235514af433164480d7a",
+              "from": {
+                "chunk": "chunk-04aem4bh.js",
+                "exportedAs": "k",
+                "declStart": 798,
+                "declEnd": 839,
+                "sha256": "00508eb8398da914196462cb3a9f4781378c4632932dcd6b58a69209717905b2"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -63,14 +390,102 @@
               "sha256": "cdcb33cf59ddedcbf97b5e9712a20c0a701e2cfe7d4bfb673dd6d6a4585ee4fa"
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2417355,
+            "end": 2417510,
+            "sha256": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2419116,
+            "end": 2419566,
+            "sha256": "e8b7e87b0722d5cd13b021597195dbbac2e1f25773f993b71add30fe83bfd138"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2428392,
+            "end": 2428782,
+            "sha256": "33942725a11b7b3d29bcbe68d05eacd9ec32a122826e6edc0af5022fd4823a1f"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2425445,
+            "end": 2425873,
+            "sha256": "bec3d4fff1b802636e856dcac49f7bd13941484cd1f2a5fa9ac68eb3ba170aa1"
+          },
+          "captures": [
+            {
+              "name": "rb",
+              "as": "agentTeamContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 7481,
+              "declEnd": 7483,
+              "sha256": "64f232610aa64e4f7f03c51728b5050d82d294b55c3040704f0e5d83c129b8f0",
+              "from": {
+                "chunk": "chunk-mk4am7jk.js",
+                "exportedAs": "rb",
+                "declStart": 1615,
+                "declEnd": 1701,
+                "sha256": "65f40d44f5fdbc4b6a119732022c295e387a7009de4f93745e9f690c157be521"
+              }
+            },
+            {
+              "name": "io",
+              "as": "agentTeamsEnabled",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 10821,
+              "declEnd": 10823,
+              "sha256": "4021fadf187fd2c8277aad0fbc5e8fc4e7f1c75fbb38b6337160f125444790b2",
+              "from": {
+                "chunk": "chunk-9rtx6cwj.js",
+                "exportedAs": "io",
+                "declStart": 766,
+                "declEnd": 886,
+                "sha256": "10ce9e96e154a054579f1d6419c9ee8486abbf16b989198e312f151f9d274084"
+              }
+            }
+          ]
         }
       ],
       "evidence": [
         "strangle/manifest.ts:write-tool-result",
+        "strangle/manifest.ts:edit-tool-result",
+        "strangle/manifest.ts:read-tool-result",
+        "strangle/manifest.ts:bash-tool-result",
+        "strangle/manifest.ts:grep-tool-result",
+        "strangle/manifest.ts:glob-result",
         "strangle/manifest.ts:task-create-result",
-        "strangle/manifest.ts:glob-result"
+        "strangle/manifest.ts:task-get-result",
+        "strangle/manifest.ts:task-list-result",
+        "strangle/manifest.ts:task-update-result",
+        "scenario:edit-tool",
+        "scenario:task-family"
       ],
-      "note": "Three leaf formatters (Write, TaskCreate, Glob) are excised from the graph and delegated to reforge-owned modules; the rest of the family (Read, Edit, Bash, Grep) is not. `spliced`, not `standalone-complete`: the modules still receive closure values from the extracted graph (§2.4). Footprints are the three excised spans in manifest order, emitted by the build to build/footprints.json (C1)."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks)."
+    },
+    {
+      "id": "subsystem/tool-result-validators",
+      "kind": "subsystem",
+      "title": "Tool-result validators (Edit's validateInput and its 19 siblings)",
+      "wave": "C4",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null,
+      "note": "Split out of §1.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads — mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it — the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -214,7 +629,7 @@
         "strangle/manifest.ts:env-block",
         "scenario:subagent"
       ],
-      "note": "C1's free-function mechanism spike, kept as a permanent splice: the <env> block itself is owned, the surrounding system-prompt assembly is not. `spliced`, not `standalone-complete` — all nine interpolated values are `effectful-port` captures still supplied by the graph (cwd, git/OS reads, directory-context sections, platform). No edges recorded: those captures read process and session state rather than another ledger row's subsystem; C6 designs their ports."
+      "note": "C1's free-function mechanism spike, kept as a permanent splice: the <env> block itself is owned, the surrounding system-prompt assembly is not. `spliced`, not `standalone-complete` — all nine interpolated values are `effectful-port` captures still supplied by the graph (cwd, git/OS reads, directory-context sections, platform). No edges recorded: those captures read process and session state rather than another ledger row's subsystem; C6 designs their ports. C4/W1 retrofit: the two model-description sections ($K/UK) are now owned outright rather than called on the graph, so the module is standalone-complete (only typed ports cross) and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — the <env> block is one function of W3's system-prompt assembly, not the assembly."
     },
     {
       "id": "subsystem/compaction",
@@ -373,7 +788,7 @@
         "strangle/manifest.ts:session-materialize",
         "scenario:resume"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort."
     },
     {
       "id": "subsystem/bash-executor",
@@ -500,7 +915,7 @@
         "strangle/manifest.ts:text-delta",
         "scenario:plain"
       ],
-      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures."
+      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
     },
     {
       "id": "subsystem/sandboxing",

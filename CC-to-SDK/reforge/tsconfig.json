@@ -4,9 +4,16 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    // The owned parity implementations are plain ESM `.js` — that is what lets
+    // ONE file be imported by both the strangled graph and the engine-ts
+    // skeleton (§2.4 dual-wiring). `allowJs` lets the skeleton's registration
+    // site import them and have TS infer their shapes; `checkJs` stays off,
+    // since they carry no annotations and their behaviour is graded by
+    // strangle/contracts.test.ts and the differential corpus.
+    "allowJs": true,
     "skipLibCheck": true,
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "m0/**/*.ts", "m1/**/*.ts", "m2/**/*.ts", "m2c/**/*.ts", "m3/**/*.ts", "strangle/**/*.ts", "engine-ts/**/*.ts", "ledger/**/*.ts"]
+  "include": ["src/**/*.ts", "m0/**/*.ts", "m1/**/*.ts", "m2/**/*.ts", "m2c/**/*.ts", "m3/**/*.ts", "strangle/**/*.ts", "w1/**/*.ts", "engine-ts/**/*.ts", "ledger/**/*.ts"]
 }

@@ -3,14 +3,21 @@
 //
 // The wire contract engine-ts must eventually speak is the one `m2/raw-protocol.ts`
 // already drives: newline-delimited JSON on stdin/stdout, `{type, subtype, ...}`
-// frames, no sdk.mjs in between. At W0 the skeleton owns none of the subsystems
-// a turn needs (§1.1), so the only correct behavior on session input is a
-// structured refusal that NAMES what is unowned — never a synthesized
+// frames, no sdk.mjs in between. The skeleton owns MODULES, not subsystems, and
+// has no behaviour dispatch at all, so the only correct behavior on session
+// input is a structured refusal that NAMES what is unowned — never a synthesized
 // `result` frame, which would be indistinguishable from a working turn and
 // would grade as a hollow pass in the differential harness.
+//
+// The refusal is deliberately careful about a claim that gets easier to overstate
+// with every wave: registration is PER MODULE. Once C4 registered ten of the
+// graph's 44 tool-result formatters, "subsystems with at least one owned module"
+// stopped meaning "owned subsystems", so the frame reports the two populations
+// separately and says which is which. reforge/ledger.json is the authority on
+// how far each subsystem actually is.
 import { ENGINE_VERSION } from "../src/pin.js";
 import { CANONICAL_ROWS } from "../ledger/rows.js";
-import { ownedSet, unownedSubsystems } from "./registry.js";
+import { ownedSet, ownedSubsystems, unownedSubsystems } from "./registry.js";
 
 /** Distinct from a crash (non-zero, unclassified) and from success (0). */
 export const EXIT_UNOWNED = 3;
@@ -22,12 +29,16 @@ export interface RefusalFrame {
   subtype: "unowned";
   is_error: true;
   engine: "engine-ts";
-  wave: "W0";
+  /** how many modules are registered — the only ownership number this file can verify */
+  owned_module_count: number;
   /** The pinned upstream engine this skeleton targets — engine-ts has no version of its own. */
   targets_engine_version: string;
   trigger: RefusalTrigger;
   owned_modules: string[];
+  /** in-scope subsystems with NO owned module at all */
   unowned_subsystems: string[];
+  /** in-scope subsystems with at least one owned module — partially owned, never done */
+  partially_owned_subsystems: string[];
   message: string;
 }
 
@@ -36,20 +47,24 @@ const titleOf = (id: string): string => CANONICAL_ROWS.find((r) => r.id === id)?
 export function refusalFrame(trigger: RefusalTrigger): RefusalFrame {
   const owned = ownedSet().map((m) => m.name);
   const unowned = [...unownedSubsystems()];
+  const partial = [...ownedSubsystems()];
   const total = CANONICAL_ROWS.filter((r) => r.kind === "subsystem").length;
   return {
     type: "reforge_engine_ts_error",
     subtype: "unowned",
     is_error: true,
     engine: "engine-ts",
-    wave: "W0",
+    owned_module_count: owned.length,
     targets_engine_version: ENGINE_VERSION,
     trigger,
     owned_modules: owned,
     unowned_subsystems: unowned,
+    partially_owned_subsystems: partial,
     message:
-      `engine-ts is the W0 skeleton: it owns ${total - unowned.length}/${total} in-scope subsystems and cannot serve a stream-json session. ` +
-      `Unowned: ${unowned.map(titleOf).join("; ")}.`,
+      `engine-ts cannot serve a stream-json session: it registers ${owned.length} owned module(s) and has no behaviour dispatch. ` +
+      `${unowned.length}/${total} in-scope subsystems have no owned module at all; the other ${partial.length} are PARTIALLY owned, ` +
+      `not done (registration is per module — see reforge/ledger.json for each subsystem's state). ` +
+      `No owned module at all: ${unowned.map(titleOf).join("; ")}.`,
   };
 }
 

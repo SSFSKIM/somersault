@@ -38,10 +38,24 @@ export interface CanonicalRow {
 
 /**
  * §1.1's table, in table order. Wave assignment follows §6's wave→scope table
- * through the roadmap's W→C mapping (W1..W14 → C4..C17).
+ * through the roadmap's W→C mapping (W1..W14 → C4..C17) — except where a child
+ * subdivided a row with measured evidence, which is a deliberate two-file edit
+ * (here and in ledger.json) reviewed like any other scope change.
  */
 const SUBSYSTEM_ROWS: CanonicalRow[] = [
-  { id: "subsystem/tool-result-formatters", kind: "subsystem", wave: "C4", title: "Tool result formatters + validators (Read, Edit, Bash, Grep, task family)" },
+  // §1.1's first row was "formatters + validators". C4 SUBDIVIDED it, with
+  // evidence: the Edit tool's error results are not produced by
+  // `mapToolResultToToolResultBlockParam` at all but by a sibling
+  // `validateInput` — 3,317 minified chars against the formatters' 155–1,590,
+  // with filesystem reads, read-state access, telemetry and gate reads (mostly
+  // `effectful-port` captures), needing its own scenario (a deliberately
+  // missing `old_string`) and its own gate row. Keeping the two halves in one
+  // row would have made "the formatter family is owned" and "the validator
+  // family is owned" indistinguishable states. See the campaign spec's Revision
+  // Notes for the subdivision, and reforge/ledger.json for the validator row's
+  // open wave assignment.
+  { id: "subsystem/tool-result-formatters", kind: "subsystem", wave: "C4", title: "Tool result formatters (Read, Edit, Bash, Grep, Glob, Write, task family)" },
+  { id: "subsystem/tool-result-validators", kind: "subsystem", wave: "C4", title: "Tool-result validators (Edit's validateInput and its 19 siblings)" },
   { id: "subsystem/tool-descriptions", kind: "subsystem", wave: "C5", title: "Tool-description functions + their satellite chunks' other exports" },
   { id: "subsystem/environment-and-system-prompt", kind: "subsystem", wave: "C6", title: "Environment block + system-prompt assembly" },
   { id: "subsystem/compaction", kind: "subsystem", wave: "C7", title: "Compaction: summarization prompt, compact_boundary emit, trigger policy" },
