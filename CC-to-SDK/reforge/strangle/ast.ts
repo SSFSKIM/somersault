@@ -176,8 +176,8 @@ function paramText(sf: ts.SourceFile, params: ts.NodeArray<ts.ParameterDeclarati
  * (`({a:x,b:y})` for `{a:x,b:y}`), which is how the original three splices have
  * always been wired. NOTE what that means and does not: the delegated module
  * sees exactly the properties the original body named — a rest element carries
- * the remainder, but a default value or a nested pattern would change what the
- * callee observes, so those fail the build instead of being approximated.
+ * the remainder, but a NESTED pattern would change what the callee observes, so
+ * that fails the build instead of being approximated.
  *
  * A COMPUTED property name is the same class of hazard and is refused for the
  * same reason (campaign spec W0 fix, lens 1): re-assembling `{[k()]:v}` into an
@@ -185,6 +185,18 @@ function paramText(sf: ts.SourceFile, params: ts.NodeArray<ts.ParameterDeclarati
  * runs TWICE — once binding the parameter, once building the forwarded object.
  * Reproducing it faithfully means hoisting the key to a temporary, which is an
  * adapter, not a mechanical re-assembly.
+ *
+ * A DEFAULT on a (non-nested) binding element is forwarded, not refused (C4 /
+ * W1: the Grep result formatter's first parameter is
+ * `{mode:e="files_with_matches", …}`, and refusing it would have blocked a
+ * target on the proven shape). The reasoning the earlier refusal missed: the
+ * delegation reproduces the ORIGINAL parameter list verbatim (`paramText`), so
+ * the default is applied exactly once, in the adapter, before the bound name is
+ * forwarded. The owned module is written against the same bound values the
+ * original body used, so it observes precisely what the excised body observed —
+ * the forwarded object differs from the CALLER's object, which is the point of a
+ * default, not a divergence. A default inside a nested pattern is still refused,
+ * because the nested pattern is.
  */
 function paramArgs(label: string, params: ts.NodeArray<ts.ParameterDeclaration>): string[] {
   return params.map((p, i) => {
@@ -193,7 +205,6 @@ function paramArgs(label: string, params: ts.NodeArray<ts.ParameterDeclaration>)
     const where = `${label}: parameter #${i}`;
     if (!ts.isObjectBindingPattern(p.name)) throw new Error(`${where} is an array pattern — delegation needs an explicit adapter`);
     const fields = p.name.elements.map((el) => {
-      if (el.initializer) throw new Error(`${where} destructures with a default — delegation needs an explicit adapter`);
       if (!ts.isIdentifier(el.name)) throw new Error(`${where} nests a binding pattern — delegation needs an explicit adapter`);
       if (el.propertyName && ts.isComputedPropertyName(el.propertyName)) {
         throw new Error(

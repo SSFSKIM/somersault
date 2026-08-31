@@ -21,6 +21,9 @@
 //              one.
 //   computed   a computed property name in parameter destructuring must be
 //              refused, because forwarding it would evaluate the key twice.
+//   defaults   a destructuring DEFAULT must forward by its bound name and
+//              evaluate exactly once (in the adapter's own parameter list),
+//              while a nested pattern stays refused.
 //
 // Plus the §2.4 contract test for the one capture pair whose ownership retrofit
 // has landed: text-delta's telemetry brands.
@@ -169,6 +172,45 @@ function footprintOf(owner: string, helper: string) {
     const cut = excise(sf, computed.indexOf("PLAIN_ANCHOR"), "sibling-method");
     return cut.render("f", cut.shapeArgs) === `good({a:v},id){return globalThis.__reforge.f({a:v},id)}`;
   })());
+}
+
+// ---- FINDING 4b: destructuring DEFAULTS forward; nesting still refuses -------
+// C4 / W1 relaxed the blanket refusal of parameter-destructuring defaults (the
+// Grep result formatter's first parameter is `{mode:e="files_with_matches", …}`).
+// The claim being tested: the default is reproduced VERBATIM in the delegation's
+// own parameter list, so it is applied exactly once, and what the owned module
+// receives is the bound value the original body used.
+{
+  const defaulted =
+    `export const tools={withDefault({mode:m="fallback",n},id){return{id,content:"DEFAULT_ANCHOR"+m+n}},` +
+    `nestedDefault({a:{b:v}={b:1}},id){return{id,content:"NESTED_ANCHOR"+v}}};\n`;
+  const sf = parse(defaulted, "defaulted");
+  const cut = excise(sf, defaulted.indexOf("DEFAULT_ANCHOR"), "sibling-method");
+  check("a destructuring default forwards by its BOUND name",
+    cut.render("f", cut.shapeArgs) ===
+      `withDefault({mode:m="fallback",n},id){return globalThis.__reforge.f({mode:m,n},id)}`);
+  check("…and the default itself survives in the adapter's parameter list, so it applies exactly once",
+    (cut.render("f", cut.shapeArgs).match(/"fallback"/g) ?? []).length === 1);
+  // The behavioural claim, executed: an omitted property reaches the delegate
+  // defaulted, and a supplied one reaches it verbatim.
+  {
+    const seen: unknown[] = [];
+    const adapter = new Function(
+      "sink",
+      `globalThis.__reforge={f:(o,id)=>sink(o,id)};const t={${cut.render("f", cut.shapeArgs)}};return t;`,
+    )((o: unknown, id: unknown) => {
+      seen.push(o, id);
+      return { id };
+    }) as { withDefault(o: unknown, id: unknown): unknown };
+    adapter.withDefault({ n: 7 }, "id1");
+    adapter.withDefault({ mode: "explicit", n: 8 }, "id2");
+    check("an omitted property arrives DEFAULTED at the delegate",
+      JSON.stringify(seen[0]) === JSON.stringify({ mode: "fallback", n: 7 }));
+    check("a supplied property arrives verbatim", JSON.stringify(seen[2]) === JSON.stringify({ mode: "explicit", n: 8 }));
+  }
+  throws("a default inside a NESTED pattern is still refused",
+    () => excise(sf, defaulted.indexOf("NESTED_ANCHOR"), "sibling-method"),
+    /nests a binding pattern/);
 }
 
 // ---- FINDING 5: the owned telemetry brands (§2.4 pure-helper contract) -------

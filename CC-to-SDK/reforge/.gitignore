@@ -5,3 +5,4 @@ cassettes/
 build/
 config/
 toolchain/
+.scratch/
