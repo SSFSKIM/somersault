@@ -14,7 +14,7 @@
 > **Scope of this scorecard:** the four sources spec §10 calls "generated, not hand-counted" —
 > `host/ops.ts` (**36** ops — the TUI-clone waves grew the host wire past M1's 25, see gap 6),
 > `bridge/types.ts` (11 `ControlFrame` verbs), `sessions/index.ts` (7 store wrappers), and `sdk.d.ts`'s
-> `interface Query` (27 methods) — **80 seam tokens** total. Spec §10's full denominator has two more
+> `interface Query` (27 methods) — **81 seam tokens** total. Spec §10's full denominator has two more
 > legs (`docs/parity/tui-ux.md` §control-plane, the fleet CLI verbs); those aren't code-walkable the
 > same way and stay tracked in `tui-ux.md` / `coverage.md`, not here.
 >
@@ -957,11 +957,11 @@ cannot carry content says so, loudly, rather than running a truncated text-only 
 
 ## Totals
 
-35 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **80 walked tokens**,
-all rowed above — plus the 21 server-origin method rows and the 4 NOTIFICATION rows beside them (the
+36 host ops + 11 ControlFrame verbs + 7 session wrappers + 27 Query methods = **81 walked tokens**,
+all rowed above — plus the 22 server-origin method rows and the 4 NOTIFICATION rows beside them (the
 archive pair, M8's `peer/messageStatus` and M8's `thread/peerMessage`), which no walker produces, plus
 M4's 2 review rows and M7's 2 dynamic-tools rows (a method and its notification, the same pairing), for
-**109 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
+**111 rows** in all. (Recounted off the tables at M3 Task 12, which read "3 / 82" from the M2b close-out
 until then, having missed Task 7's adoption pair as well as its own workspace pair; Task 13's
 `thread/shellCommand` is the eighth server-origin row and Task 14's `thread/reopen` the ninth. M3 Task 15
 is the last landing that had to recount by hand: the gate prints the row total itself now, and both counts
@@ -976,7 +976,11 @@ staleness pass finds a notification's name by scanning `appserver/**/*.ts` inste
 was outstanding — deliberately and as a PAIR, since a row ahead of the registration fails this gate in the
 same breath as a registration ahead of the row. Probes 120/120b then licensed it in one direction, and it
 lands the way it was held back: one method and one row in one commit, both counts moving together, for
-**110 rows** over **73 registered methods**. F10's three staged-image rows were found by the gate's third pass — the registry→scorecard direction, which starts from the CODE — and not by any recount, which is what that pass exists for. **The gate would not have caught a miscount at this landing**, which is
+**110 rows** over **73 registered methods**. BL11 is then the D11 walker's first real catch at this
+table: bl8's `set_advisor_model` — the 36th host op — reached main through the 0.3.251 reconcile merge
+with no row and no mirror (that merge's recorded gates were typecheck + unit only), the pass failed
+exactly as designed, and the fix ships the mirror `thread/advisorModel/set` (the 74th registered) with
+its row, both counts moving together, for **111 rows** over **74 registered methods**. F10's three staged-image rows were found by the gate's third pass — the registry→scorecard direction, which starts from the CODE — and not by any recount, which is what that pass exists for. **The gate would not have caught a miscount at this landing**, which is
 worth stating where the number is: its three passes check that walked tokens have rows and that a row's
 status matches the code, so a method or notification never registered and never rowed is invisible to all
 three — measured, not assumed, at M4 Task 9, where the script exited 0 and reported 58/88 with the whole
