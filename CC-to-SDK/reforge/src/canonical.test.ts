@@ -10,8 +10,13 @@
 // watched against a deliberately adjacent, must-survive neighbour.
 //
 // Run: npx tsx src/canonical.test.ts
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { canonicalizeForHash, canonicalizeToolResultOrder, scrubRequestBody } from "./canonical.js";
-import { fallbackVerdict, strictReplay } from "./proxy.js";
+import { assertNoKeyCollisions, fallbackVerdict, strictReplay, type CassetteEntry } from "./proxy.js";
+
+const CASSETTES = join(dirname(dirname(fileURLToPath(import.meta.url))), "cassettes");
 
 let pass = 0;
 const failures: string[] = [];
@@ -50,6 +55,17 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
   check("agentId: a tool_use id still discriminates", !sameKey(toolUse, "toolu_01Wep5xk6suYMYvaBG71xjyW"));
   check("agentId: an english word of 17 letters survives", hashed("abcdefabcdefabcdef").includes("abcdefabcdefabcdef"));
 
+  // W0 lens 3 — the scrub is bound to the ENGINE's enclosing prose, not to the
+  // shape alone. An id-shaped token a user (or a tool result, or a file the
+  // engine read back) happens to carry is NOT run-scoped and must still
+  // discriminate; before this it was blanked wherever it appeared, so two
+  // different prompts could share a replay key.
+  const bare = "a8b1bb212b0c2aeb2";
+  check("agentId: a bare id outside engine prose survives", hashed(`the token ${bare} is data`).includes(bare));
+  check("agentId: a bare id outside engine prose still discriminates", !sameKey(`the token ${bare} is data`, "the token a9c2bb770ba007053 is data"));
+  check("agentId: a LOOKALIKE key name is not the engine's header", !sameKey(`myAgentId: ${bare}`, "myAgentId: a9c2bb770ba007053"));
+  check("agentId: a non-task path segment is not the output path", !sameKey(`/cache/${bare}.output`, "/cache/a9c2bb770ba007053.output"));
+
   // The differ does NOT get this scrub: it maps run ids instead, which is
   // strictly stronger (an engine that used two ids where the oracle used one
   // still diffs). Pattern-scrubbing there would destroy that check.
@@ -69,6 +85,11 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
   const notUuid = "aba136e4-aedd-49e1-b352-244531968d6"; // one digit short
   check("uuid: a near-miss survives", hashed(notUuid).includes(notUuid));
   check("uuid: the differ path leaves it for the id MAP", differed(A).includes("aba136e4-aedd-49e1-b352-244531968d66"));
+  // Same tightening as the agent id: only the session directory of a TASK path
+  // is run-scoped. A uuid a user pasted, or one naming something else, is data.
+  const bareUuid = "aba136e4-aedd-49e1-b352-244531968d66";
+  check("uuid: a bare uuid outside a task path survives", hashed(`resume session ${bareUuid}`).includes(bareUuid));
+  check("uuid: a bare uuid outside a task path still discriminates", !sameKey(`resume session ${bareUuid}`, "resume session 7a5d233d-7f3d-4764-a7ac-abbda2b8c0be"));
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +138,100 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
   // git status, or emitted a different one, still fails the request-surface diff.
   check("git state: the differ still sees the working tree", differed(A).includes("M ../README.md"));
   check("git state: the differ still sees the commit log", differed(A).includes("04e31c65 north star"));
+
+  // W0 lens 3 — ANCHORED to the gitStatus envelope. Unanchored, the pattern ate
+  // everything from a bare `Status:` heading to the end of ANY string, so a user
+  // prompt or a tool result that merely quoted a status report lost its tail and
+  // two different requests could share a replay key.
+  const looseA = "Here is my report.\n\nStatus:\nshipped\n\nRecent commits:\nfixed the parser";
+  const looseB = "Here is my report.\n\nStatus:\nblocked\n\nRecent commits:\nreverted the parser";
+  check("git state: an unenveloped Status/Recent-commits report survives", hashed(looseA).includes("shipped"));
+  check("git state: an unenveloped report still discriminates", !sameKey(looseA, looseB));
+  check("git state: the envelope's OWN sentence is what triggers the scrub", sameKey(A, B) && !sameKey(A, looseA));
+  // The lines BETWEEN the envelope sentence and `Status:` are preserved, so the
+  // branch and the git user still discriminate (already checked for branch above).
+  check("git state: the git user survives the hash", hashed(A).includes("Git user: SSFSKIM"));
+}
+
+// ---------------------------------------------------------------------------
+// §3.4 structural backstop — a cassette whose entries canonicalize together is
+// REFUSED at load. Every scrub above is a bet; this is what makes a lost bet
+// loud instead of a silent misroute.
+// ---------------------------------------------------------------------------
+{
+  const entry = (seq: number, text: string): CassetteEntry => ({
+    seq,
+    method: "POST",
+    path: "/v1/messages?beta=true",
+    requestBody: body(text),
+    status: 200,
+    contentType: "text/event-stream",
+    responseBody: "event: message_stop\ndata: {}\n\n",
+  });
+  const collides = (a: string, b: string): boolean => {
+    try {
+      assertNoKeyCollisions([entry(0, a), entry(1, b)], "synthetic");
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  // The real corpus must load. Anything else and the gate cannot run at all.
+  const corpus = readdirSync(CASSETTES).filter((f) => f.endsWith(".jsonl") && !f.includes("-observed-"));
+  const colliding = corpus.filter((f) => {
+    const entries = readFileSync(join(CASSETTES, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as CassetteEntry);
+    try {
+      assertNoKeyCollisions(entries, f);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  check(`collision: all ${corpus.length} recorded cassettes load collision-free`, corpus.length > 0 && colliding.length === 0, colliding.join(", "));
+
+  // POSITIVE CONTROLS — bodies that differ ONLY in something a scrub erases.
+  // Each of these would have been served the other's response, silently, with
+  // fallbackServed() still reporting zero.
+  check("collision: two agent ids in engine prose are caught",
+    collides("agentId: a8b1bb212b0c2aeb2 (internal)", "agentId: a9c2bb770ba007053 (internal)"));
+  check("collision: two session uuids in a task path are caught",
+    collides("/sandbox/aba136e4-aedd-49e1-b352-244531968d66/tasks/x", "/sandbox/7a5d233d-7f3d-4764-a7ac-abbda2b8c0be/tasks/x"));
+  check("collision: two host git states are caught",
+    collides(
+      "gitStatus: This is the git status at the start of the conversation.\n\nStatus:\nM a.ts\n\nRecent commits:\nabc one",
+      "gitStatus: This is the git status at the start of the conversation.\n\nStatus:\n(clean)\n\nRecent commits:\ndef two",
+    ));
+  check("collision: two months in a tool description are caught", (() => {
+    const withTool = (m: string): CassetteEntry => ({
+      ...entry(0, "same prompt"),
+      requestBody: JSON.stringify({ model: "m", tools: [{ name: "WebSearch", description: `The current month is ${m}. Use it.` }] }),
+    });
+    try {
+      assertNoKeyCollisions([withTool("August 2026"), { ...withTool("September 2026"), seq: 1 }], "synthetic");
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+
+  // NEGATIVE CONTROLS — the backstop must not fire on healthy cassettes.
+  check("collision: two genuinely different prompts do not collide", !collides("Reply with exactly OK", "Reply with exactly NOT-OK"));
+  check("collision: an id-shaped token OUTSIDE engine prose no longer collides (this is the tightening)",
+    !collides("the token a8b1bb212b0c2aeb2 is data", "the token a9c2bb770ba007053 is data"));
+  check("collision: a REPEATED identical request is allowed (retries, repeat entries)", !collides("Reply with exactly OK", "Reply with exactly OK"));
+  // The key is method+path+canonical body, so two bodies that WOULD collide on
+  // one endpoint are distinct requests when they were sent to different ones.
+  check("collision: the key includes the path", (() => {
+    const a = entry(0, "agentId: a8b1bb212b0c2aeb2 (internal)");
+    const b = { ...entry(1, "agentId: a9c2bb770ba007053 (internal)"), path: "/v1/messages/count_tokens" };
+    try {
+      assertNoKeyCollisions([a, b], "synthetic");
+      return true;
+    } catch {
+      return false;
+    }
+  })());
 }
 
 // ---------------------------------------------------------------------------

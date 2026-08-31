@@ -98,6 +98,48 @@ export function fallbackVerdict(engineB: string, side: string, count: number): b
   return !strict;
 }
 
+/**
+ * §3.4 — the STRUCTURAL backstop against over-scrubbing.
+ *
+ * Every scrub in `canonical.ts` is a bet that the text it erases carries no
+ * behavior. Each bet is argued and regression-tested, but the tests can only
+ * cover neighbours somebody thought of; a scrub that is one character too wide
+ * for a shape nobody anticipated fails SILENTLY and in the worst direction — two
+ * genuinely different recorded requests collapse to one replay key, the first
+ * match is served to both, `fallbackServed` stays at zero, and both engines are
+ * graded against a response that answered a different question.
+ *
+ * This closes that class without needing to anticipate the shape. At cassette
+ * load, canonicalize every entry: if two entries whose RAW bodies differ share a
+ * key, the normalization has lost a distinction this very cassette depends on,
+ * and the proxy REFUSES TO START. Residual over-reach can then only refuse to
+ * run — never misroute.
+ *
+ * Identical raw bodies sharing a key is normal and allowed: a repeated request
+ * (a retry, a `repeat` fault entry, a second identical poll) is served FIFO.
+ */
+export function assertNoKeyCollisions(entries: CassetteEntry[], label: string): void {
+  const byKey = new Map<string, CassetteEntry>();
+  for (const e of entries) {
+    const key = bodyHash(e.method, e.path, e.requestBody);
+    const prior = byKey.get(key);
+    if (prior === undefined) {
+      byKey.set(key, e);
+      continue;
+    }
+    if (prior.requestBody === e.requestBody) continue;
+    let at = 0;
+    while (at < prior.requestBody.length && prior.requestBody[at] === e.requestBody[at]) at++;
+    const window = (s: string) => JSON.stringify(s.slice(Math.max(0, at - 60), at + 60));
+    throw new Error(
+      `cassette key collision in ${label}: entries #${prior.seq} and #${e.seq} have DIFFERENT raw bodies but the same ` +
+        `canonical replay key — a scrub in src/canonical.ts is eating a distinction this cassette depends on, so replay ` +
+        `would serve one request the other's response. First difference at byte ${at}:\n` +
+        `  #${prior.seq}: ${window(prior.requestBody)}\n  #${e.seq}: ${window(e.requestBody)}`,
+    );
+  }
+}
+
 export async function startRecordProxy(cassettePath: string, upstream = "https://api.anthropic.com"): Promise<ProxyHandle> {
   let seq = 0;
   const server = http.createServer(async (req, res) => {
@@ -160,6 +202,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+  assertNoKeyCollisions(entries, cassettePath);
   const consumed = new Set<number>();
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
   let fallbackServed = 0;

@@ -55,29 +55,47 @@ export const RUN_VALUE_SCRUBS: [RegExp, string][] = [
 ];
 
 /**
- * Tier 2 — run-scoped IDENTIFIERS, scrubbed by shape.
+ * Tier 2 — run-scoped IDENTIFIERS, scrubbed in the ENCLOSING SHAPE the engine
+ * mints them into.
  *
  * The differ handles these by MAPPING (see `RUN_ID_KEYS` in `differ.ts`), which
  * is strictly stronger and is why they are not in tier 1: mapping keeps the
  * consistency check alive, pattern-scrubbing does not. The replay hash has no
  * second side to build a map from, so it uses these instead.
  *
- * Both patterns are deliberately SHAPE-EXACT rather than loose:
+ * These used to be SHAPE-ONLY — `\ba[0-9a-f]{16}\b` and a bare RFC-4122 — applied
+ * to every string anywhere in the body. Shape-exactness bounded what they could
+ * eat but not WHERE, so two genuinely different requests that merely CONTAINED
+ * id-shaped tokens canonicalized identically and could share a replay key: the
+ * proxy would serve the first match, report zero fallbacks, and feed both engines
+ * the same wrong response. (W0 boundary review, lens 3.)
  *
- *   - agent ids are `a` followed by exactly 16 lowercase hex digits, and the
- *     `\b` anchors mean a longer hex run (a sha1/sha256, a content hash) cannot
- *     match. Measured forms in request prose: "agentId: a8b1bb212b0c2aeb2",
- *     "SendMessage with to: 'a8b1…'", "<task-id>a8b1…</task-id>", and the task
- *     output path "…/tasks/a8b1….output".
- *   - session/task directory names are RFC-4122 shaped, again `\b`-anchored.
+ * So each pattern now carries the prose the ENGINE writes around the id. The
+ * enclosing shapes are not guessed — they are the complete inventory of every
+ * occurrence in the recorded corpus and in every replay-time observed body:
  *
- * `src/canonical.test.ts` is the negative control for both: it feeds strings
- * that merely LOOK adjacent (a 40-hex sha, a tool_use id, a model name, a
- * configured timeout) and proves they survive.
+ *   - `agentId: a8b1…`                     — the subagent-result header
+ *   - `to: 'a8b1…'`                        — the SendMessage address in that header
+ *   - `/tasks/a8b1….output`                — the task output path
+ *   - `<task-id>a8b1…</task-id>`           — the background task-notification
+ *   - `…/<uuid>/tasks/`                    — the session directory in those paths
+ *
+ * A future scenario that mints an id into a SIXTH shape will miss its body hash
+ * and fail loudly as a positional fallback — the safe direction. The unsafe
+ * direction, a wrong match, is what the tightening removes; `assertNoKeyCollisions`
+ * in `proxy.ts` is the structural backstop that makes any residual over-reach
+ * unexploitable rather than silent.
+ *
+ * `src/canonical.test.ts` is the negative control: it feeds strings that merely
+ * LOOK adjacent (a 40-hex sha, a tool_use id, a bare id outside any engine prose)
+ * and proves they survive and still discriminate.
  */
 export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
-  [/\ba[0-9a-f]{16}\b/g, "<agent-id>"],
-  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<uuid>"],
+  [/\bagentId: a[0-9a-f]{16}\b/g, "agentId: <agent-id>"],
+  [/\bto: 'a[0-9a-f]{16}'/g, "to: '<agent-id>'"],
+  [/\/tasks\/a[0-9a-f]{16}\.output\b/g, "/tasks/<agent-id>.output"],
+  [/<task-id>a[0-9a-f]{16}<\/task-id>/g, "<task-id><agent-id></task-id>"],
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/tasks\/)/g, "<uuid>$1"],
 ];
 
 /**
@@ -103,9 +121,22 @@ export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
  * `user.name` survived — and a sandbox-owned repository would drop a `.git`
  * directory and a seed commit into a directory that `search-tools` greps and
  * `file-tools` writes into, perturbing scenarios that have nothing to do with git.
+ *
+ * ANCHORED to the whole `gitStatus:` envelope, not to the bare `\nStatus:\n …
+ * \n\nRecent commits:\n` interior it was written for. Unanchored, any string
+ * carrying those two headings — a user prompt, a file the engine read back, a
+ * tool result quoting a status report — had everything from `Status:` to the end
+ * of the string erased, so two different requests could share a replay key. The
+ * envelope sentence is engine-authored boilerplate and is present in every
+ * occurrence in the corpus (always in `system[].text`); the branch line, the
+ * "Main branch" line and the git user between the sentence and `Status:` are
+ * preserved by the capture group, so they still discriminate.
  */
 export const HOST_STATE_SCRUBS: [RegExp, string][] = [
-  [/\nStatus:\n[\s\S]*?\n\nRecent commits:\n[\s\S]*$/g, "\nStatus:\n<git-status>\n\nRecent commits:\n<git-log>"],
+  [
+    /(gitStatus: This is the git status at the start of the conversation\.[\s\S]*?\nStatus:\n)[\s\S]*?(\n\nRecent commits:\n)[\s\S]*$/g,
+    "$1<git-status>$2<git-log>",
+  ],
 ];
 
 /**
