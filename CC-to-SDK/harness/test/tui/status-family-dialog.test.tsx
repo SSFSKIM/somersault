@@ -78,6 +78,34 @@ describe("T-MENU task 3 — /status opens the Settings dialog on Status (D13 equ
     await waitFor(() => flat(lastFrame).includes("context 55% used"));
     expect(flat(lastFrame)).not.toContain("context 10% used");
   });
+
+  it("re-measures context on an ARROW-KEY entry into Status from Config — no /status command arm involved (D13)", async () => {
+    // Review gap (task-3-report.md, Important 1): `fetchSettingsStatus`'s OWN re-measurement is what this
+    // test exercises. Every other test in this file drives Status through the typed `/status` arm, whose own
+    // `refreshCtx()` (useChat.ts:2280) freshens `ctxPct` before the dialog even mounts — masking whether the
+    // dialog-side re-measure (useChat.ts:3099) does anything at all. Here Status is entered ONLY by
+    // tab-arrowing in from Config, so the command arm's `refreshCtx()` never runs and the dialog-side one is
+    // the sole thing standing between a stale `ctxPct` and the tab.
+    let tokens = 10;
+    const fake = fakeRemote({ getContextUsage: async () => ({ totalTokens: tokens, maxTokens: 100 }), usage: () => USAGE_PAYLOAD });
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯ "));
+    // Seed a STALE `ctxPct` (10%) via one /status round trip, then close — this is the reading the arrow-key
+    // path below must NOT fall back on.
+    await runSlash(stdin, lastFrame, "/status");
+    await waitFor(() => flat(lastFrame).includes("context 10% used"));
+    stdin.write("\x1b");
+    await waitFor(() => !flat(lastFrame).includes("Settings"));
+    // Context changes AFTER the stale reading, with no further /status call anywhere below.
+    tokens = 55;
+    await runSlash(stdin, lastFrame, "/config");
+    await waitFor(() => flat(lastFrame).includes("Default permission mode"));   // confirms Config tab, not Status
+    stdin.write("\x1b[D");                                                    // Tabs: Config -> Status (tabs:previous), NOT the /status arm
+    await waitFor(() => flat(lastFrame).includes("context 55% used") || flat(lastFrame).includes("context 10% used"));
+    const f = flat(lastFrame);
+    expect(f, "arrow-key entry into Status must re-measure fresh, not reuse the stale ctxPct from the earlier /status").toContain("context 55% used");
+    expect(f).not.toContain("context 10% used");
+  });
 });
 
 describe("T-MENU task 3 — /usage and /cost both open the Settings dialog on Usage (D13 equivalence)", () => {
@@ -91,6 +119,8 @@ describe("T-MENU task 3 — /usage and /cost both open the Settings dialog on Us
     // formatUsage's own field — the plan-usage bar.
     expect(f).toContain("5h");
     expect(f).toContain("43%");
+    // Nit (task-3-report.md, finding 4): formatUsage's own reset-time field, never asserted before.
+    expect(f).toContain("resets 18:00Z");
     // D13: /cost's fields, additive in the SAME tab — none may be dropped just because /usage's own pane
     // (formatUsage) never carried them.
     expect(f).toContain("Total cost:");
@@ -101,6 +131,12 @@ describe("T-MENU task 3 — /usage and /cost both open the Settings dialog on Us
     expect(f).toContain("12 lines added, 3 lines removed");
     expect(f).toContain("Usage by model:");
     expect(f).toContain("claude-opus-5");
+    // Review gap (task-3-report.md, Important 2): the checklist marked the per-model input/output/
+    // cache-read/cache-write/cost figures as verified, but the test only ever checked the model name — a
+    // mutation dropping all of those numbers passed. Pin the actual numbers `formatCost` emits for
+    // USAGE_PAYLOAD's fixture model (1000 input, 200 output, 50 cache read, 10 cache write, $0.0456 cost;
+    // formatCompactNumber renders >=1000 with one decimal, so 1000 input reads "1.0k").
+    expect(f).toContain("1.0k input, 200 output, 50 cache read, 10 cache write ($0.0456)");
   });
 
   it("/cost opens the SAME tab with the SAME merged content — not a separate text dump", async () => {
