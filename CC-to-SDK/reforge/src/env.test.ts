@@ -16,7 +16,9 @@ import {
   engineEnv,
   MissingCredentialError,
   PINNED_ENTRYPOINT,
+  PLACEHOLDER_CREDENTIALS,
   PLATFORM_PASSTHROUGH,
+  recordCredential,
   REPLAY_PLACEHOLDER_TOKEN,
   selectCredential,
 } from "./env.js";
@@ -44,15 +46,22 @@ const PLATFORM = { PATH: "/usr/bin:/bin", HOME: "/Users/fixture", TMPDIR: "/tmp/
 const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", bun: "/reforge/toolchain/bun" };
 
 // ---------------------------------------------------------------------------
-// Case 1 — OAuth only. Record selects it; replay ignores it entirely.
+// Case 1 — OAuth only. Record SELECTS it (so the engine takes the OAuth path)
+// but the child gets the placeholder; the real token goes on the wire from the
+// record proxy. Replay is unchanged.
 // ---------------------------------------------------------------------------
 {
   const parent = { ...PLATFORM, CLAUDE_CODE_OAUTH_TOKEN: FAKE_OAUTH };
   const rec = engineEnv({ ...BASE, mode: "record", parent });
-  check("1 record: selects the OAuth token", rec.CLAUDE_CODE_OAUTH_TOKEN === FAKE_OAUTH);
+  check("1 record: selects the OAuth VARIABLE", "CLAUDE_CODE_OAUTH_TOKEN" in rec);
+  check("1 record: the child gets the placeholder, not the real token", rec.CLAUDE_CODE_OAUTH_TOKEN === PLACEHOLDER_CREDENTIALS.CLAUDE_CODE_OAUTH_TOKEN);
+  check("1 record: the real token reaches NO child variable", !Object.values(rec).includes(FAKE_OAUTH));
   check("1 record: no API key appears", !("ANTHROPIC_API_KEY" in rec));
-  check("1 record: describeCredential names the var, not the value", describeCredential(rec) === "CLAUDE_CODE_OAUTH_TOKEN (from parent, value not printed)");
+  check("1 record: describeCredential names the var, not the value", describeCredential(rec) === "CLAUDE_CODE_OAUTH_TOKEN (placeholder — the record proxy injects the real value)");
   check("1 record: description leaks no value", !describeCredential(rec).includes(FAKE_OAUTH));
+  // …and the harness DOES still resolve the real credential — for the proxy,
+  // from the parent, never from the child env.
+  check("1 record: the proxy's credential is the real OAuth token", JSON.stringify(recordCredential(parent)) === JSON.stringify({ name: "CLAUDE_CODE_OAUTH_TOKEN", value: FAKE_OAUTH }));
 
   const rep = engineEnv({ ...BASE, mode: "replay", parent });
   check("1 replay: substitutes the placeholder", rep.CLAUDE_CODE_OAUTH_TOKEN === REPLAY_PLACEHOLDER_TOKEN);
@@ -66,8 +75,15 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
 {
   const parent = { ...PLATFORM, ANTHROPIC_API_KEY: FAKE_KEY };
   const rec = engineEnv({ ...BASE, mode: "record", parent });
-  check("2 record: selects the API key when it is the only credential", rec.ANTHROPIC_API_KEY === FAKE_KEY);
+  check("2 record: selects the API-key VARIABLE when it is the only credential", "ANTHROPIC_API_KEY" in rec);
+  check("2 record: the child gets the API-key placeholder", rec.ANTHROPIC_API_KEY === PLACEHOLDER_CREDENTIALS.ANTHROPIC_API_KEY);
   check("2 record: no OAuth var invented", !("CLAUDE_CODE_OAUTH_TOKEN" in rec));
+  // THE LEAK THIS CLOSES: the pinned engine's subprocess sanitizer preserves
+  // ANTHROPIC_API_KEY, so a real value here would be readable by any Bash
+  // command the engine runs — and tool output flows into the next request body,
+  // hence into the cassette and the transcript.
+  check("2 record: the real API key reaches NO child variable", !Object.values(rec).includes(FAKE_KEY));
+  check("2 record: the proxy's credential is the real API key", JSON.stringify(recordCredential(parent)) === JSON.stringify({ name: "ANTHROPIC_API_KEY", value: FAKE_KEY }));
 
   const rep = engineEnv({ ...BASE, mode: "replay", parent });
   check("2 replay: drops the API key", !("ANTHROPIC_API_KEY" in rep));
@@ -85,9 +101,11 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
   const parent = { ...PLATFORM, CLAUDE_CODE_OAUTH_TOKEN: FAKE_OAUTH, ANTHROPIC_API_KEY: FAKE_KEY };
   check("3 selectCredential prefers OAuth", selectCredential(parent) === "CLAUDE_CODE_OAUTH_TOKEN");
   const rec = engineEnv({ ...BASE, mode: "record", parent });
-  check("3 record: OAuth selected", rec.CLAUDE_CODE_OAUTH_TOKEN === FAKE_OAUTH);
+  check("3 record: OAuth selected", rec.CLAUDE_CODE_OAUTH_TOKEN === PLACEHOLDER_CREDENTIALS.CLAUDE_CODE_OAUTH_TOKEN);
   check("3 record: the API key is NOT passed (no shadowing possible)", !("ANTHROPIC_API_KEY" in rec));
   check("3 record: exactly one credential", CREDENTIAL_VARS.filter((n) => n in rec).length === 1);
+  check("3 record: neither real value reaches the child", !Object.values(rec).includes(FAKE_OAUTH) && !Object.values(rec).includes(FAKE_KEY));
+  check("3 record: the proxy injects the OAuth token, not the key", recordCredential(parent)?.value === FAKE_OAUTH);
   // Negative control: a hand-built env carrying both must be REJECTED, so the
   // "exactly one" property is enforced rather than merely produced.
   throws("3 assertSchema rejects a two-credential env", () =>
@@ -102,6 +120,7 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
 {
   const parent = { ...PLATFORM };
   check("4 selectCredential reports none", selectCredential(parent) === null);
+  check("4 recordCredential reports none (nothing for the proxy to inject)", recordCredential(parent) === null);
   throws("4 record refuses without a credential", () => engineEnv({ ...BASE, mode: "record", parent }), /record mode needs a credential/);
   try {
     engineEnv({ ...BASE, mode: "record", parent });
@@ -159,6 +178,19 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
   // it as a deliberate override — the one var no experiment may seed.
   throws("gate: the disk-cache opt-in cannot be seeded as an override", () =>
     engineEnv({ ...BASE, mode: "replay", parent, knobs: { gateOverrides: { CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: "1" } } }),
+    /must never reach the engine/);
+
+  // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB was proposed as defense in depth against
+  // the record-mode key leak. It is FORBIDDEN instead: at the pin, a truthy
+  // value forces the permission mode to `default`, overriding the
+  // bypassPermissions every corpus scenario is recorded under — it would grade a
+  // different engine, not a hardened one. The leak is closed at its source.
+  for (const mode of ["record", "replay"] as const) {
+    const env = engineEnv({ ...BASE, mode, parent: { ...parent, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" } });
+    check(`gate ${mode}: an inherited SUBPROCESS_ENV_SCRUB is dropped`, !("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" in env));
+  }
+  throws("gate: SUBPROCESS_ENV_SCRUB cannot be seeded as an override either", () =>
+    engineEnv({ ...BASE, mode: "replay", parent, knobs: { gateOverrides: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" } } }),
     /must never reach the engine/);
 }
 

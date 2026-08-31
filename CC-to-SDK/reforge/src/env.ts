@@ -39,6 +39,34 @@ export type EnvMode = "record" | "replay";
 export const REPLAY_PLACEHOLDER_TOKEN = "sk-ant-oat01-reforge-replay-placeholder-not-a-secret";
 
 /**
+ * The placeholder the engine gets IN EITHER MODE, per credential variable.
+ *
+ * RECORD mode used to hand the engine the operator's REAL credential, because
+ * record mode talks to the real API. It does not have to: the engine talks to
+ * the RECORD PROXY, and the proxy is ours. So the engine now holds a placeholder
+ * in record mode too and `startRecordProxy` swaps the real value into the
+ * outbound auth header (`src/proxy.ts`).
+ *
+ * WHY, measured (W0 boundary review, lens 3): the pinned engine's subprocess
+ * environment sanitizer strips `CLAUDE_CODE_OAUTH_TOKEN` from the environments
+ * it gives to Bash commands, but PRESERVES `ANTHROPIC_API_KEY` unless
+ * `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is set. A recorded scenario whose Bash
+ * command printed its environment would therefore put the operator's live API
+ * key into a tool result — and tool results flow into the next request body, so
+ * into the cassette, the observed log, and the transcript, all of which are
+ * committed.
+ *
+ * The placeholder keeps the ENGINE'S REQUEST SHAPE intact: it is written to the
+ * SAME variable the parent's real credential lives in, so the engine still
+ * chooses the OAuth path for an OAuth operator and the API-key path for an
+ * API-key one, and the proxy only has to substitute a value.
+ */
+export const PLACEHOLDER_CREDENTIALS: Record<CredentialVar, string> = {
+  CLAUDE_CODE_OAUTH_TOKEN: REPLAY_PLACEHOLDER_TOKEN,
+  ANTHROPIC_API_KEY: "sk-ant-api03-reforge-placeholder-not-a-secret",
+};
+
+/**
  * The credential variables the engine understands, in SELECTION order.
  *
  * Project policy prefers the OAuth token (it bills the Pro/Max subscription).
@@ -65,14 +93,29 @@ export type CredentialVar = (typeof CREDENTIAL_VARS)[number];
 export const PLATFORM_PASSTHROUGH = ["PATH", "HOME", "TMPDIR", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "LOGNAME"] as const;
 
 /**
- * Must never reach the child. `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF` is
- * the one opt-IN that would let the GrowthBook disk cache be read while
- * telemetry is off (research §4) — i.e. the single documented way a cached gate
- * blob could override a compiled-in default under our own kill-switches. It is
- * not in the allowlist, so it cannot arrive by inheritance; this asserts it
- * cannot arrive by hand either.
+ * Must never reach the child.
+ *
+ * `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF` is the one opt-IN that would let
+ * the GrowthBook disk cache be read while telemetry is off (research §4) — i.e.
+ * the single documented way a cached gate blob could override a compiled-in
+ * default under our own kill-switches.
+ *
+ * `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is here for a different and sharper reason.
+ * It is the knob that would harden the engine's subprocess environments, and the
+ * W0 boundary review proposed setting it as defense in depth against the API-key
+ * leak. READING THE PINNED BUNDLE SAYS NO: at 2.1.251 a truthy value FORCES THE
+ * PERMISSION MODE TO `default` ("Permission mode forced to default —
+ * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set (allowed_non_write_users hardening)"),
+ * overriding the `bypassPermissions` every corpus scenario is recorded under. It
+ * would not harden the graded engine; it would silently grade a DIFFERENT one.
+ * The leak is closed at its source instead — the engine never receives a real
+ * credential (see `PLACEHOLDER_CREDENTIALS`) — which makes the sanitizer's
+ * behavior irrelevant rather than load-bearing.
+ *
+ * Neither is in the allowlist, so neither can arrive by inheritance; this asserts
+ * neither can arrive by hand either.
  */
-export const FORBIDDEN_VARS = ["CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF"] as const;
+export const FORBIDDEN_VARS = ["CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] as const;
 
 /** Deliberate, schema-checked additions a caller may make. Nothing else is accepted. */
 export interface EngineEnvKnobs {
@@ -148,13 +191,34 @@ export function requireRecordCredential(parent: Record<string, string | undefine
   return name;
 }
 
+/** The credential variable, and its REAL value, that the record proxy injects. */
+export interface RecordCredential {
+  name: CredentialVar;
+  value: string;
+}
+
+/**
+ * Resolve the real credential the RECORD PROXY will put on the wire.
+ *
+ * This is the only place a real credential value is read, and it is read in the
+ * HARNESS process — never from the engine's environment, which by construction
+ * holds a placeholder. Returns `null` when the parent has none, which is what a
+ * stub-upstream test wants (nothing to inject, nothing to leak).
+ */
+export function recordCredential(parent: Record<string, string | undefined> = process.env as Record<string, string | undefined>): RecordCredential | null {
+  const name = selectCredential(parent);
+  return name === null ? null : { name, value: parent[name]! };
+}
+
 /** Human-readable, credential-safe description of what a built env carries. */
 export function describeCredential(env: Record<string, string>): string {
   const present = CREDENTIAL_VARS.filter((n) => n in env);
   if (present.length === 0) return "none";
   const name = present[0];
-  const placeholder = env[name] === REPLAY_PLACEHOLDER_TOKEN;
-  return `${present.join("+")}${placeholder ? " (replay placeholder)" : " (from parent, value not printed)"}`;
+  // Under X6 the child NEVER holds a real credential in either mode; anything
+  // else means a caller hand-built an env that bypassed `engineEnv`.
+  const placeholder = env[name] === PLACEHOLDER_CREDENTIALS[name];
+  return `${present.join("+")}${placeholder ? " (placeholder — the record proxy injects the real value)" : " (NOT the placeholder — a real credential reached the child)"}`;
 }
 
 /**
@@ -259,11 +323,14 @@ export function engineEnv(opts: EngineEnvOptions): Record<string, string> {
   if (opts.bun) env.BUN = opts.bun;
 
   if (opts.mode === "record") {
+    // Record mode still SELECTS from the parent — the selection decides which
+    // auth path the engine takes, and `startRecordProxy` injects the matching
+    // real credential outbound — but the child only ever holds the placeholder.
     const name = selectCredential(parent);
     if (name === null) throw new MissingCredentialError();
-    env[name] = parent[name]!;
+    env[name] = PLACEHOLDER_CREDENTIALS[name];
   } else {
-    env.CLAUDE_CODE_OAUTH_TOKEN = REPLAY_PLACEHOLDER_TOKEN;
+    env.CLAUDE_CODE_OAUTH_TOKEN = PLACEHOLDER_CREDENTIALS.CLAUDE_CODE_OAUTH_TOKEN;
   }
 
   const overrides = Object.entries(knobs.gateOverrides ?? {});

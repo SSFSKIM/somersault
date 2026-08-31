@@ -14,6 +14,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import { canonicalizeForHash } from "./canonical.js";
+import { recordCredential, type RecordCredential } from "./env.js";
 
 export interface CassetteEntry {
   seq: number;
@@ -140,7 +141,30 @@ export function assertNoKeyCollisions(entries: CassetteEntry[], label: string): 
   }
 }
 
-export async function startRecordProxy(cassettePath: string, upstream = "https://api.anthropic.com"): Promise<ProxyHandle> {
+/**
+ * X6 — the proxy, not the engine, holds the credential.
+ *
+ * The engine's environment carries only a placeholder (`PLACEHOLDER_CREDENTIALS`
+ * in `src/env.ts`), so the outbound request arrives here with a placeholder auth
+ * header. This swaps in the real value, read from the HARNESS process. The header
+ * chosen matches the variable the operator actually has, which is also the
+ * variable the engine was told it has, so the request shape is the engine's own:
+ * `Authorization: Bearer …` for the OAuth token, `x-api-key: …` for the API key.
+ *
+ * Nothing recorded ever sees it: `REDACT_HEADERS` keeps both auth headers out of
+ * the forwarded copy, a cassette entry has no header field at all, and the value
+ * is never logged.
+ */
+function injectCredential(headers: Record<string, string>, credential: RecordCredential): void {
+  if (credential.name === "CLAUDE_CODE_OAUTH_TOKEN") headers.authorization = `Bearer ${credential.value}`;
+  else headers["x-api-key"] = credential.value;
+}
+
+export async function startRecordProxy(
+  cassettePath: string,
+  upstream = "https://api.anthropic.com",
+  credential: RecordCredential | null = recordCredential(),
+): Promise<ProxyHandle> {
   let seq = 0;
   const server = http.createServer(async (req, res) => {
     const requestBody = await readBody(req);
@@ -149,14 +173,14 @@ export async function startRecordProxy(cassettePath: string, upstream = "https:/
     for (const [k, v] of Object.entries(req.headers)) {
       if (!REDACT_HEADERS.has(k.toLowerCase()) && typeof v === "string") headers[k] = v;
     }
-    // forward auth as received, but never record it
-    for (const k of ["authorization", "x-api-key"]) {
-      const v = req.headers[k];
-      if (typeof v === "string") headers[k] = v;
-    }
+    // The engine only ever sent a placeholder; put the real credential on the
+    // wire here. With none available (a stub-upstream test) forward nothing —
+    // an unauthenticated upstream call is a loud failure, a leak is not.
+    if (credential) injectCredential(headers, credential);
     const target = new URL(req.url ?? "/", upstream);
     const chunks: Buffer[] = [];
-    const up = https.request(
+    // A stub upstream in a test is plain http; the real API is https.
+    const up = (target.protocol === "http:" ? http : https).request(
       target,
       { method: req.method, headers: { ...headers, host: target.host } },
       (upRes) => {
