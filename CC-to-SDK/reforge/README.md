@@ -7,24 +7,56 @@ normalized-transcript diff — record API traffic once, replay it offline into
 every engine, compare what each engine says (SDK messages) **and** what each
 engine asks (requests emitted).
 
-Pinned target: **Claude Code 2.1.241** (`~/claude-code-bundle/2.1.241/`,
-extracted per its MAP.md). SDK wrapper: `@anthropic-ai/claude-agent-sdk@0.3.237`
-(installed here with `--omit=optional` — no 302MB platform binary; every run
-supplies its own engine).
+Pinned target: **Claude Code 2.1.251** (`~/claude-code-bundle/2.1.251/`,
+extracted per its MAP.md). The pin lives in **`src/pin.ts` alone** — one
+constant; everything else derives from it. SDK wrapper:
+`@anthropic-ai/claude-agent-sdk@0.3.251` (installed here with `--omit=optional`
+— no platform binary; every run supplies its own engine).
 
 ## Engines (`engines/`)
 
+Run **`npx tsx strangle/prepare.ts` first** — it materializes the engine set
+under `build/` (gitignored) from the pin and boot-checks it. The wrappers fail
+loudly (exit 127) if you skip it.
+
 | name | what it is |
 |---|---|
-| `engine-real` | the pinned real 2.1.241 Mach-O binary (reference / oracle) |
-| `engine-extracted` | the same 2.1.241 payload extracted from `$bunfs`, run as plain JS under **bun** (must be bun — silent no-op under node). Identical application code to `engine-real`, different packaging: the differ's self-test pair and the substrate the strangler reimplementation will replace module-by-module |
+| `engine-real` | the pinned real Mach-O binary (reference / oracle) |
+| `engine-extracted` | the same payload extracted from `$bunfs` and run as plain JS under **bun** (must be bun — silent no-op under node). Identical application code to `engine-real`, different packaging: the differ's self-test pair and the substrate the strangler reimplementation will replace module-by-module |
+| `engine-strangled` | the extracted graph with every manifest method excised and delegated into reforge-owned modules |
 | `engine-ts` *(future)* | the TS reimplementation — plugs in as one more wrapper script; ccx and this harness change by zero lines |
 
 Wrappers are extension-less shell scripts on purpose: `sdk.mjs` treats non-`.js`
 paths as native binaries and spawns them directly, so the shebang runs.
 
+### Packaging changed under us at 2.1.248 — what the bump cost
+
+The pre-2.1.248 payload was **one 28MB CJS blob**. It is now an **ESM graph**:
+`cli` plus ~1800 `chunk-*.js` importing each other by `/$bunfs/root/…` — paths
+that exist only inside the compiled binary's virtual filesystem, so from disk the
+graph does not resolve at all (`Cannot find module`). `strangle/prepare.ts`
+copies the extraction out and rewrites every occurrence to the copy's own
+location, **absolute rather than relative**, because the same token also appears
+in runtime asset reads, which resolve against cwd instead of the importing file
+(124,500 specifiers across 1,657 files; ~2s).
+
+**The catch-up was mechanical, as designed.** All three splice anchors survived
+the packaging change verbatim and stayed globally unique, and all three target
+method bodies were byte-identical modulo minified names — the write tool's
+freshness suffix `hui` → `q6t`, glob's truncation notice `yzv` → `APn`, both
+**re-derived by `deriveArgs`, neither hardcoded**. That is the whole bet behind
+anchoring on string literals, and it held across ten versions and a bundler
+rewrite. What did change is the prelude: with no CJS wrapper to inject source
+into, each owning chunk now gets an `import` of the reforge-owned module placed
+after its banner (imports hoist, so it initializes before the body delegating
+into it). The banner must still stay byte-first, and every path that writes a
+graph boot-checks it.
+
 ## Layout
 
+- `src/pin.ts` — the pinned version + derived paths. Bumping the pin is: extract the new version, edit one constant, re-prepare, re-record cassettes, re-gate.
+- `strangle/prepare.ts` — materializes + boot-checks the engine set (`build/graph`, `build/real-binary`).
+- `strangle/manifest.ts` — the splice manifest, in its own module so reading it never runs a build.
 - `src/runTurn.ts` — shared driver: one prompt → one engine → captured SDK-message transcript. Determinism knobs: `settingSources: []`, fixed `sandbox/` cwd, telemetry env off.
 - `src/proxy.ts` — record/replay proxy (`ANTHROPIC_BASE_URL` seam). Record forwards + captures (auth redacted before disk); replay serves deterministically (scrubbed-body hash match, then per-path FIFO) and logs every observed request for request-level diffing.
 - `src/differ.ts` — **the normalization spec is the definition of "behaviorally equivalent"**: scrubbed keys/patterns (ids, clocks `*_ms`/`*_at`, costs) are declared incidental; everything else must match. Grow it only with justification.
@@ -34,6 +66,7 @@ paths as native binaries and spawns them directly, so the shebang runs.
 
 ```sh
 cd reforge && npm install --omit=optional
+npx tsx strangle/prepare.ts       # materialize + boot-check the engine set (required first)
 set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY   # OAuth token, no API-key shadowing
 npx tsx m0/02-handshake.ts        # live: one turn per engine
 npx tsx m0/06-selftest.ts         # records cassettes once (live), then replays OFFLINE
@@ -47,7 +80,7 @@ fleet loops against cassettes; only new workload recordings spend tokens.
 
 | cell | claim | status |
 |---|---|---|
-| M0.1 | extracted payload boots under bun (`--version` → 2.1.241) | ✅ |
+| M0.1 | extracted payload boots under bun (`--version` → the pin) | ✅ |
 | M0.2 | sdk.mjs completes a full live turn against the extracted payload (`system:init → assistant → result:success`) | ✅ both engines |
 | M0.3 | record proxy captures real SSE exchanges to cassettes (auth redacted) | ✅ |
 | M0.4 | replay proxy re-serves cassettes offline, deterministically | ✅ |
@@ -89,7 +122,7 @@ extracted payload, reimplemented in reforge-owned source, and spliced back in?*
 `mapToolResultToToolResultBlockParam`).
 
 ```sh
-npx tsx strangle/build.ts [--sabotage]   # build/cli-strangled.js
+npx tsx strangle/build.ts [--sabotage <name>]   # -> build/strangled/
 npx tsx strangle/gate.ts                 # the two-phase acceptance ritual
 ```
 
@@ -388,6 +421,38 @@ Three fixes, one per layer:
 It also now tests the interchange properly: each pair has a different writer and
 resumer, so "engine-real writes → strangled resumes" and the reverse are both
 real cross-engine reads rather than same-engine round-trips.
+
+## Pin bump — 2.1.241 → 2.1.251 (2026-08-31): GATE PASS
+
+The first bump across a **packaging change** (see "Packaging changed under us"
+above), which is the real test of the catch-up claim. Everything green:
+
+| surface | result |
+|---|---|
+| corpus | **22/22 PASS** — including `background-task` and `fork-session`, whose cassettes were blocked by a rate limit at the old pin and are now recorded |
+| full acceptance (`m2/all.ts`) | 5/5 — corpus, 5 fault injections, stream partials, cross-resume, raw protocol |
+| strangler gate | **PASS** — all three splices individually live (each sabotaged alone → its covering scenario RED), faithful build equivalent on the full surface |
+
+**Cost of the bump, honestly:** one new `differ` scrub, one stale check, and no
+re-anchoring at all. The engine now reports a per-process unix socket on
+`system:init` (`/tmp/cc-socks/<pid>.sock`) — a fresh pid every run, so oracle
+sampling can never certify it and it had to be canonicalized at the source like
+the proxy port, not triaged. The gate was separately boot-checking the retired
+`build/cli-strangled.js` path, which failed every build after the layout moved to
+`build/strangled/`; the build boot-checks the graph it writes, so the gate now
+just relays the build's own verdict rather than keeping a second copy of the
+check.
+
+**One thing the bump measured and did not fix** (logged in
+`docs/tech-debt-tracker.md`): freshly recorded cassettes still take 9 positional
+fallbacks across 3 multi-request scenarios, because the proxy's match hash
+scrubs less than the differ does — the engine writes a run-scoped `agentId` and
+inline `duration_ms` into request *prose*. Reported, not silent, and every
+affected scenario still graded identical on all three surfaces; the exactness
+guarantee behind the match is what is weakened. Sharing normalization between
+the two layers needs a design pass (a hash wants one stateless canonical form; the
+differ deliberately wants run-scoped id *mapping*), so it is deferred rather than
+regex-patched during a bump.
 
 ## Next
 

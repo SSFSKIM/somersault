@@ -1,7 +1,10 @@
 #!/bin/sh
-# Engine B — the same 2.1.241 payload extracted from the binary's $bunfs section,
-# run as plain JS under bun (the compile-target runtime; under node it exits
-# silently). Byte-identical application code to engine-real, different packaging:
-# the perfect self-test pair for the differ, and the substrate the strangler
-# reimplementation will progressively replace.
-exec /Users/new/.bun/bin/bun /Users/new/claude-code-bundle/2.1.241/modules/cli "$@"
+# Engine B — the same pinned payload extracted from the binary's $bunfs section
+# and run as plain JS under bun (the compile target; under node it exits
+# silently). Identical application code to engine-real, different packaging: the
+# differ's self-test pair, and the substrate the strangler progressively replaces.
+# Since 2.1.248 the payload is an ESM chunk graph whose /$bunfs/root/ specifiers
+# only resolve inside the binary, so prepare.ts materializes a rewritten copy.
+GRAPH="$(dirname "$0")/../build/graph/cli"
+[ -e "$GRAPH" ] || { echo "reforge: graph not materialized — run 'npx tsx strangle/prepare.ts'" >&2; exit 127; }
+exec /Users/new/.bun/bin/bun "$GRAPH" "$@"

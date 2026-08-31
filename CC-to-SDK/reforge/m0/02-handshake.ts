@@ -1,5 +1,5 @@
 // M0.2 — handshake: does sdk.mjs (0.3.237) complete a full live turn against the
-// EXTRACTED 2.1.241 payload running as plain JS under bun, exactly as it would
+// EXTRACTED payload (the pinned version) running as plain JS under bun, as it would
 // against a real binary? Decisive signals:
 //   1. system:init arrives (stream-json handshake works) and reports the engine identity
 //   2. the turn completes with a result carrying the expected text + usage

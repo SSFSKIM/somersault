@@ -13,7 +13,10 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; unset ANTHROPIC_API_KEY; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { SPLICES } from "./build.js";
+import { SPLICES } from "./manifest.js";
+
+// build.ts boot-checks the graph it writes, so a build that exits 0 has already
+// proven it boots at the pinned version; the gate only has to relay the failure.
 
 const run = (cmd: string, args: string[]) =>
   spawnSync(cmd, args, { cwd: REFORGE_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -21,13 +24,11 @@ const run = (cmd: string, args: string[]) =>
 function buildAndBoot(buildArgs: string[]): boolean {
   const built = run("npx", ["tsx", "strangle/build.ts", ...buildArgs]);
   if (built.status !== 0) {
-    console.log("  build FAILED:", built.stderr.trim().split("\n").slice(-3).join(" | "));
+    const why = `${built.stdout ?? ""}${built.stderr ?? ""}`.trim().split("\n").slice(-3).join(" | ");
+    console.log("  build FAILED:", why);
     return false;
   }
-  const boot = run(process.env.BUN ?? "/Users/new/.bun/bin/bun", ["build/cli-strangled.js", "--version"]);
-  const booted = boot.stdout.includes("2.1.241");
-  if (!booted) console.log("  boot FAILED — bundle produced no version output");
-  return booted;
+  return true;
 }
 
 const results: { label: string; pass: boolean }[] = [];

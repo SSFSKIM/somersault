@@ -1,5 +1,5 @@
 // M0.6 — harness self-test on the perfect pair: engine-real vs engine-extracted
-// are the SAME 2.1.241 application code in different packaging, so after
+// are the SAME application code in different packaging, so after
 // normalization their replay transcripts must be identical. Any diff here is a
 // hole in the normalization spec (or the proxy), not a behavioral difference —
 // the differ grading itself before it ever grades a reimplementation.

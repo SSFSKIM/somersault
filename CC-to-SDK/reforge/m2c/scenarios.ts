@@ -282,7 +282,7 @@ export const M2C_SCENARIOS: Scenario[] = [
     // Task-list traffic is stateful UI-facing tool traffic ccx renders specially
     // (TaskCreate/TaskUpdate in the TUI, TodoWrite in the appserver), so its
     // structured input is a contract. NOTE: asking for "TodoWrite" produced a
-    // `TaskCreate` call — in 2.1.241 that is the tool the engine reaches for,
+    // `TaskCreate` call — that is the tool the engine reaches for,
     // and allowedTools does not narrow the catalog under bypassPermissions.
     tag: "todo-tool",
     title: "task-list tool structured input round-trips",

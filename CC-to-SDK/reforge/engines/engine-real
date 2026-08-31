@@ -1,5 +1,8 @@
 #!/bin/sh
-# Engine A — the pinned real Claude Code binary (bun-compiled Mach-O), 2.1.241.
-# No extension on this file: sdk.mjs treats non-.js paths as a native binary and
-# spawns them directly, so the shebang runs and we exec the pinned binary.
-exec /Users/new/.local/share/claude/versions/2.1.241 "$@"
+# Engine A — the pinned real Claude Code binary (bun-compiled Mach-O): the oracle.
+# No extension on this file: sdk.mjs treats a non-.js path as a native binary and
+# spawns it directly, so this shebang runs. The pinned version lives in
+# src/pin.ts alone; prepare.ts materializes build/real-binary from it.
+ENGINE="$(dirname "$0")/../build/real-binary"
+[ -e "$ENGINE" ] || { echo "reforge: engines not materialized — run 'npx tsx strangle/prepare.ts'" >&2; exit 127; }
+exec "$ENGINE" "$@"

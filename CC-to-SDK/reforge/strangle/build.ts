@@ -1,75 +1,31 @@
-// M3-B — manifest-driven strangler build: produce build/cli-strangled.js from
-// the PRISTINE extracted payload by excising each manifest method and delegating
-// it into globalThis.__reforge, with reforge-owned module source injected as a
-// prelude INSIDE the payload's CJS wrapper (the leading `// @bun @bytecode
-// @bun-cjs` banner must stay byte-first — prepending anything disables the
-// bundle silently: exit 0, no output).
+// Manifest-driven strangler build: materialize a runnable copy of the PINNED
+// extraction, excise each manifest method from whichever chunk owns it, and
+// delegate it into `globalThis.__reforge`.
 //
 //   npx tsx strangle/build.ts [--sabotage <name>|all]
 //
-// Anchoring rules (measured in M2a):
-//  - anchors are TRUE-SUBSTRING-unique ("grep -c" counts lines and lies on this
-//    effectively-one-line payload — count substrings)
+// Anchoring rules (measured in M2a, re-confirmed by the 2.1.241 → 2.1.251 bump):
+//  - anchors are TRUE-SUBSTRING-unique across the WHOLE graph ("grep -c" counts
+//    lines and lies on these effectively-one-line chunks — count substrings)
 //  - closure identifiers a method captures are RE-DERIVED from the matched body,
-//    never hardcoded, so a version catch-up stays mechanical
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+//    never hardcoded. This is what makes a version catch-up mechanical: across
+//    the bump all three method bodies were byte-identical modulo minified names
+//    (the write tool's freshness suffix went `hui` → `q6t`, glob's truncation
+//    notice `yzv` → `APn`), so nothing but the derivation had to run again.
+//
+// Packaging note: the pre-2.1.248 payload was one CJS blob, so the prelude was
+// injected as source inside its `(function(exports, require, …) {` opening. The
+// graph is ESM now, so each owning chunk instead gets an `import` of the
+// reforge-owned module placed after its banner — imports hoist, so the module
+// initializes before the chunk body that delegates into it. The banner must
+// still stay byte-first (prepending disables the bundle silently), and the build
+// boot-checks either way.
+import { readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { BUN, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-
-const PAYLOAD = "/Users/new/claude-code-bundle/2.1.241/modules/cli";
-const METHOD = "mapToolResultToToolResultBlockParam";
-
-interface Splice {
-  /** key on globalThis.__reforge AND the modules/<name>[.sabotage].js basename */
-  name: string;
-  /** true-substring-unique anchor inside the target method's body */
-  anchor: string;
-  /** delegation export name on globalThis.__reforge */
-  fn: string;
-  /**
-   * Derive closure-captured identifiers from the original method body, to be
-   * passed as extra delegation args. Throw if the expected shape is missing —
-   * a silent [] would build a delegation that references nothing it needs.
-   */
-  deriveArgs?: (body: string) => string[];
-  /** corpus scenarios that exercise this method (the gate's targeted red-check) */
-  coverage: string[];
-}
-
-export const SPLICES: Splice[] = [
-  {
-    name: "write-tool-result",
-    // the Edit tool has a sibling "has been updated successfully" template; the
-    // `.${` tail disambiguates the Write tool's
-    anchor: "has been updated successfully.${",
-    fn: "writeToolResultBlock",
-    deriveArgs: (body) => {
-      // the freshness-suffix constant: `let s = r || n ? "" : <ident>`
-      const m = body.match(/[a-zA-Z_$][\w$]*\s*=\s*[a-zA-Z_$][\w$]*\s*\|\|\s*[a-zA-Z_$][\w$]*\s*\?\s*"":\s*([a-zA-Z_$][\w$]*)/);
-      if (!m) throw new Error("write-tool-result: could not derive freshness-suffix identifier");
-      return [m[1]];
-    },
-    coverage: ["file-tools"],
-  },
-  {
-    name: "task-create-result",
-    anchor: " created successfully: ",
-    fn: "taskCreateResultBlock",
-    coverage: ["todo-tool"],
-  },
-  {
-    name: "glob-result",
-    anchor: 'content:"No files found"};return',
-    fn: "globResultBlock",
-    deriveArgs: (body) => {
-      // the truncation-notice function: `...e.truncated?[<ident>(e)]:[]`
-      const m = body.match(/e\.truncated\?\[([A-Za-z_$][\w$]*)\(e\)\]/);
-      if (!m) throw new Error("glob-result: could not derive truncation-notice identifier");
-      return [m[1]];
-    },
-    coverage: ["search-tools"],
-  },
-];
+import { METHOD, SPLICES } from "./manifest.js";
+import { bootCheck, materializeGraph, STRANGLED_DIR, textModules } from "./prepare.js";
 
 // ---- CLI --------------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -91,7 +47,9 @@ if (sabotageIdx >= 0) {
   }
 }
 
-// ---- splice -----------------------------------------------------------------
+// ---- helpers ----------------------------------------------------------------
+const countSubstring = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
 function balancedEnd(s: string, open: number, openCh: string, closeCh: string): number {
   let depth = 0;
   let inStr: string | null = null;
@@ -109,14 +67,44 @@ function balancedEnd(s: string, open: number, openCh: string, closeCh: string): 
   throw new Error("unbalanced");
 }
 
-let src = readFileSync(PAYLOAD, "utf8");
-const preludes: string[] = [];
+/** Place a statement after the leading banner//comment block, never before it. */
+function injectAfterBanner(src: string, statement: string): string {
+  let i = 0;
+  for (;;) {
+    const nl = src.indexOf("\n", i);
+    if (nl < 0) throw new Error("no code line found after banner");
+    const line = src.slice(i, nl).trim();
+    if (line !== "" && !line.startsWith("//")) break;
+    i = nl + 1;
+  }
+  return src.slice(0, i) + statement + "\n" + src.slice(i);
+}
+
+// ---- build ------------------------------------------------------------------
+const { files, specifiers } = materializeGraph(STRANGLED_DIR);
+console.log(`graph: ${files} files rewritten, ${specifiers.toLocaleString()} specifiers → ${STRANGLED_DIR}`);
+
+const sources = new Map<string, string>();
+for (const path of textModules(STRANGLED_DIR)) sources.set(path, readFileSync(path, "utf8"));
+
+const preludesFor = new Map<string, string[]>();
 
 for (const sp of SPLICES) {
-  const anchorIdx = src.indexOf(sp.anchor);
-  if (anchorIdx < 0) throw new Error(`${sp.name}: anchor not found`);
-  if (src.indexOf(sp.anchor, anchorIdx + 1) >= 0) throw new Error(`${sp.name}: anchor is not unique`);
+  // Uniqueness is a whole-GRAPH property, not a per-file one: a second match in
+  // another chunk would make "which method did we excise?" a coin flip.
+  const hits = [...sources].map(([p, s]) => [p, countSubstring(s, sp.anchor)] as const).filter(([, c]) => c > 0);
+  const total = hits.reduce((a, [, c]) => a + c, 0);
+  if (total === 0) {
+    throw new Error(`${sp.name}: anchor not found anywhere in the ${ENGINE_VERSION} graph — re-anchor it`);
+  }
+  if (total > 1) {
+    const where = hits.map(([p, c]) => `${relative(STRANGLED_DIR, p)}x${c}`).join(", ");
+    throw new Error(`${sp.name}: anchor is not unique — ${total} matches (${where})`);
+  }
 
+  const path = hits[0][0];
+  const src = sources.get(path)!;
+  const anchorIdx = src.indexOf(sp.anchor);
   const methodIdx = src.lastIndexOf(METHOD, anchorIdx);
   if (methodIdx < 0 || anchorIdx - methodIdx > 2000) throw new Error(`${sp.name}: method head not found near anchor`);
 
@@ -131,26 +119,25 @@ for (const sp of SPLICES) {
   const extraArgs = sp.deriveArgs?.(original) ?? [];
   const callArgs = [...params.split(",").map((p) => p.trim()).filter(Boolean), ...extraArgs].join(",");
   const replacement = `${METHOD}(${params}){return globalThis.__reforge.${sp.fn}(${callArgs})}`;
-  src = src.slice(0, methodIdx) + replacement + src.slice(bodyClose + 1);
+  sources.set(path, src.slice(0, methodIdx) + replacement + src.slice(bodyClose + 1));
 
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
   const moduleFile = join(REFORGE_ROOT, "strangle", "modules", `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);
-  preludes.push(readFileSync(moduleFile, "utf8"));
+  readFileSync(moduleFile); // fail loudly here rather than at boot
+  preludesFor.set(path, [...(preludesFor.get(path) ?? []), moduleFile]);
   console.log(
-    `spliced ${sp.name}: ${original.length} chars -> ${replacement.length}-char delegation` +
+    `spliced ${sp.name} in ${relative(STRANGLED_DIR, path)}: ${original.length} chars -> ${replacement.length}-char delegation` +
       `${extraArgs.length > 0 ? ` (derived: ${extraArgs.join(", ")})` : ""}${sabotaged ? " [SABOTAGE]" : ""}`,
   );
 }
 
-// ---- prelude injection (inside the CJS wrapper, never before the banner) ----
-const WRAPPER_OPEN = "__dirname) {";
-const wrapperIdx = src.indexOf(WRAPPER_OPEN);
-if (wrapperIdx < 0) throw new Error("CJS wrapper opening not found — payload shape changed");
-const injectAt = wrapperIdx + WRAPPER_OPEN.length;
-const out = src.slice(0, injectAt) + preludes.join("\n") + src.slice(injectAt);
+for (const [path, modules] of preludesFor) {
+  const statement = modules.map((m) => `import ${JSON.stringify(m)};`).join("");
+  writeFileSync(path, injectAfterBanner(sources.get(path)!, statement));
+}
 
-const outDir = join(REFORGE_ROOT, "build");
-mkdirSync(outDir, { recursive: true });
-const outFile = join(outDir, "cli-strangled.js");
-writeFileSync(outFile, out);
-console.log(`strangled build written: ${outFile} (${SPLICES.length} splices, variant: ${sabotageTarget ?? "faithful"})`);
+bootCheck([BUN, join(STRANGLED_DIR, "cli"), "--version"], "engine-strangled");
+console.log(
+  `strangled build written: ${STRANGLED_DIR} (${SPLICES.length} splices across ${preludesFor.size} chunk(s), ` +
+    `variant: ${sabotageTarget ?? "faithful"})`,
+);

@@ -10,6 +10,36 @@ holds, leave it.
 
 ---
 
+## 2026-08-31 — reforge's replay proxy scrubs less than its differ, so multi-request scenarios fall back to positional matching
+
+**Source:** the 2.1.241 → 2.1.251 pin bump, full corpus re-record · `reforge/src/proxy.ts`
+(`scrubRequestBody`, which feeds the replay match hash) vs `reforge/src/differ.ts` (`VALUE_SCRUBS` +
+run-scoped id mapping).
+
+**What:** the proxy matches a replayed request to a cassette entry by hashing the request body after
+scrubbing only two things — the date stamp and `metadata`. The differ normalizes far more, because the
+engine writes run-scoped values into request *prose*: a subagent's engine-minted `agentId`
+(`"agentId: a27548a1e816dc4a2 (use SendMessage with to: …)"`) and inline clocks
+(`<usage>… duration_ms: 2714</usage>`). Those differ between the recording run and every replay, so the
+hash misses and the proxy serves the entry positionally instead. Measured on freshly recorded cassettes
+(so this is not cassette rot): 6 fallbacks across 3 of 22 scenarios — `subagent`, `parallel-tools`,
+`runtime-setters`, all multi-request.
+
+**Cost:** the fallback is reported, not silent (M3-B added the warning), and grading still passed on all
+three surfaces in every affected scenario, because the differ *does* normalize these values. What is lost is
+the exactness guarantee behind the match: positional order is usually right, so a scenario whose engine
+under test asked for things in a different order could be served the "right" responses anyway and grade
+green. That is the precise failure `cross-resume` hit once before, where a positional fallback served the
+first turn's response to the resume turn.
+
+**Why deferred:** the fix is to share normalization between the two layers, and they want different things
+from it — the differ maps ids run-scoped and first-seen so an engine using two ids where the oracle used one
+still diffs, while a hash needs a single stateless canonical form. Over-scrubbing the hash trades a missed
+match for a *wrong* match, which is strictly worse than the fallback it replaces, so this needs its own
+design pass rather than a regex bolted onto `scrubRequestBody` during a pin bump. Revisit when a scenario
+depends on request exactness, or when `engine-ts` starts being graded — the fallback's masking power matters
+far more against a genuine reimplementation than against the identical-code pair it was measured on.
+
 ## 2026-08-31 — a fork's inherited peer history is invisible, as is every pre-M9 session's
 
 **Source:** M9 branch external review, round 3 (finding 2) · `src/peer/arrivalLog.ts` (the store is keyed by

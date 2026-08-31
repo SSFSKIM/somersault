@@ -58,6 +58,13 @@ const VALUE_SCRUBS: [RegExp, string][] = [
   // The billing header's cc_version carries a per-PROCESS suffix
   // ("2.1.241.b71" vs "2.1.241.12d"); the version is behavior, the suffix is not.
   [/(cc_version=\d+\.\d+\.\d+)\.[0-9a-z]+/g, "$1.<proc>"],
+  // The engine opens a per-PROCESS unix socket for its messaging channel and
+  // reports the path on system:init ("/tmp/cc-socks/68386.sock"). The pid is
+  // drawn fresh every run, so oracle sampling can never certify it — the same
+  // reason the proxy port is scrubbed rather than triaged. That it opens a
+  // socket, and where, stays behavior; which pid drew it does not.
+  // (Surfaced by the 2.1.241 → 2.1.251 pin bump: the field is new.)
+  [/(\/cc-socks\/)\d+\.sock/g, "$1<pid>.sock"],
   // Plan-mode file names end in two RANDOM words
   // (".../plans/reply-with-exactly-still-here-toasty-fiddle.md" vs
   // "…-spicy-candy.md"). The prompt-derived prefix is behavior — the engine
