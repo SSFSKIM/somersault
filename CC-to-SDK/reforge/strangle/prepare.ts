@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { BUN, BUNDLE_MODULES, BUNFS, ENGINE_VERSION, PINNED_BUN, REAL_BINARY } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { engineEnv } from "../src/env.js";
-import { embeddedBunVersion, externalBunVersion } from "./toolchain.js";
+import { assertBunPin, embeddedBunVersion } from "./toolchain.js";
 
 export const BUILD_DIR = join(REFORGE_ROOT, "build");
 export const GRAPH_DIR = join(BUILD_DIR, "graph");
@@ -97,19 +97,16 @@ export function assertRuntimePin(): void {
   if (embedded !== PINNED_BUN) {
     throw new Error(`runtime pin stale: src/pin.ts says ${PINNED_BUN}, the pinned binary embeds ${embedded}. Update PINNED_BUN and re-provision.`);
   }
-  let external: string;
+  // The identity checked here is the BYTES, not the version string, and it is
+  // checked on whatever `BUN` resolves to — including an env override, which
+  // used to be accepted on nothing but a matching `--version` line.
+  let pinned: ReturnType<typeof assertBunPin>;
   try {
-    external = externalBunVersion(BUN);
+    pinned = assertBunPin(BUN);
   } catch (e) {
-    throw new Error(`${(e as Error).message}\n  Provision the pinned runtime: npx tsx strangle/toolchain.ts`);
+    throw new Error(`${(e as Error).message}\n  Provision the pinned runtime: npx tsx strangle/toolchain.ts (do NOT upgrade ~/.bun).`);
   }
-  if (external !== embedded) {
-    throw new Error(
-      `runtime skew: ${BUN} is ${external}, the pinned binary embeds ${embedded}. ` +
-        `Run 'npx tsx strangle/toolchain.ts' to install the matching bun project-locally (do NOT upgrade ~/.bun).`,
-    );
-  }
-  console.log(`  runtime ok: ${BUN} is ${external} — matches the binary's embedded runtime`);
+  console.log(`  runtime ok: ${BUN} is the pinned ${pinned.version} surrogate (${pinned.revision}) — matches the binary's embedded ${embedded}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

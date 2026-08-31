@@ -46,7 +46,53 @@ export function externalBunVersion(bun: string): string {
   return (r.stdout ?? "").trim();
 }
 
-const sha256 = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+export const sha256 = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+
+/**
+ * §3.5 — the runtime pin is the EXACT BYTES, not the version string.
+ *
+ * The surrogate is provisioned from bun's rolling `canary` asset, because 1.4.1
+ * has no tagged release. A rolling asset is a moving target: "reports 1.4.1" was
+ * the only thing checked, so tomorrow's canary — a different compiler, a
+ * different commit, arbitrary behavior changes — would install silently, and a
+ * `BUN` env override pointing at any binary that printed `1.4.1` would be
+ * accepted. Version equality is a weak identity for something the equivalence
+ * claim rides on.
+ *
+ * So identity is `PINNED_BUN_SHA256`, and accepting different bytes requires
+ * editing that constant. Warning-only provenance notes are gone.
+ *
+ * HASH BEFORE EXECUTION, deliberately: an unverified binary is not run to ask it
+ * its version. That also makes the failure legible — tampered bytes report a
+ * hash mismatch rather than a codesign kill.
+ *
+ * What this does NOT claim: that the surrogate is the build Anthropic compiled
+ * the oracle against. See `PINNED_BUN` in `src/pin.ts` — the version string
+ * matches the binary's embedded runtime exactly, the underlying commit is not
+ * provably the same, and that residual is recorded rather than rounded up.
+ */
+export function assertBunPin(bun: string): { version: string; revision: string; sha256: string } {
+  if (!existsSync(bun)) {
+    throw new Error(`pinned runtime missing: ${bun}. Provision it: npx tsx strangle/toolchain.ts`);
+  }
+  const hash = sha256(bun);
+  if (hash !== PINNED_BUN_SHA256) {
+    throw new Error(
+      `runtime pin violation: ${bun}\n  sha256 ${hash}\n  pinned ${PINNED_BUN_SHA256}\n` +
+        `  These are not the verified surrogate's bytes. The canary asset rolls, so a re-download can legitimately differ — ` +
+        `but accepting it is a decision, not a default: re-verify the build and update PINNED_BUN_SHA256 in src/pin.ts.`,
+    );
+  }
+  const version = externalBunVersion(bun);
+  if (version !== PINNED_BUN) {
+    throw new Error(`runtime pin violation: ${bun} hashes as the pinned surrogate but reports ${version}, not ${PINNED_BUN} — the pin constants disagree with each other.`);
+  }
+  const revision = (spawnSync(bun, ["--revision"], { encoding: "utf8" }).stdout ?? "").trim();
+  if (revision !== PINNED_BUN_REVISION) {
+    throw new Error(`runtime pin violation: ${bun} reports revision ${revision}, pinned ${PINNED_BUN_REVISION}`);
+  }
+  return { version, revision, sha256: hash };
+}
 
 /**
  * Upstream release layout. 1.4.1 has no tagged release yet (latest is 1.4.0),
@@ -78,9 +124,11 @@ function install(version: string): void {
         continue;
       }
       chmodSync(candidate, 0o755);
-      const got = externalBunVersion(candidate);
-      if (got !== version) {
-        console.log(`  ${url} — reports ${got}, need ${version}`);
+      // The pin is the BYTES. A source whose asset has rolled past the verified
+      // surrogate is reported and skipped — never installed with a warning.
+      const got = sha256(candidate);
+      if (got !== PINNED_BUN_SHA256) {
+        console.log(`  ${url} — sha256 ${got.slice(0, 16)}… does not match the pinned surrogate (${PINNED_BUN_SHA256.slice(0, 16)}…)`);
         continue;
       }
       mkdirSync(join(TOOLCHAIN_BUN, ".."), { recursive: true });
@@ -90,8 +138,9 @@ function install(version: string): void {
       return;
     }
     throw new Error(
-      `no upstream bun build reports ${version} (tried tagged release and canary). ` +
-        `The runtime pin cannot be satisfied — report this rather than running on a skewed runtime.`,
+      `no upstream source still serves the pinned ${version} surrogate — sha256 ${PINNED_BUN_SHA256} (tried the tagged ` +
+        `release and canary). The canary asset has rolled past it. The runtime pin cannot be satisfied by download: ` +
+        `report this rather than running on unverified bytes.`,
     );
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -114,19 +163,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`installing bun ${PINNED_BUN} → ${TOOLCHAIN_BUN}`);
     install(PINNED_BUN);
   }
-  const version = externalBunVersion(TOOLCHAIN_BUN);
-  const revision = (spawnSync(TOOLCHAIN_BUN, ["--revision"], { encoding: "utf8" }).stdout ?? "").trim();
-  const hash = sha256(TOOLCHAIN_BUN);
-  console.log(`toolchain bun: ${version}  revision ${revision}`);
-  console.log(`  sha256 ${hash}`);
-  if (version !== PINNED_BUN) {
-    console.error(`FAIL — toolchain bun reports ${version}, pin requires ${PINNED_BUN}`);
+  let pinned: ReturnType<typeof assertBunPin>;
+  try {
+    pinned = assertBunPin(TOOLCHAIN_BUN);
+  } catch (e) {
+    console.error(`FAIL — ${(e as Error).message}`);
     process.exit(1);
   }
-  // Provenance, not a gate: the canary asset rolls, so a different revision or
-  // hash is expected over time. The VERSION equality above is the §3.5 contract;
-  // these two lines are what makes a drifted install visible when it happens.
-  if (revision !== PINNED_BUN_REVISION) console.log(`  note: revision differs from the recorded ${PINNED_BUN_REVISION} (canary rolls; version still matches)`);
-  if (hash !== PINNED_BUN_SHA256) console.log(`  note: sha256 differs from the recorded ${PINNED_BUN_SHA256}`);
-  console.log(`PASS — external runtime matches the binary's embedded ${embedded}`);
+  console.log(`toolchain bun: ${pinned.version}  revision ${pinned.revision}`);
+  console.log(`  sha256 ${pinned.sha256} (matches the pin)`);
+  console.log(`PASS — external runtime is the verified surrogate and matches the binary's embedded ${embedded}`);
 }
