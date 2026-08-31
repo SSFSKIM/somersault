@@ -239,6 +239,26 @@ Verification depth scales with mechanism tier:
 - **Engine-ts acceptance additionally requires**: the **synthetic response corpus** (§3.2) and the
   **state-surface diff** (§3.2), and strict replay matching (§3.4).
 
+**Non-vacuity contracts (round 3).** Every verification mechanism above must ship with a
+machine-checkable non-vacuity contract before it may gate anything — a gate whose emptiness passes
+is this project's canonical failure. Full schemas are written at each mechanism's owning wave, but
+the binding minimums are fixed now:
+
+- **Coverage attestation**: a *complete* branch inventory of the owned code (generated from its
+  AST, not hand-picked), with exclusions listed and reviewed — "major branches" is not a category.
+- **Mutation battery**: reports generated/killed/survived/unexecuted/equivalent counts;
+  **zero generated mutants fails**; a surviving mutant fails by default and passes only with
+  written adjudication.
+- **Synthetic corpus**: the §3.2 case matrix is the mandatory minimum, seeds are deterministic,
+  and every case carries an explicit oracle expectation; an empty or token case set fails.
+- **Custom-delta manifest**: deltas are bounded at scenario + surface + path granularity —
+  allowlisting an entire subtree is invalid by schema — and each delta ships an adjacent-drift
+  negative control (a nearby *undeclared* difference must still fail the custom-delta gate).
+- **`substanceOnly` checks**: as the sole engine-B grading on their scenarios, they are full
+  contracts — dispatch semantics, lifecycle completion, and identifier correlation, each with
+  malformed-input negative controls (the background-task check's two successive hardenings are
+  the template and the cautionary tale).
+
 ### 3.2 Corpus growth, by family — plus two new surfaces
 
 Per-wave scenario families: per-tool behavior depth (Read truncation/cat-n format, Edit failure
@@ -282,6 +302,14 @@ plan would have pinned a cache that is never read; replaced by:
   deliberately sets, plus a minimal platform set); the override inventory is regenerated per pin
   bump; a **negative control** seeds a known override in the parent and proves both engines still
   observe pinned defaults.
+- **The allowlist has an explicit credential contract** (round 3 caught the interlock: a literal
+  allowlist strands the SDK child's auth in record mode, while broadly admitting `CLAUDE_CODE_*`/
+  `ANTHROPIC_*` reopens the override leak). Two schemas: **record-mode** passes exactly one
+  deliberately selected credential (OAuth preferred per project policy; the API-key-shadows-OAuth
+  precedence is handled by *selection*, not inheritance); **replay-mode** passes a fixed
+  non-secret placeholder credential (replays never authenticate). All other Claude/Anthropic
+  variables are rejected in both schemas. The W0 test matrix covers OAuth-only, API-key-only,
+  both-set, missing-auth, and seeded-gate-override parents.
 - **Flip-liveness** (was a delegated unknown; resolved affirmative): the surviving per-gate env
   override enables a test that flips a covered gate inside the allowlist and observes behavior
   change — proving the resolver precedence is what the research says and that the allowlist is
@@ -293,16 +321,24 @@ plan would have pinned a cache that is never read; replaced by:
   regenerates it and the diff is reviewed (§5). This table is also the engine-ts deliverable:
   engine-ts implements gates as this constant table.
 
-### 3.4 Replay strictness
+### 3.4 Replay strictness (tightened round 3: strict from the first candidate wave, not W14)
 
-The replay proxy's positional fallback (serve-in-order when the body hash misses) stays as a
-*warned* diagnostic while grading the identical-code pair — but for **engine-ts acceptance,
-fallback count > 0 is a gate failure**: a wrong request accidentally receiving the next response
-must not be gradable as equivalent. This supersedes the 2026-08-31 tech-debt entry about
-proxy-vs-differ normalization asymmetry: closing that asymmetry is now W0-adjacent work in service
-of strict matching, not deferred debt. Every normalization/scrub rule continues to require written
-justification, and each value-level scrub carries a regression test (a scrub named `*_ms` must
-never eat a configured timeout that is a real contract).
+Round 3's objection to "strict only at engine-ts acceptance" is correct: `engine-strangled` is a
+genuinely different build from W1 onward, and a positional fallback (serve-in-order when the body
+hash misses) can hand a drifted request the "right" response through thirteen waves — including
+the inversion milestone — before strictness finally bites. So:
+
+- **W0 acceptance includes zero positional fallbacks across the whole corpus** (achieved by the
+  proxy/differ normalization-sharing pass — the known run-scoped-prose misses are exactly what it
+  canonicalizes). This supersedes the 2026-08-31 tech-debt deferral outright.
+- **From W1, a fallback is a gate FAILURE for any `engineB` that is not `engine-extracted`** —
+  every strangled and engine-ts run grades strictly.
+- Warning-only behavior survives **solely** in the real-vs-extracted identical-code self-test,
+  where it is a harness diagnostic rather than an equivalence claim.
+
+Every normalization/scrub rule continues to require written justification, and each value-level
+scrub carries a regression test (a scrub named `*_ms` must never eat a configured timeout that is
+a real contract).
 
 ### 3.5 Runtime pinning (measured skew)
 
@@ -314,16 +350,26 @@ version equals the version string extracted from the pinned binary, the pinned B
 that no external Bun can close (`process.execPath`, standalone-executable detection, embedded-VFS
 semantics) are documented per occurrence if a scenario ever surfaces one.
 
-### 3.6 Hermetic ownership gate (round 2)
+### 3.6 Hermetic ownership gate (round 2; strengthened round 3)
 
 "No extracted import + corpus green" can be satisfied by an engine-ts that *spawns* the real
-binary or dynamically loads extracted artifacts — a delegating wrapper owning nothing. The W14
-ownership gate is therefore **hermetic**: engine-ts runs with the real binary, the extraction
-bundle, and every other engine wrapper **inaccessible** (absent from the environment the gate
-constructs), with subprocess spawns traced and non-allowlisted executions failing the gate. A
-**negative control ships with the gate**: a deliberately delegating wrapper must FAIL it. (Bash
-scenarios still spawn user commands; the allowlist distinguishes workload children from engine
-delegation.)
+binary or dynamically loads extracted artifacts — a delegating wrapper owning nothing. Round 3
+added that env-absence + child tracing is not isolation either: the artifacts sit at well-known
+host paths, and an engine can `read + eval` extracted code **in-process**, producing no traced
+child at all, or reach it through a shell trampoline under an allowlisted Bash workload.
+
+The ownership gate is therefore **OS-enforced hermetic**: engine-ts runs inside an isolation
+boundary in which the real binary, the extraction bundle, `build/`, and every other engine wrapper
+are **genuinely unreadable and unexecutable** (deny-by-default filesystem policy — e.g. a
+sandbox-exec profile or an environment where those paths do not exist — not merely unset env
+vars), with `exec` *and* file-open/import activity audited across the whole descendant tree.
+**Negative controls ship with the gate, one per delegation route**: direct exec of the real
+binary, a shell trampoline via a workload child, a dynamic `import()` of an extracted chunk, and
+read-plus-eval of extracted source — each must FAIL the gate. Bash scenarios still spawn user
+commands; the isolation policy (not an env allowlist) is what distinguishes workload children from
+reference-artifact access. The isolation substrate is built at the inversion milestone (W13) —
+the first point an engine-ts-primary artifact exists to gate — and hardens into the W14
+acceptance.
 
 ### 3.7 Gate cost honesty
 
@@ -361,14 +407,22 @@ Primary: the **closure ledger** (§1.1) — per subsystem and per catalog tool, 
 (`unowned / spliced / standalone-complete / assembled / stale`), dependency edges, and evidence
 links. Secondary, informational only: owned minified bytes over the load-bearing denominator.
 
-**Pin bumps invalidate semantically, not just numerically** (round 2): regenerating the `tengu_*`
-map and size buckets cannot see a new branch or changed protocol case inside an owned subsystem.
-Each bump therefore runs semantic inventories — per-owned-chunk import/export diff, tool-catalog
-diff (from a fresh bundle scan), AST diff of every splice's target node + closure surface,
-gate-defaults fixture diff, control-protocol subtype inventory diff — and **any diff touching an
-owned row flips it to `stale`**, requiring adjudication (and new coverage if behavior changed)
-before it returns to `standalone-complete`/`assembled`. A pin bump that breaks a splice blocks the
-bump until re-anchored. Newly shipped upstream subsystems enter as new `unowned` rows.
+**Pin bumps invalidate semantically, not just numerically** (round 2; footprint-mapped after
+round 3): regenerating the `tengu_*` map and size buckets cannot see a new branch or changed
+protocol case inside an owned subsystem — and export/target inventories alone cannot see a body
+change *inside* an owned S-module whose upstream counterpart changed internally (retry ordering in
+the query loop can change with identical exports). Each owned ledger row therefore records its
+**upstream implementation footprint**: the chunk(s) and AST-node spans it replaces, content-hashed
+at splice time. Each bump runs the semantic inventories — per-owned-chunk import/export diff,
+tool-catalog diff (fresh bundle scan), AST diff of every splice target + closure surface,
+**footprint hash diff for every owned row**, gate-defaults fixture diff, control-protocol subtype
+inventory diff — and **any diff touching an owned row flips it to `stale`**, requiring
+adjudication (and new coverage if behavior changed) before it returns to
+`standalone-complete`/`assembled`. Where footprint attribution is imprecise, the rule is
+conservative: every owned row mapped to a changed chunk goes `stale`. A **bump negative control**
+proves the mechanism: an internal branch change with unchanged exports must stale its row. A pin
+bump that breaks a splice blocks the bump until re-anchored. Newly shipped upstream subsystems
+enter as new `unowned` rows.
 
 **Upstream inheritance decays by design**: while the extracted graph is primary, unowned code
 inherits upstream improvements for free; each owned subsystem converts future upstream changes
@@ -389,7 +443,7 @@ ones).
 
 | Wave | Scope | Mechanism | New corpus families / gates |
 |---|---|---|---|
-| W0 | **Mechanism foundation**: manifest `target` shapes + AST-span excision, one spike per shape gated end-to-end; **engine-ts skeleton** (stream-json shell + module registry + static-reachability check); **determinism hardening**: §3.3 env allowlist + kill-switch + defaults fixture + flip-liveness + negative control, §3.5 Bun pin, §3.4 strict-match groundwork (proxy/differ normalization sharing) | infrastructure | spike gates; skeleton boot; env negative controls; runtime version assert |
+| W0 | **Mechanism foundation**: manifest `target` shapes + AST-span excision, one spike per shape gated end-to-end; **engine-ts skeleton** (stream-json shell + module registry + static-reachability check); **determinism hardening**: §3.3 env allowlist + credential schemas + kill-switch + defaults fixture + flip-liveness + negative controls, §3.5 Bun pin; **§3.4 strict replay delivered** (proxy/differ normalization sharing; zero fallbacks corpus-wide) | infrastructure | spike gates; skeleton boot; env + credential matrix; runtime version assert; zero-fallback corpus |
 | W1 | Remaining tool-result formatters (Read, Edit, Bash, Grep, task family); retrofit existing 3 splices to standalone-complete + taxonomy-classified adapters + reference/custom/sabotage layout; cheap state-surface diff (fs tree + exit codes) | S-method (proven shape) | per-tool result depth |
 | W2 | Tool-description functions (generalized S-method); S-chunk pilot on `y30v0ja7` (3 exports) with full export inventory; coverage attestation debuts | S-method + **S-chunk debut** | per-export coverage; derivation-perturbation |
 | W3 | Environment block + system-prompt assembly | S-method (free-function shape) | prompt-assembly scenarios (settingSources, CLAUDE.md injection) |
@@ -402,8 +456,8 @@ ones).
 | W10 | Bash executor + command-safety AST | S-method (class-method shape) → S-module | bash depth |
 | W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk | mcp/skills scenario families |
 | W12 | Agent/subagent dispatch + sandbox interface (`ToolRuntimePort` boundary) | S-module (fable) | subagent depth; sandbox matrix; mutation battery |
-| W13 | Query loop / turn driver (`ModelTransportPort`); **inversion milestone** — engine-ts becomes primary with extracted compatibility islands | S-module (fable) | controlled retry/interleaving + long-horizon traces; synthetic corpus required |
-| W14 | engine-ts closure: **hermetic** ownership gate (§3.6) + delegating-wrapper negative control; static reachability; strict replay (§3.4); full acceptance surface with engine-ts as engineB | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
+| W13 | Query loop / turn driver (`ModelTransportPort`); **inversion milestone** — engine-ts becomes primary with extracted compatibility islands; **hermetic isolation substrate built** (§3.6) | S-module (fable) | controlled retry/interleaving + long-horizon traces; synthetic corpus required |
+| W14 | engine-ts closure: **OS-enforced hermetic** ownership gate (§3.6) with all four delegation-route negative controls; static reachability; full acceptance surface with engine-ts as engineB under strict replay | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
 
 ## Acceptance (behavior-phrased)
 
@@ -414,19 +468,22 @@ ones).
   per gated wave with gate output quoted.
 - **W0:** each mechanism spike passes excise → boot → solo-sabotage RED → faithful GREEN →
   derivation-perturbation-fails-loudly on a trivial target; the skeleton boots and reports its
-  owned set; the env allowlist ships with its seeded-override negative control green; the
-  flip-liveness test observes a gate flip through the allowlist; defaults fixture committed and
-  keyed to `ENGINE_VERSION`; `prepare.ts` refuses a Bun whose version differs from the binary's
-  embedded runtime.
+  owned set; the env allowlist ships with its credential schemas and the full test matrix green
+  (OAuth-only / key-only / both / missing / seeded-override); the flip-liveness test observes a
+  gate flip through the allowlist; defaults fixture committed and keyed to `ENGINE_VERSION`;
+  `prepare.ts` refuses a Bun whose version differs from the binary's embedded runtime; **the
+  corpus replays with zero positional fallbacks**, and fallbacks are fatal for every non-extracted
+  `engineB` thereafter.
 - **S-chunk (from W2):** per-export coverage + sabotage evidence for every retained export; export
   derivation perturbation fails the build loudly; coverage attestation shows covering scenarios
   execute the owned branches.
 - **S-module (from W9):** the wave's behavioral-partition matrix is written before implementation
   and fully green; the mutation battery is killed by the covering suite; state-surface diff clean.
-- **Campaign (W14):** `engines/engine-ts` passes the full acceptance surface as `engineB` under
-  the hermetic gate (§3.6) with zero replay fallbacks (§3.4); the delegating-wrapper negative
-  control FAILS the same gate; static reachability finds no extracted import; the closure ledger
-  holds no `unowned` or `stale` in-scope rows.
+- **Campaign (W14):** `engines/engine-ts` passes the full acceptance surface as `engineB` inside
+  the OS-enforced hermetic boundary (§3.6) with zero replay fallbacks (§3.4); all four
+  delegation-route negative controls (direct exec, shell trampoline, dynamic import, read+eval)
+  FAIL the same gate; static reachability finds no extracted import; the closure ledger holds no
+  `unowned` or `stale` in-scope rows.
 - **Standing:** the ledger regresses only by explicit `stale`/rebaseline entries at pin bumps; no
   splice exists without coverage; the differ's normalization spec grows only with written
   justification and per-scrub regression tests; substance checks grade both engines and carry
@@ -509,6 +566,28 @@ initiative, not this campaign.
 - **Runtime: pin external Bun to the binary's embedded version** (external assessment; skew then
   measured 1.3.14 vs 1.4.1). Rejected: unpinned "any recent Bun" (equivalence claims ride on
   runtime luck).
+- **Ownership isolation: OS-enforced, with per-route negative controls; substrate built at W13,
+  not W0** (round 3, partially adopted). Round 3 asked for hermetic isolation as a W0
+  prerequisite; adopted at W13 instead, with reasoning: hermeticity gates only an
+  engine-ts-primary artifact, which first exists at the inversion milestone — before that, every
+  graded engine legitimately lives inside the extracted graph, so a W0 hermetic harness would
+  gate nothing while inflating the foundation wave. Rejected: env-absence + child tracing as
+  "isolation" (in-process read+eval and shell trampolines bypass both).
+- **Replay strictness: strict from W0/W1, not W14** (round 3 corrected rev 2's own schedule).
+  Rejected: strictness-at-the-end (a masking path through thirteen waves including the
+  inversion).
+- **Pin-bump invalidation: content-hashed upstream footprints per owned row, conservative
+  chunk-level staling** (round 3). Rejected: export/target inventories alone (blind to internal
+  body changes in owned S-modules — the exact false-completeness class the mechanism exists to
+  close).
+- **Non-vacuity contracts for every verification mechanism, binding minimums fixed now, full
+  schemas at owning waves** (round 3, adopted in tiered form). Rejected: full schema authorship
+  before decomposition (speculative for W9+ machinery with no implementation contact); no
+  contracts (every named gate becomes claimable vacuously — the project's canonical failure).
+- **Credential contract: selection, not inheritance** (round 3 caught the allowlist/auth
+  interlock). Rejected: broad `CLAUDE_CODE_*`/`ANTHROPIC_*` passthrough (reopens the gate-override
+  leak the allowlist exists to close); literal allowlist without schemas (strands record-mode
+  auth).
 - **Metric location: per-subsystem scorecard in `reforge/README.md`**, linked from coverage.md.
   Rejected: a new standalone tracker doc (one more thing to rot).
 - **Spec location: `docs/superpowers/specs/`** per project convention, overriding the skill
@@ -527,8 +606,11 @@ initiative, not this campaign.
 - **The "description chunks" are multi-export grab-bags** (15/3/17/4 exports), not single-function
   seams — caught by adversarial review, verified against the extracted chunks, census corrected.
 - **The substance check graded only the oracle** until `98d9553d`; round 2 then showed the
-  strengthened check still accepted vacuous `undefined === undefined` ID correlation — two
-  successive lessons that a `substanceOnly` check is a full-fledged contract, not a smoke test.
+  strengthened check still accepted vacuous `undefined === undefined` ID correlation; round 3
+  then *demonstrated* (by adversarially mutating the real transcript) that the twice-hardened
+  check still accepted a foreground task with no completion notification — three successive
+  lessons that a `substanceOnly` check is a full-fledged contract, not a smoke test, now codified
+  in §3.1's non-vacuity contracts.
 - **Spliced modules were substrate-dependent by construction** (graph-supplied closure values) —
   the dependency-direction insight that moved the skeleton from W12 to W0 — and rev 1's blanket
   equality-assert fix was itself wrong for function-valued captures (round 2).
@@ -557,3 +639,10 @@ Pending — written at finish.
   gate; typed ports + no-minified-identifier hygiene; inversion milestone; anchor budget; strict
   no-fallback at engine-ts acceptance; staged synthetic corpus / state-surface / mutation
   layers; upstream-decay policy; post-campaign SDK outlook) + measured Bun runtime skew (§3.5).
+- 2026-08-31 (rev 3): adversarial review round 3 (six findings; five adopted fully, one
+  partially with recorded rationale): background-task lifecycle assertions + adversarial-mutation
+  negative controls (fix wave); §3.6 OS-enforced isolation with four delegation-route negative
+  controls, substrate pulled to W13; §5 footprint-hashed pin-bump staling with conservative
+  chunk-level fallback + bump negative control; §3.4 strict replay moved to W0/W1 (zero-fallback
+  corpus is W0 acceptance; fatal for non-extracted engines from W1); §3.1 non-vacuity contracts
+  with binding minimums; §3.3 record/replay credential schemas + test matrix.
