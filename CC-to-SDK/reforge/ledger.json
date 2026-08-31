@@ -10,9 +10,30 @@
       "state": "spliced",
       "edges": [],
       "footprint": [
-        { "chunk": "chunk-fy12d89p.js", "hash": "7d7bcc9d7bbe7088b83e0ee0cf43a2209be8b9277369d4ebdca116497984c04b" },
-        { "chunk": "chunk-fy12d89p.js", "hash": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce" },
-        { "chunk": "chunk-fy12d89p.js", "hash": "519dd1b300fefabeea65cfccd03da68772b9327aa2858fe2e8b6c357553a4275" }
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2080686,
+            "end": 2081100,
+            "sha256": "7d7bcc9d7bbe7088b83e0ee0cf43a2209be8b9277369d4ebdca116497984c04b"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2417355,
+            "end": 2417510,
+            "sha256": "4c1194ec4a09dbc473aaea857fc575b9d7fc2ef4badc8077e8832bab827abbce"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1883074,
+            "end": 1883310,
+            "sha256": "519dd1b300fefabeea65cfccd03da68772b9327aa2858fe2e8b6c357553a4275"
+          }
+        }
       ],
       "evidence": [
         "strangle/manifest.ts:write-tool-result",
@@ -38,7 +59,14 @@
       "state": "spliced",
       "edges": [],
       "footprint": [
-        { "chunk": "chunk-fy12d89p.js", "hash": "90f4eb8dbbe7b1bc63c80fcb3b750ac0a52f8636adb231e8ad0fe64314ff848e" }
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 580343,
+            "end": 580762,
+            "sha256": "90f4eb8dbbe7b1bc63c80fcb3b750ac0a52f8636adb231e8ad0fe64314ff848e"
+          }
+        }
       ],
       "evidence": [
         "strangle/manifest.ts:env-block",
@@ -99,7 +127,14 @@
       "state": "spliced",
       "edges": [],
       "footprint": [
-        { "chunk": "chunk-fy12d89p.js", "hash": "2a847b843b7edd24f60774eab00a765a186cae0425fc18ae31151ca161ddc1a7" }
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 173473,
+            "end": 174196,
+            "sha256": "2a847b843b7edd24f60774eab00a765a186cae0425fc18ae31151ca161ddc1a7"
+          }
+        }
       ],
       "evidence": [
         "strangle/manifest.ts:session-materialize",
@@ -151,7 +186,14 @@
       "state": "spliced",
       "edges": [],
       "footprint": [
-        { "chunk": "chunk-fy12d89p.js", "hash": "764b83f750e22ccb4d3b44299bc842c90f2294b3394a175c39bfb6a7d5c1974f" }
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3182489,
+            "end": 3182723,
+            "sha256": "764b83f750e22ccb4d3b44299bc842c90f2294b3394a175c39bfb6a7d5c1974f"
+          }
+        }
       ],
       "evidence": [
         "strangle/manifest.ts:text-delta",

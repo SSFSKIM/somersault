@@ -14,10 +14,27 @@
 //              the pinned binary, so path-prefix matching alone is evadable.
 //   BUNFS      any specifier carrying the extraction's own `/$bunfs/root/`
 //              scheme, resolvable or not.
+//   PACKAGE    a bare specifier that neither resolves nor is a node builtin —
+//              an import nothing can prove clean.
+//   PARSE      a file the TypeScript parser reports syntax errors for. AST
+//              discovery under-reports on a broken parse, so an unparseable
+//              file must fail loudly instead of walking half of itself.
+//   DYNAMIC    a computed `import(x)` / `require(x)`.
 //   ORPHAN     any .ts file under engine-ts/ that the walk never reached.
 //              Without this rule a module could carry a forbidden import and
 //              stay invisible simply by never being registered — the checker
 //              would pass while looking at nothing.
+//
+// Discovery is an **AST walk**, not a regex sweep (W0 boundary review, lens 2).
+// The regexes it replaces required whitespace after `import`/`export`, so the
+// compact forms a bundler emits — `export{x}from"…"`, `export*from"…"`,
+// `import{x}from"…"` — were invisible, and a re-export chain through one such
+// line hid an entire subgraph from the walk. The same `typescript` parser
+// strangle/ast.ts excises with reads every module-loading form instead:
+// ImportDeclaration, ExportDeclaration with a module specifier,
+// ImportEqualsDeclaration, dynamic `import()`, and `require()`. Comments and
+// string contents fall out of the grammar for free, so the hand-rolled
+// comment-stripper this file used to carry is gone.
 //
 // Scope, stated honestly: this is a *static* gate. An engine that reads and
 // evals extracted source at runtime, or spawns the real binary, passes it while
@@ -25,8 +42,10 @@
 // gate at W13/W14, with one negative control per delegation route. This checker
 // is the cheap continuous half, not the proof.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { BUNDLE_MODULES, BUNFS, REAL_BINARY } from "../src/pin.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,11 +66,25 @@ export const FORBIDDEN_ROOTS: string[] = [
   join(REFORGE_ROOT, "build"),
 ];
 
+/**
+ * The bare packages engine-ts may depend on without the walk entering them
+ * (§1.2 puts vendored libraries out of scope; node builtins are allowed
+ * separately and are not packages at all). Everything else that resolves is
+ * **traversed**: a workspace or node_modules entry that re-exports an extracted
+ * chunk is a delegation route, and terminating the walk at the package boundary
+ * is how it used to pass. Adding a name here is the deliberate act of vouching
+ * for a dependency's own import graph.
+ */
+export const ALLOWED_PACKAGES: ReadonlySet<string> = new Set(["typescript"]);
+
+/** Bound on the walk, so vouching for nothing cannot turn the checker into a hang. */
+const MAX_FILES = 2000;
+
 /** Files that are tooling around the skeleton, not part of it. */
 const TOOLING = (name: string) => name.endsWith(".test.ts") || name.startsWith("check-");
 
 export interface Violation {
-  rule: "FORBIDDEN" | "BUNFS" | "ORPHAN" | "ENTRY" | "DYNAMIC";
+  rule: "FORBIDDEN" | "BUNFS" | "PACKAGE" | "PARSE" | "ORPHAN" | "ENTRY" | "DYNAMIC" | "BUDGET";
   file: string;
   specifier?: string;
   resolved?: string;
@@ -66,73 +99,55 @@ export interface ReachabilityReport {
   violations: Violation[];
 }
 
-/**
- * Blank out comments (replacing them with spaces so offsets survive) before
- * scanning for specifiers. Without this the checker reads example imports out
- * of doc comments and accuses them; with a naive regex instead it would risk
- * the far worse error — blanking real code that merely contains "//" inside a
- * string — so this walks the source tracking string and template state.
- */
-export function stripComments(src: string): string {
-  const out = src.split("");
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+export interface ModuleScan {
+  /** every module specifier written as a literal, in source order */
+  specifiers: string[];
+  /**
+   * `import(x)` / `require(x)` sites whose specifier is not a literal. §3.6
+   * names a dynamic import of an extracted chunk as a delegation route, and a
+   * computed specifier is exactly the shape static analysis cannot follow — so
+   * engine-ts forbids it outright rather than pretending to have checked it.
+   */
+  computed: string[];
+  /** syntax errors the parser reported; a nonzero count makes the scan unsound */
+  parseErrors: number;
+}
+
+function scriptKindOf(file: string): ts.ScriptKind {
+  if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (file.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (file.endsWith(".js") || file.endsWith(".mjs") || file.endsWith(".cjs")) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+/** Every module-loading site in `src`, found through the parser rather than by pattern. */
+export function scanModule(file: string, src: string): ModuleScan {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, scriptKindOf(file));
+  // `parseDiagnostics` is not on the public SourceFile type; strangle/ast.ts
+  // reads it the same way, and the `?? []` keeps this a no-op if it ever moves.
+  const parseErrors = ((sf as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics ?? []).length;
+  const scan: ModuleScan = { specifiers: [], computed: [], parseErrors };
+
+  const snippet = (node: ts.Node) => node.getText(sf).replace(/\s+/g, " ").slice(0, 60);
+  const take = (node: ts.Node, spec: ts.Node | undefined) => {
+    if (spec && ts.isStringLiteralLike(spec)) scan.specifiers.push(spec.text);
+    else scan.computed.push(snippet(node));
   };
-  while (i < src.length) {
-    const c = src[i];
-    if (c === "/" && src[i + 1] === "/") {
-      const end = src.indexOf("\n", i);
-      blank(i, end === -1 ? src.length : end);
-      i = end === -1 ? src.length : end;
-    } else if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      blank(i, stop);
-      i = stop;
-    } else if (c === '"' || c === "'" || c === "`") {
-      i++;
-      while (i < src.length && src[i] !== c) i += src[i] === "\\" ? 2 : 1;
-      i++;
-    } else {
-      i++;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) take(node, node.moduleSpecifier);
+    else if (ts.isExportDeclaration(node) && node.moduleSpecifier) take(node, node.moduleSpecifier);
+    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      take(node, node.moduleReference.expression);
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (isDynamicImport || isRequire) take(node, node.arguments[0]);
     }
-  }
-  return out.join("");
-}
-
-const SPEC_PATTERNS = [
-  /(?:^|[\s;})])(?:import|export)\s[^;]*?from\s*["']([^"']+)["']/g,
-  /(?:^|[\s;})])import\s*["']([^"']+)["']/g,
-  /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-  /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-];
-
-/** Every static/dynamic module specifier written as a literal in `src`. */
-export function specifiersOf(src: string): string[] {
-  const code = stripComments(src);
-  const out: string[] = [];
-  for (const re of SPEC_PATTERNS) {
-    re.lastIndex = 0;
-    for (let m = re.exec(code); m; m = re.exec(code)) out.push(m[1]);
-  }
-  return out;
-}
-
-/**
- * Dynamic `import(x)` / `require(x)` with a computed specifier. §3.6 names a
- * dynamic import of an extracted chunk as a delegation route, and a computed
- * specifier is exactly the shape static analysis cannot follow — so engine-ts
- * forbids it outright rather than pretending to have checked it.
- */
-export function computedSpecifierSites(src: string): string[] {
-  const code = stripComments(src);
-  const sites: string[] = [];
-  const re = /\b(import|require)\s*\(\s*([^\s)])/g;
-  for (let m = re.exec(code); m; m = re.exec(code)) {
-    if (m[2] !== '"' && m[2] !== "'") sites.push(code.slice(m.index, m.index + 40).trim());
-  }
-  return sites;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return scan;
 }
 
 const underRoot = (path: string, root: string) => path === root || path.startsWith(root + "/");
@@ -153,20 +168,31 @@ function inForbiddenRoot(path: string): string | null {
 /** Resolve a relative/absolute specifier the way NodeNext + bun do (`.js` → `.ts`). */
 function resolveLocal(fromFile: string, spec: string): string | null {
   const base = isAbsolute(spec) ? spec : resolve(dirname(fromFile), spec);
+  const jsLess = base.endsWith(".js") ? base.slice(0, -3) : null;
   const candidates = [
-    base.endsWith(".js") ? base.slice(0, -3) + ".ts" : null,
-    base.endsWith(".js") ? base.slice(0, -3) + ".tsx" : null,
+    jsLess ? `${jsLess}.ts` : null,
+    jsLess ? `${jsLess}.tsx` : null,
     base,
     `${base}.ts`,
+    `${base}.js`,
+    `${base}.mjs`,
+    `${base}.cjs`,
     join(base, "index.ts"),
+    join(base, "index.js"),
   ].filter((c): c is string => c !== null);
   for (const c of candidates) if (existsSync(c) && statSync(c).isFile()) return c;
   return null;
 }
 
+/** `@scope/pkg/sub` → `@scope/pkg`; `pkg/sub` → `pkg`. */
+function packageNameOf(spec: string): string {
+  const parts = spec.split("/");
+  return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
 function tsFilesUnder(dir: string): string[] {
   return readdirSync(dir, { recursive: true, encoding: "utf8" })
-    .filter((f) => f.endsWith(".ts"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && !f.split("/").includes("node_modules"))
     .map((f) => join(dir, f))
     .filter((f) => statSync(f).isFile());
 }
@@ -184,12 +210,19 @@ export function checkReachability(entryPath: string): ReachabilityReport {
   while (queue.length > 0) {
     const file = queue.shift()!;
     if (seen.has(file)) continue;
+    if (seen.size >= MAX_FILES) {
+      report.violations.push({ rule: "BUDGET", file, detail: `walk exceeded ${MAX_FILES} files — an unvouched dependency tree; allowlist it in ALLOWED_PACKAGES or cut it` });
+      break;
+    }
     seen.add(file);
-    const src = readFileSync(file, "utf8");
-    for (const site of computedSpecifierSites(src)) {
+    const scan = scanModule(file, readFileSync(file, "utf8"));
+    if (scan.parseErrors > 0) {
+      report.violations.push({ rule: "PARSE", file, detail: `${scan.parseErrors} syntax error(s) — a file the parser cannot read is a file the walk cannot check` });
+    }
+    for (const site of scan.computed) {
       report.violations.push({ rule: "DYNAMIC", file, detail: `computed module specifier '${site}' — not statically checkable (§3.6 delegation route)` });
     }
-    for (const spec of specifiersOf(src)) {
+    for (const spec of scan.specifiers) {
       report.specifiers++;
       if (spec.includes(BUNFS)) {
         report.violations.push({ rule: "BUNFS", file, specifier: spec, detail: `carries the extraction's ${BUNFS} scheme` });
@@ -210,17 +243,27 @@ export function checkReachability(entryPath: string): ReachabilityReport {
         }
         queue.push(resolved);
       } else {
-        // A bare specifier is an npm package: §1.2 puts vendored libraries out
-        // of scope, engine-ts imports the real packages. Recorded, and checked
-        // for a forbidden resolution, but not walked.
         if (!report.externals.includes(spec)) report.externals.push(spec);
+        if (isBuiltin(spec)) continue;
+        // Resolve from the IMPORTING file. `import.meta.resolve(spec, parent)`
+        // silently ignores its second argument under tsx, which resolved every
+        // bare specifier against this checker's own location instead.
+        let resolved: string | null = null;
         try {
-          const resolved = fileURLToPath(import.meta.resolve(spec, `file://${file}`));
-          const root = inForbiddenRoot(resolved);
-          if (root) report.violations.push({ rule: "FORBIDDEN", file, specifier: spec, resolved, detail: `bare specifier resolves under ${root}` });
+          resolved = createRequire(file).resolve(spec);
         } catch {
-          /* unresolved package (types-only, or not installed) — nothing to accuse */
+          resolved = null;
         }
+        if (!resolved) {
+          report.violations.push({ rule: "PACKAGE", file, specifier: spec, detail: "bare specifier does not resolve — an unresolved import cannot be proven clean" });
+          continue;
+        }
+        const root = inForbiddenRoot(resolved);
+        if (root) {
+          report.violations.push({ rule: "FORBIDDEN", file, specifier: spec, resolved, detail: `bare specifier resolves under ${root}` });
+          continue;
+        }
+        if (!ALLOWED_PACKAGES.has(packageNameOf(spec))) queue.push(resolved);
       }
     }
   }
@@ -246,6 +289,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  files walked: ${report.files.length} → ${report.files.map(rel).join(", ")}`);
   console.log(`  specifiers checked: ${report.specifiers}`);
   console.log(`  external packages: ${report.externals.length ? report.externals.join(", ") : "none"}`);
+  console.log(`  allowlisted packages: ${[...ALLOWED_PACKAGES].join(", ")}`);
   console.log(`  forbidden roots: ${FORBIDDEN_ROOTS.join(", ")}`);
   for (const v of report.violations) console.log(`  ${v.rule}  ${rel(v.file)}${v.specifier ? ` → ${v.specifier}` : ""}: ${v.detail}`);
   const ok = report.violations.length === 0;
