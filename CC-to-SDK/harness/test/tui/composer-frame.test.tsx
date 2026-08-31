@@ -27,6 +27,10 @@ afterAll(() => { if (priorFleetRoot === undefined) delete process.env.CCX_FLEET_
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+/** T-SPACE Task 3 (spec §2.2/D16): `ComposerFrame` now carries its own `marginTop=1` (dropped to 0 only
+ *  while the suggestion palette is open), so row 0 of every frame below is that blank line, not the top
+ *  rule. Skip to the first non-blank line rather than re-deriving the margin's presence in each case. */
+const firstNonBlank = (s: string) => s.split("\n").find((l) => l.length > 0)!;
 const settle = () => new Promise((r) => setTimeout(r, 30));
 const waitFor = async (p: () => boolean, ms = 2000) => {
   const until = Date.now() + ms;
@@ -60,13 +64,13 @@ describe("ComposerFrame (CM1): two rules, no box", () => {
 describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () => {
   it("splices ` label ` into the top rule after three dashes, keeping the total width", () => {
     const { lastFrame } = render(<ComposerFrame columns={40} label="History 3/57" />);
-    const top = strip(frame(lastFrame)).split("\n")[0]!;
+    const top = firstNonBlank(strip(frame(lastFrame)));
     expect(top).toBe("─── History 3/57 " + "─".repeat(40 - 3 - 14));
     expect(top.length).toBe(40);
   });
   it("dims the label TEXT and leaves the dashes on both sides undimmed", () => {
     const { lastFrame } = render(<ComposerFrame columns={40} label="History 3/57" />);
-    const top = frame(lastFrame).split("\n")[0]!;
+    const top = firstNonBlank(frame(lastFrame));
     const dimOpen = top.indexOf("\x1b[2m");
     expect(dimOpen).toBeGreaterThan(-1);
     // Everything before the dim run is leading dashes; everything after the dim CLOSE is trailing dashes.
@@ -80,7 +84,7 @@ describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () =
     expect(strip(top.slice(dimOpen, top.indexOf("\x1b[22m")))).toBe("History 3/57");
   });
   it("renders nothing extra when the label is absent", () => {
-    const top = strip(frame(render(<ComposerFrame columns={20} />).lastFrame)).split("\n")[0]!;
+    const top = firstNonBlank(strip(frame(render(<ComposerFrame columns={20} />).lastFrame)));
     expect(top).toBe("─".repeat(20));
   });
   // `$Bu`'s FIRST branch, `if (Ut(content) >= s - 2)`: the label is clamped to the row instead of overflowing
@@ -88,9 +92,10 @@ describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () =
   it("truncates an over-long label instead of overflowing the rule (t2 review, Minor)", () => {
     const top = (columns: number) => {
       const lines = strip(frame(render(<ComposerFrame columns={columns} label="History 3/57" />).lastFrame)).split("\n");
-      expect(lines[0]!.length, `columns=${columns}`).toBeLessThanOrEqual(columns);   // never wraps onto a second row
+      const first = firstNonBlank(lines.join("\n"));
+      expect(first.length, `columns=${columns}`).toBeLessThanOrEqual(columns);   // never wraps onto a second row
       expect(lines.filter((l) => l.length > 0).length, `columns=${columns}`).toBe(2);
-      return lines[0]!;
+      return first;
     };
     // `content` here is ` History 3/57 ` = 14 columns. The clamp at `Math.min(a, s - i - 1)` bites BEFORE the
     // overflow arm does: at 17 there is only room for 2 lead dashes, at 16 for none.
@@ -102,7 +107,7 @@ describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () =
     expect(top(8)).toBe(" History");                        // …and below its own width the label TEXT is cut
   });
   it("still keeps the dashes undimmed in the truncating arm", () => {
-    const top = frame(render(<ComposerFrame columns={16} label="History 3/57" />).lastFrame).split("\n")[0]!;
+    const top = firstNonBlank(frame(render(<ComposerFrame columns={16} label="History 3/57" />).lastFrame));
     const after = top.slice(top.indexOf("\x1b[22m") + "\x1b[22m".length);
     expect(after).not.toContain("\x1b[2m");
     expect(strip(after)).toBe(" ──");
@@ -163,7 +168,7 @@ describe("ChatComposer wears the frame", () => {
     const { lastFrame } = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} />);
     await settle();
     const raw = frame(lastFrame), lines = strip(raw).split("\n");
-    expect(lines[0]).toBe("─".repeat(40));
+    expect(firstNonBlank(lines.join("\n"))).toBe("─".repeat(40));
     expect(lines.filter((l) => l === "─".repeat(40)).length).toBe(2);   // exactly two rules, top and bottom
     for (const ch of ["│", "╭", "╮", "╰", "╯"]) expect(raw).not.toContain(ch);
     expect(raw).toContain(GLYPH);
@@ -188,10 +193,10 @@ describe("ChatComposer wears the frame", () => {
   it("paints the label into the top rule when given one, and nothing when not", async () => {
     const withLabel = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} label="History 3/57" />);
     await settle();
-    expect(strip(frame(withLabel.lastFrame)).split("\n")[0]).toBe("─── History 3/57 " + "─".repeat(23));
+    expect(firstNonBlank(strip(frame(withLabel.lastFrame)))).toBe("─── History 3/57 " + "─".repeat(23));
     const without = renderWithKeymap(<ChatComposer onSubmit={() => {}} cwd={tmpdir()} commandCatalog={[]} columns={() => 40} />);
     await settle();
-    expect(strip(frame(without.lastFrame)).split("\n")[0]).toBe("─".repeat(40));
+    expect(firstNonBlank(strip(frame(without.lastFrame)))).toBe("─".repeat(40));
   });
   it("the Z_a ladder still shortens once \\+Return has been used — now only in the `?` grid", async () => {
     // WAVE C TASK 2: the ladder's composer ROW went with hint row 1 (upstream's home footer has no such
@@ -224,7 +229,7 @@ describe("external editor in flight (CM8)", () => {
     expect(strip(held)).not.toContain("draft");                        // glyph + input row are gone
     expect(strip(held)).not.toContain("⏎ send");                       // …and so is everything below them
     expect(held).not.toContain(GLYPH);
-    expect(strip(held).split("\n")[0]).toBe("─".repeat(40));           // but the rules survive (`...t_`)
+    expect(firstNonBlank(strip(held))).toBe("─".repeat(40));           // but the rules survive (`...t_`)
 
     release("edited in $EDITOR");
     await waitFor(() => strip(frame(lastFrame)).includes("edited in $EDITOR"));

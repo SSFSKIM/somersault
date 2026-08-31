@@ -37,16 +37,27 @@ export const WINDOW_SLACK = 2;
 
 /** The measured steady-state main-screen dock: the rows that are never the transcript's. It is a measurement,
  *  not a guess (plan review C3) — change it only against a re-measured dock, which means re-checking these
- *  fourteen rows one at a time:
+ *  sixteen rows one at a time. T-SPACE Task 3 (spec §2.2/D16) added the two `+1`s marked below: the chrome
+ *  margins `addMargin`'s invariant puts on the live-turn slot and the composer (canon `Gn` L77727 / L160599),
+ *  which this constant had never charged for because `RenderItem` itself grew no margin concept before
+ *  T-SPACE — see `toolRenderer.tsx`'s own separator device for why a `marginTop` is a painted row here, not
+ *  a prop:
  *    · 5 — the todo panel's task rows at their maximum (`todoWindowSize` caps the window at 5, `taskPanelModel.ts:16-18`)
  *    · 1 — the todo panel's `marginTop={1}` (`TaskPanel.tsx:106`)
  *    · 1 — the todo panel's count header, "N tasks (…)" (`TaskPanel.tsx:107-111`)
  *    · 1 — the todo panel's "+N more" overflow line (`TaskPanel.tsx:116`)
- *    · 1 — the live-turn slot: spinner, retry row or compaction row, whichever holds it (`ChatApp.tsx:776`/`:788`/`:800`)
- *    · 1 — the queue band at its minimum: one echoed queued prompt (`ChatApp.tsx:800-804`)
- *    · 3 — the composer at its minimum (`ChatApp.tsx:968`)
- *    · 1 — the footer (`ChatApp.tsx:1021`) */
-const MAIN_DOCK_ROWS = 14;
+ *    · 1 — the live-turn slot: spinner, retry row or compaction row, whichever holds it (`ChatApp.tsx:1984-1988`)
+ *    · 1 — (T-SPACE +1) the live-turn slot's own `marginTop={1}` wrapper, canon `Gn` L77727, unconditional
+ *      whenever the slot renders (`ChatApp.tsx:1984-1988`)
+ *    · 1 — the queue band at its minimum: one echoed queued prompt (`ChatApp.tsx:1997-2001`)
+ *    · 3 — the composer at its minimum (`ComposerFrame`'s two rules + one content row, `composerFrame.tsx:131`)
+ *    · 1 — (T-SPACE +1) the composer's own `marginTop={1}` (canon L160599). This constant models the
+ *      WORST case — the palette CLOSED, where the margin is 1 — because a palette open drops the margin to 0
+ *      but simultaneously opens `popupHeight(rows)`, a strictly larger reservation subtracted separately at
+ *      each call site (`mainWindowCap(rows) − WINDOW_SLACK − popupHeight(rows)`, see `live-window-popup.test.tsx`);
+ *      charging the smaller, palette-open figure here would under-reserve the moment the palette closes.
+ *    · 1 — the footer (`ChatApp.tsx:2090`) */
+const MAIN_DOCK_ROWS = 16;
 
 /** The main screen's hard cap: whatever the terminal has left once the dock is paid for, floored at zero (a
  *  terminal shorter than the dock simply has no live window — the window has no rows, so everything with any

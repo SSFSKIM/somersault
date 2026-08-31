@@ -383,20 +383,24 @@ describe("S1 — both overflow checks", () => {
   // geometry this cell reaches, by the "S1 — useDockBottom + the dock-slot watchdog" block above (a dock
   // taller than `dockCap` zeroes it with `dockTop` untouched). `ChatApp` exposes no seam to mount a probe
   // INSIDE its own `dock` JSX without a product code change outside this task's scope, so the claim here is
-  // the observable end of that same mechanism: the combined occupants below cross `dockCap(24, false)` = 12
-  // (task panel ~8 rows + spinner 1 + composer 5 + footer 1 = 15), and both mount through ChatApp state
+  // the observable end of that same mechanism: the combined occupants below cross `dockCap(32, false)` = 16
+  // (task panel 9 rows + spinner 2 [T-SPACE Task 3: content row + its `marginTop=1`] + composer 6 [2 rules +
+  // 3-line draft + its own `marginTop=1`] + footer 1 = 18), and both mount through ChatApp state
   // (`state.tasks`, `state.busy`) — the one condition under which the frame DOES re-render and the watchdog
   // is fresh — so the refusal below is `dockBottom` answering 0, not `dockTop` going stale.
   it("task panel + spinner + composer growth combined, crossing dockCap: a click is refused", async () => {
     let fake!: ReturnType<typeof fakeRemote>;
     fake = fakeRemote({});
-    // Six tasks + the live-turn spinner + a three-line draft (28 rows / `dockCap(28, false)` = 14): the
+    // Six tasks + the live-turn spinner + a three-line draft (32 rows / `dockCap(32, false)` = 16): the
     // combined band is one row over the cap — a MINIMAL overflow, chosen so the outer clip (which eats from
     // the bottom once the dock outgrows the frame) takes only the footer's row, leaving the task panel, the
-    // spinner and all three draft lines on screen to assert against.
+    // spinner and all three draft lines on screen to assert against. T-SPACE Task 3 (spec §2.2/D16) added the
+    // spinner's and the composer's own `marginTop=1` — two more painted rows — so the terminal grew from 28 to
+    // 32 rows to keep this scenario at the SAME one-row-over calibration rather than a larger, footer-plus
+    // overflow that would clip the very content this test asserts against.
     const r = renderWithKeymap(
       <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
-        renderer={{ mode: "fullscreen", reason: "env_on" }} deps={{ columns: () => TEST_COLUMNS, rows: () => 28 }} />);
+        renderer={{ mode: "fullscreen", reason: "env_on" }} deps={{ columns: () => TEST_COLUMNS, rows: () => 32 }} />);
     await waitFor(() => plainFrame(r).includes(PROMPT));
     await settle();
     fake.pushEvent({ kind: "turn", phase: "start", seq: 1 });   // the live-turn spinner

@@ -106,11 +106,14 @@ describe("FSW T3 — commit is settle-driven, the window is render-time", () => 
   }
 
   it("an item taller than the whole budget commits WHOLE, and the window is what sits below it", async () => {
-    // 18 rows → 18 − 14 − 2 = 2 live rows. The Bash result's compact body is four rows (three plus the
-    // overflow marker), so it can never be in any window: it commits entire rather than being split, and
-    // the one-row prose beneath it is what stays live.
+    // 20 rows → 20 − 16 − 2 = 2 live rows. (T-SPACE Task 3, spec §2.2/D16: MAIN_DOCK_ROWS moved 14 → 16 for
+    // the spinner-slot and composer chrome margins, so the terminal grew from 18 to 20 to keep the SAME
+    // two-live-row calibration — at 18 rows the new dock leaves 0 live rows, which would force-commit the
+    // prose line below the Bash body too and defeat what this case is testing.) The Bash result's compact
+    // body is four rows (three plus the overflow marker), so it can never be in any window: it commits
+    // entire rather than being split, and the one-row prose beneath it is what stays live.
     const fake = fakeRemote();
-    const spy = mountSpy(fake, 18);
+    const spy = mountSpy(fake, 20);
     await new Promise((r) => setTimeout(r, 0));
     fake.pushEvent({ kind: "message", data: { type: "assistant", parent_tool_use_id: null, uuid: "u-bash", message: { id: "m-bash", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "echo hi" } }] } } });
     fake.pushEvent({ kind: "message", data: { type: "user", uuid: "u-bash-r", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n"), is_error: false }] } } });

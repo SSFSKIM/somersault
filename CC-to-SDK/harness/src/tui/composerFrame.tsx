@@ -122,13 +122,18 @@ function Rule({ columns, color, label }: { columns: number; color: string; label
 }
 
 /** The composer's frame: top rule (optionally carrying the history label), the content row, bottom rule.
- *  No Ink `borderStyle` anywhere — see the header note on why it cannot express CM1. */
-export function ComposerFrame({ columns, borderToken = "promptBorder", label, children }: {
-  columns: number; borderToken?: ComposerBorderToken; label?: string; children?: React.ReactNode;
+ *  No Ink `borderStyle` anywhere — see the header note on why it cannot express CM1.
+ *    T-SPACE Task 3 (spec §2.2/D16): `marginTop` is 1 normally, dropped to 0 while the suggestion palette is
+ *  open — canon `cli.pretty.js:160599`, `r(o, { marginTop: bn || yEe ? 0 : 1, … })` (`bn` is upstream's brief
+ *  layout, which this port has no surface for — D8 — so `paletteOpen` alone stands in for `bn || yEe`). The
+ *  caller (`ChatComposer.tsx`) passes its own `popupDrawn(state)` result, the SAME predicate that gates the
+ *  popup's render and its row budget, so this can never disagree with whether a palette is actually up. */
+export function ComposerFrame({ columns, borderToken = "promptBorder", label, children, paletteOpen = false }: {
+  columns: number; borderToken?: ComposerBorderToken; label?: string; children?: React.ReactNode; paletteOpen?: boolean;
 }) {
   const color = resolveThemeColor(themeTokens()[borderToken]);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginTop={paletteOpen ? 0 : 1}>
       <Rule columns={columns} color={color} label={label} />
       <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-start">{children}</Box>
       <Rule columns={columns} color={color} />

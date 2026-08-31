@@ -1733,8 +1733,12 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     if (!fullscreen) return undefined;
     // The queue term went with D14 (T14): in fullscreen those rows are at the document's tail, not in the
     // band, so charging the band for them would have reserved rows nothing was going to use.
+    // T-SPACE Task 3 (spec §2.2/D16): the live-turn slot is now TWO rows whenever it renders, not one — the
+    // pre-existing content charge (1, itself already an undercount for a 2-row CompactionRow — see
+    // ChatComposer.tsx's `dockDialogRows` note, unchanged pre-existing debt) plus the slot's own
+    // `marginTop={1}` wrapper added in ChatApp's dock above, which is unconditional whenever the slot renders.
     const others = footerRows(footerStatusInput())                                      // the footer's rows
-      + (state.busy || state.compacting ? 1 : 0)                                        // the live-turn slot
+      + (state.busy || state.compacting ? 2 : 0)                                        // the live-turn slot + its margin
       + (todosOpen ? todoPanelRows(state.tasks, terminalRows()) : 0);
     return Math.max(0, dockCap(size.rows, true) - others);
   };
@@ -1989,10 +1993,16 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
           argument does not weaken because the thing being retried is a compaction — the API not answering is
           the more urgent news and the rarer state. Compacting then beats the ordinary spinner because it is
           strictly more specific: it names the pass that is running instead of a random thinking verb. */}
+      {/* T-SPACE Task 3 (spec §2.2/D16) — the `marginTop={1}` sits on the SLOT, not on any of the three
+          verbs: canon `Gn` (`cli.pretty.js:77727`) wraps the whole live-turn row in an unconditional
+          `marginTop: 1`, and the slot is shared by RetryRow/CompactionRow/TurnSpinner, so one wrapper here
+          gives all three the same margin rather than three copies of it. */}
       {(state.busy || state.compacting) && !paneOwned
-        ? (state.retryStatus ? <RetryRow status={state.retryStatus} reducedMotion={motionReduced} />
-          : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} reducedMotion={motionReduced} {...(deps?.now ? { now: deps.now } : {})} />
-          : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} tasks={state.tasks} reducedMotion={motionReduced} />)
+        ? <Box marginTop={1}>
+            {state.retryStatus ? <RetryRow status={state.retryStatus} reducedMotion={motionReduced} />
+              : state.compacting ? <CompactionRow startedAt={state.compacting.startedAt} columns={terminalColumns()} reducedMotion={motionReduced} {...(deps?.now ? { now: deps.now } : {})} />
+              : <TurnSpinner startedAt={state.turnStartedAt} meter={state.turnMeter} columns={terminalColumns()} tasks={state.tasks} reducedMotion={motionReduced} />}
+          </Box>
         : null}
       {/* F4 Task 8 — upstream `wqo` (pack §7.7, bundle L426002–426022): a queued prompt is the ORDINARY
           prompt echo wrapped in `<Box paddingX={$jp}>` with `$jp = 2`, and nothing else. It carries no

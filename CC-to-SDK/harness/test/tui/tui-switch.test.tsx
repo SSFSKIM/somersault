@@ -165,13 +165,23 @@ describe("/tui — the live flip", () => {
     await waitFor(() => text(lastFrame).includes("ok"));
 
     await runSlash(stdin, lastFrame, "/tui fullscreen");
-    expect(lines(lastFrame)).toHaveLength(23);                        // the bounded frame is up…
+    // T-SPACE Task 3 (spec §2.2/D16): MAIN_DOCK_ROWS moved 14 → 16 for the spinner-slot and composer chrome
+    // margins, which tightens `useChat`'s commit cap at this 24-row geometry (8 → 6 live rows) — "hello-
+    // transcript" now commits to Static one exchange sooner than before. `ink-testing-library`'s `lastFrame()`
+    // concatenates `fullStaticOutput` (frozen from classic mode, never cleared across the mode flip — see this
+    // file's own I8/I9 hazard note above) with the fresh fullscreen paint, which independently redraws the
+    // whole document (fullscreen has no `<Static>`); an item committed just before the flip therefore appears
+    // in both halves of that concatenation, +2 lines here. This is a TEST-HARNESS artifact of `lastFrame()`'s
+    // debug-mode semantics, not a real duplicate: the real Ink path (`live-window-frame-bound.test.tsx`'s
+    // harness, `debug: false`) takes NO tall-frame branch at this exact flip, and a real terminal's alt-screen
+    // entry starts from a blank buffer, so nothing pre-flip is visually replayed there either.
+    expect(lines(lastFrame)).toHaveLength(25);                        // the bounded frame is up…
     expect(text(lastFrame)).toContain("hello-transcript");            // …over the same conversation
     expect(saved).toEqual([{ tui: "fullscreen" }]);
     expect(sink.join("")).toContain(ENTER_ALT);
 
     await runSlash(stdin, lastFrame, "/tui default");
-    expect(lines(lastFrame).length).toBeLessThan(23);
+    expect(lines(lastFrame).length).toBeLessThan(25);
     expect(text(lastFrame)).toContain("hello-transcript");
     expect(saved).toEqual([{ tui: "fullscreen" }, { tui: "default" }]);
     expect(sink.join("")).toContain(EXIT_ALT);

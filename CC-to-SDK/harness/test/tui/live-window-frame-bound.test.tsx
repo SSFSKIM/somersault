@@ -122,7 +122,15 @@ describe.skipIf(isInCi)("FSW T3 fix round — the frame stays inside the termina
   // rows, not N. The 19-physical-row cliff above is untouched (D14 does not touch the dock/window budget,
   // only the streaming tier's own row count) — it is simply reached one content row earlier now, so the
   // representative "safely under the cliff" values move from 12/18 to 11/17 (12/18 physical rows).
-  for (const streamedRows of [11, 17] as const) {
+  //
+  // T-SPACE Task 3 (spec §2.2/D16) shifts it AGAIN, this time from the dock side: the live-turn slot and the
+  // composer each gained an unconditional `marginTop=1` (canon `Gn`/L160599), two more painted rows that sit
+  // in `dock`, not `streaming` — so `dock + streaming` reaches 24 two content rows earlier than before this
+  // task. Measured directly (not re-derived from the constant, since the cliff is a real Ink write, not
+  // arithmetic): the tall write now starts at 16 streamed content rows, so the representative values move
+  // from 11/17 to 11/15 (11 is comfortably under both cliffs and stays as the "ordinary turn" control; 15 is
+  // the new largest-safe value, one content row under 16's tall write).
+  for (const streamedRows of [11, 15] as const) {
     it(`${streamedRows} streamed rows under a full window at 24 rows writes NO tall frame`, async () => {
       const geo = { columns: 80, rows: 24 };
       const { fake, tty } = mount(geo);

@@ -15,7 +15,8 @@
 //
 // RED on the parent commit, same harness, twelve 200-column paragraphs at 80x24:
 //     window items 8 · LOGICAL rows 8 (at the cap, as the selector believed) · PAINTED rows 24 (3× the cap)
-// GREEN below: 2 items · 2 logical · 6 painted, against a cap of 8.
+// GREEN below (against the ORIGINAL 8-row cap; T-SPACE Task 3, spec §2.2/D16 later moved the cap to 6 — see
+// the test body for the current literal): 2 items · 2 logical · 6 painted.
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { Box } from "ink";
@@ -67,10 +68,11 @@ describe("FSW BL3 — the classic live window's budget is in painted rows", () =
     await waitFor(() => plain(app.lastFrame()).includes("WIDE-12"));
 
     const window = seen.windows[seen.windows.length - 1]!;
-    // 24 rows − the measured 14-row dock − 2 rows of slack = 8. Literal, per the wave's rule that a fixture
+    // 24 rows − the measured 16-row dock (T-SPACE Task 3, spec §2.2/D16: 14 → 16 for the spinner-slot and
+    // composer chrome margins) − 2 rows of slack = 6. Literal, per the wave's rule that a fixture
     // re-deriving the constant only pins it to itself.
-    expect(mainWindowCap(24) - WINDOW_SLACK).toBe(8);
-    expect(paintedRows(window, 80)).toBeLessThanOrEqual(8);
+    expect(mainWindowCap(24) - WINDOW_SLACK).toBe(6);
+    expect(paintedRows(window, 80)).toBeLessThanOrEqual(6);
     // Positive controls, both needed: an empty window would satisfy the bound forever, and a window whose
     // items did not wrap would satisfy it without ever exercising the change.
     expect(window.length).toBeGreaterThan(0);
@@ -83,7 +85,8 @@ describe("FSW BL3 — the classic live window's budget is in painted rows", () =
 
   it("leaves a window of content that does not wrap exactly where it was", async () => {
     // THE NO-CHANGE HALF. Painted and logical agree on a document that fits the width, so the classic
-    // renderer's ordinary case must select the identical eight items it always did.
+    // renderer's ordinary case must select the identical six items it always did (T-SPACE Task 3, spec
+    // §2.2/D16: the cap moved from 8 to 6 with the dock's 14 → 16 remeasurement).
     seen.windows.length = 0;
     const fake = fakeRemote();
     const app = render(
@@ -96,8 +99,8 @@ describe("FSW BL3 — the classic live window's budget is in painted rows", () =
     await waitFor(() => plain(app.lastFrame()).includes("ALPHA-12"));
 
     const window = seen.windows[seen.windows.length - 1]!;
-    expect(logicalRows(window)).toBe(8);
-    expect(paintedRows(window, 80)).toBe(8);
+    expect(logicalRows(window)).toBe(6);
+    expect(paintedRows(window, 80)).toBe(6);
     app.unmount();
   });
 

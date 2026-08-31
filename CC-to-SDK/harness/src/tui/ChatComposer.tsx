@@ -1528,7 +1528,10 @@ export function ChatComposer({ onSubmit, cwd, commandCatalog, onExit, onCycleMod
             row. `footerNotice` is the predicate; everything below immediate simply does not draw in
             fullscreen, which is canon's behaviour for all of them. */}
       {fullscreen || !notice ? null : <Box width={cols} paddingLeft={2} paddingRight={1} flexDirection="row" justifyContent="flex-end" overflow="hidden"><NotificationSlot notification={notice} /></Box>}
-      <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel}>
+      {/* T-SPACE Task 3 (spec §2.2/D16): `paletteOpen` is `popupShown`, computed above from `popupDrawn(state)` —
+          the SAME gate `hoisted`/the inline `SuggestPopup` render and its row budget already use, so the
+          frame's margin can never disagree with whether a palette is actually up. */}
+      <ComposerFrame columns={cols} borderToken={borderToken} label={ruleLabel} paletteOpen={popupShown}>
         <PromptGlyph mode={mode} busy={busy} />
         {/* CM5 (`t_p`, L395963): an empty buffer paints the PLACEHOLDER with its first character inverted —
             that inversion is the cursor. With no placeholder to show (the ladder's "otherwise none" arm) the
