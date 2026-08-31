@@ -362,8 +362,9 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
 
   if (capturelessFootprints.length > 0) {
     warnings.push(
-      `${capturelessFootprints.length} footprint(s) record no capture list (${capturelessFootprints.join(", ")}) — C1's emitter does not yet ` +
-        "emit capture declaration spans, so §2.4's hygiene rule is unverifiable for them. Backfill `captures` once it does; this becomes an error then.",
+      `${capturelessFootprints.length} footprint(s) record no capture list (${capturelessFootprints.join(", ")}) — these rows predate C1's ` +
+        "capture emission, so §2.4's hygiene rule is unverifiable for them. Backfill `captures` from build/footprints.json; " +
+        "the omission becomes an error once every recorded footprint carries one.",
     );
   }
 
