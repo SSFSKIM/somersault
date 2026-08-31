@@ -56,7 +56,7 @@ export const WINDOW_SLACK = 2;
  *      but simultaneously opens `popupHeight(rows)`, a strictly larger reservation subtracted separately at
  *      each call site (`mainWindowCap(rows) − WINDOW_SLACK − popupHeight(rows)`, see `live-window-popup.test.tsx`);
  *      charging the smaller, palette-open figure here would under-reserve the moment the palette closes.
- *    · 1 — the footer (`ChatApp.tsx:2090`) */
+ *    · 1 — the footer (`ChatApp.tsx:2100`) */
 const MAIN_DOCK_ROWS = 16;
 
 /** The main screen's hard cap: whatever the terminal has left once the dock is paid for, floored at zero (a

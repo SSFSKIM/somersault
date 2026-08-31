@@ -59,6 +59,23 @@ describe("ComposerFrame (CM1): two rules, no box", () => {
   });
 });
 
+// T-SPACE Task 3 fix wave (review finding 4, nit→include): the `paletteOpen` prop was only exercised
+// incidentally (via a fullscreen geometry test in `fullscreen-surfaces.test.tsx`) — nothing at this level
+// asserted `ComposerFrame` itself carries `marginTop=1` closed / `marginTop=0` open. Direct coverage here.
+describe("ComposerFrame paletteOpen prop: margin drops to 0 only while the palette is up (T-SPACE Task 3)", () => {
+  it("palette closed (default, prop omitted): row 0 is the marginTop blank, row 1 is the top rule", () => {
+    const { lastFrame } = render(<ComposerFrame columns={40} />);
+    const lines = strip(frame(lastFrame)).split("\n");
+    expect(lines[0]).toBe("");
+    expect(lines[1]).toBe("─".repeat(40));
+  });
+  it("palette open (paletteOpen={true}): no leading blank — row 0 IS the top rule", () => {
+    const { lastFrame } = render(<ComposerFrame columns={40} paletteOpen />);
+    const lines = strip(frame(lastFrame)).split("\n");
+    expect(lines[0]).toBe("─".repeat(40));
+  });
+});
+
 // `offset: 2` does NOT mean two lead dashes. `$Bu` (L179465–179482) takes `a = offset + 1` for align "start"
 // and paints `H[0] + Pm(top, a - 1)` — the first cell plus a-1 more, so THREE. We shipped two (t2 review).
 describe("ComposerFrame label (borderText offset 2 → THREE lead dashes)", () => {
