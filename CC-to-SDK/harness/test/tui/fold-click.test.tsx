@@ -240,10 +240,17 @@ describe("T10 (d\u2032): the document moving under a held button discards the an
   // re-wrap on resize and a document swap with one comparison. The geometry below is measured, not derived:
   // two rows of prose-plus-cluster separate the runs, so exactly two arriving lines put the SECOND cluster on
   // the FIRST one\u2019s cell.
+  //   bl10 T-SPACE: the separator invariant (one blank row above EVERY top-level block \u2014 canon's
+  // `addMargin`, research-spacing.md \u00a71.5 rows "any block \u2192 assistant text" and "\u2192 tool row") doubles both
+  // sides of that arithmetic, and they cancel. Between the two cluster rows there are now two block seams
+  // (cluster \u2192 "between" prose, prose \u2192 second cluster), so the gap is 1 prose row + 2 blanks = 4 rows;
+  // and each arriving stream line is itself a block, so it costs its own blank + its text = 2 rows. Two
+  // pushes still slide the second cluster exactly onto the first one's cell \u2014 4 rows of drift over a 4-row
+  // gap \u2014 which is the mechanism this cell exists to exercise, unchanged.
   it("refuses a tap whose row a different cluster took over mid-gesture", async () => {
     const r = await mount(TWO_CLUSTER_DOC);
     const foldRow = rowOf(r.lastFrame(), COLLAPSED);
-    expect(rowOf(r.lastFrame(), COLLAPSED_3)).toBe(foldRow + 2);   // premise: one prose row between the runs
+    expect(rowOf(r.lastFrame(), COLLAPSED_3)).toBe(foldRow + 4);   // premise: one prose row + its two block-seam blanks
 
     r.stdin.write(press(COL, foldRow));
     await tick();
@@ -252,7 +259,7 @@ describe("T10 (d\u2032): the document moving under a held button discards the an
     // The measured drift: the button never moved and the user never scrolled, yet the cell under it now
     // belongs to the OTHER cluster.
     expect(rowOf(r.lastFrame(), COLLAPSED_3)).toBe(foldRow);
-    expect(rowOf(r.lastFrame(), COLLAPSED)).toBe(foldRow - 2);
+    expect(rowOf(r.lastFrame(), COLLAPSED)).toBe(foldRow - 4);
 
     r.stdin.write(release(COL, foldRow));
     await settle();

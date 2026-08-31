@@ -374,14 +374,19 @@ describe("T-LINKOPEN Task 3 — alt/ctrl-click on a link cell arms the 500 ms op
   // OWN cell and opened on that answer alone, so a reflow between press and release that slid a DIFFERENT
   // link under the identical coordinates opened the WRONG url. `REFLOW_LINK_DOC` already overflows the
   // screen (30 pad lines, `fold-click.test.tsx`'s own proven mechanism), so a single streamed line — no
-  // gesture anywhere — slides the whole tail up by exactly one row: beta inherits alpha's former cell, and
-  // alpha itself scrolls fully off the top.
+  // gesture anywhere — slides the whole tail up onto alpha's former cell: beta inherits it, and alpha itself
+  // scrolls fully off the top.
+  //   bl10 T-SPACE: alpha and beta are two SEPARATE assistant messages, so the separator invariant (one blank
+  // row above every top-level block — canon's `addMargin`, research-spacing.md §1.5 "assistant text →
+  // assistant text (next msg) = 1") now puts one blank between them, making the gap 2 rows rather than 1.
+  // One push still suffices, because an arriving stream line is a block too and now costs its own blank plus
+  // its text — 2 rows of drift over a 2-row gap.
   it("a same-cell release whose HREF changed mid-gesture never opens (content reflow under a held press)", async () => {
     setGates({ TERM_PROGRAM: "iTerm.app" });
     const clock = linkClock();
     const r = await mount(REFLOW_LINK_DOC, clock);
     const alpha = locate(r.lastFrame(), LINK_LABEL_ALPHA);
-    expect(locate(r.lastFrame(), LINK_LABEL_BETA).row).toBe(alpha.row + 1);   // premise: adjacent, same column
+    expect(locate(r.lastFrame(), LINK_LABEL_BETA).row).toBe(alpha.row + 2);   // premise: one block-seam blank apart, same column
 
     r.stdin.write(press(alpha.col, alpha.row, ALT));
     await tick();
