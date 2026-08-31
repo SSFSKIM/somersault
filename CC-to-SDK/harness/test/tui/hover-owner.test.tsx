@@ -157,16 +157,25 @@ describe("H1 producer matrix — every transcript species mints ONE ownerKey per
   });
 
   // (l) LIVE STREAMING — streamingItems.ts, THE REAL TIER.
+  //   T-SPACE Task 2 gave this tier its own leading separator (spec §2.2/D14) — chrome, like every other
+  //   separator, carrying no `ownerKey` at all (Task 1's own established discipline). `contentRows` below is
+  //   the tier minus that one leading chrome row, which is what this cell's ownership claims are actually about.
+  const contentRows = (rows: readonly RenderItem[]) => rows.filter((r) => !r.id.startsWith("sep:"));
+  it("the leading separator ahead of the in-flight message carries no ownerKey — chrome, not a hover unit", () => {
+    const rows = streamingItems([{ text: "alpha" }], 40, streamOwnerKey("msg_01"));
+    expect(rows[0]!.id.startsWith("sep:")).toBe(true);
+    expect(rows[0]!.ownerKey).toBeUndefined();
+  });
   it("every line and every wrap fragment of the in-flight message shares ONE ownerKey", () => {
-    const rows = streamingItems([{ text: "alpha" }, { text: "b".repeat(200) }, { text: "gamma" }], 40, streamOwnerKey("msg_01"));
+    const rows = contentRows(streamingItems([{ text: "alpha" }, { text: "b".repeat(200) }, { text: "gamma" }], 40, streamOwnerKey("msg_01")));
     expect(rows.length).toBeGreaterThan(3);                                        // premise: row 2 really wrapped
     expect(distinct(ownersOf(rows))).toBe(1);
     expect(rows[0]!.ownerKey).toBe("stream:msg_01");
     expect(distinct(rows.map((r) => r.id))).toBe(rows.length);                     // ids still per row
   });
   it("two successive in-flight messages are distinct units", () => {
-    expect(streamingItems([{ text: "a" }], 40, streamOwnerKey("msg_01"))[0]!.ownerKey)
-      .not.toBe(streamingItems([{ text: "a" }], 40, streamOwnerKey("msg_02"))[0]!.ownerKey);
+    expect(contentRows(streamingItems([{ text: "a" }], 40, streamOwnerKey("msg_01")))[0]!.ownerKey)
+      .not.toBe(contentRows(streamingItems([{ text: "a" }], 40, streamOwnerKey("msg_02")))[0]!.ownerKey);
   });
   it("LiveTurn.messageKey() changes on message_start and never returns undefined", () => {
     const lt = new LiveTurn();

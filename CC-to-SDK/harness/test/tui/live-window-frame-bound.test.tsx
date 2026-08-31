@@ -116,7 +116,13 @@ describe.skipIf(isInCi)("FSW T3 fix round — the frame stays inside the termina
   // Nineteen is the PARENT commit's own threshold and is not this task's to fix: with the window fully
   // yielded the frame is `dock + streaming` on both sides of the change, which is exactly parity. Twelve
   // rows of streamed prose is an ordinary turn, which is what made the shipped number a regression.
-  for (const streamedRows of [12, 18] as const) {
+  //
+  // T-SPACE Task 2 (spec §2.2/D14) shifts this sweep down by one content row: the streaming region now
+  // carries its own leading separator (`streamingItems.ts`), so N streamed content rows cost N+1 PHYSICAL
+  // rows, not N. The 19-physical-row cliff above is untouched (D14 does not touch the dock/window budget,
+  // only the streaming tier's own row count) — it is simply reached one content row earlier now, so the
+  // representative "safely under the cliff" values move from 12/18 to 11/17 (12/18 physical rows).
+  for (const streamedRows of [11, 17] as const) {
     it(`${streamedRows} streamed rows under a full window at 24 rows writes NO tall frame`, async () => {
       const geo = { columns: 80, rows: 24 };
       const { fake, tty } = mount(geo);

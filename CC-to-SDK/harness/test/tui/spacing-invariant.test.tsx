@@ -10,9 +10,14 @@
 // away (a suppressed tool folded silently into its run) — those must NOT grow a phantom separator with
 // nothing under it.
 import { describe, expect, it } from "vitest";
+import React from "react";
+import { render } from "ink-testing-library";
 import { welcomeBanner } from "../../src/tui/banner.js";
-import { projectCompact, projectDetail, projectPending, type RenderItem } from "../../src/tui/toolRenderer.js";
+import { projectCompact, projectDetail, projectPending, streamOwnerKey, withLeadingSeparator, type RenderItem } from "../../src/tui/toolRenderer.js";
 import { TranscriptDocument } from "../../src/tui/transcriptModel.js";
+import { streamingItems } from "../../src/tui/streamingItems.js";
+import { Transcript } from "../../src/tui/Transcript.js";
+import type { RenderLine } from "../../src/tui/render.js";
 
 const context = { cwd: "/work", home: "/home/me", platform: "darwin" as NodeJS.Platform, columns: 100, now: 0 };
 const call = (id: string, name: string, input: unknown, messageId = `m-${id}`) =>
@@ -247,5 +252,95 @@ describe("T-SPACE Task 1: separator id durability and uniqueness", () => {
 
     expect(after.slice(0, before.length)).toEqual(before); // the earlier region's ids, separators included, are unchanged
     expect(new Set(after).size).toBe(after.length); // and the grown projection stays pairwise-distinct
+  });
+});
+
+// T-SPACE Task 2 (spec §2.2/D14, plan-review F8) — LIVE STREAMING joins the invariant. The streaming region
+// bypasses every concat site above entirely (`streamingItems.ts` is a leaf `FullscreenViewport`/`ChatApp`
+// call directly, not a caller of `foldAnchored` etc.), so it needs its own covering suite rather than relying
+// on the projection tests above.
+describe("T-SPACE Task 2: streamingItems.ts mints the same leading separator, gated the same way", () => {
+  const L = (text: string): RenderLine => ({ text });
+  const sepsOf = (items: readonly RenderItem[]) => items.filter((i) => i.id.startsWith("sep:"));
+
+  it("the first delta already shows one gap above the in-flight message", () => {
+    const items = streamingItems([L("hello")], 80);
+    expect(sepsOf(items)).toHaveLength(1);
+    expect(items[0]!.id.startsWith("sep:")).toBe(true);
+    expect(items[0]!.kind).toBe("line");
+    expect(items[0]!.kind === "line" && items[0]!.line.text).toBe("");
+    expect(items[1]!.kind === "line" && items[1]!.line.text).toBe("hello");
+  });
+
+  it("the gap does NOT accumulate across deltas: still exactly one, and it is the SAME id, as the message grows", () => {
+    const first = streamingItems([L("hello")], 80);
+    const grown = streamingItems([L("hello"), L("world")], 80);
+    expect(sepsOf(first)).toHaveLength(1);
+    expect(sepsOf(grown)).toHaveLength(1);
+    expect(sepsOf(grown)[0]!.id).toBe(sepsOf(first)[0]!.id); // stable across the delta, not re-minted
+  });
+
+  it("an interrupted/aborted stream (lines go back to empty) leaves no orphan separator", () => {
+    expect(streamingItems([], 80)).toEqual([]);
+  });
+
+  it("a stream beginning with NOTHING preceding it still gets its separator — no document-start suppression (D7)", () => {
+    // streamingItems has no notion of what (if anything) precedes it; it separates any non-empty region
+    // unconditionally, which is exactly what makes the very first thing in an empty transcript get a gap too.
+    const items = streamingItems([L("the very first line ever")], 80);
+    expect(items[0]!.id.startsWith("sep:")).toBe(true);
+  });
+
+  it("the streaming separator is chrome like every other one: no ownerKey, clickable, foldAnchor, or bg", () => {
+    const sep = streamingItems([L("hi")], 80, streamOwnerKey("msg_01"))[0]!;
+    expect(sep.ownerKey).toBeUndefined();
+    expect(sep.clickable).toBeUndefined();
+    expect(sep.foldAnchor).toBeUndefined();
+    if (sep.kind === "line") expect(sep.line.bg).toBeUndefined();
+  });
+
+  it("a wide first line that wraps to several physical rows still yields exactly one leading separator, unaffected by the wrap", () => {
+    const items = streamingItems([L("x".repeat(200)), L("second")], 40);
+    expect(sepsOf(items)).toHaveLength(1);
+    expect(items[0]!.id.startsWith("sep:")).toBe(true);
+  });
+
+  it("streaming→finalized keeps exactly one gap across the transition — no jump, no double blank", () => {
+    // Frame A ("mid-stream"): an already-finalized "intro" block plus an in-flight partial assistant line —
+    // composed the way FullscreenViewport composes its document (`finalRows ⧺ pendingRows ⧺ streamRows`).
+    const finalizedBefore = withLeadingSeparator([{ kind: "line" as const, id: "sdk:intro", line: L("intro") }]);
+    const streamBefore = streamingItems([L("partial reply")], 80);
+    const framesBefore = [...finalizedBefore, ...streamBefore];
+
+    // Frame B ("settled"): the SAME text is now a real finalized block (its own projection separator), and
+    // the streaming region has cleared back to empty — the finalized block's separator REPLACES the
+    // streaming one, it does not add to it.
+    const finalizedAfter = [...finalizedBefore, ...withLeadingSeparator([{ kind: "line" as const, id: "sdk:reply", line: L("partial reply") }])];
+    const streamAfter = streamingItems([], 80);
+    const framesAfter = [...finalizedAfter, ...streamAfter];
+
+    expect(sepsOf(framesBefore)).toHaveLength(2); // one above "intro", one above the streaming partial
+    expect(sepsOf(framesAfter)).toHaveLength(2);  // one above "intro", one above the now-finalized reply — same count
+  });
+});
+
+describe("T-SPACE Task 2: the classic path (Transcript.tsx) mirrors the same gap over raw streaming lines", () => {
+  it("streaming shows its blank line even with nothing published or windowed yet (no document-start suppression)", () => {
+    const { lastFrame } = render(<Transcript staticItems={[]} pendingItems={[]} streaming={[{ text: "typing…" }]} />);
+    const lines = (lastFrame() ?? "").split("\n");
+    expect(lines[0]).toBe("");
+    expect(lines[1]).toBe("typing…");
+  });
+
+  it("an interrupted/aborted stream (empty) renders no leading blank — no orphan separator", () => {
+    const { lastFrame } = render(<Transcript staticItems={[]} pendingItems={[]} streaming={[]} />);
+    expect(lastFrame()).toBe("");
+  });
+
+  it("the gap does not accumulate as the streaming array grows across re-renders — one blank, not one per delta", () => {
+    const { lastFrame, rerender } = render(<Transcript staticItems={[]} pendingItems={[]} streaming={[{ text: "a" }]} />);
+    rerender(<Transcript staticItems={[]} pendingItems={[]} streaming={[{ text: "a" }, { text: "b" }, { text: "c" }]} />);
+    const lines = (lastFrame() ?? "").split("\n");
+    expect(lines).toEqual(["", "a", "b", "c"]);
   });
 });

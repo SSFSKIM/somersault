@@ -666,8 +666,17 @@ export const separatorItemId = (boundaryId: string): string => `sep:${boundaryId
 const separatorItem = (boundaryId: string): RenderItem => ({ kind: "line", id: separatorItemId(boundaryId), line: { text: "" } });
 /** The shared gate every concat site applies: an empty push (a carrier whose content was filtered, absorbed,
  *  or coalesced away — D11) gets no separator and stays invisible, exactly as before this task. A non-empty
- *  push gets exactly one, keyed on its own first item. */
-const withLeadingSeparator = (items: readonly RenderItem[]): readonly RenderItem[] =>
+ *  push gets exactly one, keyed on its own first item.
+ *
+ *  EXPORTED for T-SPACE Task 2 (spec §2.2/D14): the live streaming region bypasses every concat site above
+ *  (`streamingItems.ts` is a leaf, not a caller of `foldAnchored`/`weaveStandaloneHooksFlat`/`projectPending`),
+ *  so it cannot reuse this file's `Anchored`-shaped call sites — but it is exactly the same "non-empty push
+ *  of RenderItems keyed on its own first id" shape, so it reuses this SAME gate rather than growing a second
+ *  one. Keying on `items[0].id` (not a hardcoded id) is what keeps the streaming separator's id stable across
+ *  deltas: line 0 of a growing in-flight message keeps its `stream:0`-derived id for the whole message
+ *  (`streamingItems.ts`'s own doc — the region holds at most one message and ids are position-keyed), so
+ *  calling this again on a longer `lines` array yields the identical separator, not an accumulating one. */
+export const withLeadingSeparator = (items: readonly RenderItem[]): readonly RenderItem[] =>
   items.length === 0 ? items : [separatorItem(items[0]!.id), ...items];
 /** `groupItems`' one exception to the shared gate above: canon's expanded-cluster container (`uI`'s verbose
  *  branch, `cli.pretty.js:193379-193422`) destructures an `addMargin` prop and never reads it — the outer

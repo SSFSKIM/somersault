@@ -185,9 +185,11 @@ describe("FullscreenViewport — the anchor", () => {
     const { lastFrame } = render(view({
       finalizedItems: doc(3, "F"), pendingItems: doc(2, "P"), streaming: [{ text: "S0" }, { text: "S1" }], rows: 4,
     }));
-    // Seven physical rows (3 + 2 + 2) in a four-row region: the window is the last four, which crosses two
-    // of the three region boundaries — so a viewport that anchored inside one of them would show F-rows.
-    expect(rowsOf(lastFrame())).toEqual(["P0", "P1", "S0", "S1"]);
+    // Eight physical rows (3 + 2 + 3 — T-SPACE Task 2 gives the streaming region its own leading separator,
+    // so a non-empty stream costs 3 rows here, not 2) in a four-row region: the window is the last four,
+    // which crosses two of the three region boundaries — so a viewport that anchored inside one of them
+    // would show F-rows. The blank row is the streaming block's own gap, same as every other block's.
+    expect(rowsOf(lastFrame())).toEqual(["P1", "", "S0", "S1"]);
   });
 });
 

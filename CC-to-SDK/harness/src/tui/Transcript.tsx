@@ -20,6 +20,16 @@ export { Line } from "./Line.js";
  *  projection-parity harnesses, and any caller that only wants Static) composes unchanged. */
 const NO_WINDOW: readonly RenderItem[] = [];
 
+/** T-SPACE Task 2 (spec §2.2/D14) — the classic path's mirror of `streamingItems.ts`'s leading separator.
+ *  This branch renders the in-flight turn as RAW `RenderLine[]` (never through `streamingItems`/`RenderItem`
+ *  at all — Ink re-wraps these itself), so it cannot reuse that module's `withLeadingSeparator` call; the gap
+ *  is minted here instead, with the same shape (a bare blank line, no styling) and the same non-empty gate
+ *  (an empty `streaming` array — the idle state, and what an interrupted/aborted stream settles back to —
+ *  renders nothing and leaves no orphan blank). A stable literal key is enough here (no hover/dedup identity
+ *  to carry, unlike a published `RenderItem`), and gating on `streaming.length > 0` alone (not on whether
+ *  anything precedes it) matches D7's no-document-start-suppression rule. */
+const STREAM_GAP: RenderLine = { text: "" };
+
 /** The three re-rendered regions — everything above except `<Static>` — as a fragment (a fragment adds no Yoga
  *  node, so `Transcript` below composes exactly as it did). Extracted by FSW Task 9 for the fullscreen shell;
  *  Task 10 replaced that use with `FullscreenViewport`, because a renderer with no scrollback cannot show only
@@ -29,6 +39,7 @@ export function LiveRegion({ windowItems = NO_WINDOW, pendingItems, streaming }:
     <>
       {windowItems.map((item) => <RenderItemView key={item.id} item={item} />)}
       {pendingItems.map((item) => <RenderItemView key={item.id} item={item} />)}
+      {streaming.length > 0 && <Line key="s-gap" l={STREAM_GAP} />}
       {streaming.map((l, i) => <Line key={`s${i}`} l={l} />)}
     </>
   );
