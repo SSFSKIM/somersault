@@ -925,7 +925,7 @@ export function FullscreenViewport({ finalizedItems, pendingItems, streaming, st
       // than `sourceId(item.id)` alone — the hover unit is the whole message/call `ownerKey` names, not this
       // one item, so every slice sharing that owner lights up together.
       <HoverContext.Provider key={`${s.item.id}:${i}`} value={hoveredKey !== null && (s.item.ownerKey ?? sourceId(s.item.id)) === hoveredKey && s.item.expanded !== true}>
-        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} />
+        <RenderItemView item={s.item} start={s.start} end={s.end} showGutter={s.showGutter} rowSelections={sliceSelections[i]} columns={columns} />
       </HoverContext.Provider>
     ))}
     {/* AMENDMENT 2: the pill names `v` exactly when `v` is registered above — one derivation, `showPill &&
