@@ -102,8 +102,11 @@ describe("T8 (b): an expanded cluster projects its members, in detail, all tagge
     expect(texts.some((t) => t.includes("ToolSearch"))).toBe(true);              // suppressed → its GENERIC header row
     expect(texts.some((t) => t.includes("mcp__srv__thing"))).toBe(true);
     expect(texts.at(-1)).toBe("done");                                           // the breaker still follows it
-    // Every item the cluster produced carries the anchor; nothing outside it does.
-    for (const item of items) expect(item.foldAnchor).toBe(lineTexts([item])[0] === "done" ? undefined : "read-1");
+    // Every item the cluster produced carries the anchor; nothing outside it does. T-SPACE Task 1: a
+    // top-level spacing separator (`sep:...`) is chrome, not a row of any block — it carries no
+    // `foldAnchor` by design (spec §2.2/D11) — so it is excluded here rather than asserted against "done".
+    for (const item of items.filter((i) => !i.id.startsWith("sep:")))
+      expect(item.foldAnchor).toBe(lineTexts([item])[0] === "done" ? undefined : "read-1");
   });
 
   it("renders members in the DETAIL form, not the compact one (an expanded body is not clipped to three rows)", () => {
@@ -323,9 +326,11 @@ describe("T8 (e): the growable cluster expands in the PENDING projection and sta
       fake.pushEvent({ kind: "message", data: m });
     await waitFor(() => groupRows(api.c!.state.pendingItems).length > 0);
     expect(api.c!.state.finalizedItems.filter((i) => i.id.startsWith("group:"))).toEqual([]);   // Static has none of it
-    expect(lineTexts(api.c!.state.pendingItems)).toEqual(["  Read 1 file, ran 1 shell command"]);  // settled form: no blinking glyph
+    // T-SPACE Task 1 (spec §2.2, R3 §1.5 "any block → tool row: 1"): the collapsed row is governed by the
+    // ordinary top-level separator, so it now carries its own leading blank ahead of the sentence.
+    expect(lineTexts(api.c!.state.pendingItems)).toEqual(["", "  Read 1 file, ran 1 shell command"]);  // settled form: no blinking glyph
     await tick(80);                                                              // …and nothing repaints it
-    expect(lineTexts(api.c!.state.pendingItems)).toEqual(["  Read 1 file, ran 1 shell command"]);
+    expect(lineTexts(api.c!.state.pendingItems)).toEqual(["", "  Read 1 file, ran 1 shell command"]);
 
     api.c!.toggleFold("read-1");
     await waitFor(() => groupRows(api.c!.state.pendingItems).length === 0);

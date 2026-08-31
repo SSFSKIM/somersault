@@ -642,6 +642,44 @@ export const streamOwnerKey = (messageKey: string): string => `stream:${messageK
  *  moved. An index key is a key the survivors INHERIT; `q.id` is not. */
 export const queuedOwnerKey = (entryId: string): string => `queued:${entryId}`;
 
+// ── T-SPACE Task 1 (spec §2.2/D6/D7/D11) — the one blank-row-above-every-block invariant ──────────────────
+// Canon's `addMargin`/`marginTop:1` (research-spacing.md §1.1) is "one blank row above every top-level
+// rendered block", modeled here as ONE stand-in device (the `toolRenderer.tsx` precedent `thinkingRowItems`
+// already documents below) rather than a `marginTop` field on `RenderItem` (D6: a field would touch every
+// consumer of item geometry — wrap, pager, hitmap, height — for the same visual result). Emitted at the
+// CONCAT sites, gated on the pushed unit actually contributing items (D11: raw `Anchored` entries are not
+// visible blocks — `buildAnchoredEntries` retains empty carriers for filtered/absorbed content, and a
+// separator above one would be a phantom gap with nothing under it) — never precomputed inside
+// `buildAnchoredEntries` itself. No document-start suppression: the very first rendered unit gets its
+// separator too, exactly like canon's `addMargin`, which ignores index entirely.
+/** A separator is chrome, not a row of the block it sits above: no `ownerKey` (not part of any hover unit),
+ *  no `clickable`, no `foldAnchor` (never inside a fold band), no `bg`. Keyed off the boundary id — the
+ *  pushed unit's own first item's id — which is durable across re-projection (item ids already are) and
+ *  pairwise-distinct for free: item ids are already globally unique (Static's append-once dedup depends on
+ *  it), so embedding it inherits that uniqueness rather than needing its own scheme. The trailing `:gap`
+ *  is load-bearing, not decoration: several call sites key a specific row by ID SUFFIX (`.endsWith(":header")`,
+ *  `:pending-row`, `:unclosed-row`, `:pending-hint`), and a bare `sep:<boundaryId>` would preserve the
+ *  boundary item's own suffix verbatim — a separator ahead of a header would itself satisfy `endsWith(":header")`
+ *  and win a `.find()` race against the real row it precedes. Prefix-only checks (`.startsWith("group:")` etc.)
+ *  stay safe either way, since `sep:` changes the START of the string. */
+export const separatorItemId = (boundaryId: string): string => `sep:${boundaryId}:gap`;
+const separatorItem = (boundaryId: string): RenderItem => ({ kind: "line", id: separatorItemId(boundaryId), line: { text: "" } });
+/** The shared gate every concat site applies: an empty push (a carrier whose content was filtered, absorbed,
+ *  or coalesced away — D11) gets no separator and stays invisible, exactly as before this task. A non-empty
+ *  push gets exactly one, keyed on its own first item. */
+const withLeadingSeparator = (items: readonly RenderItem[]): readonly RenderItem[] =>
+  items.length === 0 ? items : [separatorItem(items[0]!.id), ...items];
+/** `groupItems`' one exception to the shared gate above: canon's expanded-cluster container (`uI`'s verbose
+ *  branch, `cli.pretty.js:193379-193422`) destructures an `addMargin` prop and never reads it — the outer
+ *  Box wrapping every member/thinking row carries no margin of its own, because each row already gets its
+ *  OWN unconditional `marginTop:1` from `LC`/`QR` (193259/193275) or the thinking arm (193422), independent
+ *  of any outer prop. `expandedMemberItems` mirrors that with its own leading blank per member (the [BUG]
+ *  fix below) — so wrapping an EXPANDED group's output in the generic top-level separator too would double
+ *  the gap above its first row. Only the COLLAPSED single summary row is governed by the ordinary addMargin
+ *  mechanism and still needs it. */
+const withGroupSeparator = (group: FoldGroup, items: readonly RenderItem[], options: ProjectionOptions): readonly RenderItem[] =>
+  options.expandedFolds?.has(group.anchorId) === true ? items : withLeadingSeparator(items);
+
 /** PROJECTION IDENTITY ONLY — never append/dedup. Task 1's `appendSdk` deliberately refuses to hash a
  *  payload (two equal-looking calls can be genuinely distinct turns), but a retained entry with no
  *  source-stable identity still needs a deterministic, collision-free item id; the occurrence counter is
@@ -875,7 +913,15 @@ export function projectMessageEntry(entry: SdkEntry, options: ProjectionOptions,
     const resultContent: unknown = block.type === "advisor_tool_result" ? (block as Record<string, unknown>).content : undefined;
     const clickableAdvisor = !alreadyExpandedByProjection && isRecord(resultContent) && resultContent.type === "advisor_result"
       && (!isDeclined(resultContent) || advisorDeclineReason(resultContent) !== undefined);
-    for (const [lineIndex, line] of renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index], advisor: advisorOpts }).entries())
+    const rendered = [...renderMessage({ type: message.type, message: { content: [block] } }, { ...renderOpts, imageOrdinal: imageOrdinalAt[index], advisor: advisorOpts }).entries()];
+    if (rendered.length === 0) return;
+    // T-SPACE Task 1 (spec §2.2): canon emits one message per retained content block, each with its own
+    // `marginTop` — so a SECOND (and later) retained block of one entry needs the same separator the
+    // top-level concat sites give between anchors. The FIRST retained block does not: that gap is the
+    // anchor-level separator the caller (`buildAnchoredEntries`'s consumer) already puts above this whole
+    // entry's `items` once they leave this function — adding one here too would double it.
+    if (items.length > 0) items.push(separatorItem(sdkItemId(id, `block:${index}:0`)));
+    for (const [lineIndex, line] of rendered)
       // `block:<i>:<line>` rather than the bare `block:<i>`: one markdown block legitimately renders many
       // lines, and two items sharing an id would publish once and lose the rest.
       items.push({ kind: "line", id: sdkItemId(id, `block:${index}:${lineIndex}`), ownerKey, line, ...(clickableAdvisor ? { clickable: true } : {}) });
@@ -1093,7 +1139,15 @@ function expandedMemberItems(group: FoldGroup, anchorId: string, options: Projec
     const items = normalized.status === "suppressed"
       ? suppressedHeaderItems(event, event.result === undefined ? "running" : event.result.isError ? "error" : "success", detail)
       : renderToolEvent(event, normalized, detail);
-    const tagged = reid(items, event.id, event.result ? event.result.resultSequence : "pending").map((item): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true }));
+    // [BUG] fix (spec §2.2, research-spacing.md §1.4): canon's `LC` gives every member row an UNCONDITIONAL
+    // `marginTop: 1` (`cli.pretty.js:193259`) — the same leading blank `thinkingRowItems` above already
+    // carries. `reid` mints this member's real header/body ids first (index-based: shifting it by prepending
+    // the blank BEFORE `reid` would relabel the real header "part:1" and its `⎿` body would lose the "body"
+    // id), so the blank is minted separately and prepended after, then the existing map stamps `foldAnchor`/
+    // `expanded` onto it exactly like every other row in this cluster.
+    const sequence = event.result ? event.result.resultSequence : "pending";
+    const margin: RenderItem = { kind: "line", id: toolItemId(event.id, sequence, "margin"), ownerKey: toolOwnerKey(event.id, sequence), line: { text: "" } };
+    const tagged = [margin, ...reid(items, event.id, sequence)].map((item): RenderItem => ({ ...item, foldAnchor: anchorId, expanded: true }));
     entries.push({ key: event.callSequence, rank: 1, items: tagged });
   }
   for (const thought of group.absorbedThinking ?? []) entries.push({ key: thought.messageSequence, rank: 0, items: thinkingRowItems(thought, anchorId, options) });
@@ -1579,12 +1633,12 @@ const batchByMember = (batches: readonly AgentBatch[]): ReadonlyMap<string, Agen
  *  identically to the compact-mode row, just never collapsed into a group. */
 function weaveStandaloneHooksFlat(anchored: readonly Anchored[], options: ProjectionOptions): readonly RenderItem[] {
   const placements = positionStandaloneHooksFlat(anchored.map((a) => a.sequence), options.hookRuns);
-  if (placements.length === 0) return anchored.flatMap((a) => a.items);
+  if (placements.length === 0) return anchored.flatMap((a) => withLeadingSeparator(a.items));
   const out: RenderItem[] = [];
   let next = 0;
   for (let index = 0; index <= anchored.length; index++) {
-    while (next < placements.length && placements[next]!.position === index) { out.push(...hooksItemRows(placements[next]!, options)); next++; }
-    if (index < anchored.length) out.push(...anchored[index]!.items);
+    while (next < placements.length && placements[next]!.position === index) { out.push(...withLeadingSeparator(hooksItemRows(placements[next]!, options))); next++; }
+    if (index < anchored.length) out.push(...withLeadingSeparator(anchored[index]!.items));
   }
   return out;
 }
@@ -1746,20 +1800,20 @@ function foldAnchored(anchored: readonly Anchored[], options: ProjectionOptions)
   const emitted = new Set(visible.flatMap((item) => (item.kind === "tool" ? [item.event.id] : [])));
   const out: RenderItem[] = [];
   for (const item of visible) {
-    if (item.kind === "group") { out.push(...groupItems(item.group, "published", options, emitted)); continue; }
-    if (item.kind === "passthrough") { out.push(...(anchored[item.sequence]?.items ?? [])); continue; }
+    if (item.kind === "group") { out.push(...withGroupSeparator(item.group, groupItems(item.group, "published", options, emitted), options)); continue; }
+    if (item.kind === "passthrough") { out.push(...withLeadingSeparator(anchored[item.sequence]?.items ?? [])); continue; }
     // bl8 T-QY Task 3: `{kind:"hooks"}` items `weaveStandaloneHooks` (Task 2) placed anywhere BEFORE the
     // trailing cut are already positionally fixed (a later atom bounds them) — `trailingRunCut` above has
     // already excluded the still-growable trailing ones from `visible`, so every one reaching here renders.
-    if (item.kind === "hooks") { out.push(...hooksItemRows(item, options)); continue; }
+    if (item.kind === "hooks") { out.push(...withLeadingSeparator(hooksItemRows(item, options))); continue; }
     // A popped-out failure whose own projection is empty gets the substitute row (see `poppedOnErrorItems`),
     // re-keyed exactly as `projectAll` keys a standalone unit so Static's append-once bookkeeping is unchanged.
     // The other three `popsOutOnError` names render normally and keep their real items.
     const items = standalone.get(item.event) ?? [];
     if (item.poppedOnError === true && items.length === 0 && item.event.result !== undefined) {
-      out.push(...reid(poppedOnErrorItems(item.event, options), item.event.id, item.event.result.resultSequence)); continue;
+      out.push(...withLeadingSeparator(reid(poppedOnErrorItems(item.event, options), item.event.id, item.event.result.resultSequence))); continue;
     }
-    out.push(...items);
+    out.push(...withLeadingSeparator(items));
   }
   return out;
 }
@@ -1843,14 +1897,14 @@ export function projectPending(document: TranscriptDocument, options: Projection
   // not emitted here, and an expanded cluster it stayed a member of therefore draws it, once.
   const emitted = new Set(dynamic.flatMap((item) => (item.kind === "tool" && (batchItems.has(item.event) || !item.event.result) ? [item.event.id] : [])));
   for (const item of dynamic) {
-    if (item.kind === "group") { items.push(...groupItems(item.group, item.group.open ? "active" : "unclosed", full, emitted)); continue; }
+    if (item.kind === "group") { items.push(...withGroupSeparator(item.group, groupItems(item.group, item.group.open ? "active" : "unclosed", full, emitted), full)); continue; }
     if (item.kind !== "tool") continue;
     // A withheld agent batch draws whole — its first member stands in for the unit, and one member having a
     // result says nothing about whether Static may have it (only "every member resolved" does).
     const batch = batchItems.get(item.event);
-    if (batch !== undefined) { items.push(...batch); continue; }
+    if (batch !== undefined) { items.push(...withLeadingSeparator(batch)); continue; }
     // A COMPLETED standalone tool is already published (only groups are ever withheld); only an open one has a row here.
-    if (!item.event.result) items.push(...reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending"));
+    if (!item.event.result) items.push(...withLeadingSeparator(reid(renderToolEvent(item.event, normalizeToolResult(item.event, { verbose: false }), full), item.event.id, "pending")));
   }
   // Round review F1: the OTHER thing `trailingRunCut` withholds from Static — an unresolved advisor consult
   // — has no `ToolEvent` and so never enters the `dynamic` fold above as a `tool`/`group` item; it rides in
