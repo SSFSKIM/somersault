@@ -40,6 +40,12 @@ design pass rather than a regex bolted onto `scrubRequestBody` during a pin bump
 depends on request exactness, or when `engine-ts` starts being graded — the fallback's masking power matters
 far more against a genuine reimplementation than against the identical-code pair it was measured on.
 
+**Superseded 2026-08-31 (same day):** the reforge-full campaign spec
+(`docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md` §3.4) promotes this from deferred debt
+to scheduled work — the normalization-sharing design pass lands W0-adjacent, and `fallback count > 0`
+becomes a hard gate failure at engine-ts acceptance (diagnostic-only remains the posture while grading the
+identical-code pair). Kept here for the record; the campaign spec owns the obligation now.
+
 ## 2026-08-31 — a fork's inherited peer history is invisible, as is every pre-M9 session's
 
 **Source:** M9 branch external review, round 3 (finding 2) · `src/peer/arrivalLog.ts` (the store is keyed by
