@@ -8,6 +8,12 @@
 //                refused. Each watched failing as well as passing — a guard
 //                only ever fed valid input proves nothing about what it
 //                excludes.
+//   contracts  : the owned parity implementations, over partitioned inputs
+//                (strangle/contracts.test.ts). §2.4 buys ownership of a pure
+//                helper against "the differential surfaces its output flows
+//                into PLUS a contract test where its domain is wider than the
+//                corpus" — and the corpus's domain is narrow: one of Read's six
+//                result arms, one of Grep's three, and no Glob truncation at all.
 //   derivation : every capture must track an upstream rename and must throw
 //                when its shape is destroyed, and the manifest's declared
 //                captures must BE the excised body's free variables
@@ -81,6 +87,19 @@ console.log("━━━ mechanism: footprint closure surface, capture inventory, 
   const r = run("npx", ["tsx", "strangle/mechanism.test.ts"]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
   results.push({ label: "splice mechanism", pass: r.status === 0 });
+}
+
+// ---- contracts: the owned implementations, over partitioned inputs ---------
+// After C4's §2.4 retrofit the owned modules ship their own constants and pure
+// helpers, so a wrong branch inside one is only caught differentially where a
+// scenario renders it — and the corpus renders one of Read's six result arms,
+// one of Grep's three, and never truncates a Glob result at all. This phase is
+// the other half of §2.4's bargain.
+console.log("━━━ contracts: owned helpers + the formatter arms the corpus does not reach ━━━");
+{
+  const r = run("npx", ["tsx", "strangle/contracts.test.ts"]);
+  for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
+  results.push({ label: "owned-implementation contracts", pass: r.status === 0 });
 }
 
 // ---- derivation: re-derivation must track renames and fail loudly ----------
