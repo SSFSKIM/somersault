@@ -871,6 +871,51 @@ Pending — written at finish.
   and `strangle/perturb.ts` makes the derivation claim machine-checkable —
   every capture must track an upstream rename and must throw when its shape is
   destroyed (44 checks at this pin).
+- 2026-08-31 (C3 / W0c — determinism & strictness): §3.3's environment lockdown,
+  §3.5's runtime pin and §3.4's strict replay landed; corpus 22/22 and the
+  strangler gate PASS with **zero positional fallbacks** and the strangled build
+  graded under the fatal rule. Four items change what later waves should expect:
+  - **The environment leak was real and it was steering the ORACLE.** Two
+    operator variables reached every engine run: `CLAUDE_CODE_ENTRYPOINT` (written
+    into every request body, so a cassette's match key depended on which shell
+    recorded it) and `ENABLE_PROMPT_CACHING_1H` (forcing `cache_control.ttl:"1h"`
+    on breakpoints that otherwise resolve per scope). The second is cost-bearing
+    behavior. §3.3's premise is therefore confirmed empirically, not just by
+    inference from the override inventory.
+  - **The re-record advisory was right for the wrong reason.** C3's advisory
+    predicted that canonicalization would invalidate body hashes and cost one
+    corpus re-record. Canonicalization cost **zero** re-records — the hash is
+    computed over both sides through the same scrub, as the contract says. Three
+    scenarios (`subagent`, `background-task`, `slash-compact`) were re-recorded
+    because the *env lockdown* removed the leaked cache-TTL variable, and
+    `m2/raw-protocol.ts` gained its own cassette because it had been replaying
+    the SDK corpus's recording despite building a materially different prompt.
+    Later waves should budget re-records against **env/prompt changes**, not
+    against normalization changes.
+  - **Flip-liveness is affirmative, but not through the gate the spec names.**
+    §3.3 cites `CLAUDE_CODE_LUMINOUS_WHISTLE`; measured, that override is
+    unreachable on a headless proxied run — its reader short-circuits on a
+    first-party-base-URL predicate. The flip was observed instead through
+    `CLAUDE_CODE_USE_POWERSHELL_TOOL` (gate `tengu_cobalt_ridge`), which swaps
+    `Read` out of the headless tool catalog for `PowerShell` — i.e. a per-gate
+    env override can rewrite §1.3's moat surface. The override inventory is now
+    generated from the bundle (13 entries at this pin) rather than cited by hand,
+    so the sweep follows the pin.
+  - **Delegated unknown resolved, with a caveat: Bun 1.4.1 is pinnable, but not
+    from a tagged release.** The binary embeds 1.4.1; upstream's latest tag is
+    1.4.0, and the only public build reporting 1.4.1 is the rolling `canary`
+    asset (installed as `1.4.1-canary.1+d9b769812`). The version string matches
+    exactly; the commit is not provably the one upstream compiled against. Future
+    bumps should expect the same shape — the embedded runtime may lead the
+    release channel — and `strangle/toolchain.ts` tries the tagged release first,
+    then canary, and refuses anything that does not report the pinned version.
+  Also recorded: strictness caught two pre-existing defects on its first run (the
+  engine retries with `"stream": false` after a mid-stream failure, which the
+  derived fault cassettes did not answer; and the raw-protocol suite's borrowed
+  cassette), which is the liveness evidence for the rule itself. One deferral
+  logged in `docs/tech-debt-tracker.md`: `PINNED_ENTRYPOINT` is `sdk-cli` to stay
+  compatible with the recorded corpus, and should become `sdk-ts` at the next pin
+  bump, when a re-record is already being paid for.
 - 2026-08-31 (composite): the decomposing run extended this document in place with
   "## Roadmap — the cut" — grounding baseline, children C1–C17 (W0 trisected; binding detail at
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
