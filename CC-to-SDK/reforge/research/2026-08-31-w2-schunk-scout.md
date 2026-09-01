@@ -188,3 +188,36 @@ The coordination point, stated explicitly:
 
 Same shape, smaller stakes, applies to `jVe` (2000) and `Nmn`/`sYn`/`aYn`/`lYn`, which C4's Read
 formatter and a later Read-description splice both touch.
+
+---
+
+## 5. Correction, added by C5 at implementation time (2026-09-01)
+
+**§1.5's "`O_n` has exactly one consumer, called as `O_n(void 0)`" is wrong, and §3's consequence
+for the attestation followed it off the cliff.**
+
+`fy12d89p` calls `O_n` **twice**, from two methods of the same Glob tool object:
+
+```js
+async description(){return O_n(void 0)}
+async prompt({model:e}){return O_n(e)}
+```
+
+The second is the one §3 itself identifies as filling `requestBody.tools[i].description`. So `td(e)`
+is *not* always `false` at the call site, the lean branch is **not** dead on its only call path, and
+`gmn` (Grep) has exactly the same pair. What is true is narrower and much less interesting: no corpus
+scenario reached the lean arm, because the only scenario whose `allowedTools` admit Glob and Grep
+(`search-tools`) runs a sonnet model, and `w()` matches `"sonnet"`.
+
+That distinction decided the wave. Had the "dead on its only call path" reading stood, C5 would have
+recorded a **reviewed exclusion** for a live branch. Instead it recorded a 25th scenario —
+`search-tools-lean`, the search-tools tool set on the api-error model — and both lean arms are now
+differentially covered and solo-sabotage red. The reviewed exclusions that remain
+(`attestation/w2-descriptions.md`) are all environment-pinned rather than call-path arguments.
+
+The generalizable lesson, since the scout method is reused every wave: **a "dead code" finding about
+a function with more than one caller has to be re-derived from the call sites**, and a `grep -o` for
+`return <fn>(` on a minified one-line chunk returns the first match per line, so it under-counts by
+construction. The rest of §1's inventory (3 exports, zero top-level side effects, zero live bindings,
+the three imports and their classes) was verified independently by `strangle/chunk.ts` at build time
+and is correct.

@@ -671,7 +671,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C2 | W0b | commit `453f5952` | **landed + boundary-reviewed** — skeleton boots, ledger 46 rows evidence-backed, AST-based reachability w/ package allowlist (fix commits `bedff4b8`/`080e8dfd`/`cadb2e66`) |
 | C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed + boundary-reviewed** — env allowlist + credential injection (engine never holds a live secret), collision-fatal replay keys, SHA-pinned Bun, month-rot scrub (fix commits `64318463`…`fa8009d0`); gate 12/12, zero fallbacks |
 | C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | **landed** — 13 splices (10 tool-result formatters), corpus 24, every owned module standalone-complete + registered, contract tests and the cheap state surface online; validator row split out `unowned` |
-| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | not-dispatched — scouted; C4 landed, dispatchable now |
+| C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | **landed** — S-chunk mechanism + `chunk-y30v0ja7` owned whole, 3 description splices, corpus 25, coverage attestation online (14/20 executed, 6 adjudicated), ledger folded into the gate |
 | C5x | mech r2 | scouts (flow-back) | not-dispatched — blocked-by C5 (lock); blocks the bloc |
 | C6–C10 | W3–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; blocked-by C5x |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
@@ -1065,3 +1065,50 @@ Pending — written at finish.
     error the SDK throws, because a true exit status needs either an env var outside X6 or dropping
     `exec` from the engine wrappers, and dropping `exec` would orphan the engine when an aborted
     run signals the shell. Process supervision belongs with the full surface at W9.
+- 2026-09-01 (C5 / W2 — descriptions + the S-chunk debut): the strangler gained a second unit of
+  ownership. `chunk-y30v0ja7.js` is the first file in the graph with no upstream bytes left in it,
+  and the four tool-description functions are owned (one whole-chunk, three S-method). Manifest
+  13 splices → 16 splices + 1 chunk; corpus 24 → 25; gate 23 → 33 phases, PASS. Six things change
+  what later waves inherit:
+  - **The W2 scout was wrong about one call path, and the error would have bought a false
+    exclusion.** The scout recorded Glob's description as reached only through
+    `description(){return O_n(void 0)}`, making its lean arm dead code on its only call path. It is
+    also reached through `prompt({model})` — the method that actually fills
+    `requestBody.tools[].description` — so the arm is live and merely unrendered by a sonnet
+    corpus. Had that reading stood, C5 would have recorded a reviewed exclusion for a branch one
+    cheap scenario covers (`search-tools-lean`: the search-tools tool set on the api-error model,
+    which emits the full catalog before the model id is rejected). **A "dead code" finding about a
+    function with more than one caller should be re-derived from the call sites, not inherited.**
+  - **S-chunk needs per-EXPORT sabotage, and §2.2 already said so.** One twin per chunk passes as
+    long as any single export is live — the same vacuous shape solo-sabotage refuses one level
+    down. `--sabotage <row>:<export>` wires one export from the sabotage layer and leaves the rest
+    faithful. Waves taking a chunk should budget one liveness phase per retained export, not one
+    per chunk.
+  - **A constant can be graded better than a scenario can grade it.** The chunk's `"REPL"` export is
+    unobservable by any corpus request — the REPL tool is gated behind an interactive-entrypoint
+    test false on every headless run — so it declares a reviewed `darkReason` and the machinery
+    refuses an empty coverage list without one. What grades it is the build comparing the owned
+    constant against the value the PINNED CHUNK declares, every run, which is strictly stronger
+    than a differential red: a red only sees a constant some scenario happened to render. **For
+    `primitive` exports, prefer the build-time comparison to a coverage argument.**
+  - **The attestation's oracle should be upstream, not a hand-written expectation.**
+    `strangle/description-parity.test.ts` extracts the four upstream bodies from the pinned bundle,
+    runs them with stubbed ports and requires byte identity over the full branch cross-product (18
+    checks). Every one of the six reviewed exclusions names it as what grades that arm — so an
+    unrendered branch is graded *against upstream directly*, which is better evidence than a
+    differential red gives a rendered one. §2.4's "contract test where the domain is wider than the
+    corpus" should take this shape wherever the upstream body is still on disk; it hand-writes no
+    expectations, so it cannot encode a transcription error.
+  - **§3.1's "complete inventory" is enforceable only if the tool refuses what it cannot record.**
+    `strangle/branches.ts` walks the AST for every branching construct and FAILS on any it cannot
+    instrument (switch, loops, try/catch, optional chaining) rather than skipping it, because a tool
+    that silently ignores what it does not understand reports full coverage of the subset it
+    understood. Coverage is measured on an instrumented rebuild of the graded graph whose covering
+    scenarios must stay GREEN first, and no env var carries the recorder's path (X6) — the
+    directory is baked in at generation time.
+  - **The ledger now fails the gate** (C4's standing suggestion, adjudicated yes): two build-free
+    phases, the checker's own fixture controls and then the real ledger. `subsystem/tool-descriptions`
+    moves `unowned → spliced`, not `standalone-complete` — its charter is every description function
+    plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
+    exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
+    subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.

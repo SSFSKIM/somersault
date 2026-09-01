@@ -1307,14 +1307,231 @@ claims to watch.
   identical to one that left it clean. The snapshot now opens with the root itself (details under
   "The fourth diff surface").
 
+## W2 — tool descriptions, and the first chunk the graph no longer owns (2026-09-01)
+
+Campaign child **C5** (spec §2.2 S-chunk, §2.1 S-method, §3.1 coverage attestation). Two things
+land: the four tool-description functions become reforge-owned, and the strangler gains a second
+unit of ownership — the **chunk**.
+
+| row | mechanism | what is owned | covered by |
+|---|---|---|---|
+| `glob-description` | **S-chunk** | all of `chunk-y30v0ja7.js`: `"Glob"`, `"REPL"`, the Glob description | `search-tools`, **`search-tools-lean`** |
+| `read-description` | S-method (free-function) | the Read description; 2 primitives, 2 ports | `plain`, `api-error` |
+| `grep-description` | S-method (free-function) | the Grep description; 3 primitives, 2 ports | `search-tools`, **`search-tools-lean`** |
+| `webfetch-description` | S-method (free-function) | the WebFetch description + its usage-notes block; 2 ports | `plain`, `api-error` |
+
+Manifest: **13 splices → 16 splices + 1 chunk**. Corpus **24 → 25**.
+
+### S-chunk: the file, not the function
+
+`chunk-y30v0ja7.js` is now 1,545 generated characters where 1,590 minified ones were, and none of
+them are upstream's. The W2 scout's inventory
+(`reforge/research/2026-08-31-w2-schunk-scout.md`) is what made that safe — 3 exports, no top-level
+side effects, no live bindings, no re-exports — but the build does not take the scout's word for any
+of it. Per run `strangle/chunk.ts`:
+
+1. **locates the chunk by a graph-unique string literal**, exactly as a splice is located. Never by
+   chunk name: names are content-addressed and churn per pin, and name-scoping would turn every
+   bump into a manual re-anchoring pass;
+2. **audits the top-level statements** and refuses anything that is not an import, a declaration or
+   the single local export clause. A chunk with side effects is not clean for whole-file
+   replacement, and "the scout said it was clean" is a claim about bytes that have since moved;
+3. **re-derives every export name and every import binding by shape**, and requires each derived set
+   to *equal* the real one. §2.2's rule is that export names churn, so they are derived rather than
+   written down; the set equality is the other half — an unclaimed export would silently drop a
+   binding thirteen other chunks import, and an unclassified import would hide a ledger edge;
+4. **compares constant exports against the pinned chunk's own values**, at build time.
+
+### Sabotage is per export, and one export is dark
+
+§2.2 prices S-chunk at "behavioral coverage + sabotage evidence for every retained export, not just
+the headline function". One twin per chunk cannot deliver that: it passes as long as *any* export is
+live, which is the same vacuous shape solo-sabotage exists to refuse one level down. So
+`--sabotage <row>:<export>` takes exactly that binding from the module's sabotage layer and leaves
+the others faithful, and the gate walks one liveness phase per export.
+
+Which surfaced the honest edge case. `"REPL"` — the chunk's grab-bag half — is **unobservable by any
+corpus request**, and that is a property of the engine rather than of the corpus: the REPL tool sits
+behind an interactive-entrypoint test that is false on every headless run, and all four of its
+readers are downstream of that gate. Measured: the literal appears in no recorded request except as
+prose inside an unrelated tool's description.
+
+Rather than quietly leaving it ungated, the row declares a reviewed `darkReason`; the machinery
+refuses an empty coverage list that has no such reason, and the gate prints the adjudication as its
+own phase. What grades it instead is *stronger* than a differential red would be — the build
+compares the owned constant against the value the pinned chunk declares, every run. A differential
+red can only see a constant some scenario happened to render.
+
+### A 25th scenario, because two lean arms had no coverage at all
+
+All four descriptions have the shape `leanPrompt(model) ? brief : full`. Measured across the
+recorded requests: Read's and WebFetch's text rides in 23 of 24 scenarios, and `api-error` takes
+their lean arm (its deliberately invalid model id falls outside the lean-prompt family test). Glob's
+and Grep's appear in exactly **one** request in the whole corpus — `search-tools`, the only scenario
+whose `allowedTools` admit them — and that scenario runs a sonnet model. Their lean arms were
+unexecuted everywhere.
+
+`search-tools-lean` is the intersection and nothing more: the search-tools tool set on the api-error
+model. The request goes out with the full catalog before the model id is rejected. Verified to carry
+both lean descriptions and neither full one.
+
+**This corrects the scout on a point that mattered.** The scout read `O_n` as called only via
+`description(){return O_n(void 0)}`, making the lean arm dead on its only call path. It is also
+called by `prompt({model:e})` — the method that actually fills `requestBody.tools[].description` —
+so the arm is live, just unreached by a sonnet corpus. Had that stood, W2 would have recorded a
+*reviewed exclusion* for a branch that a single cheap scenario covers.
+
+### Coverage attestation (§3.1's debut)
+
+Solo-sabotage proves a target is **reached**. It says nothing about which of its branches the corpus
+renders — and after C4's retrofit, the unrendered ones are our implementation too. `strangle/attest.ts`
+closes that:
+
+```
+=== coverage attestation: 14/20 executed, 6 excluded ===
+PASS — every branch of every attested module is executed or carries a reviewed exclusion
+```
+
+Three properties are load-bearing, and each answers a way this mechanism could pass vacuously:
+
+- **The inventory is machine-made and complete.** `strangle/branches.ts` walks the AST for every
+  branching construct and **refuses** any it cannot record — a switch, a loop, a try/catch, an
+  optional chain — rather than skipping it. A tool that silently ignores what it does not understand
+  reports full coverage of the subset it understood. §3.1 says "major branches" is not a category;
+  this is what makes that enforceable.
+- **Measurement is on the graded code, not a copy of it.** `strangle/build.ts --instrument` rebuilds
+  the strangled graph against an instrumented copy of `strangle/modules`, and every covering
+  scenario must stay **GREEN** on it before any coverage is read. An instrumented build that
+  diverges is measuring a different engine. No env var carries the recorder's output path (X6
+  forbids one); the directory is baked in at generation time, and it appends on first hit rather
+  than flushing at exit, so a killed engine still reports what it ran.
+- **A stale exclusion fails, in both directions** — one naming a branch that no longer exists, and
+  one the corpus has since started to execute. Verified with two negative controls.
+
+The six exclusions are all *environment*-pinned rather than unexamined: the subagent-steer arm of
+Glob and Grep (its four sources are an env var X6 forbids, empty clientData, a GrowthBook flag §3.3
+pins disabled, and an unset model floor — and it latches on first call), the PDF-capability arm of
+both Read arms (needs a `claude-3-haiku` session; reachable, deferred, and recorded as a deferral
+rather than an impossibility), and the claude.ai artifact carve-out of both WebFetch arms (needs the
+Artifact tool in the session catalog, which the headless catalog does not have).
+
+### What grades a branch no scenario renders
+
+Each exclusion names its oracle, and it is not "nothing". `strangle/description-parity.test.ts`
+extracts the four description functions **out of the pinned bundle**, evaluates each with stubbed
+ports, and requires byte identity with the owned module over the full cross-product of their
+branches — 18 checks. So an excluded arm is graded against upstream *directly*, which is stronger
+evidence than a differential red gives a rendered one: a red only ever compares what a scenario
+happened to produce.
+
+This is the shape §2.4's "contract test where the helper's domain is wider than the corpus" should
+probably take everywhere the upstream body is still on disk. It hand-writes no expectations, so it
+cannot encode a transcription error, and a pin bump that moves a body breaks it loudly.
+
+### The closure ledger now fails the gate
+
+C4 left this as a standing suggestion; C5 adjudicates it yes. The ledger is the campaign's progress
+metric and nothing validated it on the way past. Two build-free phases, under a second: the
+checker's own fixture controls first (it must reject a fabricated footprint, a dangling edge, an
+ownership claim with no registration), then the real ledger.
+
+### Ledger: `spliced`, and the row says why not more
+
+`subsystem/tool-descriptions` moves `unowned → spliced` with four footprints, four typed-port edges
+and eight evidence links. It does **not** move to `standalone-complete`, and this is the same
+judgment W1 made about the formatter row. The row's charter is *every* description function plus the
+satellite chunks' other exports; one of those four chunks is owned end to end, and the other three
+carry 15/17/4 exports of unrelated behaviour — PDF page-range parsing, the REPL registry, the
+deferred-tool policy, the WebFetch answering prompt — that stay upstream's. Every owned module is
+individually standalone-complete and registered through X7; the *row* is not closed, and saying
+otherwise would make "the description family is owned" and "one chunk of it is" the same state.
+
+The four ports are the honest price, recorded as edges: `leanPrompt` (system-prompt policy, → C6),
+`subagentSteer` (subagent dispatch, latching + telemetry, → C15), `pdfCapable` (reads the session
+model, → C16) and `cacheTtlPhrase` (the WebFetch cache TTL, → the WebFetch tool row).
+
+### The first thing the ledger phase caught was three of its own controls
+
+Wiring `ledger/check.test.ts` into the gate paid for itself on the first run, in the way these
+checks usually do: not by catching a bad ledger, but by catching a control that had stopped being
+one. Three of the checker's negative controls — `standalone-complete` with no footprint, `assembled`
+with no footprint, `standalone-complete` against the live registry — used
+`subsystem/tool-descriptions` as their fixture, because at C4 it was a row with no footprint, no
+evidence and no registration. This wave gave it all three. The controls kept running and kept
+reporting PASS, while the mutation they applied was no longer a violation of anything.
+
+The fixture is now *derived* from the committed ledger — the first subsystem row still unowned,
+unfootprinted, unevidenced and unregistered — so it follows the campaign rather than expiring at
+whichever wave owns the row it named, and the derivation throws with instructions if the campaign
+ever runs out. 59 controls, all green.
+
+### Gate
+
+```
+=== strangler gate ===
+  PASS  env schema + credential matrix
+  PASS  canonicalization scrubs
+  PASS  state surface catches what it claims
+  PASS  gate-defaults fixture matches the pin
+  PASS  closure-ledger checker fixtures (X2)
+  PASS  closure ledger is green (X2)
+  PASS  splice mechanism
+  PASS  owned-implementation contracts
+  PASS  description parity vs the pinned bundle
+  PASS  derivation perturbation
+  PASS  liveness write-tool-result
+  PASS  liveness edit-tool-result
+  PASS  liveness read-tool-result
+  PASS  liveness bash-tool-result
+  PASS  liveness grep-tool-result
+  PASS  liveness glob-result
+  PASS  liveness task-create-result
+  PASS  liveness task-get-result
+  PASS  liveness task-list-result
+  PASS  liveness task-update-result
+  PASS  liveness read-description
+  PASS  liveness grep-description
+  PASS  liveness webfetch-description
+  PASS  liveness env-block
+  PASS  liveness text-delta
+  PASS  liveness session-materialize
+  PASS  liveness glob-description export globToolName
+  PASS  liveness glob-description export replToolName (dark, adjudicated)
+  PASS  liveness glob-description export globDescription
+  PASS  coverage attestation
+  PASS  equivalence (faithful)
+  PASS  credential leak (end-to-end, X6)
+  PASS  runtime pin is the bytes (§3.5)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+**Thirty-three phases**, up from twenty-three. Six of the ten are new machinery rather than new
+splices: the two closure-ledger phases, the description-parity contract test, the coverage
+attestation, and the three per-export liveness lines the S-chunk row contributes — one of which is
+the printed adjudication for the export the corpus cannot see.
+
+Corpus **25/25**, full acceptance **5/5**, **20** liveness phases. Zero positional fallbacks, and
+that is not a separate claim: a fallback is fatal for any `engineB` other than the identical-code
+pair, so a green equivalence phase against `engine-strangled` *is* the zero-fallback proof (§3.4).
+
 ## Next
 
-**C5 / W2** — tool-description functions on the generalized S-method, and the S-chunk mechanism
-debut on `chunk-y30v0ja7` with its full export-and-consumer inventory
-(`reforge/research/2026-08-31-w2-schunk-scout.md`). Coverage still leads: the scout already measured
-that a Glob or Grep description sabotage reddens exactly one scenario (`search-tools`), and that
-Glob's lean branch is unreachable at its only call site — so W2 either adds a lean-branch variant or
-records a reviewed exclusion, rather than letting a green gate imply coverage it does not have.
+**C5x** — the mechanism round the roadmap inserted between this wave and the C6–C10 bloc, informed
+by the W3–W7 anchor scouts. Two mechanism debts W2 leaves it, both recorded rather than smoothed
+over:
 
-Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It
-is filed under C4 because C4 subdivided it; the roadmap owes it an assignment.
+- **The transitive-closure walk gives up on the WebFetch usage-notes helper.** It is owned, so §5
+  hashes what it calls; the walk reaches the cache-TTL resolver, its per-host memo and the pluralizer,
+  crosses the 20-declaration bound, and falls back to hashing **five whole chunks**. That is the
+  conservative direction — the row stales on edits it does not depend on — but it is the first row
+  in the campaign to take it (W1 measured 0–4 declarations at depth ≤2 and never needed the
+  fallback), and "an owned helper that reaches an env-backed per-host memo" is a shape later waves
+  will meet again.
+- **Instrumentation covers only conditions.** `strangle/branches.ts` refuses a switch, a loop, a
+  try/catch or an optional chain rather than under-reporting, which is right, but the waves after
+  this one own bodies that have all four. Teaching it those constructs is a mechanism-round job, not
+  something to improvise inside a feature wave.
+
+Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It is
+filed under C4 because C4 subdivided it; the roadmap owes it an assignment.
