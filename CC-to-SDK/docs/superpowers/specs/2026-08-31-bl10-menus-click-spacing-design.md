@@ -283,10 +283,10 @@ scrollable read-only bodies (D13 held, then *hardened* — see below); bare `/mc
 list → server menu → tools → tool detail off normalized `mcpServerStatus()`; every top-level
 transcript block sits one blank line above its predecessor (streaming included, D17 cluster
 exemption honored, dock at 16); expanded blocks paint and hit full-width via the `band` marker and
-collapse on a blank-tail click, pty-proven byte-identical. Final battery: unit 4420, tui 5098,
+collapse on a blank-tail click, pty-proven byte-identical. Final battery: unit 4420, tui 5101,
 resize-matrix 10/0, hover-cells 2/2, all green.
 
-**The review loop was the round's second half: 9 codex passes, 8 fix waves, 25 findings fixed, 5
+**The review loop was the round's second half: 9 codex passes, 9 fix waves, 26 findings fixed, 10
 logged.** What it taught:
 
 - *New-surface geometry defects arrive as a CLASS, not a list.* Three classes — state-dependent hint
@@ -311,9 +311,11 @@ logged.** What it taught:
   round (rr8) whose findings could not extend it. Future rounds should pre-commit BOTH the per-wave
   rule and the terminal round.
 
-Residuals: five tracker entries (h1's negative-only fixture; the scrolled-out expanded-header band;
-MCP detail full-text route; the latent batched-input view read, masked by Ink's Legacy Root; the
-dormant DialogFrame title bound) — `docs/parity/tech-debt-tracker.md`. One finding was bl12's
+Residuals: ten tracker entries — h1's negative-only fixture; the scrolled-out expanded-header band;
+MCP detail full-text route; the latent batched-input view read (masked by Ink's Legacy Root); the
+dormant DialogFrame title bound; and rr8/wave-9's five final logs (advisor rows unbanded; gutter
+band paint discontinuity; loading-state "0 servers"; single-row navigation hints; scroll maxOffset
+overshoot) — `docs/parity/tech-debt-tracker.md`. One finding was bl12's
 surface and closed by that lane (PR #5). Round ledger:
 `.doperpowers/sdd/2026-08-31-bl10-round/round.md`.
 

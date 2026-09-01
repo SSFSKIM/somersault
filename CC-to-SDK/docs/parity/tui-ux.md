@@ -1085,7 +1085,7 @@ collapsed row stays glyph-width; ccx now mints an explicit row-level `band` mark
 `expanded` was proven unusable as a proxy) that drives BOTH the full-width paint (gutter columns
 included) and the widened `HitRow` width, with separators never banded; the wrong bl4 test pin was
 flipped to canon's asymmetric rule and the fix pty-proven byte-identical in the real binary. **The
-review loop set a program record: 9 codex passes, 8 fix waves, 25 findings fixed, 5 logged.** The
+review loop set a program record: 9 codex passes, 9 fix waves, 26 findings fixed, 10 logged.** The
 wave-1 P1 (MCP dialog absent from the overlay input-owner predicate) and the wave-2 P1 (the PTY
 suites staged content with `/status`, which had just become a modal — the merged tree had never run a
 green battery; restaged with `! printf`, re-derived row accounting, first genuinely green
@@ -1098,7 +1098,7 @@ evidence: four reviews insisted the read-only clip was wrong, and the fourth pro
 deferring. One finding was out of scope and closed by the concurrent bl12 lane (PR #5, the
 settings-path display). Mid-round the repository migrated (codex_somersault archived → somersault
 monorepo) and concurrent lanes rewrote main twice more; all content transplanted verified-intact.
-Final battery: unit 4420, tui 5098 (0 failed), resize-matrix 10/0, hover-cells 2/2 (h1 flipped to a
+Final battery: unit 4420, tui 5101 (0 failed), resize-matrix 10/0, hover-cells 2/2 (h1 flipped to a
 positive pin of the T-CLICKGATE gate), t-click pty cell. Ledger
 `.doperpowers/sdd/2026-08-31-bl10-round/round.md` (old-repo checkout); spec
 `docs/superpowers/specs/2026-08-31-bl10-menus-click-spacing-design.md`; residuals in

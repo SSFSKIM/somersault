@@ -514,11 +514,11 @@
 >   palette-aware composer margin, `MAIN_DOCK_ROWS` 14→16. **T-CLICK**: explicit row-level `band`
 >   marker (D9-v2) makes expanded blocks full-width paint AND full-width hit (collapse on blank-tail
 >   click; separators inert; collapsed rows glyph-width) — pty-proven byte-identical. Review loop: 9
->   codex passes / 8 fix waves / 25 fixed / 5 logged; structural catches were the MCP overlay-owner
+>   codex passes / 9 fix waves / 26 fixed / 10 logged; structural catches were the MCP overlay-owner
 >   gap and the PTY suites' `/status` staging (the merged tree's first genuinely green resize-matrix
 >   followed); recurring classes closed by sweeps; the clip-vs-scroll adjudication reversed on D13
 >   evidence at wave 8. Mid-round repo migration (→ somersault monorepo) + two more concurrent main
->   rewrites absorbed content-intact. Final battery: unit 4420, tui 5098, resize-matrix 10/0,
+>   rewrites absorbed content-intact. Final battery: unit 4420, tui 5101, resize-matrix 10/0,
 >   hover-cells 2/2, pty cell — all green. T-MENU/T-SPACE/geomtest content PUBLIC on origin/main via
 >   other lanes' pushes; later waves local-only at close-out.
 > - **bl9 round close-out — attach reconcile + three retired premises (2026-08-31)** — spec

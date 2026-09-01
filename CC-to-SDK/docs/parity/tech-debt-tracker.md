@@ -96,6 +96,12 @@ the commit) or when a round's scope absorbs them.
   2026-09-02; `McpDialog.tsx` hint gate). `count === 1` still walks the full Select scope, so
   "↑ navigate"/"PgUp" render although movement clamps to index 0. The hint-accuracy class's last
   edge: gate navigation hints on `count > 1`.
+- **Settings scroll `maxOffset` overshoots when the LAST line alone is oversized** (bl10 wave-9
+  residual, 2026-09-02; `readOnlyScrollWindow`). The bottom-anchored `maxOffset` loop breaks
+  before advancing if the final line's wrapped cost alone exceeds the budget, permitting a
+  trailing scroll offset that renders a blank window (the line itself stays reachable at its own
+  offset — overshoot, not loss). Clamp `maxOffset` to the last claimable index when the window
+  code is next touched; details in `fixwave9-report.md`.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
