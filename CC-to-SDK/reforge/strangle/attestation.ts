@@ -221,7 +221,7 @@ export const ATTESTED: AttestedModule[] = [
   // decide, and a decision that is REACHED and passes leaves the same transcript
   // as one that was never reached. Every excluded arm below names
   // `strangle/permissions-parity.test.ts` and the block inside it that runs the
-  // arm — 2,496 comparisons with 47 controls, over the fixture's own six modes,
+  // arm — 2,488 comparisons with 45 controls, over the fixture's own six modes,
   // three rule behaviours and eleven decisionReason kinds.
   // The pre-check's list is the LONGEST in the file, deliberately: its ladder has
   // thirteen rungs and each mode reaches a different one, so the scenarios that
@@ -236,6 +236,11 @@ export const ATTESTED: AttestedModule[] = [
       "perm-accept-edits", "perm-plan-mode", "perm-dont-ask", "perm-rule-deny",
       "perm-rule-allow", "perm-rule-ask", "perm-bypass-deny-rule", "perm-hook-rewrite",
       "perm-hook-deny", "perm-broker-updates", "perm-mode-walk",
+      // Not permission scenarios, and named here for exactly that reason: the
+      // pre-check runs on EVERY tool call, so the corpus's MCP call and its
+      // aborted turn reach rungs no permission fixture can create — the MCP ask
+      // ceiling and the abort check at the top of the ladder.
+      "mcp-tool", "interrupt",
     ],
   },
   { module: "rule-based-permissions", row: "rule-based-permissions", scenarios: ["perm-hook-rewrite"] },

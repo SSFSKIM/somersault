@@ -54,12 +54,23 @@ distinction it draws is the one the vocabulary exists to protect:
   verdict has since been recorded and now reads FIRED; the vocabulary entry stays because a wave
   that authors scenarios faster than it can record them will need it again.
 
-The distinction earned its keep twice in this wave. The first recording sweep used a scenario tag
-that does not exist; `m1/run.ts` exits non-zero on an unknown tag, so **every** target read as
-sabotage-detected — a vacuous positive that looked exactly like success. And three separate cells
-were authored, recorded, and then found to be measuring something other than what they claimed
-(§3.2's ask rule, §3.1's `acceptEdits` Bash, §3.3's `rule` denial); each is footnoted below with
-what it actually grades.
+The distinction earned its keep repeatedly. The first recording sweep used a scenario tag that does
+not exist; `m1/run.ts` exits non-zero on an unknown tag, so **every** target read as
+sabotage-detected — a vacuous positive that looked exactly like success. And **five** cells were
+authored, recorded, and then found to be measuring something other than what they claimed; each is
+footnoted below with what it actually grades.
+
+Two of those five are worth separating from the rest, because the instrument that caught them was
+not the check. `perm-rule-deny` and `perm-bypass-deny-rule` both used a WHOLE-TOOL deny rule, both
+passed every assertion they were given, and both replayed identically on either engine — and neither
+executed a single rung of the permission chain. Upstream applies a whole-tool deny rule by
+**removing the tool from the session** (twenty-four tools in the init frame instead of twenty-five),
+so the model got "No such tool available" and nothing decided anything. What caught it was the
+BRANCH ATTESTATION: the pre-check's deny rungs had not executed once across the entire corpus, which
+is a fact no transcript-level check could have surfaced, because a filtered tool and a denied tool
+leave the same transcript. Both cells now use command-scoped rules, and both now produce a real
+denial frame. **A passing check is not coverage; only an inventory of the owned code can say which
+rung decided.**
 
 ## 2. The correction this wave owes the campaign spec
 
@@ -113,8 +124,8 @@ with `settingSources: []` still in force, so nothing on the filesystem is read.
 
 | behavior | mode | verdict | evidence |
 |---|---|---|---|
-| `deny` | `default` | **FIRED** | `perm-rule-deny` — the rule must win BEFORE the broker is consulted, which is the ladder's first rung |
-| `deny` | `bypassPermissions` | **FIRED** | `perm-bypass-deny-rule`. The spec's short-circuit claim is already settled by the bytes, by solo sabotage and by an oracle control; this cell is the live confirmation |
+| `deny` | `default` | **FIRED**, after a correction | `perm-rule-deny`, on a command-scoped rule (`Bash(chmod:*)`). The rule wins BEFORE the broker is consulted, and it produces a real denial frame. See §1 for what the whole-tool take actually measured |
+| `deny` | `bypassPermissions` | **FIRED**, after the same correction | `perm-bypass-deny-rule`, command-scoped, no broker armed at all: the rule still bit and the session emitted a denial frame. §2's correction stated by a recording rather than by a reading |
 | `allow` | `default` | **FIRED**, after a correction | `perm-rule-allow`. Note what the allow-rule decision actually decides: not "allow" but "the tool still gets to object". The first take used a CONTENT-scoped rule, which the tool's own `checkPermissions` matches before the ladder's allow rung is reached — so it graded the tool, not the rule. The recorded scenario uses a whole-tool `Write` rule |
 | `ask` | `default` | **FIRED**, with its claim narrowed | `perm-rule-ask`, on `echo` — a command default mode approves WITHOUT the broker, so a rule forcing a prompt for it is the only way to show a user rule overriding an auto-approval. The scenario grades the CONSULT (a rule turned a silent approval into an ask). It does NOT grade `matchedAskRule`: the field is stamped only on the pre-check's own annotating arm, and a tool that passes its own check reaches the host without it. The oracle grades the field; a recording cannot |
 | `ask` | via a hook rewrite | **FIRED** | `perm-hook-rewrite` — the rule checker re-runs on a hook's rewritten input, objects with an ask, and the engine converts it to a deny because the hook has already answered. The only scenario that reaches the rule-only checker at all |
@@ -129,14 +140,14 @@ RECORDING reaches.
 
 | kind | in a recording | evidence / condition |
 |---|---|---|
-| `rule` | **FIRED**, with its claim narrowed | `perm-rule-deny`. A rule denial produces NO `permission_denied` frame — the SDK's own type docs say the field is populated only for `canUseTool` denials, and a rule deny never reaches the broker. The scenario grades the ORDERING claim instead: the rule wins before any consult, which is the ladder's first rung. The `decision_reason_type` stamp itself is oracle-graded |
+| `rule` | **OPEN as a stamp, FIRED as a decision** | `perm-rule-deny` denies on a rule and emits a frame, but the frame's `decision_reason_type` is `subcommandResults`: the Bash tool decides per subcommand and reports the AGGREGATE, so the rule sits one level down and the top-level stamp is someone else's. A cell that stamps `rule` at the top level needs a non-decomposing tool with a matching content rule, which the whole-tool trap above rules out for file tools. The stamp itself is oracle-graded across all eleven kinds |
 | `mode` | **FIRED** | `perm-dont-ask`, `perm-mode-walk` |
 | `hook` | **FIRED** | `perm-hook-deny`, `perm-hook-rewrite` |
 | `permissionPromptTool` | **FIRED** | every brokered ask — the response mapper stamps it; `permission-broker` and `permission-bag` are recorded |
 | `other` | **FIRED** | the `requiresUserInteraction` and organisation-ceiling arms are oracle-only; the crash arm reaches a recording only through `perm-hook-rewrite`'s re-check |
 | `classifier` | **OPEN**, and now with evidence | auto mode is reachable (§4.1), so the blocker is no longer the mode. The probe ran `chmod 777 /etc/hosts` under `auto` and it was ALLOWED with no consult and no PermissionRequest hook, so the classifier's blocking arm was not created. Named, not created |
 | `safetyCheck` | **OPEN** | needs a command the safety layer objects to. Named, not created: creating it means running something genuinely dangerous in the sandbox, which is a scenario this project should design deliberately rather than improvise |
-| `subcommandResults` | **OPEN** | a compound Bash command whose parts decide differently |
+| `subcommandResults` | **FIRED**, unexpectedly | `perm-rule-deny` and `perm-bypass-deny-rule`. The cell was written for "a compound Bash command whose parts decide differently" and was reached by a SINGLE command instead: the Bash tool decomposes unconditionally, so every Bash denial is an aggregate of one |
 | `sandboxOverride` | **OPEN** | needs sandboxing enabled, which §3.3's pinned environment does not do |
 | `workingDir` | **OPEN** | a tool call outside the allowed directories |
 | `asyncAgent` | **OPEN** | a headless context with no permission prompt surface at all (bare `-p`, no `canUseTool`) |

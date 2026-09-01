@@ -145,6 +145,24 @@ const broker = (
 /** How long the two hook cells make the host wait, so the hook's decision can land. */
 const HOOK_RACE_DELAY_MS = 1500;
 
+/**
+ * Whether the session's init frame OFFERED the tool at all — the non-vacuity
+ * guard every rule cell needs.
+ *
+ * A whole-tool deny rule is applied by removing the tool from the session, not
+ * by refusing it at decision time, so a rule cell built on one produces a
+ * transcript that looks exactly like a denial (tool attempted, no consult, no
+ * effect) while the permission chain never runs. Two of this wave's cells were
+ * written that way and passed; the branch attestation is what caught them. Any
+ * cell whose subject is the RULE ENGINE has to assert the tool survived the
+ * filter first.
+ */
+const toolOffered = (msgs: unknown[], tool: string): boolean =>
+  msgs.some((m) => {
+    const f = m as { type?: string; subtype?: string; tools?: unknown };
+    return f.type === "system" && f.subtype === "init" && Array.isArray(f.tools) && f.tools.includes(tool);
+  });
+
 /** Every `{type:"system",subtype:"permission_denied"}` frame in a transcript, projected. */
 const denials = (msgs: unknown[]) =>
   msgs
@@ -244,34 +262,49 @@ export const W6_SCENARIOS: Scenario[] = [
   {
     // RULE CELL: a DENY rule, in default mode, with a broker that would allow.
     // The rule must win, and it must win BEFORE the broker is consulted — which
-    // is the pre-check's first rung and the ordering claim the whole ladder
-    // rests on.
+    // is the pre-check's ladder and the ordering claim the whole chain rests on.
+    //
+    // THE RULE IS COMMAND-SCOPED, and that is not a detail. The first take used
+    // `deny: ["Write"]` and passed every check it was given: the Write was
+    // attempted, the broker was not consulted, the file was not written. The
+    // BRANCH ATTESTATION is what caught it — the pre-check's deny rungs had not
+    // executed once across the whole corpus. A WHOLE-TOOL deny rule is applied by
+    // REMOVING the tool from the session (upstream filters the tool list on the
+    // same matcher), so the model got "No such tool available: Write" and the
+    // permission chain never ran at all. Twenty-four tools in that session's init
+    // frame instead of twenty-five.
+    //
+    // A command-scoped rule survives the filter, so the call reaches the chain
+    // and is refused at the ladder's input-deny rung. The general form is the
+    // one this wave kept learning: A PASSING CHECK IS NOT COVERAGE. Only an
+    // inventory of the OWNED code can tell you which rung decided.
     tag: "perm-rule-deny",
     title: "a deny rule beats a broker that would have allowed",
     run: (ctx) =>
-      drive(writePrompt(TARGET), {
+      drive(CHMOD_PROMPT, {
         ...baseOptions(ctx),
         maxTurns: 4,
         permissionMode: "default",
-        settings: rules({ deny: ["Write"] }),
+        settings: rules({ deny: ["Bash(chmod:*)"] }),
         canUseTool: broker(ctx),
       }),
-    // MEASURED, and the check says only what the recording supports: a deny RULE
-    // produces NO `permission_denied` system frame. The first take asserted one
-    // and failed. The SDK's own documentation for that message names the
-    // exclusion — denials that resolve before `canUseTool` runs are not covered
-    // by it — and a deny rule is rung 1 of the pre-check's ladder, which is as
-    // far before the broker as a decision can be. So what this cell grades is
-    // the ORDERING claim, which is the one that matters: the rule wins, and it
-    // wins without the host being asked.
+    // MEASURED, and it corrects the reading the whole-tool take left behind. A
+    // rule denial DOES produce a `permission_denied` frame once it reaches the
+    // chain, and the frame's `decision_reason_type` is `subcommandResults` rather
+    // than `rule`: the Bash tool decomposes its command, decides per part, and
+    // reports the AGGREGATE, so the rule that did the work is nested one level
+    // down. That is a reason kind §3.3 of the matrix had listed as OPEN, and this
+    // cell is what fires it.
     check: (msgs, events) => {
-      if (!usedTool(msgs, "Write")) return "the Write was never attempted";
-      if (consults(events).some((c) => c.toolName === "Write")) return "the broker was consulted despite a matching deny rule";
-      const denial = denials(msgs).find((d) => d.tool_name === "Write");
-      if (denial && denial.decision_reason_type !== "rule") {
-        return `a permission_denied frame appeared and its decision_reason_type is ${JSON.stringify(denial.decision_reason_type)}, not "rule"`;
+      if (!toolOffered(msgs, "Bash")) return "Bash was filtered out of the session, so this cell grades the tool filter and not the rule engine";
+      if (!usedTool(msgs, "Bash")) return "the Bash call was never attempted";
+      if (consults(events).some((c) => c.toolName === "Bash")) return "the broker was consulted despite a matching deny rule";
+      const denial = denials(msgs).find((d) => d.tool_name === "Bash");
+      if (!denial) return "no permission_denied frame for the denied Bash call";
+      if (denial.decision_reason_type !== "subcommandResults") {
+        return `the denial's decision_reason_type is ${JSON.stringify(denial.decision_reason_type)}, not the aggregate "subcommandResults" the Bash tool reports`;
       }
-      if (resultText(msgs).includes("REFORGE_W6")) return "the Write appears to have succeeded despite a matching deny rule";
+      if (!resultText(msgs).includes("DENIED")) return "the model does not report a denial, so the deny rule may not have bitten";
       return null;
     },
   },
@@ -349,17 +382,30 @@ export const W6_SCENARIOS: Scenario[] = [
     // This scenario is what settles it, and it is worth having whichever way it
     // lands: either it records the short-circuit the spec claims, or it records
     // the correction. `w6/probe-permissions.ts` measured it live first.
+    //
+    // COMMAND-SCOPED for the same reason as the deny cell above: a whole-tool
+    // deny rule never reaches the chain, because upstream applies it by removing
+    // the tool from the session. Under bypass that would have been the emptiest
+    // possible cell — a mode that skips the ask, tested against a rule the mode
+    // never sees.
     tag: "perm-bypass-deny-rule",
     title: "bypassPermissions meets a deny rule",
     run: (ctx) =>
-      drive(writePrompt(TARGET), {
+      drive(CHMOD_PROMPT, {
         ...baseOptions(ctx),
         maxTurns: 4,
         permissionMode: "bypassPermissions",
-        settings: rules({ deny: ["Write"] }),
+        settings: rules({ deny: ["Bash(chmod:*)"] }),
       }),
+    // MEASURED: the rule bites. Under `bypassPermissions`, with no broker armed
+    // at all, the command-scoped deny rule still produced a `permission_denied`
+    // frame — which is §2's correction stated by a recording rather than by a
+    // reading of the bytes.
     check: (msgs) => {
-      if (!usedTool(msgs, "Write")) return "the Write was never attempted, so nothing was decided under bypass";
+      if (!toolOffered(msgs, "Bash")) return "Bash was filtered out of the session, so this cell grades the tool filter and not the rule engine";
+      if (!usedTool(msgs, "Bash")) return "the Bash call was never attempted, so nothing was decided under bypass";
+      if (!denials(msgs).some((d) => d.tool_name === "Bash")) return "bypass short-circuited the deny rule — no denial frame, contrary to the pre-check's rung order";
+      if (!resultText(msgs).includes("DENIED")) return "bypass appears to have short-circuited the deny rule — the model does not report a denial";
       return null;
     },
   },
