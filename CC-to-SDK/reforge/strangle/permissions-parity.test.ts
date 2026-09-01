@@ -68,6 +68,7 @@ import { readFixture } from "../research/tools/extract-permission-surface.js";
 // modules directly, so the argument list this file passes IS the one the build's
 // delegation synthesises — the manifest's non-owned captures, in manifest order,
 // primitives and their equality assertions included.
+import "./modules/permission-decision.js";
 import "./modules/permission-precheck.js";
 import "./modules/rule-based-permissions.js";
 import "./modules/allow-rule-decision.js";
@@ -256,7 +257,12 @@ function extract(name: string): Extracted {
     binding.set(c.as, c.identifier);
   }
   const out: Extracted = {
-    source: cut.original,
+    // An ARROW-INITIALIZER's excision is the initializer EXPRESSION, not a
+    // declaration — `async(…)=>{…}` with no `kye=` in front of it, because that
+    // is exactly the span the build replaces. Evaluating it needs the binding put
+    // back; every other shape's excision is already a declaration that names
+    // itself.
+    source: sp.target === "arrow-initializer" || sp.target === "variable-declarator" ? `const ${cut.label} = ${cut.original};` : cut.original,
     label: cut.label,
     binding,
     forwarded: captures.filter((c) => !c.owned).map((c) => c.as),
@@ -1809,6 +1815,72 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
   );
 }
 
+
+// ============================================================================
+// 9. THE INHERITED LINK — C5x's `kye`, and the carve-out it left open.
+//
+//    C5x spliced the chain's deny-stamping link as its mechanism spike for the
+//    ARROW-INITIALIZER target shape, and left the VALUE ungraded: the corpus
+//    proves the link is live, but nothing compared what it returns against
+//    upstream's bytes. That obligation was handed to this wave. It is small —
+//    one decision, stamped on one arm — and small is exactly where a
+//    transcription error survives, because every scenario that reaches it also
+//    reaches thirteen other rungs that would mask a wrong stamp.
+//
+//    Three claims, and each has a control below: the stamp lands ONLY on a deny;
+//    it OVERWRITES a location the body already set; and a non-deny is returned
+//    UNCHANGED rather than rebuilt, which a spread would silently break.
+// ============================================================================
+{
+  const behaviours = [
+    { behavior: "deny", message: "no", decisionReason: { type: "rule", rule: { ruleBehavior: "deny" } } },
+    { behavior: "deny", decideLocation: "already-set", message: "no" },
+    { behavior: "allow", updatedInput: { a: 1 } },
+    { behavior: "ask", message: "may I", suggestions: [{ type: "addRules" }] },
+    { behavior: "passthrough", message: "…" },
+  ];
+  for (const decision of behaviours) {
+    for (const sink of [undefined, { note: "sink" }]) {
+      await both(
+        "permission-decision",
+        `${decision.behavior}${"decideLocation" in decision ? " (pre-stamped)" : ""} sink=${sink !== undefined}`,
+        (trace) => [stubTool(trace), { file_path: "/x" }, stubContext(trace), { id: "msg" }, "toolu_1", undefined, sink],
+        (trace) => ({
+          decide: async (...args: unknown[]) => {
+            trace.push(`decide(${args.length})`);
+            return decision;
+          },
+        }),
+      );
+    }
+  }
+
+  const up = (d: Record<string, unknown>) =>
+    upstream("permission-decision", { decide: async () => d }) as (...a: unknown[]) => Promise<unknown>;
+  const call = (d: Record<string, unknown>) => up(d)(stubTool([]), {}, stubContext([]), undefined, "t", undefined, undefined);
+
+  mustDiffer(
+    "the stamp landing on an ALLOW as well as a deny",
+    await call({ behavior: "allow", updatedInput: {} }),
+    { behavior: "allow", updatedInput: {}, decideLocation: "pre-ask" },
+  );
+  mustDiffer(
+    "a pre-set decideLocation surviving instead of being overwritten",
+    await call({ behavior: "deny", decideLocation: "already-set" }),
+    { behavior: "deny", decideLocation: "already-set" },
+  );
+  mustDiffer(
+    "the stamp written BEFORE the spread, so the body's own value wins",
+    safeJson(await call({ behavior: "deny", decideLocation: "already-set" })),
+    safeJson({ decideLocation: "already-set", behavior: "deny" }),
+  );
+  mustDiffer(
+    "a non-deny REBUILT rather than returned, which changes key order on a passthrough",
+    safeJson(await call({ behavior: "passthrough", message: "m", decisionReason: { type: "other" } })),
+    safeJson({ decisionReason: { type: "other" }, message: "m", behavior: "passthrough" }),
+  );
+}
+
 // ============================================================================
 // SUMMARY
 // ============================================================================
@@ -1817,8 +1889,8 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
 // stopped being able to FAIL would pass by comparing an implementation against
 // itself. Both numbers are measured, not aspirational — raise them when the
 // cross-product grows.
-if (checks < 2488) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 45) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 2508) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 49) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 
 console.log(`=== permission-subsystem parity: ${checks} comparison(s), ${controls} control(s) ===`);
 for (const f of failures.slice(0, 40)) console.log(`  FAIL — ${f}`);

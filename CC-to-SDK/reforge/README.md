@@ -2579,7 +2579,7 @@ measured negative; it will not be a third time by treating these as one.
 ## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
 
 Ten splices plus four owned-but-unspliced functions, eleven new recordings, and a fifth parity oracle
-grading **2,488 comparisons with 45 controls**. The wave's headline is not a count, though — it is
+grading **2,508 comparisons with 49 controls**. The wave's headline is not a count, though — it is
 **two corrections the campaign spec needed** and a set of measurements that changed how liveness is
 proven. Five more functions were spliced and then removed: each was measured dark, and the wave kept the
 finding instead of the row.
@@ -2769,6 +2769,21 @@ streak predicate's three-term conjunction, the pre-check's two reads of the perm
 it walks the fixture's own axes — the mode transition's thirty ordered pairs, the guard's six modes ×
 four context shapes × the gate, the message builder's eleven reason kinds × three tool names — so a
 mode added upstream widens the cross-product instead of leaving a hole nobody wrote a case for.
+
+### C5x's inherited carve-out, closed
+
+C5x spliced `kye` — the chain's deny-stamping link — as its mechanism spike for the
+arrow-initializer target shape, and left the VALUE ungraded: the corpus proved the link live, but
+nothing compared what it returns against upstream's bytes. Small is exactly where a transcription
+error survives, because every scenario reaching it also reaches thirteen other rungs that would mask
+a wrong stamp. The oracle now runs it over five decision shapes and both sink shapes, with four
+controls: the stamp landing on a non-deny, a pre-set `decideLocation` surviving instead of being
+overwritten, the stamp written before the spread, and a non-deny rebuilt rather than returned.
+
+Closing it needed one extension to the oracle's extractor. An arrow-initializer's excision is the
+initializer EXPRESSION — `async(…)=>{…}` with no `kye=` in front of it, because that is the span the
+build replaces — so evaluating it needs the binding put back. Every other shape's excision is
+already a declaration that names itself.
 
 ### `gK` does not carry `initialize`
 
