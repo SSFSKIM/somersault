@@ -66,6 +66,25 @@ import * as permissionRequestHooks from "../../strangle/modules/permission-reque
 import * as userPromptExpansionHooks from "../../strangle/modules/user-prompt-expansion-hooks/reference.js";
 import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
+// W6 / C9 — the permission subsystem's decision chain, mode axis and headless
+// broker seam. Fifteen modules; the subsystem does NOT close on them (the
+// mode-aware decision body above the pre-check and the broker's own
+// `createCanUseTool` are §2.3 deferrals recorded on the ledger row).
+import * as permissionPrecheck from "../../strangle/modules/permission-precheck/reference.js";
+import * as ruleBasedPermissions from "../../strangle/modules/rule-based-permissions/reference.js";
+import * as allowRuleDecision from "../../strangle/modules/allow-rule-decision/reference.js";
+import * as askRuleReason from "../../strangle/modules/ask-rule-reason/reference.js";
+import * as safetyCheckReason from "../../strangle/modules/safety-check-reason/reference.js";
+import * as permissionMessage from "../../strangle/modules/permission-message/reference.js";
+import * as classifierStreak from "../../strangle/modules/classifier-streak/reference.js";
+import * as modeChangeGuard from "../../strangle/modules/mode-change-guard/reference.js";
+import * as modeTransition from "../../strangle/modules/mode-transition/reference.js";
+import * as setPermissionMode from "../../strangle/modules/set-permission-mode/reference.js";
+import * as permissionRequestHookDecision from "../../strangle/modules/permission-request-hook-decision/reference.js";
+import * as brokerResponseMap from "../../strangle/modules/broker-response-map/reference.js";
+import * as brokerPermissionUpdates from "../../strangle/modules/broker-permission-updates/reference.js";
+import * as controlResponseSuccess from "../../strangle/modules/control-response-success/reference.js";
+import * as controlResponseError from "../../strangle/modules/control-response-error/reference.js";
 import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
 import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
 import * as systemPromptWire from "../../strangle/modules/system-prompt-wire/reference.js";
@@ -176,6 +195,27 @@ const OWNED: [string, string, unknown][] = [
   ["permission-request-hooks", "subsystem/hook-dispatch", permissionRequestHooks.permissionRequestHooks],
   ["user-prompt-expansion-hooks", "subsystem/hook-dispatch", userPromptExpansionHooks.userPromptExpansionHooks],
   ["file-changed-hooks", "subsystem/hook-dispatch", fileChangedHooks.fileChangedHooks],
+  // W6 / C9. Two of these belong to the CONTROL PROTOCOL rather than to
+  // permissions — the success and error response envelopes — and are registered
+  // under that subsystem: the permission wave took them because the
+  // `can_use_tool` round trip is the only control request the permission chain
+  // itself issues, and leaving the return leg unowned would have stopped the
+  // chain's ownership mid-round-trip. W7 inherits the request leg.
+  ["permission-precheck", "subsystem/permissions", permissionPrecheck.permissionPrecheck],
+  ["rule-based-permissions", "subsystem/permissions", ruleBasedPermissions.checkRuleBasedPermissions],
+  ["allow-rule-decision", "subsystem/permissions", allowRuleDecision.allowRuleDecision],
+  ["ask-rule-reason", "subsystem/permissions", askRuleReason.isAskRuleDrivenReason],
+  ["safety-check-reason", "subsystem/permissions", safetyCheckReason.findSafetyCheckReason],
+  ["permission-message", "subsystem/permissions", permissionMessage.permissionMessage],
+  ["classifier-streak", "subsystem/permissions", classifierStreak.classifierOnlyStreakActive],
+  ["mode-change-guard", "subsystem/permissions", modeChangeGuard.guardPermissionModeChange],
+  ["mode-transition", "subsystem/permissions", modeTransition.transitionPermissionMode],
+  ["set-permission-mode", "subsystem/permissions", setPermissionMode.setPermissionModeWithGuards],
+  ["permission-request-hook-decision", "subsystem/permissions", permissionRequestHookDecision.permissionRequestHookDecision],
+  ["broker-response-map", "subsystem/permissions", brokerResponseMap.brokerResponseMap],
+  ["broker-permission-updates", "subsystem/permissions", brokerPermissionUpdates.brokerPermissionUpdates],
+  ["control-response-success", "subsystem/control-protocol", controlResponseSuccess.controlResponseSuccess],
+  ["control-response-error", "subsystem/control-protocol", controlResponseError.controlResponseError],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

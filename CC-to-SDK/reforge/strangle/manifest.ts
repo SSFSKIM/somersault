@@ -956,6 +956,934 @@ export const SPLICES: Splice[] = [
     coverage: ["permission-broker", "permission-bag"],
   },
 
+  // ==========================================================================
+  // W6 / C9 — the permission subsystem (subsystem/permissions).
+  //
+  // Read them as the decision's own order, because that is what they are:
+  //
+  //   permission-precheck        the ladder every headless tool call descends
+  //   rule-based-permissions     the same ladder with the modes removed
+  //   allow-rule-decision        what a matched ALLOW rule actually decides
+  //   ask-rule-reason            was this ask forced by a user's rule?
+  //   safety-check-reason        the objection no mode may override
+  //   permission-message         the sentence a request is rendered as
+  //   classifier-streak          whether the denial counter may be reset
+  //   mode-change-guard          may this session move to that mode?
+  //   mode-transition            what the move DOES
+  //   set-permission-mode        the seam that joins those two
+  //   permission-request-hook-decision  the hook that races the SDK host
+  //   broker-response-map        the host's answer, turned back into a decision
+  //   broker-permission-updates  which of its permission updates are accepted
+  //   control-response-success   the envelope every success leaves through
+  //   control-response-error     the envelope every refusal leaves through
+  //
+  // TWO NAMED GAPS, both §2.3 deferrals rather than omissions, both on the
+  // ledger row: the 11.6 KB mode-aware body ABOVE the pre-check (`von` — a
+  // classifier call, a mutable denial counter, sixty free variables) and the
+  // broker's `createCanUseTool`, a class method closing over five mutable maps
+  // on its receiver. A third, `Dd`, carries no string literal at all and is not
+  // takeable by this mechanism; its whole body is two lines and both of its
+  // neighbours are owned.
+  {
+    // The decision every headless tool call actually gets. One call site, and
+    // that site runs on every tool call in every mode.
+    //
+    // ANCHOR: `Cannot call ${` is unique bundle-wide and lives in this body's
+    // plan-mode MCP override. Prose rather than structure, which §2.1 measures
+    // as the stronger kind — and the alternative here was `Permission to use ${`
+    // at fifteen carriers in this chunk alone.
+    //
+    // THE PORT COUNT IS THE ROW'S PRICE, and it is recorded rather than
+    // minimised: twenty-eight forwarded ports plus two owned helpers. Every one
+    // is a free variable the AST derived and `strangle/scope.ts` machine-checks
+    // in both directions, so the list cannot quietly go stale — but it is also
+    // the measurement behind this wave's decision NOT to take the 11.6 KB body
+    // above it, whose surface is twice as wide over mutable state.
+    name: "permission-precheck",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: "Cannot call ${",
+    fn: "permissionPrecheck",
+    captures: [
+      {
+        // `Ze` / AbortError — a CONSTRUCTOR, forwarded as a port because the
+        // owned module has to `new` the graph's class for the caller's
+        // `instanceof` checks to keep working.
+        as: "AbortError",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "AbortError", new RegExp(`signal\\.aborted\\)throw new (${ID})`)),
+      },
+      {
+        // `he` / getToolPermissionContext — reads app state.
+        as: "toolPermissionContext",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "toolPermissionContext", new RegExp(`throw new ${ID};let ${ID}=(${ID})\\(${ID}\\),`)),
+      },
+      {
+        as: "matchedToolDenyRule",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-precheck",
+          "matchedToolDenyRule",
+          new RegExp(`let ${ID}=${ID}\\(${ID}\\),${ID}=(${ID})\\(${ID},${ID}\\);if\\(${ID}\\)return\\{behavior:"deny"`),
+        ),
+      },
+      {
+        // `JF` — the input-rule matcher, called twice with different behaviors
+        // ("deny" here, "ask" further down). One port, two uses.
+        as: "matchedInputRule",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "matchedInputRule", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID},${ID},"deny"\\)`)),
+      },
+      {
+        as: "matchedToolAllowRule",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "matchedToolAllowRule", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID}\\);if\\(${ID}\\)\\{let`)),
+      },
+      {
+        as: "denyRuleMessage",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "denyRuleMessage", new RegExp(`rule:${ID}\\},message:(${ID})\\(${ID}\\.name,${ID}\\)\\}`)),
+      },
+      {
+        // `ql` — the message builder, which this wave ALSO owns. Forwarded
+        // rather than owned because this seam does not carry the four sub-ports
+        // that module needs; the delegation reaches the strangled graph's copy,
+        // which is the owned module behind its own adapter.
+        as: "permissionMessage",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "permissionMessage", new RegExp(`behavior:"passthrough",message:(${ID})\\(${ID}\\.name\\)\\}`)),
+      },
+      {
+        // `y7e` — the allow-rule decision, also owned by this wave, forwarded
+        // for the same reason. Note the FOUR-argument call: the rule checker
+        // passes a fifth (its options), this one does not.
+        as: "allowRuleDecision",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "allowRuleDecision", new RegExp(`if\\(!${ID}&&!${ID}\\)return (${ID})\\(${ID},${ID},${ID},${ID}\\)\\}`)),
+      },
+      {
+        as: "classifyToolError",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-precheck",
+          "classifyToolError",
+          new RegExp(`catch\\(${ID}\\)\\{let ${ID}=(${ID})\\(${ID},${ID},${ID},${ID}\\);if\\(${ID}!==void 0\\)`),
+        ),
+      },
+      {
+        // `Qe = "Bash"` — owned in shared/tool-names.js and asserted by the
+        // adapter. The sandbox arm is Bash-only, so this literal decides which
+        // tool gets it.
+        as: "bashToolName",
+        kind: "primitive",
+        derive: pick("permission-precheck", "bashToolName", new RegExp(`${ID}\\.name===(${ID})&&${ID}\\.forRemoteExecution!==!0`)),
+      },
+      {
+        // `pt` — the sandbox manager object, two methods read off it.
+        as: "sandbox",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "sandbox", new RegExp(`&&(${ID})\\.isSandboxingEnabled\\(\\)`)),
+      },
+      {
+        as: "bashAutoAllowable",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "bashAutoAllowable", new RegExp(`isAutoAllowBashIfSandboxedEnabled\\(\\)&&(${ID})\\(${ID}\\)`)),
+      },
+      {
+        as: "sandboxConfirmed",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "sandboxConfirmed", new RegExp(`,${ID}=${ID}&&(${ID})\\(${ID}\\),${ID}=${ID}&&!${ID}`)),
+      },
+      {
+        // `a` — the process environment reader.
+        as: "env",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "env", new RegExp(`source==="mcpServerPolicy"&&(${ID})\\.CLAUDE_CODE_REMOTE`)),
+      },
+      {
+        // `I` — the feature-gate resolver. Pinned to compiled-in defaults by
+        // §3.3, so on this corpus it always answers with the call-site default.
+        as: "featureGate",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "featureGate", new RegExp(`&&(${ID})\\("tengu_mcp_server_policy_bypass_exempt",!0\\)`)),
+      },
+      {
+        // `kH` — the tool's EFFECTIVE mode, which is the session mode narrowed
+        // by any MCP-server override. Called twice.
+        as: "effectiveMode",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "effectiveMode", new RegExp(`CLAUDE_CODE_REMOTE&&(${ID})\\(${ID},${ID}\\)==="bypassPermissions"`)),
+      },
+      {
+        as: "isReadOnlyMcpInput",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "isReadOnlyMcpInput", new RegExp(`\\.mode==="plan"&&!(${ID})\\(${ID}\\(${ID}\\),${ID}\\)`)),
+      },
+      {
+        // `my` — the tool's rule identity, which is not always its name.
+        as: "toolIdentity",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "toolIdentity", new RegExp(`\\.mode==="plan"&&!${ID}\\((${ID})\\(${ID}\\),${ID}\\)`)),
+      },
+      {
+        as: "organizationAskReason",
+        kind: "primitive",
+        derive: pick(
+          "permission-precheck",
+          "organizationAskReason",
+          new RegExp(`effectiveMaxPermission==="ask"\\)\\{let ${ID}=\\{type:"other",reason:(${ID})\\}`),
+        ),
+      },
+      {
+        // `hTt` / isBypassImmuneCircuitBreaker — the FILTER the safety-check
+        // finder is given under bypass. It is what makes the floor asymmetric.
+        as: "bypassImmuneSafetyCheck",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "bypassImmuneSafetyCheck", new RegExp(`\\?${ID}\\(${ID}\\.decisionReason,(${ID})\\):void 0`)),
+      },
+      {
+        as: "isPlanModeFloor",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "isPlanModeFloor", new RegExp(`==="sandboxOverride"\\|\\|(${ID})\\(${ID}\\.decisionReason\\)`)),
+      },
+      {
+        // `u7e` — the input an allow carries: the tool's rewrite when there is
+        // one, the raw input otherwise. Both allow arms use it.
+        as: "resolvedInput",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-precheck",
+          "resolvedInput",
+          new RegExp(`return\\{behavior:"allow",updatedInput:(${ID})\\(${ID},${ID}\\),decisionReason:\\{type:"mode"`),
+        ),
+      },
+      {
+        as: "wholeToolAllowRule",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-precheck",
+          "wholeToolAllowRule",
+          new RegExp(`let ${ID}=(${ID})\\(${ID}\\(${ID}\\),${ID}\\);if\\(${ID}&&${ID}\\.ignoresWholeToolAllowRule`),
+        ),
+      },
+      {
+        as: "isChromeTool",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "isChromeTool", new RegExp(`!==!0&&!\\((${ID})\\(${ID}\\(${ID}\\)\\)&&`)),
+      },
+      {
+        as: "chromeClassifierApplies",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "chromeClassifierApplies", new RegExp(`&&\\((${ID})\\(${ID}\\(${ID}\\)\\)\\|\\|${ID}\\(${ID}\\)\\.chromeClassifierFloorEnabled`)),
+      },
+      {
+        as: "ruleScopedAway",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "ruleScopedAway", new RegExp(`chromeClassifierFloorEnabled===!0\\)\\)&&!(${ID})\\(${ID},${ID},${ID},${ID}\\)\\)`)),
+      },
+      {
+        as: "log",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "log", new RegExp(`${ID}\\.suggestions\\)(${ID})\\(\`Permission suggestions`)),
+      },
+      {
+        as: "stringify",
+        kind: "effectful-port",
+        derive: pick("permission-precheck", "stringify", new RegExp(`Permission suggestions for \\$\\{${ID}\\.name\\}: \\$\\{(${ID})\\(${ID}\\.suggestions,null,2\\)\\}`)),
+      },
+      {
+        // OWNED (§2.4): the ask-rule predicate. Upstream keeps four other
+        // callers, so its own splice stays live.
+        as: "isAskRuleDrivenReason",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "permission-precheck",
+          "isAskRuleDrivenReason",
+          new RegExp(`==="ask"&&(${ID})\\(${ID}\\.decisionReason\\)\\)return ${ID};if\\(${ID}\\.mcpInfo`),
+        ),
+      },
+      {
+        // OWNED (§2.4): the safety-check finder, used twice here — once with the
+        // bypass-immune filter and once bare. Upstream keeps fifteen other
+        // callers.
+        as: "findSafetyCheckReason",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("permission-precheck", "findSafetyCheckReason", new RegExp(`\\?(${ID})\\(${ID}\\.decisionReason,${ID}\\):void 0`)),
+      },
+    ],
+    coverage: ["permission-broker", "permission-bag"],
+  },
+
+  {
+    // The same ladder with the modes removed. Eight call sites across five
+    // chunks; the one this wave can reach is the PermissionRequest hook seam,
+    // which re-checks a hook's rewritten input against the rules.
+    //
+    // ANCHOR: `crashIsObjection===!0` has exactly two carriers, both in this
+    // chunk — this and the allow-rule decision it delegates to — and the two are
+    // separated by parameter count. `siblings: 2` makes an anchor that quietly
+    // stopped being a pair fail loudly rather than pick the other one.
+    name: "rule-based-permissions",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: "crashIsObjection===!0",
+    siblings: 2,
+    fn: "checkRuleBasedPermissions",
+    captures: [
+      {
+        as: "toolPermissionContext",
+        kind: "effectful-port",
+        derive: pick(
+          "rule-based-permissions",
+          "toolPermissionContext",
+          new RegExp(`\\)\\{let ${ID}=(${ID})\\(${ID}\\),${ID}=${ID}\\(${ID},${ID}\\);if\\(${ID}\\)return\\{behavior:"deny"`),
+        ),
+      },
+      {
+        as: "matchedToolDenyRule",
+        kind: "effectful-port",
+        derive: pick(
+          "rule-based-permissions",
+          "matchedToolDenyRule",
+          new RegExp(`let ${ID}=${ID}\\(${ID}\\),${ID}=(${ID})\\(${ID},${ID}\\);if\\(${ID}\\)return\\{behavior:"deny"`),
+        ),
+      },
+      {
+        as: "matchedInputRule",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "matchedInputRule", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID},${ID},"deny"\\)`)),
+      },
+      {
+        as: "matchedToolAllowRule",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "matchedToolAllowRule", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID}\\);if\\(${ID}\\)\\{let`)),
+      },
+      {
+        as: "denyRuleMessage",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "denyRuleMessage", new RegExp(`rule:${ID}\\},message:(${ID})\\(${ID}\\.name,${ID}\\)\\}`)),
+      },
+      {
+        as: "permissionMessage",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "permissionMessage", new RegExp(`behavior:"passthrough",message:(${ID})\\(${ID}\\.name\\)\\}`)),
+      },
+      {
+        // The FIVE-argument call: this one passes its options through, so the
+        // crash arm reaches one level further down than the pre-check's does.
+        as: "allowRuleDecision",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "allowRuleDecision", new RegExp(`\\)\\)return (${ID})\\(${ID},${ID},${ID},${ID},${ID}\\)\\}`)),
+      },
+      {
+        as: "classifyToolError",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "classifyToolError", new RegExp(`catch\\(${ID}\\)\\{let ${ID}=(${ID})\\(${ID},${ID},${ID},${ID}\\)`)),
+      },
+      {
+        as: "crashReason",
+        kind: "primitive",
+        derive: pick("rule-based-permissions", "crashReason", new RegExp(`\\{type:"other",reason:(${ID})\\};return\\{behavior:"ask"`)),
+      },
+      {
+        as: "bashToolName",
+        kind: "primitive",
+        derive: pick("rule-based-permissions", "bashToolName", new RegExp(`${ID}\\.name===(${ID})&&${ID}\\.forRemoteExecution!==!0`)),
+      },
+      {
+        as: "sandbox",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "sandbox", new RegExp(`&&(${ID})\\.isSandboxingEnabled\\(\\)`)),
+      },
+      {
+        as: "bashAutoAllowable",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "bashAutoAllowable", new RegExp(`isAutoAllowBashIfSandboxedEnabled\\(\\)&&(${ID})\\(${ID}\\)`)),
+      },
+      {
+        as: "sandboxConfirmed",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "sandboxConfirmed", new RegExp(`,${ID}=${ID}&&(${ID})\\(${ID}\\);if\\(!\\(${ID}&&!${ID}\\)\\)`)),
+      },
+      {
+        // `e1t` — "does the hook's rewritten input satisfy a tool that needs
+        // interaction". Its presence is the reason a PermissionRequest hook can
+        // answer for such a tool at all; the pre-check has no equivalent.
+        as: "interactionSatisfied",
+        kind: "effectful-port",
+        derive: pick("rule-based-permissions", "interactionSatisfied", new RegExp(`if\\(!(${ID})\\(${ID},${ID}\\?\\.hookUpdatedInput\\)`)),
+      },
+      {
+        as: "organizationAskReason",
+        kind: "primitive",
+        derive: pick(
+          "rule-based-permissions",
+          "organizationAskReason",
+          new RegExp(`effectiveMaxPermission==="ask"\\)\\{let ${ID}=\\{type:"other",reason:(${ID})\\}`),
+        ),
+      },
+      {
+        as: "isAskRuleDrivenReason",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "rule-based-permissions",
+          "isAskRuleDrivenReason",
+          new RegExp(`==="ask"&&(${ID})\\(${ID}\\.decisionReason\\)\\)return ${ID};if\\(${ID}\\.mcpInfo`),
+        ),
+      },
+      {
+        as: "findSafetyCheckReason",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "rule-based-permissions",
+          "findSafetyCheckReason",
+          new RegExp(`&&\\((${ID})\\(${ID}\\.decisionReason\\)\\|\\|${ID}\\.decisionReason\\?\\.type==="sandboxOverride"\\)\\)return`),
+        ),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // What a matched ALLOW rule actually decides — which is not "allow".
+    //
+    // ANCHOR: `matchedAskRule:o}` is unique bundle-wide. Structural rather than
+    // prose (§2.1's weaker kind), but it is the shape that makes this function
+    // what it is: the field named for an ASK rule carrying the ALLOW rule that
+    // matched.
+    name: "allow-rule-decision",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: "matchedAskRule:o}",
+    fn: "allowRuleDecision",
+    captures: [
+      {
+        as: "permissionMessage",
+        kind: "effectful-port",
+        derive: pick("allow-rule-decision", "permissionMessage", new RegExp(`rule:${ID}\\},message:(${ID})\\(${ID}\\.name\\)`)),
+      },
+      {
+        as: "classifyToolError",
+        kind: "effectful-port",
+        derive: pick("allow-rule-decision", "classifyToolError", new RegExp(`catch\\(${ID}\\)\\{let ${ID}=(${ID})\\(${ID},${ID},${ID},${ID}\\)`)),
+      },
+      {
+        as: "crashReason",
+        kind: "primitive",
+        derive: pick("allow-rule-decision", "crashReason", new RegExp(`\\{type:"other",reason:(${ID})\\}`)),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // Was this ask FORCED by a user's own ask rule? Six call sites, zero free
+    // variables, self-recursive.
+    //
+    // ANCHOR: the fragment must carry the RETURN as well as the comparison —
+    // `rule.ruleBehavior==="ask"` alone has six carriers in four chunks, two of
+    // them one-parameter top-level functions in this one (this and the MCP-policy
+    // variant beside it), which the signature cannot separate. With `)return!0`
+    // it is unique bundle-wide.
+    name: "ask-rule-reason",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: 'rule.ruleBehavior==="ask")return!0',
+    fn: "isAskRuleDrivenReason",
+    // `captures: []` — the positive claim "verified zero free variables". The
+    // recursive call resolves to the function's own binding, which the scope
+    // analysis treats as bound rather than free.
+    captures: [],
+    coverage: [],
+  },
+
+  {
+    // The objection no permission mode may override. Seventeen call sites — the
+    // most-called function this wave owns — and zero free variables.
+    //
+    // ANCHOR: `type==="safetyCheck")return ` is unique bundle-wide. Structural,
+    // and it is the body's one distinguishing shape: every other safety-check
+    // test in the graph compares without returning the reason.
+    name: "safety-check-reason",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: 'type==="safetyCheck")return ',
+    fn: "findSafetyCheckReason",
+    captures: [],
+    coverage: [],
+  },
+
+  {
+    // The sentence a permission request is rendered as. Forty-five call sites,
+    // and its `case` clauses ARE the decisionReason axis the matrix is built on.
+    //
+    // ANCHOR: `blocked this action:` is unique bundle-wide — the hook arm's
+    // "with a reason" sentence, which is the one branch of eleven that no other
+    // permission surface duplicates.
+    name: "permission-message",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "blocked this action:",
+    fn: "permissionMessage",
+    captures: [
+      {
+        as: "renderRuleValue",
+        kind: "effectful-port",
+        derive: pick("permission-message", "renderRuleValue", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.rule\\.ruleValue\\)`)),
+      },
+      {
+        as: "renderRuleSource",
+        kind: "effectful-port",
+        derive: pick("permission-message", "renderRuleSource", new RegExp(`,${ID}=(${ID})\\(${ID}\\.rule\\.source\\)`)),
+      },
+      {
+        as: "splitRedirections",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-message",
+          "splitRedirections",
+          new RegExp(`\\{commandWithoutRedirections:${ID},redirections:${ID}\\}=(${ID})\\(${ID}\\)`),
+        ),
+      },
+      {
+        // OWNED (§2.4): 41 bytes, provably pure, used throughout the engine — so
+        // upstream's copy keeps its own callers and stays live.
+        as: "pluralize",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("permission-message", "pluralize", new RegExp(`\\$\\{(${ID})\\(${ID},"part"\\)\\}`)),
+      },
+      {
+        as: "modeTitle",
+        kind: "effectful-port",
+        derive: pick("permission-message", "modeTitle", new RegExp(`Current permission mode \\(\\$\\{(${ID})\\(${ID}\\.mode\\)\\}\\)`)),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // Sixty-two bytes on the allow arm of every tool call, in every mode —
+    // including the twenty-two bypass scenarios, which is where its liveness
+    // comes from.
+    //
+    // ANCHOR: `requestDialog!==void 0` has three carriers in this chunk and one
+    // in another, so it needs BOTH a chunk scope and a sibling count. The
+    // co-literal is the message builder's hook sentence, unique bundle-wide and
+    // in this chunk. The signature then separates the three: one parameter AND
+    // declared at the top level.
+    name: "classifier-streak",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "requestDialog!==void 0",
+    coLiteral: "blocked this action:",
+    siblings: 3,
+    fn: "classifierOnlyStreakActive",
+    captures: [
+      {
+        as: "streakGateEnabled",
+        kind: "effectful-port",
+        derive: pick("classifier-streak", "streakGateEnabled", new RegExp(`return (${ID})\\(\\)&&${ID}\\.requestDialog`)),
+      },
+      {
+        as: "sdkDialogHostActive",
+        kind: "effectful-port",
+        derive: pick("classifier-streak", "sdkDialogHostActive", new RegExp(`requestDialog!==void 0&&!(${ID})\\(\\)`)),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // The only gate on the mode axis. Its refusals are what
+    // `research/fixtures/permission-surface-<pin>.json` reads the guard table
+    // from, and the `auto` arm is where §3.3's pinned-disabled gate decides
+    // whether that mode exists at all on this corpus.
+    //
+    // ANCHOR: the launch-flag refusal, unique bundle-wide and the longest prose
+    // in the subsystem.
+    name: "mode-change-guard",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "Cannot set permission mode to bypassPermissions because the session was not launched",
+    fn: "guardPermissionModeChange",
+    captures: [
+      {
+        as: "parsePermissionMode",
+        kind: "effectful-port",
+        derive: pick("mode-change-guard", "parsePermissionMode", new RegExp(`let ${ID}=(${ID})\\(${ID}\\);if\\(${ID}===void 0\\)`)),
+      },
+      {
+        // Upstream builds this by joining its own mode enumeration in SORTED
+        // order, so it is a second, independent statement of the mode axis.
+        as: "unrecognizedModeError",
+        kind: "primitive",
+        derive: pick("mode-change-guard", "unrecognizedModeError", new RegExp(`if\\(${ID}===void 0\\)return\\{ok:!1,error:(${ID})\\}`)),
+      },
+      {
+        as: "restrictedBypassError",
+        kind: "primitive",
+        derive: pick("mode-change-guard", "restrictedBypassError", new RegExp(`\\.restricted\\)return\\{ok:!1,error:(${ID})\\}`)),
+      },
+      {
+        as: "bypassDisabled",
+        kind: "effectful-port",
+        derive: pick("mode-change-guard", "bypassDisabled", new RegExp(`if\\((${ID})\\(\\)\\)return\\{ok:!1,error:"Cannot set permission mode to bypassPermissions because it is disabled`)),
+      },
+      {
+        as: "autoModeGateEnabled",
+        kind: "effectful-port",
+        derive: pick("mode-change-guard", "autoModeGateEnabled", new RegExp(`==="auto"&&!(${ID})\\(\\)`)),
+      },
+      {
+        as: "autoModeUnavailableReason",
+        kind: "effectful-port",
+        derive: pick("mode-change-guard", "autoModeUnavailableReason", new RegExp(`\\{let ${ID}=(${ID})\\(\\);return\\{ok:!1,error:${ID}\\?`)),
+      },
+      {
+        as: "autoModeUnavailableNotification",
+        kind: "effectful-port",
+        derive: pick(
+          "mode-change-guard",
+          "autoModeUnavailableNotification",
+          new RegExp(`Cannot set permission mode to auto: \\$\\{(${ID})\\(${ID}\\)\\}`),
+        ),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // What the move DOES: twelve ports, every one a side effect whose far side
+    // belongs to a subsystem W6 does not own.
+    //
+    // ANCHOR: the auto-gate assertion, unique bundle-wide.
+    name: "mode-transition",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: "Cannot transition to auto mode: gate is not enabled",
+    fn: "transitionPermissionMode",
+    captures: [
+      {
+        as: "setProvisionalStartupMode",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "setProvisionalStartupMode", new RegExp(`return ${ID};if\\((${ID})\\(void 0\\),`)),
+      },
+      {
+        as: "recordModeChange",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "recordModeChange", new RegExp(`\\(void 0\\),(${ID})\\(\\{from:`)),
+      },
+      {
+        as: "handlePlanModeTransition",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "handlePlanModeTransition", new RegExp(`trigger:${ID}\\}\\),(${ID})\\(${ID},${ID}\\),`)),
+      },
+      {
+        as: "handleAutoModeTransition",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "handleAutoModeTransition", new RegExp(`trigger:${ID}\\}\\),${ID}\\(${ID},${ID}\\),(${ID})\\(${ID},${ID}\\),`)),
+      },
+      {
+        as: "setHasExitedPlanMode",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "setHasExitedPlanMode", new RegExp(`!=="plan"\\)(${ID})\\(!0\\)`)),
+      },
+      {
+        as: "prepareContextForPlanMode",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "prepareContextForPlanMode", new RegExp(`!=="plan"\\)return (${ID})\\(${ID}\\)`)),
+      },
+      {
+        as: "isAutoModeActive",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "isAutoModeActive", new RegExp(`==="plan"&&(${ID})\\(\\),${ID}=${ID}==="auto"`)),
+      },
+      {
+        as: "isAutoModeGateEnabled",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "isAutoModeGateEnabled", new RegExp(`if\\(!(${ID})\\(\\)\\)throw Error\\("Cannot transition to auto mode`)),
+      },
+      {
+        as: "setAutoModeActive",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "setAutoModeActive", new RegExp(`gate is not enabled"\\);(${ID})\\(!0\\)`)),
+      },
+      {
+        as: "setNeedsAutoModeExitAttachment",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "setNeedsAutoModeExitAttachment", new RegExp(`\\(!1\\),(${ID})\\(!0\\),`)),
+      },
+      {
+        as: "stripDangerousPermissionsForAutoMode",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "stripDangerousPermissionsForAutoMode", new RegExp(`,${ID}=(${ID})\\(${ID}\\)\\}else if`)),
+      },
+      {
+        as: "restoreDangerousPermissions",
+        kind: "effectful-port",
+        derive: pick("mode-transition", "restoreDangerousPermissions", new RegExp(`\\(!0\\),${ID}=(${ID})\\(${ID}\\);if\\(${ID}==="plan"`)),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // The seam that joins the guard to the transition, and the one the headless
+    // control channel's `set_permission_mode` handler calls.
+    //
+    // ANCHOR: `{ok:!0,mode:` has two carriers in this chunk — this and the guard
+    // it calls — and three more elsewhere, so it needs BOTH a chunk scope and a
+    // sibling count. The co-literal is the guard's launch-flag refusal, which is
+    // unique bundle-wide and in this chunk; the signature then separates the
+    // pair by parameter count.
+    name: "set-permission-mode",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: "{ok:!0,mode:",
+    coLiteral: "Cannot set permission mode to bypassPermissions because the session was not launched",
+    siblings: 2,
+    fn: "setPermissionModeWithGuards",
+    captures: [
+      {
+        as: "guardModeChange",
+        kind: "effectful-port",
+        derive: pick("set-permission-mode", "guardModeChange", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID}\\);if\\(!${ID}\\.ok\\)`)),
+      },
+      {
+        as: "transitionMode",
+        kind: "effectful-port",
+        derive: pick("set-permission-mode", "transitionMode", new RegExp(`return\\{\\.\\.\\.(${ID})\\(${ID}\\.mode,${ID},${ID},${ID}\\),mode:`)),
+      },
+      {
+        as: "modeChanged",
+        kind: "effectful-port",
+        derive: pick("set-permission-mode", "modeChanged", new RegExp(`setImmediate\\(\\(\\)=>\\{(${ID})\\.emit\\(\\)\\}\\)`)),
+      },
+    ],
+    coverage: [],
+  },
+
+  {
+    // The hook that races the SDK host on every ask.
+    //
+    // ANCHOR: `Permission denied by PermissionRequest hook` is unique
+    // bundle-wide — the default message the deny arm supplies.
+    name: "permission-request-hook-decision",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: "Permission denied by PermissionRequest hook",
+    fn: "permissionRequestHookDecision",
+    captures: [
+      {
+        as: "toolPermissionContext",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "toolPermissionContext", new RegExp(`let ${ID}=(${ID})\\(${ID}\\)\\.mode,`)),
+      },
+      {
+        // `Tee` / executePermissionRequestHooks — the dispatcher W5 already
+        // OWNS, so this port's far side is another reforge module rather than
+        // extracted code. Ownership composing across waves, at a seam.
+        as: "dispatchHooks",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-request-hook-decision",
+          "dispatchHooks",
+          new RegExp(`,${ID}=(${ID})\\(${ID}\\.name,${ID},${ID},${ID},${ID},${ID},${ID}\\.abortController\\.signal\\)`),
+        ),
+      },
+      {
+        as: "guardHookUpdatedInput",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "guardHookUpdatedInput", new RegExp(`let ${ID}=(${ID})\\(await ${ID}\\(`)),
+      },
+      {
+        // `Gx` — the rule checker, which this wave also owns. Forwarded for the
+        // same reason as the message builder: this seam does not carry the
+        // fifteen sub-ports that module needs.
+        as: "checkRules",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-request-hook-decision",
+          "checkRules",
+          new RegExp(`=${ID}\\(await (${ID})\\(${ID},${ID},\\{\\.\\.\\.${ID},toolUseId:`),
+        ),
+      },
+      {
+        // `YXe` — a frozen reason OBJECT, not a string, so it stays a port: the
+        // adapter's `primitive` assertion is `Object.is`, which cannot compare
+        // two structurally equal objects, and a members comparison would be a
+        // second transcription of a shape this wave does not otherwise own.
+        as: "headlessDenyReason",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "headlessDenyReason", new RegExp(`decisionReason:${ID}\\.decisionReason\\?\\?(${ID}),`)),
+      },
+      {
+        as: "interactionSatisfied",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "interactionSatisfied", new RegExp(`if\\(!(${ID})\\(${ID},${ID}\\.updatedInput\\)&&`)),
+      },
+      {
+        as: "withoutRemoteScope",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "withoutRemoteScope", new RegExp(`===!0\\?(${ID})\\(${ID}\\.updatedPermissions\\?\\?\\[\\]\\)`)),
+      },
+      {
+        as: "applySessionUpdates",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "applySessionUpdates", new RegExp(`setSessionToolPermissionContext\\(\\(${ID}\\)=>(${ID})\\(`)),
+      },
+      {
+        as: "persistUpdates",
+        kind: "effectful-port",
+        derive: pick("permission-request-hook-decision", "persistUpdates", new RegExp(`,await (${ID})\\(${ID},${ID}\\.storageV5\\)`)),
+      },
+      {
+        as: "isPersistedDestination",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-request-hook-decision",
+          "isPersistedDestination",
+          new RegExp(`permanent:${ID}\\.some\\(\\(${ID}\\)=>(${ID})\\(${ID}\\.destination\\)\\)`),
+        ),
+      },
+    ],
+    coverage: ["permission-broker", "permission-bag"],
+  },
+
+  {
+    // The headless seam's RETURN leg: the SDK host's answer turned back into an
+    // engine decision, with the eleventh decisionReason kind stamped on it.
+    //
+    // ANCHOR: `type:"permissionPromptTool"` is unique bundle-wide — the fixture
+    // records it as the one reason kind upstream RENDERS but nothing else
+    // CONSTRUCTS, because it is built here as a whole object.
+    name: "broker-response-map",
+    target: "free-function",
+    signature: { params: 6, ancestry: ["SourceFile"] },
+    anchor: 'type:"permissionPromptTool"',
+    fn: "brokerResponseMap",
+    captures: [
+      {
+        as: "filterPermissionUpdates",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "filterPermissionUpdates", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.updatedPermissions,`)),
+      },
+      {
+        as: "applySessionUpdates",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "applySessionUpdates", new RegExp(`setSessionToolPermissionContext\\(\\(${ID}\\)=>(${ID})\\(`)),
+      },
+      {
+        as: "persistUpdates",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "persistUpdates", new RegExp(`,(${ID})\\(${ID},${ID}\\.storageV5\\)\\.catch\\(`)),
+      },
+      {
+        as: "lastKnownInput",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "lastKnownInput", new RegExp(`\\.length>0\\?${ID}\\.updatedInput:(${ID})\\(${ID}\\.name,${ID}\\)`)),
+      },
+      {
+        as: "logError",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "logError", new RegExp(`\\.storageV5\\)\\.catch\\((${ID})\\)`)),
+      },
+      {
+        as: "log",
+        kind: "effectful-port",
+        derive: pick("broker-response-map", "log", new RegExp(`\\.interrupt\\)(${ID})\\(\``)),
+      },
+    ],
+    coverage: ["permission-broker", "permission-bag"],
+  },
+
+  {
+    // Which of the host's requested permission updates the engine will accept —
+    // deny-by-default in two of its four arms.
+    //
+    // ANCHOR: the OTHER suppression predicate. `suppressesAllPermissionUpdates`
+    // reads like the natural anchor and is not one: it has fourteen carriers
+    // across five chunks, two of them in this chunk, and those two — this and
+    // the hook decision above — are BOTH five-parameter top-level functions, so
+    // `params` + `ancestry` tie and the build refuses rather than guessing.
+    // (`async` would separate them and the signature has no such dimension; a
+    // flow-back note for the next mechanism round, not a blocker here.)
+    // `suppressesAlwaysAllowRule` occurs once in this chunk and only this
+    // function reads it, so the chunk scope alone makes it unique.
+    name: "broker-permission-updates",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: "suppressesAlwaysAllowRule",
+    coLiteral: 'type:"permissionPromptTool"',
+    fn: "brokerPermissionUpdates",
+    captures: [
+      {
+        as: "isExemptContext",
+        kind: "effectful-port",
+        derive: pick("broker-permission-updates", "isExemptContext", new RegExp(`forRemoteExecution===!0\\|\\|(${ID})\\(${ID}\\)\\)return`)),
+      },
+      {
+        as: "withoutRemoteScope",
+        kind: "effectful-port",
+        derive: pick("broker-permission-updates", "withoutRemoteScope", new RegExp(`\\{let ${ID}=(${ID})\\(${ID}\\);return ${ID}\\.length>0`)),
+      },
+      {
+        as: "stripWholeToolGrants",
+        kind: "effectful-port",
+        derive: pick("broker-permission-updates", "stripWholeToolGrants", new RegExp(`\\|\\|${ID}\\)\\?(${ID})\\(${ID},${ID},`)),
+      },
+      {
+        as: "toolPermissionContext",
+        kind: "effectful-port",
+        derive: pick("broker-permission-updates", "toolPermissionContext", new RegExp(`\\?${ID}\\(${ID},${ID},(${ID})\\(${ID}\\)\\):${ID}\\}`)),
+      },
+    ],
+    coverage: ["permission-broker", "permission-bag"],
+  },
+
+  {
+    // The success envelope every headless control_response leaves through.
+    // Seven call sites; `initialize` is the first request of every SDK-driven
+    // run, so its liveness is universal.
+    //
+    // ANCHOR: `subtype:"success",request_id:` has three carriers in this chunk
+    // and twenty-four bundle-wide, so it needs BOTH a chunk scope and a sibling
+    // count. The co-literal is the permission-prompt reason kind, which only
+    // this chunk constructs.
+    name: "control-response-success",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: 'subtype:"success",request_id:',
+    coLiteral: 'type:"permissionPromptTool"',
+    siblings: 3,
+    fn: "controlResponseSuccess",
+    captures: [],
+    coverage: [],
+  },
+
+  {
+    // The error envelope, and the only thing carrying a guard's own sentence out
+    // to an SDK host.
+    //
+    // ANCHOR: same shape as its twin — two carriers in this chunk, thirty
+    // bundle-wide.
+    name: "control-response-error",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: 'subtype:"error",request_id:',
+    coLiteral: 'type:"permissionPromptTool"',
+    siblings: 2,
+    fn: "controlResponseError",
+    captures: [],
+    coverage: [],
+  },
+
   // ---- system-prompt assembly (subsystem/environment-and-system-prompt) ----
   // W3's five splices, all `free-function` — the shape W0a spiked on `env-block`,
   // which is the sixth member of this subsystem and already owned.
