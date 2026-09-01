@@ -60,7 +60,7 @@
 //   `effectful-port` is forwarded and stays a typed delegation argument.
 import type { TargetSignature } from "./ast.js";
 
-export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case";
+export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer";
 
 export type CaptureClass = "primitive" | "pure-helper" | "effectful-port";
 
@@ -100,6 +100,14 @@ export interface Splice {
    * for the full argument and the failure modes.
    */
   coLiteral?: string;
+  /**
+   * How many nodes of the resolved chunk carry the anchor, verified at splice
+   * time. Default 1 — the rule that has always held. A row that declares more
+   * is asking `signature` to SELECT among them (strangle/anchor.ts,
+   * `selectExcision` in ast.ts); a signature that cannot separate them is a tie
+   * and fails the build.
+   */
+  siblings?: number;
   /** delegation export name on globalThis.__reforge */
   fn: string;
   /** EVERY closure value the body takes from its scope, classified per §2.4 */
@@ -897,6 +905,38 @@ export const SPLICES: Splice[] = [
       },
     ],
     coverage: ["hooks"],
+  },
+
+  {
+    // ARROW-INITIALIZER shape (campaign spec C5x, unit 2) — the mechanism spike
+    // for an arrow that initializes one declarator of a multi-declarator `var`,
+    // and W6's other hard blocker: the permission chain's three entry points are
+    // ONE statement (`Dd=…,kye=…,von=…`), so the excision has to take the arrow
+    // and leave the neighbours, the commas and the `var` keyword alone.
+    //
+    // It is also the campaign's first SIBLING-DISAMBIGUATED row (unit 4). The
+    // only literal inside `kye` is `decideLocation:"pre-ask"`, which its own
+    // 11.6 KB neighbour `von` also stamps — same chunk, so a `coLiteral` cannot
+    // help, and the two are both 7-parameter arrows at the same ancestry, so
+    // `params` + `ancestry` tie. Their positions in the declaration list do not:
+    // `declarator: 1` is what selects, and an upstream edit to the list makes the
+    // build refuse rather than pick the 11.6 KB neighbour.
+    name: "permission-decision",
+    target: "arrow-initializer",
+    signature: { params: 7, ancestry: ["SourceFile"], declarator: 1 },
+    anchor: 'decideLocation:"pre-ask"',
+    siblings: 2,
+    fn: "permissionDecisionWithSink",
+    captures: [
+      {
+        // `von` — the mode-aware decision body. Stateful (app state, denial
+        // tracking, the ask path's promises), so a port and a ledger edge to W6.
+        as: "decide",
+        kind: "effectful-port",
+        derive: pick("permission-decision", "decide", new RegExp(`let ${ID}=await (${ID})\\(${ID},`)),
+      },
+    ],
+    coverage: ["permission-broker", "permission-bag"],
   },
 ];
 

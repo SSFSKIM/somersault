@@ -1180,9 +1180,35 @@
       "kind": "subsystem",
       "title": "Permission decisions + rule matching/parsing",
       "wave": "C9",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1054224,
+            "end": 1054345,
+            "sha256": "8782153d6eeb4dfda0b3b6533aa86f1e905dc85e25f4021311dca802eaf0a8c0"
+          },
+          "captures": [
+            {
+              "name": "von",
+              "as": "decide",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 1054346,
+              "declEnd": 1065930,
+              "sha256": "41f938a24bc216afff626c7e56bfebf410e691070df78ad97bfd90814d047bb0"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:permission-decision",
+        "scenario:permission-broker",
+        "scenario:permission-bag"
+      ],
+      "note": "C5x's arrow-initializer spike owns the chain's deny-stamping link (upstream kye, hasPermissionsToUseToolWithSink): a deny from the decision body is stamped with where it was decided, everything else passes through. The 11.6 KB mode-aware decision body it delegates to (von) stays a port and stays W6's — the W5-W7 scout measured it S-module-shaped. No outward edge: the port's far side is inside this same row."
     },
     {
       "id": "subsystem/control-protocol",

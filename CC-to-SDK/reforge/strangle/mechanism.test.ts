@@ -32,6 +32,10 @@
 //              while a nested pattern stays refused.
 //   anchoring  a `coLiteral`-scoped anchor must still resolve to exactly one
 //              node, and every way of mis-declaring the scope must throw.
+//   arrow      an arrow initializing ONE declarator of a multi-declarator
+//              `var` must excise the arrow alone, leaving its siblings byte
+//              for byte — and a body reading `this` or `arguments` must be
+//              refused, since an arrow inherits both lexically.
 //   siblings   two nodes of one chunk carrying the same literal must be
 //              separated by the verified signature — and when it cannot
 //              separate them, the tie must throw rather than pick one.
@@ -526,11 +530,55 @@ function footprintOf(owner: string, helper: string) {
     /not all in one chunk/);
 }
 
+// ---- FINDING 9: the arrow-initializer shape (C5x unit 2) --------------------
+// The permission chain is one `var` statement with three arrow declarators, so
+// the transform has to take ONE initializer and leave its neighbours, the commas
+// between them and the `var` keyword exactly where they were. The two things an
+// arrow inherits lexically — `this` and `arguments` — make a body unmovable, and
+// both are refused rather than approximated.
+{
+  const chain =
+    `var first=async(a,b)=>{return "ARROW_ANCHOR"+a+b},second=(x)=>{return "SIB_ANCHOR"+x},third=42;\n` +
+    `function outer(){var bound=()=>{return "THIS_ANCHOR"+this.x},args=()=>{return "ARGS_ANCHOR"+arguments.length};return [bound,args]}\n`;
+  const sf = parse(chain, "arrows");
+  const cut = excise(sf, chain.indexOf("ARROW_ANCHOR"), "arrow-initializer");
+  check("the excised span is the ARROW, not the declarator or the statement",
+    cut.original === `async(a,b)=>{return "ARROW_ANCHOR"+a+b}`, cut.original);
+  check("the delegation keeps the arrow shape and the async modifier",
+    cut.render("f", cut.shapeArgs) === `async (a,b)=>globalThis.__reforge.f(a,b)`, cut.render("f", cut.shapeArgs));
+  check("the signature records which declarator it is", cut.signature.declarator === 0 && cut.signature.params === 2);
+  check("…and its sibling's is different",
+    excise(sf, chain.indexOf("SIB_ANCHOR"), "arrow-initializer").signature.declarator === 1);
+
+  // Applied to the source, the neighbours must survive byte-for-byte.
+  const spliced = chain.slice(0, cut.start) + cut.render("f", cut.shapeArgs) + chain.slice(cut.end);
+  check("splicing one declarator leaves the siblings untouched",
+    spliced.includes(`second=(x)=>{return "SIB_ANCHOR"+x}`) && spliced.includes("third=42") && spliced.startsWith("var first="),
+    spliced.split("\n")[0]);
+
+  throws("an arrow whose body reads `this` is refused — it inherits it lexically",
+    () => excise(sf, chain.indexOf("THIS_ANCHOR"), "arrow-initializer"), /reads `this`/);
+  throws("…and one reading `arguments`, which the capture inventory calls ambient",
+    () => excise(sf, chain.indexOf("ARGS_ANCHOR"), "arrow-initializer"), /reads `arguments`/);
+
+  // The real pair this shape exists for: same anchor, same arity, same ancestry
+  // — separable ONLY by declaration-list position.
+  const twins = `var small=(a)=>{return "PAIR_ANCHOR"+a},big=(a)=>{return "PAIR_ANCHOR"+a+a+a};\n`;
+  const tsf = parse(twins, "arrow-twins");
+  const offsets: number[] = [];
+  for (let i = twins.indexOf("PAIR_ANCHOR"); i >= 0; i = twins.indexOf("PAIR_ANCHOR", i + 1)) offsets.push(i);
+  check("the declarator index selects among otherwise identical siblings",
+    selectExcision("fixture", tsf, offsets, "arrow-initializer", { params: 1, ancestry: ["SourceFile"], declarator: 1 }).label === "big");
+  throws("…and without it they tie, exactly as params+ancestry alone would",
+    () => selectExcision("fixture", tsf, offsets, "arrow-initializer", { params: 1, ancestry: ["SourceFile"] }),
+    /TIE across 2 candidates/);
+}
+
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

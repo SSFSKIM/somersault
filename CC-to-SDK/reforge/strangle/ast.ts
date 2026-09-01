@@ -69,6 +69,22 @@ export interface TargetSignature {
   /** enclosing shape-forming syntax kinds, innermost first, ending at SourceFile */
   ancestry: string[];
   /**
+   * The target declarator's index in its `var`/`let`/`const` statement, for the
+   * shapes whose target hangs off one (C5x, unit 2/4).
+   *
+   * DISAMBIGUATION ONLY, and recorded only by a row that needs it: the
+   * permission pair `kye`/`von` are both 7-parameter arrows declared in one
+   * three-declarator statement and both stamp `decideLocation:"pre-ask"`, so
+   * `params` + `ancestry` tie and no literal separates them. Their positions in
+   * the declaration list do not.
+   *
+   * A row that does not record one is not claiming a position, and comparison
+   * skips it — so this never forces an index onto the shapes that never needed
+   * one. When it IS recorded, an upstream edit to the declaration list makes the
+   * build refuse rather than select a different sibling.
+   */
+  declarator?: number;
+  /**
    * Set when the target is a generator — the delegation is `yield*` rather than
    * `return`, so this is not decoration: an upstream function that becomes (or
    * stops being) a generator needs a different delegation AND a differently
@@ -122,7 +138,19 @@ function matchesShape(n: ts.Node, shape: TargetShape): boolean {
       return ts.isFunctionDeclaration(n);
     case "switch-case":
       return ts.isCaseClause(n);
+    // An arrow that IS a declarator's initializer. Deliberately not "any arrow":
+    // the excision has to leave the declarator, its siblings and the statement's
+    // `var` keyword exactly where they are, and only an initializer position
+    // makes that a straight span replacement.
+    case "arrow-initializer":
+      return ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.initializer === n;
   }
+}
+
+/** Which declarator of its `var`/`let`/`const` statement this declaration is. */
+function declaratorIndex(d: ts.VariableDeclaration): number {
+  const list = d.parent;
+  return ts.isVariableDeclarationList(list) ? list.declarations.indexOf(d) : 0;
 }
 
 const has = (n: ts.Node, kind: ts.SyntaxKind) =>
@@ -157,10 +185,13 @@ export const sameSignature = (a: TargetSignature, b: TargetSignature) =>
   a.params === b.params &&
   a.ancestry.length === b.ancestry.length &&
   a.ancestry.every((k, i) => k === b.ancestry[i]) &&
-  a.generator === b.generator;
+  a.generator === b.generator &&
+  // see `declarator`: an unrecorded index is not a claim, so it is not compared.
+  (a.declarator === undefined || b.declarator === undefined || a.declarator === b.declarator);
 
 export const formatSignature = (s: TargetSignature) =>
-  `params=${s.params} ancestry=${s.ancestry.join("<")}${s.generator ? " generator" : ""}`;
+  `params=${s.params} ancestry=${s.ancestry.join("<")}${s.generator ? " generator" : ""}` +
+  `${s.declarator === undefined ? "" : ` declarator=#${s.declarator}`}`;
 
 /**
  * The target-identity guard. A mismatch is never auto-healed: re-verify which
@@ -308,6 +339,47 @@ function exciseFunction(sf: ts.SourceFile, n: ts.FunctionDeclaration): Excision 
   };
 }
 
+/**
+ * An arrow function that initializes one declarator (campaign spec C5x, unit 2).
+ *
+ * The permission chain's entry points are written this way —
+ * `Dd=async(…)=>{…},kye=async(…)=>{…},von=async(…)=>{…}` is ONE `var` statement
+ * with three declarators — so W6 has no target without it. The excised span is
+ * the ARROW, never the declarator and never the statement: the neighbours in the
+ * list, the commas between them and the `var` keyword all belong to bindings
+ * this row is not claiming, and taking them would silently rewrite two other
+ * functions.
+ *
+ * Two things an arrow inherits from its enclosing scope make a body unmovable,
+ * and both are refused rather than approximated. `this` is lexical, so a body
+ * that reads it would see the owned module's `this` instead of the chunk's.
+ * `arguments` is the same hazard and is invisible to the capture inventory,
+ * which treats it as an ambient global — a function declaration binds its own,
+ * so this is the one shape where that assumption is wrong.
+ */
+function exciseArrow(sf: ts.SourceFile, n: ts.ArrowFunction): Excision {
+  const decl = n.parent as ts.VariableDeclaration;
+  if (!ts.isIdentifier(decl.name)) throw new Error("arrow-initializer target is bound by a destructuring pattern — nothing to name the delegation after");
+  const name = decl.name.text;
+  if (readsThis(n)) throw new Error(`${name}: the arrow's body reads \`this\`, which it inherits lexically — the delegated body would see a different one`);
+  if (/(?<![\w$])arguments(?![\w$])/.test(sf.text.slice(n.getStart(sf), n.getEnd()))) {
+    throw new Error(`${name}: the arrow's body reads \`arguments\`, which it inherits from the enclosing function — delegation needs an explicit adapter`);
+  }
+  const params = paramText(sf, n.parameters);
+  const prefix = has(n, ts.SyntaxKind.AsyncKeyword) ? "async " : "";
+  return {
+    shape: "arrow-initializer",
+    label: name,
+    node: n,
+    signature: signatureOf(n, n.parameters.length, { declarator: declaratorIndex(decl) }),
+    start: n.getStart(sf),
+    end: n.getEnd(),
+    original: sf.text.slice(n.getStart(sf), n.getEnd()),
+    shapeArgs: paramArgs(name, n.parameters),
+    render: (fn, args) => `${prefix}(${params})=>globalThis.__reforge.${fn}(${args.join(",")})`,
+  };
+}
+
 /** Does this subtree read `this` outside a nested `function`/class of its own? */
 function readsThis(n: ts.Node): boolean {
   let found = false;
@@ -434,6 +506,7 @@ export function excise(sf: ts.SourceFile, anchorIdx: number, shape: TargetShape)
     if (!matchesShape(node, shape)) continue;
     if (shape === "switch-case") return exciseCase(sf, node as ts.CaseClause);
     if (shape === "free-function") return exciseFunction(sf, node as ts.FunctionDeclaration);
+    if (shape === "arrow-initializer") return exciseArrow(sf, node as ts.ArrowFunction);
     return exciseMethod(sf, node as ts.MethodDeclaration, shape);
   }
   throw new Error(`no enclosing ${shape} node above the anchor — re-check the target shape`);
