@@ -2785,7 +2785,8 @@ ownership mid-round-trip. W7 inherits the request leg, and should re-verify the 
 
 ### The attestation is what grades the SCENARIOS
 
-W6's exclusion set is the widest in the campaign — 173 new entries — and the reason is structural
+W6's exclusion set is the widest in the campaign — 175 new entries, for a total of 301 against 340
+executed outcomes — and the reason is structural
 rather than sloppy. **This subsystem's job is to decide, and a rung that is reached and passes leaves
 the same transcript as one that was never reached.** A decision ladder is the one shape where
 transcript-level coverage says least, which is precisely why the branch inventory earns its cost

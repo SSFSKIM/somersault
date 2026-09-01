@@ -247,6 +247,9 @@ Three findings came only from the branch side:
    the whole subsystem is named for are not among them, because the engine has faster paths above
    them for the two rule shapes a corpus can express.
 
+Final figures: **340 of 641 branch outcomes executed, 301 excluded, zero unadjudicated**, and the
+gate passes 121 of 121 phases over a 56-scenario corpus.
+
 The exclusion families, all named on the entries themselves: arms behind the pinned environment
 (sandboxing, remote execution, the feature gates §3.3 fixes at their disabled defaults), arms behind
 a tool CAPABILITY no headless tool implements (`requiresUserInteraction`,
