@@ -19,3 +19,6 @@ export const GREP_TOOL_NAME = "Grep";
 export const BASH_TOOL_NAME = "Bash";
 export const AGENT_TOOL_NAME = "Agent";
 export const REPL_TOOL_NAME = "REPL";
+// Upstream `ar`, in the primitives chunk. Read by the subagent prompt's notes
+// block, by permission-rule matching and by a dozen prose sites.
+export const WRITE_TOOL_NAME = "Write";

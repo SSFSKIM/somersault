@@ -952,6 +952,286 @@ export const SPLICES: Splice[] = [
     coverage: ["permission-broker", "permission-bag"],
   },
 
+  // ---- system-prompt assembly (subsystem/environment-and-system-prompt) ----
+  // W3's five splices, all `free-function` — the shape W0a spiked on `env-block`,
+  // which is the sixth member of this subsystem and already owned.
+  //
+  // Read them as a pipeline, because that is what they are on every request:
+  //
+  //   identity-prompt        picks the one sentence the prompt opens with
+  //   context-prompt-lines   appends the ambient context as `key: value` lines
+  //   system-prompt-blocks   partitions the flat list into scoped blocks
+  //   system-prompt-wire     turns those into the API's `system` array
+  //   context-reminder       renders the same context as the first user message
+  //   subagent-prompt        the parallel assembly for a dispatched agent
+  //
+  // Three of them were DARK on the corpus until this wave recorded
+  // `sysprompt-preset`, `sysprompt-append` and `claude-md-memory` (see
+  // w3/scenarios.ts): the harness passes no `systemPrompt`, so every earlier
+  // recording carried the same two blocks and none of the section machinery.
+
+  {
+    // The block partition and its cache scoping — the function every request's
+    // `system` array comes out of. Anchored on its own telemetry event, unique
+    // graph-wide.
+    //
+    // FOUR of its six captures are `primitive`, which is the highest yield in
+    // the manifest: the boundary marker, the billing prefix, the three identity
+    // sentences and the reporting-outcomes prose are all compared against the
+    // graph on every single delegation. A prompt constant that is REWORDED
+    // upstream moves no anchor, no target hash and no capture hash — these
+    // comparisons are the only thing that would see it.
+    name: "system-prompt-blocks",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "tengu_sysprompt_boundary_found",
+    fn: "systemPromptBlocks",
+    captures: [
+      {
+        // `Kde()` — two feature gates plus a `firstParty`/`anthropicAws`
+        // provider test. FALSE under §3.3's pinned gate state, measured through
+        // `sysprompt-preset` (the preset's section list carries no boundary
+        // marker, which only happens on the gate's empty arm).
+        as: "staticPromptEnabled",
+        kind: "effectful-port",
+        derive: pick(
+          "system-prompt-blocks",
+          "staticPromptEnabled",
+          new RegExp(`let ${ID}=(${ID})\\(\\),${ID}=e\\.findIndex`),
+        ),
+      },
+      {
+        // `wO` — the SDK's public `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`.
+        as: "boundaryMarker",
+        kind: "primitive",
+        derive: pick("system-prompt-blocks", "boundaryMarker", new RegExp(`=>${ID}===(${ID})\\)`)),
+      },
+      {
+        // `tL="x-anthropic-billing-header:"`.
+        as: "billingHeaderPrefix",
+        kind: "primitive",
+        derive: pick("system-prompt-blocks", "billingHeaderPrefix", new RegExp(`\\.startsWith\\((${ID})\\)`)),
+      },
+      {
+        // `n6` — the frozen Set of the three identity sentences, shared with the
+        // `identity-prompt` row that PRODUCES them. A Set is not `Object.is`
+        // comparable, so its adapter asserts the members in declaration order
+        // (shared/assert.js `assertGraphMembers`); a blanket equality assertion
+        // over a Set would be vacuous in both directions.
+        as: "identityPrompts",
+        kind: "primitive",
+        derive: pick("system-prompt-blocks", "identityPrompts", new RegExp(`else if\\((${ID})\\.has\\(`)),
+      },
+      {
+        // `aE` — the "# Reporting outcomes" section. Recognised by identity, so
+        // the owned copy has to be the same 907 characters.
+        as: "reportingOutcomes",
+        kind: "primitive",
+        derive: pick("system-prompt-blocks", "reportingOutcomes", new RegExp(`else if\\(${ID}===(${ID})\\)`)),
+      },
+      {
+        as: "telemetry",
+        kind: "effectful-port",
+        derive: pick(
+          "system-prompt-blocks",
+          "telemetry",
+          new RegExp(`(${ID})\\("tengu_sysprompt_using_tool_based_cache"`),
+        ),
+      },
+    ],
+    // Every scenario in the corpus: this is the one function no request can
+    // avoid. Listed in full so the expected-RED set is not read as a regression
+    // (the `bash-tool-result` precedent).
+    coverage: [
+      "plain",
+      "bash-tool",
+      "file-tools",
+      "permission-broker",
+      "hooks",
+      "multi-turn",
+      "resume",
+      "api-error",
+      "thinking",
+      "subagent",
+      "partial-tool-args",
+      "mcp-tool",
+      "parallel-tools",
+      "slash-compact",
+      "runtime-setters",
+      "todo-tool",
+      "search-tools",
+      "uuid-correlation",
+      "interrupt",
+      "permission-bag",
+      "background-task",
+      "fork-session",
+      "edit-tool",
+      "task-family",
+      "search-tools-lean",
+      "sysprompt-preset",
+      "sysprompt-append",
+      "claude-md-memory",
+    ],
+  },
+
+  {
+    // Scoped blocks -> the API's `system` array. The scout filed this one
+    // "unanchorable"; it is not. Its distinctive substring is the pair of
+    // property names `cacheScope,ttl:` — one occurrence graph-wide, and no
+    // minified identifier in it, which is the property the anchor doctrine
+    // actually asks for (a `coLiteral` exists for anchors that are not unique,
+    // not for anchors that are not PROSE).
+    name: "system-prompt-wire",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: "cacheScope,ttl:",
+    fn: "systemPromptTextBlocks",
+    captures: [
+      {
+        // `tOe` — the graph's binding for the partition above, which this wave
+        // also owns. Kept a port rather than an owned helper: it is effectful
+        // (telemetry) and its own six captures belong to the graph, so the call
+        // reaches owned code through the delegation rather than by import.
+        as: "partition",
+        kind: "effectful-port",
+        derive: pick("system-prompt-wire", "partition", new RegExp(`return (${ID})\\(e,\\{skipGlobalCacheForSystemPrompt`)),
+      },
+      {
+        // `fF({scope,ttl})` — builds the `cache_control` object, reading the
+        // prompt-cache TTL policy. A ledger edge to the query-loop wave.
+        as: "cacheControl",
+        kind: "effectful-port",
+        derive: pick("system-prompt-wire", "cacheControl", new RegExp(`cache_control:(${ID})\\(\\{scope:`)),
+      },
+    ],
+    // Same reason as the partition it calls: no request avoids it.
+    coverage: ["plain", "subagent", "sysprompt-preset", "sysprompt-append", "claude-md-memory"],
+  },
+
+  {
+    // The identity-line selector. Anchored on `?.isNonInteractive` — 19
+    // occurrences graph-wide but exactly ONE in the engine chunk, so a
+    // `coLiteral` scopes it: the append-aware identity sentence, which is
+    // declared immediately above this function and read by nothing else.
+    // Neither part carries a minified identifier.
+    name: "identity-prompt",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "?.isNonInteractive",
+    coLiteral: "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.",
+    fn: "identityPrompt",
+    captures: [
+      {
+        // `Efe` — returned by BOTH the Vertex arm and the interactive arm, so
+        // one derivation with two use sites.
+        as: "cliIdentity",
+        kind: "primitive",
+        derive: pick("identity-prompt", "cliIdentity", new RegExp(`==="vertex"\\)return (${ID});`)),
+      },
+      {
+        as: "appendIdentity",
+        kind: "primitive",
+        derive: pick("identity-prompt", "appendIdentity", new RegExp(`\\.hasAppendSystemPrompt\\)return (${ID});`)),
+      },
+      {
+        as: "sdkIdentity",
+        kind: "primitive",
+        derive: pick("identity-prompt", "sdkIdentity", new RegExp(`\\.hasAppendSystemPrompt\\)return ${ID};return (${ID})\\}`)),
+      },
+      {
+        // `Ne()` — the resolved API provider. Pinned to first-party by the
+        // harness's own base URL, so the Vertex arm is unreachable and adjudicated.
+        as: "provider",
+        kind: "effectful-port",
+        derive: pick("identity-prompt", "provider", new RegExp(`if\\((${ID})\\(\\)==="vertex"\\)`)),
+      },
+    ],
+    // 27 scenarios render the SDK arm; `sysprompt-append` is the only recording
+    // in the corpus that carries the append arm's sentence.
+    coverage: ["plain", "subagent", "sysprompt-preset", "sysprompt-append", "claude-md-memory"],
+  },
+
+  {
+    // CLAUDE.md injection: the ambient context as the first user message.
+    name: "context-reminder",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "<system-reminder>\nAs you answer the user's questions",
+    fn: "contextReminderMessages",
+    captures: [
+      {
+        // `xe({content,isMeta})` — the message constructor, which stamps a uuid
+        // and a timestamp. A ledger edge to the session/transcript subsystem.
+        as: "makeMessage",
+        kind: "effectful-port",
+        derive: pick("context-reminder", "makeMessage", new RegExp(`return\\[(${ID})\\(\\{content:`)),
+      },
+    ],
+    // `currentDate` is unconditional, so every scenario renders the one-entry
+    // shape; `claude-md-memory` is the only one that renders two entries, i.e.
+    // the only one where the join separator is observable at all.
+    coverage: ["plain", "subagent", "claude-md-memory"],
+  },
+
+  {
+    // The same context, appended to the SYSTEM prompt as `key: value` lines —
+    // where a Claude Code prompt's `gitStatus:` paragraph comes from.
+    //
+    // The scout filed this one unanchorable too, and it is the manifest's
+    // weakest anchor: `].filter(Boolean)}` is punctuation, with no prose and no
+    // semantics. It is takeable because it occurs ONCE in the engine chunk and
+    // a `coLiteral` scopes it there — the context reminder's own opening line,
+    // which is the adjacent function and the other half of the same context
+    // rendering. Both failure modes are loud: a second occurrence fails the
+    // uniqueness check, and a drifted node fails the signature.
+    name: "context-prompt-lines",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "].filter(Boolean)}",
+    coLiteral: "<system-reminder>\nAs you answer the user's questions",
+    fn: "contextPromptLines",
+    // Verified zero free variables.
+    captures: [],
+    // Called on every request, but only OBSERVABLE where the context map is
+    // non-empty — which on this corpus is the two preset scenarios.
+    coverage: ["sysprompt-preset", "sysprompt-append"],
+  },
+
+  {
+    // A dispatched agent's system prompt. Anchored on the provenance-and-
+    // authority sentence it appends, which is unique graph-wide.
+    name: "subagent-prompt",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: "Messages from the agent that launched you",
+    fn: "subagentPrompt",
+    captures: [
+      {
+        // `ar="Write"` — interpolated into the notes block's last bullet.
+        as: "writeToolName",
+        kind: "primitive",
+        derive: pick("subagent-prompt", "writeToolName", new RegExp(`- Do NOT \\$\\{(${ID})\\} report/summary`)),
+      },
+      {
+        // `W8t` — the env-info section, which wraps the ALREADY OWNED env block
+        // (W0a's `env-block` splice). The first owned module in the campaign
+        // whose port's far side is also owned; recorded as a ledger edge rather
+        // than folded away.
+        as: "envInfoSection",
+        kind: "effectful-port",
+        derive: pick("subagent-prompt", "envInfoSection", new RegExp(`,${ID}=await (${ID})\\(t,r\\),`)),
+      },
+      {
+        // `kKe` — the `<total_tokens>` attachment; reads env kill-switches and
+        // the session's token budget.
+        as: "tokenAttachment",
+        kind: "effectful-port",
+        derive: pick("subagent-prompt", "tokenAttachment", new RegExp(`,${ID}=(${ID})\\(t\\);return\\[`)),
+      },
+    ],
+    coverage: ["subagent", "background-task"],
+  },
+
   {
     // VARIABLE-DECLARATOR shape (campaign spec C5x, unit 3) — the mechanism
     // spike for owning a top-level constant's initializer, on the target W4

@@ -87,6 +87,14 @@ for (const [label, argv] of [
   // ledger, which now fails the gate rather than drifting quietly.
   ["closure-ledger checker fixtures (X2)", ["ledger/check.test.ts"]],
   ["closure ledger is green (X2)", ["ledger/check.ts"]],
+  // X7's own enforcement, added by W3 after finding it had none: contract X7
+  // says every wave registers its standalone-complete modules in the skeleton,
+  // and `skeleton.test.ts` asserts one registration per manifest row — but it
+  // was not a gate phase, so C5x's three modules went unregistered through a
+  // green gate and were only noticed when the NEXT wave's rows shifted the
+  // count. A contract nothing runs is a contract nothing enforces.
+  ["engine-ts skeleton + X7 registration", ["engine-ts/skeleton.test.ts"]],
+  ["engine-ts reaches no extracted artifact", ["engine-ts/check-reachability.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const tail = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+plausibility)/.test(l)).slice(-2);

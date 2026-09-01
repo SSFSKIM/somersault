@@ -22,3 +22,27 @@ export function assertGraphValue(splice, as, graph, owned) {
       `owned constant deliberately — never by copying whatever the graph now says.`,
   );
 }
+
+/**
+ * The same claim for a capture whose value is a SET of strings rather than one
+ * string — upstream freezes the three identity sentences into a `Set` and the
+ * block partition recognises the identity block by membership.
+ *
+ * `Object.is` cannot see inside a Set, so a blanket equality assertion over one
+ * would be vacuous (two different Sets are never `Object.is`-equal, and the same
+ * Set always is). Compare the MEMBERS, in declaration order, which is what the
+ * owned copy actually has to keep in step: a sentence upstream rewords, adds or
+ * drops moves no anchor and no hash, and this is the only thing that sees it.
+ */
+export function assertGraphMembers(splice, as, graph, owned) {
+  const actual = [...graph];
+  const same = actual.length === owned.length && actual.every((v, i) => Object.is(v, owned[i]));
+  if (same) return owned;
+  throw new Error(
+    `reforge ${splice}: the graph's '${as}' no longer has the owned members.\n` +
+      `  owned: ${JSON.stringify(owned)}\n` +
+      `  graph: ${JSON.stringify(actual)}\n` +
+      `  The owned copy is stale. Re-verify the upstream declaration in the pinned bundle and update the ` +
+      `owned constants deliberately — never by copying whatever the graph now says.`,
+  );
+}

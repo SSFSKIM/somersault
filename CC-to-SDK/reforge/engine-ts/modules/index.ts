@@ -43,6 +43,15 @@ import * as globDescription from "../../strangle/modules/glob-description/refere
 import * as readDescription from "../../strangle/modules/read-description/reference.js";
 import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
 import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
+import * as postToolHooks from "../../strangle/modules/post-tool-hooks/reference.js";
+import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
+import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
+import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
+import * as systemPromptWire from "../../strangle/modules/system-prompt-wire/reference.js";
+import * as identityPrompt from "../../strangle/modules/identity-prompt/reference.js";
+import * as contextReminder from "../../strangle/modules/context-reminder/reference.js";
+import * as contextPromptLines from "../../strangle/modules/context-prompt-lines/reference.js";
+import * as subagentPrompt from "../../strangle/modules/subagent-prompt/reference.js";
 
 /** name, closure-ledger subsystem row, and the module's entry point. */
 const OWNED: [string, string, unknown][] = [
@@ -76,6 +85,25 @@ const OWNED: [string, string, unknown][] = [
   ["read-description", "subsystem/tool-descriptions", readDescription.readDescription],
   ["grep-description", "subsystem/tool-descriptions", grepDescription.grepDescription],
   ["webfetch-description", "subsystem/tool-descriptions", webFetchDescription.webFetchDescription],
+  // C5x's three mechanism-round-2 modules. They shipped as permanent owned
+  // splices rather than rehearsals, but their registration was missed — an X7
+  // gap the skeleton test caught the moment the next wave added a row, and one
+  // nothing in the gate was watching (skeleton.test.ts is not a gate phase).
+  // Registered here by W3 for the same reason C5x's attestation obligation
+  // lands here: the owning wave closes what the mechanism wave deferred.
+  ["post-tool-hooks", "subsystem/hook-dispatch", postToolHooks.postToolHooks],
+  ["permission-decision", "subsystem/permissions", permissionDecision.permissionDecisionWithSink],
+  ["compaction-prompt", "subsystem/compaction", compactionPrompt.summarizationPrompt],
+  // W3's prompt-assembly pipeline (C6). Six modules, one subsystem row, and the
+  // row still does not close on them: the section BUILDERS behind the preset's
+  // 27 KB block are upstream's, and so is the tool serializer. reforge/ledger.json
+  // says so.
+  ["system-prompt-blocks", "subsystem/environment-and-system-prompt", systemPromptBlocks.systemPromptBlocks],
+  ["system-prompt-wire", "subsystem/environment-and-system-prompt", systemPromptWire.systemPromptTextBlocks],
+  ["identity-prompt", "subsystem/environment-and-system-prompt", identityPrompt.identityPrompt],
+  ["context-reminder", "subsystem/environment-and-system-prompt", contextReminder.contextReminderMessages],
+  ["context-prompt-lines", "subsystem/environment-and-system-prompt", contextPromptLines.contextPromptLines],
+  ["subagent-prompt", "subsystem/environment-and-system-prompt", subagentPrompt.subagentPrompt],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {
