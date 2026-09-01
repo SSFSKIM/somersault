@@ -10,34 +10,29 @@
 // unspliceable: a splice whose solo sabotage cannot turn a scenario red is dead
 // code the gate would have to refuse.
 //
-// WHICH EVENTS ARE LIVE, RE-MEASURED RATHER THAN INHERITED — TWICE.
+// WHICH EVENTS ARE LIVE, RE-MEASURED RATHER THAN INHERITED — THREE TIMES, AND
+// THE MEASUREMENT WAS THE HARD PART.
+//
 // `w5/probe-hook-events.ts` re-measured the 2026-06 "8 of 30" number against the
-// PINNED engine. Its first take drove ONE batched tool turn with CALLBACKS only
-// and reported eight live events; C8's boundary review found the negatives that
-// take produced were vacuous, and the re-measured probe (a phase per firing
-// condition, callbacks AND settings command hooks on every event) fires TWELVE:
+// PINNED engine and reported eight. C8's boundary review found those negatives
+// vacuous — the one batched tool turn created none of the missing firing
+// conditions — and re-measured twelve. C8's SECOND round found that
+// re-measurement still choosing its own watched list by judgment, so three live
+// events sat outside the measurement entirely and six more were never asked.
 //
-//   PreToolUse, PostToolUse, PostToolBatch, UserPromptSubmit, Stop,
-//   MessageDisplay  — the original six, on an ordinary tool turn
-//   SubagentStart, SubagentStop  — on an Agent dispatch (`hooks-subagent`)
-//   PostToolUseFailure  — on a tool call that fails (`hooks-tool-failure`)
-//   PreCompact          — on a compaction (`hooks-precompact`)
-//   SessionStart        — on every run, COMMAND path only (`hooks-session-start`)
-//   SessionEnd          — on teardown, and by callback on `/clear`
-//                         (`hooks-session-end`)
+// The population now comes from upstream's own dispatcher REGISTRY: 33 events,
+// snapshotted as `research/fixtures/hook-registry-2.1.251.json` and re-derived by
+// the gate, with one named firing condition per event. TWENTY-THREE fire. Ten
+// stay OPEN with their conditions named — an eliciting MCP server, a teammate
+// session, a `--worktree` launch, an auto-mode permission classifier — which is
+// an honest absence of evidence rather than a negative.
 //
-// Only Notification did not fire in any phase; its one call site in the pinned
-// bundle is MCP-elicitation completion. The callback/command split is not a
-// detail: `vUt` (SessionStart) and `tz` (PreCompact) call their executor with no
-// session hooks registry, so a callback-only probe cannot see them at all — which
-// is exactly how four live events were mistaken for dead ones.
-//
-// EIGHT RECORDINGS. The scout budgeted one per uncovered event; the probe showed
-// a single no-tool turn fires UserPromptSubmit, MessageDisplay and Stop together,
-// so `hooks-prompt-submit` carries all three. The batch, subagent, failure,
-// compaction, session-start and session-end events each need their own turn
-// SHAPE and get their own scenario, and the command-hook cell is the matrix's one
-// non-trivial cell (see below).
+// FOURTEEN RECORDINGS. One per turn SHAPE rather than one per event, because
+// several events share a condition: a single no-tool turn fires UserPromptSubmit,
+// MessageDisplay and Stop together; one compaction fires PreCompact and then
+// PostCompact; one permission consult answered slowly fires PermissionRequest and
+// Notification; one TaskCreate/TaskUpdate pair fires both task events. The
+// command-hook cell is the matrix's one non-trivial cell (see below).
 //
 // THE COMMAND-HOOK CELL. `Options.hooks` takes CALLBACKS, and a callback is
 // handed a JavaScript object — so nothing in the corpus grades the hook-input
@@ -619,15 +614,18 @@ export const W5_SCENARIOS: Scenario[] = [
   },
 
   {
-    // SessionStart — the one live event `Options.hooks` cannot reach AT ALL.
-    // Upstream's dispatcher hands its executor no session hooks registry, so the
-    // function-hook lookup has nothing to look in and a callback is never
-    // consulted however the run is shaped. The settings layer still resolves, so
+    // SessionStart — the one live event no CALLBACK has ever observed, measured
+    // over every phase of every probe run. The settings layer still resolves, so
     // this is the second command-hook cell, and like the first it is graded on
     // the SANDBOX: the projection's bytes are the record's serialisation.
     //
-    // That mechanism is exactly what made this event look dead. A callback-only
-    // probe measured the registration path, not the dispatcher.
+    // That timing is exactly what made this event look dead. A callback-only
+    // probe measured the registration path, not the dispatcher — and the first
+    // fix for that read the silence as STRUCTURAL ("the dispatcher passes no
+    // registry, so no callback can reach it"), which the bundle refutes:
+    // `Options.hooks` entries land in a global `sdkHost` store the executor's
+    // lookup consults whether or not a registry was passed. The byte fact
+    // survives, the inference did not.
     tag: "hooks-session-start",
     title: "a command hook receives the SessionStart record — the event no callback can see",
     run: async (ctx) => {
@@ -655,7 +653,12 @@ export const W5_SCENARIOS: Scenario[] = [
     check: (msgs, events) => {
       if (!resultText(msgs).includes("REFORGE_SESSION_START")) return "the turn did not complete";
       if (events.some((e) => (e as { event?: string }).event === "SessionStart")) {
-        return "a SessionStart CALLBACK fired — upstream passes this dispatcher no registry, so the seam changed";
+        return (
+          "a SessionStart CALLBACK fired. This dispatch runs BEFORE the SDK host's hooks are registered, which is why " +
+          "no callback has ever seen it; a callback firing here means the registration now completes first — a timing " +
+          "change in the SDK's initialize path, not a change in the dispatcher. Re-measure with w5/probe-hook-events.ts " +
+          "before assuming either."
+        );
       }
       const dump = events.find((e) => (e as { event?: string }).event === "SessionStart:stdin") as
         | { payload?: string | null }
@@ -678,12 +681,13 @@ export const W5_SCENARIOS: Scenario[] = [
   },
 
   {
-    // SessionEnd. Upstream has exactly two call sites — session RESUME and
-    // `/clear` — so `/clear` is the one a headless run reaches, and it is the
-    // one that puts the dispatcher INSIDE the observation window. The event also
-    // fires on ordinary teardown, but that fire lands after the SDK iterator has
-    // ended and after the state surface is sampled, so a scenario that waited
-    // for it would be grading a race.
+    // SessionEnd. Upstream has THREE call sites — session RESUME, `/clear`, and
+    // the app's own `shutdown()`, which reaches the dispatcher through the barrel
+    // chunk by dynamic import. `/clear` is the one that puts it INSIDE the
+    // observation window; the shutdown caller is the ordinary-teardown fire the
+    // probe sees on every phase, and it lands after the SDK iterator has ended
+    // and after the state surface is sampled, so a scenario that waited for it
+    // would be grading a race.
     //
     // Unlike every other dispatcher in the family this one is not a generator
     // and its results are not yielded anywhere: it writes failures to stderr and

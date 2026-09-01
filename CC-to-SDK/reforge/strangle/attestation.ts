@@ -891,7 +891,7 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "session-end-hooks#sessionEndHooks@0:F",
     reason:
-      "the `options || {}` default, i.e. the dispatcher called with no options bag at all. Both of upstream's headlessly reachable call sites (`/clear` and session resume) pass one, so the corpus cannot render the arm without a third caller. strangle/hooks-parity.test.ts runs every result shape against BOTH option sets, the absent one included, and compares the executor request each produces.",
+      "the `options || {}` default, i.e. the dispatcher called with no options bag at all. Upstream has THREE callers — `/clear`, session resume, and the app's own shutdown(), which reaches this function through the barrel chunk by dynamic import — and all three pass a bag, so the arm is defensive rather than reachable and the corpus cannot render it without a fourth caller. (The count was two here until C8's second round found the shutdown caller: the static import graph does not see a dynamic import, and that miss is also what left SessionEnd's ordinary-teardown fire unexplained. The conclusion is unchanged; the premise was wrong.) strangle/hooks-parity.test.ts runs every result shape against BOTH option sets, the absent one included, and compares the executor request each produces.",
   },
 
   // ---- PreCompact: the result shapes a scenario cannot produce -------------

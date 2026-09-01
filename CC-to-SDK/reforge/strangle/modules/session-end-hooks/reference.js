@@ -22,10 +22,15 @@
 //   its OWN TIMEOUT, 1500 ms, where every other dispatcher in the family
 //       defaults to 600,000. A session is ending; the engine will not wait ten
 //       minutes for a hook that is holding it open.
-//   the OPTIONS BAG is optional. Called with nothing, every option destructures
-//       to `undefined` and the executor still runs — the settings layers still
-//       resolve, which is why this event fires on ordinary teardown with no
-//       registry passed at all.
+//   the OPTIONS BAG is optional (`options || {}`). Upstream has THREE callers
+//       and all three pass a bag — `/clear`, session resume, and the app's own
+//       `shutdown()`, which reaches this function through the barrel chunk by
+//       dynamic import and passes `{signal, storageV5, credentials}` with a
+//       reason defaulting to "other". What none of them passes is a session
+//       hooks registry, and the executor still runs: the settings layers resolve
+//       without one. That shutdown caller is the ordinary-teardown fire the
+//       probe measures on every phase, and the `|| {}` arm itself is defensive
+//       rather than reachable.
 //
 // Ports (nothing behind them is owned by this wave):
 //   createBaseHookInput(session, cwd)  the common prefix (two arguments).

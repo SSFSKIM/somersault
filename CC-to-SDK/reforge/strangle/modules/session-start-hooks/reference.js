@@ -1,12 +1,20 @@
 // PARITY LAYER (§2.5 `reference`) — the SessionStart hook dispatcher
 // (upstream `vUt` / `executeSessionStartHooks`, 2.1.251, chunk-fy12d89p).
 //
-// The one live event `Options.hooks` cannot reach. This dispatcher hands its
-// executor NO session hooks registry, so the executor's function-hook lookup has
-// nothing to look in and an SDK callback is never consulted — however the run is
-// shaped. Only the settings layer resolves, which is why `hooks-session-start`
-// registers a COMMAND hook and grades the record on the sandbox rather than in
-// the event log, and why a callback-only probe read this live event as dead.
+// The one live event no SDK CALLBACK observes, and the reason is timing rather
+// than structure. This dispatcher hands its executor no session hooks registry —
+// that byte fact is real, and it is why this module forwards none — but a
+// registry is not what a callback travels in: `Options.hooks` entries are tagged
+// `origin:"sdkHost"` and pushed into a GLOBAL store, which the executor's lookup
+// consults unconditionally. What actually keeps a callback out is that this
+// dispatch runs before the host's hooks are registered. Measured: in every probe
+// phase, on every run, the SessionStart callback count is zero and the settings
+// command hook fires.
+//
+// So the settings layer is the only path a recording can use, which is why
+// `hooks-session-start` registers a COMMAND hook and grades the record on the
+// sandbox rather than in the event log — and why a callback-only probe read this
+// live event as dead.
 //
 // What it owns beyond the record's field set:
 //
