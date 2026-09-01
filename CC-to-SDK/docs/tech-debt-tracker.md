@@ -281,3 +281,38 @@ budget's own timetable rather than on this entry's. Re-anchoring is the priced c
 structural anchor, and §2.1 now says so. Revisit if the structural-anchor count grows beyond a handful,
 or if a bump ever produces a resolution that is wrong rather than absent — the second would falsify the
 loud-failure argument this entry rests on.
+
+---
+
+## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded
+
+**Source:** the C8 boundary review (finding 5, logged rather than fixed) ·
+`reforge/strangle/hooks-parity.test.ts` (`Trace`, `compare`, `compareValue`).
+
+**What:** the oracle grades each dispatcher on two things — what it yielded or returned, and a TRACE of
+what its ports saw. The trace is a record of per-port arrays: every `createBaseHookInput` call in one
+list, every executor request in another, and so on. Comparing them proves each port was called the right
+number of times with the right arguments, and it is what actually grades the hook record's field set and
+the executor request. What it cannot see is ORDER ACROSS PORTS. A dispatcher that built its record before
+taking the activity hold instead of after, or that read the working directory after asking the executor
+rather than before, produces the same per-port lists and compares equal. Two smaller edges ride along:
+the comparison is `JSON.stringify`-based, so a key present with the value `undefined` and a key absent
+compare equal, and a port called with `undefined` versus not called at all is distinguished only by the
+array's length.
+
+**Cost:** bounded, and bounded by the subsystem rather than by luck. These dispatchers are short and
+straight-line — build one record, call one executor — so the orderings a defect could plausibly permute
+are few, and the two that carry real ordering semantics are graded another way: the SessionStart activity
+hold is compared as a single ordered `activity` list (`begin(...)`, `end(...)` in call order), and the
+try/finally that releases it has its own branch-attestation arm and its own control. The
+present-with-undefined blindness is narrower still: every hook record reaches a command hook through
+`JSON.stringify` onto stdin, which erases exactly the same distinction, so for the field that matters
+most the oracle is blind to something the engine also cannot express.
+
+**Why deferred:** fixing it means replacing the per-port lists with one interleaved event log, which is a
+rewrite of the trace's comparison and of every `mustDiffer` control written against the current shape —
+about sixty assertions across ten dispatchers. That is a worthwhile change when a dispatcher with real
+sequencing arrives (the hook EXECUTOR itself is the obvious candidate: it spawns processes, races
+timeouts and propagates cancellation, and for that one interleaving IS the behaviour). Doing it now would
+buy ordering coverage for ten functions that mostly have one order to be in. Revisit when the executor is
+spliced, or when any hook module grows a second effectful call whose position is load-bearing.
