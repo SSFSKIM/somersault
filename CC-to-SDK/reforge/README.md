@@ -2155,60 +2155,241 @@ Nor is the auto-compaction path proven at its natural threshold. The corpus reac
 effective window because a scenario declares that; what runs at 167,000 tokens is the same predicate
 with a different number, and the gap is named rather than rounded up.
 
+## W5 — hook dispatch: seven functions, eight events (2026-09-01)
+
+One scenario in the corpus W5 inherited registered a hook at all — `hooks`, a PreToolUse and a
+PostToolUse callback around one `echo`. Two of the engine's eight headlessly-live events were
+graded and six were not, and each event has its **own** dispatcher building its own record. So W5
+opens the way W3 and W4 did: with recordings, because six of the seven functions it owns had no
+covering scenario and a splice whose solo sabotage cannot turn anything red is dead code the gate
+refuses.
+
+### The live set was re-measured, not inherited
+
+`docs/parity/coverage.md` has said "8 of 30 events fire headlessly" since 2026-06, against a
+different pin. `w5/probe-hook-events.ts` registers callbacks for thirteen events against the
+**pinned** engine and drives one batched tool turn:
+
+| fired | did not fire |
+|---|---|
+| PreToolUse, PostToolUse, PostToolBatch, UserPromptSubmit, Stop, MessageDisplay | PostToolUseFailure, SessionStart, SessionEnd, Notification, PreCompact |
+
+SubagentStart and SubagentStop need an Agent dispatch and fire in `hooks-subagent`. The old number
+survives contact with the new pin — and the five that did not fire are now an evidence-backed
+exclusion on the ledger row rather than an assumption.
+
+### Four recordings, not the scouted five
+
+| scenario | what it renders that nothing else does |
+|---|---|
+| `hooks-prompt-submit` | UserPromptSubmit, MessageDisplay and Stop on one no-tool turn — and the hook's `additionalContext` has to reach the model, so the dispatcher is graded on the REQUEST surface too |
+| `hooks-batch` | PostToolBatch, which needs a turn SHAPE (two tool_use blocks in one assistant message), not a matcher |
+| `hooks-subagent` | SubagentStart, SubagentStop and the parent Stop — both arms of the one dispatcher that serves two events |
+| `hooks-command` | a COMMAND hook: the record read as the byte stream it is serialised into |
+
+Corpus **31 → 35**. The scout budgeted one scenario per uncovered event; the probe showed a single
+no-tool turn fires three of them together, so the same eight events cost one fewer live recording.
+All four replay offline with zero positional fallbacks and all four surfaces identical.
+
+### The command-hook cell, and how it stopped being expensive
+
+`Options.hooks` takes CALLBACKS, and a callback is handed a JavaScript object — so nothing in the
+corpus graded the hook-input record as the **byte stream** a real hook reads on stdin, which is what
+these modules' field ORDER is. Command hooks live in settings, and turning on a filesystem setting
+source would drag the operator's ancestor `.claude/` directories into the recording (the trap W3
+hit). The probe settled the way out: **`Options.settings` takes an inline settings object into the
+flag-settings layer with `settingSources: []` still in force.** No filesystem source, nothing read
+outside the sandbox, and the command ran with the engine's serialised record on stdin — whose key
+order is exactly what `post-tool-hooks/reference.js` says it is.
+
+The hook writes a normalised projection into the sandbox (the raw record carries `session_id` and
+`transcript_path`, and `src/state.ts` hashes contents with no normalisation, so a raw dump would
+diff on run-scoped ids and grade nothing). The projection keeps the key order verbatim, the
+event-specific fields, and the TYPE of the two run-scoped ones. It is graded twice: on the state
+surface, where the file's hash is compared between engines, and on the events surface, where the
+scenario reads it back inside its own run.
+
+### Six splices, one shape, one anchor family
+
+| splice | upstream | what only it does |
+|---|---|---|
+| `pre-tool-hooks` | `Tye` | two execution paths — the in-process function-hook chain and the settings execution it falls back to |
+| `post-tool-batch-hooks` | `Fct` | one record for a BATCH of calls; no `matchQuery`, because a batch has no single tool name |
+| `user-prompt-submit-hooks` | `bSe` | its results change the CONVERSATION, and its timeout is 30 s where every sibling's is 600 s |
+| `stop-hooks` | `y9` | one function, two events, two record shapes |
+| `subagent-start-hooks` | `kUt` | hands the executor its session hooks and agent context directly — the agent being started has no context yet |
+| `message-display-hooks` | `Zqe` | builds from a MESSAGE and synthesises its own correlation id |
+
+All six are `free-function` generator targets on `hook_event_name:"<Event>"`, the anchor family
+C5x's spike proved out. Five are unique bundle-wide.
+`user-prompt-submit-hooks` is not: the literal occurs twice in ONE chunk, so a `coLiteral` cannot
+scope it (it scopes to a chunk). The other carrier is `Y4e`, the REPL-side dispatcher, which has six
+parameters where this one has five — so `siblings: 2` plus the verified signature selects, and an
+upstream edit to either arity makes the build refuse rather than splice the wrong function.
+
+### Seven helpers became owned, and the call graph is why
+
+C7's lesson — a pure helper reachable only through a function the wave owns belongs *inside* that
+module — has a converse this wave used seven times. The hook fan-out rule (`Hb`), its two
+agent-context predicates (`DR`, `ka`), the last-assistant-message pair (`Wy`, `zr`) and the
+plain-object test (`He`) all have callers all over the engine, so splicing six dispatchers leaves
+upstream's copies live and each stays a real `pure-helper` capture: footprinted, never forwarded,
+reimplemented in `strangle/modules/shared/`. That is genuine ownership of the *rules* — which agent
+ids a hook lookup runs under, which subagent kinds dispatch nothing, when a turn's last message
+counts as text — rather than another port.
+
+### The oracle: `strangle/hooks-parity.test.ts`
+
+**371 comparisons, 36 controls.** The fourth instance of W2's shape, with two additions:
+
+- **The bindings come from the MANIFEST.** Each dispatcher's free variables are re-derived with the
+  manifest's own `derive` regexes against the extracted body, so the oracle cannot bind a port the
+  splice does not forward, and the owned side is driven through the **adapters** — the same argument
+  list the build's delegation synthesises, primitives and their equality assertions included.
+- **The port TRACE carries the executor request.** A callback sees the hook input; it never sees the
+  options the executor was asked for, and those options are most of what distinguishes one
+  dispatcher from another. Comparing the trace is therefore what actually grades the record's field
+  set and the request's shape.
+
+The six owned pure helpers are extracted and compared against their **own upstream bytes** before
+any dispatcher is bound to them — C7's boundary-review lesson, applied where it would otherwise have
+bitten: five of the seven bodies call at least one of them.
+
+### It found a real defect in C5x's spiked module
+
+Every upstream dispatcher ends in a **bare** `yield*`, so it discards the executor generator's
+completion value and returns `undefined`. All seven owned modules wrote `return yield*` and handed
+that value back. No corpus scenario can see it — nothing on the recorded paths reads a dispatcher's
+return value — and the oracle failed on it in its first run. That is precisely what C5x deferred the
+attestation obligation *for*: the mechanism wave shipped a module, the owning wave built the oracle,
+and the oracle found the difference the corpus could not.
+
+### 40 branch outcomes adjudicated, in five families
+
+**132 of 235 executed, 103 excluded, zero un-adjudicated.** The two large families are the
+managed-hooks options bag (never supplied on the headless seam) and the PreToolUse function-hook
+chain (armed only by an in-process module handler or a managed pass, neither of which the SDK seam
+exposes — 19 outcomes, the largest single family this wave adjudicates).
+
+The third family is new to the campaign and is not "the corpus does not do that":
+
+> **A registration guard's REFUSAL arm is unrecordable by construction.** A run with no hook
+> registered for an event produces no consult, no record and no observable of any kind — so "the
+> guard refused" and "the dispatcher was never called" are the *same recording*. It is also the
+> common case in production. Only an upstream-differential oracle can grade it.
+
+The others are the stop dispatcher's guard matrix (two agent kinds the headless Agent tool cannot
+produce, two of three turn-end phases, four shapes of the derived `last_assistant_message`) and a
+prompt submitted inside a subagent context.
+
+Demonstrated red: swapping `tool_use_id` and `duration_ms` in the PostToolUse record fails five
+comparisons.
+
+### Ledger
+
+`subsystem/hook-dispatch` carries seven upstream footprints with 51 rebased captures, thirteen
+evidence links and four typed-port edges — and stays **`spliced`**. The note says what the gap is,
+and it is one function: the **23 KB shared executor** (upstream `Qxt`, reached through `jy`/`Xxt`) —
+hook matching, command/callback/http/mcp invocation, timeouts, cancellation — which the W5–W7 scout
+measured **S-module-shaped** and which §2.3 says is owned behind a designed port rather than
+transcribed. Whichever wave takes it inherits `getMatchingHooks`, the agent-context result filter and
+the headless-suppression wrapper with it.
+
+### Gate
+
+**Sixty-three phases**, up from fifty-six: the hook-dispatch parity oracle and six new liveness rows.
+Corpus **35/35**, full acceptance **5/5**, **38** liveness phases, coverage attestation
+**132/235 executed with 103 adjudicated and zero un-adjudicated**.
+
+```
+  PASS  hook-dispatch parity vs the pinned bundle
+  PASS  liveness message-display-hooks      (hooks-prompt-submit)
+  PASS  liveness post-tool-batch-hooks      (hooks-batch)
+  PASS  liveness subagent-start-hooks       (hooks-subagent)
+  PASS  liveness user-prompt-submit-hooks   (hooks-prompt-submit)
+  PASS  liveness stop-hooks                 (hooks-prompt-submit, hooks-subagent)
+  PASS  liveness pre-tool-hooks             (hooks)
+  PASS  liveness post-tool-hooks            (hooks, hooks-command)
+  PASS  coverage attestation
+  PASS  equivalence (faithful)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+**The 56-vs-61 counting artifact is resolved, and it was a counting one.** C7 reported 56 phases and
+its fix round measured 61 with no phases added — the fix commits touched neither `gate.ts` nor the
+manifest, and recomputing the phase count from that tree gives exactly 56. The five extra come from
+counting the LOG rather than the summary: the equivalence phase relays `m2/all.ts`'s five suite
+verdicts in the gate's own `  PASS  <label>` format before the summary prints, so a transcript-wide
+count double-counts them. Measured on this run: 68 such lines in the whole log, 63 in the summary,
+and the five in between are the suites. **The number to quote is the summary's** — it is a property
+of the manifest plus the fixed blocks, not of the transcript.
+
+### What W5 does NOT claim
+
+The subsystem is not owned. What is owned is every per-event **record** — its field set, its order,
+and the guard that decides whether to build it — and the rules behind the guards. What is not owned
+is what happens after the record exists: which hooks match it, how a command hook is spawned and
+timed out, how a callback is dispatched over the control channel, how cancellation propagates. That
+is the executor, and it is a port.
+
+Nor is the hooks matrix complete in the sense of §3.2's family. Eight events fire and eight are
+graded; the other twenty-five the SDK declares have dispatchers here that no headless run reaches,
+and five of them are named with the probe as evidence. The rest are outside the exclusion ledger's
+current reach and are neither claimed nor ruled out.
+
 ## Next
 
-W4 has landed; **C8–C10 (hooks, permissions, control protocol) are next in the bloc's priority
-order.** What they inherit, newest first:
+W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they
+inherit, newest first:
 
-- **A pure helper reachable only through a function the wave owns belongs INSIDE that owned module.**
-  W4 gave `d1n` its own row and watched its solo sabotage come back GREEN: §2.4 makes a pure helper
-  owned rather than called, so splicing its only caller makes upstream's copy unreachable and the
-  separate row dead. Check a candidate helper's call graph before giving it a row.
-- **Compare a port TRACE, not just an output, wherever the target's arms differ by effect — and trace
-  EVERY port, or the trace only separates the arms it happens to cover.** Two of the auto-compaction
-  predicate's four refusals differ from each other in nothing but which ports ran before they refused;
-  `compaction-parity.test.ts` compares which ports ran, with what, and how often, across all eight. The
-  other two refusals call no port at all, and no trace can separate those — an arm that refuses before
-  any effect needs its *guard* graded, not its trace. W6's permission chain and W5's hook dispatchers
-  are the same shape.
-- **Bind the upstream body to UPSTREAM's helpers, never to the owned ones.** The trigger predicate's
-  oracle bound upstream's two source guards to the owned implementations on the theory that a wrong
-  owned helper would make upstream's body take a different arm. It does not: the same defect flows
-  through both sides and the comparison comes back equal. Measured — a perturbed entry in the owned
-  non-conversational source list left all 94 comparisons green. Extract the helper's own bytes and
-  compare them separately, then bind the body to those. Every later oracle whose target calls a helper
-  the same wave owns inherits this.
-- **A predicate's coverage needs the conversation its CONSUMER requires.** Setting a threshold as low
-  as possible made the trigger fire on the second exchange, where upstream refuses to compact at all —
-  a `true` decision and no boundary. Grading a decision means recording the thing the decision causes.
-- **Declared surface ≠ reachable surface applies to SDK OPTIONS too.**
-  `managedSettings: { autoCompactWindow }` does not reach `options.autoCompactWindow` on the headless
-  seam. Probe an option before designing a scenario on it, exactly as for engine capability.
-- **The attestation obligation C5x deferred is now one third open.** `compaction-prompt` was closed by
-  W3's oracle and re-graded by W4's; `post-tool-hooks` and `permission-decision` still need one, and
-  building it is C8's and C9's design work.
-- **An anchor is required to be free of MINIFIED IDENTIFIERS, not to be prose.** W3 took three targets
-  two scouts had written off; W4 replaced a scout's identifier-tainted proposal with the wire keys the
-  same node emits. Before filing a target as unanchorable, enumerate its untainted substrings and count
-  them — and reach for a `coLiteral` before reaching for sibling selection, which is the narrower tool.
-- **`selectExcision` counts candidates, not spans.** An anchor occurring twice inside ONE target node
-  ties and throws, even though the two occurrences name the same span. Not a blocker for any target yet
-  taken, but the next wave that meets it should know the failure is the mechanism's shape rather than
-  the anchor's.
+- **`Options.settings` is the way to register a COMMAND hook — or any settings-layer fixture —
+  without a filesystem setting source.** An inline settings object goes into the flag-settings layer
+  with `settingSources: []` still in force, so nothing outside the sandbox is read and the W3
+  recording trap does not apply. W6's allow/deny/ask rule fixtures are the same shape and should use
+  it rather than writing `.claude/settings.json` anywhere.
+- **A REFUSAL that produces no observable is unrecordable by construction, not under-scoped.** A
+  dispatcher that returns because nothing is registered emits no consult, no record and no frame, so
+  no corpus can distinguish it from a function that was never called — while being the common case in
+  production. W6's permission chain is full of the same shape (`bypassPermissions` short-circuits
+  before the rule engine says anything). Budget an upstream-differential oracle for those arms
+  instead of a scenario, and say so in the exclusion.
+- **Grade a serialised record as BYTES somewhere, not only as an object.** Field ORDER is behaviour
+  for anything that reaches a subprocess's stdin, and a callback corpus cannot see it. One scenario
+  and one oracle assertion cost almost nothing and catch a reordering that every object comparison
+  passes.
+- **Bind the oracle's upstream body to the MANIFEST's own derived captures.** Re-deriving each free
+  variable with the manifest's `derive` regexes and driving the owned side through its ADAPTER means
+  the oracle cannot bind a port the splice does not forward, the argument list is the one the build
+  synthesises, and a derivation that stopped resolving fails in the oracle as well as at the build.
+- **A helper with many callers is a `pure-helper` capture; a helper with one is a fold-in.** W4
+  learned the second half; W5 used the first seven times. Check the call graph before deciding, in
+  both directions.
+- **A generator's delegation form is behaviour.** Upstream's dispatchers end in a bare `yield*` and
+  return `undefined`; `return yield*` hands the delegate's completion value back instead. Nothing on
+  the corpus's paths reads it, so only an oracle sees the difference — and W7's control-protocol
+  generators are the same shape.
+- **Compare a port TRACE, not just an output, wherever the target's arms differ by effect** (W4), and
+  **bind extracted upstream bodies to UPSTREAM's helpers, never the wave's own** (W4's boundary
+  review). Both held in W5: the trace is what grades the executor request, and five of seven bodies
+  call a helper this wave owns.
 - **`kye`'s neighbours are not takeable the same way.** `Dd` has no string literal at all, and `von`
   ties with `kye` on every structural fact except its position. W6 should expect the chain's other
   links to need coverage-first scenarios rather than more anchor mechanism.
+- **`selectExcision` counts candidates, not spans.** An anchor occurring twice inside ONE target node
+  ties and throws, even though the two occurrences name the same span. Still not a blocker for any
+  target taken so far.
 
-Three named debts the roadmap owes an assignment:
+Named debts the roadmap owes an assignment:
 
 - **`subsystem/tool-result-validators`** — an `unowned` ledger row with no wave, filed under C4 because
   C4 subdivided it (open since W1).
-- **The preset's ~20 prose section builders** behind `OS()` — now RENDERED by the corpus
-  (`sysprompt-preset`), so the follow-on cut the W3 scout deferred is unblocked. It is not W3's and it
-  was not W4's.
-- **Segment compaction** (upstream `hRt`, the from/up_to variant) — three of W4's adjudicated branch
-  outcomes are reachable only through it, and `/compact <instructions>` does not reach it. Whichever
-  wave takes it inherits the coverage.
+- **The preset's ~20 prose section builders** behind `OS()` — RENDERED by the corpus since W3, so the
+  follow-on cut is unblocked; it was not W3's, W4's or W5's.
+- **Segment compaction** (upstream `hRt`) — three of W4's adjudicated branch outcomes are reachable
+  only through it.
+- **The 23 KB hook EXECUTOR** (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`) — new with W5, S-module-shaped,
+  and the only thing standing between `subsystem/hook-dispatch` and `standalone-complete`.
 
-And one deferral now recorded on a ledger row rather than in a research note: **the compaction DRIVERS
-(`zRe`, `Tte`) are C16/W13's**, with the rest of the query loop.
+And the deferrals now recorded on ledger rows rather than in research notes: the compaction DRIVERS
+(`zRe`, `Tte`) are C16/W13's, and the hook executor is unassigned.

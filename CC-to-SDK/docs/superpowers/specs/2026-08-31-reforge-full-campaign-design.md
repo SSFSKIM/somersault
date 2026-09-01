@@ -602,8 +602,12 @@ follow as C4/C5.
   reviewed exclusion with evidence, not a scenario debt. Coverage debts quantified: ~5 hook
   recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
   short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
-  pinned defaults.
-- **Required.** Status: **C6 and C7 landed** 2026-09-01 (Revision Notes below); C8–C10 not-dispatched, **unblocked** (C5x + C6 + C7 landed; see their Revision Notes for what each wave inherits).
+  pinned defaults. **C8's outturn corrects the hook half of this:** the live set was
+  re-measured against the pinned engine (still 8, now evidence rather than inheritance), four
+  recordings bought the six uncovered events rather than five, and the matrix's command-hook
+  cell needs no filesystem setting source — `Options.settings` reaches the flag-settings
+  layer with `settingSources: []` in force.
+- **Required.** Status: **C6, C7 and C8 landed** 2026-09-01 (Revision Notes below); C9–C10 not-dispatched, **unblocked** (see the Revision Notes for what each wave inherits — C8's in particular hands W6 the "a refusal that produces no observable is unrecordable by construction" family, which covers most of §2.1's permission chain under `bypassPermissions`).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -692,7 +696,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
 | C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
-| C8–C10 | W5–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 landed) |
+| C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed** — four scenarios (corpus 31 → 35) covering the six live hook events the corpus never reached, incl. the matrix's command-hook cell via `Options.settings`; six dispatcher splices, which with C5x's spike make seven functions over all EIGHT headlessly-live events; `strangle/hooks-parity.test.ts` grading 371 comparisons with 36 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); 40 exclusions in five families incl. the campaign's first "unrecordable by construction"; the 23 KB hook executor named as the row's remaining gap; gate 63/63 |
+| C9–C10 | W6–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 + C8 landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -1222,6 +1227,85 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C8 / W5 — hook dispatch): the wave owns every per-event
+  DISPATCHER and none of the executor they delegate into. Four scenarios first
+  (`hooks-prompt-submit`, `hooks-batch`, `hooks-subagent`, `hooks-command`;
+  corpus 31 → 35), then six `free-function` generator splices which, with C5x's
+  PostToolUse spike, make seven functions covering all EIGHT headlessly-live
+  events — one function serves Stop and SubagentStop and the corpus reaches both
+  arms. `strangle/hooks-parity.test.ts` grades 371 comparisons with 36 controls;
+  attestation 132/235 executed, 103 excluded, zero un-adjudicated. Gate
+  **63/63 phases PASS**, corpus 35/35, 38 liveness phases. Seven items change
+  what the rest of the bloc and the roadmap inherit:
+  - **A REFUSAL that produces no observable is unrecordable BY CONSTRUCTION, and
+    that is a new exclusion family.** Five of the seven dispatchers return
+    without building anything when no hook is registered for the event — no
+    consult, no record, no frame — so "the guard refused" and "the dispatcher was
+    never called" are the same recording, while being the common case in
+    production. Every prior exclusion in this campaign said "the corpus does not
+    drive that"; this one says no corpus could. It generalizes immediately: W6's
+    chain short-circuits on `bypassPermissions` before the rule engine says
+    anything, so the same argument covers most of §2.1's decision chain, and the
+    honest response is an upstream-differential oracle for those arms rather than
+    a scenario that cannot exist.
+  - **The oracle found a real defect in C5x's shipped module, which is what the
+    deferred obligation was FOR.** Every upstream dispatcher ends in a bare
+    `yield*` and therefore returns `undefined`; all seven owned modules wrote
+    `return yield*` and handed the executor's completion value back. Nothing on
+    the corpus's paths reads a dispatcher's return value, so no scenario, no
+    sabotage and no differential could see it — the parity oracle failed on it in
+    its first run. The general form: **when a wave ships a module ahead of its
+    oracle, the debt is real and the interest is invisible.** W7's control-protocol
+    generators are the same shape.
+  - **`Options.settings` registers a settings-layer fixture without a filesystem
+    setting source**, which is what made the matrix's one non-trivial cell cheap.
+    `Options.hooks` takes callbacks only, so nothing in the corpus graded a hook
+    record as the BYTE STREAM it is serialised into — and field order is
+    behaviour for anything that reaches a subprocess's stdin. Turning on
+    `settingSources` would have re-run W3's ancestor-directory trap; an inline
+    settings object goes into the flag-settings layer with `settingSources: []`
+    still in force. W6's allow/deny/ask rule fixtures are the same shape and
+    should use it.
+  - **Bind the oracle to the MANIFEST's own derived captures, and drive the owned
+    side through its ADAPTER.** Re-deriving each free variable with the
+    manifest's `derive` regexes against the extracted body means the oracle
+    cannot bind a port the splice does not forward; calling through the adapter
+    makes the argument list the one the build synthesises, primitives and their
+    equality assertions included. It is the same "no second transcription"
+    argument §2.4's oracle shape already makes, one level further in, and it
+    turned a 7-module cross-product into one generic harness.
+  - **A helper with MANY callers is a `pure-helper` capture; a helper with ONE is
+    a fold-in.** C7 recorded the second half after `d1n`'s row came back green.
+    W5 used the first half seven times — the hook fan-out rule, its two
+    agent-context predicates, the last-assistant-message pair and the
+    plain-object test all have callers throughout the engine, so splicing six
+    dispatchers leaves upstream's copies live and each stays a real owned helper.
+    The check is the call graph, in both directions.
+  - **The corpus can be grown by FEWER recordings than the scout budgeted when a
+    probe says which events share a turn.** The W5 scout owed five; one no-tool
+    turn fires UserPromptSubmit, MessageDisplay and Stop together, so four bought
+    the same eight events. The probe that established it also re-measured the
+    live set against the pinned engine rather than inheriting a 2026-06 number,
+    and turned five never-firing events into evidence-backed ledger exclusions.
+  - **The hook EXECUTOR is a new named debt, and it is the whole remaining
+    subsystem.** Upstream `Qxt` (23 KB, reached through `jy`/`Xxt`) does hook
+    matching, command/callback/http/mcp invocation, timeouts and cancellation;
+    the scout measured it S-module-shaped and §2.3 says a stateful core is owned
+    behind a designed port. Whichever wave takes it inherits `getMatchingHooks`,
+    the agent-context result filter and the headless-suppression wrapper.
+    Until then `subsystem/hook-dispatch` is `spliced` and cannot close.
+  - **The gate's phase count had a counting artifact, and it is resolved.** C7
+    reported 56 and its fix round measured 61 with no phases added. Recomputed
+    from the tree: the gate pushed exactly 56 `results` entries at C7's landing
+    commit and the fix round changed neither `gate.ts` nor the manifest (its four
+    commits touch the compaction oracle, the canonicalizer and three docs), so 56
+    was right. The 61 comes from counting PASS lines in the LOG rather than
+    entries in the summary — the equivalence phase relays `m2/all.ts`'s five suite
+    verdicts in the gate's own `  PASS  <label>` format before the summary prints,
+    and 56 + 5 = 61. Measured on W5's run: 68 such lines in the whole log, 63 in
+    the summary, the five in between being the suites. **The number to quote is
+    the summary's** — it is a property of the manifest plus the fixed blocks, not
+    of the transcript.
 - 2026-09-01 (C7 / W4 — compaction): the wave owns everything in the
   subsystem except its drivers. Two scenarios first (`compact-continue`,
   `auto-compact-threshold`; corpus 29 → 31), then four splices — the
