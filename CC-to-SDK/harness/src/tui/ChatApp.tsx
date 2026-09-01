@@ -590,7 +590,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
     ? "shortcuts"
     : transcriptOpen
       ? "transcript"
-      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.effortDialog.open || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.advisorDialog.open || state.addDir.open || state.picker.open
+      : state.bypassConsent.open || state.helpOpen || state.historyOpen || state.rewinding || state.rewindPicker.open || state.bgPanelOpen || state.effortDialog.open || state.modelPicker.open || state.settings.open || state.permissions.open || state.themeDialog.open || state.advisorDialog.open || state.mcpDialog.open || state.addDir.open || state.picker.open
         ? "overlay"
         // `Fui()`'s three states (bundle L499192), as two arms of this ladder. A parked decision while the
         // draft is live is SUPPRESSED — the dialog renders nothing (`Xrl()` L499196) and the composer keeps
