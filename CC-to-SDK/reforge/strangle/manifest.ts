@@ -110,6 +110,19 @@ export interface Splice {
   siblings?: number;
   /** delegation export name on globalThis.__reforge */
   fn: string;
+  /**
+   * `variable-declarator` rows only: the written carve-out for an initializer
+   * that is not a plain literal, so the build cannot compare the owned value
+   * against the pinned chunk's bytes.
+   *
+   * The comparison is the whole reason this shape exists — a constant whose
+   * VALUE moves while its name stays put moves no anchor, no target hash and no
+   * capture hash — so losing it is an adjudication, not a fallback. Absent, a
+   * non-literal initializer FAILS the build; present, the reason is printed
+   * every build and must name what grades the value instead. Same bargain
+   * `darkReason` strikes for a chunk export the corpus cannot observe.
+   */
+  valueUngraded?: string;
   /** EVERY closure value the body takes from its scope, classified per §2.4 */
   captures: Capture[];
   /** corpus scenarios that exercise this node (the gate's targeted red-check) */

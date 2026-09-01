@@ -1565,6 +1565,18 @@ literal-valued declarator the build compares the owned value against the pinned 
 reports the first differing character. That is chunk.ts's rule-5 argument one level in, and stronger
 than a differential, because it holds for a constant no scenario renders.
 
+The comparison is `ast.ts`'s `gradeDeclaratorValue`, and it has its own controls (C5x fix): the
+mechanism fixtures drive the same function the build runs, watch it throw on a perturbed **owned**
+value — never on upstream's, which is the side it grades against — and check that the failure names
+the first differing offset and both lengths. The **not-a-literal** path was the other half. It used
+to annotate the log line `[value NOT literal — graded differentially only]` and continue, which
+silently retires the shape's whole enforcement property; a regression widening that path would have
+built green. It now **refuses the build** unless the row carries a written `valueUngraded` carve-out
+naming what grades the value instead — the same bargain `darkReason` strikes for a chunk export the
+corpus cannot observe, and for the same reason: the corpus is exactly what cannot see a constant it
+never renders. `compaction-prompt`, the only declarator row today, is on the literal path and
+verifies 5,810 characters every build.
+
 ### The signature learned to CHOOSE, not just to verify
 
 A `coLiteral` scopes to a chunk, so it cannot separate two nodes inside one — and the graph has such

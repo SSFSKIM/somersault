@@ -423,6 +423,74 @@ export function literalStringValue(node: ts.Node): string | null {
 }
 
 /**
+ * Grade a `variable-declarator` splice's VALUE against the pinned chunk's own
+ * bytes — the build-time enforcement the shape exists for, extracted here so it
+ * has fixture controls of its own (campaign spec C5x fix, finding 1).
+ *
+ * It lived inline in build.ts, which meant the one property the shape adds over
+ * every other target — that a prompt whose wording moves while its name stays
+ * put is caught — was asserted by nothing. `literalStringValue` had a control;
+ * the comparison built on it did not, so a regression that widened the
+ * not-a-literal path or inverted the equality would have gone green.
+ *
+ * ## The not-a-literal path REFUSES rather than downgrades
+ *
+ * The old code annotated a non-literal initializer `[value NOT literal — graded
+ * differentially only]` and continued. That is a silent downgrade of the shape's
+ * whole enforcement property, and it is the shape a widening regression would
+ * hide behind: the row keeps building, the log line changes, nothing fails.
+ *
+ * So a non-literal initializer is a BUILD FAILURE unless the row adjudicates it
+ * in writing, the same bargain `darkReason` strikes for a chunk export the
+ * corpus cannot observe (chunk.ts): an ungraded value may exist, but only as a
+ * reviewed carve-out recorded in the manifest and printed every build — never as
+ * an accident. The reason has to name what grades the value instead, because
+ * "graded differentially only" is a claim about the corpus, and the corpus is
+ * exactly what cannot see a constant it never renders.
+ *
+ * `readOwned` is called only on the literal path, so an adjudicated row does not
+ * import its module to prove a comparison it is not making.
+ */
+export async function gradeDeclaratorValue(args: {
+  name: string;
+  /** the excised initializer node */
+  node: ts.Node;
+  /** the row's written carve-out, when its initializer is not a plain literal */
+  ungraded?: string;
+  /** the owned module's live value for this row */
+  readOwned: () => Promise<unknown>;
+}): Promise<string> {
+  const { name, node, ungraded, readOwned } = args;
+  const upstream = literalStringValue(node);
+  if (upstream === null) {
+    if (ungraded === undefined) {
+      throw new Error(
+        `${name}: the variable-declarator initializer is NOT a plain literal, so its value cannot be compared against ` +
+          `the pinned chunk's bytes — and that comparison is the only thing in the mechanism that can see a constant whose ` +
+          `VALUE moves while its name stays put (no anchor, no target hash and no capture hash move with it).\n` +
+          `  Either narrow the target to a literal-valued declarator, or adjudicate it in writing: set 'valueUngraded' on ` +
+          `the manifest row, naming what grades the value instead. Silently downgrading to "differential only" is refused — ` +
+          `the corpus cannot see a constant no scenario renders.`,
+      );
+    }
+    return `value NOT literal — UNGRADED, adjudicated: ${ungraded}`;
+  }
+  const owned = await readOwned();
+  if (owned !== upstream) {
+    const at = typeof owned === "string" ? [...upstream].findIndex((c, i) => owned[i] !== c) : -1;
+    throw new Error(
+      `${name}: the owned value is not the pinned chunk's.\n` +
+        `  upstream: ${upstream.length} chars, owned: ${typeof owned === "string" ? `${owned.length} chars` : typeof owned}\n` +
+        (at >= 0
+          ? `  first difference at ${at}: upstream ${JSON.stringify(upstream.slice(at, at + 60))} vs owned ${JSON.stringify(String(owned).slice(at, at + 60))}\n`
+          : "") +
+        `  A constant whose VALUE moves while its name stays put moves no anchor and no footprint hash; this comparison is what sees it.`,
+    );
+  }
+  return `value verified: ${upstream.length} chars`;
+}
+
+/**
  * A top-level constant's INITIALIZER (campaign spec C5x, unit 3).
  *
  * The engine's prompt text is not in functions — it is in `var` initializers:

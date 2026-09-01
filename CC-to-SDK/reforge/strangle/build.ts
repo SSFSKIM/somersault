@@ -33,7 +33,7 @@ import { pathToFileURL } from "node:url";
 import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, literalStringValue, selectExcision } from "./ast.js";
+import { assertSignature, chunkAst, gradeDeclaratorValue, selectExcision } from "./ast.js";
 import { assertOwnedValues, planChunkReplacement } from "./chunk.js";
 import { spliceFootprint, type FootprintFile } from "./footprint.js";
 import { CHUNK_REPLACEMENTS, deriveCaptures, SABOTAGE_TARGETS, SPLICES } from "./manifest.js";
@@ -169,27 +169,21 @@ for (const sp of SPLICES) {
   // behaviour, and a prompt whose wording changes while its name stays put moves
   // no anchor, no target hash and no capture hash. Always against the REFERENCE
   // adapter, even in a sabotage build — the sabotage twin differs on purpose,
-  // and the claim being checked is about the parity layer.
-  let valueNote = "";
-  if (sp.target === "variable-declarator") {
-    const upstreamValue = literalStringValue(cut.node);
-    if (upstreamValue === null) {
-      valueNote = " [value NOT literal — graded differentially only]";
-    } else {
-      await import(pathToFileURL(join(MODULES_ROOT, `${sp.name}.js`)).href);
-      const owned = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => unknown> }).__reforge?.[sp.fn]?.();
-      if (owned !== upstreamValue) {
-        const at = typeof owned === "string" ? [...upstreamValue].findIndex((c, i) => owned[i] !== c) : -1;
-        throw new Error(
-          `${sp.name}: the owned value is not the pinned chunk's.\n` +
-            `  upstream: ${upstreamValue.length} chars, owned: ${typeof owned === "string" ? `${owned.length} chars` : typeof owned}\n` +
-            (at >= 0 ? `  first difference at ${at}: upstream ${JSON.stringify(upstreamValue.slice(at, at + 60))} vs owned ${JSON.stringify(String(owned).slice(at, at + 60))}\n` : "") +
-            `  A constant whose VALUE moves while its name stays put moves no anchor and no footprint hash; this comparison is what sees it.`,
-        );
-      }
-      valueNote = ` [value verified: ${upstreamValue.length} chars]`;
-    }
-  }
+  // and the claim being checked is about the parity layer. The comparison itself
+  // lives in ast.ts so the mechanism fixtures can watch it fire; a non-literal
+  // initializer refuses the build unless the row adjudicates it.
+  const valueNote =
+    sp.target === "variable-declarator"
+      ? ` [${await gradeDeclaratorValue({
+          name: sp.name,
+          node: cut.node,
+          ungraded: sp.valueUngraded,
+          readOwned: async () => {
+            await import(pathToFileURL(join(MODULES_ROOT, `${sp.name}.js`)).href);
+            return (globalThis as { __reforge?: Record<string, (...a: unknown[]) => unknown> }).__reforge?.[sp.fn]?.();
+          },
+        })}]`
+      : "";
 
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
   const moduleFile = join(MODULES_ROOT, `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);

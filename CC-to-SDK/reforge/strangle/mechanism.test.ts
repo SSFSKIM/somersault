@@ -37,8 +37,10 @@
 //              for byte — and a body reading `this` or `arguments` must be
 //              refused, since an arrow inherits both lexically.
 //   declarator a constant's initializer must excise alone, its delegation must
-//              be an EXPRESSION, and a literal value must be recoverable so the
-//              build can compare it against upstream's own bytes.
+//              be an EXPRESSION, and its value must be compared against
+//              upstream's own bytes — with that comparison watched FAILING on a
+//              perturbed owned value, and a non-literal initializer refusing the
+//              build rather than downgrading to "differential only".
 //   siblings   two nodes of one chunk carrying the same literal must be
 //              separated by the verified signature — and when it cannot
 //              separate them, the tie must throw rather than pick one.
@@ -53,7 +55,7 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, excise, formatSignature, literalStringValue, selectExcision } from "./ast.js";
+import { assertSignature, chunkAst, excise, formatSignature, gradeDeclaratorValue, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { assertCaptureInventory } from "./scope.js";
@@ -72,6 +74,19 @@ function throws(label: string, fn: () => unknown, match: RegExp): void {
     const msg = String((e as Error).message);
     if (!match.test(msg)) failures.push(`${label} — threw the wrong error: ${msg.split("\n")[0]}`);
     else pass++;
+  }
+}
+/** The async twin, returning the message so a caller can assert on its DETAIL as well. */
+async function throwsAsync(label: string, fn: () => Promise<unknown>, match: RegExp): Promise<string> {
+  try {
+    await fn();
+    failures.push(`${label} — expected a throw, got none`);
+    return "";
+  } catch (e) {
+    const msg = String((e as Error).message);
+    if (!match.test(msg)) failures.push(`${label} — threw the wrong error: ${msg.split("\n")[0]}`);
+    else pass++;
+    return msg;
   }
 }
 
@@ -668,10 +683,18 @@ function footprintOf(owner: string, helper: string) {
 // hash can see. The shape excises the initializer alone, and the build compares
 // the owned value against upstream's bytes (`literalStringValue`), which is what
 // makes that class of change loud.
+//
+// The comparison ITSELF is watched here too (C5x fix, finding 1). It used to
+// live inline in build.ts, where the only thing under test was the value
+// extractor beneath it: an inverted equality, or a regression widening the
+// not-a-literal path, would have built green. `gradeDeclaratorValue` is the same
+// code the build runs, driven on fixtures — perturbing the OWNED side must
+// throw, and a non-literal initializer must refuse rather than downgrade.
 {
   const consts =
     "var promptA=`head ${\"middle\"} tail: DECL_ANCHOR`,promptB=\"other\",count=7;\n" +
-    "var lazy=(x)=>{return \"FN_ANCHOR\"+x};\n";
+    "var lazy=(x)=>{return \"FN_ANCHOR\"+x};\n" +
+    "var sub=\"x\",joined=`head ${sub} tail: JOIN_ANCHOR`;\n";
   const sf = parse(consts, "consts");
   const cut = excise(sf, consts.indexOf("DECL_ANCHOR"), "variable-declarator");
   check("the excised span is the INITIALIZER, not the declarator",
@@ -687,13 +710,62 @@ function footprintOf(owner: string, helper: string) {
     () => excise(sf, consts.indexOf("FN_ANCHOR"), "variable-declarator"), /arrow-initializer/);
   check("a non-literal initializer reports no value rather than being evaluated",
     literalStringValue(excise(sf, consts.indexOf("FN_ANCHOR"), "arrow-initializer").node) === null);
+
+  // ---- THE VALUE COMPARISON, watched (C5x fix, finding 1) ----
+  // The positive path first: the owned value equals the pinned bytes, and the
+  // note the build prints reports the length it verified.
+  const upstreamValue = "head middle tail: DECL_ANCHOR";
+  const grade = (owned: () => Promise<unknown>, node = cut.node, ungraded?: string) =>
+    gradeDeclaratorValue({ name: "fixture", node, ungraded, readOwned: owned });
+  check("an owned value equal to the pinned bytes passes, and says what it verified",
+    (await grade(async () => upstreamValue)) === `value verified: ${upstreamValue.length} chars`);
+
+  // THE CONTROL. Perturb the OWNED side — never upstream's, which is what the
+  // comparison is measured against — and the build must refuse.
+  const perturbed = await throwsAsync("perturbing the OWNED value fails the build",
+    () => grade(async () => upstreamValue.replace("middle", "MIDDLE")),
+    /the owned value is not the pinned chunk's/);
+  check("…and the failure locates the first differing character, so the operator can adjudicate",
+    /first difference at 5:/.test(perturbed) && /"middle tail/.test(perturbed) && /"MIDDLE tail/.test(perturbed),
+    perturbed.split("\n").slice(1, 3).join(" | "));
+  check("…and reports both lengths", /upstream: 29 chars, owned: 29 chars/.test(perturbed), perturbed.split("\n")[1]);
+  // A length change is caught the same way, and so is a module that registered
+  // nothing at all — the shape a renamed `fn` produces.
+  await throwsAsync("a truncated owned value fails too",
+    () => grade(async () => upstreamValue.slice(0, -1)), /the owned value is not the pinned chunk's/);
+  const missing = await throwsAsync("an owned module that registers no value fails, reporting the TYPE",
+    () => grade(async () => undefined), /the owned value is not the pinned chunk's/);
+  check("…rather than a bogus character offset", /owned: undefined/.test(missing) && !/first difference/.test(missing), missing.split("\n")[1]);
+
+  // ---- the downgrade path, which used to be silent ----
+  // `joined`'s initializer interpolates an identifier, so no value can be
+  // recovered without evaluating engine code. Previously that annotated the log
+  // line and continued; now it refuses unless the row adjudicates it in writing.
+  const nonLiteral = excise(sf, consts.indexOf("JOIN_ANCHOR"), "variable-declarator");
+  check("the downgrade fixture really is a variable-declarator with a non-literal value",
+    nonLiteral.label === "joined" && literalStringValue(nonLiteral.node) === null, nonLiteral.original);
+  let readOwnedCalls = 0;
+  const counted = async () => {
+    readOwnedCalls++;
+    return upstreamValue;
+  };
+  const refused = await throwsAsync("a NON-LITERAL initializer refuses the build rather than downgrading silently",
+    () => grade(counted, nonLiteral.node),
+    /NOT a plain literal/);
+  check("…and the refusal says how to adjudicate it, rather than only that it failed",
+    /valueUngraded/.test(refused) && /naming what grades the value instead/.test(refused), refused.split("\n").slice(1).join(" "));
+  check("an ADJUDICATED row builds, and the reason is carried into the build's own log line",
+    (await grade(counted, nonLiteral.node, "graded by the W4 differential; see the row's note")) ===
+      "value NOT literal — UNGRADED, adjudicated: graded by the W4 differential; see the row's note");
+  check("…and neither path ever read the owned value — an ungraded row makes no comparison to fake",
+    readOwnedCalls === 0, `readOwned called ${readOwnedCalls}×`);
 }
 
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone, declarator values are recoverable"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone, declarator values are compared against upstream's bytes or refused"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;
