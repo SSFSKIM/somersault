@@ -581,6 +581,18 @@ export const W5_SCENARIOS: Scenario[] = [
               { hooks: [{ type: "command", command: "echo REFORGE_PRECOMPACT_LOUD_FAILURE >&2; exit 1" }] },
               { hooks: [{ type: "command", command: "exit 1" }] },
             ],
+            // The same three shapes for PostCompact, for the same reason one
+            // level down: its verdict is a narration of result SHAPES, and a
+            // callback that returns `{continue:true}` produces exactly one of
+            // them. Four of its arms are only reachable from a real hook
+            // process. Unlike PreCompact there is no blocking arm to worry
+            // about — by the time this runs the compaction has happened — so
+            // the failing hooks cost nothing but their own narration.
+            PostCompact: [
+              { hooks: [{ type: "command", command: "echo REFORGE_POSTCOMPACT_NARRATION" }] },
+              { hooks: [{ type: "command", command: "echo REFORGE_POSTCOMPACT_LOUD_FAILURE >&2; exit 1" }] },
+              { hooks: [{ type: "command", command: "exit 1" }] },
+            ],
           },
         },
       }, (results) => {

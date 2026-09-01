@@ -265,6 +265,7 @@ describe.skipIf(isInCi)("bl10 merge-battery (D15) — /mcp dialog + chrome margi
     const tree = <KeymapProvider><ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work"
       deps={{ now: () => 0, columns: () => geo.columns, rows: () => geo.rows, scheduleRepaint: () => () => {} }} /></KeymapProvider>;
     const tty = renderRealInk(tree, geo);
+    await settle();
     const mark = tty.mark();
     tty.stdin.write("/mcp");
     await waitFor(() => tty.textSince(mark).includes("/mcp"));

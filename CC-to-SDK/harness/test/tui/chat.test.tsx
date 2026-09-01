@@ -1711,8 +1711,12 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("sess-1"));       // formatStatus's session-id row — unique to the Status tab
     const f = frame(lastFrame);
     expect(f).not.toContain("Default permission mode");             // Config's rows are gone
-    // T-MENU task 2 fix wave: the hand-written READONLY_FOOTER is gone — same auto keyhint bar as Config's.
-    expect(f).toContain("Esc cancel · ↑ navigate · Space select · / search");
+    // T-MENU task 2 fix wave: the hand-written READONLY_FOOTER is gone — the auto keyhint bar takes its slot.
+    // bl10 fix wave 1, finding 3: on a READ-ONLY tab there is no `Select` and no search box (`readOnlyTabBody`),
+    // so the true set is narrower than Config's own — cancel plus switch tab, not navigate/select/search.
+    expect(f).toContain("Esc cancel · Tab switch tab");
+    expect(f).not.toContain("navigate");
+    expect(f).not.toContain("search");
   });
 
   // F6 T11 (DG46), end to end through the app rather than the component: the two ways out of the picker

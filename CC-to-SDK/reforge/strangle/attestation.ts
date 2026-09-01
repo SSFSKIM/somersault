@@ -158,6 +158,57 @@ export const ATTESTED: AttestedModule[] = [
   { module: "session-start-hooks", row: "session-start-hooks", scenarios: ["hooks-session-start"] },
   { module: "session-end-hooks", row: "session-end-hooks", scenarios: ["hooks-session-end"] },
   { module: "pre-compact-hooks", row: "pre-compact-hooks", scenarios: ["hooks-precompact"] },
+
+  // ---- C8's second round: the nine the registry-derived probe found live ----
+  // Each is measured on the ONE recording that creates its firing condition,
+  // which is the whole finding restated as corpus. PostCompact rides the
+  // compaction recording it shares with PreCompact; the task pair share one.
+  { module: "post-compact-hooks", row: "post-compact-hooks", scenarios: ["hooks-precompact"] },
+  {
+    module: "notification-hooks",
+    row: "notification-hooks",
+    scenarios: ["hooks-permission"],
+    noBranchesReason:
+      "the body destructures, builds one record and awaits the executor — no branch-forming construct at all, so its AST inventory is legitimately " +
+      "empty rather than under-reported (the two parameter DEFAULTS are applied before the body runs and are not arms). " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another.",
+  },
+  {
+    module: "permission-request-hooks",
+    row: "permission-request-hooks",
+    scenarios: ["hooks-permission"],
+    noBranchesReason:
+      "one log call, one record, one delegation — straight-line, so the inventory is legitimately empty. " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another.",
+  },
+  { module: "instructions-loaded-hooks", row: "instructions-loaded-hooks", scenarios: ["hooks-memory"] },
+  { module: "stop-failure-hooks", row: "stop-failure-hooks", scenarios: ["hooks-stop-failure"] },
+  {
+    module: "task-created-hooks",
+    row: "task-created-hooks",
+    scenarios: ["hooks-tasks"],
+    noBranchesReason:
+      "one record and one delegation — the family's simplest body, and straight-line, so the inventory is legitimately empty. " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another.",
+  },
+  {
+    module: "task-completed-hooks",
+    row: "task-completed-hooks",
+    scenarios: ["hooks-tasks"],
+    noBranchesReason:
+      "its twin's body with one string changed, and straight-line for the same reason. " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another. The oracle also asserts each twin stamps its OWN event name, which is the only thing that distinguishes them.",
+  },
+  { module: "user-prompt-expansion-hooks", row: "user-prompt-expansion-hooks", scenarios: ["hooks-slash"] },
+  {
+    module: "file-changed-hooks",
+    row: "file-changed-hooks",
+    scenarios: ["hooks-file-watch"],
+    noBranchesReason:
+      "one record and one call into the watcher-hooks helper — straight-line, so the inventory is legitimately empty. " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another. The oracle also asserts the helper is called POSITIONALLY with three arguments rather than with a request object, " +
+      "which is what makes this row's port a third execution path rather than a differently-named executor.",
+  },
 ];
 
 export interface Exclusion {
@@ -180,6 +231,21 @@ export interface Exclusion {
  *    (a claude-3-haiku session) but would buy one boolean for a live recording,
  *    and the parity test already grades both sides of it byte for byte.
  */
+/**
+ * What grades each of C8's second-round dispatchers instead of a rendered
+ * branch. Named once rather than restated per exclusion: every entry below is
+ * excluded for a DIFFERENT reason, and the sentence that says what covers it
+ * instead is the same one each time.
+ */
+const ORACLE_PC =
+  "strangle/hooks-parity.test.ts grades it: the PostCompact block runs eleven cases over every result shape and both guard arms, compares the returned verdict and the full port trace, and holds five controls on them.";
+const ORACLE_SF =
+  "strangle/hooks-parity.test.ts grades it: the StopFailure block runs ten cases including both refusals, compares the executor request and the port trace, and holds seven controls on them.";
+const ORACLE_IL =
+  "strangle/hooks-parity.test.ts grades it: the InstructionsLoaded block runs seven cases including an absent options bag, compares the record's field order and the executor request, and holds four controls on them.";
+const ORACLE_UPE =
+  "strangle/hooks-parity.test.ts grades it: the UserPromptExpansion block runs six cases across both guard keys and the refusal, compares the executor request and the port trace, and holds seven controls on them.";
+
 export const EXCLUSIONS: Exclusion[] = [
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded
@@ -789,12 +855,15 @@ export const EXCLUSIONS: Exclusion[] = [
   // scenario that would then be grading something else.
   // ==========================================================================
 
-  // ---- the registration guard's refusal (unrecordable by construction) -----
-  {
-    branch: "post-tool-failure-hooks#postToolFailureHooks@0:T",
-    reason:
-      "the refusal arm: a run with NO PostToolUseFailure hook registered produces no consult, no record and no frame of any kind, so \"the guard refused\" and \"the dispatcher was never called\" are the same recording — unrecordable by construction, and the common case in production. strangle/hooks-parity.test.ts grades it: the failure block runs eight cases including an unregistered one, compares the port trace, and holds two controls on it (a refusal that still built the record, a refusal that still called the executor).",
-  },
+  // The PostToolUseFailure refusal arm USED to be excluded here as "unrecordable
+  // by construction". C8's second round retired that exclusion by accident and
+  // the lesson is worth keeping: the arm needs a run that makes a tool call
+  // WITHOUT registering a PostToolUseFailure hook, and every scenario in the
+  // corpus that made tool calls had registered one, so the arm looked like a
+  // property of the seam when it was a property of the corpus's habits. The
+  // round's new recordings register hooks for other events and use tools, and
+  // the arm now executes. An exclusion is a claim about reachability, and a
+  // claim about reachability is only as good as the population it was made over.
 
   // ---- SessionStart: the arms the headless caller never supplies -----------
   // Upstream has ONE call site for this dispatcher, and it forwards a session-id
@@ -887,5 +956,75 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "pre-compact-hooks#preCompactHooks@15:T",
     reason:
       "the blocking spread on the general verdict; unreachable while no result is blocked (see @9:T). Graded by strangle/hooks-parity.test.ts.",
+  },
+
+  // ==========================================================================
+  // C8's SECOND round — the nine dispatchers the registry-derived probe found
+  // live. Each has a recording that creates its firing condition; the
+  // compaction recording gained a second set of command hooks so PostCompact's
+  // four result-shape arms render with real hook processes rather than with a
+  // callback's single shape. What is left is below.
+  // ==========================================================================
+
+  // ---- PostCompact: the two result shapes and the agent kind ---------------
+  {
+    branch: "post-compact-hooks#postCompactHooks@0:T",
+    reason:
+      "the delegated-observation arm, which returns the EMPTY verdict before the executor runs — so unlike PreCompact, whose delegated arm still runs the hooks and only drops their reporting, this one never dispatches at all. Producing a delegated-observation subagent needs an agent kind the headless Agent tool cannot dispatch. " +
+      ORACLE_PC + " One of those controls asserts the delegated arm did NOT reach the executor, which is the difference between the two siblings.",
+  },
+  {
+    branch: "post-compact-hooks#postCompactHooks@3:T",
+    reason:
+      "a CANCELLED hook result, narrated as nothing at all. Producing one needs the hook execution aborted or timed out mid-run, which is not a shape a recording can hold still. " +
+      ORACLE_PC + " One control asserts a cancelled hook is not narrated in the display message.",
+  },
+  {
+    branch: "post-compact-hooks#postCompactHooks@7:F",
+    reason:
+      "an EMPTY display list, which requires every result to have been cancelled — the same unreproducible shape as above, and then all of them. " +
+      ORACLE_PC + " The zero-results arm above it is a different branch and the corpus does not render that either; a control asserts the two are not collapsed, since `{}` and `{userDisplayMessage: undefined}` are the same JSON and differ only in their KEYS.",
+  },
+
+  // ---- InstructionsLoaded: the defensive default --------------------------
+  {
+    branch: "instructions-loaded-hooks#instructionsLoadedHooks@0:T",
+    reason:
+      "the `options ?? {}` default, i.e. the dispatcher called with no options bag. Both of upstream's call sites pass one — they have to, since that is where the storage handle and the credentials travel — so the arm is defensive rather than reachable, and the corpus cannot render it without a third caller. " +
+      ORACLE_IL,
+  },
+
+  // ---- StopFailure: the agent kind, and two shapes of failing turn ---------
+  {
+    branch: "stop-failure-hooks#stopFailureHooks@0:T",
+    reason:
+      "the delegated-observation arm, checked BEFORE the registration guard. Same unreachable agent kind as PostCompact's. " +
+      ORACLE_SF + " One control asserts the delegated arm is checked before the guard rather than after, which is the ordering a module could silently swap.",
+  },
+  {
+    branch: "stop-failure-hooks#stopFailureHooks@2:F",
+    reason:
+      "a failing turn whose assistant message carries NO text, which upstream coerces from the empty string to undefined so JSON drops the key. The recorded failure is a 500 the engine renders as an api-error message WITH text, and a text-free failing turn would need a different failure shape than the one this recording exists for. " +
+      ORACLE_SF + " Three cases cover no text, whitespace-only text and two blocks joined by a newline, with a control on the coercion.",
+  },
+  {
+    branch: "stop-failure-hooks#stopFailureHooks@3:T",
+    reason:
+      "the `error ?? \"unknown\"` fallback, i.e. a failing turn the engine could not name a kind for. Every arm that reaches this dispatcher sets one — api_error, prompt_too_long, image_error, the malformed-tool-use exhaustion — so the fallback is defensive. It is also the match query, which makes the fallback a matcher key and not only a field. " +
+      ORACLE_SF + " One control asserts a missing kind is not left undefined.",
+  },
+
+  // ---- UserPromptExpansion: the agent key, and the refusal -----------------
+  {
+    branch: "user-prompt-expansion-hooks#userPromptExpansionHooks@0:F",
+    reason:
+      "the guard keyed on the AGENT id rather than the session id — the only dispatcher in the family that chooses between them. It needs a slash command, skill or MCP prompt expanded INSIDE a subagent, and the headless Agent tool takes a task rather than a command to expand. " +
+      ORACLE_UPE + " Two cases and two controls sit on this key, because keying it wrong silently disables hook matching for every subagent expansion.",
+  },
+  {
+    branch: "user-prompt-expansion-hooks#userPromptExpansionHooks@1:T",
+    reason:
+      "the refusal arm: an expansion with no UserPromptExpansion hook registered produces no consult, no record and no frame, so \"the guard refused\" and \"nothing was expanded\" are the same recording. Unlike PostToolUseFailure's refusal — which another scenario's tool call now renders incidentally — nothing else in the corpus expands a slash command at all, so this one stays unrecordable until a second expanding scenario exists. " +
+      ORACLE_UPE + " Two controls sit on it: a refusal that still reached the executor, and one that still minted a tool-use id.",
   },
 ];
