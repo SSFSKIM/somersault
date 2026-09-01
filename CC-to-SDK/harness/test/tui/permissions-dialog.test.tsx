@@ -924,3 +924,32 @@ describe("PermissionsDialog — sub-view confirms bound their dynamic strings (b
     expect(longLines, "an unclipped typed rule echo wraps the add-rule box into extra rows").toBe(shortLines);
   });
 });
+
+describe("PermissionsDialog — the 'User settings' destination reflects the effective settings root (bl14)", () => {
+  /** Walks Allow → 'Add a new rule…' → type a rule → the destination step, where DEST_OPTIONS renders. */
+  async function openDestStep(over: Partial<Parameters<typeof PermissionsDialog>[0]> = {}) {
+    const r = render(<PermissionsDialog {...props(over)} />);
+    await waitFor(() => plain(r.lastFrame).includes("❯ Add a new rule…"));
+    r.stdin.write(ENTER);
+    await waitFor(() => plain(r.lastFrame).includes("Enter permission rule…"));
+    r.stdin.write("WebFetch");
+    await waitFor(() => plain(r.lastFrame).includes("WebFetch"));
+    r.stdin.write(ENTER);
+    await waitFor(() => plain(r.lastFrame).includes("Where should this rule be saved?"));
+    return r;
+  }
+
+  it("with no settingsFileDeps override, falls back to the real HOME — never the fixed upstream literal", async () => {
+    const r = await openDestStep();
+    const f = plain(r.lastFrame);
+    expect(f).not.toContain("Saved in at ~/.claude/settings.json");   // bl12/bl14: no longer a fixed literal
+    expect(f).toContain("/.claude/settings.json");
+  });
+
+  it("under CLAUDE_CONFIG_DIR (threaded in as settingsFileDeps.env, same as an attach's carried host root), shows the ACTUAL file the rule lands in, not ~/.claude", async () => {
+    const r = await openDestStep({ settingsFileDeps: { env: { CLAUDE_CONFIG_DIR: "/tenant-root" } } });
+    const f = plain(r.lastFrame);
+    expect(f).toContain("Saved in /tenant-root/settings.json");
+    expect(f).not.toContain("~/.claude/settings.json");
+  });
+});
