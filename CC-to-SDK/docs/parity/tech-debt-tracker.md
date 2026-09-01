@@ -78,6 +78,24 @@ the commit) or when a round's scope absorbs them.
   so this is dormant, not live — but the frame is the chrome every dialog shares, and a future
   caller passing runtime text re-opens the unbounded-string class the wave closed. Bound at the
   frame when DialogFrame is next touched; details in `fixwave7-report.md`.
+- **Advisor result rows never mint `expanded`/`band`** (bl10 rereview8 final round, 2026-09-02;
+  `toolRenderer.tsx` ~:951). The advisor path stamps `clickable` only, so a click-expanded
+  `advisor_tool_result` keeps the pre-band behavior: blank-tail clicks don't collapse it and hover
+  stays enabled while open. T-CLICK applied the band to the tool-result path; derive the flags from
+  `options.expandedItems?.has(ownerKey)` there too when advisor rendering is next touched.
+- **Expanded gutter-block band paints the gutter on the first body row only** (bl10 rereview8 final
+  round, 2026-09-02; `toolRenderer.tsx` ~:2007). Later body rows get layout padding without band
+  color in the gutter columns, while the hitmap treats every row as full-width — the advertised
+  band is visually discontinuous (hit still works; paint-only). Render a background-filled gutter
+  cell per body row when the gutter renderer is next touched.
+- **MCP subtitle claims "0 servers" while the fetch is pending** (bl10 rereview8 final round,
+  2026-09-02; `McpDialog.tsx` subtitle gate). `servers === undefined` (loading) yields count 0 with
+  no `fetchError`, so a slow request shows a false empty-fleet claim beside "Loading…". Same shape
+  as the fetch-error gate wave 4 added — extend it to the undefined state.
+- **Single-row MCP views advertise inert navigation hints** (bl10 rereview8 final round,
+  2026-09-02; `McpDialog.tsx` hint gate). `count === 1` still walks the full Select scope, so
+  "↑ navigate"/"PgUp" render although movement clamps to index 0. The hint-accuracy class's last
+  edge: gate navigation hints on `count > 1`.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
