@@ -1032,6 +1032,16 @@ Pending — written at finish.
   direction it actually catches. Gate **39/39 phases PASS**, corpus 25/25, 22 liveness phases.
   Ledger: `subsystem/hook-dispatch`, `subsystem/permissions` and `subsystem/compaction` → `spliced`
   (8 spliced rows, 39 unowned).
+- 2026-09-01 (C5x boundary review, internal): verdict **sound — no false-green path**; the
+  reviewer extracted `b3e`/`l1n` from the bundle itself, resolved the symbol-map 831-vs-832
+  delta empirically (one non-semantic alias filtered), and confirmed upstream's bare `yield*`
+  and our `return yield*` coincide (inner generator returns undefined on every path). Four
+  findings: three fixed same-day (commits through `fdba8f73a` — the declarator value comparison
+  gained 12 controls and its silent non-literal downgrade became a loud refusal with a
+  `valueUngraded` written-carve-out escape; generator early-`return()` gained 5 controls proven
+  non-vacuous against a return-shaped seam; the external-import leaf note now distinguishes
+  builtin from bare-external). The fourth (the kye deny-stamp's value graded by nothing) stands
+  as the recorded C7/C9 carve-out. Mechanism suite 99 → 119 checks; gate 39/39.
 - 2026-09-01 (W2 boundary review): **Codex became unavailable mid-campaign** — the account's
   ChatGPT-plan Codex entitlement now rejects every model ("not supported when using Codex with a
   ChatGPT account"; setup shows auth active, so it is an entitlement/plan change, surfaced to the
