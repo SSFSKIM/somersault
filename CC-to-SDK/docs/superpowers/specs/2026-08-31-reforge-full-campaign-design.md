@@ -691,7 +691,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | **landed** — S-chunk mechanism + `chunk-y30v0ja7` owned whole, 3 description splices, corpus 25, coverage attestation online (14/20 executed, 6 adjudicated), ledger folded into the gate |
 | C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
-| C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
+| C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
 | C8–C10 | W5–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
@@ -1214,7 +1214,9 @@ Pending — written at finish.
   `compact_boundary` constructor, its wire shaping, the post-compaction
   continuation message with the summary rewriter it calls, and the
   auto-compaction trigger predicate — plus a parity oracle over all five owned
-  bodies. Gate **{GATE}**. Seven items change what the rest of the bloc and the
+  bodies. Gate **56/56 phases PASS**, corpus 31/31, 32 liveness phases,
+  attestation 83/146 executed with 63 adjudicated and zero un-adjudicated.
+  Seven items change what the rest of the bloc and the
   roadmap inherit:
   - **The X6 addition was needed and the cleaner-looking alternative was
     disproved.** `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` landed on the C3 sign-off
