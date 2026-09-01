@@ -600,9 +600,14 @@ follow as C4/C5.
   cheaply; **microcompaction is headlessly unreachable** (`createContextHintController` returns
   null unless querySource starts with `repl_main_thread`; the SDK path sends `"sdk"`) — a
   reviewed exclusion with evidence, not a scenario debt. Coverage debts quantified: ~5 hook
-  recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
-  short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
-  pinned defaults. **C8's outturn corrects the hook half of this, and C8 was then corrected
+  recordings, ~10–12 permission-matrix recordings, one probe on whether `auto` mode is gate-dead under
+  pinned defaults. **C9's outturn corrects the reason for that permission budget** (the
+  recordings were still owed, for different cells): `bypassPermissions` does NOT
+  short-circuit the chain W6 owns. Its arm is rung 11 of 13 in upstream's pre-check —
+  below the deny rules, the allow rules, the tool's own `checkPermissions` and the ask
+  rules — so a deny rule still bites under bypass and the corpus's 22 bypass scenarios
+  exercise most of the pre-check rather than none of it. The claim came from reading the
+  BASH TOOL's own mode handler as a statement about the chain. **C8's outturn corrects the hook half of this, and C8 was then corrected
   TWICE.** The live set is **23 of the engine's 33-event dispatcher registry**, not 8 and not 12.
   The first re-measurement registered callbacks only, on one turn that created none of the missing
   firing conditions; the second still chose its watched list by hand, so three live events were
@@ -613,7 +618,7 @@ follow as C4/C5.
   a §2.3 deferral recorded on the ledger row. The matrix's command-hook cell needs no filesystem
   setting source — `Options.settings` reaches the flag-settings layer with `settingSources: []` in
   force, which is the only path to a dispatcher whose dispatch precedes host-hook registration.
-- **Required.** Status: **C6, C7 and C8 landed** 2026-09-01 (Revision Notes below); C9–C10 not-dispatched, **unblocked** (see the Revision Notes for what each wave inherits — C8's in particular hands W6 the "a refusal that produces no observable is unrecordable by construction" family, which covers most of §2.1's permission chain under `bypassPermissions`).
+- **Required.** Status: **C6, C7, C8 and C9 landed** 2026-09-01 (Revision Notes below); C10 not-dispatched, **unblocked**. C8's "a refusal that produces no observable is unrecordable by construction" family did cover most of §2.1's permission chain — but not for the reason given: the family holds because a rung that is REACHED and passes leaves the same transcript as one that was never reached, not because `bypassPermissions` skips the chain (C9 measured that it does not). W7 inherits the control-response envelopes already owned and one correction to the scout's §3.2 table (see C9's Revision Note).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -709,7 +714,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
 | C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
 | C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected TWICE** — fourteen scenarios (corpus 31 → 45) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`, a `canUseTool` answered past the notify timer, and an authored API failure (`Scenario.deriveFault`); nineteen dispatcher splices, which with C5x's spike make **twenty functions over twenty-one of the TWENTY-THREE events the engine is measured to fire headlessly** out of upstream's 33-event dispatcher registry (the model-switch pair is a §2.3 deferral on the ledger row; the other ten registry events are OPEN with named conditions, not dead). The wave first claimed seven functions over all eight on a probe whose negatives were vacuous, then eleven over twelve on a probe that still chose its own watched list — see the two C8-fix Revision Notes. `strangle/hooks-parity.test.ts` grades 686 comparisons with 107 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 186/312 with 126 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction" — one of which the new recordings then RETIRED by reaching it; all three hook execution helpers (`Qxt`, `AE`, `zxt`) named as the row's remaining gap; gate **77/77** |
-| C9–C10 | W6–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 + C8 landed) |
+| C9 | W6 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md`; matrix: `reforge/research/2026-09-01-w6-permission-matrix.md` | **landed** — thirteen splices over the decision chain, the mode axis and the headless broker's return leg, plus two owned pure helpers the corpus cannot make live (both takeable, both measured inert, both re-homed as `pure-helper` captures); `strangle/permissions-parity.test.ts` grades **2,496 comparisons with 47 controls** over axes derived from the bundle (`research/fixtures/permission-surface-2.1.251.json`: six modes agreed by four independent enumerations, three rule behaviours, eleven decisionReason kinds) and finds every module byte-faithful. **A measured correction to this spec: `bypassPermissions` does NOT short-circuit the rule engine** — the bypass arm is rung 11 of 13 in upstream's pre-check, so a deny rule still bites under bypass and the corpus's bypass scenarios exercise most of the pre-check rather than none of it. Five sabotage twins and one whole scenario were rewritten after being MEASURED INERT (a twin that cannot be observed proves nothing, and it fails in the quiet direction); the branch instrumenter gained a guarded body that returns (nine controls); the oracle now locates its subject by the build's own anchor rule. Three §2.3 gaps named on the ledger row: `von`, `createCanUseTool`, and `Dd` (no string literal at all) |
+| C10 | W7 | scout: `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked**. Inherits from C9: the control-response ENVELOPES are already owned (`gK`/`$U`), and the scout's claim that they carry every headless `control_response` is **wrong** — `initialize` and `reinitialize` are built inline by the headless runtime, so sabotaging the success constructor leaves `plain` green and reddens `runtime-setters`. Re-verify the rest of §3.2's table the same way |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -1239,6 +1245,113 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C9 / W6 — permission decisions): the wave owns the decision chain
+  from the pre-check down, the mode axis end to end, and the headless broker's
+  return leg — thirteen splices plus two owned pure helpers, graded by a fifth
+  parity oracle (`strangle/permissions-parity.test.ts`, 2,496
+  comparisons with 47 controls) over axes derived from the bundle
+  rather than chosen: `research/fixtures/permission-surface-2.1.251.json` holds
+  six modes agreed by FOUR independent enumerations, three rule behaviours, six
+  rule destinations and the eleven decisionReason kinds upstream's own message
+  builder renders. Corpus 45 → CORPUS_N, gate GATE_N. Eight items change what
+  the rest of the campaign inherits.
+  - **THE SPEC WAS WRONG ABOUT `bypassPermissions`, AND THE ERROR SHAPED TWO
+    WAVES' BUDGETS.** §6's scout-driven corrections and the W5–W7 scout both
+    record that bypass "short-circuits the whole rule engine", so "22 of 24
+    scenarios grade none of §2.1's chain". Upstream's pre-check puts the bypass
+    arm at rung ELEVEN of thirteen — below the tool deny rule, the input deny
+    rule, the allow rule and its delegation, the tool's own `checkPermissions`,
+    the ask rule, the interaction check, the MCP ask ceiling and the safety
+    floor. Only the ASK is short-circuited; a deny rule still bites under bypass.
+    Measured twice by different means: the pre-check sabotaged alone turns eight
+    inherited scenarios red, every one of them a bypass run, and the parity
+    oracle carries "bypass short-circuits the deny rules" as a mutant that must
+    differ. The reading came from the BASH TOOL's own mode handler ("Bypass mode
+    is handled in main permission flow"), which is a statement about that tool's
+    checkPermissions and not about the chain. **The general form: a claim read
+    off one function's comment is a claim about that function.**
+  - **A LIVENESS TWIN HAS ONE JOB AND IT IS NOT PLAUSIBILITY.** Five of this
+    wave's sabotage twins were written as the most plausible wrong
+    implementation, and five were MEASURED INERT: an allow-rule decision that
+    returns the prepared ask differs only in a message no scenario renders; a
+    mode transition that returns the context unchanged skips only side effects
+    nothing headless reads; a setter that reports success without applying is
+    invisible until something asks the subsystem to decide again; a response
+    mapper that spreads the host's answer carries the host's `updatedInput` with
+    it; a control-response envelope emptied of its payload changes nothing,
+    because nothing in the corpus reads one. Each twin now changes a DECISION,
+    and the plausible-wrong-implementation mutants moved to the oracle where they
+    belong. **A twin that cannot be observed proves nothing about the splice, and
+    it fails in the QUIET direction — the gate goes green on a dead row.**
+  - **AND THE SAME QUESTION HAS TO BE ASKED OF THE SCENARIO.** The wave's
+    mode-walk scenario originally changed mode four times and then said READY;
+    all three mode-seam splices measured inert on it. A session can be told to
+    change mode, believe it did, apply none of the transition and produce a
+    byte-identical transcript, as long as nothing afterwards asks it to decide
+    anything. The walk now makes a tool call after every change, and each change
+    is chosen for the DECISION it flips rather than for the mode it visits.
+  - **`gK` DOES NOT CARRY `initialize`, and W7 should not budget as if it did.**
+    The W5–W7 scout calls `gK`/`$U` "the highest-leverage pair in W7 — every
+    headless `control_response` passes through them, so sabotage reddens on
+    `initialize` alone". Measured: the headless runtime builds the `initialize`
+    and `reinitialize` responses as INLINE object literals and routes every OTHER
+    inbound subtype through the shared responder. Sabotaging the success
+    constructor leaves `plain` green and turns `runtime-setters` red. W6 took
+    both envelopes (the `can_use_tool` round trip is the only control request the
+    permission chain itself issues, and leaving the return leg unowned would have
+    stopped that chain's ownership mid-round-trip); W7 inherits the REQUEST leg
+    and should re-verify the rest of §3.2's table the same way.
+  - **A LIVENESS SWEEP NEEDS ITS OWN NON-VACUITY GUARD.** The first sweep of this
+    wave reported six splices live on a scenario tag that does not exist:
+    `m1/run.ts` exits non-zero on an unknown tag, and the sweep reads non-zero as
+    RED. It is C8's vacuous negative with the sign flipped — a vacuous POSITIVE,
+    which is worse, because a false negative gets investigated and a false
+    positive gets committed. The sweep now runs its whole tag list against a
+    known-good engine before it measures anything.
+  - **TWO TAKEABLE FUNCTIONS ARE OWNED WITHOUT BEING SPLICED, and the reason
+    generalises C7's rule.** `Ree`/`isAskRuleDrivenReason` (6 call sites) and
+    `Fy`/`findSafetyCheckReason` (17, the most-called function this wave owns) are
+    both anchorable and both have zero free variables; both were spliced, built
+    and solo-sabotaged, and neither turned a scenario red. After the pre-check and
+    the rule checker take their own copies, upstream's remaining callers are the
+    mode-aware body's gate-dead auto/dontAsk arms and the broker's ask path, where
+    the corpus's decisions carry no `decisionReason` at all — so a finder that
+    never finds anything returns exactly what the healthy one does. C7's "a
+    single-caller pure helper cannot be a live splice" is the special case of **a
+    helper whose remaining callers are all dark cannot be either.** Both live in
+    `strangle/modules/shared/` as `pure-helper` captures, graded against their own
+    upstream bytes before either body is built on them.
+  - **EXTEND THE INSTRUMENT, NOT THE OWNED CODE — the second instance.**
+    `strangle/branches.ts` refused a `try` block that can `return`, because the
+    end-of-block marker is what a `return` skips. Three of this subsystem's four
+    most-called functions do exactly that, and rewriting them to hoist a result
+    into a variable would have measured something other than upstream. Every
+    escaping `return` now carries its own recorder for the same completed arm,
+    written as an EXPRESSION so a braceless `if (x) return y` keeps owning its own
+    statement; the end-of-block marker is emitted only when the body can actually
+    fall off its end. Nine new controls. Still refused, for a reason a `return`
+    does not share: a `break` or `continue` that leaves the guarded body, labelled
+    ones included — a jump has no expression position to record in.
+  - **THE ORACLE NOW FINDS ITS SUBJECT BY THE BUILD'S OWN RULE.** The four
+    previous parity oracles hand-rolled a brace matcher to extract upstream's
+    body; this one calls `resolveAnchor` + `selectExcision` + `assertSignature`
+    against the pinned bundle — the same three functions `strangle/build.ts`
+    calls — so an oracle and a build cannot grade different functions, and a row
+    whose anchor drifted fails in the oracle as well as at the build. It compares
+    the PORT TRACE alongside the value, because two refusals returning the same
+    thing can differ in nothing but which ports ran and in what order.
+  - **THE GAPS, all named rather than implied.** `von` (the 11.6 KB mode-aware
+    decision body ABOVE the pre-check: sixty free variables, a model-classifier
+    call, a mutable per-session denial counter) and `createCanUseTool` (the
+    broker's class method: five mutable maps on its receiver plus thirty-five
+    module imports) are §2.3 designed-port deferrals, not omissions. `Dd`, the
+    chain's two-line entry point, carries no string literal at all and is not
+    takeable by the anchor mechanism — both of its neighbours are owned.
+    `eln`/`initializeToolPermissionContext` (5.4 KB, filesystem and settings I/O)
+    belongs with the settings layer. And one mechanism gap is recorded rather than
+    built: the target signature has no ASYNC dimension, which is what would have
+    separated the broker's two five-parameter functions (an anchor change solved
+    it here).
 - 2026-09-01 (C8-fix-2 verification round — **CONVERGED**, W5's review loop closed):
   a third boundary round over the nine new splices found no wrong byte, no
   false-green path and no wrong measured claim. All nine upstream bodies were
