@@ -21,6 +21,7 @@ import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { useSelectKeys } from "./keys/selectKeys.js";
+import { useRefState } from "./keys/refState.js";
 import { POINTER } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
 import { truncateLabel } from "./select/selectModel.js";
@@ -96,8 +97,12 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
   }, []);
 
   const [view, setView] = useState<McpView>(MCP_ROOT_VIEW);
-  const [serverFocus, setServerFocus] = useState(0);
-  const [toolFocus, setToolFocus] = useState(0);
+  // bl10 fix wave 2, finding 4: ref-backed, mirroring `Select.tsx`'s own pattern — `useSelectKeys`'s contract
+  // (selectKeys.ts:18-22) requires a GETTER for any focus that can move more than once per stdin chunk, and a
+  // plain `index` number (what this used to pass) is captured once per render. `onMove`/`onAccept` below read
+  // the ref, never the render-closed state, so a same-chunk move+accept always acts on the POST-move row.
+  const [serverFocus, setServerFocus, serverFocusRef] = useRefState(0);
+  const [toolFocus, setToolFocus, toolFocusRef] = useRefState(0);
 
   const listRows = buildListRows(servers ?? []);
   const currentServer = view.type !== "list" ? findServer(servers ?? [], view.server) : undefined;
@@ -115,7 +120,7 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
   if (view.type === "list") {
     count = serverCount;
     onAccept = () => {
-      const flat = flatIndexOfServer(listRows, serverFocus);
+      const flat = flatIndexOfServer(listRows, serverFocusRef.current);
       const row = flat >= 0 ? listRows[flat] : undefined;
       if (row?.kind === "server") setView(enterServerMenu(row.server.name));
     };
@@ -124,12 +129,12 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     onAccept = () => { if (currentServer && currentServer.tools.length > 0) { setToolFocus(0); setView(enterServerTools(currentServer.name)); } };
   } else if (view.type === "server-tools") {
     count = currentServer?.tools.length ?? 0;
-    onAccept = () => { const t = currentServer?.tools[toolFocus]; if (currentServer && t) setView(enterToolDetail(currentServer.name, t.name)); };
+    onAccept = () => { const t = currentServer?.tools[toolFocusRef.current]; if (currentServer && t) setView(enterToolDetail(currentServer.name, t.name)); };
   }
 
-  const index = view.type === "server-tools" ? toolFocus : serverFocus;
   useSelectKeys({
-    count, index,
+    count,
+    index: () => (view.type === "server-tools" ? toolFocusRef.current : serverFocusRef.current),
     onMove: (i) => { if (view.type === "server-tools") setToolFocus(i); else setServerFocus(i); },
     onAccept, onCancel: pop,
   });

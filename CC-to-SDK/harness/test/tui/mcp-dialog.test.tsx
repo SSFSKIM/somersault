@@ -211,6 +211,42 @@ describe("McpDialog — drill/pop cycle", () => {
   });
 });
 
+// bl10 fix wave 2, finding 4: `serverFocus`/`toolFocus` were plain render-captured state, but `useSelectKeys`'
+// own contract (selectKeys.ts:18-22) requires a GETTER for any focus that can move more than once per stdin
+// chunk — the provider dispatches every event of one chunk in a loop with NO render in between, so a plain
+// number (or an `onAccept` closure that reads it) sees the PRE-chunk value for every event but the first.
+// `Select.tsx`'s own fix for the identical hazard is the house pattern: ref-backed focus, a getter passed to
+// `useSelectKeys`, the ref updated synchronously in `onMove`, and `onAccept` reading the ref.
+describe("McpDialog — same-chunk move+accept lands on the post-move row (bl10 fw2 F4)", () => {
+  const A: McpServerRow = { name: "a-server", status: "connected", scope: "project", tools: [] };
+  const B: McpServerRow = { name: "b-server", status: "connected", scope: "project", tools: [] };
+  const C: McpServerRow = { name: "c-server", status: "connected", scope: "project", tools: [] };
+
+  it("root list: `j` then Enter in ONE chunk opens the SECOND server, not the first", async () => {
+    const { stdin, lastFrame } = await mount([A, B, C]);
+    stdin.write("j\r");                                      // one chunk: move to b-server, then accept
+    await waitFor(() => flat(lastFrame).includes("Status:"));
+    const f = flat(lastFrame);
+    expect(f).toContain("b-server");
+    expect(f).not.toContain("a-server");
+  });
+
+  it("server-tools: `j` then Enter in ONE chunk drills into the SECOND tool, not the first", async () => {
+    const withTools: McpServerRow = {
+      name: "srv", status: "connected", scope: "project",
+      tools: [{ name: "tool-one" }, { name: "tool-two" }, { name: "tool-three" }],
+    };
+    const { stdin, lastFrame } = await mount([withTools]);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    stdin.write("j\r");                       // one chunk: move to tool-two, then accept -> tool-detail
+    await waitFor(() => flat(lastFrame).includes("srv"));
+    await waitFor(() => flat(lastFrame).includes("tool-two"));
+    const f = flat(lastFrame);
+    expect(f).toContain("tool-two");
+  });
+});
+
 describe("McpDialog — onClose", () => {
   it("root Esc closes the dialog", async () => {
     let closed = false;
