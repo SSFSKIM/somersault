@@ -365,6 +365,35 @@ describe("McpDialog — multiline tool descriptions flatten to one physical row 
   });
 });
 
+// bl10 fix wave 4, W4-2: `server-tool-detail` rendered `currentServer.name`, `tool.name` and the
+// `annotations.join(", ")` line as raw `Text`, while `MCP_DETAIL_FIXED_ROWS`/`MCP_DETAIL_ANNOTATIONS_ROWS`
+// budget exactly one row each — a name wider than the dialog (or one carrying a `\n`) wraps under Ink and can
+// push the frame past `rows`, the same tall-frame hazard RF2/RF4 already fixed for `ServerLabel`/`ToolLabel`/
+// `serverMenuFields`.
+describe("McpDialog — tool-detail name/annotations flatten and truncate (bl10 fw4 W4-2)", () => {
+  it("an over-wide server name, tool name and annotations list each render on one physical row, keeping the frame within `rows`", async () => {
+    const wide: McpServerRow = {
+      name: `wide-server-${"n".repeat(500)}`, status: "connected", scope: "project",
+      tools: [{ name: `wide-tool-${"t".repeat(500)}`, annotations: { readOnly: true, destructive: true, openWorld: true } }],
+    };
+    const instance = render(<McpDialog fetchServers={async () => [wide]} onClose={() => {}} rows={14} columns={40} />);
+    mounted = instance;
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    instance.stdin.write("\r"); await tick();          // -> server-menu
+    instance.stdin.write("\r"); await tick();          // -> server-tools
+    instance.stdin.write("\r"); await tick();          // -> server-tool-detail
+    const f = frame(instance.lastFrame);
+    const lines = f.split("\n").length;
+    expect(lines, "an unclipped wide name/annotations must not wrap past the frame's own row budget").toBeLessThan(14);
+    // The annotations list itself must also be truncated (not just short-circuited by the name overflow
+    // above) — the full, untruncated "open-world" would only appear if the annotations line skipped the
+    // width clip entirely.
+    expect(f).toContain("Annotations:");
+    expect(f).not.toContain("read-only, destructive, open-world");
+  });
+});
+
 describe("McpDialog — onClose", () => {
   it("root Esc closes the dialog", async () => {
     let closed = false;

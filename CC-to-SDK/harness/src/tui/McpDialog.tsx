@@ -267,10 +267,18 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     const descLines = tool.description !== undefined ? paintedRows(tool.description, detailWidth) : [];
     const descBudget = mcpToolDetailDescriptionRows(rows, annotations.length > 0);
     const { keep: descKeep, hidden: descHidden } = bodyWindow(descLines.length, descBudget);
+    // bl10 fix wave 4, W4-2: the server-name, tool-name and annotations lines used to render RAW — each is a
+    // one-row budget item (`MCP_DETAIL_FIXED_ROWS`/`MCP_DETAIL_ANNOTATIONS_ROWS`), but a name wider than the
+    // dialog (or one carrying a `\n`) wraps under Ink and pushes the frame past `rows`, the same tall-frame
+    // hazard RF2/RF4 already fixed for `ServerLabel`/`ToolLabel`/`serverMenuFields`. Same discipline here:
+    // `flattenLabel` first (so measurement/paint agree on one row), then `truncateLabel` to what the frame
+    // actually gives this row.
+    const annotationsLabel = "Annotations:";
+    const annotationsWidth = Math.max(10, columns - 3 - stringWidth(annotationsLabel));
     return (
       <Box flexDirection="column">
-        <Text dimColor>{currentServer.name}</Text>
-        <Text bold>{tool.name}</Text>
+        <Text dimColor>{truncateLabel(flattenLabel(currentServer.name), detailWidth)}</Text>
+        <Text bold>{truncateLabel(flattenLabel(tool.name), detailWidth)}</Text>
         {tool.description ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Description:</Text>
@@ -280,7 +288,7 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
         ) : null}
         {annotations.length > 0 ? (
           <Box flexDirection="row" gap={1} marginTop={1}>
-            <Text bold>Annotations:</Text><Text dimColor>{annotations.join(", ")}</Text>
+            <Text bold>{annotationsLabel}</Text><Text dimColor>{truncateLabel(flattenLabel(annotations.join(", ")), annotationsWidth)}</Text>
           </Box>
         ) : null}
       </Box>
