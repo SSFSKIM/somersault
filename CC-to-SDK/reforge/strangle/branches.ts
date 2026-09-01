@@ -66,10 +66,20 @@
 //                          rewriting the owned module to avoid it would be
 //                          changing the code to suit the instrument.
 //
+//   A guarded body that RETURNS skips the end-of-block marker, so each escaping
+//   `return` carries its own recorder for the SAME completed arm — written as an
+//   expression (`return (__covS(id:F), EXPR)`, or `return __covS(id:F)` when
+//   there is nothing to return), because a statement insertion would change
+//   which statement a braceless `if` owns. Not a new outcome: "the body did not
+//   throw" is one arm however control left it. Added by W6, whose permission
+//   pre-check, rule checker and allow-rule decision all guard a body that
+//   returns from inside it — rewriting those to hoist a result into a variable
+//   would have been measuring something other than what upstream wrote.
+//
 //   A guarded body that neither completes nor throws — a generator whose
 //   CONSUMER calls `.return()` runs the finally without either — records neither
-//   outcome. That is what try/catch already does, and the abrupt-completion
-//   refusal below is what keeps it from happening any other way.
+//   outcome. That is what try/catch already does, and the escaping-jump refusal
+//   below is what keeps it from happening any other way.
 //
 // ## Branch ids are structural, not positional
 //
@@ -88,7 +98,18 @@ export type BranchEdit =
   | { kind: "wrap"; start: number; end: number; recorder: "__cov" | "__covN" }
   | { kind: "mark"; pos: number; outcome: string }
   /** a rethrowing `catch` spliced into a try/finally, so its throwing arm has somewhere to be marked */
-  | { kind: "insertCatch"; pos: number; outcome: string };
+  | { kind: "insertCatch"; pos: number; outcome: string }
+  /**
+   * A `return` that ESCAPES a guarded body: the completed arm is recorded on
+   * that exit as well as at the end of the block, because the end-of-block
+   * marker is exactly what a `return` skips. Written as an expression
+   * (`return (__covS(id), EXPR)`) rather than a statement, so it is safe in a
+   * braceless arm (`if (x) return y`) where inserting a statement would change
+   * which statement the `if` owns.
+   */
+  | { kind: "wrapReturn"; start: number; end: number; outcome: string }
+  /** the same, for a valueless `return` — the recorder BECOMES the returned expression */
+  | { kind: "markReturnVoid"; pos: number; outcome: string };
 
 export interface BranchSite {
   /** `<module>#<function>@<n>` */
@@ -134,8 +155,8 @@ function unsupported(n: ts.Node): string | null {
   if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isBlock(n.statement)) {
     return "for..of/for..in with a braceless body — there is nowhere to mark the iterated arm; add braces";
   }
-  if (ts.isTryStatement(n) && abruptCompletion(n.tryBlock)) {
-    return "try block that can complete abruptly (return/break/continue) — the end-of-try marker would be skipped on a path that did not throw, under-reporting the non-throwing arm";
+  if (ts.isTryStatement(n) && escapingJumps(n.tryBlock)) {
+    return "try block that can `break` or `continue` out of the guarded body — the end-of-try marker would be skipped on a path that did not throw, and a jump has no expression position to record it in (a `return` does, and is recorded)";
   }
   if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && n.questionDotToken && hasOptionalChain(n.expression)) {
     return "optional chain over an optional chain (`a?.b?.c`) — when the inner link short-circuits the outer one never evaluates, so a recorder there would report an arm that did not run";
@@ -158,26 +179,62 @@ function hasOptionalChain(n: ts.Node): boolean {
   return found;
 }
 
-/** Can this block finish other than by falling off its end or throwing? */
-function abruptCompletion(block: ts.Block): boolean {
+/**
+ * Every `return` that ESCAPES this guarded block, in source order.
+ *
+ * A nested function's `return` is its own and does not escape; a `return` inside
+ * a loop or switch nested in the block DOES, which is why those are still walked
+ * for returns while their own `break`/`continue` are left alone.
+ *
+ * Each one is an exit path that skips the end-of-block marker, so each gets its
+ * own recorder — which is what makes a guarded body that returns measurable
+ * instead of refused. The alternative was rewriting the owned module to hoist
+ * its result into a variable, and that would be measuring something other than
+ * the code upstream wrote (C8's "extend the instrument, not the owned code").
+ */
+function escapingReturns(block: ts.Block): ts.ReturnStatement[] {
+  const found: ts.ReturnStatement[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isReturnStatement(n)) {
+      found.push(n);
+      return;
+    }
+    if (ts.isFunctionLike(n) || ts.isClassLike(n)) return;
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(block, visit);
+  return found.sort((a, b) => a.getStart() - b.getStart());
+}
+
+/**
+ * Does this block `break` or `continue` OUT of itself?
+ *
+ * Still refused, and for a reason `return` does not share: a jump has no
+ * expression position to hang a recorder on, so recording it would need a
+ * statement insertion — which is unsafe in a braceless arm — or a flag variable,
+ * which is a rewrite of the measured code rather than an insertion into it.
+ * A jump owned by a loop or switch INSIDE the block does not leave it.
+ */
+function escapingJumps(block: ts.Block): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
     if (found) return;
-    if (ts.isReturnStatement(n) || ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
+    if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
       found = true;
       return;
     }
-    // A nested function's `return` is its own; loops and switches inside the try
+    // A nested function's jumps are its own; loops and switches inside the try
     // own their `break`/`continue`, so those do not escape either.
     if (ts.isFunctionLike(n) || ts.isClassLike(n)) return;
     if (ts.isIterationStatement(n, false) || ts.isSwitchStatement(n)) {
-      // still walk for a `return`, which does escape
-      const inner = (m: ts.Node): void => {
+      // …unless it is LABELLED, which jumps past the construct that would
+      // otherwise own it and can therefore still leave the guarded block.
+      const labelled = (m: ts.Node): void => {
         if (found) return;
-        if (ts.isReturnStatement(m)) found = true;
-        else if (!ts.isFunctionLike(m) && !ts.isClassLike(m)) ts.forEachChild(m, inner);
+        if ((ts.isBreakStatement(m) || ts.isContinueStatement(m)) && m.label) found = true;
+        else if (!ts.isFunctionLike(m) && !ts.isClassLike(m)) ts.forEachChild(m, labelled);
       };
-      ts.forEachChild(n, inner);
+      ts.forEachChild(n, labelled);
       return;
     }
     ts.forEachChild(n, visit);
@@ -257,9 +314,30 @@ export function branchSites(moduleName: string, path: string, source?: string): 
       const pos = n.statements.length > 0 ? n.statements[0].getStart(sf) : n.getEnd();
       marked(n, "clause", [{ outcome: "taken", pos }], ts.isCaseClause(n) ? n.expression : n);
     } else if (ts.isTryStatement(n)) {
+      // The end-of-block marker only exists for a body that can FALL OFF its
+      // end. One whose last statement is a `return` or a `throw` cannot, and
+      // marking there would both be dead code and collide with the recorder on
+      // that final `return`'s expression (they share a position).
+      const last = n.tryBlock.statements[n.tryBlock.statements.length - 1];
+      const fallsOff = last === undefined || !(ts.isReturnStatement(last) || ts.isThrowStatement(last));
       const completed = { outcome: "F", pos: n.tryBlock.getEnd() - 1 };
+      // Every `return` that leaves the guarded body is a completed-arm exit that
+      // skips the end-of-block marker, so each carries its own recorder. They
+      // are EXTRA edits on the same site with the same outcome, not new
+      // outcomes: "the body did not throw" is one arm however it left.
+      const returnEdits: BranchEdit[] = escapingReturns(n.tryBlock).map((r) =>
+        r.expression
+          ? { kind: "wrapReturn", start: r.expression.getStart(sf), end: r.expression.getEnd(), outcome: "F" }
+          : { kind: "markReturnVoid", pos: r.getStart(sf) + "return".length, outcome: "F" },
+      );
       if (n.catchClause) {
-        marked(n, "try", [{ outcome: "T", pos: n.catchClause.block.getStart(sf) + 1 }, completed], n.tryBlock);
+        const arms = [{ outcome: "T", pos: n.catchClause.block.getStart(sf) + 1 }, ...(fallsOff ? [completed] : [])];
+        marked(n, "try", arms, n.tryBlock);
+        const site = raw[raw.length - 1];
+        site.edits.push(...returnEdits);
+        // The site still has both outcomes even when the block cannot fall off
+        // its end: `F` is then recorded on the returning exits alone.
+        if (!fallsOff) site.outcomes = ["T", "F"];
       } else {
         // try/finally, no catch. There is no arm to mark the throwing path in,
         // so one is INSERTED: a catch that records and immediately rethrows,
@@ -280,7 +358,11 @@ export function branchSites(moduleName: string, path: string, source?: string): 
           text: label(n.tryBlock),
           line: at(n),
           sort: n.getStart(sf),
-          edits: [{ kind: "insertCatch", pos: n.tryBlock.getEnd(), outcome: "T" }, { kind: "mark", ...completed }],
+          edits: [
+            { kind: "insertCatch", pos: n.tryBlock.getEnd(), outcome: "T" },
+            ...(fallsOff ? [{ kind: "mark" as const, ...completed }] : []),
+            ...returnEdits,
+          ],
         });
       }
     } else if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && n.questionDotToken) {
@@ -308,13 +390,37 @@ export const outcomesOf = (site: BranchSite): string[] => site.outcomes.map((o) 
  * applied back to front, so nested sites keep the offsets the AST reported.
  */
 export function instrumentSource(source: string, sites: readonly BranchSite[], recorderSpecifier: string): string {
-  const wraps = sites.flatMap((s) => s.edits.filter((e) => e.kind === "wrap").map((e) => ({ site: s, edit: e as Extract<BranchEdit, { kind: "wrap" }> })));
+  // Both span-based edit kinds share the depth computation and the tie ranks:
+  // a condition wrap (`__cov(id,(EXPR))`, which records by truthiness) and a
+  // returned-expression wrap (`(__covS(id:F), EXPR)`, which records an arm and
+  // evaluates to EXPR). They nest inside each other freely — a `return` inside a
+  // guarded body can return a `??` expression that is itself wrapped — so they
+  // must be ordered together rather than in two independent passes.
+  const wraps = sites.flatMap((s) =>
+    s.edits
+      .filter((e): e is Extract<BranchEdit, { kind: "wrap" | "wrapReturn" }> => e.kind === "wrap" || e.kind === "wrapReturn")
+      .map((e) => ({
+        start: e.start,
+        end: e.end,
+        open: e.kind === "wrap" ? `${e.recorder}(${JSON.stringify(s.id)},(` : `(__covS(${JSON.stringify(`${s.id}:${e.outcome}`)}),`,
+        close: e.kind === "wrap" ? "))" : ")",
+      })),
+  );
   const edits: { pos: number; text: string; depth: number; rank: number }[] = [];
-  for (const { site, edit } of wraps) {
-    // depth = how many wrapped sites contain this one; used only to break ties
-    const depth = wraps.filter((o) => o.edit.start <= edit.start && edit.end <= o.edit.end).length;
-    edits.push({ pos: edit.start, text: `${edit.recorder}(${JSON.stringify(site.id)},(`, depth, rank: 1 });
-    edits.push({ pos: edit.end, text: "))", depth, rank: -1 });
+  for (const w of wraps) {
+    // depth = how many wrapped spans contain this one; used only to break ties
+    const depth = wraps.filter((o) => o.start <= w.start && w.end <= o.end).length;
+    edits.push({ pos: w.start, text: w.open, depth, rank: 1 });
+    edits.push({ pos: w.end, text: w.close, depth, rank: -1 });
+  }
+  for (const site of sites) {
+    for (const edit of site.edits) {
+      if (edit.kind !== "markReturnVoid") continue;
+      // `return;` has no expression to wrap, so the recorder BECOMES the
+      // returned expression: `__covS` returns undefined, which is what a
+      // valueless `return` already produced.
+      edits.push({ pos: edit.pos, text: ` __covS(${JSON.stringify(`${site.id}:${edit.outcome}`)})`, depth: 0, rank: 2 });
+    }
   }
   for (const site of sites) {
     for (const edit of site.edits) {

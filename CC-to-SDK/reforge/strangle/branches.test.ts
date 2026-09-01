@@ -129,15 +129,75 @@ async function exercise(source: string, call: (m: Record<string, (...a: unknown[
   check("a try whose catch never runs records only the completed arm",
     quiet.ran.includes(`${qs.id}:F`) && !quiet.ran.includes(`${qs.id}:T`), JSON.stringify(quiet.ran));
 
-  refuses("a try block that can `return` is refused — the end-of-try marker would be skipped",
-    `export function f(a){try{if(a)return 1;go()}catch(e){return 2}return 3}\n`,
-    /complete abruptly/);
   check("…while a try whose only escape is a THROW is fine (that is the arm being measured)", (() => {
     const sites = branchSites("fx", "/fixture/throwing.js", `export function f(a){try{if(a)throw new Error("x");go()}catch(e){}return 1}\n`);
     return sites.some((s) => s.kind === "try");
   })());
   check("…and a `return` inside a nested function in the try does not count as an escape", (() => {
     const sites = branchSites("fx", "/fixture/nested.js", `export function f(){try{run(()=>{return 1})}catch(e){}return 2}\n`);
+    return sites.some((s) => s.kind === "try");
+  })());
+}
+
+// ---- TRY WHOSE BODY RETURNS (W6) --------------------------------------------
+// Refused until W6, whose permission pre-check, rule checker and allow-rule
+// decision all `return` from inside a guarded body — three of the subsystem's
+// four most-called functions. Rewriting them to hoist a result into a variable
+// would have been changing the measured code to suit the instrument, so the
+// instrument was extended instead: every escaping `return` records the SAME
+// completed arm the end-of-block marker records, as an EXPRESSION, so a
+// braceless `if (x) return y` keeps owning its own statement.
+{
+  // Four shapes in one fixture: a braceless early return, a valueless return, a
+  // return that falls off the end, and the throwing arm.
+  const source =
+    `export function f(a){try{if(a===1)return "early";if(a===2)return;if(a===3)throw new Error("boom");return "tail"}catch(e){return "caught:"+e.message}}\n`;
+  const r = await exercise(source, (m) => [m.f(1), m.f(2), m.f(3), m.f(4)]);
+  const site = r.sites.find((s) => s.kind === "try")!;
+  check("a try whose body returns is RECORDED, not refused", site !== undefined && site.outcomes.join() === "T,F",
+    JSON.stringify(r.sites.map((s) => [s.kind, s.outcomes])));
+  check("instrumenting it does not change what it returns — including the valueless return", r.identical, JSON.stringify(r.got));
+  check("…and the values are the ones the plain module produced",
+    JSON.stringify(r.got) === JSON.stringify(["early", undefined, "caught:boom", "tail"]), JSON.stringify(r.got));
+  check("both arms are recorded: the returning exits are the completed arm, the throw is the T arm",
+    r.ran.includes(`${site.id}:F`) && r.ran.includes(`${site.id}:T`), JSON.stringify(r.ran));
+
+  // The negative control that matters: without the per-return recorders, a body
+  // whose ONLY exits are returns would record no completed arm at all and the
+  // attestation would report an unexercised, adjudication-demanding branch on a
+  // path every call takes. That is the false-RED direction, and it is what the
+  // old refusal was protecting against by refusing outright.
+  const early = await exercise(
+    `export function g(a){try{if(a)return "yes";return "no"}catch(e){return "caught"}}\n`,
+    (m) => [m.g(true), m.g(false)],
+  );
+  const es = early.sites.find((s) => s.kind === "try")!;
+  check("a guarded body that ONLY ever returns still records its completed arm",
+    early.ran.includes(`${es.id}:F`), JSON.stringify(early.ran));
+  check("…and does NOT record the throwing arm it never took",
+    !early.ran.includes(`${es.id}:T`), JSON.stringify(early.ran));
+
+  // A returned expression that is ITSELF a branch site: the two wraps nest, and
+  // the inner one must sit inside the outer one rather than swallowing it.
+  const nested = await exercise(
+    `export function h(a,b){try{return a ?? b}catch(e){return "caught"}}\n`,
+    (m) => [m.h(null, "fallback"), m.h("value", "fallback")],
+  );
+  const ns = nested.sites.find((s) => s.kind === "try")!;
+  const nullish = nested.sites.find((s) => s.kind === "nullish")!;
+  check("a wrapped expression inside a recorded return still evaluates correctly", nested.identical, JSON.stringify(nested.got));
+  check("…and both the nullish arms AND the completed arm are recorded",
+    nested.ran.includes(`${ns.id}:F`) && nested.ran.includes(`${nullish.id}:T`) && nested.ran.includes(`${nullish.id}:F`),
+    JSON.stringify(nested.ran));
+
+  // Still refused, and for a reason a `return` does not share.
+  refuses("a try body that `break`s out of an enclosing loop is still refused — a jump has no expression position",
+    `export function f(xs){for(const x of xs){try{if(x)break;go()}catch(e){}}return 1}\n`, /break` or `continue`/);
+  refuses("…and so is a labelled break that jumps past the loop that would own it",
+    `export function f(xs){outer:for(const x of xs){try{for(const y of x){if(y)break outer}}catch(e){}}return 1}\n`,
+    /break` or `continue`/);
+  check("…while an UNLABELLED break owned by a loop inside the try does not escape it", (() => {
+    const sites = branchSites("fx", "/fixture/ownbreak.js", `export function f(xs){try{for(const x of xs){if(x)break}}catch(e){}return 1}\n`);
     return sites.some((s) => s.kind === "try");
   })());
 }
@@ -185,8 +245,22 @@ async function exercise(source: string, call: (m: Record<string, (...a: unknown[
   check("…and an abandoned body records NEITHER arm, as the header says",
     !gen.ran.includes(`${gs.id}:T`) && !gen.ran.includes(`${gs.id}:F`), JSON.stringify(gen.ran));
 
-  refuses("a try/finally block that can `return` is refused, like a try/catch one",
-    `export function f(a){try{if(a)return 1;go()}finally{done()}return 3}\n`, /complete abruptly/);
+  // A try/finally whose body returns is recorded the same way a try/catch one
+  // is — and the recorder's spliced catch must still be invisible: the finally
+  // runs on the returning path, and the return value is untouched.
+  const returning = await exercise(
+    `export function f(a,log){try{if(a)return "early";log.push("body");return "tail"}finally{log.push("released")}}\n`,
+    (m) => { const l1 = [] as string[]; const l2 = [] as string[]; return [m.f(true, l1), l1, m.f(false, l2), l2]; },
+  );
+  const rs = returning.sites.find((s) => s.kind === "try")!;
+  check("a try/finally whose body returns is recorded, and the finally still runs on that path",
+    returning.identical && JSON.stringify(returning.got) === JSON.stringify(["early", ["released"], "tail", ["body", "released"]]),
+    JSON.stringify(returning.got));
+  check("…and the completed arm is recorded on the returning exit",
+    returning.ran.includes(`${rs.id}:F`) && !returning.ran.includes(`${rs.id}:T`), JSON.stringify(returning.ran));
+
+  refuses("a try/finally body that `continue`s out of an enclosing loop is still refused",
+    `export function f(xs){for(const x of xs){try{if(x)continue;go()}finally{done()}}return 3}\n`, /break` or `continue`/);
 }
 
 // ---- LOOPS -------------------------------------------------------------------
@@ -253,7 +327,7 @@ console.log(`=== branch instrumenter: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — switch, try/catch, try/finally, loops and optional chaining are recorded faithfully; every unrecordable form is refused by name"
+    ? "PASS — switch, try/catch (including a body that returns), try/finally, loops and optional chaining are recorded faithfully; every unrecordable form is refused by name"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;
