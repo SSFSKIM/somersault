@@ -50,6 +50,10 @@ import * as userPromptSubmitHooks from "../../strangle/modules/user-prompt-submi
 import * as stopHooks from "../../strangle/modules/stop-hooks/reference.js";
 import * as subagentStartHooks from "../../strangle/modules/subagent-start-hooks/reference.js";
 import * as messageDisplayHooks from "../../strangle/modules/message-display-hooks/reference.js";
+import * as postToolFailureHooks from "../../strangle/modules/post-tool-failure-hooks/reference.js";
+import * as sessionStartHooks from "../../strangle/modules/session-start-hooks/reference.js";
+import * as sessionEndHooks from "../../strangle/modules/session-end-hooks/reference.js";
+import * as preCompactHooks from "../../strangle/modules/pre-compact-hooks/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
 import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
@@ -124,20 +128,27 @@ const OWNED: [string, string, unknown][] = [
   ["compact-boundary-wire", "subsystem/compaction", compactBoundaryWire.compactBoundaryWire],
   ["compact-continuation", "subsystem/compaction", compactContinuation.compactContinuation],
   ["auto-compact-trigger", "subsystem/compaction", autoCompactTrigger.autoCompactTrigger],
-  // W5's hook dispatchers (C8). Six modules, and with C5x's PostToolUse
-  // dispatcher that is SEVEN functions covering all EIGHT events the engine
-  // fires headlessly — `stop-hooks` serves Stop and SubagentStop through one
-  // internal conditional. The row stays `spliced`, not `standalone-complete`:
-  // what these delegate INTO — the 23 KB shared executor, with matching,
-  // command/callback/http/mcp invocation, timeouts and cancellation — is a port
-  // and S-module-shaped, so the subsystem does not close on the dispatchers.
-  // reforge/ledger.json says so.
+  // W5's hook dispatchers (C8). Ten modules, and with C5x's PostToolUse
+  // dispatcher that is ELEVEN functions covering ELEVEN of the TWELVE events the
+  // engine is measured to fire headlessly — `stop-hooks` serves Stop and
+  // SubagentStop through one internal conditional, and Notification is excluded
+  // on two named grounds. The last four landed with C8's boundary round, which
+  // found that the wave's "all eight" claim rested on a probe whose negatives
+  // were vacuous. The row stays `spliced`, not `standalone-complete`: what these
+  // delegate INTO — the 23 KB shared executor and its awaiting sibling, with
+  // matching, command/callback/http/mcp invocation, timeouts and cancellation —
+  // is a port and S-module-shaped, so the subsystem does not close on the
+  // dispatchers. reforge/ledger.json says so.
   ["pre-tool-hooks", "subsystem/hook-dispatch", preToolHooks.preToolHooks],
   ["post-tool-batch-hooks", "subsystem/hook-dispatch", postToolBatchHooks.postToolBatchHooks],
   ["user-prompt-submit-hooks", "subsystem/hook-dispatch", userPromptSubmitHooks.userPromptSubmitHooks],
   ["stop-hooks", "subsystem/hook-dispatch", stopHooks.stopHooks],
   ["subagent-start-hooks", "subsystem/hook-dispatch", subagentStartHooks.subagentStartHooks],
   ["message-display-hooks", "subsystem/hook-dispatch", messageDisplayHooks.messageDisplayHooks],
+  ["post-tool-failure-hooks", "subsystem/hook-dispatch", postToolFailureHooks.postToolFailureHooks],
+  ["session-start-hooks", "subsystem/hook-dispatch", sessionStartHooks.sessionStartHooks],
+  ["session-end-hooks", "subsystem/hook-dispatch", sessionEndHooks.sessionEndHooks],
+  ["pre-compact-hooks", "subsystem/hook-dispatch", preCompactHooks.preCompactHooks],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {
