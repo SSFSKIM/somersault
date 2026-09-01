@@ -65,6 +65,13 @@ the commit) or when a round's scope absorbs them.
   click is a no-op, no state/content loss, and paint==hit still holds. Pre-bl10 owner-gate
   design; fix direction: stamp headers clickable for expandable/expanded results. Logged per the
   post-wave-3 convergence rule.
+- **Long MCP detail values have no full-text route** (bl10 rereview5, 2026-09-02). The dialog's
+  bounding waves clip every rendered MCP string (root rows, field values, tool descriptions via
+  `descKeep`) to the frame budget; a long server error/URL/command or tall description survives
+  intact in `mcpDialogModel`'s normalized rows but no view scrolls or expands to show the tail,
+  so the omitted diagnostic is unreadable in the TUI. Safe direction (clip beats tall-frame
+  replay), same design tension as the Settings read-only entry above — resolve both with one
+  scrollable-detail primitive if either becomes a real-usage complaint.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
