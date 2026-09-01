@@ -1,6 +1,12 @@
-// PARITY LAYER (§2.5 `reference`) — the sentence a permission request is
-// rendered as (upstream `ql` / `createPermissionRequestMessage`, 2.1.251,
-// chunk-fy12d89p).
+// The sentence a permission request is rendered as, owned outright (§2.4
+// `pure-helper`) — upstream `ql` / `createPermissionRequestMessage`, 2.1.251,
+// chunk-fy12d89p.
+//
+// OWNED BUT NOT SPLICED, and the manifest records why where its row would be:
+// forty-five call sites and it runs on every tool call, so reachability is not
+// the question — but on every path a headless corpus can create, the sentence it
+// builds is absorbed before it reaches an observable. A splice would be a row
+// the gate could not prove live.
 //
 // WHY THIS IS THE SUBSYSTEM'S HIGHEST-LEVERAGE UNIT. Forty-five call sites
 // bundle-wide, and every one of them is a decision explaining ITSELF: the

@@ -71,7 +71,6 @@ import { readFixture } from "../research/tools/extract-permission-surface.js";
 import "./modules/permission-precheck.js";
 import "./modules/rule-based-permissions.js";
 import "./modules/allow-rule-decision.js";
-import "./modules/permission-message.js";
 import "./modules/classifier-streak.js";
 import "./modules/mode-change-guard.js";
 import "./modules/mode-transition.js";
@@ -82,6 +81,7 @@ import "./modules/broker-permission-updates.js";
 import "./modules/control-response-success.js";
 import "./modules/control-response-error.js";
 import { pluralize } from "./modules/shared/pluralize.js";
+import { permissionMessage } from "./modules/shared/permission-message.js";
 import { isAskRuleDrivenReason } from "./modules/shared/ask-rule-reason.js";
 import { findSafetyCheckReason } from "./modules/shared/safety-check-reason.js";
 
@@ -158,6 +158,29 @@ const SHARED_HELPERS: Splice[] = [
     coverage: [],
   },
   {
+    // Forty-five call sites and every one of them discards the sentence, so it
+    // is owned in `shared/` rather than spliced. The oracle grades it exactly as
+    // it grades a spliced row — same anchor, same excision, same comparison —
+    // because the reason it is not a row says nothing about whether it is right.
+    name: "permission-message",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "blocked this action:",
+    fn: "permissionMessage",
+    captures: [
+      { as: "renderRuleValue", kind: "effectful-port", derive: (b) => must(b, /let ([\w$]+)=([\w$]+)\([\w$]+\.rule\.ruleValue\)/, 2, "renderRuleValue") },
+      { as: "renderRuleSource", kind: "effectful-port", derive: (b) => must(b, /,([\w$]+)=([\w$]+)\([\w$]+\.rule\.source\)/, 2, "renderRuleSource") },
+      {
+        as: "splitRedirections",
+        kind: "effectful-port",
+        derive: (b) => must(b, /\{commandWithoutRedirections:[\w$]+,redirections:[\w$]+\}=([\w$]+)\(/, 1, "splitRedirections"),
+      },
+      { as: "pluralize", kind: "pure-helper", owned: true, derive: (b) => must(b, /\$\{([\w$]+)\([\w$]+,"part"\)\}/, 1, "pluralize") },
+      { as: "modeTitle", kind: "effectful-port", derive: (b) => must(b, /Current permission mode \(\$\{([\w$]+)\(/, 1, "modeTitle") },
+    ],
+    coverage: [],
+  },
+  {
     name: "safety-check-reason",
     target: "free-function",
     signature: { params: 2, ancestry: ["SourceFile"] },
@@ -167,6 +190,13 @@ const SHARED_HELPERS: Splice[] = [
     coverage: [],
   },
 ];
+
+/** One regex, one group, one loud failure — the shared-helper rows' own `derive`. */
+function must(body: string, re: RegExp, group: number, as: string): string {
+  const m = body.match(re);
+  if (!m || m[group] === undefined) throw new Error(`shared helper: could not derive '${as}' — ${re}`);
+  return m[group];
+}
 
 const splice = (name: string): Splice => {
   const sp = SPLICES.find((s) => s.name === name) ?? SHARED_HELPERS.find((s) => s.name === name);
@@ -230,10 +260,20 @@ function upstream(name: string, ports: Record<string, unknown>): (...args: unkno
   return make(scope);
 }
 
-/** The owned side, through its adapter, with the manifest's forwarded captures in manifest order. */
+/**
+ * The owned side. A spliced row is driven through its ADAPTER — so the argument
+ * list is the one the build's delegation synthesises, primitives and their
+ * equality assertions included — and an owned-but-unspliced helper is called
+ * directly, because it has no adapter to drive.
+ */
+const SHARED_ENTRY: Record<string, (...a: unknown[]) => unknown> = {
+  "permission-message": permissionMessage as (...a: unknown[]) => unknown,
+};
+
 function owned(name: string, params: unknown[], ports: Record<string, unknown>): unknown {
   const ex = extract(name);
-  return reforge[splice(name).fn](...params, ...ex.forwarded.map((as) => ports[as]));
+  const fn = SHARED_ENTRY[name] ?? reforge[splice(name).fn];
+  return fn(...params, ...ex.forwarded.map((as) => ports[as]));
 }
 
 /**

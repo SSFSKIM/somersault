@@ -110,7 +110,24 @@ const rules = (spec: Partial<Record<"allow" | "deny" | "ask", string[]>>) => ({ 
  * was asked about, why the engine says it is asking, and whether a user rule
  * forced the prompt.
  */
-const broker = (ctx: ScenarioContext, decide?: (tool: string, input: Record<string, unknown>) => { behavior: "deny"; message: string } | null) =>
+const broker = (
+  ctx: ScenarioContext,
+  decide?: (tool: string, input: Record<string, unknown>) => { behavior: "deny"; message: string } | null,
+  /**
+   * Answer this many milliseconds late.
+   *
+   * Only the two PermissionRequest-hook cells use it, and they must: the engine
+   * RACES the hook dispatch against the host's `canUseTool`, and both are
+   * control-channel round trips, so an immediate broker wins often enough that
+   * the hook's decision never lands. Being consulted is not the same as
+   * deciding — the first take of those two cells asserted the former and
+   * measured nothing.
+   *
+   * Well under the 6000 ms notify timer, so no Notification frame is armed
+   * (W5's trap, and not this wave's condition to create).
+   */
+  delayMs = 0,
+) =>
   async (toolName: string, input: Record<string, unknown>, opts: Record<string, unknown>) => {
     ctx.collect("consult", {
       toolName,
@@ -119,16 +136,40 @@ const broker = (ctx: ScenarioContext, decide?: (tool: string, input: Record<stri
       blockedPath: opts.blockedPath ?? null,
       suggestions: Array.isArray(opts.suggestions) ? (opts.suggestions as PermissionUpdate[]).length : 0,
     });
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
     const refusal = decide?.(toolName, input);
     if (refusal) return refusal;
     return { behavior: "allow" as const, updatedInput: input };
   };
+
+/** How long the two hook cells make the host wait, so the hook's decision can land. */
+const HOOK_RACE_DELAY_MS = 1500;
 
 /** Every `{type:"system",subtype:"permission_denied"}` frame in a transcript, projected. */
 const denials = (msgs: unknown[]) =>
   msgs
     .filter((m) => (m as { type?: string; subtype?: string }).type === "system" && (m as { subtype?: string }).subtype === "permission_denied")
     .map((m) => m as { tool_name?: string; decision_reason_type?: string; message?: string });
+
+/**
+ * The text of every `tool_result` block in the transcript.
+ *
+ * The permission subsystem's messages reach a MODEL through here and nowhere
+ * else: a denied tool call's result content is the sentence the decision carried.
+ * Reading the model's prose instead would grade the model's paraphrase.
+ */
+const toolResults = (msgs: unknown[]): string[] => {
+  const out: string[] = [];
+  for (const m of msgs) {
+    const content = (m as { message?: { content?: unknown } }).message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as { type?: string; content?: unknown }[]) {
+      if (block?.type !== "tool_result") continue;
+      out.push(typeof block.content === "string" ? block.content : JSON.stringify(block.content));
+    }
+  }
+  return out;
+};
 
 const consults = (events: unknown[]) =>
   events.filter((e) => (e as { event?: string }).event === "consult").map((e) => (e as { payload: Record<string, unknown> }).payload);
@@ -236,24 +277,28 @@ export const W6_SCENARIOS: Scenario[] = [
   },
 
   {
-    // RULE CELL: an ALLOW rule, in default mode, on a command the mode would
-    // otherwise broker. The rule must make the consult disappear — which is the
-    // allow-rule decision's default arm, reached only when the tool itself
-    // neither denies nor asks.
+    // RULE CELL: a WHOLE-TOOL allow rule, in default mode.
+    //
+    // The whole-tool part is the measurement. The first take used a CONTENT rule
+    // (`Bash(mkdir:*)`), the broker was correctly not consulted, and solo
+    // sabotage of the allow-rule decision stayed green — because a content rule
+    // is matched by the TOOL's own `checkPermissions`, not by the pre-check's
+    // allow-rule rung. Only a whole-tool rule reaches the rung, and only the rung
+    // reaches the function this cell exists to cover.
     tag: "perm-rule-allow",
-    title: "an allow rule runs a non-read-only command without brokering it",
+    title: "a whole-tool allow rule reaches the allow-rule decision",
     run: (ctx) =>
-      drive(MKDIR_PROMPT, {
+      drive(writePrompt(TARGET), {
         ...baseOptions(ctx),
         maxTurns: 4,
         permissionMode: "default",
-        settings: rules({ allow: ["Bash(mkdir:*)"] }),
+        settings: rules({ allow: ["Write"] }),
         canUseTool: broker(ctx),
       }),
-    check: (msgs, events) => {
-      if (!usedTool(msgs, "Bash")) return "the Bash call was never attempted";
-      if (consults(events).some((c) => c.toolName === "Bash")) return "the broker was consulted despite a matching allow rule";
+    check: (msgs) => {
+      if (!usedTool(msgs, "Write")) return "the Write was never attempted";
       if (denials(msgs).length > 0) return "the allow rule produced a denial";
+      if (resultText(msgs).includes("DENIED")) return "the model reports the Write was denied despite a whole-tool allow rule";
       return null;
     },
   },
@@ -339,7 +384,7 @@ export const W6_SCENARIOS: Scenario[] = [
         ...baseOptions(ctx),
         maxTurns: 4,
         permissionMode: "default",
-        settings: rules({ ask: [`Write(${REWRITTEN})`] }),
+        settings: rules({ ask: ["Write(*)", "Write(**)", "Write(rewritten.txt)", `Write(//${REWRITTEN})`] }),
         hooks: {
           PermissionRequest: [
             {
@@ -348,11 +393,19 @@ export const W6_SCENARIOS: Scenario[] = [
                   const record = input as { tool_name?: string; tool_input?: Record<string, unknown> };
                   ctx.collect("permissionRequestHook", { toolName: record.tool_name });
                   if (record.tool_name !== "Write") return { continue: true };
+                  // The SHAPE is `hookSpecificOutput.decision`, and the first
+                  // take of this scenario got it wrong: a hook that returns a
+                  // `permissionRequestResult` key fires, is parsed, and has its
+                  // decision silently ignored — the scenario passed its substance
+                  // check (the hook DID fire) while grading nothing, and solo
+                  // sabotage of the rule checker stayed green. A hook whose
+                  // output shape is wrong is indistinguishable from a hook with
+                  // no opinion.
                   return {
                     continue: true,
-                    permissionRequestResult: {
-                      behavior: "allow",
-                      updatedInput: { ...record.tool_input, file_path: REWRITTEN },
+                    hookSpecificOutput: {
+                      hookEventName: "PermissionRequest",
+                      decision: { behavior: "allow", updatedInput: { ...record.tool_input, file_path: REWRITTEN } },
                     },
                   } as never;
                 },
@@ -360,13 +413,37 @@ export const W6_SCENARIOS: Scenario[] = [
             },
           ],
         },
-        canUseTool: broker(ctx),
+        canUseTool: broker(ctx, undefined, HOOK_RACE_DELAY_MS),
       }),
-    check: (msgs, events) => {
-      if (!events.some((e) => (e as { event?: string }).event === "permissionRequestHook")) {
-        return "the PermissionRequest hook never fired, so the rewrite path was not taken";
-      }
+    // THE CHECK READS THE TOOL_RESULT, not the model's reply, and getting there
+    // took four takes — each of which passed or failed for a reason that was not
+    // the cell's claim, which is itself the finding.
+    //
+    //   1. asserted the hook FIRED. Passes on an engine that parses the hook's
+    //      output and ignores its decision — which is what the first take DID,
+    //      because the output shape is `hookSpecificOutput.decision` and the
+    //      scenario used a `permissionRequestResult` key.
+    //   2. asserted the broker was not CONSULTED. Fails on a race the engine is
+    //      entitled to win either way; being consulted is not deciding.
+    //   3. asserted the MODEL said DENIED. Passed while the rewritten file was
+    //      written anyway — the model paraphrased, and an ask rule naming a bare
+    //      absolute path never matched.
+    //   4. asserted the message builder's `rule` sentence. The rule DID match
+    //      this time and the write WAS refused, and the sentence is the Write
+    //      tool's own: the rule checker's ask-rule rung has two arms, and when
+    //      the tool is already asking it ANNOTATES that decision rather than
+    //      building a new one, so the builder is never called.
+    //
+    // What the cell actually grades, and it is the claim it was written for: a
+    // hook's rewritten input is RE-CHECKED against the rules, and an objection
+    // there overturns the hook's allow. The evidence is the refusal reaching the
+    // model for the REWRITTEN path — a path the model never asked to write.
+    check: (msgs) => {
       if (!usedTool(msgs, "Write")) return "the Write was never attempted";
+      const refusal = toolResults(msgs).find((r) => r.includes("permissions") && r.includes("rewritten.txt"));
+      if (!refusal) {
+        return `no tool_result refuses the rewritten path, so the re-check did not object (results: ${JSON.stringify(toolResults(msgs)).slice(0, 220)})`;
+      }
       return null;
     },
   },
@@ -394,20 +471,25 @@ export const W6_SCENARIOS: Scenario[] = [
                   if (record.tool_name !== "Write") return { continue: true };
                   return {
                     continue: true,
-                    permissionRequestResult: { behavior: "deny", message: "reforge W6: denied by the PermissionRequest hook" },
+                    hookSpecificOutput: {
+                      hookEventName: "PermissionRequest",
+                      decision: { behavior: "deny", message: "reforge W6: denied by the PermissionRequest hook" },
+                    },
                   } as never;
                 },
               ],
             },
           ],
         },
-        canUseTool: broker(ctx),
+        canUseTool: broker(ctx, undefined, HOOK_RACE_DELAY_MS),
       }),
     check: (msgs, events) => {
       if (!events.some((e) => (e as { event?: string }).event === "permissionRequestHook")) return "the PermissionRequest hook never fired";
       if (!usedTool(msgs, "Write")) return "the Write was never attempted";
-      const text = resultText(msgs);
-      if (text.includes("REFORGE_W6") && !text.includes("DENIED")) return "the Write appears to have succeeded despite the hook's deny";
+      const denial = toolResults(msgs).find((r) => r.includes("reforge W6: denied by the PermissionRequest hook"));
+      if (!denial) {
+        return `no tool_result carries the hook's own deny message, so the hook's decision did not take (results: ${JSON.stringify(toolResults(msgs)).slice(0, 200)})`;
+      }
       return null;
     },
   },

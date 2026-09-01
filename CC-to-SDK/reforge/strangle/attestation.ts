@@ -240,7 +240,6 @@ export const ATTESTED: AttestedModule[] = [
   },
   { module: "rule-based-permissions", row: "rule-based-permissions", scenarios: ["perm-hook-rewrite"] },
   { module: "allow-rule-decision", row: "allow-rule-decision", scenarios: ["perm-rule-allow", "bash-tool"] },
-  { module: "permission-message", row: "permission-message", scenarios: ["perm-hook-rewrite", "perm-rule-ask", "bash-tool"] },
   {
     module: "classifier-streak",
     row: "classifier-streak",

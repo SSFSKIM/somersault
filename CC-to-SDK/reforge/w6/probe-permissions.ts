@@ -399,6 +399,29 @@ async function main(): Promise<void> {
     focus: ["PermissionRequest", "PermissionDenied"],
   });
 
+  // ---- E2. auto mode's CLASSIFIER, which a Write cannot reach --------------
+  // Both auto phases above allowed a Write without consulting anything, and the
+  // reason is in the mode-aware body: before it queues a classifier call it asks
+  // whether the call "would be allowed in acceptEdits mode", and a Write would.
+  // So a Write measures the FAST PATH, not the classifier.
+  //
+  // `chmod` is neither on the accept-edits shell allowlist nor read-only, so it
+  // is the cheapest call that has to reach the classifier. Two outcomes and both
+  // are findings: the classifier ALLOWS (the path is live, and PermissionDenied
+  // still needs a block) or it BLOCKS (and PermissionDenied's named condition is
+  // finally created).
+  specs.push({
+    label: "auto-classifier",
+    condition: "auto mode + a command the acceptEdits fast path does not cover, so the classifier has to decide",
+    extra: { maxTurns: 4, permissionMode: "auto" as PermissionMode, canUseTool: brokerFor("auto-classifier") } as Partial<Options>,
+    next: (r) =>
+      r === 0
+        ? "Use the Bash tool exactly once to run exactly `chmod 600 /etc/hosts`. Do not run anything else and do not use any other tool. " +
+          "If the tool is denied, do not retry; reply with exactly DENIED."
+        : null,
+    focus: ["PermissionRequest", "PermissionDenied"],
+  });
+
   // ---- F. the shadowing trap, measured rather than inherited ---------------
   specs.push({
     label: "shadowing",

@@ -1386,7 +1386,7 @@ export const SPLICES: Splice[] = [
         derive: pick("allow-rule-decision", "crashReason", new RegExp(`\\{type:"other",reason:(${ID})\\}`)),
       },
     ],
-    coverage: ["perm-rule-allow"],
+    coverage: ["perm-hook-rewrite"],
   },
 
   // TWO FUNCTIONS THIS WAVE OWNS AND DOES NOT SPLICE, recorded here because the
@@ -1409,54 +1409,29 @@ export const SPLICES: Splice[] = [
   // upstream bytes BEFORE either body is built on them (C7's other rule), and
   // where upstream's copies stay untouched and stay live for their own callers.
 
-  {
-    // The sentence a permission request is rendered as. Forty-five call sites,
-    // and its `case` clauses ARE the decisionReason axis the matrix is built on.
-    //
-    // ANCHOR: `blocked this action:` is unique bundle-wide — the hook arm's
-    // "with a reason" sentence, which is the one branch of eleven that no other
-    // permission surface duplicates.
-    name: "permission-message",
-    target: "free-function",
-    signature: { params: 2, ancestry: ["SourceFile"] },
-    anchor: "blocked this action:",
-    fn: "permissionMessage",
-    captures: [
-      {
-        as: "renderRuleValue",
-        kind: "effectful-port",
-        derive: pick("permission-message", "renderRuleValue", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.rule\\.ruleValue\\)`)),
-      },
-      {
-        as: "renderRuleSource",
-        kind: "effectful-port",
-        derive: pick("permission-message", "renderRuleSource", new RegExp(`,${ID}=(${ID})\\(${ID}\\.rule\\.source\\)`)),
-      },
-      {
-        as: "splitRedirections",
-        kind: "effectful-port",
-        derive: pick(
-          "permission-message",
-          "splitRedirections",
-          new RegExp(`\\{commandWithoutRedirections:${ID},redirections:${ID}\\}=(${ID})\\(${ID}\\)`),
-        ),
-      },
-      {
-        // OWNED (§2.4): 41 bytes, provably pure, used throughout the engine — so
-        // upstream's copy keeps its own callers and stays live.
-        as: "pluralize",
-        kind: "pure-helper",
-        owned: true,
-        derive: pick("permission-message", "pluralize", new RegExp(`\\$\\{(${ID})\\(${ID},"part"\\)\\}`)),
-      },
-      {
-        as: "modeTitle",
-        kind: "effectful-port",
-        derive: pick("permission-message", "modeTitle", new RegExp(`Current permission mode \\(\\$\\{(${ID})\\(${ID}\\.mode\\)\\}\\)`)),
-      },
-    ],
-    coverage: ["perm-hook-rewrite"],
-  },
+  // A THIRD FUNCTION OWNED WITHOUT BEING SPLICED, and the reason is different
+  // from the other two. `ql`/`createPermissionRequestMessage` has FORTY-FIVE call
+  // sites and runs on every tool call in every mode — reachability is not the
+  // problem. Its OUTPUT is: on every path a headless corpus can create, the
+  // sentence it builds is absorbed before it reaches an observable.
+  //
+  //   the pre-check builds `{behavior:"passthrough", message: builder(name)}`
+  //     before it evaluates anything, and every arm below either replaces the
+  //     decision or returns an allow, which carries no message;
+  //   an ASK's message does not travel to the SDK host — the `can_use_tool`
+  //     request carries `decision_reason` (a different renderer, which returns
+  //     undefined for a `rule` reason) and a `description` built from the tool's
+  //     own input, never `decision.message`;
+  //   the one path on which an ask's message DOES reach the model — a
+  //     PermissionRequest hook's rewrite, re-checked and objected to — takes the
+  //     rule checker's ANNOTATING arm, which keeps the tool's own message and
+  //     never calls the builder. `w6/scenarios.ts` reached that path and
+  //     measured exactly this.
+  //
+  // So it is owned in `shared/` as a `pure-helper`, where the parity oracle
+  // grades all eleven of its decisionReason arms against upstream's bytes across
+  // three tool names. A splice would be a row the gate could not prove live, and
+  // the campaign's answer to that is C1's: drop the row, keep the finding.
 
   {
     // Sixty-two bytes on the allow arm of every tool call, in every mode —

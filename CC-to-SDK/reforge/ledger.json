@@ -629,7 +629,7 @@
         "scenario:edit-tool",
         "scenario:task-family"
       ],
-      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (§2.4), one per effectful-port capture that leaves this row: `tool/Read` — the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` — the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery §1.1 files under the Bash executor; `subsystem/subagent-dispatch` — TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (§3.3), so it is a port with no edge."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too \u2014 the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (\u00a72.4), one per effectful-port capture that leaves this row: `tool/Read` \u2014 the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` \u2014 the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery \u00a71.1 files under the Bash executor; `subsystem/subagent-dispatch` \u2014 TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (\u00a73.3), so it is a port with no edge."
     },
     {
       "id": "subsystem/tool-result-validators",
@@ -639,7 +639,7 @@
       "state": "unowned",
       "edges": [],
       "footprint": null,
-      "note": "Split out of §1.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads — mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it — the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
+      "note": "Split out of \u00a71.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads \u2014 mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it \u2014 the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -889,7 +889,7 @@
               "declStart": 2171,
               "declEnd": 3430,
               "sha256": "e212d4afb1c8445114a8c3e85e43690059bbadd2267d6952db913532c86f5ec6",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-qe0j59w7.js",
@@ -899,7 +899,7 @@
                   "declStart": 0,
                   "declEnd": 4188,
                   "sha256": "67e46af70a6bb035bcfbe20be524f402b35b26871ab9bb6646c1af1f6f0974af",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-04aem4bh.js",
@@ -909,7 +909,7 @@
                   "declStart": 0,
                   "declEnd": 5767,
                   "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-38213y7h.js",
@@ -919,7 +919,7 @@
                   "declStart": 0,
                   "declEnd": 94444,
                   "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-w3k8bej2.js",
@@ -929,7 +929,7 @@
                   "declStart": 0,
                   "declEnd": 57148,
                   "sha256": "2f1f54062ae10f93dff9c7771a6324067cbb78472e9452ac52c780f37cac36b1",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-nt3hxpjz.js",
@@ -939,7 +939,7 @@
                   "declStart": 0,
                   "declEnd": 1762,
                   "sha256": "bb8a594e87857dde76a57b3b22868c9aab77173166a3631f0b1133e9dda01966",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             }
@@ -1345,7 +1345,7 @@
         "scenario:subagent",
         "attestation/coverage.md"
       ],
-      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first."
+      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt \u2014 plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first."
     },
     {
       "id": "subsystem/compaction",
@@ -1383,7 +1383,7 @@
               "declStart": 24074,
               "declEnd": 24090,
               "sha256": "a1e48f62bc230dadb386dbf8667b960613e4ae42daed051067c793faf9fc832d",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             }
           ]
         },
@@ -1984,7 +1984,7 @@
               "declStart": 2170797,
               "declEnd": 2170814,
               "sha256": "f8161e08e471529d29f435220ac614d67c6582c538536366659385c35f76571e",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "I_e",
@@ -2157,7 +2157,7 @@
               "declStart": 3005677,
               "declEnd": 3005694,
               "sha256": "e0a1938fa4ba991d87c6e49a0c76d07ccd34b43031e6d67ad34839f6e0ea7929",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -2220,7 +2220,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -2474,7 +2474,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -2943,7 +2943,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -3006,7 +3006,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -3147,7 +3147,7 @@
               "declStart": 3008687,
               "declEnd": 3008704,
               "sha256": "dd21e625a7aaaf1aa3399529cb6030c9c3981654012ec4f2876882d1beb7d80b",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -3944,83 +3944,6 @@
         {
           "chunk": "chunk-fy12d89p.js",
           "target": {
-            "start": 1031335,
-            "end": 1032707,
-            "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
-          },
-          "captures": [
-            {
-              "name": "eo",
-              "as": "renderRuleValue",
-              "kind": "effectful-port",
-              "declKind": "import",
-              "declStart": 7252,
-              "declEnd": 7254,
-              "sha256": "5d61caeedf54c4df706492776961de8e326e6d23957ac6c0622e21afa0ada80c",
-              "from": {
-                "chunk": "chunk-fk13r7sg.js",
-                "exportedAs": "eo",
-                "declStart": 2379,
-                "declEnd": 2481,
-                "sha256": "1e4a91a386f6880ffc68d9e55318970b34cfaf3db2b45d22230584268c156738"
-              }
-            },
-            {
-              "name": "Cee",
-              "as": "renderRuleSource",
-              "kind": "effectful-port",
-              "declKind": "function",
-              "declStart": 1030117,
-              "declEnd": 1030147,
-              "sha256": "04f222dfd52fbcdd647847404df29aef24b9d6f42f3c70d9f805ff585ff28201"
-            },
-            {
-              "name": "See",
-              "as": "splitRedirections",
-              "kind": "effectful-port",
-              "declKind": "function",
-              "declStart": 905938,
-              "declEnd": 908388,
-              "sha256": "a8f74e58a5ff0d3d24ff179ab867f2b4ea2d7cd9ee83ee58c0ed18bb9f49dcb6"
-            },
-            {
-              "name": "k",
-              "as": "pluralize",
-              "kind": "pure-helper",
-              "declKind": "import",
-              "declStart": 2739,
-              "declEnd": 2740,
-              "sha256": "8254c329a92850f6d539dd376f4816ee2764517da5e0235514af433164480d7a",
-              "from": {
-                "chunk": "chunk-04aem4bh.js",
-                "exportedAs": "k",
-                "declStart": 798,
-                "declEnd": 839,
-                "sha256": "00508eb8398da914196462cb3a9f4781378c4632932dcd6b58a69209717905b2"
-              },
-              "closure": []
-            },
-            {
-              "name": "K$",
-              "as": "modeTitle",
-              "kind": "effectful-port",
-              "declKind": "import",
-              "declStart": 6868,
-              "declEnd": 6870,
-              "sha256": "49922aa7e6810ffecc0324df72706b100cd67e08466e668a5da679f89911e781",
-              "from": {
-                "chunk": "chunk-af80z9sa.js",
-                "exportedAs": "K$",
-                "declStart": 5230,
-                "declEnd": 5263,
-                "sha256": "9ab6db5b4ce2a1f381fa4bb91b583586d10b00573df94713f22a162fd4ada35b"
-              }
-            }
-          ]
-        },
-        {
-          "chunk": "chunk-fy12d89p.js",
-          "target": {
             "start": 1029607,
             "end": 1029669,
             "sha256": "943b8a1c282308620de508d5a1955225829d14f02de4fd5687d4a2d6760a81b7"
@@ -4707,7 +4630,6 @@
         "strangle/manifest.ts:permission-precheck",
         "strangle/manifest.ts:rule-based-permissions",
         "strangle/manifest.ts:allow-rule-decision",
-        "strangle/manifest.ts:permission-message",
         "strangle/manifest.ts:classifier-streak",
         "strangle/manifest.ts:mode-change-guard",
         "strangle/manifest.ts:mode-transition",
@@ -4735,7 +4657,7 @@
         "scenario:perm-broker-updates",
         "scenario:perm-mode-walk"
       ],
-      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: eleven splices here plus C5x's deny-stamping link, two owned pure helpers in shared/ (the ask-rule predicate and the safety-check finder — both takeable, both measured INERT under solo sabotage because their remaining upstream callers are gate-dead, so they are captures rather than rows), and two control_response envelopes recorded on subsystem/control-protocol. Graded by strangle/permissions-parity.test.ts (2,496 comparisons, 47 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter — a §2.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
+      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: ten splices here plus C5x's deny-stamping link, and THREE owned pure helpers in shared/ that are deliberately not rows. The ask-rule predicate and the safety-check finder are takeable and were measured INERT under solo sabotage, because their remaining upstream callers are gate-dead. The message builder (ql, 45 call sites) is different: it RUNS on every tool call and its output is absorbed before it reaches any observable a headless corpus can produce \u2014 an ask's message never travels to the SDK host, and the one path on which it reaches the model takes the rule checker's annotating arm, which keeps the tool's own message. All three are graded against upstream's bytes by the parity oracle, and two control_response envelopes recorded on subsystem/control-protocol. Graded by strangle/permissions-parity.test.ts (2,496 comparisons, 47 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter \u2014 a \u00a72.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
     },
     {
       "id": "subsystem/control-protocol",
@@ -4770,7 +4692,7 @@
         "strangle/permissions-parity.test.ts",
         "scenario:plain"
       ],
-      "note": "W6 took the two response ENVELOPES ahead of W7, because the can_use_tool round trip is the only control request the permission chain itself issues and leaving the return leg unowned would have stopped that chain's ownership mid-round-trip. Sixteen call sites between them, zero free variables each, and every headless control_response passes through one or the other — `initialize` is the first request of every SDK-driven run, so sabotaging either reddens the whole corpus. What W7 inherits is the REQUEST leg: the 55-arm subtype dispatch inside runHeadless and the named handlers its live arms delegate to."
+      "note": "W6 took the two response ENVELOPES ahead of W7, because the can_use_tool round trip is the only control request the permission chain itself issues and leaving the return leg unowned would have stopped that chain's ownership mid-round-trip. Sixteen call sites between them, zero free variables each, and every headless control_response passes through one or the other \u2014 `initialize` is the first request of every SDK-driven run, so sabotaging either reddens the whole corpus. What W7 inherits is the REQUEST leg: the 55-arm subtype dispatch inside runHeadless and the named handlers its live arms delegate to."
     },
     {
       "id": "subsystem/moat-tools",
@@ -4896,7 +4818,7 @@
         "strangle/manifest.ts:session-materialize",
         "scenario:resume"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` \u2014 the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` \u2014 W9 owns the SessionPort."
     },
     {
       "id": "subsystem/bash-executor",
@@ -5047,7 +4969,7 @@
         "strangle/manifest.ts:text-delta",
         "scenario:plain"
       ],
-      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
+      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` \u2014 the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
     },
     {
       "id": "subsystem/sandboxing",
@@ -5061,7 +4983,7 @@
     {
       "id": "tool/Agent",
       "kind": "tool",
-      "title": "Agent — subagent dispatch tool",
+      "title": "Agent \u2014 subagent dispatch tool",
       "wave": "C15",
       "state": "unowned",
       "edges": [],
@@ -5313,7 +5235,7 @@
     {
       "id": "tool/WebSearch",
       "kind": "tool",
-      "title": "WebSearch — server-executed; the client-side surface is formatting only (§1.2)",
+      "title": "WebSearch \u2014 server-executed; the client-side surface is formatting only (\u00a71.2)",
       "wave": "C11",
       "state": "unowned",
       "edges": [],
