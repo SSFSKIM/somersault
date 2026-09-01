@@ -27,8 +27,10 @@
 # BROKEN build and proves nothing, so every cell below establishes all three before it asserts:
 #   1. a width SHRINK (a widening alone never strands a too-long line),
 #   2. at least one emitted frame line LONGER than the new width — the composer's two full-width rules,
-#   3. at least one row of CONTENT above the frame — staged with `/status`, which paints a real transcript
-#      block with no model turn and therefore no API key (see "keyless" below).
+#   3. at least one row of CONTENT above the frame — staged with a local `!`-prefixed bash command, which
+#      paints a real transcript block with no model turn and therefore no API key (see "keyless" below).
+#      `/status` staged this until bl10-t-click (T-MENU task 3, spec A1/D13) turned it into a Settings DIALOG
+#      that owns the whole pane and never hands the composer back — see `stage_content` for the replacement.
 #
 # WHY THERE IS NO BURST CELL, MEASURED (W2 t7, s2qa2-07). A cell for a rapid multi-width drag was written and
 # then withdrawn: the tmux CLI cannot produce one at the granularity a real drag has, and the two regimes it
@@ -60,8 +62,8 @@
 #
 # KEYLESS BY DEFAULT. Nothing in the matrix proper runs a model turn. `HOME` and `CCX_FLEET_ROOT` point at a
 # scratch dir per cell (the non-negotiable isolation rule in docs/parity/qa-driver.md §0 — an unisolated run
-# once wrote to the operator's live ~/.claude), and the content above the composer comes from `/status`, a
-# local command.
+# once wrote to the operator's live ~/.claude), and the content above the composer comes from `stage_content`'s
+# local `!` bash command (see its own header for why this is no longer `/status`).
 #
 # THE EXCEPTIONS ARE THE MID-TURN ONES: the A3 CELL (Wave R task 6, `run_a3_cell` below), which resizes DURING
 # a streaming turn, and the STREAMING HALF of the M1 cell (FSW T4), which resizes under a live window and an
@@ -115,6 +117,15 @@ command -v node >/dev/null 2>&1 || missing node
 DASH="─"                                   # U+2500, 3 bytes — the composer's rule glyph
 CARET="❯"                                  # U+276F, the composer prompt
 
+# bl10-t-click: `/status`'s replacement for staged content, since T-MENU task 3 turned `/status` into a
+# Settings dialog (see `stage_content` below for the full reasoning). `runBashMode` (useChat.ts) echoes
+# `! ${command}` VERBATIM and then appends `formatBashOutput`'s two-space-indented lines one per output line
+# — three here, so a caller needing more than one row to anchor on (hover-cells.sh's h1) has a middle row.
+STAGE_CMD="printf 'stg1\nstg2\nstg3'"
+STAGE_ECHO="! ${STAGE_CMD}"                # the echoed transcript row, verbatim — a single, unique needle
+STAGE_LAST="  stg3"                        # the LAST output row — staging is only DONE once this paints (the
+                                            # output is a second, async append after the echo; see stage_content)
+
 pass_count=0; fail_count=0; failed_cells=""
 SESSIONS=""                                # every session name we created, for teardown
 # …AND THE NAMES ARE PER-RUN, WHICH IS THE OTHER HALF OF THE SAME RULE (external whole-branch review). With a
@@ -141,9 +152,12 @@ trap cleanup EXIT INT TERM
 # than passing it quietly.
 #   · a RULE is a line made only of `─`. Its width is its byte length / 3 (LC_ALL=C keeps awk on bytes, which
 #     is the one length that needs no locale to be correct).
-#   · a COMPOSER BLOCK is a `❯` line directly under a rule. The transcript's own echo rows also start with
-#     `❯` (`❯ /status`), so the rule above is what distinguishes the live composer from its echoes — and the
-#     doubled-composer defect shows up as exactly two of them.
+#   · a COMPOSER BLOCK is a `❯` line directly under a rule. A SUBMITTED PROMPT's own echo row also starts
+#     with `❯` (a3's live turn, m1's streaming half — both submit a real prompt through the composer, not
+#     bash mode), so the rule above is what distinguishes the live composer from those echoes — and the
+#     doubled-composer defect shows up as exactly two of them. `stage_content`'s staged rows do NOT collide
+#     here: bash mode echoes with `!`, not `❯` (`useChat.ts`'s `runBashMode`), so this caret ambiguity is
+#     specific to the live-turn cells now, not to the keyless staging every other cell uses.
 #   · the rule COUNT is pinned at exactly 2 (the composer's own pair), not merely "at least 2", and that is
 #     the check that carries the 160→80 cell. A width test alone is blind at exact multiples: a stranded
 #     160-wide rule wraps into two lines that are each PERFECTLY 80 wide, so every rule on a residue-carrying
@@ -324,28 +338,40 @@ launch() {                                  # launch <session> <cols> <rows> [<e
   echo "      FAIL $s never reached the ready frame"; return 1
 }
 type_line() { tmux send-keys -t "$1" -l "$2"; sleep 0.3; tmux send-keys -t "$1" Enter; }
-# Condition 3, staged: `/status` is a LOCAL command — it paints an echo row and a five-line block with no
-# model turn, so the screen has real content above the composer on a machine with no API key at all.
+# Condition 3, staged: `$STAGE_CMD` is a LOCAL `!` bash command — it paints an echo row and a three-line
+# output block with no model turn, so the screen has real content above the composer on a machine with no
+# API key at all. `/status` staged this until bl10-t-click: T-MENU task 3 (spec A1/D13) turned `/status` into
+# a Settings DIALOG, which is PANE-OWNING (the transcript and composer unmount underneath it) and never hands
+# the composer back on its own — every cell downstream of a `/status` stage would now be typing into a dialog
+# that eats every keystroke, not a prompt. `!` bash mode has no such surface: it replaces the composer's
+# suggestion popup outright (`runBashMode`'s own comment in useChat.ts) and returns straight to an idle
+# composer once its output lands — no dialog, no popup, nothing left open.
 #
-# THE NEEDLE READS SCROLLBACK, NOT THE VIEWPORT, AND THAT IS WHAT MAKES IT WORK AT SHORT HEIGHTS (fsw g1
-# repair). `/status` commits ELEVEN rows — the `❯ /status` echo, the `Status` header and nine detail rows —
-# and the composer frame under it is four more. On a 15-row pane the sum overflows and the echo row, the
-# needle itself, is scrolled ABOVE the viewport by the time the block finishes painting; a `capture-pane -p`
-# that sees only the viewport therefore polls out on a session that staged perfectly (measured at 60x15: the
-# row sits at scrollback line 15 of 30, and zero copies are visible). Every cell that stages at 24 rows or
-# more never saw it, so the failure read as g1-specific and pre-existing. `-S -` is a superset of the
-# viewport, so no cell's staging gets weaker — and it is the right question anyway: what this waits for is
-# the row being COMMITTED, which is also what makes it a countable marker for the tall-branch preconditions
-# in `g1`/`m1`. SP-R0's condition 3 proper — content still ON SCREEN above the frame at assert time — is
-# `check_frame`'s `contentAboveFrame`, unchanged and still measured on the visible pane.
+# THE NEEDLE READS SCROLLBACK, NOT THE VIEWPORT (fsw g1 repair's own reasoning, kept). `/status`'s eleven-row
+# block used to overflow a 15-row pane before the block finished painting, which is what forced `-S -` here
+# in the first place. The new block is four rows (the echo plus three output lines) and, measured, fits
+# every height this matrix stages at without scrolling — so staging itself no longer needs the scrollback
+# read to avoid a false timeout. `-S -` stays anyway: it is a strict superset of the viewport so no cell's
+# staging gets weaker, and `g1` depends on it for a SEPARATE reason of its own — the `/model` picker it opens
+# after staging is what pushes the committed rows into real scrollback there (see `run_g1_cell`). What this
+# polls for either way is the row being COMMITTED, which is also what makes `$STAGE_ECHO` a countable marker
+# for the tall-branch preconditions in `g1`/`m1`. SP-R0's condition 3 proper — content still ON SCREEN above
+# the frame at assert time — is `check_frame`'s `contentAboveFrame`, unchanged and still measured on the
+# visible pane.
+#
+# THE NEEDLE IS THE LAST OUTPUT ROW, NOT THE ECHO (m1_stage's own precedent, below). The echo paints
+# synchronously; the output is a SECOND, later append after `await runBash(...)` actually runs the command
+# (useChat.ts's `runBashMode`), so polling for the echo alone can return before the output committed — and a
+# caller that immediately counts scrollback copies (`g1`) or captures a "before" frame (hover-cells.sh's h1)
+# would then be racing an incomplete stage. `$STAGE_LAST` only exists once the whole block has painted.
 stage_content() {                           # stage_content <session>
   local s="$1" i=0 cap="$MATRIX_ROOT/cap-stage"
-  type_line "$s" "/status"
+  type_line "$s" "$STAGE_ECHO"
   while [ "$i" -lt 40 ]; do
-    tmux capture-pane -t "$s" -p -S - > "$cap"; grep -qF "$CARET /status" "$cap" && return 0
+    tmux capture-pane -t "$s" -p -S - > "$cap"; grep -qF "$STAGE_LAST" "$cap" && return 0
     sleep 0.25; i=$((i+1))
   done
-  echo "      FAIL $s never painted the staged /status content"
+  echo "      FAIL $s never painted the staged content"
   echo "      ── scrollback ──"; sed 's/^/      | /' "$cap"; echo "      ───────────"
   return 1
 }
@@ -430,12 +456,13 @@ run_cell() {                                # run_cell <name> <w0>x<h0> [<w>x<h>
 # (`Try "…"`) is the string that gets stranded, so its presence at or above the submitted prompt is the
 # failure. The submit is a local command for the same keyless reason as `stage_content`.
 #
-# THE ORDER IS THE WHOLE CELL, AND THE OBVIOUS ORDER IS WRONG (fix round 1). The first draft staged `/status`
-# BEFORE the shrink, which made this assertion unfailable: `pickPlaceholder` (src/tui/placeholder.ts:145-155)
-# returns NOTHING once `submitCount >= 1`, so the placeholder was already gone before the cell looked for it —
-# green on a build with the correction stubbed out. The genuine repro SHRINKS FIRST, while the placeholder is
-# still painted, and takes its "content above the frame" from the launch banner instead of from `/status`.
-# Both preconditions below are asserted rather than assumed, so this cell cannot quietly go vacuous again.
+# THE ORDER IS THE WHOLE CELL, AND THE OBVIOUS ORDER IS WRONG (fix round 1). The first draft staged its local
+# command (`/status`, at the time) BEFORE the shrink, which made this assertion unfailable: `pickPlaceholder`
+# (src/tui/placeholder.ts:145-155) returns NOTHING once `submitCount >= 1`, so the placeholder was already
+# gone before the cell looked for it — green on a build with the correction stubbed out. The genuine repro
+# SHRINKS FIRST, while the placeholder is still painted, and takes its "content above the frame" from the
+# launch banner instead of from the staged command below. Both preconditions below are asserted rather than
+# assumed, so this cell cannot quietly go vacuous again.
 #
 # WHY THERE ARE TWO SHRINKS AND NOT ONE. A session's FIRST shrink is repaired by `correctionAfterRepaint`
 # (the verdict is not in yet when Ink writes); every LATER shrink is repaired by `frameWriteCorrection` at the
@@ -471,14 +498,16 @@ run_a5_cell() {
     sed 's/^/      | /' "$cap"; kill_cell "$s"; record "a5" 1; return
   fi
   printf '      ok   %-28s placeholder painted at 120 and still live at 80\n' "a5 preconditions"
-  type_line "$s" "/status"
+  type_line "$s" "$STAGE_ECHO"
   # One bounded poll covers both waits: the echo must have arrived AND the frame must have settled. A broken
   # build never converges, so this changes flake exposure only, not detection (t5-fix re-review, finding A).
-  settle_frame "$s" 80 "a5 after submit" "$CARET /status" || rc=1
+  # The needle is the ECHO here (not `$STAGE_LAST` as in `stage_content`) because the anchor this cell wants
+  # next is the FIRST row of the submitted block — the earliest point a stranded placeholder could sit above.
+  settle_frame "$s" 80 "a5 after submit" "$STAGE_ECHO" || rc=1
   # …and the A5 assertion proper: the echo of the submitted prompt is on screen, and NO placeholder row
   # survives at or above it.
   local echo_line placeholder
-  echo_line=$(grep -nF "$CARET /status" "$cap" | tail -1 | cut -d: -f1)
+  echo_line=$(grep -nF "$STAGE_ECHO" "$cap" | tail -1 | cut -d: -f1)
   if [ -z "$echo_line" ]; then echo "      FAIL the submitted prompt never echoed"; rc=1
   else
     placeholder=$(head -n "$echo_line" "$cap" | grep -cF 'Try "')
@@ -506,9 +535,9 @@ run_a5_cell() {
 # THE PRECONDITION IS PROVABLE FROM OUTSIDE, WHICH IS WHY THIS CELL IS HONEST. "Did Ink take the tall branch"
 # is not visible in a pane capture — but its side effect is: the proxy strips `ESC[3J` from that chunk
 # (chatMain.tsx, "AND THE `ESC[3J` COMES OUT"), so the `fullStaticOutput` the same chunk carries APPENDS a
-# complete second copy of the session's committed transcript to SCROLLBACK. So the staged `/status` echo row,
-# counted over `capture-pane -S -`, goes from one to two the moment the branch fires. A run where it does not
-# fails the precondition rather than passing an assertion that could not have failed.
+# complete second copy of the session's committed transcript to SCROLLBACK. So the staged `$STAGE_ECHO` echo
+# row, counted over `capture-pane -S -`, goes from one to two the moment the branch fires. A run where it does
+# not fails the precondition rather than passing an assertion that could not have failed.
 #
 # AND IT HAS TEETH, MEASURED AS AN A/B ON THE SHIPPED BINARY. With the grow edge reading `tallWrites()` live
 # from the passive effect (the version this cell was written to falsify), the same sequence leaves `Select
@@ -520,7 +549,7 @@ run_g1_cell() {
   launch "$s" 60 15 || { record "g1" 1; kill_cell "$s"; return; }
   stage_content "$s" || { record "g1" 1; kill_cell "$s"; return; }
   tmux capture-pane -t "$s" -p -S - > "$hist"
-  before=$(grep -cF "$CARET /status" "$hist")
+  before=$(grep -cF "$STAGE_ECHO" "$hist")
   # THE PICKER IS FOUND BY ITS FOOTER, NOT ITS TITLE. At 60x15 the title is exactly what the pane does NOT hold:
   # the frame is taller than the pane, so `Select model` is off the top — which is the whole reason this cell
   # exists, and why the post-grow assertion below is a count of 1 rather than a count that was already 1.
@@ -537,7 +566,7 @@ run_g1_cell() {
   # committed transcript in scrollback per tall render; without one, the grow below has nothing to strand and a
   # green assertion would prove nothing.
   tmux capture-pane -t "$s" -p -S - > "$hist"
-  after=$(grep -cF "$CARET /status" "$hist")
+  after=$(grep -cF "$STAGE_ECHO" "$hist")
   if [ "$after" -le "$before" ]; then
     echo "      FAIL g1 precondition: the picker frame did not take Ink's tall branch at 60x15 (scrollback copies of the staged row: $before -> $after) — nothing would be stranded by the grow"
     kill_cell "$s"; record "g1" 1; return
@@ -571,8 +600,9 @@ run_g1_cell() {
 # §12 item 14): every stale row survived the interrupt verbatim. Both halves are asserted here — one spinner
 # row while the turn runs, and none once Esc has ended it.
 #
-# WHY THIS ONE CANNOT BE KEYLESS. Every other cell stages its content with `/status`, a local command. A3's
-# subject is the LIVE TURN's own chrome: a spinner that reprints on its own timer while text streams under it.
+# WHY THIS ONE CANNOT BE KEYLESS. Every other cell stages its content with `stage_content`'s local `!` bash
+# command. A3's subject is the LIVE TURN's own chrome: a spinner that reprints on its own timer while text
+# streams under it.
 # There is nothing to resize into without a model actually answering, so this cell is gated on a credential
 # and skips (recording neither pass nor fail) when there is none. The component-level regression guard for the
 # same acceptance is `test/tui/resize-midturn.test.tsx`, which is keyless and runs in CI; it can prove that
@@ -820,7 +850,10 @@ run_a3_cell() {
 # is that the count did not move — an absence — and what proves the counter is not simply blind is `g1`, which
 # runs in this same script, uses this same method, and FAILS ITS PRECONDITION unless the count rises.
 #
-# THE STAGING IS `! echo`, NOT `/status`, AND THE DEFECT THAT FORCED IT IS NOW **RESOLVED** (71ec75d2f6).
+# THE STAGING IS `! echo`, NOT A SLASH COMMAND, AND THE DEFECT THAT FORCED IT IS NOW **RESOLVED**
+# (71ec75d2f6). (bl10-t-click: `stage_content` also moved to a `!` bash command once `/status` became a
+# dialog — see its own header — but m1 keeps ITS OWN marker rather than sharing `stage_content`'s, for the
+# scope reason below, which predates and is independent of that move.)
 # The finding, kept because it is why this cell looks the way it does: typing a SLASH command opens the command
 # popup, which is up to ~20 rows and was NOT in `mainWindowCap`'s fourteen-row dock budget (`liveWindow.ts`
 # enumerates the todo panel, the live-turn slot, the queue, the composer and the footer — the popup is none of
@@ -831,8 +864,9 @@ run_a3_cell() {
 # subtracts `popupHeight(rows)` from the live window's render cap while the popup is drawn; the same
 # measurement on the fixed build is 6 copies / 65 rows, i.e. back to one copy per submission.
 #   THE STAGING STAYS `! echo` ANYWAY, and that is now a scope decision rather than a workaround: this cell
-# asserts the RESIZE claim, and a `/status` staging would fold a second, independently-covered mechanism into
-# its needle. The popup budget has its own red-first coverage where the branch is countable —
+# asserts the RESIZE claim, and sharing `stage_content`'s own multi-row block/needle would fold a second,
+# independently-covered mechanism into it. The popup budget has its own red-first coverage where the branch
+# is countable —
 # `test/tui/live-window-popup.test.tsx`, the full open/filter/close lifecycle at 80x24 and 80x40.
 #
 # THE GEOMETRIES ARE THE ONES THAT HURT. 80x40 fills a 24-row window (40 − 14 dock − 2 slack); 80x24 is the
@@ -897,8 +931,9 @@ run_m1_cell() {
   # ── the STREAMING half, keyed only ──────────────────────────────────────────────────────────────────────
   # The window shares the frame with the in-flight turn, and only the window is bounded (T3's C2: the render
   # cap subtracts the streamed rows for exactly this reason). A resize DURING a turn is therefore the tightest
-  # frame this build ever composes, and there is no keyless way to hold one open — `/status` and `! echo`
-  # both paint and stop. Same credential handling as `run_a3_cell`, for the same reasons: `-e` rather than
+  # frame this build ever composes, and there is no keyless way to hold one open — every local command this
+  # file stages (bash mode or, before it was a dialog, `/status`) paints and stops. Same credential handling
+  # as `run_a3_cell`, for the same reasons: `-e` rather than
   # argv, and a SKIP (not a failure) with no credential or on tmux older than 3.2.
   #   THE SHRINK IS WIDTH-ONLY AT 40 ROWS ON PURPOSE. At 24 rows a long enough stream reaches the branch on
   # this build AND on its parent — the streaming region is unbounded until T10 lands the fullscreen viewport,
