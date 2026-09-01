@@ -31,12 +31,25 @@
 //      the chunk's actual import bindings. The specifier and the imported name
 //      then come from the AST, so the replacement imports the ports from the same
 //      chunks upstream did.
-//   5. an export declared as a constant also has its VALUE derived and compared
-//      against the owned module's, at build time, against the pinned bytes. For a
-//      constant that no scenario renders this is the whole of the parity claim —
-//      and it is strictly stronger than a differential red would be, because it
-//      compares against upstream rather than against whatever a scenario happened
-//      to exercise.
+//   5. an export declared as a constant also has its VALUE derived from the
+//      pinned bytes and compared against the owned module's live export. For a
+//      constant no scenario renders, the pinned bytes are the whole of the parity
+//      claim — stronger than a differential red, which can only speak about what
+//      a scenario happened to exercise.
+//
+//      SAID PRECISELY, because the enforcement is not where the sentence above
+//      makes it sound (W2 boundary review). For the constants owned today there
+//      is no shape that identifies WHICH minified binding is the tool name except
+//      its value — `var ti="Glob"` — so the NAME derivation is anchored on the
+//      value too. An upstream value change therefore fails in the derivation
+//      ("could not derive"), before the comparison is ever reached; what the
+//      comparison catches is the other direction, an owned module edited away
+//      from the pinned value. Both are loud and both grade against upstream, but
+//      only one of them is a comparison, and a reader deciding whether a new row
+//      needs a `value` should know which. Where a constant IS identifiable
+//      without its value — a prompt anchored on its opening sentence, as the
+//      `variable-declarator` splice shape does — the comparison is what fires,
+//      and it reports the first differing character.
 //
 // ## Sabotage is per EXPORT
 //
@@ -361,6 +374,12 @@ export function planChunkReplacement(
  * Rule 5: an export the manifest declares constant must carry the value the
  * pinned chunk gives it. Run against the owned module's live export, so the two
  * cannot drift while the name stays put.
+ *
+ * Which direction this actually catches depends on the row's derivations, and
+ * for today's two it is the OWNED side: their name derivations are anchored on
+ * the value (nothing else identifies which minified binding is the tool name), so
+ * upstream moving the value throws in `derive` before reaching this comparison.
+ * See rule 5 in the header for why that is inherent rather than a gap.
  */
 export async function assertOwnedValues(plan: ChunkPlan, modulesRoot: string): Promise<string[]> {
   const checked: string[] = [];

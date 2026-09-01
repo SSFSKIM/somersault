@@ -983,6 +983,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         kind: "primitive",
         owned: "GLOB_TOOL_NAME",
         derive: pick("glob-description", "globToolName", new RegExp(`var (${ID})="Glob"`)),
+        // Anchored on the value, because nothing else says WHICH minified binding
+        // is the tool name — which means an upstream value change fails in the
+        // NAME derivation above, before this one is reached. What this catches is
+        // the owned constant drifting from the pinned bytes. Both loud, but not
+        // the same direction; see rule 5 in chunk.ts.
         value: pick("glob-description", "globToolName value", new RegExp(`var ${ID}="(Glob)"`)),
         declare: (name, owned) => `var ${name}=${owned};`,
         coverage: ["search-tools"],
