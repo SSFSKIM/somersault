@@ -60,7 +60,7 @@
 //   `effectful-port` is forwarded and stays a typed delegation argument.
 import type { TargetSignature } from "./ast.js";
 
-export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer";
+export type TargetShape = "sibling-method" | "free-function" | "class-method" | "switch-case" | "arrow-initializer" | "variable-declarator";
 
 export type CaptureClass = "primitive" | "pure-helper" | "effectful-port";
 
@@ -937,6 +937,26 @@ export const SPLICES: Splice[] = [
       },
     ],
     coverage: ["permission-broker", "permission-bag"],
+  },
+
+  {
+    // VARIABLE-DECLARATOR shape (campaign spec C5x, unit 3) — the mechanism
+    // spike for owning a top-level constant's initializer, on the target W4
+    // actually wants: the compaction summarization prompt. It is declarator 0 of
+    // a four-declarator `var` (`l1n`, `c1n`, `u1n`, `gRt`), so the excision has
+    // to take the initializer and leave three siblings alone.
+    //
+    // Upstream writes it as a template literal whose one substitution is a
+    // string literal — a constant fold — so `captures: []` here is the verified
+    // claim "this initializer reads nothing from its scope", and the owned
+    // module ships the concatenation verbatim.
+    name: "compaction-prompt",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: "Your task is to create a detailed summary of the conversation",
+    fn: "summarizationPrompt",
+    captures: [],
+    coverage: ["slash-compact"],
   },
 ];
 

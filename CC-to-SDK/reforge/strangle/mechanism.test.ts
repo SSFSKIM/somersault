@@ -36,6 +36,9 @@
 //              `var` must excise the arrow alone, leaving its siblings byte
 //              for byte — and a body reading `this` or `arguments` must be
 //              refused, since an arrow inherits both lexically.
+//   declarator a constant's initializer must excise alone, its delegation must
+//              be an EXPRESSION, and a literal value must be recoverable so the
+//              build can compare it against upstream's own bytes.
 //   siblings   two nodes of one chunk carrying the same literal must be
 //              separated by the verified signature — and when it cannot
 //              separate them, the tie must throw rather than pick one.
@@ -49,7 +52,7 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, excise, formatSignature, selectExcision } from "./ast.js";
+import { assertSignature, chunkAst, excise, formatSignature, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { assertCaptureInventory } from "./scope.js";
@@ -574,11 +577,38 @@ function footprintOf(owner: string, helper: string) {
     /TIE across 2 candidates/);
 }
 
+// ---- FINDING 10: the variable-declarator shape (C5x unit 3) -----------------
+// Prompt text lives in `var` initializers, and a prompt's VALUE is its
+// behaviour — the one class of upstream change no anchor, target hash or capture
+// hash can see. The shape excises the initializer alone, and the build compares
+// the owned value against upstream's bytes (`literalStringValue`), which is what
+// makes that class of change loud.
+{
+  const consts =
+    "var promptA=`head ${\"middle\"} tail: DECL_ANCHOR`,promptB=\"other\",count=7;\n" +
+    "var lazy=(x)=>{return \"FN_ANCHOR\"+x};\n";
+  const sf = parse(consts, "consts");
+  const cut = excise(sf, consts.indexOf("DECL_ANCHOR"), "variable-declarator");
+  check("the excised span is the INITIALIZER, not the declarator",
+    cut.original.startsWith("`head") && cut.original.endsWith("`"), cut.original);
+  check("the delegation is an expression, not a statement",
+    cut.render("f", cut.shapeArgs) === "globalThis.__reforge.f()", cut.render("f", cut.shapeArgs));
+  check("the value is folded through the template's literal substitution",
+    literalStringValue(cut.node) === "head middle tail: DECL_ANCHOR", String(literalStringValue(cut.node)));
+  const spliced = consts.slice(0, cut.start) + cut.render("f", cut.shapeArgs) + consts.slice(cut.end);
+  check("splicing it leaves the sibling declarators untouched",
+    spliced.includes('promptB="other"') && spliced.includes("count=7") && spliced.startsWith("var promptA=globalThis"));
+  throws("a function-like initializer is refused, and names the shape that owns it",
+    () => excise(sf, consts.indexOf("FN_ANCHOR"), "variable-declarator"), /arrow-initializer/);
+  check("a non-literal initializer reports no value rather than being evaluated",
+    literalStringValue(excise(sf, consts.indexOf("FN_ANCHOR"), "arrow-initializer").node) === null);
+}
+
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused, arrow initializers excise alone, declarator values are recoverable"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

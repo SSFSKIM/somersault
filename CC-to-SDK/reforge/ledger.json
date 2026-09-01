@@ -1100,9 +1100,24 @@
       "kind": "subsystem",
       "title": "Compaction: summarization prompt, compact_boundary emit, trigger policy",
       "wave": "C7",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2789882,
+            "end": 2795709,
+            "sha256": "c7e21f66d91f6b8e1d5e75dafcb546e0ef718e5e27e9b5f579c174a4c9da3361"
+          },
+          "captures": []
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:compaction-prompt",
+        "scenario:slash-compact"
+      ],
+      "note": "C5x's variable-declarator spike owns the summarization prompt text (upstream l1n) outright: captures: [] is the verified claim that the initializer reads nothing from its scope, and the build compares the owned 5,810 characters against the pinned chunk's own bytes on every run. The wrappers (nie/hRt), the boundary emitters (H1/rSe) and the trigger policy (nKn) remain W4's."
     },
     {
       "id": "subsystem/hook-dispatch",

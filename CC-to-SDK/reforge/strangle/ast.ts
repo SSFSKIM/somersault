@@ -144,6 +144,13 @@ function matchesShape(n: ts.Node, shape: TargetShape): boolean {
     // makes that a straight span replacement.
     case "arrow-initializer":
       return ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.initializer === n;
+    // A declarator whose initializer is a VALUE — the shape prompt text is
+    // written in. Kept distinct from `arrow-initializer` rather than merged: the
+    // delegation is an expression evaluated once at module init, not a callable
+    // the graph invokes, so the two have different failure modes and deserve
+    // different declarations.
+    case "variable-declarator":
+      return ts.isVariableDeclaration(n) && n.initializer !== undefined;
   }
 }
 
@@ -380,6 +387,87 @@ function exciseArrow(sf: ts.SourceFile, n: ts.ArrowFunction): Excision {
   };
 }
 
+/**
+ * The VALUE of a purely literal expression, or null when it is not one.
+ *
+ * The `variable-declarator` shape exists for prompt text, and a prompt's value
+ * IS its behaviour — the one class of upstream change that moves no anchor, no
+ * target hash and no capture hash. So the build compares the owned module's
+ * output against upstream's own bytes, which is the same argument chunk.ts's
+ * rule 5 makes for a constant export, and strictly stronger than a differential:
+ * it holds for a constant no scenario renders.
+ *
+ * "Literal" is deliberately narrow — strings, template literals whose
+ * substitutions are themselves literal (upstream's minifier emits exactly that,
+ * a constant fold), and their concatenations. Anything else returns null and the
+ * build says it could not check rather than evaluating engine code to find out.
+ */
+export function literalStringValue(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) {
+    let out = node.head.text;
+    for (const span of node.templateSpans) {
+      const inner = literalStringValue(span.expression);
+      if (inner === null) return null;
+      out += inner + span.literal.text;
+    }
+    return out;
+  }
+  if (ts.isParenthesizedExpression(node)) return literalStringValue(node.expression);
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = literalStringValue(node.left);
+    const right = literalStringValue(node.right);
+    return left === null || right === null ? null : left + right;
+  }
+  return null;
+}
+
+/**
+ * A top-level constant's INITIALIZER (campaign spec C5x, unit 3).
+ *
+ * The engine's prompt text is not in functions — it is in `var` initializers:
+ * the compaction summarization prompt, the identity lines, the reporting-outcome
+ * section. Every one of them is a constant whose VALUE is the behaviour, which
+ * is the class of change nothing else in the mechanism can see (a prompt whose
+ * wording moves while its name stays put moves no anchor, no target hash and no
+ * capture hash). Owning the initializer converts each into an equality-asserted
+ * primitive AND makes it customizable, which under this campaign's strategy is
+ * the same act.
+ *
+ * The excised span is the initializer alone, so the declarator, its siblings and
+ * the `var` keyword are untouched — same rule as the arrow shape, and for the
+ * same reason. The delegation is an EXPRESSION: `globalThis.__reforge.fn(…)`,
+ * evaluated once when the chunk body runs. That is safe because the reforge
+ * module is injected as an `import`, and ESM evaluates a module's dependencies
+ * before its own body — the same ordering every other splice already relies on.
+ *
+ * A function-like initializer is refused rather than accepted: an arrow belongs
+ * to `arrow-initializer`, whose delegation is a callable the graph invokes per
+ * call rather than a value computed once.
+ */
+function exciseVariable(sf: ts.SourceFile, decl: ts.VariableDeclaration): Excision {
+  if (!ts.isIdentifier(decl.name)) throw new Error("variable-declarator target is bound by a destructuring pattern — nothing to name the delegation after");
+  const name = decl.name.text;
+  const init = decl.initializer!;
+  if (ts.isArrowFunction(init) || ts.isFunctionExpression(init) || ts.isClassExpression(init)) {
+    throw new Error(
+      `${name}: the initializer is a ${ts.SyntaxKind[init.kind]} — a value delegation would evaluate it once at module init. ` +
+        `Use the arrow-initializer shape (or a class/function target), not variable-declarator.`,
+    );
+  }
+  return {
+    shape: "variable-declarator",
+    label: name,
+    node: init,
+    signature: signatureOf(init, 0, { declarator: declaratorIndex(decl) }),
+    start: init.getStart(sf),
+    end: init.getEnd(),
+    original: sf.text.slice(init.getStart(sf), init.getEnd()),
+    shapeArgs: [],
+    render: (fn, args) => `globalThis.__reforge.${fn}(${args.join(",")})`,
+  };
+}
+
 /** Does this subtree read `this` outside a nested `function`/class of its own? */
 function readsThis(n: ts.Node): boolean {
   let found = false;
@@ -507,6 +595,7 @@ export function excise(sf: ts.SourceFile, anchorIdx: number, shape: TargetShape)
     if (shape === "switch-case") return exciseCase(sf, node as ts.CaseClause);
     if (shape === "free-function") return exciseFunction(sf, node as ts.FunctionDeclaration);
     if (shape === "arrow-initializer") return exciseArrow(sf, node as ts.ArrowFunction);
+    if (shape === "variable-declarator") return exciseVariable(sf, node as ts.VariableDeclaration);
     return exciseMethod(sf, node as ts.MethodDeclaration, shape);
   }
   throw new Error(`no enclosing ${shape} node above the anchor — re-check the target shape`);

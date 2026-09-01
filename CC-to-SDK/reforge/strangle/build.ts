@@ -29,10 +29,11 @@
 // boot-checks either way.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, selectExcision } from "./ast.js";
+import { assertSignature, chunkAst, literalStringValue, selectExcision } from "./ast.js";
 import { assertOwnedValues, planChunkReplacement } from "./chunk.js";
 import { spliceFootprint, type FootprintFile } from "./footprint.js";
 import { CHUNK_REPLACEMENTS, deriveCaptures, SABOTAGE_TARGETS, SPLICES } from "./manifest.js";
@@ -163,6 +164,33 @@ for (const sp of SPLICES) {
   const closures = footprint.captures.filter((c) => c.closure !== undefined);
   const wholeChunk = closures.flatMap((c) => c.closure!).filter((n) => n.basis === "whole-chunk");
 
+  // A LITERAL-valued declarator is compared against upstream's own bytes, the
+  // same argument chunk.ts's rule 5 makes one level out: the value IS the
+  // behaviour, and a prompt whose wording changes while its name stays put moves
+  // no anchor, no target hash and no capture hash. Always against the REFERENCE
+  // adapter, even in a sabotage build — the sabotage twin differs on purpose,
+  // and the claim being checked is about the parity layer.
+  let valueNote = "";
+  if (sp.target === "variable-declarator") {
+    const upstreamValue = literalStringValue(cut.node);
+    if (upstreamValue === null) {
+      valueNote = " [value NOT literal — graded differentially only]";
+    } else {
+      await import(pathToFileURL(join(MODULES_ROOT, `${sp.name}.js`)).href);
+      const owned = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => unknown> }).__reforge?.[sp.fn]?.();
+      if (owned !== upstreamValue) {
+        const at = typeof owned === "string" ? [...upstreamValue].findIndex((c, i) => owned[i] !== c) : -1;
+        throw new Error(
+          `${sp.name}: the owned value is not the pinned chunk's.\n` +
+            `  upstream: ${upstreamValue.length} chars, owned: ${typeof owned === "string" ? `${owned.length} chars` : typeof owned}\n` +
+            (at >= 0 ? `  first difference at ${at}: upstream ${JSON.stringify(upstreamValue.slice(at, at + 60))} vs owned ${JSON.stringify(String(owned).slice(at, at + 60))}\n` : "") +
+            `  A constant whose VALUE moves while its name stays put moves no anchor and no footprint hash; this comparison is what sees it.`,
+        );
+      }
+      valueNote = ` [value verified: ${upstreamValue.length} chars]`;
+    }
+  }
+
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
   const moduleFile = join(MODULES_ROOT, `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);
   readFileSync(moduleFile); // fail loudly here rather than at boot
@@ -172,6 +200,7 @@ for (const sp of SPLICES) {
       `${cut.original.length} chars -> ${replacement.length}-char delegation` +
       `${captures.length > 0 ? ` (derived: ${captures.map((c) => `${c.as}=${c.identifier}${c.owned ? "*" : ""}`).join(", ")})` : " (no free variables)"}` +
       `${closures.length > 0 ? ` [closure: ${closures.map((c) => `${c.as}+${c.closure!.length}`).join(", ")}${wholeChunk.length > 0 ? `, ${wholeChunk.length} WHOLE-CHUNK` : ""}]` : ""}` +
+      valueNote +
       `${sabotaged ? " [SABOTAGE]" : ""}`,
   );
 }
