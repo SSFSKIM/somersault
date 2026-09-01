@@ -34,7 +34,7 @@ import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
 import { resolveAnchor } from "./anchor.js";
-import { chunkAst, excise } from "./ast.js";
+import { chunkAst, selectExcision } from "./ast.js";
 import { planChunkReplacement } from "./chunk.js";
 import { CHUNK_REPLACEMENTS, deriveCaptures, SPLICES } from "./manifest.js";
 import { textModules } from "./prepare.js";
@@ -58,16 +58,16 @@ for (const sp of SPLICES) {
   // Same resolver the build uses, so a `coLiteral`-scoped row is perturbed
   // against the chunk it will actually be spliced in rather than whichever
   // sibling happens to be scanned first.
-  let owner: [string, string];
+  let owner: [string, string, number[]];
   try {
     const r = resolveAnchor(sources, sp, (p) => relative(BUNDLE_MODULES, p));
-    owner = [r.path, r.source];
+    owner = [r.path, r.source, r.offsets];
   } catch (e) {
     failures.push(`${sp.name}: ${(e as Error).message}`);
     continue;
   }
-  const [path, src] = owner;
-  const cut = excise(chunkAst(path, src), src.indexOf(sp.anchor), sp.target);
+  const [path, src, offsets] = owner;
+  const cut = selectExcision(sp.name, chunkAst(path, src), offsets, sp.target, sp.signature);
   const captures = sp.captures;
   console.log(`\n  ${sp.name} [${sp.target}] ${cut.label} in ${relative(BUNDLE_MODULES, path)} — ${captures.length} capture(s)`);
 

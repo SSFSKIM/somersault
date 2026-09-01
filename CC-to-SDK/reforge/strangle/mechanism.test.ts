@@ -32,6 +32,9 @@
 //              while a nested pattern stays refused.
 //   anchoring  a `coLiteral`-scoped anchor must still resolve to exactly one
 //              node, and every way of mis-declaring the scope must throw.
+//   siblings   two nodes of one chunk carrying the same literal must be
+//              separated by the verified signature — and when it cannot
+//              separate them, the tie must throw rather than pick one.
 //   generator  a generator target must delegate by `yield*`, carrying the
 //              yielded sequence, the completion value and `next`/`throw`
 //              signalling — and the signature must refuse a target whose
@@ -42,7 +45,7 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, excise, formatSignature } from "./ast.js";
+import { assertSignature, chunkAst, excise, formatSignature, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { assertCaptureInventory } from "./scope.js";
@@ -474,11 +477,60 @@ function footprintOf(owner: string, helper: string) {
     JSON.stringify({ caught: (caughtInside as Error | null)?.message, after }));
 }
 
+// ---- FINDING 8: same-chunk sibling disambiguation (C5x unit 4) --------------
+// `coLiteral` scopes to a CHUNK, so it cannot separate two nodes inside one —
+// and the graph has such pairs for reasons that are not drift (a shared prompt
+// preamble; a decision value the caller and the callee both stamp). The
+// signature can tell them apart; before this it only ever verified AFTER
+// selection. Both halves are watched: it selects, and when it cannot, it says so
+// instead of picking one.
+{
+  const twins =
+    `function first(a){return "TWIN_ANCHOR"+a}\n` +
+    `function second(a,b){return "TWIN_ANCHOR"+a+b}\n`;
+  const sf = parse(twins, "twins");
+  const offsets: number[] = [];
+  for (let i = twins.indexOf("TWIN_ANCHOR"); i >= 0; i = twins.indexOf("TWIN_ANCHOR", i + 1)) offsets.push(i);
+  check("the fixture really is ambiguous", offsets.length === 2);
+  check("the signature SELECTS the one-parameter sibling",
+    selectExcision("fixture", sf, offsets, "free-function", { params: 1, ancestry: ["SourceFile"] }).label === "first");
+  check("…and the two-parameter one",
+    selectExcision("fixture", sf, offsets, "free-function", { params: 2, ancestry: ["SourceFile"] }).label === "second");
+  throws("a signature matching NEITHER names every candidate rather than guessing",
+    () => selectExcision("fixture", sf, offsets, "free-function", { params: 3, ancestry: ["SourceFile"] }),
+    /none of the 2 same-anchored candidates.*first.*second/s);
+
+  // THE TIE. Two siblings the signature cannot separate must fail loudly:
+  // picking the first is the coin flip the uniqueness rule exists to forbid.
+  const tied = `function alpha(a){return "TIED_ANCHOR"+a}\nfunction beta(a){return "TIED_ANCHOR"+a}\n`;
+  const tsf = parse(tied, "tied");
+  const tOffsets: number[] = [];
+  for (let i = tied.indexOf("TIED_ANCHOR"); i >= 0; i = tied.indexOf("TIED_ANCHOR", i + 1)) tOffsets.push(i);
+  throws("two candidates the signature cannot separate is a TIE, and a tie throws",
+    () => selectExcision("fixture", tsf, tOffsets, "free-function", { params: 1, ancestry: ["SourceFile"] }),
+    /TIE across 2 candidates/);
+
+  // The count is part of what the row verified: the resolver refuses an anchor
+  // that occurs a different number of times than declared, in either direction.
+  const graph = new Map([["/g/twins.js", twins], ["/g/other.js", `function far(a){return "FAR_ANCHOR"+a}\n`]]);
+  throws("an undeclared second occurrence is still refused",
+    () => resolveAnchor(graph, { name: "amb", anchor: "TWIN_ANCHOR" }), /not unique in the graph — 2 matches/);
+  check("a declared count admits exactly that many offsets",
+    resolveAnchor(graph, { name: "amb", anchor: "TWIN_ANCHOR", siblings: 2 }).offsets.length === 2);
+  throws("a declared count that no longer matches fails loudly",
+    () => resolveAnchor(graph, { name: "amb", anchor: "TWIN_ANCHOR", siblings: 3 }),
+    /declares siblings: 3 but the anchor occurs 2×/);
+  throws("…and siblings never spans two chunks, whatever the count says",
+    () =>
+      resolveAnchor(new Map([["/g/a.js", twins], ["/g/b.js", twins]]), { name: "amb", anchor: "TWIN_ANCHOR", siblings: 4 }),
+    /not all in one chunk/);
+}
+
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*, same-anchored siblings are selected or refused"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

@@ -41,6 +41,24 @@ export interface AnchorSpec {
   anchor: string;
   /** optional second literal that must occur in the same chunk as the anchor */
   coLiteral?: string;
+  /**
+   * How many nodes of the same chunk carry this anchor, VERIFIED at splice time
+   * (campaign spec C5x, unit 4). Defaults to 1 — the rule that has always held.
+   *
+   * A `coLiteral` scopes to a CHUNK, so it cannot separate two siblings inside
+   * one: the compaction wrapper `nie` shares a byte-identical five-line preamble
+   * with `hRt`, and the permission pair `kye`/`von` share `decideLocation:"pre-ask"`.
+   * A row that declares `siblings: n` says "I know this literal names n nodes
+   * here; select among them by my structural signature" — and the count is part
+   * of what is verified, so an upstream edit that adds or removes an occurrence
+   * fails the build instead of silently changing which node is in play.
+   *
+   * Selection itself is `selectExcision` in ast.ts; this only widens the
+   * uniqueness rule from "one occurrence" to "exactly the declared number, all
+   * in one chunk". Two chunks carrying the anchor is still a coin flip and is
+   * still refused.
+   */
+  siblings?: number;
 }
 
 const countSubstring = (haystack: string, needle: string) => haystack.split(needle).length - 1;
@@ -60,7 +78,7 @@ export function resolveAnchor(
   sources: ReadonlyMap<string, string>,
   sp: AnchorSpec,
   label: (path: string) => string = (p) => p,
-): { path: string; source: string } {
+): { path: string; source: string; offsets: number[] } {
   const all = [...sources].map(([p, s]) => [p, countSubstring(s, sp.anchor)] as const).filter(([, c]) => c > 0);
   const anchorTotal = all.reduce((a, [, c]) => a + c, 0);
   if (anchorTotal === 0) {
@@ -86,14 +104,28 @@ export function resolveAnchor(
     }
   }
 
+  // One CHUNK, always: two chunks carrying the anchor makes "which node did we
+  // excise?" a coin flip that no signature can settle, since the same-shaped
+  // node in the other chunk is a different function entirely.
+  const expected = sp.siblings ?? 1;
   const total = hits.reduce((a, [, c]) => a + c, 0);
-  if (total > 1) {
+  if (hits.length > 1 || total > expected) {
     const scope = sp.coLiteral === undefined ? "the graph" : `chunks containing ${JSON.stringify(sp.coLiteral)}`;
     throw new Error(
       `${sp.name}: anchor is not unique in ${scope} — ${total} matches (${describe(hits, label)})` +
+        (expected > 1 ? `; the row declares siblings: ${expected}${hits.length > 1 ? ", but they are not all in one chunk" : ""}` : "") +
         (sp.coLiteral === undefined ? "; scope it with a coLiteral, or re-anchor" : ""),
     );
   }
+  if (total < expected) {
+    throw new Error(
+      `${sp.name}: the row declares siblings: ${expected} but the anchor occurs ${total}× (${describe(hits, label)}) — ` +
+        `an occurrence disappeared upstream, so re-verify WHICH node the row now selects before adjusting the count`,
+    );
+  }
   const path = hits[0][0];
-  return { path, source: sources.get(path)! };
+  const source = sources.get(path)!;
+  const offsets: number[] = [];
+  for (let i = source.indexOf(sp.anchor); i >= 0; i = source.indexOf(sp.anchor, i + 1)) offsets.push(i);
+  return { path, source, offsets };
 }

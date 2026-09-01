@@ -32,7 +32,7 @@ import { join, relative } from "node:path";
 import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { resolveAnchor } from "./anchor.js";
-import { assertSignature, chunkAst, excise } from "./ast.js";
+import { assertSignature, chunkAst, selectExcision } from "./ast.js";
 import { assertOwnedValues, planChunkReplacement } from "./chunk.js";
 import { spliceFootprint, type FootprintFile } from "./footprint.js";
 import { CHUNK_REPLACEMENTS, deriveCaptures, SABOTAGE_TARGETS, SPLICES } from "./manifest.js";
@@ -113,9 +113,11 @@ for (const sp of SPLICES) {
   // another chunk would make "which node did we excise?" a coin flip. A row that
   // declares a `coLiteral` narrows the scope to the chunks carrying both, and
   // still has to be unique inside it (strangle/anchor.ts).
-  const { path, source: src } = resolveAnchor(sources, sp, (p) => relative(STRANGLED_DIR, p));
+  const { path, source: src, offsets } = resolveAnchor(sources, sp, (p) => relative(STRANGLED_DIR, p));
   const sf = chunkAst(path, src);
-  const cut = excise(sf, src.indexOf(sp.anchor), sp.target);
+  // One offset is the rule; a row that declares `siblings` has more than one,
+  // and the verified signature is what chooses among them (C5x, unit 4).
+  const cut = selectExcision(sp.name, sf, offsets, sp.target, sp.signature);
   // Belt and braces: the span the AST chose must be the one the anchor named.
   if (!cut.original.includes(sp.anchor)) throw new Error(`${sp.name}: excised span does not contain the anchor`);
   // …and it must be the node the operator verified, not a same-shaped neighbour.

@@ -368,6 +368,66 @@ function exciseCase(sf: ts.SourceFile, n: ts.CaseClause): Excision {
  * build checks it against the one the manifest row recorded at splice time
  * ({@link assertSignature}).
  */
+/**
+ * Which of several same-anchored nodes the row means (campaign spec C5x, unit 4).
+ *
+ * The anchor rule was "true-substring-unique", full stop, and for one occurrence
+ * that is still exactly what happens: excise it and let {@link assertSignature}
+ * speak if it drifted. But a chunk can carry the same literal in two nodes for
+ * reasons that are not drift — a shared prompt preamble, a decision value the
+ * caller and the callee both stamp — and `coLiteral` scopes to a chunk, so it
+ * cannot separate siblings inside one.
+ *
+ * The signature already knows how to tell same-shaped nodes apart; it just never
+ * got to CHOOSE, only to verify after the fact. Here it chooses. Two properties
+ * keep that from weakening the doctrine:
+ *
+ *  - a row must DECLARE `siblings: n` to enter this path at all (anchor.ts), so
+ *    an anchor that silently stops being unique after a bump still fails loudly
+ *    rather than being auto-selected;
+ *  - a signature that matches two candidates is a TIE, and a tie throws. Picking
+ *    the first would be exactly the coin flip the uniqueness rule exists to
+ *    forbid.
+ *
+ * A candidate the transform cannot excise at all (wrong enclosing shape, a
+ * refused parameter pattern) is not a match, but its reason is carried into the
+ * failure — "no candidate matched" is unactionable if one of them was the target
+ * and merely unexcisable.
+ */
+export function selectExcision(
+  name: string,
+  sf: ts.SourceFile,
+  offsets: readonly number[],
+  shape: TargetShape,
+  expected: TargetSignature,
+): Excision {
+  if (offsets.length === 0) throw new Error(`${name}: no anchor offset to excise from`);
+  if (offsets.length === 1) return excise(sf, offsets[0], shape);
+
+  const candidates = offsets.map((offset) => {
+    try {
+      return { offset, cut: excise(sf, offset, shape) };
+    } catch (e) {
+      return { offset, why: (e as Error).message.split("\n")[0] };
+    }
+  });
+  const matches = candidates.filter((c) => c.cut && sameSignature(c.cut.signature, expected));
+  if (matches.length === 1) return matches[0].cut!;
+
+  const listed = candidates
+    .map((c) => `    @${c.offset} ${c.cut ? `${c.cut.shape} '${c.cut.label}': ${formatSignature(c.cut.signature)}` : `not excisable — ${c.why}`}`)
+    .join("\n");
+  throw new Error(
+    matches.length === 0
+      ? `${name}: none of the ${candidates.length} same-anchored candidates matches the verified signature.\n` +
+        `  manifest signature: ${formatSignature(expected)}\n${listed}\n` +
+        `  Re-verify which node the anchor names now, then update the row deliberately.`
+      : `${name}: the anchor and the signature TIE across ${matches.length} candidates — selection would be a coin flip.\n` +
+        `  manifest signature: ${formatSignature(expected)}\n${listed}\n` +
+        `  Separate them with a structural fact the signature carries, or find a literal only the target has.`,
+  );
+}
+
 export function excise(sf: ts.SourceFile, anchorIdx: number, shape: TargetShape): Excision {
   let node: ts.Node | undefined = deepestAt(sf, anchorIdx);
   for (; node; node = node.parent) {
