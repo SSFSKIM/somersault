@@ -243,7 +243,7 @@ Three findings came only from the branch side:
    with its condition and its three refuted spellings written down, which is a better row than the
    one it replaces.
 3. **The ladder's rungs are covered far less evenly than a mode matrix suggests.** The pre-check runs
-   on every tool call in every mode, and 71 of its 118 branch outcomes execute — but the two rungs
+   on every tool call in every mode, and 80 of its 122 branch outcomes execute — but the two rungs
    the whole subsystem is named for are not among them, because the engine has faster paths above
    them for the two rule shapes a corpus can express.
 
@@ -254,3 +254,11 @@ a tool CAPABILITY no headless tool implements (`requiresUserInteraction`,
 behind an interactive surface a headless session does not have, and arms behind a condition this
 project has deliberately not created — a real safety-check trigger, which means running something
 genuinely dangerous in the sandbox and should be designed rather than improvised.
+
+A fourth finding came from the attestation refusing to pass rather than from the code at all. The
+worklist that drove the adjudication was produced by splitting the report's markdown table on `|`,
+and four branches whose source text contains a `||` operator were silently attributed to the wrong
+column and read as already covered. The report escapes the pipe; the throwaway parser did not
+unescape it. **A tool that filters a report can drop rows without saying so**, and the only thing
+that noticed was the check that refuses to pass with an unadjudicated branch — which is the whole
+argument for having it.

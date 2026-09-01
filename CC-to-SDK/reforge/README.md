@@ -2766,7 +2766,7 @@ here.
 It paid for itself three times over:
 
 - it caught the two rule cells above, which no check could have;
-- it showed that the pre-check's own **deny rungs never fire** — 71 of 118 outcomes execute, and the
+- it showed that the pre-check's own **deny rungs never fire** — 80 of its 122 branch outcomes execute, and the
   two rungs the subsystem is named for are not among them, because the engine has faster paths above
   them for both rule shapes a corpus can express (a whole-tool rule removes the tool; a Bash content
   rule is decided by the Bash tool's own subcommand pass);
