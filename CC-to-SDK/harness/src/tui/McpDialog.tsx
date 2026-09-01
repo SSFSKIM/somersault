@@ -84,9 +84,12 @@ function ServerLabel({ server, width }: { server: McpServerRow; width: number })
  *  DESCRIPTION used to be clipped (`descWidth`), never the NAME, so a long tool name wraps under Ink and
  *  costs its row more than the one physical line the window's budget counted it as. */
 function ToolLabel({ tool, width }: { tool: McpToolInfo; width: number }) {
-  // bl10 fix wave 5: `tool.name`/`tool.description` are already flattened at the model boundary
-  // (`normalizeTool`); the `flattenLabel` calls this used to make here are now redundant.
-  const name = tool.name;
+  // bl10 fix wave 5: `tool.description` is already flattened at the model boundary (`normalizeTool`); the
+  // `flattenLabel` call this used to make here is now redundant.
+  //   bl10 fix wave 7, W7-3 follow-up: DISPLAY reads `tool.label` now, not `tool.name` — `name` is the
+  // tool's raw identity within its server (React keys, `enterToolDetail`, the view stack), never flattened;
+  // `label` is the flattened, display-only counterpart `normalizeTool` computes alongside it.
+  const name = tool.label;
   if (tool.description === undefined) return <Text>{truncateLabel(name, width)}</Text>;
   const description = tool.description;
   const full = `${name}  ${description}`;
@@ -295,19 +298,19 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     // bl10 fix wave 4, W4-2 (simplified in fix wave 5): the server-name, tool-name and annotations lines
     // used to render RAW — each is a one-row budget item (`MCP_DETAIL_FIXED_ROWS`/`MCP_DETAIL_ANNOTATIONS_
     // ROWS`), but a name wider than the dialog (or one carrying a `\n`) wraps under Ink and pushes the frame
-    // past `rows`. `tool.name` is flattened at the model boundary, so only the width truncation is needed
-    // here; `annotations.join(", ")` is built from the static labels `toolAnnotationLabels` returns (never
-    // raw metadata), so it was never at risk and needs no flattening.
-    //   bl10 fix wave 7, W7-3: the server line reads `currentServer.label` (flattened, display-only) now, not
-    // `.name` (the row's raw identity) — see `ServerLabel`'s own comment. `tool.name` is unaffected: this
-    // fix's scope is the SERVER identity/display split (the regression it closes collapsed two servers, not
-    // two tools, into one identity).
+    // past `rows`; `annotations.join(", ")` is built from the static labels `toolAnnotationLabels` returns
+    // (never raw metadata), so it was never at risk and needs no flattening.
+    //   bl10 fix wave 7, W7-3 (+ follow-up): both lines read their `.label` now, not `.name` — `name` is each
+    // row's raw identity (server: React keys/`findServer`/the view stack; tool: React keys/`enterToolDetail`/
+    // the view stack), never flattened; `label` is the flattened, display-only counterpart. The follow-up
+    // extends the original fix's server-only scope to `McpToolInfo` — the identical class, closed for the
+    // other identity this file carries.
     const annotationsLabel = "Annotations:";
     const annotationsWidth = Math.max(10, columns - 3 - stringWidth(annotationsLabel));
     return (
       <Box flexDirection="column">
         <Text dimColor>{truncateLabel(currentServer.label, detailWidth)}</Text>
-        <Text bold>{truncateLabel(tool.name, detailWidth)}</Text>
+        <Text bold>{truncateLabel(tool.label, detailWidth)}</Text>
         {tool.description ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Description:</Text>

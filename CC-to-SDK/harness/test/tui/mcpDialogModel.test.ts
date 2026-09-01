@@ -25,8 +25,8 @@ describe("normalizeMcpServers", () => {
       {
         name: "linear", label: "linear", status: "connected", scope: "project", type: "stdio", command: "node",
         tools: [
-          { name: "create_issue", description: "Create a Linear issue", annotations: { destructive: false, readOnly: false } },
-          { name: "search_issues", description: "Search issues", annotations: { readOnly: true, openWorld: true } },
+          { name: "create_issue", label: "create_issue", description: "Create a Linear issue", annotations: { destructive: false, readOnly: false } },
+          { name: "search_issues", label: "search_issues", description: "Search issues", annotations: { readOnly: true, openWorld: true } },
         ],
       },
     ]);
@@ -39,7 +39,7 @@ describe("normalizeMcpServers", () => {
     ]);
     expect(rows[0]).toMatchObject({ name: "notion", type: "http", url: "https://mcp.notion.com/mcp" });
     expect(rows[0]).not.toHaveProperty("command");
-    expect(rows[0]!.tools).toEqual([{ name: "notion-search" }]);
+    expect(rows[0]!.tools).toEqual([{ name: "notion-search", label: "notion-search" }]);
   });
 
   it("carries names and descriptions through as-is beyond whitespace flattening (no title-casing, no truncation)", () => {
@@ -49,7 +49,7 @@ describe("normalizeMcpServers", () => {
     ]);
     expect(rows[0]!.name).toBe("my_weird-Server.99");
     expect(rows[0]!.label).toBe("my_weird-Server.99");
-    expect(rows[0]!.tools[0]).toEqual({ name: "mcp__weird__tool_NAME", description: "does multi-line stuff with \"quotes\"" });
+    expect(rows[0]!.tools[0]).toEqual({ name: "mcp__weird__tool_NAME", label: "mcp__weird__tool_NAME", description: "does multi-line stuff with \"quotes\"" });
   });
 
   // bl10 fix wave 5: three prior waves flattened embedded control whitespace SITE-BY-SITE, in the render
@@ -76,7 +76,12 @@ describe("normalizeMcpServers", () => {
     expect(rows[0]!.type).toBe("std io");
     expect(rows[0]!.command).toBe("node server.js");
     expect(rows[0]!.url).toBe("https://x .example/mcp");
-    expect(rows[0]!.tools[0]).toEqual({ name: "tool name", description: "line one line two line three" });
+    // bl10 fix wave 7, W7-3 follow-up: the tool's `name` is ITS OWN identity within the server (React keys,
+    // `toolFocus` lookups, `enterToolDetail`'s `tool` argument, the view stack, `findTool`) — the same class
+    // fixed for the server row above. It stays raw; `label` carries the flattened display form.
+    expect(rows[0]!.tools[0]!.name, "tool identity: never flattened").toBe("tool\nname");
+    expect(rows[0]!.tools[0]!.label, "tool display: flattened").toBe("tool name");
+    expect(rows[0]!.tools[0]!.description).toBe("line one line two line three");
   });
 
   // bl10 fix wave 7, W7-3 (cited regression): the whole point of keeping `name` raw — two servers whose names
@@ -96,6 +101,23 @@ describe("normalizeMcpServers", () => {
     // Both display identically — the shared flattened form lives in `label`, never in `name`.
     expect(rows[0]!.label).toBe("foo");
     expect(rows[1]!.label).toBe("foo");
+  });
+
+  // bl10 fix wave 7, W7-3 follow-up (same regression class, for tools): two tools on ONE server whose names
+  // differ only in whitespace must stay distinct — before this fix `normalizeTool` flattened `name` itself,
+  // so both tools would normalize to the same identity and `findTool`/the view stack's `tool` field would
+  // resolve the first match for either.
+  it("keeps two tools on one server whose names differ only in whitespace as distinct identities, with the same display label", () => {
+    const rows = normalizeMcpServers([
+      { name: "srv", status: "connected", tools: [{ name: "foo" }, { name: "foo " }] },
+    ]);
+    const tools = rows[0]!.tools;
+    expect(tools).toHaveLength(2);
+    expect(tools[0]!.name).toBe("foo");
+    expect(tools[1]!.name).toBe("foo ");
+    expect(tools[0]!.name).not.toBe(tools[1]!.name);
+    expect(tools[0]!.label).toBe("foo");
+    expect(tools[1]!.label).toBe("foo");
   });
 
   it("every status literal survives, and an unrecognized one falls back to failed rather than throwing", () => {
@@ -120,9 +142,9 @@ describe("normalizeMcpServers", () => {
     expect(rows[0]).toEqual({ name: "sparse", label: "sparse", status: "connected", tools: [] });
     expect(rows[1]).toEqual({ name: "bad-config", label: "bad-config", status: "connected", tools: [] });
     expect(rows[2]).toEqual({ name: "bad-tools", label: "bad-tools", status: "connected", tools: [] });
-    expect(rows[3]!.tools).toEqual([{ name: "ok" }]);                            // every malformed tool entry dropped
-    expect(rows[4]!.tools).toEqual([{ name: "t" }]);                             // annotations not an object -> omitted
-    expect(rows[5]!.tools).toEqual([{ name: "t" }]);                             // non-boolean annotation field -> omitted
+    expect(rows[3]!.tools).toEqual([{ name: "ok", label: "ok" }]);                            // every malformed tool entry dropped
+    expect(rows[4]!.tools).toEqual([{ name: "t", label: "t" }]);                             // annotations not an object -> omitted
+    expect(rows[5]!.tools).toEqual([{ name: "t", label: "t" }]);                             // non-boolean annotation field -> omitted
   });
 
   // bl10 fix wave 2, finding 3: the pre-dialog `/mcp` formatter (commands.ts's `formatMcpStatus`) always
@@ -260,11 +282,11 @@ describe("view-stack transitions", () => {
 });
 
 describe("findServer / findTool", () => {
-  const servers = [row({ name: "a" }), row({ name: "b", tools: [{ name: "t1" }, { name: "t2" }] })];
+  const servers = [row({ name: "a" }), row({ name: "b", tools: [{ name: "t1", label: "t1" }, { name: "t2", label: "t2" }] })];
   it("finds by exact name, undefined on a miss", () => {
     expect(findServer(servers, "b")).toBe(servers[1]);
     expect(findServer(servers, "missing")).toBeUndefined();
-    expect(findTool(servers[1]!, "t2")).toEqual({ name: "t2" });
+    expect(findTool(servers[1]!, "t2")).toEqual({ name: "t2", label: "t2" });
     expect(findTool(servers[1]!, "missing")).toBeUndefined();
   });
 });
@@ -292,11 +314,11 @@ describe("statusText / serverMenuFields", () => {
 
 describe("toolAnnotationLabels", () => {
   it("lists only the TRUE flags, in canon's order", () => {
-    expect(toolAnnotationLabels({ name: "t" })).toEqual([]);
-    expect(toolAnnotationLabels({ name: "t", annotations: {} })).toEqual([]);
-    expect(toolAnnotationLabels({ name: "t", annotations: { readOnly: false, destructive: false, openWorld: false } })).toEqual([]);
-    expect(toolAnnotationLabels({ name: "t", annotations: { readOnly: true } })).toEqual(["read-only"]);
-    expect(toolAnnotationLabels({ name: "t", annotations: { readOnly: true, destructive: true, openWorld: true } }))
+    expect(toolAnnotationLabels({ name: "t", label: "t" })).toEqual([]);
+    expect(toolAnnotationLabels({ name: "t", label: "t", annotations: {} })).toEqual([]);
+    expect(toolAnnotationLabels({ name: "t", label: "t", annotations: { readOnly: false, destructive: false, openWorld: false } })).toEqual([]);
+    expect(toolAnnotationLabels({ name: "t", label: "t", annotations: { readOnly: true } })).toEqual(["read-only"]);
+    expect(toolAnnotationLabels({ name: "t", label: "t", annotations: { readOnly: true, destructive: true, openWorld: true } }))
       .toEqual(["read-only", "destructive", "open-world"]);
   });
 });

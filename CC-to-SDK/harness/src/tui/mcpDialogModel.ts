@@ -9,7 +9,21 @@ import { plural } from "./format.js";
 import { windowBounds, type SelectWindow } from "./select/selectModel.js";
 
 export interface McpToolAnnotations { readOnly?: boolean; destructive?: boolean; openWorld?: boolean }
-export interface McpToolInfo { name: string; description?: string; annotations?: McpToolAnnotations }
+export interface McpToolInfo {
+  /** The tool's IDENTITY within its server — React keys (tools-list `Row`), `toolFocus` lookups,
+   *  `enterToolDetail`'s `tool` argument and the view stack's `tool` field, `findTool`-style lookups. RAW,
+   *  never flattened (bl10 fix wave 7, W7-3 follow-up: the same identity-vs-display class fixed for
+   *  `McpServerRow.name` applies here too — two tools on one server whose names differ only in whitespace
+   *  must stay distinct rows, not collapse to one identity). `label` below is the display-only, flattened
+   *  counterpart every render site uses. */
+  name: string;
+  /** The flattened form of `name` (`flattenLabel`) — the tools-list row and the tool-detail heading show
+   *  THIS, never `name`, so an embedded newline still cannot paint as an extra row. Two tools with the same
+   *  `label` are a legitimate, distinguishable pair as long as their `name`s differ. */
+  label: string;
+  description?: string;
+  annotations?: McpToolAnnotations;
+}
 export type McpStatus = "connected" | "failed" | "needs-auth" | "pending" | "disabled";
 export interface McpServerRow {
   /** The row's IDENTITY — React keys, `findServer` lookups, the view stack's `server` field. RAW, never
@@ -40,7 +54,10 @@ function normalizeTool(raw: unknown): McpToolInfo | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
   if (typeof t.name !== "string" || t.name === "") return null;
-  const tool: McpToolInfo = { name: flattenLabel(t.name) };
+  // bl10 fix wave 7, W7-3 follow-up: `name` is the tool's IDENTITY within its server (see the interface
+  // docblock) — it stays exactly what the host reported, never flattened. `label` is the flattened,
+  // display-only counterpart the tools-list row and tool-detail heading read instead.
+  const tool: McpToolInfo = { name: t.name, label: flattenLabel(t.name) };
   if (typeof t.description === "string") tool.description = flattenLabel(t.description);
   if (t.annotations && typeof t.annotations === "object") {
     const a = t.annotations as Record<string, unknown>;

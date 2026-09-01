@@ -24,18 +24,19 @@ async function waitFor(cond: () => boolean, timeout = 2000) {
   const start = Date.now();
   for (;;) { if (cond()) { await tick(); return; } if (Date.now() - start > timeout) throw new Error("waitFor timeout"); await new Promise((r) => setTimeout(r, 5)); }
 }
-// bl10 fix wave 7, W7-3: `label` is a real field on `McpServerRow` now (identity/display split) — every
-// hand-built fixture below sets it equal to `name` (none of these names carry whitespace, so raw === flattened).
+// bl10 fix wave 7, W7-3 (+ follow-up): `label` is a real field on both `McpServerRow` and `McpToolInfo` now
+// (identity/display split) — every hand-built fixture below sets it equal to `name` (none of these names
+// carry whitespace, so raw === flattened).
 const LOCAL: McpServerRow = {
   name: "linear", label: "linear", status: "connected", scope: "project", type: "stdio", command: "node server.js",
   tools: [
-    { name: "create_issue", description: "Create a Linear issue", annotations: { destructive: true } },
-    { name: "search_issues", description: "Search issues by query", annotations: { readOnly: true, openWorld: true } },
+    { name: "create_issue", label: "create_issue", description: "Create a Linear issue", annotations: { destructive: true } },
+    { name: "search_issues", label: "search_issues", description: "Search issues by query", annotations: { readOnly: true, openWorld: true } },
   ],
 };
 const REMOTE: McpServerRow = {
   name: "notion", label: "notion", status: "connected", scope: "user", type: "http", url: "https://mcp.notion.com/mcp",
-  tools: [{ name: "notion-search" }],
+  tools: [{ name: "notion-search", label: "notion-search" }],
 };
 const FAILED: McpServerRow = { name: "broken", label: "broken", status: "failed", error: "spawn ENOENT", scope: "local", tools: [] };
 const NEEDS_AUTH: McpServerRow = { name: "figma", label: "figma", status: "needs-auth", scope: "user", tools: [] };
@@ -226,9 +227,9 @@ describe("McpDialog — drill/pop cycle", () => {
 // silently reset the root cursor to the FIRST server.
 describe("McpDialog — server-menu navigation must not clobber root focus (bl10 fw3 RF3)", () => {
   it("moving in a non-first server's menu leaves the root list focused on that same server after Esc", async () => {
-    const A: McpServerRow = { name: "a-server", label: "a-server", status: "connected", scope: "project", tools: [{ name: "t1" }] };
-    const B: McpServerRow = { name: "b-server", label: "b-server", status: "connected", scope: "project", tools: [{ name: "t2" }] };
-    const C: McpServerRow = { name: "c-server", label: "c-server", status: "connected", scope: "project", tools: [{ name: "t3" }] };
+    const A: McpServerRow = { name: "a-server", label: "a-server", status: "connected", scope: "project", tools: [{ name: "t1", label: "t1" }] };
+    const B: McpServerRow = { name: "b-server", label: "b-server", status: "connected", scope: "project", tools: [{ name: "t2", label: "t2" }] };
+    const C: McpServerRow = { name: "c-server", label: "c-server", status: "connected", scope: "project", tools: [{ name: "t3", label: "t3" }] };
     const { stdin, lastFrame } = await mount([A, B, C]);
     stdin.write("j"); await tick();
     stdin.write("j"); await tick();           // root cursor -> c-server (index 2)
@@ -264,7 +265,7 @@ describe("McpDialog — same-chunk move+accept lands on the post-move row (bl10 
   it("server-tools: `j` then Enter in ONE chunk drills into the SECOND tool, not the first", async () => {
     const withTools: McpServerRow = {
       name: "srv", label: "srv", status: "connected", scope: "project",
-      tools: [{ name: "tool-one" }, { name: "tool-two" }, { name: "tool-three" }],
+      tools: [{ name: "tool-one", label: "tool-one" }, { name: "tool-two", label: "tool-two" }, { name: "tool-three", label: "tool-three" }],
     };
     const { stdin, lastFrame } = await mount([withTools]);
     stdin.write("\r"); await tick();          // -> server-menu
@@ -284,7 +285,7 @@ describe("McpDialog — same-chunk move+accept lands on the post-move row (bl10 
 describe("McpDialog — server-tools view budget and label truncation (bl10 fw2 F5)", () => {
   const manyTools: McpServerRow = {
     name: "srv", label: "srv", status: "connected", scope: "project",
-    tools: Array.from({ length: 20 }, (_, i) => ({ name: `tool-${i}` })),
+    tools: Array.from({ length: 20 }, (_, i) => ({ name: `tool-${i}`, label: `tool-${i}` })),
   };
 
   it("keeps the composed frame STRICTLY under `rows` on a short terminal with many tools", async () => {
@@ -301,7 +302,7 @@ describe("McpDialog — server-tools view budget and label truncation (bl10 fw2 
 
   it("a very long, untruncated tool name wraps under Ink and blows the frame past `rows`", async () => {
     const many = { name: "srv", label: "srv", status: "connected" as const, scope: "project",
-      tools: Array.from({ length: 5 }, (_, i) => ({ name: `tool-${i}-${"x".repeat(120)}`, description: "a description" })) };
+      tools: Array.from({ length: 5 }, (_, i) => { const n = `tool-${i}-${"x".repeat(120)}`; return { name: n, label: n, description: "a description" }; }) };
     const { stdin, lastFrame } = await mount([many], 14);
     stdin.write("\r"); await tick();          // -> server-menu
     stdin.write("\r"); await tick();          // -> server-tools
@@ -331,7 +332,7 @@ describe("McpDialog — server-menu and tool-detail are bounded to the row budge
   it("a tool-detail description with many lines stays within the short-terminal row budget", async () => {
     const manyLineDescription: McpServerRow = {
       name: "srv", label: "srv", status: "connected", scope: "project",
-      tools: [{ name: "verbose-tool", description: Array.from({ length: 40 }, (_, i) => `description line ${i}`).join("\n") }],
+      tools: [{ name: "verbose-tool", label: "verbose-tool", description: Array.from({ length: 40 }, (_, i) => `description line ${i}`).join("\n") }],
     };
     const { stdin, lastFrame } = await mount([manyLineDescription], 14);
     stdin.write("\r"); await tick();          // -> server-menu
@@ -377,7 +378,7 @@ describe("McpDialog — tool-detail name/annotations flatten and truncate (bl10 
   it("an over-wide server name, tool name and annotations list each render on one physical row, keeping the frame within `rows`", async () => {
     const wide: McpServerRow = {
       name: `wide-server-${"n".repeat(500)}`, label: `wide-server-${"n".repeat(500)}`, status: "connected", scope: "project",
-      tools: [{ name: `wide-tool-${"t".repeat(500)}`, annotations: { readOnly: true, destructive: true, openWorld: true } }],
+      tools: [{ name: `wide-tool-${"t".repeat(500)}`, label: `wide-tool-${"t".repeat(500)}`, annotations: { readOnly: true, destructive: true, openWorld: true } }],
     };
     const instance = render(<McpDialog fetchServers={async () => [wide]} onClose={() => {}} rows={14} columns={40} />);
     mounted = instance;
@@ -538,6 +539,36 @@ describe("McpDialog — identity vs display: two servers differing only in white
     const f = flat(lastFrame);
     expect(f, "the SECOND server's own URL, not the first's").toContain("https://foo-b.example/mcp");
     expect(f, "not the first server's URL").not.toContain("https://foo-a.example/mcp");
+  });
+});
+
+// bl10 fix wave 7, W7-3 follow-up: the identical class, for tools — `normalizeTool` used to flatten `name`
+// itself, so two tools on ONE server whose names differ only in whitespace collapsed to the same identity;
+// selecting the second tool's detail resolved the FIRST tool's own description (`currentServer.tools.find`
+// matches the FIRST entry whose — now-shared — `name` equals `view.tool`).
+describe("McpDialog — identity vs display: two tools differing only in whitespace stay distinct (bl10 fw7 W7-3 follow-up)", () => {
+  it("selecting the second of two whitespace-differing tools opens the SECOND tool's own detail", async () => {
+    // Through `normalizeMcpServers`/`normalizeTool` — the real entry point — not hand-built `McpToolInfo`
+    // literals, which would skip the one function the identity/display split actually lives in.
+    const [srv] = normalizeMcpServers([
+      {
+        name: "srv", status: "connected", scope: "project",
+        // Array order is preserved by `normalizeTool`'s `.map()` and by the server-tools view (no sort), so
+        // the second tool is deterministically the trailing-whitespace one regardless of display.
+        tools: [
+          { name: "foo", description: "tool A description" },
+          { name: "foo ", description: "tool B description" },
+        ],
+      },
+    ]);
+    const { stdin, lastFrame } = await mount([srv!]);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    stdin.write("j"); await tick();           // cursor -> the second tool (identity "foo ")
+    stdin.write("\r"); await tick();          // -> tool-detail
+    const f = flat(lastFrame);
+    expect(f, "the SECOND tool's own description, not the first's").toContain("tool B description");
+    expect(f, "not the first tool's description").not.toContain("tool A description");
   });
 });
 
