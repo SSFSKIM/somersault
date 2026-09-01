@@ -280,6 +280,29 @@ describe("McpDialog — server-tools view budget and label truncation (bl10 fw2 
   });
 });
 
+// bl10 fix wave 3, RF2: `stringWidth` (both `ToolLabel`'s own measurement and `truncateLabel`'s clip) treats
+// `\n` as zero-width while Ink's `<Text>` paints it as a real line break, so a description carrying embedded
+// newlines measures as ONE option (the tools-view budget's unit) but PAINTS as several — a valid MCP
+// description is not obligated to be single-line. Flattening every embedded line break (and other control
+// whitespace) to a single space before measuring/truncating is what keeps the paint and the budget in sync.
+describe("McpDialog — multiline tool descriptions flatten to one physical row (bl10 fw3 RF2)", () => {
+  it("a tool description containing \\n renders as ONE physical row, within the tools-view budget", async () => {
+    const manyLines = Array.from({ length: 12 }, (_, i) => `line-${i}`).join("\n");
+    const withNewlines: McpServerRow = {
+      name: "srv", status: "connected", scope: "project",
+      tools: [{ name: "multiline-tool", description: manyLines }],
+    };
+    const { stdin, lastFrame } = await mount([withNewlines], 14);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    const raw = frame(lastFrame);
+    // Flattened, not clipped away: every line's own text still shows, just space-joined on one row.
+    expect(raw).toContain("line-0 line-1 line-2");
+    // The embedded newlines must not multiply the option's row cost past the budget the window was sized to.
+    expect(raw.split("\n").length, "12 embedded newlines must not paint as 12 extra rows").toBeLessThan(14);
+  });
+});
+
 describe("McpDialog — onClose", () => {
   it("root Esc closes the dialog", async () => {
     let closed = false;

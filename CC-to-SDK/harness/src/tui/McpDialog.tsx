@@ -27,7 +27,7 @@ import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
 import { truncateLabel } from "./select/selectModel.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import {
-  buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpToolsVisibleRows, mcpWindow,
+  buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpToolsVisibleRows, mcpWindow, flattenLabel,
   MCP_ROOT_VIEW, enterServerMenu, enterServerTools, enterToolDetail, popMcpView, findServer,
   serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE,
   type McpServerRow, type McpToolInfo, type McpView,
@@ -63,24 +63,30 @@ function Row({ label, focused }: { label: React.ReactNode; focused: boolean }) {
  *  (`server-menu` view) — the root row only needs to say ENOUGH to pick the right server. */
 function ServerLabel({ server, width }: { server: McpServerRow; width: number }) {
   const statusColor = STATUS_COLOR[server.status];
-  const status = statusText(server);
-  const full = `${server.name}  ${status}`;
+  // bl10 fix wave 3, RF2: flattened FIRST — `stringWidth` ignores an embedded `\n` while Ink's render does
+  // not, so measuring/truncating the raw strings would size this row for one physical line while it paints
+  // several.
+  const name = flattenLabel(server.name);
+  const status = flattenLabel(statusText(server));
+  const full = `${name}  ${status}`;
   if (stringWidth(full) <= width) {
-    return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{status}</Text></>;
+    return <><Text>{name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{status}</Text></>;
   }
   // The name alone already fills the row (an extreme narrow-pane/long-name case) — clip it and drop the
   // status rather than split a string with nothing left to show of it.
-  if (stringWidth(server.name) >= width) return <Text>{truncateLabel(server.name, width)}</Text>;
-  const statusWidth = width - stringWidth(server.name) - 2;   // 2 = the "  " separator between the two runs
-  return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{truncateLabel(status, statusWidth)}</Text></>;
+  if (stringWidth(name) >= width) return <Text>{truncateLabel(name, width)}</Text>;
+  const statusWidth = width - stringWidth(name) - 2;   // 2 = the "  " separator between the two runs
+  return <><Text>{name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{truncateLabel(status, statusWidth)}</Text></>;
 }
 
 /** bl10 fix wave 2, finding 5: `ServerLabel`'s own discipline, for the `server-tools` view — only the
  *  DESCRIPTION used to be clipped (`descWidth`), never the NAME, so a long tool name wraps under Ink and
  *  costs its row more than the one physical line the window's budget counted it as. */
 function ToolLabel({ tool, width }: { tool: McpToolInfo; width: number }) {
-  const { name, description } = tool;
-  if (description === undefined) return <Text>{truncateLabel(name, width)}</Text>;
+  // bl10 fix wave 3, RF2: flattened FIRST, same reasoning as `ServerLabel` above.
+  const name = flattenLabel(tool.name);
+  if (tool.description === undefined) return <Text>{truncateLabel(name, width)}</Text>;
+  const description = flattenLabel(tool.description);
   const full = `${name}  ${description}`;
   if (stringWidth(full) <= width) return <><Text>{name}</Text><Text dimColor>{"  "}{description}</Text></>;
   if (stringWidth(name) >= width) return <Text>{truncateLabel(name, width)}</Text>;

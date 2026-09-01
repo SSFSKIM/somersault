@@ -218,6 +218,16 @@ export function serverMenuFields(row: McpServerRow): McpFieldRow[] {
   return fields;
 }
 
+/** bl10 fix wave 3, RF2: `stringWidth` treats `\n` (and other control whitespace) as zero-width while Ink's
+ *  `<Text>` paints it as a real line break — a tool description or server field carrying one measures as ONE
+ *  row (what every single-row option's width budget counts it as) but PAINTS as several, overflowing a window
+ *  sized against the smaller count. A valid MCP description is not obligated to be single-line, so every
+ *  label folded into a single-row option (server name/status, tool name/description, a server-menu field
+ *  value) is flattened through this FIRST, so measurement, truncation and paint all agree on one row. */
+export function flattenLabel(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
 /** The true annotation flags, in canon's own display order (`HUe`'s row builder, bundle L278070+). Empty
  *  when the tool carries no annotations, or none of them are true. */
 export function toolAnnotationLabels(tool: McpToolInfo): string[] {
