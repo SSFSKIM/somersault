@@ -1239,6 +1239,31 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C8-fix-2 verification round — **CONVERGED**, W5's review loop closed):
+  a third boundary round over the nine new splices found no wrong byte, no
+  false-green path and no wrong measured claim. All nine upstream bodies were
+  re-extracted through the manifest's own machinery and compared line-by-line
+  (record field order, executor-request key order, guards, defaults — including
+  the family's historical defect classes: the oracle demonstrably reddens on a
+  reintroduced `return yield*`); every headline number reproduced from a fresh
+  run in the round's own session (686/107 oracle, 186/312/126/0 attestation,
+  45/45 corpus, 33/32 registry, the 77-phase arithmetic); two sabotages
+  demonstrated live for their own named reasons; the model-switch deferral judged
+  a defensible, accurately characterized §2.3 call. Three findings, all
+  debt-class, closed in the loop's final commit: the CwdChanged OPEN row's
+  justification was factually wrong about the seam (the Bash tool's
+  post-command `tengu_shell_set_cwd` tracking DOES move the tracked cwd on a
+  persisting `cd`; the verdict stands because no phase ran one — prose corrected,
+  the one-`cd` follow-up phase logged in the tech-debt tracker with `AUt` named
+  recordable via the shared `zxt`), the ledger row's curated evidence list had
+  silently gone stale at round one's inventory (the nine new manifest rows and
+  six new scenarios appended; the mechanical footprint had covered them
+  throughout), and the trace comparison's present-with-undefined blindness was
+  already in the tracker. **Stop-signal honored: a round that produces only
+  logged debt and prose corrections is convergence** — three rounds, each
+  finding the layer beneath the previous one (vacuous negatives → judgment-derived
+  enumeration → nothing), is this campaign's measured case for review-until-quiet
+  on every multi-splice wave.
 - 2026-09-01 (C8-fix-2 / W5 second boundary round — the measurement layer was
   wrong, so the enumeration now comes from the artifact): a verification round on
   the first fix confirmed all four new splices byte-faithful and the oracle,

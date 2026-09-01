@@ -133,8 +133,11 @@ const CONDITIONS: Record<string, { phase: string | null; condition: string }> = 
     phase: null,
     condition:
       "the tracked cwd MOVES (`onCwdChanged`), with a CwdChanged or FileChanged hook registered to arm the watcher. " +
-      "The file-watch phase arms it and never moves the cwd, because nothing on the SDK's Options moves the engine's " +
-      "cwd mid-session — so this is an OPEN row, not a negative.",
+      "The tracked cwd CAN move headlessly — the Bash tool's post-command tracking (the `tengu_shell_set_cwd` block) " +
+      "reads the shell's final PWD and calls `onCwdChanged` when a `cd` persists — but the file-watch phase, which " +
+      "arms the watcher and has Bash enabled, never runs a `cd`, so the condition stays uncreated. OPEN, not a " +
+      "negative; cheaply closable by a follow-up phase that runs one persisting `cd` (if it fires, `AUt` becomes " +
+      "recordable — it shares `zxt` with the already-spliced `CUt`).",
   },
   FileChanged: { phase: "file-watch", condition: "a watcher event on a path a FileChanged hook's MATCHER named (the matcher arms chokidar; hook output does not)" },
   PreModelSwitch: { phase: "model-switch", condition: "a model change proposed (`/model`), before it is applied" },

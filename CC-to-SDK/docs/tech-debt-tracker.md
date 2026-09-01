@@ -316,3 +316,22 @@ sequencing arrives (the hook EXECUTOR itself is the obvious candidate: it spawns
 timeouts and propagates cancellation, and for that one interleaving IS the behaviour). Doing it now would
 buy ordering coverage for ten functions that mostly have one order to be in. Revisit when the executor is
 spliced, or when any hook module grows a second effectful call whose position is load-bearing.
+
+## 2026-09-01 — the CwdChanged hook event is one `cd` away from a verdict, and `AUt` from recordability
+
+W5's registry-derived probe left `CwdChanged` OPEN, correctly — no phase created its condition — but
+the row's original justification ("nothing on the SDK's Options moves the engine's cwd mid-session")
+was wrong about the seam, and the C8-fix-2 boundary round corrected it: the Bash tool's post-command
+tracking (the `tengu_shell_set_cwd` block) reads the shell's final PWD and calls `onCwdChanged` when a
+`cd` persists, and the file-watch phase already arms the watcher with Bash enabled. The probe prose now
+states the real mechanism.
+
+**Debt:** one follow-up probe phase that runs a persisting `cd` under an armed CwdChanged matcher. If
+the event fires, its dispatcher `AUt` becomes recordable and splice-able on the family template — it
+shares the watcher-hooks helper `zxt` with the already-spliced `CUt`/FileChanged, so the capture
+inventory is already characterized.
+
+**Why deferred:** the verdict table is honest as written (OPEN names the uncreated condition), and W5's
+boundary review converged with this as its only probe-shaped residue. Fold the phase into whichever
+wave next touches the probe — W7.5's executor work is the natural host, since `zxt` is on its ledger
+gap already.
