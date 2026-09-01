@@ -133,6 +133,6 @@ describe("bl10 fix wave 1, finding 1 — /mcp joins the seam-owning overlay clas
 // payload — guards against the dialog and the model silently drifting on what a "server" object looks like.
 describe("normalizeMcpServers — wiring fixture parity", () => {
   it("the bare {name,status} shape the existing formatMcpStatus tests use still normalizes cleanly", () => {
-    expect(normalizeMcpServers([{ name: "linear", status: "connected" }])).toEqual([{ name: "linear", status: "connected", tools: [] }]);
+    expect(normalizeMcpServers([{ name: "linear", status: "connected" }])).toEqual([{ name: "linear", label: "linear", status: "connected", tools: [] }]);
   });
 });

@@ -64,9 +64,10 @@ function Row({ label, focused }: { label: React.ReactNode; focused: boolean }) {
  *  (`server-menu` view) — the root row only needs to say ENOUGH to pick the right server. */
 function ServerLabel({ server, width }: { server: McpServerRow; width: number }) {
   const statusColor = STATUS_COLOR[server.status];
-  // bl10 fix wave 5: `server.name` is already flattened at the model boundary (`normalizeMcpServers`); the
-  // `flattenLabel` call this used to make here is now redundant.
-  const name = server.name;
+  // bl10 fix wave 7, W7-3: DISPLAY reads `server.label` now, not `server.name` — `name` is the row's raw
+  // identity (React keys, `findServer`, the view stack), never flattened; `label` is the flattened,
+  // display-only counterpart `normalizeMcpServers` computes alongside it.
+  const name = server.label;
   const status = statusText(server);
   const full = `${name}  ${status}`;
   if (stringWidth(full) <= width) {
@@ -217,13 +218,14 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
       // its value.
       const fieldValueWidth = (label: string) => Math.max(10, columns - 3 - stringWidth(label));
       // bl10 fix wave 5: the heading itself is the same tall-frame hazard RF4 already fixed for the field
-      // VALUES below it — `currentServer.name` is flattened at the model boundary, but an over-wide name
-      // still wraps under Ink unless it is also truncated to what this row (no `Row` gutter here, just the
-      // frame's own `paddingX` either side) actually has.
+      // VALUES below it — an over-wide name still wraps under Ink unless it is also truncated to what this
+      // row (no `Row` gutter here, just the frame's own `paddingX` either side) actually has.
+      //   bl10 fix wave 7, W7-3: DISPLAY reads `currentServer.label` (flattened) now, not `.name` (the row's
+      // raw identity) — see `ServerLabel`'s own comment.
       const menuHeadingWidth = Math.max(1, columns - 2);
       return (
         <Box flexDirection="column">
-          <Text bold>{truncateLabel(currentServer.name, menuHeadingWidth)}</Text>
+          <Text bold>{truncateLabel(currentServer.label, menuHeadingWidth)}</Text>
           <Box flexDirection="column" marginTop={1}>
             {fields.map((f) => (
               <Box key={f.label} flexDirection="row" gap={1}>
@@ -249,13 +251,14 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
       // this view's rows sit behind the identical `Row` primitive, so the identical budget applies.
       const toolRowWidth = Math.max(10, columns - 4);
       // bl10 fix wave 5: this view's own heading is the same tall-frame hazard fix wave 2 (F5) already fixed
-      // for the tool rows below it — `currentServer.name` is flattened at the model boundary, but an
-      // over-wide name still wraps under Ink unless also truncated to what this row (no `Row` gutter, just
-      // the frame's own `paddingX` either side, same as the server-menu heading above) actually has.
+      // for the tool rows below it — an over-wide name still wraps under Ink unless also truncated to what
+      // this row (no `Row` gutter, just the frame's own `paddingX` either side, same as the server-menu
+      // heading above) actually has.
+      //   bl10 fix wave 7, W7-3: DISPLAY reads `currentServer.label` (flattened) now, not `.name`.
       const toolsHeadingWidth = Math.max(1, columns - 2);
       return (
         <Box flexDirection="column">
-          <Text bold>{truncateLabel(currentServer.name, toolsHeadingWidth)}</Text>
+          <Text bold>{truncateLabel(currentServer.label, toolsHeadingWidth)}</Text>
           <Box flexDirection="column" marginTop={1}>
             {tools.length === 0
               ? <Text dimColor>No tools.</Text>
@@ -292,14 +295,18 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     // bl10 fix wave 4, W4-2 (simplified in fix wave 5): the server-name, tool-name and annotations lines
     // used to render RAW — each is a one-row budget item (`MCP_DETAIL_FIXED_ROWS`/`MCP_DETAIL_ANNOTATIONS_
     // ROWS`), but a name wider than the dialog (or one carrying a `\n`) wraps under Ink and pushes the frame
-    // past `rows`. `currentServer.name`/`tool.name` are now flattened at the model boundary, so only the
-    // width truncation is needed here; `annotations.join(", ")` is built from the static labels
-    // `toolAnnotationLabels` returns (never raw metadata), so it was never at risk and needs no flattening.
+    // past `rows`. `tool.name` is flattened at the model boundary, so only the width truncation is needed
+    // here; `annotations.join(", ")` is built from the static labels `toolAnnotationLabels` returns (never
+    // raw metadata), so it was never at risk and needs no flattening.
+    //   bl10 fix wave 7, W7-3: the server line reads `currentServer.label` (flattened, display-only) now, not
+    // `.name` (the row's raw identity) — see `ServerLabel`'s own comment. `tool.name` is unaffected: this
+    // fix's scope is the SERVER identity/display split (the regression it closes collapsed two servers, not
+    // two tools, into one identity).
     const annotationsLabel = "Annotations:";
     const annotationsWidth = Math.max(10, columns - 3 - stringWidth(annotationsLabel));
     return (
       <Box flexDirection="column">
-        <Text dimColor>{truncateLabel(currentServer.name, detailWidth)}</Text>
+        <Text dimColor>{truncateLabel(currentServer.label, detailWidth)}</Text>
         <Text bold>{truncateLabel(tool.name, detailWidth)}</Text>
         {tool.description ? (
           <Box flexDirection="column" marginTop={1}>

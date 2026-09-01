@@ -23,7 +23,7 @@ describe("normalizeMcpServers", () => {
     ]);
     expect(rows).toEqual<McpServerRow[]>([
       {
-        name: "linear", status: "connected", scope: "project", type: "stdio", command: "node",
+        name: "linear", label: "linear", status: "connected", scope: "project", type: "stdio", command: "node",
         tools: [
           { name: "create_issue", description: "Create a Linear issue", annotations: { destructive: false, readOnly: false } },
           { name: "search_issues", description: "Search issues", annotations: { readOnly: true, openWorld: true } },
@@ -48,6 +48,7 @@ describe("normalizeMcpServers", () => {
         tools: [{ name: "mcp__weird__tool_NAME", description: "does\nmulti-line\tstuff with \"quotes\"" }] },
     ]);
     expect(rows[0]!.name).toBe("my_weird-Server.99");
+    expect(rows[0]!.label).toBe("my_weird-Server.99");
     expect(rows[0]!.tools[0]).toEqual({ name: "mcp__weird__tool_NAME", description: "does multi-line stuff with \"quotes\"" });
   });
 
@@ -56,7 +57,12 @@ describe("normalizeMcpServers", () => {
   // render site (e.g. the server-menu/server-tools heading) free to reintroduce the same tall-frame hazard.
   // Flattening every MCP-metadata string ONCE, at the normalization boundary, closes the class: no render
   // site can ever see an embedded newline or other control whitespace again.
-  it("flattens embedded newlines/control whitespace in every metadata string field, at normalization", () => {
+  //
+  // bl10 fix wave 7, W7-3: fix wave 5 flattened `name` ITSELF, which is this row's IDENTITY (React keys,
+  // `findServer` lookups, the view stack's `server` field) — not just a display string, unlike every other
+  // field this test covers. Two servers whose names differ only in whitespace/newlines collapsed to one
+  // identity. `name` now stays RAW; `label` carries the flattened form every render site displays.
+  it("flattens embedded newlines/control whitespace into `label`, at normalization — `name` stays the raw identity", () => {
     const rows = normalizeMcpServers([
       {
         name: "server\nname\twith\nbreaks", status: "failed", error: "spawn\nENOENT\tfailed",
@@ -64,12 +70,32 @@ describe("normalizeMcpServers", () => {
         tools: [{ name: "tool\nname", description: "line one\nline two\tline three" }],
       },
     ]);
-    expect(rows[0]!.name).toBe("server name with breaks");
+    expect(rows[0]!.name, "identity: never flattened").toBe("server\nname\twith\nbreaks");
+    expect(rows[0]!.label, "display: flattened").toBe("server name with breaks");
     expect(rows[0]!.error).toBe("spawn ENOENT failed");
     expect(rows[0]!.type).toBe("std io");
     expect(rows[0]!.command).toBe("node server.js");
     expect(rows[0]!.url).toBe("https://x .example/mcp");
     expect(rows[0]!.tools[0]).toEqual({ name: "tool name", description: "line one line two line three" });
+  });
+
+  // bl10 fix wave 7, W7-3 (cited regression): the whole point of keeping `name` raw — two servers whose names
+  // differ only in whitespace must stay two distinct, separately addressable rows. Before the fix both
+  // normalized to the SAME flattened `name`, so `findServer`/the view stack's `server` field/React's own
+  // `key={server.name}` all collapsed them into one identity; selecting the second row resolved the first
+  // server's details.
+  it("keeps two servers whose names differ only in whitespace as distinct identities, with the same display label", () => {
+    const rows = normalizeMcpServers([
+      { name: "foo", status: "connected" },
+      { name: "foo ", status: "connected" },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.name).toBe("foo");
+    expect(rows[1]!.name).toBe("foo ");
+    expect(rows[0]!.name).not.toBe(rows[1]!.name);
+    // Both display identically — the shared flattened form lives in `label`, never in `name`.
+    expect(rows[0]!.label).toBe("foo");
+    expect(rows[1]!.label).toBe("foo");
   });
 
   it("every status literal survives, and an unrecognized one falls back to failed rather than throwing", () => {
@@ -91,9 +117,9 @@ describe("normalizeMcpServers", () => {
       { name: "bad-annotations", status: "connected", tools: [{ name: "t", annotations: "nope" }] },
       { name: "bad-annotation-fields", status: "connected", tools: [{ name: "t", annotations: { readOnly: "yes" } }] },
     ]);
-    expect(rows[0]).toEqual({ name: "sparse", status: "connected", tools: [] });
-    expect(rows[1]).toEqual({ name: "bad-config", status: "connected", tools: [] });
-    expect(rows[2]).toEqual({ name: "bad-tools", status: "connected", tools: [] });
+    expect(rows[0]).toEqual({ name: "sparse", label: "sparse", status: "connected", tools: [] });
+    expect(rows[1]).toEqual({ name: "bad-config", label: "bad-config", status: "connected", tools: [] });
+    expect(rows[2]).toEqual({ name: "bad-tools", label: "bad-tools", status: "connected", tools: [] });
     expect(rows[3]!.tools).toEqual([{ name: "ok" }]);                            // every malformed tool entry dropped
     expect(rows[4]!.tools).toEqual([{ name: "t" }]);                             // annotations not an object -> omitted
     expect(rows[5]!.tools).toEqual([{ name: "t" }]);                             // non-boolean annotation field -> omitted
@@ -135,7 +161,10 @@ describe("mcpSubtitle / MCP_TITLE", () => {
   it("the frame title is canon's literal", () => { expect(MCP_TITLE).toBe("Manage MCP servers"); });
 });
 
-const row = (over: Partial<McpServerRow> = {}): McpServerRow => ({ name: "x", status: "connected", tools: [], ...over });
+// bl10 fix wave 7, W7-3: `label` is a real field on `McpServerRow` now (identity/display split) — every test
+// below constructs rows directly rather than through `normalizeMcpServers`, and none of them read `.label`,
+// so it defaults to the same value `name` starts at ("x") unless a caller overrides either.
+const row = (over: Partial<McpServerRow> = {}): McpServerRow => ({ name: "x", label: "x", status: "connected", tools: [], ...over });
 
 describe("buildListRows (grouping)", () => {
   it("groups by scope in canon's order, alphabetized within a group", () => {

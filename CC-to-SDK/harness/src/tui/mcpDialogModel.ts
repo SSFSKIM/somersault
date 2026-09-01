@@ -12,7 +12,16 @@ export interface McpToolAnnotations { readOnly?: boolean; destructive?: boolean;
 export interface McpToolInfo { name: string; description?: string; annotations?: McpToolAnnotations }
 export type McpStatus = "connected" | "failed" | "needs-auth" | "pending" | "disabled";
 export interface McpServerRow {
+  /** The row's IDENTITY — React keys, `findServer` lookups, the view stack's `server` field. RAW, never
+   *  flattened (bl10 fix wave 7, W7-3: fix wave 5 flattened this itself, so two servers whose names differed
+   *  only in whitespace/newlines collapsed to one identity and the second row silently resolved the first
+   *  server's details). `label` below is the display-only, flattened counterpart every render site uses. */
   name: string;
+  /** The flattened form of `name` (`flattenLabel`) — every render site (root list, server-menu/server-tools
+   *  headings, tool-detail) shows THIS, never `name`, so an embedded newline still cannot paint as an extra
+   *  row. Two rows with the same `label` are a legitimate, distinguishable pair as long as their `name`s
+   *  differ — the identity lives in `name` alone. */
+  label: string;
   status: McpStatus;
   error?: string;
   /** `config.type` — `"stdio" | "sse" | "http" | "sdk" | "claudeai-proxy"` (sdk.d.ts:1109-1216). */
@@ -60,8 +69,12 @@ export function normalizeMcpServers(raw: unknown): McpServerRow[] {
     // read `r.status ?? r.state` — an older or loosely typed host reporting `state` instead of `status` must
     // still normalize to that value rather than reading as "failed" (the unknown-status fallback).
     const rawStatus = e.status ?? e.state;
+    // bl10 fix wave 7, W7-3: `name` is the row's IDENTITY (see the interface docblock) — it stays exactly
+    // what the host reported, never flattened. `label` is the flattened, display-only counterpart every
+    // render site reads instead.
     const row: McpServerRow = {
-      name: flattenLabel(e.name),
+      name: e.name,
+      label: flattenLabel(e.name),
       status: KNOWN_STATUSES.includes(rawStatus as McpStatus) ? (rawStatus as McpStatus) : "failed",
       tools: [],
     };
