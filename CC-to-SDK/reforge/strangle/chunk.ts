@@ -128,13 +128,71 @@ function exportClause(sf: ts.SourceFile, name: string): string[] {
 }
 
 /**
+ * Is this initializer INERT — evaluable at module init with no effect the
+ * replacement would drop (campaign spec C5x, unit 9)?
+ *
+ * The statement-kind check below is necessary and was not sufficient: a
+ * top-level `var x = effectfulCall()` is a `VariableStatement`, and the chunk
+ * replacement drops the call along with the file. It was bounded in practice
+ * only by the accident that the one owned chunk has none — which is the shape of
+ * bound the W2 boundary review flagged, and not one to keep.
+ *
+ * ALLOWED, because evaluating them can be reproduced by the replacement's own
+ * declaration: literals of every kind, template literals, identifiers and member
+ * reads (an imported binding is exactly how `${yt}` reaches a prompt string),
+ * arrays and objects of allowed things, operators over them, and function or
+ * arrow expressions — whose BODIES are not entered, because they do not run at
+ * init.
+ *
+ * REFUSED: anything that calls, constructs, awaits, yields, assigns, mutates or
+ * tags — and a class expression, whose static blocks and field initializers DO
+ * run at definition. The refusal names the construct and the offset, because the
+ * answer to it is a judgement (fall back to S-method splices), not a retry.
+ */
+function inertInitializer(n: ts.Node): { kind: string; at: number } | null {
+  if (ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return null; // body is not evaluated here
+  if (
+    ts.isCallExpression(n) ||
+    ts.isNewExpression(n) ||
+    ts.isAwaitExpression(n) ||
+    ts.isYieldExpression(n) ||
+    ts.isTaggedTemplateExpression(n) ||
+    ts.isClassExpression(n) ||
+    ts.isDeleteExpression(n) ||
+    ts.isPostfixUnaryExpression(n) ||
+    (ts.isPrefixUnaryExpression(n) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment)
+  ) {
+    return { kind: ts.SyntaxKind[n.kind], at: n.pos };
+  }
+  let found: { kind: string; at: number } | null = null;
+  ts.forEachChild(n, (c) => {
+    found ??= inertInitializer(c);
+  });
+  return found;
+}
+
+/**
  * Rule 2: a chunk with top-level side effects is not clean for whole-file
  * replacement. Refusing is the point — the scout's "zero side effects" reading is
  * a claim about the pinned bytes, and this is what re-checks it every build.
  */
 function auditTopLevel(sf: ts.SourceFile, name: string): void {
   for (const s of sf.statements) {
-    if (ts.isImportDeclaration(s) || ts.isVariableStatement(s) || ts.isFunctionDeclaration(s) || ts.isExportDeclaration(s)) continue;
+    if (ts.isVariableStatement(s)) {
+      for (const d of s.declarationList.declarations) {
+        const effect = d.initializer && inertInitializer(d.initializer);
+        if (!effect) continue;
+        throw new Error(
+          `${name}: top-level declarator '${d.name.getText(sf)}' initializes with a ${effect.kind} at offset ${effect.at} — ` +
+            `that runs when the chunk is evaluated, and replacing the file whole would drop it. ` +
+            `Fall back to S-method splices of the individual functions (§2.2).`,
+        );
+      }
+      continue;
+    }
+    if (ts.isImportDeclaration(s) || ts.isFunctionDeclaration(s) || ts.isExportDeclaration(s)) continue;
     throw new Error(
       `${name}: top-level ${ts.SyntaxKind[s.kind]} at offset ${s.getStart(sf)} — the chunk has side effects beyond declarations, ` +
         `so replacing the file whole would drop behaviour. Fall back to S-method splices of the individual functions (§2.2).`,

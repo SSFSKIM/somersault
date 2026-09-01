@@ -120,9 +120,10 @@ for (const sp of SPLICES) {
 // from the original chunk's export statement each build; perturbing a derived
 // name must fail the build loudly." Two layers are graded here: each derivation
 // on its own (tracking + loudness, exactly as above), and then the WHOLE PLAN
-// against four fixture mutations — because a derivation that throws is only half
+// against five fixture mutations — because a derivation that throws is only half
 // the claim. The other half is that the surface checks around it (unclaimed
-// export, unclassified import, top-level side effect) actually fire.
+// export, unclassified import, a top-level side effect, an effectful variable
+// initializer) actually fire.
 let plans = 0;
 for (const cr of CHUNK_REPLACEMENTS) {
   let owner: [string, string];
@@ -202,11 +203,19 @@ for (const cr of CHUNK_REPLACEMENTS) {
     (s) => s.replace(/\nexport\{/, '\nglobalThis.__reforgeSideEffect=1;\nexport{'),
     /top-level|side effects/,
   );
+  // The same rule one level in (C5x unit 9): a `var x = effectfulCall()` IS a
+  // VariableStatement, so the statement-kind audit alone waved it through and
+  // the replacement would have dropped the call with the file.
+  mustReject(
+    "an effectful variable initializer",
+    (s) => s.replace(/\nexport\{/, '\nvar reforgeEffect=globalThis.__reforgeRegister("chunk");\nexport{'),
+    /initializes with a CallExpression|runs when the chunk is evaluated/,
+  );
 }
 
 console.log(`\n=== derivation perturbation: ${checks} check(s) + ${inventories} capture inventor(ies) + ${plans} chunk fixture(s) ===`);
 for (const f of failures) console.log(`  FAIL  ${f}`);
-const expectedPlans = CHUNK_REPLACEMENTS.length * 4;
+const expectedPlans = CHUNK_REPLACEMENTS.length * 5;
 if (checks === 0 || inventories !== SPLICES.length || plans !== expectedPlans) {
   // An empty run reporting success is exactly the vacuous pass this file exists
   // to forbid — and a run that skipped a splice's inventory, or a chunk row's
