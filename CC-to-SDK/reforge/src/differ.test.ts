@@ -164,6 +164,32 @@ check(
   ),
 );
 
+// ---- C10/W7: the initialize response's `pid`, and the surface it arrived on --
+// The raw driver sends `initialize` and reads the answer off the wire, which is
+// the only way this payload is ever observed — `sdk.mjs` consumes the frame. It
+// carries `process.pid`, so two engines can never agree on it. The scrub pays
+// for itself with the control: everything ELSE in that payload is behaviour the
+// wave now grades, and a scrub that reached the rest of it would be invisible.
+const initFrame = (pid: number, mode = "default"): unknown[] => [
+  {
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "reforge-initialize",
+      response: { pid, commands: ["clear", "compact"], models: ["sonnet"], current_permission_mode: mode, output_style: "default" },
+    },
+  },
+];
+check("two engines' initialize answers agree once the pid is scrubbed", !differs(initFrame(71791), initFrame(71807)));
+check(
+  "an initialize answer reporting a DIFFERENT permission mode still diffs",
+  differs(initFrame(71791), initFrame(71807, "bypassPermissions")),
+);
+check(
+  "an initialize answer that dropped a command still diffs",
+  differs(initFrame(71791), [{ type: "control_response", response: { subtype: "success", request_id: "reforge-initialize", response: { pid: 71807, commands: ["clear"], models: ["sonnet"], current_permission_mode: "default", output_style: "default" } } }]),
+);
+
 console.log(`=== differ run-id map: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(failures.length === 0 ? "PASS — engine-minted ids are mapped and every behavioural difference still fires" : `FAIL — ${failures.length} violation(s)`);

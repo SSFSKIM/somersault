@@ -32,6 +32,15 @@ export const SCRUB_KEYS = new Set([
   // harness-side artifacts of background work (subagent scenario): a per-run
   // temp path, not engine behavior
   "output_file",
+  // The OS process id, which the initialize control_response reports back to its
+  // host (upstream's payload builder writes `pid: process.pid`). Two engines are
+  // two processes, so this can never match and it says nothing about behaviour.
+  // It became visible only when the raw driver started sending `initialize` and
+  // reading the answer off the wire — the SDK consumes that frame, so no
+  // scenario had ever seen the field. Scrubbed rather than mapped: unlike a
+  // session id it is not correlated with anything else in the transcript, so
+  // there is no consistency claim to preserve.
+  "pid",
 ]);
 
 // Clock-valued keys follow naming conventions — scrub by pattern, not enumeration.
