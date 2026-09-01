@@ -571,7 +571,7 @@ follow as C4/C5.
 - **Acceptance:** one gated spike per new shape/mechanism (the W0 ritual: excise → boot →
   solo-sabotage RED → faithful GREEN → perturbation loud); symbol-map artifact committed with a
   `--check` mode; gate stays green end-to-end.
-- **Edges:** blocked-by: C5 (lock); blocks: C6–C10. **Required.** Status: not-dispatched.
+- **Edges:** blocked-by: C5 (lock); blocks: C6–C10. **Required.** Status: **landed** 2026-09-01 (Revision Note below).
 
 #### C6–C10: W3–W7 (prompt assembly · compaction · hooks · permissions · control protocol) — autonomous at dispatch
 - One child per §6 wave row; purpose/acceptance/corpus families as tabled. Each is blocked-by
@@ -597,7 +597,7 @@ follow as C4/C5.
   recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
   short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
   pinned defaults.
-- **Required.** Status: not-dispatched (blocked-by C5x).
+- **Required.** Status: not-dispatched — **unblocked** (C5x landed 2026-09-01; see its Revision Note for what each wave inherits).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -672,8 +672,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C3 | W0c | commits `d73bb3b5`/`1fadfeba` | **landed + boundary-reviewed** — env allowlist + credential injection (engine never holds a live secret), collision-fatal replay keys, SHA-pinned Bun, month-rot scrub (fix commits `64318463`…`fa8009d0`); gate 12/12, zero fallbacks |
 | C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | **landed** — 13 splices (10 tool-result formatters), corpus 24, every owned module standalone-complete + registered, contract tests and the cheap state surface online; validator row split out `unowned` |
 | C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | **landed** — S-chunk mechanism + `chunk-y30v0ja7` owned whole, 3 description splices, corpus 25, coverage attestation online (14/20 executed, 6 adjudicated), ledger folded into the gate |
-| C5x | mech r2 | scouts (flow-back) | not-dispatched — blocked-by C5 (lock); blocks the bloc |
-| C6–C10 | W3–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; blocked-by C5x |
+| C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
+| C6–C10 | W3–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -987,6 +987,51 @@ Pending — written at finish.
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
   design sections above are unchanged; authority grades on inherited content are marked in the
   child sections and contracts.
+- 2026-09-01 (C5x — mechanism round 2): the four transform gaps the W3–W7 scouts measured are
+  closed, each behind a §2.1 spike on a target the scouts had already verified, so all three new
+  shapes ship as permanent owned splices rather than rehearsals: **generator delegation** (`return
+  yield* …`, the only form that carries a generator's yielded sequence, completion value and
+  `next`/`throw` signalling — spiked on `b3e`/`executePostToolHooks`, covered by `hooks`);
+  **`arrow-initializer`** (the arrow alone, leaving its declarator siblings byte-identical — spiked
+  on `kye`, covered by `permission-broker`/`permission-bag`); **`variable-declarator`** (a constant's
+  initializer, spiked on `l1n`, the 5,810-character summarization prompt, covered by
+  `slash-compact`). Five items change what the bloc inherits:
+  - **`siblings` + `declarator` extend the anchor doctrine, deliberately narrowly.** A `coLiteral`
+    scopes to a CHUNK and therefore cannot separate two nodes inside one, which blocks `nie`/`hRt`
+    and `kye`/`von`. The signature can now SELECT among same-anchored candidates, but only for a row
+    that declares `siblings: n` (so an anchor that quietly stops being unique still fails loudly),
+    the count is verified in both directions, and a signature matching two candidates is a **tie that
+    throws** rather than a coin flip. The scout's suggestion of a declared ORDINAL was rejected —
+    `declarator` is the index in a declaration list, which fails loudly when the list changes rather
+    than silently selecting a different sibling.
+  - **The scout's "`Dd`/`kye` need a coLiteral" is wrong, and the correction matters for W6.**
+    `decideLocation:"pre-ask"` occurs twice in ONE chunk, so no co-literal can scope it; `kye` is
+    takeable only because its declarator index separates it from `von`. `Dd` carries no string
+    literal at all and is not takeable by this mechanism — W6 should plan coverage-first scenarios
+    for the chain's other links rather than more anchor machinery.
+  - **A literal-valued declarator is now compared against upstream's own bytes at build time.** A
+    prompt whose wording changes while its name stays put moves no anchor, no target hash and no
+    capture hash; this is the only thing that sees it, and it is chunk.ts's rule-5 argument one level
+    in. Every prompt-text constant the later waves take inherits it for free.
+  - **The transitive-closure bound stays at 6/20, on measurement.** W2's debt named the wrong cause:
+    the WebFetch usage-notes walk was abandoning on an import of `fs`, and an external module is a
+    boundary rather than a hole (no pin bump can change it). With that recorded as a leaf, the
+    closure still does not terminate at depth 40 / 500 declarations — 500+ declarations, 17 chunks,
+    272 KB — so the whole-chunk fallback is the designed behaviour for that row and the env-backed-memo
+    cut rule is rejected: an owned capture is one the module REIMPLEMENTED, so stopping at an env
+    reader would narrow §5's contract.
+  - **Attestation is now possible for the constructs later waves own** (switch clauses, try/catch
+    arms, loop conditions, single-link optional chains), with five forms still refused by name and
+    reason. But **C5x's own three modules are deliberately NOT attested**: an exclusion needs an
+    oracle, W2's is `description-parity.test.ts`, and building one for a hook dispatcher or a
+    permission link is the owning wave's design work. C8, C9 and C7 inherit that obligation.
+  Also fixed, all three W2-review findings (the campaign's own defect class, so fixed rather than
+  logged): `strangle/attest.test.ts` gives the stale-exclusion detector the controls the README
+  claimed; `auditTopLevel` refuses effectful variable initializers (it enforced "no side effects" by
+  statement kind, and `var x = f()` is a `VariableStatement`); rule 5's prose now says which
+  direction it actually catches. Gate **39/39 phases PASS**, corpus 25/25, 22 liveness phases.
+  Ledger: `subsystem/hook-dispatch`, `subsystem/permissions` and `subsystem/compaction` → `spliced`
+  (8 spliced rows, 39 unowned).
 - 2026-09-01 (W2 boundary review): **Codex became unavailable mid-campaign** — the account's
   ChatGPT-plan Codex entitlement now rejects every model ("not supported when using Codex with a
   ChatGPT account"; setup shows auth active, so it is an entitlement/plan change, surfaced to the

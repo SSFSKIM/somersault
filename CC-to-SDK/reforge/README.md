@@ -1527,23 +1527,216 @@ Corpus **25/25**, full acceptance **5/5**, **20** liveness phases. Zero position
 that is not a separate claim: a fallback is fatal for any `engineB` other than the identical-code
 pair, so a green equivalence phase against `engine-strangled` *is* the zero-fallback proof (§3.4).
 
+## C5x — mechanism round 2: three new target shapes, and the machinery's own controls (2026-09-01)
+
+Campaign child **C5x**, inserted by the roadmap between W2 and the C6–C10 bloc because the W3–W7
+anchor scouts measured four transform gaps that would have blocked the waves that follow. Ten units;
+what changed, and what each one is evidence for.
+
+### Three new target shapes, each spiked on a real target
+
+§2.1's rule is that a new shape ships behind a mechanism spike — a live target excised, boot-checked,
+sabotaged RED, restored GREEN, its derivation perturbed. All three took targets the scouts had
+already verified, so each spike is also a permanent owned splice rather than a rehearsal.
+
+| shape | why the mechanism had no target | spike | covering scenario |
+|---|---|---|---|
+| generator (`yield*`) | all eight hook dispatchers are `async function*`, and a `return`-shaped delegation cannot carry a generator at all | `b3e` / `executePostToolHooks` (363 chars) | `hooks` |
+| `arrow-initializer` | the permission chain's three entry points are ONE `var` statement with three arrow declarators | `kye` / `hasPermissionsToUseToolWithSink` (121 chars) | `permission-broker`, `permission-bag` |
+| `variable-declarator` | the engine's prompt text lives in `var` initializers, not in functions | `l1n`, the 5,810-character compaction summarization prompt | `slash-compact` |
+
+**The generator delegation is `return yield* globalThis.__reforge.fn(…)`**, which is the only form
+that carries all three parts of a generator's contract across the seam: the yielded sequence, the
+completion value, and `next`/`throw`/`return` signalling into the delegate. The fixtures do not read
+the rewrite — they execute it against a stub delegate and assert each part, including that a caller's
+`throw()` lands inside the delegate's own `catch`.
+
+**The arrow shape excises the arrow and nothing else.** Its neighbours, the commas between them and
+the `var` keyword belong to bindings the row is not claiming; the spliced chunk keeps `Dd` and `von`
+byte-identical, which a fixture asserts directly. What an arrow inherits lexically is refused rather
+than approximated: a body reading `this` would see the owned module's, and a body reading `arguments`
+is invisible to the capture inventory, which treats it as ambient — true for every other shape,
+because a function declaration binds its own.
+
+**The declarator shape brought a value comparison with it.** A prompt's value IS its behaviour, and
+it is the one class of upstream change nothing else in the mechanism can see: a constant whose
+wording moves while its name stays put moves no anchor, no target hash and no capture hash. So for a
+literal-valued declarator the build compares the owned value against the pinned chunk's own bytes and
+reports the first differing character. That is chunk.ts's rule-5 argument one level in, and stronger
+than a differential, because it holds for a constant no scenario renders.
+
+### The signature learned to CHOOSE, not just to verify
+
+A `coLiteral` scopes to a chunk, so it cannot separate two nodes inside one — and the graph has such
+pairs for reasons that are not drift. `kye`'s only literal is `decideLocation:"pre-ask"`, which its
+own 11.6 KB neighbour `von` also stamps; the compaction wrapper `nie` shares a byte-identical
+five-line preamble with `hRt`. The structural signature already knew how to tell same-shaped nodes
+apart; it only ever got to verify after selection.
+
+Two properties keep that from weakening the uniqueness doctrine. A row must declare `siblings: n` to
+enter the path at all, so an anchor that quietly stops being unique at a bump still fails loudly
+rather than being auto-selected — and the count is itself verified, in both directions. And a
+signature matching two candidates is a **tie, which throws**: picking the first would be exactly the
+coin flip the rule exists to forbid. `kye` and `von` tie on `params` and `ancestry`, so the signature
+gained `declarator` — the index in the declaration list, recorded only by a row that needs it.
+Unrecorded is not a claim and is not compared, so no existing row carries a position it never
+verified.
+
+### The symbol map: the engine ships a partial name table for itself
+
+The W5–W7 scout found 387 chunks re-exporting engine symbols under source-level names.
+`research/tools/symbol-map.ts` harvests both ESM spellings, follows barrel chains to the chunk that
+DECLARES each binding, and keeps only aliases that are not themselves minified: **831 names for the
+engine chunk** against the scout's independently measured 832, and 6,745 over 621 chunks. Committed
+keyed to `ENGINE_VERSION`, `--check`ed in the gate's build-free determinism block, and queryable
+(`--chunk`, `--find`) — targets are now looked up rather than hunted by literal. It is also a §5
+staleness signal nothing else has: a semantic name that appears, vanishes or moves to another binding
+is upstream telling us a subsystem moved with every export inventory, anchor and footprint hash
+byte-identical.
+
+### The closure-walk bound: measured, and deliberately not raised
+
+W2 left this as a debt: the WebFetch usage-notes helper crosses the 20-declaration bound and falls
+back to whole-chunk hashes. Measured, the premise was wrong in a useful way.
+
+At the committed bound the walk was not abandoning on width — it hit an import of `fs`. An external
+module is a **boundary, not a hole**: it is not in the extracted graph, so no pin bump can change it
+(the runtime pin does), and degrading the whole row for one was worse than useless, staling the row
+on unrelated edits while still covering nothing extra. The import site is now recorded as a leaf and
+the walk continues; a specifier that IS a graph path and still does not resolve remains a genuine
+hole and still abandons.
+
+With that fixed: at depth 40 and 500 declarations the closure **still** does not terminate — 500+
+declarations across 17 chunks and 272 KB. The helper genuinely reaches a subsystem, so no reachable
+bound enumerates it. **Decision: bound unchanged, fallback kept, reasoning recorded in
+`footprint.ts`.** The alternative of cutting the walk at env-backed memos is rejected on the record:
+an owned capture is one the module reimplemented, so everything it called is part of what was
+replaced, and stopping at an env reader would narrow the contract in the direction §5 exists to
+prevent.
+
+### The instrumenter learned four constructs, and still refuses five forms
+
+`strangle/branches.ts` could only refuse a switch, a loop, a try/catch or an optional chain — which
+meant a later wave owning a body with any of them could not be attested at all. Each is now recorded
+in the way that construct admits: switch clauses and `for..of`/`for..in` bodies by an inserted mark
+(one arm each), `while`/`do`/`for` by their condition (exact — its false arm IS the zero-iteration
+case), and try/catch as one site with two arms. Iteration COUNT is deliberately not attested: a loop
+that ran seven times instead of six is not a branch.
+
+Five forms stay refused, each because recording it would misreport: a switch with no `default` (the
+no-match path is an arm of no clause), `for(;;)`, a braceless `for..of`, a try block that can
+`return` (the end-of-try marker would be skipped on a non-throwing path, under-reporting it), an
+optional chain over an optional chain (when the inner link short-circuits the outer never evaluates,
+so a recorder there reports an arm that did not run — the false-green direction), and an optional
+CALL (wrapping the callee would change `this`, a behaviour change in the code being measured).
+
+### Three W2-review findings, fixed rather than logged
+
+- **The attestation's refusals now have the controls the README claimed.** The rules move to
+  `strangle/adjudicate.ts`, pure, and `strangle/attest.test.ts` puts each in front of the fixture
+  that violates it: both stale directions, an unadjudicated branch, an empty inventory — and a fresh
+  attestation that passes, because a checker that fails everything proves as little as one that fails
+  nothing.
+- **`auditTopLevel` stopped accepting effectful variable initializers.** Rule 2 refused "side
+  effects" by STATEMENT KIND, and `var x = effectfulCall()` is a `VariableStatement`. The audit now
+  walks each initializer; what bounded the hole before was the accident that the one owned chunk has
+  no such declarator.
+- **Rule 5's prose says what rule 5 does.** For a constant whose value is its only identity
+  (`var ti="Glob"`), the NAME derivation is anchored on the value, so an upstream change throws in
+  the derivation before the comparison is reached; the comparison catches the owned side. Both loud,
+  not the same direction — and the contrast with the new declarator shape, where the comparison IS
+  what fires, is now written down.
+
+### Ledger
+
+Three rows move to `spliced`, each recording exactly what was taken and what stays with its wave:
+`subsystem/hook-dispatch` (C8 — the PostToolUse dispatcher; the other seven and the 23 KB executor
+remain W5's), `subsystem/permissions` (C9 — the deny-stamping link; the 11.6 KB decision body stays a
+port), `subsystem/compaction` (C7 — the summarization prompt outright; the wrappers, boundary
+emitters and trigger policy remain W4's). **Eight spliced rows, thirty-nine unowned.**
+
+The rows units 1–3 first landed carried materialized-basis spans copied straight out of
+`build/footprints.json`; the ledger's basis is upstream, which is the one every machine shares, so
+they were rebased and `ledger/backfill-captures.ts --check` now passes on them.
+
+### The gate found a control that had stopped being one
+
+The first full run after the three splices landed failed on exactly one phase, and not on a splice:
+`ledger/check.test.ts`'s "stale without an adjudication note is rejected" mutated
+`subsystem/compaction` to `stale` and expected the missing-note rule to fire — but C5x had given that
+row a real note, so the mutation became legal and the control accepted it. It had been green for the
+wrong reason ever since a row moved underneath it. This is the third time the ledger phase has caught
+its own controls rather than a bad ledger, which is what a controls suite looks like when it is
+working.
+
+### Gate
+
+```
+=== strangler gate ===
+  PASS  env schema + credential matrix
+  PASS  canonicalization scrubs
+  PASS  state surface catches what it claims
+  PASS  gate-defaults fixture matches the pin
+  PASS  symbol map matches the pin
+  PASS  closure-ledger checker fixtures (X2)
+  PASS  closure ledger is green (X2)
+  PASS  splice mechanism
+  PASS  branch instrumenter
+  PASS  attestation adjudicator
+  PASS  owned-implementation contracts
+  PASS  description parity vs the pinned bundle
+  PASS  derivation perturbation
+  PASS  liveness write-tool-result
+  PASS  liveness edit-tool-result
+  PASS  liveness read-tool-result
+  PASS  liveness bash-tool-result
+  PASS  liveness grep-tool-result
+  PASS  liveness glob-result
+  PASS  liveness task-create-result
+  PASS  liveness task-get-result
+  PASS  liveness task-list-result
+  PASS  liveness task-update-result
+  PASS  liveness read-description
+  PASS  liveness grep-description
+  PASS  liveness webfetch-description
+  PASS  liveness env-block
+  PASS  liveness text-delta
+  PASS  liveness session-materialize
+  PASS  liveness post-tool-hooks
+  PASS  liveness permission-decision
+  PASS  liveness compaction-prompt
+  PASS  liveness glob-description export globToolName
+  PASS  liveness glob-description export replToolName (dark, adjudicated)
+  PASS  liveness glob-description export globDescription
+  PASS  coverage attestation
+  PASS  equivalence (faithful)
+  PASS  credential leak (end-to-end, X6)
+  PASS  runtime pin is the bytes (§3.5)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+**Thirty-nine phases**, up from thirty-three: the symbol-map fixture, the branch-instrumenter
+controls, the attestation-adjudicator controls, and three new liveness rows. Corpus **25/25**, full
+acceptance **5/5**, **22** liveness phases, coverage attestation 14/20 executed with 6 adjudicated.
+
+### What the new splices do NOT claim
+
+None of the three modules is branch-attested. Attestation requires an oracle for every excluded
+branch — for W2 that is `description-parity.test.ts`, which evaluates the pinned upstream function
+over the full branch cross-product — and building one for the hook dispatcher or the permission link
+is the owning wave's design work, not a mechanism round's. Recorded here so the absence is an
+adjudication rather than an oversight: **C8, C9 and C7 inherit the attestation obligation for the
+modules C5x spliced.**
+
 ## Next
 
-**C5x** — the mechanism round the roadmap inserted between this wave and the C6–C10 bloc, informed
-by the W3–W7 anchor scouts. Two mechanism debts W2 leaves it, both recorded rather than smoothed
-over:
+The C6–C10 bloc is unblocked: every transform gap the W3–W7 scouts measured is closed, and each
+closure ships with a real target already owned. Three things the bloc inherits:
 
-- **The transitive-closure walk gives up on the WebFetch usage-notes helper.** It is owned, so §5
-  hashes what it calls; the walk reaches the cache-TTL resolver, its per-host memo and the pluralizer,
-  crosses the 20-declaration bound, and falls back to hashing **five whole chunks**. That is the
-  conservative direction — the row stales on edits it does not depend on — but it is the first row
-  in the campaign to take it (W1 measured 0–4 declarations at depth ≤2 and never needed the
-  fallback), and "an owned helper that reaches an env-backed per-host memo" is a shape later waves
-  will meet again.
-- **Instrumentation covers only conditions.** `strangle/branches.ts` refuses a switch, a loop, a
-  try/catch or an optional chain rather than under-reporting, which is right, but the waves after
-  this one own bodies that have all four. Teaching it those constructs is a mechanism-round job, not
-  something to improvise inside a feature wave.
-
-Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It is
-filed under C4 because C4 subdivided it; the roadmap owes it an assignment.
+- **The attestation obligation above**, one per spiked module.
+- **`kye`'s neighbours are not takeable the same way.** `Dd` has no string literal at all, and `von`
+  ties with `kye` on every structural fact except its position. W6 should expect the chain's other
+  links to need coverage-first scenarios rather than more anchor mechanism.
+- Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It
+  is filed under C4 because C4 subdivided it; the roadmap owes it an assignment.
