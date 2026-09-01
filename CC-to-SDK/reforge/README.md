@@ -2504,11 +2504,12 @@ third SessionEnd caller and the source of the ordinary-teardown fire the probe s
 
 ### Gate
 
-**Sixty-seven phases**, up from fifty-six: the hook-dispatch parity oracle and ten new liveness rows.
-Corpus **39/39**, full acceptance **5/5**, **42** liveness phases, coverage attestation
-**165/283 executed with 118 adjudicated and zero un-adjudicated**.
+**Seventy-seven phases**, up from sixty-seven: nine new liveness rows and the hook-registry fixture
+check. Corpus **45/45**, full acceptance **5/5**, **51** liveness phases, coverage attestation
+**186/312 executed with 126 adjudicated and zero un-adjudicated**.
 
 ```
+  PASS  hook-registry fixture matches the pin
   PASS  hook-dispatch parity vs the pinned bundle
   PASS  liveness message-display-hooks      (hooks-prompt-submit)
   PASS  liveness post-tool-batch-hooks      (hooks-batch)
@@ -2521,20 +2522,33 @@ Corpus **39/39**, full acceptance **5/5**, **42** liveness phases, coverage atte
   PASS  liveness session-start-hooks        (hooks-session-start)
   PASS  liveness session-end-hooks          (hooks-session-end)
   PASS  liveness pre-compact-hooks          (hooks-precompact)
+  PASS  liveness post-compact-hooks         (hooks-precompact)
+  PASS  liveness notification-hooks         (hooks-permission)
+  PASS  liveness permission-request-hooks   (hooks-permission)
+  PASS  liveness instructions-loaded-hooks  (hooks-memory)
+  PASS  liveness stop-failure-hooks         (hooks-stop-failure)
+  PASS  liveness task-created-hooks         (hooks-tasks)
+  PASS  liveness task-completed-hooks       (hooks-tasks)
+  PASS  liveness user-prompt-expansion-hooks (hooks-slash)
+  PASS  liveness file-changed-hooks         (hooks-file-watch)
   PASS  coverage attestation
   PASS  equivalence (faithful)
 
 GATE PASS — every splice is live AND the faithful build is equivalent
 ```
 
-Each of the four new sabotages reddens its scenario for its own reason, not by crashing the run:
-PostToolUseFailure never fires, PreCompact never fires, SessionEnd never fires on `/clear`, and the
-SessionStart command hook writes no record into the sandbox.
+Each sabotage reddens its scenario for its OWN reason rather than by crashing the run: the four from
+the boundary round (PostToolUseFailure never fires; PreCompact never fires; SessionEnd never fires on
+`/clear`; the SessionStart command hook writes no record into the sandbox), and the nine here —
+PostCompact stops narrating, Notification and PermissionRequest stop consulting, InstructionsLoaded
+stops firing on a loaded memory, StopFailure stops firing on a failed turn, the two task dispatchers
+stop firing on their own tool calls, UserPromptExpansion stops firing on an expansion, and
+FileChanged never reaches the watcher helper.
 
 **The engine-ts skeleton caught the one thing four green scenarios could not.** Its acceptance phase
-requires one registered module per manifest row, and the four splices landed without registering —
-which is exactly the coupling that check exists to enforce, and the only failure in the round's first
-full gate.
+requires one registered module per manifest row, and the boundary round's four splices landed without
+registering — exactly the coupling that check exists to enforce, and the only failure in that round's
+first full gate. It caught the second round's nine the same way, before the gate ever ran.
 
 **The 56-vs-61 counting artifact is resolved, and it was a counting one.** C7 reported 56 phases and
 its fix round measured 61 with no phases added — the fix commits touched neither `gate.ts` nor the
@@ -2542,8 +2556,9 @@ manifest, and recomputing the phase count from that tree gives exactly 56. The f
 counting the LOG rather than the summary: the equivalence phase relays `m2/all.ts`'s five suite
 verdicts in the gate's own `  PASS  <label>` format before the summary prints, so a transcript-wide
 count double-counts them. Measured on the wave's run: 68 such lines in the whole log, 63 in the
-summary, and the five in between are the suites (the boundary round's run: 72 and 67). **The number to quote is the summary's** — it is a property
-of the manifest plus the fixed blocks, not of the transcript.
+summary, and the five in between are the suites (the boundary round's run: 72 and 67; this round's:
+82 and 77). **The number to quote is the summary's** — it is a property of the manifest plus the fixed
+blocks, not of the transcript.
 
 ### What W5 does NOT claim
 
@@ -2552,7 +2567,7 @@ and the guard that decides whether to build it — the rules behind the guards, 
 alone) the reduction from hook results to the verdict the compactor obeys. What is not owned is what
 happens between the record and the results: which hooks match it, how a command hook is spawned and
 timed out, how a callback is dispatched over the control channel, how cancellation propagates. That
-is the two executors, and they are ports.
+is the three execution helpers, and they are ports.
 
 Nor is the hooks matrix complete in the sense of §3.2's family. **Twenty-three of the registry's
 thirty-three events are measured to fire and twenty-one are graded.** The two that fire and are not
