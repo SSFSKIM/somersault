@@ -325,3 +325,8 @@ surface and closed by that lane (PR #5). Round ledger:
   `mcpServerStatus().tools` normalization; F5 permissions order corrected, Auto mode display-only
   D12; F6 ChatApp seam + paneOwned + T-CLICK rebase D15; F7 band marker D9v2; F8 streaming separator
   D14). R1's permissions-order claim corrected in place per the bundle (L829914-829953).
+- v2+D17 (2026-08-31): expanded-cluster outer-separator exemption added mid-execution (T-SPACE T1
+  double-blank conflict; canon's verbose branch applies no outer addMargin).
+- v3 (2026-09-02): §8 retrospective written at close-out; the review loop's wave-8 scroll hardening
+  recorded as a D13-driven reversal of the clip adjudication (read-only bodies scroll; the D13 gate's
+  "every field visible" now holds at every geometry, not just tall terminals).
