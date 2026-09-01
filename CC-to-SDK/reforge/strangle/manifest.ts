@@ -1599,41 +1599,21 @@ export const SPLICES: Splice[] = [
     coverage: ["perm-mode-walk"],
   },
 
-  {
-    // The seam that joins the guard to the transition, and the one the headless
-    // control channel's `set_permission_mode` handler calls.
-    //
-    // ANCHOR: `{ok:!0,mode:` has two carriers in this chunk — this and the guard
-    // it calls — and three more elsewhere, so it needs BOTH a chunk scope and a
-    // sibling count. The co-literal is the guard's launch-flag refusal, which is
-    // unique bundle-wide and in this chunk; the signature then separates the
-    // pair by parameter count.
-    name: "set-permission-mode",
-    target: "free-function",
-    signature: { params: 4, ancestry: ["SourceFile"] },
-    anchor: "{ok:!0,mode:",
-    coLiteral: "Cannot set permission mode to bypassPermissions because the session was not launched",
-    siblings: 2,
-    fn: "setPermissionModeWithGuards",
-    captures: [
-      {
-        as: "guardModeChange",
-        kind: "effectful-port",
-        derive: pick("set-permission-mode", "guardModeChange", new RegExp(`let ${ID}=(${ID})\\(${ID},${ID}\\);if\\(!${ID}\\.ok\\)`)),
-      },
-      {
-        as: "transitionMode",
-        kind: "effectful-port",
-        derive: pick("set-permission-mode", "transitionMode", new RegExp(`return\\{\\.\\.\\.(${ID})\\(${ID}\\.mode,${ID},${ID},${ID}\\),mode:`)),
-      },
-      {
-        as: "modeChanged",
-        kind: "effectful-port",
-        derive: pick("set-permission-mode", "modeChanged", new RegExp(`setImmediate\\(\\(\\)=>\\{(${ID})\\.emit\\(\\)\\}\\)`)),
-      },
-    ],
-    coverage: ["perm-mode-walk"],
-  },
+  // A FOURTH FUNCTION MEASURED OFF THE HEADLESS PATH, and this one is a plain
+  // DEAD SPLICE rather than an unobservable one. `K0`/`setPermissionModeWithGuards`
+  // joins the guard to the transition and looks like the obvious seam for
+  // `set_permission_mode` — the W5–W7 scout tables it as exactly that. It is not
+  // the one the control channel uses: the headless runtime's handler (`um`)
+  // calls the GUARD directly and applies the mode itself, and `K0`'s single call
+  // site in that chunk is a different entry point's `onSetPermissionMode`
+  // callback. Spliced, built and solo-sabotaged against a mode walk that makes a
+  // tool call after every change — including a twin that REFUSES every change,
+  // which cannot be absorbed — it stayed green.
+  //
+  // Dropped rather than kept as an ungated row, which is what C1 did with the
+  // interrupt clause for the same reason. The two functions it joins are both
+  // owned and both live (`mode-change-guard`, `mode-transition`), so the seam's
+  // ends are covered and only the joint is not.
 
   {
     // The hook that races the SDK host on every ask.

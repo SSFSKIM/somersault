@@ -76,7 +76,6 @@ import * as allowRuleDecision from "../../strangle/modules/allow-rule-decision/r
 import * as classifierStreak from "../../strangle/modules/classifier-streak/reference.js";
 import * as modeChangeGuard from "../../strangle/modules/mode-change-guard/reference.js";
 import * as modeTransition from "../../strangle/modules/mode-transition/reference.js";
-import * as setPermissionMode from "../../strangle/modules/set-permission-mode/reference.js";
 import * as permissionRequestHookDecision from "../../strangle/modules/permission-request-hook-decision/reference.js";
 import * as brokerResponseMap from "../../strangle/modules/broker-response-map/reference.js";
 import * as brokerPermissionUpdates from "../../strangle/modules/broker-permission-updates/reference.js";
@@ -204,7 +203,6 @@ const OWNED: [string, string, unknown][] = [
   ["classifier-streak", "subsystem/permissions", classifierStreak.classifierOnlyStreakActive],
   ["mode-change-guard", "subsystem/permissions", modeChangeGuard.guardPermissionModeChange],
   ["mode-transition", "subsystem/permissions", modeTransition.transitionPermissionMode],
-  ["set-permission-mode", "subsystem/permissions", setPermissionMode.setPermissionModeWithGuards],
   ["permission-request-hook-decision", "subsystem/permissions", permissionRequestHookDecision.permissionRequestHookDecision],
   ["broker-response-map", "subsystem/permissions", brokerResponseMap.brokerResponseMap],
   ["broker-permission-updates", "subsystem/permissions", brokerPermissionUpdates.brokerPermissionUpdates],

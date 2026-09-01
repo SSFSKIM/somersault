@@ -247,7 +247,6 @@ export const ATTESTED: AttestedModule[] = [
   },
   { module: "mode-change-guard", row: "mode-change-guard", scenarios: ["runtime-setters", "perm-mode-walk"] },
   { module: "mode-transition", row: "mode-transition", scenarios: ["runtime-setters", "perm-mode-walk"] },
-  { module: "set-permission-mode", row: "set-permission-mode", scenarios: ["runtime-setters", "perm-mode-walk"] },
   { module: "permission-request-hook-decision", row: "permission-request-hook-decision", scenarios: ["permission-broker", "hooks-permission", "perm-hook-deny", "perm-hook-rewrite"] },
   { module: "broker-response-map", row: "broker-response-map", scenarios: ["permission-bag", "perm-broker-updates"] },
   { module: "broker-permission-updates", row: "broker-permission-updates", scenarios: ["permission-bag", "perm-broker-updates"] },

@@ -74,7 +74,6 @@ import "./modules/allow-rule-decision.js";
 import "./modules/classifier-streak.js";
 import "./modules/mode-change-guard.js";
 import "./modules/mode-transition.js";
-import "./modules/set-permission-mode.js";
 import "./modules/permission-request-hook-decision.js";
 import "./modules/broker-response-map.js";
 import "./modules/broker-permission-updates.js";
@@ -727,64 +726,6 @@ const upstreamPluralize = (() => {
   });
   mustDiffer("a same-mode transition still running its side effects", up("plan", "plan", { mode: "plan" }, "user"), { mode: "plan", planned: true });
 }
-
-// ============================================================================
-// 7. THE SETTER SEAM — the guard's answer applied, or not.
-// ============================================================================
-{
-  for (const guardOk of [true, false]) {
-    for (const already of [true, false]) {
-      const ports = (trace: string[]) => ({
-        guardModeChange: (requested: string) => {
-          trace.push(`guardModeChange(${requested})`);
-          return guardOk ? { ok: true, mode: "plan" } : { ok: false, error: "refused" };
-        },
-        transitionMode: (from: string, to: string, previous: Record<string, unknown>) => {
-          trace.push(`transitionMode(${from}->${to})`);
-          return { ...previous, transitioned: true };
-        },
-        modeChanged: {
-          emit: () => {
-            trace.push("modeChanged.emit");
-          },
-        },
-      });
-      const params = (trace: string[]) => [
-        "plan",
-        { restricted: false },
-        (update: (p: Record<string, unknown>) => Record<string, unknown>) => {
-          const next = update({ mode: already ? "plan" : "default", rules: ["r"] });
-          trace.push(`updateState -> ${JSON.stringify(next)}`);
-        },
-        "user",
-      ];
-      // The state updater is itself a probe, so it has to live in the SAME trace
-      // as the ports; `both` builds one trace per side, so the params are built
-      // per side too.
-      const upTrace: string[] = [];
-      const ownTrace: string[] = [];
-      const up = await settle(() => (upstream("set-permission-mode", ports(upTrace)) as (...a: unknown[]) => unknown)(...params(upTrace)));
-      const own = await settle(() => owned("set-permission-mode", params(ownTrace), ports(ownTrace)));
-      eq(`set-permission-mode :: guardOk=${guardOk} alreadyInMode=${already}`, up, own);
-      // `setImmediate` defers the emit past this tick on both sides, so the
-      // traces are compared after one turn of the loop — the deferral itself is
-      // behaviour and is what the wait is grading.
-      await new Promise((r) => setImmediate(r));
-      eq(`set-permission-mode :: guardOk=${guardOk} alreadyInMode=${already} [port trace]`, upTrace, ownTrace);
-    }
-  }
-  const trace: string[] = [];
-  const up = upstream("set-permission-mode", {
-    guardModeChange: () => ({ ok: true, mode: "plan" }),
-    transitionMode: (f: string, t: string, p: Record<string, unknown>) => ({ ...p, transitioned: true }),
-    modeChanged: { emit: () => trace.push("emit") },
-  }) as (...a: unknown[]) => unknown;
-  let seen: unknown;
-  up("plan", {}, (u: (p: Record<string, unknown>) => Record<string, unknown>) => (seen = u({ mode: "plan" })), "user");
-  mustDiffer("the no-op check dropped, so a same-mode update still rebuilds the state", seen, { mode: "plan", transitioned: true });
-  mustDiffer("the emit fired synchronously rather than on the next macrotask", trace, ["emit"]);
-}
-
 
 // ============================================================================
 // 8. THE DECISION BODIES. From here on the subjects take a TOOL and a permission
@@ -1849,8 +1790,8 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
 // stopped being able to FAIL would pass by comparing an implementation against
 // itself. Both numbers are measured, not aspirational — raise them when the
 // cross-product grows.
-if (checks < 2496) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 47) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 2488) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 45) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 
 console.log(`=== permission-subsystem parity: ${checks} comparison(s), ${controls} control(s) ===`);
 for (const f of failures.slice(0, 40)) console.log(`  FAIL — ${f}`);
