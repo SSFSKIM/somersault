@@ -660,7 +660,13 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 
 - **Deferred (may return):** custom-delta gate machinery (ships with the first real
   customization, §2.5); platform/runtime matrix (pre-W14, per delegated unknowns); SDK-shim
-  ownership (post-campaign, "## Beyond the campaign").
+  ownership (post-campaign, "## Beyond the campaign"); **the preset's ~20 prose section
+  builders** behind `OS()` (C6 flow-back: the section inventory is unblocked now that the corpus
+  renders the preset — the env-and-system-prompt row cannot reach `standalone-complete` without
+  them, so W14's ledger gate enforces eventual placement; route into a prompt-sections follow-up
+  wave when the bloc clears); **`selectExcision` counts candidates, not distinct spans** (C6
+  flow-back: a same-node duplicate literal reads as a tie and throws — a wrinkle for the next
+  mechanism round, blocked nothing yet).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
