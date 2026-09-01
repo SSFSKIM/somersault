@@ -19,7 +19,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { SUBSYSTEM_IDS } from "../ledger/rows.js";
-import { SPLICES } from "../strangle/manifest.js";
+import { CHUNK_REPLACEMENTS, SPLICES } from "../strangle/manifest.js";
 import { lookup, ownedSet, register, resetRegistryForTests, unownedSubsystems } from "./registry.js";
 
 const WRAPPER = join(import.meta.dirname, "..", "engines", "engine-ts");
@@ -58,9 +58,13 @@ check("--owned emits parseable JSON", threw(() => (ownedDoc = JSON.parse(owned.o
 // to be registered here, or half the wiring is a claim nobody checks. Comparing
 // against the manifest rather than a literal keeps the two in step by force.
 const ownedNames = Array.isArray(ownedDoc.owned_modules) ? (ownedDoc.owned_modules as { name?: string }[]).map((m) => m.name) : [];
-const missing = SPLICES.map((sp) => sp.name).filter((n) => !ownedNames.includes(n));
-check("--owned reports one registered module per manifest splice", missing.length === 0 && ownedNames.length === SPLICES.length,
-  `registered ${ownedNames.length}/${SPLICES.length}; missing ${missing.join(", ") || "none"}`);
+// One registered module per manifest ROW, and a chunk replacement is a row as
+// much as a splice is — it is the strangler's other unit of ownership, so
+// leaving it out here would let a whole owned chunk go unregistered.
+const rowNames = [...SPLICES.map((sp) => sp.name), ...CHUNK_REPLACEMENTS.map((cr) => cr.name)];
+const missing = rowNames.filter((n) => !ownedNames.includes(n));
+check("--owned reports one registered module per manifest row (splice or chunk)", missing.length === 0 && ownedNames.length === rowNames.length,
+  `registered ${ownedNames.length}/${rowNames.length}; missing ${missing.join(", ") || "none"}`);
 check(
   "--owned partitions the subsystems: with an owned module vs with none, and the two are disjoint and complete",
   Array.isArray(ownedDoc.owned_subsystems) &&
@@ -84,7 +88,7 @@ check("the refusal names every subsystem with no owned module",
     Array.isArray(frame.partially_owned_subsystems) &&
     (frame.unowned_subsystems as string[]).length + (frame.partially_owned_subsystems as string[]).length === SUBSYSTEM_IDS.length);
 check("the refusal reports the owned MODULE count, and says partial ownership is not ownership",
-  frame.owned_module_count === SPLICES.length && /PARTIALLY owned/.test(String(frame.message)),
+  frame.owned_module_count === rowNames.length && /PARTIALLY owned/.test(String(frame.message)),
   String(frame.message).slice(0, 200));
 check("the refusal records what triggered it", frame.trigger === "stream-json-input", String(frame.trigger));
 check("the refusal is also human-readable on stderr", session.err.includes("engine-ts"), session.err.slice(0, 120));

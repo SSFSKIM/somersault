@@ -646,9 +646,317 @@
       "kind": "subsystem",
       "title": "Tool-description functions + their satellite chunks' other exports",
       "wave": "C5",
-      "state": "unowned",
-      "edges": [],
-      "footprint": null
+      "state": "spliced",
+      "edges": [
+        "subsystem/environment-and-system-prompt",
+        "subsystem/subagent-dispatch",
+        "subsystem/query-loop",
+        "tool/WebFetch"
+      ],
+      "footprint": [
+        {
+          "chunk": "chunk-y30v0ja7.js",
+          "target": {
+            "start": 0,
+            "end": 1410,
+            "sha256": "5f956ee2634f41d85d1cfd4b833a53d8b92cd34f07cad1aba811b2461d7b867e"
+          },
+          "captures": [
+            {
+              "name": "yt",
+              "as": "agentToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 716,
+              "declEnd": 718,
+              "sha256": "3d40f99acd3b0e84749b6e7117480b41f14c4f84aead9bf4f579edf96fcbab40",
+              "from": {
+                "chunk": "chunk-k8vt31j7.js",
+                "exportedAs": "yt",
+                "declStart": 619,
+                "declEnd": 629,
+                "sha256": "1f25c7bbddb03e09144c247973f8914b6885529ed9e184bc15748cb8263958c1"
+              }
+            },
+            {
+              "name": "td",
+              "as": "leanPrompt",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 669,
+              "declEnd": 671,
+              "sha256": "30fc9e3356c21227177859ff28b144526d9bcaf9802b1bc19ed5709ca482f8ae",
+              "from": {
+                "chunk": "chunk-p33zayst.js",
+                "exportedAs": "td",
+                "declStart": 4155,
+                "declEnd": 4195,
+                "sha256": "05bcd46fa8ee8744035614f7a55951b394a0babd8b4c0092bcd723a62b79d948"
+              }
+            },
+            {
+              "name": "Jk",
+              "as": "subagentSteer",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 622,
+              "declEnd": 624,
+              "sha256": "32ce2e6a499b026462630c6fa48d1187d90c60bc4eaf31f6528448a8effe1dcb",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Jk",
+                "declStart": 166967,
+                "declEnd": 167155,
+                "sha256": "e8b0ad380e0fcc9f6880cb1d160d632d86fd15e01f0d60d26041d5e2d7160f21"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-hx5r9amq.js",
+          "target": {
+            "start": 2731,
+            "end": 4745,
+            "sha256": "b431e1f21e7f12ce62c3082c4216b86b111a555b78cf1b43f71e3cb905d15b8c"
+          },
+          "captures": [
+            {
+              "name": "jVe",
+              "as": "lineBudget",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 2151,
+              "declEnd": 2159,
+              "sha256": "2cd34a9da205a9df0e531f9397f00c477ed5b527969e8b67a8af35fdae5f4779"
+            },
+            {
+              "name": "n",
+              "as": "noRereadNote",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1304,
+              "declEnd": 1460,
+              "sha256": "c04b312a2049881e5cb3c2a99efb62c16ad053f153d208e9a8f8be4d5b3c25a9"
+            },
+            {
+              "name": "td",
+              "as": "leanPrompt",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 669,
+              "declEnd": 671,
+              "sha256": "30fc9e3356c21227177859ff28b144526d9bcaf9802b1bc19ed5709ca482f8ae",
+              "from": {
+                "chunk": "chunk-p33zayst.js",
+                "exportedAs": "td",
+                "declStart": 4155,
+                "declEnd": 4195,
+                "sha256": "05bcd46fa8ee8744035614f7a55951b394a0babd8b4c0092bcd723a62b79d948"
+              }
+            },
+            {
+              "name": "BVe",
+              "as": "pdfCapable",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1149,
+              "declEnd": 1217,
+              "sha256": "6ab862250afcaf53318972ebd6d7997ce01141b7be3a974e2c42f763bfc4786a"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-hdmehzg7.js",
+          "target": {
+            "start": 1130,
+            "end": 2607,
+            "sha256": "f1308787fd369978be79a7dc790f8f30f229091e7999df7d61c37fbbde994c25"
+          },
+          "captures": [
+            {
+              "name": "Xo",
+              "as": "grepToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1120,
+              "declEnd": 1129,
+              "sha256": "109596f46d039fafd48677e1099da1775e8b72a2b17e07e2905d684a64d5a642"
+            },
+            {
+              "name": "Qe",
+              "as": "bashToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 769,
+              "declEnd": 771,
+              "sha256": "dcdfc1ff7a857b37612e582442af027acbdfe7ab254bce55dfb1c8f331256300",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Qe",
+                "declStart": 573039,
+                "declEnd": 573048,
+                "sha256": "830b917aaee59a026803c6d75b01623994b1f1e1e816641570f67114983fb8a1"
+              }
+            },
+            {
+              "name": "yt",
+              "as": "agentToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 1076,
+              "declEnd": 1078,
+              "sha256": "3d40f99acd3b0e84749b6e7117480b41f14c4f84aead9bf4f579edf96fcbab40",
+              "from": {
+                "chunk": "chunk-k8vt31j7.js",
+                "exportedAs": "yt",
+                "declStart": 619,
+                "declEnd": 629,
+                "sha256": "1f25c7bbddb03e09144c247973f8914b6885529ed9e184bc15748cb8263958c1"
+              }
+            },
+            {
+              "name": "td",
+              "as": "leanPrompt",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 834,
+              "declEnd": 836,
+              "sha256": "30fc9e3356c21227177859ff28b144526d9bcaf9802b1bc19ed5709ca482f8ae",
+              "from": {
+                "chunk": "chunk-p33zayst.js",
+                "exportedAs": "td",
+                "declStart": 4155,
+                "declEnd": 4195,
+                "sha256": "05bcd46fa8ee8744035614f7a55951b394a0babd8b4c0092bcd723a62b79d948"
+              }
+            },
+            {
+              "name": "Jk",
+              "as": "subagentSteer",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 781,
+              "declEnd": 783,
+              "sha256": "32ce2e6a499b026462630c6fa48d1187d90c60bc4eaf31f6528448a8effe1dcb",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Jk",
+                "declStart": 166967,
+                "declEnd": 167155,
+                "sha256": "e8b0ad380e0fcc9f6880cb1d160d632d86fd15e01f0d60d26041d5e2d7160f21"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-qe0j59w7.js",
+          "target": {
+            "start": 1035,
+            "end": 2171,
+            "sha256": "f2500996cdfda99bb9ef86e8fe06262897599774c124852185080f9573841716"
+          },
+          "captures": [
+            {
+              "name": "td",
+              "as": "leanPrompt",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 762,
+              "declEnd": 764,
+              "sha256": "30fc9e3356c21227177859ff28b144526d9bcaf9802b1bc19ed5709ca482f8ae",
+              "from": {
+                "chunk": "chunk-p33zayst.js",
+                "exportedAs": "td",
+                "declStart": 4155,
+                "declEnd": 4195,
+                "sha256": "05bcd46fa8ee8744035614f7a55951b394a0babd8b4c0092bcd723a62b79d948"
+              }
+            },
+            {
+              "name": "r",
+              "as": "cacheTtlPhrase",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 950,
+              "declEnd": 1035,
+              "sha256": "b4008bb3f76ad7db13855e7a8c7293244e28ee02f475061d7004b393dbbc5ddc"
+            },
+            {
+              "name": "u",
+              "as": "usageNotes",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 2171,
+              "declEnd": 3430,
+              "sha256": "e212d4afb1c8445114a8c3e85e43690059bbadd2267d6952db913532c86f5ec6",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "closure": [
+                {
+                  "name": "chunk-qe0j59w7.js",
+                  "chunk": "chunk-qe0j59w7.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 4188,
+                  "sha256": "67e46af70a6bb035bcfbe20be524f402b35b26871ab9bb6646c1af1f6f0974af",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-04aem4bh.js",
+                  "chunk": "chunk-04aem4bh.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 5767,
+                  "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-38213y7h.js",
+                  "chunk": "chunk-38213y7h.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 94444,
+                  "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-w3k8bej2.js",
+                  "chunk": "chunk-w3k8bej2.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 57148,
+                  "sha256": "2f1f54062ae10f93dff9c7771a6324067cbb78472e9452ac52c780f37cac36b1",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                },
+                {
+                  "name": "chunk-nt3hxpjz.js",
+                  "chunk": "chunk-nt3hxpjz.js",
+                  "depth": 0,
+                  "basis": "whole-chunk",
+                  "declStart": 0,
+                  "declEnd": 1762,
+                  "sha256": "bb8a594e87857dde76a57b3b22868c9aab77173166a3631f0b1133e9dda01966",
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:glob-description",
+        "strangle/manifest.ts:read-description",
+        "strangle/manifest.ts:grep-description",
+        "strangle/manifest.ts:webfetch-description",
+        "scenario:search-tools",
+        "scenario:search-tools-lean",
+        "scenario:plain",
+        "scenario:api-error"
+      ],
+      "note": "C5/W2 owns FOUR description functions and ONE satellite chunk whole. The row's charter is wider than that on purpose, and it is not met: chunk-y30v0ja7 is reforge-owned end to end (the campaign's first S-chunk: 3 exports, 0 upstream bytes), but the Read, Grep and WebFetch chunks carry 15/17/4 exports of unrelated behaviour -- PDF page-range parsing, the REPL registry, the deferred-tool policy, the WebFetch answering prompt -- and stay upstream's, so only their description functions are spliced. The catalog also has description functions beyond these four. 'standalone-complete' would therefore be an overclaim; every owned module IS standalone-complete individually and registered in engine-ts/modules/index.ts, which is what closes the dual-wiring half. Edges are the four typed ports the descriptions take from the graph: leanPrompt (system-prompt policy), subagentSteer (subagent dispatch, latching), pdfCapable (reads the session model, hence the query-loop row) and cacheTtlPhrase (the WebFetch cache TTL). Branch coverage: attestation/w2-descriptions.md."
     },
     {
       "id": "subsystem/environment-and-system-prompt",

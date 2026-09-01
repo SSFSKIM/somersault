@@ -39,6 +39,10 @@ import * as taskUpdateResult from "../../strangle/modules/task-update-result/ref
 import * as envBlock from "../../strangle/modules/env-block/reference.js";
 import * as textDelta from "../../strangle/modules/text-delta/reference.js";
 import * as sessionMaterialize from "../../strangle/modules/session-materialize/reference.js";
+import * as globDescription from "../../strangle/modules/glob-description/reference.js";
+import * as readDescription from "../../strangle/modules/read-description/reference.js";
+import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
+import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
 
 /** name, closure-ledger subsystem row, and the module's entry point. */
 const OWNED: [string, string, unknown][] = [
@@ -59,6 +63,19 @@ const OWNED: [string, string, unknown][] = [
   ["env-block", "subsystem/environment-and-system-prompt", envBlock.envBlock],
   ["text-delta", "subsystem/query-loop", textDelta.appendTextDelta],
   ["session-materialize", "subsystem/session-storage", sessionMaterialize.materializeSessionFile],
+  // Four of the catalog's tool descriptions (C5 / W2). `glob-description` is the
+  // campaign's first S-CHUNK: it is not a function spliced out of a chunk but the
+  // whole of chunk-y30v0ja7, so registering it claims its two tool-name constants
+  // as well as its description function. The other three are S-method splices —
+  // their chunks carry 15/17/4 exports of unrelated behaviour and stay upstream's.
+  //
+  // The SUBSYSTEM row they contribute to does not close on them: its charter is
+  // every description function plus the satellite chunks' other exports, and
+  // three of those four chunks are still upstream's. reforge/ledger.json says so.
+  ["glob-description", "subsystem/tool-descriptions", globDescription.globDescription],
+  ["read-description", "subsystem/tool-descriptions", readDescription.readDescription],
+  ["grep-description", "subsystem/tool-descriptions", grepDescription.grepDescription],
+  ["webfetch-description", "subsystem/tool-descriptions", webFetchDescription.webFetchDescription],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

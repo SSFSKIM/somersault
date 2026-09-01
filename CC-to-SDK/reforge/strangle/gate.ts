@@ -41,7 +41,7 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { SPLICES } from "./manifest.js";
+import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
 
 // build.ts boot-checks the graph it writes, so a build that exits 0 has already
 // proven it boots at the pinned version; the gate only has to relay the failure.
@@ -73,6 +73,14 @@ for (const [label, argv] of [
   ["canonicalization scrubs", ["src/canonical.test.ts"]],
   ["state surface catches what it claims", ["src/state.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
+  // The closure ledger is the campaign's progress metric (X2), and a metric
+  // nobody validates is a metric nobody can trust. Build-free and sub-second, so
+  // it belongs in this block rather than in a recipe someone remembers to run:
+  // the checker's own fixture controls first (it must reject a fabricated
+  // footprint, a dangling edge, an unregistered ownership claim), then the real
+  // ledger, which now fails the gate rather than drifting quietly.
+  ["closure-ledger checker fixtures (X2)", ["ledger/check.test.ts"]],
+  ["closure ledger is green (X2)", ["ledger/check.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const tail = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+plausibility)/.test(l)).slice(-2);
@@ -99,10 +107,19 @@ console.log("━━━ mechanism: footprint closure surface, capture inventory, 
 // one of Grep's three, and never truncates a Glob result at all. This phase is
 // the other half of §2.4's bargain.
 console.log("━━━ contracts: owned helpers + the formatter arms the corpus does not reach ━━━");
-{
-  const r = run("npx", ["tsx", "strangle/contracts.test.ts"]);
+for (const [label, script] of [
+  ["owned-implementation contracts", "strangle/contracts.test.ts"],
+  // The description functions get their own contract test, and it is a
+  // different KIND: rather than partitioning inputs by hand it extracts the four
+  // upstream bodies out of the pinned bundle, runs them with stubbed ports, and
+  // requires byte identity over the full branch cross-product. That is the
+  // oracle behind every exclusion the coverage attestation records — an arm no
+  // scenario renders is still graded against upstream.
+  ["description parity vs the pinned bundle", "strangle/description-parity.test.ts"],
+] as [string, string][]) {
+  const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
-  results.push({ label: "owned-implementation contracts", pass: r.status === 0 });
+  results.push({ label, pass: r.status === 0 });
 }
 
 // ---- derivation: re-derivation must track renames and fail loudly ----------
@@ -115,29 +132,74 @@ console.log("━━━ derivation: every capture tracks its rename, throws when 
   results.push({ label: "derivation perturbation", pass: r.status === 0 });
 }
 
-// ---- per-splice liveness: sabotage exactly one, its coverage must go red ----
-for (const sp of SPLICES) {
-  console.log(`\n━━━ liveness: sabotage ONLY ${sp.name} → ${sp.coverage.join(", ")} must go RED ━━━`);
-  if (!buildAndBoot(["--sabotage", sp.name])) {
-    results.push({ label: `liveness ${sp.name}`, pass: false });
+// ---- per-target liveness: sabotage exactly one, its coverage must go red ----
+// A splice is one target. A CHUNK replacement is one target per retained export
+// (§2.2): one twin per file would pass as long as any single export is live,
+// which is the same vacuous shape solo-sabotage exists to refuse one level down.
+interface LivenessTarget {
+  /** what `--sabotage` is given */
+  id: string;
+  label: string;
+  coverage: string[];
+  /** set when the corpus provably cannot observe this target — a reviewed adjudication, not a skip */
+  darkReason?: string;
+}
+const TARGETS: LivenessTarget[] = [
+  ...SPLICES.map((sp) => ({ id: sp.name, label: sp.name, coverage: sp.coverage })),
+  ...CHUNK_REPLACEMENTS.flatMap((cr) =>
+    cr.exports.map((e) => ({
+      id: `${cr.name}:${e.as}`,
+      label: `${cr.name} export ${e.as}`,
+      coverage: e.coverage,
+      darkReason: e.darkReason,
+    })),
+  ),
+];
+
+for (const t of TARGETS) {
+  if (t.coverage.length === 0 && t.darkReason) {
+    // Not a pass by omission: the manifest carries a written reason, chunk.ts
+    // refuses an empty coverage without one, and something else grades it —
+    // which the reason has to name. Printed at gate time so the adjudication is
+    // read every run rather than buried in a manifest comment.
+    console.log(`\n━━━ liveness: ${t.label} is DARK to the corpus — reviewed exclusion ━━━`);
+    console.log(`  ${t.darkReason}`);
+    results.push({ label: `liveness ${t.label} (dark, adjudicated)`, pass: true });
     continue;
   }
-  // A splice with no covering scenario would leave `allRed` true and "pass"
+  console.log(`\n━━━ liveness: sabotage ONLY ${t.id} → ${t.coverage.join(", ")} must go RED ━━━`);
+  if (!buildAndBoot(["--sabotage", t.id])) {
+    results.push({ label: `liveness ${t.label}`, pass: false });
+    continue;
+  }
+  // A target with no covering scenario would leave `allRed` true and "pass"
   // having tested nothing — the same vacuous-pass shape an external review
-  // caught in the corpus runner. A splice that nothing covers is ungated.
-  if (sp.coverage.length === 0) {
-    console.log(`  FAIL — ${sp.name} has no covering scenario; liveness cannot be proven`);
-    results.push({ label: `liveness ${sp.name}`, pass: false });
+  // caught in the corpus runner. A target nothing covers is ungated.
+  if (t.coverage.length === 0) {
+    console.log(`  FAIL — ${t.label} has no covering scenario and no reviewed exclusion; liveness cannot be proven`);
+    results.push({ label: `liveness ${t.label}`, pass: false });
     continue;
   }
   let allRed = true;
-  for (const tag of sp.coverage) {
+  for (const tag of t.coverage) {
     const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"]);
     const red = r.status !== 0;
-    console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — splice is dead code"}`);
+    console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — the target is dead code on this scenario"}`);
     allRed &&= red;
   }
-  results.push({ label: `liveness ${sp.name}`, pass: allRed });
+  results.push({ label: `liveness ${t.label}`, pass: allRed });
+}
+
+// ---- coverage attestation: do the covering scenarios reach the branches? ----
+// Solo-sabotage above proves each target is REACHED. It says nothing about which
+// of its branches the corpus renders, and after C4's retrofit the unrendered
+// ones are our implementation too. Runs its own instrumented build, so it goes
+// after the liveness block and before the faithful build the final phase makes.
+console.log("\n━━━ attestation: every branch of the wave's owned modules is executed or adjudicated (§3.1) ━━━");
+{
+  const r = run("npx", ["tsx", "strangle/attest.ts", "--check"]);
+  for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
+  results.push({ label: "coverage attestation", pass: r.status === 0 });
 }
 
 // ---- equivalence: faithful build, full surface green ------------------------
