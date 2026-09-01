@@ -143,6 +143,43 @@ export const W3_SCENARIOS: Scenario[] = [
   },
 
   {
+    // The one input to the block partition a CALLER fully controls. The SDK
+    // exports the marker as `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` and documents
+    // placing it as a standalone element of a `string[]` prompt to split the
+    // globally-cacheable prefix from the session-specific suffix.
+    //
+    // A custom prompt REPLACES the preset entirely, so this is also the corpus's
+    // only recording of that path. What it grades in the partition is the
+    // marker's removal: the sentinel must be dropped from every block on every
+    // path, and a build that leaked it would put a literal
+    // `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__` into the request body.
+    //
+    // What it does NOT reach is the "global" cache scope the marker exists for:
+    // that path is behind `staticPromptEnabled()`, pinned false by §3.3's gate
+    // environment, so the marker is dropped and the split is not honoured. The
+    // parity test grades the honoured case against upstream.
+    tag: "sysprompt-boundary",
+    title: "a custom prompt split by the dynamic-boundary marker",
+    run: (ctx) =>
+      drive("PING", {
+        ...baseOptions(ctx),
+        systemPrompt: [
+          "You are a test fixture. When the user's message is exactly PING, reply with exactly the single word REFORGE_BOUNDARY_OK and nothing else.",
+          // Imported by value rather than from the SDK: the literal is what the
+          // engine compares against, and the owned module declares its own copy,
+          // so writing it here keeps the scenario a black-box caller.
+          "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__",
+          "Session-specific suffix, after the boundary.",
+        ],
+        allowedTools: [],
+        maxTurns: 1,
+        permissionMode: "bypassPermissions",
+      }),
+    check: (msgs) =>
+      resultText(msgs).includes("REFORGE_BOUNDARY_OK") ? null : "result lacks REFORGE_BOUNDARY_OK — the custom system prompt did not reach the model",
+  },
+
+  {
     // CLAUDE.md injection. The memory is seeded from the scenario body rather
     // than committed as a fixture because `resetSandbox()` wipes the tree
     // before every run — including between the two replay sides, so a file

@@ -1070,6 +1070,7 @@ export const SPLICES: Splice[] = [
       "search-tools-lean",
       "sysprompt-preset",
       "sysprompt-append",
+      "sysprompt-boundary",
       "claude-md-memory",
     ],
   },

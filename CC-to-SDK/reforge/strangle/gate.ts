@@ -142,6 +142,12 @@ for (const [label, script] of [
   // oracle behind every exclusion the coverage attestation records — an arm no
   // scenario renders is still graded against upstream.
   ["description parity vs the pinned bundle", "strangle/description-parity.test.ts"],
+  // The same oracle for W3's prompt-assembly modules, where the corpus/domain
+  // gap is widest in the campaign so far: the block partition has three paths
+  // and the corpus reaches one, because the static-prompt gate is pinned false.
+  // It compares the telemetry events as well as the returned blocks, since two
+  // of those three paths differ only in which event they emit.
+  ["prompt-assembly parity vs the pinned bundle", "strangle/prompt-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
