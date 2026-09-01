@@ -44,6 +44,12 @@ import * as readDescription from "../../strangle/modules/read-description/refere
 import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
 import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
 import * as postToolHooks from "../../strangle/modules/post-tool-hooks/reference.js";
+import * as preToolHooks from "../../strangle/modules/pre-tool-hooks/reference.js";
+import * as postToolBatchHooks from "../../strangle/modules/post-tool-batch-hooks/reference.js";
+import * as userPromptSubmitHooks from "../../strangle/modules/user-prompt-submit-hooks/reference.js";
+import * as stopHooks from "../../strangle/modules/stop-hooks/reference.js";
+import * as subagentStartHooks from "../../strangle/modules/subagent-start-hooks/reference.js";
+import * as messageDisplayHooks from "../../strangle/modules/message-display-hooks/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
 import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
@@ -118,6 +124,20 @@ const OWNED: [string, string, unknown][] = [
   ["compact-boundary-wire", "subsystem/compaction", compactBoundaryWire.compactBoundaryWire],
   ["compact-continuation", "subsystem/compaction", compactContinuation.compactContinuation],
   ["auto-compact-trigger", "subsystem/compaction", autoCompactTrigger.autoCompactTrigger],
+  // W5's hook dispatchers (C8). Six modules, and with C5x's PostToolUse
+  // dispatcher that is SEVEN functions covering all EIGHT events the engine
+  // fires headlessly — `stop-hooks` serves Stop and SubagentStop through one
+  // internal conditional. The row stays `spliced`, not `standalone-complete`:
+  // what these delegate INTO — the 23 KB shared executor, with matching,
+  // command/callback/http/mcp invocation, timeouts and cancellation — is a port
+  // and S-module-shaped, so the subsystem does not close on the dispatchers.
+  // reforge/ledger.json says so.
+  ["pre-tool-hooks", "subsystem/hook-dispatch", preToolHooks.preToolHooks],
+  ["post-tool-batch-hooks", "subsystem/hook-dispatch", postToolBatchHooks.postToolBatchHooks],
+  ["user-prompt-submit-hooks", "subsystem/hook-dispatch", userPromptSubmitHooks.userPromptSubmitHooks],
+  ["stop-hooks", "subsystem/hook-dispatch", stopHooks.stopHooks],
+  ["subagent-start-hooks", "subsystem/hook-dispatch", subagentStartHooks.subagentStartHooks],
+  ["message-display-hooks", "subsystem/hook-dispatch", messageDisplayHooks.messageDisplayHooks],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

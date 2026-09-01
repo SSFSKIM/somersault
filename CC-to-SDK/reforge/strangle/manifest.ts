@@ -917,7 +917,11 @@ export const SPLICES: Splice[] = [
         derive: pick("post-tool-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
       },
     ],
-    coverage: ["hooks"],
+    // `hooks` registers a PostToolUse CALLBACK; `hooks-command` registers a
+    // command hook, which is the only scenario that grades this record as the
+    // byte stream it is serialised into (W5 — the field order the module's
+    // header calls behaviour rather than style).
+    coverage: ["hooks", "hooks-command"],
   },
 
   {
@@ -1407,6 +1411,474 @@ export const SPLICES: Splice[] = [
       },
     ],
     coverage: ["auto-compact-threshold"],
+  },
+
+  // ---- hook dispatch (subsystem/hook-dispatch) -----------------------------
+  // W5's six splices, plus C5x's `post-tool-hooks` above. Together they are
+  // SEVEN dispatchers covering all EIGHT events the engine fires headlessly —
+  // one function (`y9`) serves Stop and SubagentStop through an internal
+  // conditional, and the corpus reaches both arms.
+  //
+  // They share one shape (`async function*`), one anchor family
+  // (`hook_event_name:"<Event>"`, prose-free but minifier-stable and unique
+  // bundle-wide for six of the seven) and one contract: build ONE hook-input
+  // record and `yield*`-delegate the whole execution into the shared executor.
+  // What differs between them — and what each module therefore owns — is the
+  // record's field set, the guard that decides whether to dispatch at all, and
+  // the options the executor is called with.
+  //
+  // The 23 KB executor itself stays a PORT this wave: the W5–W7 scout measured
+  // it S-MODULE-shaped (20+ destructured options, process spawning, timeouts,
+  // cancellation), and §2.3 says a stateful core is owned behind a designed port
+  // rather than transcribed. It is a ledger edge, not an omission.
+
+  {
+    // The narrowest dispatcher, and the one whose record is built from a MESSAGE
+    // rather than a tool call. Two things only this one does: it calls the
+    // common-prefix builder with TWO arguments (so the record carries no
+    // permission_mode/agent_id/agent_type) and it SYNTHESISES its tool-use id
+    // from the message it announces.
+    name: "message-display-hooks",
+    target: "free-function",
+    signature: { params: 7, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"MessageDisplay"',
+    fn: "messageDisplayHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "message-display-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"MessageDisplay"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "message-display-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"MessageDisplay"`),
+        ),
+      },
+      {
+        // the parameter DEFAULT, evaluated in the chunk's scope (§2.4 `primitive`).
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("message-display-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID},${ID}\\)\\{let`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("message-display-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-prompt-submit"],
+  },
+
+  {
+    // The dispatcher that needs a turn SHAPE, not a matcher: PostToolBatch fires
+    // once for a batch of tool calls issued together, so `hooks-batch` demands
+    // two tool_use blocks in one assistant message. Its registration guard reads
+    // the registry under the FAN-OUT agent ids, which the owned module
+    // implements (`shared/hook-agent-context.js`) rather than forwarding.
+    name: "post-tool-batch-hooks",
+    target: "free-function",
+    signature: { params: 6, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PostToolBatch"',
+    fn: "postToolBatchHooks",
+    captures: [
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("post-tool-batch-hooks", "hasHookForEvent", new RegExp(`if\\(!(${ID})\\("PostToolBatch",`)),
+      },
+      {
+        // `Hb` — the fan-out rule. Owned (§2.4 `pure-helper`): footprinted, never
+        // forwarded. Its upstream copy stays live for the dispatchers this wave
+        // does not take, so splicing here does not make the row dead.
+        as: "hookAgentIds",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "post-tool-batch-hooks",
+          "hookAgentIds",
+          new RegExp(`${ID}\\.sessionHooksRegistry,(${ID})\\(${ID},"PostToolBatch"`),
+        ),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "post-tool-batch-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PostToolBatch"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "post-tool-batch-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),hook_event_name:"PostToolBatch"`),
+        ),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("post-tool-batch-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID},${ID}=(${ID})\\)\\{if\\(`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("post-tool-batch-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-batch"],
+  },
+
+  {
+    // The subagent-start dispatcher. Its executor request is the odd one of the
+    // family: the session hooks and the agent context are handed over EXPLICITLY
+    // rather than read off a tool-use context, because the context of the agent
+    // being started does not exist yet.
+    name: "subagent-start-hooks",
+    target: "free-function",
+    signature: { params: 8, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"SubagentStart"',
+    fn: "subagentStartHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "subagent-start-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\)\\),hook_event_name:"SubagentStart"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "subagent-start-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\)\\),hook_event_name:"SubagentStart"`),
+        ),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("subagent-start-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID},${ID},${ID}\\)\\{let`)),
+      },
+      {
+        // `randomUUID`, imported into the chunk: this event has no real tool
+        // call, so its correlation id is minted.
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("subagent-start-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),matchQuery:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("subagent-start-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-subagent"],
+  },
+
+  {
+    // The only dispatcher whose results change the CONVERSATION — a hook's
+    // `additionalContext` is folded into the prompt the model sees — and the
+    // only one with its own timeout (30 s, not the shared 600 s).
+    //
+    // SIBLING-DISAMBIGUATED. `hook_event_name:"UserPromptSubmit"` occurs twice,
+    // both inside chunk-fy12d89p, so a `coLiteral` cannot separate them (it
+    // scopes to a chunk). The other carrier is `Y4e`, the REPL-side dispatcher
+    // that takes its session hooks and storage directly; it has six parameters
+    // where this one has five, so the verified signature selects, and an
+    // upstream edit that changed either arity makes the build refuse rather than
+    // splice the wrong function.
+    name: "user-prompt-submit-hooks",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"UserPromptSubmit"',
+    siblings: 2,
+    fn: "userPromptSubmitHooks",
+    captures: [
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick(
+          "user-prompt-submit-hooks",
+          "hasHookForEvent",
+          new RegExp(`${ID}\\.managedHooksOnly&&!(${ID})\\("UserPromptSubmit",`),
+        ),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "user-prompt-submit-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID}\\),hook_event_name:"UserPromptSubmit"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "user-prompt-submit-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID}\\),hook_event_name:"UserPromptSubmit"`),
+        ),
+      },
+      {
+        // `Yc` / getCurrentSessionTitle — reads the session store's title cache.
+        as: "sessionTitle",
+        kind: "effectful-port",
+        derive: pick("user-prompt-submit-hooks", "sessionTitle", new RegExp(`session_title:(${ID})\\(${ID}\\.session\\.id\\)`)),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("user-prompt-submit-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),signal:`)),
+      },
+      {
+        // `I_e` — 30,000 ms, and NOT the shared hook timeout. Forwarded so the
+        // adapter can equality-assert it (§2.4 `primitive`): this is the one
+        // number in the family that is different on purpose, so it is the one
+        // most worth watching for a silent change.
+        as: "promptSubmitTimeoutMs",
+        kind: "primitive",
+        derive: pick("user-prompt-submit-hooks", "promptSubmitTimeoutMs", new RegExp(`timeoutMs:(${ID}),toolUseContext:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("user-prompt-submit-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-prompt-submit"],
+  },
+
+  {
+    // ONE function, TWO events: an agent id decides whether the record is a
+    // SubagentStop (with `agent_id`, `agent_transcript_path`, `agent_type`) or
+    // the session's own Stop. Both arms are covered — `hooks-prompt-submit` for
+    // the plain Stop, `hooks-subagent` for a run that fires the subagent arm and
+    // then the parent's.
+    //
+    // Anchored on the SubagentStop literal rather than the Stop one: both are
+    // unique, and this is the arm whose field set the anchor names.
+    //
+    // Four of its free variables are owned pure helpers rather than ports — the
+    // two agent-context predicates and the two message-text helpers — so the
+    // module reimplements the rule that decides `last_assistant_message` rather
+    // than calling the graph's.
+    name: "stop-hooks",
+    target: "free-function",
+    signature: { params: 9, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"SubagentStop"',
+    fn: "stopHooks",
+    captures: [
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("stop-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID}=!1,`)),
+      },
+      {
+        // `ka` — the delegated-observation subagent predicate, the guard that
+        // refuses outright.
+        as: "isDelegatedObservationSubagent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-hooks", "isDelegatedObservationSubagent", new RegExp(`if\\((${ID})\\(${ID}\\.agentContext\\)\\)return`)),
+      },
+      {
+        // `DR` — the built-in web-fetch subagent predicate, which both bypasses
+        // the registration guard and narrows the executor to managed hooks.
+        as: "isBuiltInWebFetchSubagent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-hooks", "isBuiltInWebFetchSubagent", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.agentContext\\),`)),
+      },
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "hasHookForEvent", new RegExp(`&&!(${ID})\\(${ID},${ID}\\.sessionHooksRegistry,${ID}\\)\\)return`)),
+      },
+      {
+        // `Wy` — the last assistant message of the turn.
+        as: "lastAssistantMessage",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-hooks", "lastAssistantMessage", new RegExp(`=${ID}\\?(${ID})\\(${ID}\\):void 0,`)),
+      },
+      {
+        // `zr` — its text blocks, joined.
+        as: "textOfContent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-hooks", "textOfContent", new RegExp(`=${ID}\\?(${ID})\\(${ID}\\.message\\.content,`)),
+      },
+      {
+        // `Gxt` — the task registry's wire projection. A ledger edge to the
+        // background-task subsystem, whose wave owns the far side.
+        as: "backgroundTasks",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "backgroundTasks", new RegExp(`background_tasks:(${ID})\\(`)),
+      },
+      {
+        as: "sessionCrons",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "sessionCrons", new RegExp(`session_crons:(${ID})\\(\\)`)),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "stop-hooks",
+          "createBaseHookInput",
+          new RegExp(`,${ID}=(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),${ID}=${ID}\\?\\{`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "stop-hooks",
+          "cwd",
+          new RegExp(`,${ID}=${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),${ID}=${ID}\\?\\{`),
+        ),
+      },
+      {
+        // `mp` — the child agent's transcript file. A ledger edge to session storage.
+        as: "agentTranscriptPath",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "agentTranscriptPath", new RegExp(`agent_transcript_path:(${ID})\\(${ID}\\),`)),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),signal:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("stop-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-prompt-submit", "hooks-subagent"],
+  },
+
+  {
+    // The largest dispatcher and the only one with two execution paths: the
+    // in-process FUNCTION-HOOK CHAIN (which can rewrite a tool's input, deny it
+    // or defer it) and the plain settings-hook execution it falls back to. Which
+    // one runs is decided by a managed pass, a module-handler registry and a
+    // plain-object test on the tool input — three reads, one of which
+    // (`isPlainObject`) the owned module implements outright.
+    name: "pre-tool-hooks",
+    target: "free-function",
+    signature: { params: 8, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PreToolUse"',
+    fn: "preToolHooks",
+    captures: [
+      {
+        // `dl` — the stable-key namespace. Captured as the NAMESPACE, because
+        // that is what the body references; the owned module calls
+        // `.stableKey` through it.
+        as: "stableKeys",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "stableKeys", new RegExp(`(${ID})\\.stableKey\\(`)),
+      },
+      {
+        // `Pd` — the in-process module-handler registry namespace.
+        as: "moduleHandlers",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "moduleHandlers", new RegExp(`(${ID})\\.hasModuleHandlers\\("PreToolUse"\\)`)),
+      },
+      {
+        // `He` — the plain-object test. Owned (§2.4 `pure-helper`): it decides
+        // whether the tool call is eligible for the chain at all, and it has
+        // callers all over the engine, so upstream's copy stays live.
+        as: "isPlainObject",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("pre-tool-hooks", "isPlainObject", new RegExp(`hasModuleHandlers\\("PreToolUse"\\)\\)&&(${ID})\\(${ID}\\)\\?`)),
+      },
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "hasHookForEvent", new RegExp(`&&!(${ID})\\("PreToolUse",${ID}\\.sessionHooksRegistry,`)),
+      },
+      {
+        as: "hookAgentIds",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("pre-tool-hooks", "hookAgentIds", new RegExp(`${ID}\\.sessionHooksRegistry,(${ID})\\(${ID},"PreToolUse"`)),
+      },
+      {
+        // the verbose logger. Forwarded and CALLED: the log stream is an
+        // observable surface, and a dispatcher that stopped logging would be a
+        // difference this wave should not introduce.
+        as: "log",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "log", new RegExp("(" + ID + ")\\(`executePreToolHooks called for tool:")),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "pre-tool-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PreToolUse"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "pre-tool-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),hook_event_name:"PreToolUse"`),
+        ),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("pre-tool-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID}\\)\\{let ${ID}=${ID}\\.managedPass`)),
+      },
+      {
+        // reached through the inner `runSettingsHooks` closure, which the owned
+        // module reimplements — so the executor is a plain `return`, not a
+        // `yield*`, at this call site.
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "executeHooks", new RegExp(`return (${ID})\\(\\{session:${ID}\\.session,hookInput:`)),
+      },
+      {
+        // `fW` — the function-hook chain namespace.
+        as: "preToolChain",
+        kind: "effectful-port",
+        derive: pick("pre-tool-hooks", "preToolChain", new RegExp(`of (${ID})\\.executePreToolUseChain\\(`)),
+      },
+      {
+        // `cun` / stripConfinedHookApproval — reads whether the session was
+        // launched confined, so a port rather than a pure helper.
+        as: "stripConfinedHookApproval",
+        kind: "effectful-port",
+        derive: pick(
+          "pre-tool-hooks",
+          "stripConfinedHookApproval",
+          new RegExp(`yield (${ID})\\(${ID},"PreToolUse function-hook chain"\\)`),
+        ),
+      },
+    ],
+    coverage: ["hooks"],
   },
 ];
 
