@@ -48,6 +48,7 @@
 // every hash is taken over the UPSTREAM bytes, so a footprint moves when
 // upstream moves and not when this machine's paths do.
 import { createHash } from "node:crypto";
+import { isBuiltin } from "node:module";
 import ts from "typescript";
 import type { Excision, TargetSignature } from "./ast.js";
 import type { CaptureClass, DerivedCapture } from "./manifest.js";
@@ -166,12 +167,29 @@ export interface FootprintInput {
  * Is this specifier outside the extracted graph entirely?
  *
  * Every intra-graph edge is a PATH: the bundle writes `/$bunfs/root/chunk-….js`
- * and prepare.ts rewrites it to an absolute one. A bare specifier is therefore
- * something the bundle did not contain — measured at 2.1.251, all of them are
- * Node builtins (`path`, `fs/promises`, `fs`, `crypto`, `os`, `child_process`, …)
- * plus `ws`. None of them can move when the pin moves.
+ * and prepare.ts rewrites it to an absolute one. The discriminator is therefore
+ * BARENESS, not builtin-ness — a bare specifier is simply something the bundle
+ * did not contain. Measured at 2.1.251 the bare set is the Node builtins
+ * (`path`, `fs/promises`, `fs`, `crypto`, `os`, `child_process`, …) plus `ws`.
+ *
+ * Both are boundaries for the walk, but they are NOT the same claim, and the
+ * recorded note says which (campaign spec C5x fix, finding 4). A builtin is
+ * pinned by the runtime (§3.5), so "no bundle bump can change it" is exact. A
+ * bare NON-builtin like `ws` is pinned by nothing this repo measures: the bundle
+ * vendors no copy and nothing resolves it on the headless path, so the edge is
+ * dead there — which is why there is nothing to hash, and it is a weaker
+ * statement than the builtin's.
  */
 export const isExternalSpecifier = (specifier: string) => !specifier.startsWith("/") && !specifier.startsWith(".");
+
+/** The note an external-import leaf carries — the strong claim only where it holds. */
+export const externalLeafNote = (specifier: string): string =>
+  isBuiltin(specifier)
+    ? `resolves to Node builtin '${specifier}', outside the extracted graph — no bundle bump can change it ` +
+      `(the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash.`
+    : `resolves to bare external module '${specifier}', outside the extracted graph and NOT a Node builtin — the bundle ` +
+      `vendors no copy and nothing resolves it on the headless path, so the edge is dead there and has no far side to hash. ` +
+      `The import site is covered, which is what catches upstream vendoring, renaming or dropping it.`;
 
 /** Where the closure walk currently stands: a declaration node and the chunk it lives in. */
 interface Site {
@@ -218,17 +236,19 @@ export function spliceFootprint(input: FootprintInput): SpliceFootprint {
             const mod = specifier ? resolveModule(specifier) : null;
             const far = mod && decl.importedName ? resolveExport(mod.sf, decl.importedName) : null;
             if (!mod || !far) {
-              // An EXTERNAL module — `fs`, `path`, `crypto` — is a boundary, not
-              // a hole (campaign spec C5x, unit 6). It is not in the extracted
-              // graph, so no bundle bump can change it; what pins its behaviour
-              // is the runtime pin (§3.5). Degrading the whole row to
-              // whole-chunk hashes here would be worse than useless: it stales
-              // the row on unrelated edits and STILL does not cover the callee
-              // it could not reach. So the IMPORT SITE is recorded as a leaf —
-              // which is exactly what catches upstream swapping `fs` for
-              // something else, or dropping the import — and the walk continues.
-              // A specifier that IS a graph path and still does not resolve is a
-              // real hole and still abandons.
+              // A BARE specifier — `fs`, `path`, `crypto`, and also `ws` — is a
+              // boundary, not a hole (campaign spec C5x, unit 6). It is not in
+              // the extracted graph, so there is nothing on the bundle side to
+              // hash either way. Degrading the whole row to whole-chunk hashes
+              // here would be worse than useless: it stales the row on unrelated
+              // edits and STILL does not cover the callee it could not reach. So
+              // the IMPORT SITE is recorded as a leaf — which is exactly what
+              // catches upstream swapping `fs` for something else, or dropping
+              // the import — and the walk continues. What differs between a
+              // builtin and a bare non-builtin is only what the leaf can CLAIM,
+              // which `externalLeafNote` says out loud. A specifier that IS a
+              // graph path and still does not resolve is a real hole and still
+              // abandons.
               if (specifier !== undefined && isExternalSpecifier(specifier)) {
                 const key = `${where}:${decl.start}-${decl.end}`;
                 if (seen.has(key)) continue;
@@ -240,9 +260,7 @@ export function spliceFootprint(input: FootprintInput): SpliceFootprint {
                   basis: "declaration",
                   declKind: "import",
                   ...cover(source, decl),
-                  note:
-                    `resolves to external module '${specifier}', outside the extracted graph — no bundle bump can change it ` +
-                    `(the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash.`,
+                  note: externalLeafNote(specifier),
                 });
                 continue;
               }

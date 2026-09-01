@@ -1599,12 +1599,20 @@ byte-identical.
 W2 left this as a debt: the WebFetch usage-notes helper crosses the 20-declaration bound and falls
 back to whole-chunk hashes. Measured, the premise was wrong in a useful way.
 
-At the committed bound the walk was not abandoning on width — it hit an import of `fs`. An external
-module is a **boundary, not a hole**: it is not in the extracted graph, so no pin bump can change it
-(the runtime pin does), and degrading the whole row for one was worse than useless, staling the row
-on unrelated edits while still covering nothing extra. The import site is now recorded as a leaf and
-the walk continues; a specifier that IS a graph path and still does not resolve remains a genuine
-hole and still abandons.
+At the committed bound the walk was not abandoning on width — it hit an import of `fs`. A **bare
+specifier is a boundary, not a hole**: the graph's own edges are all paths, so a bare one is
+something the bundle did not contain and there is nothing on the bundle side to hash either way.
+Degrading the whole row for one was worse than useless, staling the row on unrelated edits while
+still covering nothing extra. The import site is now recorded as a leaf and the walk continues; a
+specifier that IS a graph path and still does not resolve remains a genuine hole and still abandons.
+
+The leaf's NOTE distinguishes two cases the first version conflated (C5x fix). A Node builtin is
+pinned by the runtime (§3.5), so "no bundle bump can change it" is exact. A bare non-builtin — `ws`
+is the only one the pinned bundle has — is pinned by nothing this repo measures and resolves nowhere
+on the headless path, so its leaf records it as external-unresolvable and makes the weaker claim.
+Neither changes the walk. On the pinned graph no enumerated closure reaches a bare import today (the
+one capture that would, WebFetch's usage notes, degrades on width first), so the note is visible in
+`build/footprints.json` and in the mechanism fixtures rather than in `ledger.json`.
 
 With that fixed: at depth 40 and 500 declarations the closure **still** does not terminate — 500+
 declarations across 17 chunks and 272 KB. The helper genuinely reaches a subsystem, so no reachable

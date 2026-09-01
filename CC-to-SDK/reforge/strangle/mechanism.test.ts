@@ -241,27 +241,47 @@ function footprintOf(owner: string, helper: string) {
     bailedClosure[0] !== undefined &&
       (only(deepFootprint(unreachable.replace("o.n", "o.N"))).closure ?? [])[0]?.sha256 !== bailedClosure[0]?.sha256);
 
-  // An EXTERNAL module is a boundary, not a hole (C5x unit 6). `fs` is not in
-  // the extracted graph and no pin bump can change it, so the import SITE is
-  // recorded as a leaf and the walk keeps going — where degrading to whole-chunk
-  // hashes would stale the row on unrelated edits AND still cover nothing extra.
+  // A BARE specifier is a boundary, not a hole (C5x unit 6): it is not in the
+  // extracted graph, so the import SITE is recorded as a leaf and the walk keeps
+  // going — where degrading to whole-chunk hashes would stale the row on
+  // unrelated edits AND still cover nothing extra. The DISCRIMINATOR is
+  // bareness, not builtin-ness, and the two do not license the same claim
+  // (C5x fix, finding 4): `fs` is pinned by the runtime, so "no bundle bump can
+  // change it" is exact; a bare non-builtin like `ws` is pinned by nothing this
+  // repo measures and is unresolvable on the headless path. The note has to say
+  // which, or the record over-claims for half the set the bundle actually has.
   {
-    const external =
-      `import{readFileSync as rf}from"fs";\n` +
+    const external = (specifier: string) =>
+      `import{readFileSync as rf}from"${specifier}";\n` +
       `var PAD2=" pad";\n` +
       `function DEEPEST2(n){return \`d:\${n}\`+PAD2}\n` +
       `function HELPER(o){return rf(o.path)+DEEPEST2(o.n)}\n` +
       `export{HELPER};\n`;
-    const fp = only(deepFootprint(external));
+    const fp = only(deepFootprint(external("fs")));
     const closure = fp.closure ?? [];
     const leaf = closure.find((c) => c.name === "rf");
     check("an external import is a LEAF, not an abandonment",
       fp.note === undefined && closure.every((c) => c.basis === "declaration"), String(fp.note));
     check("…recorded at the import site, saying where it goes and why there is no far side",
-      leaf?.declKind === "import" && /external module 'fs'/.test(leaf?.note ?? ""), JSON.stringify(leaf));
+      leaf?.declKind === "import" && /no far side to hash|far side to hash/.test(leaf?.note ?? ""), JSON.stringify(leaf));
+    check("a BUILTIN leaf makes the strong claim — the runtime pin is what moves it",
+      /Node builtin 'fs'/.test(leaf?.note ?? "") && /no bundle bump can change it/.test(leaf?.note ?? ""),
+      String(leaf?.note));
     check("…and the walk continues past it to the real callees",
       closure.some((c) => c.name === "DEEPEST2") && closure.some((c) => c.name === "PAD2"),
       JSON.stringify(closure.map((c) => c.name)));
+    // THE CONTROL for the over-claim: same leaf shape, bare NON-builtin. `ws` is
+    // the one the pinned bundle actually has.
+    const bare = only(deepFootprint(external("ws")));
+    const bareLeaf = (bare.closure ?? []).find((c) => c.name === "rf");
+    check("a bare NON-builtin is a leaf on the same terms",
+      bare.note === undefined && bareLeaf?.declKind === "import" && (bare.closure ?? []).some((c) => c.name === "DEEPEST2"),
+      JSON.stringify(bareLeaf));
+    check("…but does NOT claim the runtime pin holds it — it is external-unresolvable, dead on the headless path",
+      /bare external module 'ws'/.test(bareLeaf?.note ?? "") &&
+        /NOT a Node builtin/.test(bareLeaf?.note ?? "") &&
+        !/no bundle bump can change it/.test(bareLeaf?.note ?? ""),
+      String(bareLeaf?.note));
     check("…while a specifier that IS a graph path and does not resolve still abandons",
       /could not be enumerated/.test(only(deepFootprint(unreachable)).note ?? ""));
   }
