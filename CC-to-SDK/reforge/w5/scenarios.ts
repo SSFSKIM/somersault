@@ -468,12 +468,24 @@ export const W5_SCENARIOS: Scenario[] = [
     // dispatcher.
     //
     // This dispatcher is not a generator and its result is CONSUMED: the engine
-    // folds a hook's stdout back in as new custom instructions and refuses to
-    // compact at all if a hook blocks. Neither arm is reachable from a callback
-    // that returns `{continue:true}`, so what this recording grades is the
-    // record and the no-op result; the oracle grades the rest.
+    // folds a hook's stdout back in as new custom instructions, narrates every
+    // result to the operator, and refuses to compact at all if a hook blocks. A
+    // callback that returns `{continue:true}` produces exactly ONE result shape
+    // — succeeded, unblocked, silent — so a callback-only recording would
+    // exercise one path through a reduction with a dozen.
+    //
+    // So the scenario registers three COMMAND hooks alongside the callback, one
+    // per result shape a hook process can produce: succeeded with output (which
+    // becomes a custom instruction), failed with output, and failed silently.
+    // The two failure phrasings differ only by whether the hook printed
+    // anything, and nothing but a real failing process renders either.
+    //
+    // What is still out of reach and left to the oracle: a BLOCKED hook (which
+    // would refuse the compaction this scenario exists to record), a CANCELLED
+    // one (which needs a timeout), and the delegated-observation arm (which
+    // needs an agent kind the headless Agent tool cannot produce).
     tag: "hooks-precompact",
-    title: "PreCompact fires on a real compaction, with the manual trigger",
+    title: "PreCompact fires on a real compaction, and its results become the engine's verdict",
     run: (ctx) =>
       converse({ ...baseOptions(ctx), allowedTools: [], permissionMode: "bypassPermissions",
         hooks: {
@@ -485,6 +497,20 @@ export const W5_SCENARIOS: Scenario[] = [
             trigger: i.trigger,
             customInstructions: i.custom_instructions,
           })),
+        },
+        settings: {
+          hooks: {
+            PreCompact: [
+              // A hook's OUTPUT is its stdout when it succeeds and its STDERR
+              // when it fails (upstream reads `status===0 ? stdout : stderr`),
+              // which is why the loud failure below writes to stderr — a
+              // failing hook that printed to stdout would render as the SILENT
+              // failure arm and grade the wrong phrasing.
+              { hooks: [{ type: "command", command: "echo REFORGE_PRECOMPACT_INSTRUCTION" }] },
+              { hooks: [{ type: "command", command: "echo REFORGE_PRECOMPACT_LOUD_FAILURE >&2; exit 1" }] },
+              { hooks: [{ type: "command", command: "exit 1" }] },
+            ],
+          },
         },
       }, (results) => {
         if (results < COMPACT_FILLER.length) return COMPACT_FILLER[results];
@@ -575,6 +601,11 @@ export const W5_SCENARIOS: Scenario[] = [
     // and its results are not yielded anywhere: it writes failures to stderr and
     // CLEARS the session's hooks. What the callback proves is that it ran with
     // the reason the caller gave it.
+    //
+    // A failing COMMAND hook rides along, because the drain's reporting arm — a
+    // failed hook with output is named on stderr, everything else is silent — is
+    // the only part of this dispatcher a succeeding hook cannot move. Its
+    // failure is expected and is not a scenario failure.
     tag: "hooks-session-end",
     title: "SessionEnd fires with reason 'clear' when /clear ends the session",
     run: (ctx) =>
@@ -586,6 +617,11 @@ export const W5_SCENARIOS: Scenario[] = [
             reason: i.reason,
           })),
           Stop: watch(ctx, "Stop", (i) => ({ event: i.hook_event_name })),
+        },
+        settings: {
+          // Stderr, not stdout: a failed hook's `output` is its stderr, so a
+          // failure that printed to stdout would be reported as the silent kind.
+          hooks: { SessionEnd: [{ hooks: [{ type: "command", command: "echo REFORGE_SESSION_END_FAILURE >&2; exit 1" }] }] },
         },
       }, (results) => {
         if (results === 0) return "Reply with exactly REFORGE_SESSION_END and nothing else.";

@@ -116,12 +116,15 @@ export const ATTESTED: AttestedModule[] = [
   },
 
   // ---- W5: the hook dispatchers --------------------------------------------
-  // Seven modules, one per dispatcher, covering all eight headlessly-live
-  // events. Scenario sets are the smallest ones that can move each module's
-  // branches: `hooks` for the two tool-scoped dispatchers, `hooks-command` for
-  // the same PostToolUse record read as a byte stream, `hooks-batch` for the
-  // batch guard, `hooks-prompt-submit` for the prompt/display/stop trio, and
-  // `hooks-subagent` for the subagent arm of the stop dispatcher.
+  // Eleven modules, one per dispatcher. Seven landed with the wave; the last
+  // four landed with C8's boundary round, which re-measured the probe the wave's
+  // event set rested on and found four live events it had recorded as dead.
+  // Scenario sets are the smallest ones that can move each module's branches:
+  // `hooks` for the two tool-scoped dispatchers, `hooks-command` for the same
+  // PostToolUse record read as a byte stream, `hooks-batch` for the batch guard,
+  // `hooks-prompt-submit` for the prompt/display/stop trio, `hooks-subagent` for
+  // the subagent arm of the stop dispatcher, and one scenario each for the four
+  // firing conditions the wave had never created.
   //
   // What grades every unexecuted arm is `strangle/hooks-parity.test.ts`, and it
   // also grades what no branch inventory here can see: the OWNED SHARED HELPERS.
@@ -149,6 +152,12 @@ export const ATTESTED: AttestedModule[] = [
       "which is where this dispatcher's distinctive claims live: a synthesised `${messageId}-${index}` correlation id, forced synchronous execution, and suppressed per-invocation telemetry. " +
       "Four mutation controls hold that comparison to it.",
   },
+
+  // ---- C8's boundary round: the four events the wave read as dead -----------
+  { module: "post-tool-failure-hooks", row: "post-tool-failure-hooks", scenarios: ["hooks-tool-failure"] },
+  { module: "session-start-hooks", row: "session-start-hooks", scenarios: ["hooks-session-start"] },
+  { module: "session-end-hooks", row: "session-end-hooks", scenarios: ["hooks-session-end"] },
+  { module: "pre-compact-hooks", row: "pre-compact-hooks", scenarios: ["hooks-precompact"] },
 ];
 
 export interface Exclusion {
@@ -764,5 +773,119 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "stop-hooks#stopHooks@13:F",
     reason:
       "the turn-end phase argument: the headless driver dispatches one phase on every recording, so the two others — and the `skipSessionFunctionHooks`/`sessionFunctionHooksOnly` options they select — are unrendered. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+
+  // ==========================================================================
+  // C8's boundary round — the four dispatchers the wave had read as dead.
+  //
+  // Each of these scenarios was written to CREATE its dispatcher's firing
+  // condition, which is the finding the round exists for, and two of them were
+  // re-recorded once the first attestation showed which arms a callback alone
+  // could not move: `hooks-precompact` now registers three command hooks, one
+  // per result shape a hook PROCESS can produce, and `hooks-session-end`
+  // registers a failing one so the drain's reporting arm renders. What is
+  // excluded below is what is left after that, and each entry says which of the
+  // two kinds it is — genuinely unproducible on this seam, or producible by a
+  // scenario that would then be grading something else.
+  // ==========================================================================
+
+  // ---- the registration guard's refusal (unrecordable by construction) -----
+  {
+    branch: "post-tool-failure-hooks#postToolFailureHooks@0:T",
+    reason:
+      "the refusal arm: a run with NO PostToolUseFailure hook registered produces no consult, no record and no frame of any kind, so \"the guard refused\" and \"the dispatcher was never called\" are the same recording — unrecordable by construction, and the common case in production. strangle/hooks-parity.test.ts grades it: the failure block runs eight cases including an unregistered one, compares the port trace, and holds two controls on it (a refusal that still built the record, a refusal that still called the executor).",
+  },
+
+  // ---- SessionStart: the arms the headless caller never supplies -----------
+  // Upstream has ONE call site for this dispatcher, and it forwards a session-id
+  // override and a title from its own parameters. Both arrive undefined on the
+  // headless seam — measured, not assumed: the record `hooks-session-start`
+  // writes has five keys, which is what is left after JSON drops the undefined
+  // ones.
+  {
+    branch: "session-start-hooks#sessionStartHooks@0:T",
+    reason:
+      "the session-id OVERRIDE arm, which builds the record for a synthetic session while still handing the executor the real one. The headless caller passes no override — measured: the record the corpus writes carries the run's own session id. strangle/hooks-parity.test.ts grades it with a dedicated case plus a control asserting the executor was NOT handed the synthetic session, which is the defect a module that collapsed the two would ship.",
+  },
+  {
+    branch: "session-start-hooks#sessionStartHooks@1:F",
+    reason:
+      "an explicit session TITLE, which beats the lookup. The headless caller passes none, so the corpus only ever renders the fallback — and the fallback answers `undefined` on this seam, which is why `session_title` is absent from the record on stdin. strangle/hooks-parity.test.ts grades both arms, with a control asserting the fallback is derived from the RECORD's session id rather than the real one.",
+  },
+  {
+    branch: "session-start-hooks#sessionStartHooks@2:T",
+    reason:
+      "the throwing arm of the activity-hold bracket. Reaching it needs the shared hook executor to throw, which no corpus scenario can make it do without breaking the run it is grading. strangle/hooks-parity.test.ts grades it directly: one case drives the dispatcher with a throwing executor stub and a control asserts the hold is NOT left un-released — the difference between an idle session and one wedged open forever.",
+  },
+
+  // ---- SessionEnd: the options bag upstream defaults ------------------------
+  {
+    branch: "session-end-hooks#sessionEndHooks@0:F",
+    reason:
+      "the `options || {}` default, i.e. the dispatcher called with no options bag at all. Both of upstream's headlessly reachable call sites (`/clear` and session resume) pass one, so the corpus cannot render the arm without a third caller. strangle/hooks-parity.test.ts runs every result shape against BOTH option sets, the absent one included, and compares the executor request each produces.",
+  },
+
+  // ---- PreCompact: the result shapes a scenario cannot produce -------------
+  // This dispatcher reduces a list of hook RESULTS to a verdict, so its arms are
+  // selected by the shapes of those results rather than by anything the
+  // conversation does. `hooks-precompact` now produces four of the six shapes
+  // with real hook processes. The two it does not are `blocked` and `cancelled`,
+  // and neither is a scenario this recording could also be:
+  //
+  //   BLOCKED is producible — a command hook exiting 2 blocks — but a blocked
+  //       PreCompact CANCELS the compaction, so the scenario would no longer
+  //       record the compaction it exists for. That is a different recording,
+  //       and it is deferred rather than called impossible.
+  //   CANCELLED needs the hook execution to be aborted or to time out mid-run,
+  //       which is not a shape a recording can hold still.
+  {
+    branch: "pre-compact-hooks#preCompactHooks@4:T",
+    reason:
+      "a CANCELLED hook result, which upstream narrates as nothing at all while still counting it toward the custom instructions — an asymmetry no other surface can see. Producing one needs the execution aborted or timed out mid-run. strangle/hooks-parity.test.ts grades it with a dedicated case and a control asserting a cancelled hook is not narrated in the display message.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@9:T",
+    reason:
+      "at least one BLOCKED result, which is what produces a blocking reason at all. Producible in principle (a command hook that exits 2 blocks) but a blocked PreCompact cancels the compaction, so the scenario would stop recording the compaction it exists for — deferred to a scenario of its own, not impossible. strangle/hooks-parity.test.ts grades it across three blocking cases and a control that computes blocking from FAILURE instead of the blocked flag.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@10:T",
+    reason:
+      "the blocking reason's WITH-output phrasing, inside the map over blocked results; unreachable while no result is blocked (see @9:T). Graded by strangle/hooks-parity.test.ts, which runs a blocked hook with a reason and one without.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@10:F",
+    reason:
+      "the blocking reason's bare-command phrasing, for a hook that blocked without saying why; unreachable while no result is blocked (see @9:T). Graded by strangle/hooks-parity.test.ts.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@11:T",
+    reason:
+      "the DELEGATED-OBSERVATION verdict: blocking only, with no custom instructions and no display message, because that kind of subagent has neither a summarisation prompt of its own nor a conversation to display into. The headless Agent tool cannot produce a delegated-observation subagent (the same agent kind W5's stop dispatcher already excludes). strangle/hooks-parity.test.ts grades it with two cases and a control asserting the delegated arm does not return the full verdict.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@12:T",
+    reason:
+      "the blocking spread inside the delegated-observation return; unreachable while that arm is (see @11:T). Graded by strangle/hooks-parity.test.ts.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@12:F",
+    reason:
+      "the same spread with nothing blocking; unreachable while the delegated-observation arm is (see @11:T). Graded by strangle/hooks-parity.test.ts, which runs the delegated arm both with and without a blocking result.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@13:F",
+    reason:
+      "the no-instructions arm, i.e. a compaction where no hook contributed any. It is the complement of an arm this scenario DOES render — one recording holds one compaction, so one of the two is always unrendered, and the rendered one was chosen because it also exercises the join. strangle/hooks-parity.test.ts runs both, with a control on the blank-line join between instructions.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@14:F",
+    reason:
+      "the no-display-message arm, which needs EVERY result to be cancelled — the only result shape that contributes no line. Unreachable for the same reason @4:T is. strangle/hooks-parity.test.ts grades it.",
+  },
+  {
+    branch: "pre-compact-hooks#preCompactHooks@15:T",
+    reason:
+      "the blocking spread on the general verdict; unreachable while no result is blocked (see @9:T). Graded by strangle/hooks-parity.test.ts.",
   },
 ];

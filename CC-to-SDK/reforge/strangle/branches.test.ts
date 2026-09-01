@@ -129,8 +129,6 @@ async function exercise(source: string, call: (m: Record<string, (...a: unknown[
   check("a try whose catch never runs records only the completed arm",
     quiet.ran.includes(`${qs.id}:F`) && !quiet.ran.includes(`${qs.id}:T`), JSON.stringify(quiet.ran));
 
-  refuses("try/finally with no catch is refused",
-    `export function f(){try{go()}finally{done()}}\n`, /try\/finally with no catch/);
   refuses("a try block that can `return` is refused — the end-of-try marker would be skipped",
     `export function f(a){try{if(a)return 1;go()}catch(e){return 2}return 3}\n`,
     /complete abruptly/);
@@ -142,6 +140,53 @@ async function exercise(source: string, call: (m: Record<string, (...a: unknown[
     const sites = branchSites("fx", "/fixture/nested.js", `export function f(){try{run(()=>{return 1})}catch(e){}return 2}\n`);
     return sites.some((s) => s.kind === "try");
   })());
+}
+
+// ---- TRY / FINALLY (no catch) -----------------------------------------------
+// A `finally` is behaviour in the code being measured — upstream's SessionStart
+// dispatcher brackets its dispatch in one so an executor that throws still
+// releases the activity hold — so the instrumenter records it rather than the
+// module being rewritten to suit the instrument. The recorder's catch must be
+// invisible: the exception has to reach the finally and go on propagating.
+{
+  const source =
+    `export function held(fn){const log=[];try{log.push(fn())}finally{log.push("released")}return log}\n` +
+    `export function caught(fn){let out;try{out={log:held(fn)}}catch(e){out={threw:e.message}}return out}\n`;
+  const r = await exercise(source, (m) => [m.caught(() => "fine"), m.caught(() => { throw new Error("boom"); })]);
+  const site = r.sites.find((s) => s.kind === "try" && s.fn === "held");
+  check("a try/finally is ONE site with the same two outcomes as a try/catch",
+    site !== undefined && site.outcomes.join() === "T,F", JSON.stringify(r.sites.map((s) => [s.fn, s.kind, s.outcomes])));
+  check("instrumenting it changes nothing — the exception still propagates past the finally", r.identical, JSON.stringify(r.got));
+  check("the finally ran on BOTH paths, instrumented and not",
+    JSON.stringify(r.got) === JSON.stringify([{ log: ["fine", "released"] }, { threw: "boom" }]), JSON.stringify(r.got));
+  check("both arms are recorded when both run",
+    site !== undefined && r.ran.includes(`${site.id}:T`) && r.ran.includes(`${site.id}:F`), JSON.stringify(r.ran));
+
+  // The arm that must stay UNrecorded when it does not run — the whole point of
+  // the inventory is that an unexercised throwing path is visible as one.
+  const quiet = await exercise(
+    `export function q(fn){const log=[];try{log.push(fn())}finally{log.push("r")}return log}\n`,
+    (m) => m.q(() => "fine"),
+  );
+  const qs = quiet.sites.find((s) => s.kind === "try")!;
+  check("a try/finally whose body never throws records only the completed arm",
+    quiet.ran.includes(`${qs.id}:F`) && !quiet.ran.includes(`${qs.id}:T`), JSON.stringify(quiet.ran));
+
+  // The generator shape the SessionStart dispatcher actually has, including the
+  // consumer-abandonment case the header names: `.return()` runs the finally
+  // without throwing, so NEITHER outcome is recorded.
+  const gen = await exercise(
+    `export function g(log){return (async function*(){try{yield 1;yield 2}finally{log.push("released")}})()}\n` +
+      `export async function abandon(log){const it=g(log);await it.next();await it.return("done");return log}\n`,
+    (m) => m.abandon([]),
+  );
+  const gs = gen.sites.find((s) => s.kind === "try")!;
+  check("a generator's finally still runs when the consumer abandons it", JSON.stringify(gen.got) === JSON.stringify(["released"]), JSON.stringify(gen.got));
+  check("…and an abandoned body records NEITHER arm, as the header says",
+    !gen.ran.includes(`${gs.id}:T`) && !gen.ran.includes(`${gs.id}:F`), JSON.stringify(gen.ran));
+
+  refuses("a try/finally block that can `return` is refused, like a try/catch one",
+    `export function f(a){try{if(a)return 1;go()}finally{done()}return 3}\n`, /complete abruptly/);
 }
 
 // ---- LOOPS -------------------------------------------------------------------
@@ -208,7 +253,7 @@ console.log(`=== branch instrumenter: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — switch, try/catch, loops and optional chaining are recorded faithfully; every unrecordable form is refused by name"
+    ? "PASS — switch, try/catch, try/finally, loops and optional chaining are recorded faithfully; every unrecordable form is refused by name"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

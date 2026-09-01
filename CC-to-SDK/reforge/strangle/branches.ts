@@ -50,9 +50,26 @@
 //                          unexecuted `iterated` means "never reached OR reached
 //                          and empty" — recorded here so a reader of the report
 //                          knows which question it answers.
-//   try / catch            two outcomes on one site: `T` is "the catch ran",
-//                          marked at the top of the catch block, and `F` is "the
-//                          try block completed", marked at its end.
+//   try / catch            two outcomes on one site: `T` is "the guarded body
+//                          threw", marked at the top of the catch block, and `F`
+//                          is "it completed", marked at the end of the try block.
+//   try / finally          the SAME two outcomes, but there is no catch block to
+//                          mark the throwing arm in — so one is INSERTED: a
+//                          `catch` that records and immediately rethrows, spliced
+//                          between the try block and the `finally` keyword. The
+//                          exception is rethrown unchanged, so it still reaches
+//                          the finally and still propagates; only the recorder is
+//                          added. Needed because a `finally` is BEHAVIOUR in the
+//                          code being measured — upstream's SessionStart
+//                          dispatcher brackets its dispatch in one so an executor
+//                          that throws still releases the activity hold — and
+//                          rewriting the owned module to avoid it would be
+//                          changing the code to suit the instrument.
+//
+//   A guarded body that neither completes nor throws — a generator whose
+//   CONSUMER calls `.return()` runs the finally without either — records neither
+//   outcome. That is what try/catch already does, and the abrupt-completion
+//   refusal below is what keeps it from happening any other way.
 //
 // ## Branch ids are structural, not positional
 //
@@ -69,7 +86,9 @@ export type BranchKind = "if" | "conditional" | "and" | "or" | "nullish" | "opti
 /** How one site is recorded: by wrapping an expression, or by marking an arm. */
 export type BranchEdit =
   | { kind: "wrap"; start: number; end: number; recorder: "__cov" | "__covN" }
-  | { kind: "mark"; pos: number; outcome: string };
+  | { kind: "mark"; pos: number; outcome: string }
+  /** a rethrowing `catch` spliced into a try/finally, so its throwing arm has somewhere to be marked */
+  | { kind: "insertCatch"; pos: number; outcome: string };
 
 export interface BranchSite {
   /** `<module>#<function>@<n>` */
@@ -115,11 +134,8 @@ function unsupported(n: ts.Node): string | null {
   if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isBlock(n.statement)) {
     return "for..of/for..in with a braceless body — there is nowhere to mark the iterated arm; add braces";
   }
-  if (ts.isTryStatement(n)) {
-    if (!n.catchClause) return "try/finally with no catch — the throwing path leaves the statement unrecorded";
-    if (abruptCompletion(n.tryBlock)) {
-      return "try block that can complete abruptly (return/break/continue) — the end-of-try marker would be skipped on a path that did not throw, under-reporting the non-throwing arm";
-    }
+  if (ts.isTryStatement(n) && abruptCompletion(n.tryBlock)) {
+    return "try block that can complete abruptly (return/break/continue) — the end-of-try marker would be skipped on a path that did not throw, under-reporting the non-throwing arm";
   }
   if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && n.questionDotToken && hasOptionalChain(n.expression)) {
     return "optional chain over an optional chain (`a?.b?.c`) — when the inner link short-circuits the outer one never evaluates, so a recorder there would report an arm that did not run";
@@ -241,16 +257,32 @@ export function branchSites(moduleName: string, path: string, source?: string): 
       const pos = n.statements.length > 0 ? n.statements[0].getStart(sf) : n.getEnd();
       marked(n, "clause", [{ outcome: "taken", pos }], ts.isCaseClause(n) ? n.expression : n);
     } else if (ts.isTryStatement(n)) {
-      const catchBlock = n.catchClause!.block;
-      marked(
-        n,
-        "try",
-        [
-          { outcome: "T", pos: catchBlock.getStart(sf) + 1 },
-          { outcome: "F", pos: n.tryBlock.getEnd() - 1 },
-        ],
-        n.tryBlock,
-      );
+      const completed = { outcome: "F", pos: n.tryBlock.getEnd() - 1 };
+      if (n.catchClause) {
+        marked(n, "try", [{ outcome: "T", pos: n.catchClause.block.getStart(sf) + 1 }, completed], n.tryBlock);
+      } else {
+        // try/finally, no catch. There is no arm to mark the throwing path in,
+        // so one is INSERTED: a catch that records and immediately rethrows,
+        // between the try block and the `finally` keyword. The exception object
+        // is rethrown unchanged, so it still reaches the finally and still
+        // propagates; only the recorder is added.
+        //
+        // Not a workaround for a missing arm — it is the same two outcomes
+        // try/catch has, stated the same way: `T` is "the guarded body threw",
+        // `F` is "it completed". A body the CONSUMER abandons (a generator's
+        // `.return()` runs the finally without throwing) records neither, which
+        // is exactly what try/catch already does and what the abrupt-completion
+        // refusal above keeps from happening any other way.
+        raw.push({
+          kind: "try",
+          outcomes: ["T", "F"],
+          fn: enclosingName(n, moduleName),
+          text: label(n.tryBlock),
+          line: at(n),
+          sort: n.getStart(sf),
+          edits: [{ kind: "insertCatch", pos: n.tryBlock.getEnd(), outcome: "T" }, { kind: "mark", ...completed }],
+        });
+      }
     } else if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && n.questionDotToken) {
       wrapped(n.expression, "optional", true);
     }
@@ -292,6 +324,15 @@ export function instrumentSource(source: string, sites: readonly BranchSite[], r
       // and `out=fn()__covS(…)` is a syntax error. An empty statement is legal
       // in every position a mark is inserted into.
       edits.push({ pos: edit.pos, text: `;__covS(${JSON.stringify(`${site.id}:${edit.outcome}`)});`, depth: 0, rank: 2 });
+    }
+  }
+  for (const site of sites) {
+    for (const edit of site.edits) {
+      if (edit.kind !== "insertCatch") continue;
+      // Between the try block's `}` and the `finally` keyword. The binding is
+      // named for the recorder so it cannot shadow anything the module declares.
+      const id = JSON.stringify(`${site.id}:${edit.outcome}`);
+      edits.push({ pos: edit.pos, text: `catch(__covErr){__covS(${id});throw __covErr}`, depth: 0, rank: 3 });
     }
   }
   // Applying right-to-left, an insertion at the same position as a previous one
