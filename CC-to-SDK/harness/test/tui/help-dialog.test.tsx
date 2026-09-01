@@ -195,6 +195,69 @@ describe("<HelpDialog> — the footers", () => {
   });
 });
 
+// bl10 fix wave 7, W7-2 sweep: the `/` query's own echoed input line and the "No commands match …" message
+// both embed the raw, user-typed `search` string with no width bound at all — `SettingsDialog`'s own `/`
+// search box had the identical gap (fw7 W7-1's cited surface, same fix wave). Height comparison, not `flat`
+// (which collapses newlines and would hide the very wrap this pins).
+describe("HelpDialog — the `/` query echo and no-match message clip to the frame budget (bl10 fw7 W7-2 sweep)", () => {
+  it("clips an over-long, non-matching query so the frame is the same height as a short one", async () => {
+    const short = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={30} columns={80} />);
+    await waitFor(() => flat(short.lastFrame).includes(HELP_INTRO));
+    short.stdin.write("\t");
+    await waitFor(() => flat(short.lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    short.stdin.write("/");
+    await waitFor(() => flat(short.lastFrame).includes("Search commands"));
+    short.stdin.write("z");
+    await waitFor(() => flat(short.lastFrame).includes('No commands match "z"'));
+    const shortLines = stripAnsi(frame(short.lastFrame)).split("\n").length;
+    short.unmount();
+
+    const long = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={30} columns={80} />);
+    await waitFor(() => flat(long.lastFrame).includes(HELP_INTRO));
+    long.stdin.write("\t");
+    await waitFor(() => flat(long.lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    long.stdin.write("/");
+    await waitFor(() => flat(long.lastFrame).includes("Search commands"));
+    const query = "z".repeat(100);
+    long.stdin.write(query);
+    await waitFor(() => flat(long.lastFrame).includes("No commands match"));
+    const longLines = stripAnsi(frame(long.lastFrame)).split("\n").length;
+    long.unmount();
+
+    expect(longLines, "an unclipped query — echoed AND embedded in the no-match message — wraps into extra rows").toBe(shortLines);
+  });
+
+  // The manual (non-`Select`) search-result render maps `browserOptions` straight into `<Text>{o.label}</Text>`
+  // with no clip of its own — unlike the `Select`-driven browsing list, whose two-column layout already
+  // truncates the label. A live catalog's command name is not this dialog's to bound by convention alone.
+  it("clips an over-long command name in the filtered search-result row", async () => {
+    const long = "x".repeat(200);
+    const short = render(<HelpDialog commands={[{ name: "z", description: "d", source: "catalog" }]} onClose={() => {}} rows={30} columns={80} />);
+    await waitFor(() => flat(short.lastFrame).includes(HELP_INTRO));
+    short.stdin.write("\t");
+    await waitFor(() => flat(short.lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    short.stdin.write("/");
+    await waitFor(() => flat(short.lastFrame).includes("Search commands"));
+    short.stdin.write("z");
+    await waitFor(() => flat(short.lastFrame).includes("/z"));
+    const shortLines = stripAnsi(frame(short.lastFrame)).split("\n").length;
+    short.unmount();
+
+    const wide = render(<HelpDialog commands={[{ name: long, description: "d", source: "catalog" }]} onClose={() => {}} rows={30} columns={80} />);
+    await waitFor(() => flat(wide.lastFrame).includes(HELP_INTRO));
+    wide.stdin.write("\t");
+    await waitFor(() => flat(wide.lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    wide.stdin.write("/");
+    await waitFor(() => flat(wide.lastFrame).includes("Search commands"));
+    wide.stdin.write("x");
+    await waitFor(() => flat(wide.lastFrame).includes("/x"));
+    const wideLines = stripAnsi(frame(wide.lastFrame)).split("\n").length;
+    wide.unmount();
+
+    expect(wideLines, "an unclipped command-name label wraps the filtered row into extra lines").toBe(shortLines);
+  });
+});
+
 describe("browserOptions", () => {
   it("dedups by name, sorts by name, and clips the description to `columns - 10` (`FIr`, L459455)", () => {
     const dupes: CommandEntry[] = [...CATALOG, { name: "compact", description: "a second row for one name", source: "catalog" }];

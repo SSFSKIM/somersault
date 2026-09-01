@@ -385,6 +385,36 @@ describe("SettingsDialog — the auto keyhint bar replaces the browsing footers 
   });
 });
 
+// bl10 fix wave 7, W7-2 sweep: the `/` query's own echoed input line and the "No settings match …" message
+// both embed the raw, user-typed `search` string with no width bound at all — unlike every other dynamic
+// string this dialog renders (`RowBody`'s `clipRowText`, the read-only tabs' `paintedRows`/`MoreRow` window).
+// A long enough query wraps under Ink and grows the frame past the chrome budget the same way an unclipped
+// row body did before the row-clip round (`RowBody`'s own docblock).
+describe("SettingsDialog — the `/` query echo and no-match message clip to the frame budget (bl10 fw7 W7-2 sweep)", () => {
+  it("clips an over-long, non-matching query so the frame is the same height as a short one", async () => {
+    const short = render(<SettingsDialog {...props()} rows={30} columns={80} />);
+    await waitFor(() => frame(short.lastFrame).includes("Theme"));
+    short.stdin.write("/");
+    await waitFor(() => plain(frame(short.lastFrame)).includes("Search settings…"));
+    short.stdin.write("z");
+    await waitFor(() => plain(frame(short.lastFrame)).includes('No settings match "z"'));
+    const shortLines = plain(frame(short.lastFrame)).split("\n").length;
+    short.unmount();
+
+    const long = render(<SettingsDialog {...props()} rows={30} columns={80} />);
+    await waitFor(() => frame(long.lastFrame).includes("Theme"));
+    long.stdin.write("/");
+    await waitFor(() => plain(frame(long.lastFrame)).includes("Search settings…"));
+    const query = "z".repeat(100);
+    long.stdin.write(query);
+    await waitFor(() => plain(frame(long.lastFrame)).includes("No settings match"));
+    const longLines = plain(frame(long.lastFrame)).split("\n").length;
+    long.unmount();
+
+    expect(longLines, "an unclipped query — echoed AND embedded in the no-match message — wraps into extra rows").toBe(shortLines);
+  });
+});
+
 // bl10 fix wave 2, finding 2: `readOnlyTabBody` rendered `tabLines[t]!.map(...)` with no windowing at all — a
 // tall fetched payload (a `/cost` usage table with many per-model rows) made the composed frame exceed `rows`,
 // which is exactly the tall-frame-replay hazard the rest of this file's chrome budgets exist to prevent.

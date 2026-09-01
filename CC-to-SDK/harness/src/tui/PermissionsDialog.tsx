@@ -49,6 +49,7 @@ import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
 import type { KeyContextName, KeyEvent, TextEvent } from "./keys/types.js";
 import { ruleRows, workspaceRows, SOURCE_LABELS, type RuleRow, type DenialEntry } from "./permissionsModel.js";
+import { clipRowText } from "./rewindModel.js";
 import type { RenderLine } from "./render.js";
 import type { SettingsTarget } from "./settingsFile.js";
 import type { AddDirVerdict } from "./addDir.js";
@@ -598,13 +599,27 @@ export function PermissionsDialog({
   // text entry (and to be swallowed while the embedded AddDirDialog owns the keyboard).
   useKeyFallback(route(() => {}));
 
+  // bl10 fix wave 7, W7-2 sweep: the six sub-views below are the dialog's own raw bordered boxes — not
+  // `renderItem`'s clipped list rows, and not routed through `DialogFrame` at all — and several of them embed
+  // a genuinely dynamic, non-compile-time-literal string with no width bound: `ruleText` (live-typed),
+  // `selectedRule.rule` (a settings-file rule string), the `SOURCE_LABELS[...] ?? selectedRule.source`
+  // fallback (an unrecognized provenance string, permissionsModel.ts's `source: string`), `selectedDir` (a
+  // workspace path) and `o.desc(cwd)` (the launch cwd, threaded into a destination description). `subViewWidth`
+  // is the same chrome every one of these boxes actually spends — `PERMISSIONS_FRAME_INSET`'s
+  // `borderStyle="round"` + `paddingX={1}`, both sides — and `clipRowText` (newline-safe, unlike a bare
+  // `truncateLabel`) is the general clip this file already reaches for elsewhere (`clipSegments`'s own
+  // newline arm), reused here for a single string rather than a row's own segment list.
+  const subViewWidth = Math.max(1, (columns ?? process.stdout.columns ?? 80) - PERMISSIONS_FRAME_INSET);
+
   if (sub === "addRuleText") return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>{`Add ${behavior} permission rule`}</Text>
       <Text>Permission rules are a tool name, optionally followed by a specifier in parentheses.</Text>
       <Text dimColor>e.g., <Text bold>WebFetch</Text> or <Text bold>Bash(ls *)</Text></Text>
       <Box flexDirection="row">
-        {ruleText.length ? <Text>{ruleText}</Text> : <Text dimColor>Enter permission rule…</Text>}
+        {/* `- 1`: this row also carries the inverse-video cursor block right after the text (below), which
+            costs one more column this row's own width budget must leave room for. */}
+        {ruleText.length ? <Text>{clipRowText(ruleText, Math.max(1, subViewWidth - 1))}</Text> : <Text dimColor>Enter permission rule…</Text>}
         <Text inverse>{" "}</Text>
       </Box>
       <Text dimColor>{RULE_FLOW_FOOTER}</Text>
@@ -617,7 +632,7 @@ export function PermissionsDialog({
       {DEST_OPTIONS.map((o, i) => (
         <Box key={o.label} flexDirection="column">
           <Text color={i === destIdx ? ACCENT : undefined}>{i === destIdx ? "❯ " : "  "}{o.label}</Text>
-          <Text dimColor>    {o.desc(cwd)}</Text>
+          <Text dimColor>    {clipRowText(o.desc(cwd), Math.max(1, subViewWidth - 4))}</Text>
         </Box>
       ))}
       <Text dimColor>{RULE_FLOW_FOOTER}</Text>
@@ -626,7 +641,7 @@ export function PermissionsDialog({
   if (sub === "deleteConfirm" && selectedRule && behavior) return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>{`Delete ${DELETE_LABEL[behavior]} tool?`}</Text>
-      <Text bold>{selectedRule.rule}</Text>
+      <Text bold>{clipRowText(selectedRule.rule, subViewWidth)}</Text>
       <Text>Are you sure you want to delete this permission rule?</Text>
       <Text dimColor>{DELETE_FOOTER}</Text>
     </Box>
@@ -634,8 +649,8 @@ export function PermissionsDialog({
   if (sub === "ruleDetails" && selectedRule) return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Rule details</Text>
-      <Text bold>{selectedRule.rule}</Text>
-      <Text dimColor>{`From ${SOURCE_LABELS[selectedRule.source] ?? selectedRule.source}`}</Text>
+      <Text bold>{clipRowText(selectedRule.rule, subViewWidth)}</Text>
+      <Text dimColor>{clipRowText(`From ${SOURCE_LABELS[selectedRule.source] ?? selectedRule.source}`, subViewWidth)}</Text>
       <Text> </Text>
       <Text>This rule comes from a read-only source and cannot be modified here.</Text>
       <Text dimColor>{DETAILS_FOOTER}</Text>
@@ -656,7 +671,7 @@ export function PermissionsDialog({
   if (sub === "removeDirConfirm" && selectedDir) return (
     <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor={ACCENT}>
       <Text bold>Remove directory from workspace?</Text>
-      <Text bold>{selectedDir}</Text>
+      <Text bold>{clipRowText(selectedDir, subViewWidth)}</Text>
       <Text>Claude Code will no longer have access to files in this directory.</Text>
       <Text dimColor>{REMOVE_DIR_FOOTER}</Text>
     </Box>

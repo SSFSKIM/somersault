@@ -55,7 +55,7 @@ import { formatBindingLower, withModSep } from "./keys/hints.js";
 import { rankCommands, type CommandEntry } from "./commandComplete.js";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { Select, type SelectOption } from "./select/Select.js";
-import { truncateLabel } from "./select/selectModel.js";
+import { clipRowText } from "./rewindModel.js";
 import { Tabs, Tab } from "./select/Tabs.js";
 import { ShortcutsGrid } from "./ShortcutsOverlay.js";
 
@@ -95,14 +95,23 @@ export function splitCommands(commands: readonly CommandEntry[]): { defaults: Co
 }
 
 /** `FIr`'s row model (L459455-459461): dedup by name, sort by name, `/name` as the label, the description
- *  clipped to `columns - 10`. */
+ *  clipped to `columns - 10`.
+ *
+ *  bl10 fix wave 7, W7-2 sweep: `label` used to be the raw `/${c.name}` with no clip at all — the live
+ *  catalog's `CommandEntry.name` is not a compile-time literal (a plugin/custom command names itself), so an
+ *  unusually long one reaches `Select`'s two-column layout unclipped (which happens to bound it there via its
+ *  own `labelColumnWidth` truncation) AND the manual, non-`Select` search-result render below (which did not
+ *  bound it at all). Clipped at the source instead of patching only the second render site: one change fixes
+ *  both, and pre-clipping here can only shrink what `labelColumnWidth`'s own computation sees, never widen it.
+ *  `clipRowText`, not `truncateLabel` alone, for the same newline-safety reason `mcpFetchErrorText` picks it
+ *  over a bare width clip — a command name is catalog data, not a compile-time literal. */
 export function browserOptions(commands: readonly CommandEntry[], columns: number): SelectOption[] {
   const width = Math.max(1, columns - 10);
   const seen = new Set<string>();
   return commands
     .filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ value: c.name, label: `/${c.name}`, description: truncateLabel(c.description, width) }));
+    .map((c) => ({ value: c.name, label: clipRowText(`/${c.name}`, width), description: clipRowText(c.description, width) }));
 }
 
 /** `K_f` (L459450): how many rows of the list fit under this dialog's chrome. */
@@ -153,16 +162,20 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
     return (
       <Box flexDirection="column">
         <Text>{title}</Text>
+        {/* bl10 fix wave 7, W7-2 sweep: `search` is user-typed and unbounded, exactly `SettingsDialog`'s own
+            `/` query gap (fw7 W7-1's cited surface). Bounded here the same way that fix bounds it, and for the
+            same reason `browserOptions` above now clips `label` — `columns - 10` is the width already
+            established for this dialog's browser row. */}
         {search !== null ? (
           <Box flexDirection="row">
-            {search.length ? <Text>{search}</Text> : <Text dimColor>Search commands…</Text>}
+            {search.length ? <Text>{clipRowText(search, Math.max(1, columns - 10))}</Text> : <Text dimColor>Search commands…</Text>}
             <Text inverse>{" "}</Text>
           </Box>
         ) : null}
         <Box marginTop={1} flexDirection="column">
           {search !== null
             ? (filtered.length === 0
-              ? <Text dimColor>{`No commands match "${search}"`}</Text>
+              ? <Text dimColor>{clipRowText(`No commands match "${search}"`, Math.max(1, columns - 10))}</Text>
               : browserOptions(filtered, columns).slice(0, browserVisibleRows(rows)).map((o) => (
                 <Box key={o.value} flexDirection="row" gap={2}>
                   <Text>{o.label}</Text><Text dimColor>{o.description}</Text>

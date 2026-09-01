@@ -479,6 +479,43 @@ describe("McpDialog — server-menu/server-tools headings flatten and truncate (
   });
 });
 
+// bl10 fix wave 7, W7-2 (cited site): the fetch-error path (~:171-174) rendered the raw `Error.message`
+// verbatim, with no width/row bounding at all — unlike every other string in this dialog (root list, tools
+// list, tool detail, server-menu/server-tools headings), a long or multiline message could push the composed
+// frame past `rows`, tripping Ink's tall-frame replay. Same "control" pattern as the headings' own fw5 tests
+// above: a short and a long/newline-carrying message must produce the SAME total frame height once the long
+// one is flattened and clipped to the empty-list body's own budget.
+describe("McpDialog — fetch-error text flattens and truncates (bl10 fw7 W7-2)", () => {
+  async function heightAt(message: string, rows = 14, columns = 40) {
+    const instance = render(<McpDialog fetchServers={() => Promise.reject(new Error(message))} onClose={() => {}} rows={rows} columns={columns} />);
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    const lines = frame(instance.lastFrame).split("\n").length;
+    instance.unmount();
+    return lines;
+  }
+
+  it("an over-long fetch-error message renders as one physical row, same total height as a short one", async () => {
+    const short = await heightAt("ECONNRESET");
+    const wide = await heightAt(`connection failed: ${"n".repeat(2000)}`);
+    expect(wide, "an unclipped fetch-error message wraps into extra rows the empty-list body never budgets for").toBe(short);
+  });
+
+  it("a multiline fetch-error message renders as one physical row, same total height as its flattened form", async () => {
+    const flattened = await heightAt("connection failed: reason one reason two");
+    const withNewline = await heightAt("connection failed: reason one\nreason two");
+    expect(withNewline, "an embedded newline in the fetch-error message must not paint as an extra row").toBe(flattened);
+  });
+
+  it("keeps the composed frame within `rows` for a very long multiline error", async () => {
+    const instance = render(<McpDialog fetchServers={() => Promise.reject(new Error(`${"x".repeat(500)}\n${"y".repeat(500)}`))} onClose={() => {}} rows={14} columns={40} />);
+    mounted = instance;
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    expect(frame(instance.lastFrame).split("\n").length).toBeLessThanOrEqual(14);
+  });
+});
+
 // The `/mcp` wiring tests (spec A2/D5-bl10) live in `mcp-wiring.test.tsx` — a SEPARATE file, mirroring
 // status-family-dialog.test.tsx's own split from its dialog's component tests. Not just tidiness: this
 // file's ~15 direct `McpDialog` renders above (each with a live `useSelectKeys` subscription, unmounted via

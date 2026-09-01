@@ -831,3 +831,96 @@ describe("PermissionsDialog — the auto keyhint bar replaces the browsing foote
     expect(f, "the Tabs strip is mounted regardless of the fetch").toContain("switch tab");
   });
 });
+
+// bl10 fix wave 7, W7-2 sweep: the six sub-views (`sub !== "none"`) are their own raw `<Box borderStyle="round">`
+// — not `renderItem`'s clipped list rows, and not routed through `DialogFrame` at all — and four of them embed
+// a genuinely dynamic, non-compile-time-literal string with no width bound: `selectedRule.rule` (a settings-file
+// rule string) in `deleteConfirm`/`ruleDetails`, `SOURCE_LABELS[...] ?? selectedRule.source` (an unrecognized
+// provenance string falls back to the raw value) in `ruleDetails`, `selectedDir` (a workspace path) in
+// `removeDirConfirm`, and the live-typed `ruleText` echo in `addRuleText`. Same `<Box width>` convention as the
+// row-clip round above; `frameLines` is that describe block's own helper, reused here.
+describe("PermissionsDialog — sub-view confirms bound their dynamic strings (bl10 fw7 W7-2 sweep)", () => {
+  const at = (cols: number, over: Partial<Parameters<typeof PermissionsDialog>[0]>) => (
+    <Box width={cols}><PermissionsDialog {...props(over)} rows={40} columns={cols} /></Box>
+  );
+
+  it("clips an over-long rule string in the delete confirm to the same height as a short one", async () => {
+    const short = render(at(60, { fetchSettings: async () => oneRemovable as unknown }));
+    await waitFor(() => plain(short.lastFrame).includes("❯ Add a new rule…"));
+    short.stdin.write(DOWN); await waitFor(() => plain(short.lastFrame).includes("❯ Bash(ls)"));
+    short.stdin.write(ENTER); await waitFor(() => plain(short.lastFrame).includes("Delete allowed tool?"));
+    const shortLines = frameLines(short.lastFrame);
+    short.unmount();
+
+    const longRule = { sources: [{ source: "flagSettings", settings: { permissions: { allow: [`Bash(${"x".repeat(200)})`] } } }] };
+    const wide = render(at(60, { fetchSettings: async () => longRule as unknown }));
+    await waitFor(() => plain(wide.lastFrame).includes("❯ Add a new rule…"));
+    wide.stdin.write(DOWN); await waitFor(() => plain(wide.lastFrame).includes("❯ Bash(x"));
+    wide.stdin.write(ENTER); await waitFor(() => plain(wide.lastFrame).includes("Delete allowed tool?"));
+    const wideLines = frameLines(wide.lastFrame);
+    wide.unmount();
+
+    expect(wideLines, "an unclipped rule string wraps the delete confirm into extra rows").toBe(shortLines);
+  });
+
+  it("clips an over-long rule string AND an unrecognized long source name in rule details", async () => {
+    const short = { sources: [{ source: "userSettings", settings: { permissions: { allow: ["Bash(ls)"] } } }] };
+    const shortR = render(at(60, { fetchSettings: async () => short as unknown }));
+    await waitFor(() => plain(shortR.lastFrame).includes("❯ Add a new rule…"));
+    shortR.stdin.write(DOWN); await waitFor(() => plain(shortR.lastFrame).includes("❯ Bash(ls)"));
+    shortR.stdin.write(ENTER); await waitFor(() => plain(shortR.lastFrame).includes("Rule details"));
+    const shortLines = frameLines(shortR.lastFrame);
+    shortR.unmount();
+
+    const long = { sources: [{ source: `custom-${"s".repeat(200)}`, settings: { permissions: { allow: [`Bash(${"r".repeat(200)})`] } } }] };
+    const longR = render(at(60, { fetchSettings: async () => long as unknown }));
+    await waitFor(() => plain(longR.lastFrame).includes("❯ Add a new rule…"));
+    longR.stdin.write(DOWN); await waitFor(() => plain(longR.lastFrame).includes("❯ Bash(r"));
+    longR.stdin.write(ENTER); await waitFor(() => plain(longR.lastFrame).includes("Rule details"));
+    const longLines = frameLines(longR.lastFrame);
+    longR.unmount();
+
+    expect(longLines, "an unclipped rule string and/or unrecognized source name wrap rule details into extra rows").toBe(shortLines);
+  });
+
+  it("clips an over-long directory path in the remove-directory confirm to the same height as a short one", async () => {
+    const shortDirs = [{ path: "/tmp/added", source: "session" as const }];
+    const shortR = render(at(60, { tab: "Workspace", fetchDirs: async () => shortDirs }));
+    await waitFor(() => plain(shortR.lastFrame).includes("❯ Add directory…"));
+    shortR.stdin.write(DOWN); await waitFor(() => plain(shortR.lastFrame).includes("❯ /tmp/added"));
+    shortR.stdin.write(ENTER); await waitFor(() => plain(shortR.lastFrame).includes("Remove directory from workspace?"));
+    const shortLines = frameLines(shortR.lastFrame);
+    shortR.unmount();
+
+    const longPath = `/tmp/${"d".repeat(200)}`;
+    const longDirs = [{ path: longPath, source: "session" as const }];
+    const longR = render(at(60, { tab: "Workspace", fetchDirs: async () => longDirs }));
+    await waitFor(() => plain(longR.lastFrame).includes("❯ Add directory…"));
+    longR.stdin.write(DOWN); await waitFor(() => plain(longR.lastFrame).includes("❯ /tmp/d"));
+    longR.stdin.write(ENTER); await waitFor(() => plain(longR.lastFrame).includes("Remove directory from workspace?"));
+    const longLines = frameLines(longR.lastFrame);
+    longR.unmount();
+
+    expect(longLines, "an unclipped directory path wraps the remove confirm into extra rows").toBe(shortLines);
+  });
+
+  it("clips an over-long typed rule to the same height as a short one while adding a rule", async () => {
+    const shortR = render(at(60, {}));
+    await waitFor(() => plain(shortR.lastFrame).includes("❯ Add a new rule…"));
+    shortR.stdin.write(ENTER); await waitFor(() => plain(shortR.lastFrame).includes("Add allow permission rule"));
+    shortR.stdin.write("a"); await waitFor(() => plain(shortR.lastFrame).includes("a"));
+    const shortLines = frameLines(shortR.lastFrame);
+    shortR.unmount();
+
+    const longR = render(at(60, {}));
+    await waitFor(() => plain(longR.lastFrame).includes("❯ Add a new rule…"));
+    longR.stdin.write(ENTER); await waitFor(() => plain(longR.lastFrame).includes("Add allow permission rule"));
+    const query = "a".repeat(200);
+    longR.stdin.write(query);
+    await waitFor(() => plain(longR.lastFrame).includes("aaaa"));
+    const longLines = frameLines(longR.lastFrame);
+    longR.unmount();
+
+    expect(longLines, "an unclipped typed rule echo wraps the add-rule box into extra rows").toBe(shortLines);
+  });
+});

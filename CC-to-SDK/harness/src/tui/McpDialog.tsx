@@ -30,7 +30,7 @@ import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js"
 import {
   buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpToolsVisibleRows, mcpWindow,
   mcpToolDetailDescriptionRows, MCP_ROOT_VIEW, enterServerMenu, enterServerTools, enterToolDetail, popMcpView,
-  findServer, serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE,
+  findServer, serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE, flattenLabel,
   type McpServerRow, type McpToolInfo, type McpView,
 } from "./mcpDialogModel.js";
 
@@ -170,7 +170,18 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
 
     if (view.type === "list") {
       if (serverCount === 0) {
-        if (fetchError !== undefined) return <Text color={role("error")}>{mcpFetchErrorText(fetchError)}</Text>;
+        // bl10 fix wave 7, W7-2 (cited site): `fetchError` is the raw `Error.message` of whatever
+        // `fetchServers` rejected with — a host/transport string this dialog does not control, unlike every
+        // other value it renders (root list, tools list, tool detail, server-menu/server-tools headings all
+        // flatten+truncate at the model boundary or the render site). A long or multiline message rendered
+        // verbatim here has no width/row bounding at all: flattened the same way `normalizeMcpServers` flattens
+        // every OTHER string field it reads (an embedded newline paints as a real Ink line break, which
+        // `stringWidth` cannot see), then clipped to this row's own budget — the frame's `paddingX` either
+        // side, no `Row` gutter here, same width every other bare heading in this file clips to.
+        if (fetchError !== undefined) {
+          const errorWidth = Math.max(1, columns - 2);
+          return <Text color={role("error")}>{truncateLabel(mcpFetchErrorText(flattenLabel(fetchError)), errorWidth)}</Text>;
+        }
         return <Text dimColor>{MCP_EMPTY}</Text>;
       }
       const flatFocus = flatIndexOfServer(listRows, serverFocus);

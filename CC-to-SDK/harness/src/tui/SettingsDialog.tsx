@@ -571,14 +571,22 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
         <Text> </Text>
         <TabPane title="Status">{readOnlyTabBody("Status")}</TabPane>
         <TabPane title="Config">
+          {/* bl10 fix wave 7, W7-2 sweep: `search` is user-typed and unbounded — unlike every other dynamic
+              string this dialog renders (`RowBody`'s own `clipRowText`, the read-only tabs' `paintedRows`/
+              `MoreRow` window), the echoed query line and the "No settings match" message below both used to
+              embed it verbatim, with no width bound at all. A long enough query wraps under Ink and grows the
+              frame past `SETTINGS_CHROME_ROWS`' own budget, the same hazard `RowBody`'s clip exists to close
+              for a settings VALUE. `clipRowText` (already imported, for `RowBody`) is reused rather than
+              `truncateLabel` alone purely for consistency with every other dynamic string this dialog clips —
+              `onSearchKey`'s own `input >= " "` guard already keeps a literal newline out of `search`. */}
           {search !== null ? (
             <Box flexDirection="row">
-              {search.length ? <Text>{search}</Text> : <Text dimColor>Search settings…</Text>}
+              {search.length ? <Text>{clipRowText(search, settingsRowWidth(columns))}</Text> : <Text dimColor>Search settings…</Text>}
               <Text inverse>{" "}</Text>
             </Box>
           ) : null}
           {search !== null && filtered.length === 0 ? (
-            <Text dimColor>{`No settings match "${search}"`}</Text>
+            <Text dimColor>{clipRowText(`No settings match "${search}"`, settingsRowWidth(columns))}</Text>
           ) : search !== null ? (
             /* THE `/` QUERY'S OWN LIST, UNCHANGED — and the `Select` is deliberately not mounted over it.
                While the query is open every key is text (that is why the scopes stay pushed), and a mounted
