@@ -327,6 +327,9 @@ const ORACLE_BROKERMAP =
 const ORACLE_BROKERUPD =
   "strangle/permissions-parity.test.ts grades it: the update-filter block runs both context shapes and both tool suppression hooks, compares the surviving update list, and asserts the exemption short-circuits before the tool is consulted.";
 
+const ONECALLER_TEXT =
+  "`Gx` has exactly one live headless caller — the re-check the engine runs on a PermissionRequest hook's REWRITTEN input — and every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs.";
+
 export const EXCLUSIONS: Exclusion[] = [
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded
@@ -2209,6 +2212,35 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "broker-permission-updates#brokerPermissionUpdates@9:T",
     reason:
       "its null-check term. Same condition. " +
+      ORACLE_BROKERUPD,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@47:T",
+    reason:
+      "the NON-BYPASS half of the safety floor: an ask that a safety check, a sandbox override or a plan-mode floor holds in place. All three disjuncts are conditions this corpus does not create — the safety check for the reason §3.3 of the matrix gives (creating one means running something genuinely dangerous, which should be designed rather than improvised), the sandbox override because sandboxing is off, and the plan-mode floor because the plan cells' tool calls are refused above this rung. " +
+      ORACLE_PRECHECK +
+      " The floor's asymmetry is the arm the oracle spends most of its pre-check cases on, because under bypass only a bypass-immune check holds and outside it any of the three does — an inversion no recording could see.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@30:T",
+    reason:
+      "the same safety floor in the rule-only checker, holding. Compounds two uncreated conditions: a safety check firing at all, and " +
+      ONECALLER_TEXT +
+      " " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@30:F",
+    reason:
+      "the same floor NOT holding, which is the ordinary path through it. Unreached for the second of those two reasons alone: " +
+      ONECALLER_TEXT +
+      " " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@0:T",
+    reason:
+      "the whole exemption test — a remote-execution context OR an otherwise exempt one. X6's env allowlist forbids a graded run from producing the first, and the second is a context shape the headless broker seam does not construct. This is the branch that decides whether the update filter runs at all, so its true arm short-circuits everything below it. " +
       ORACLE_BROKERUPD,
   },
 ];
