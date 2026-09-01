@@ -34,8 +34,8 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { tmpdir as osTmpdir } from "node:os";
-import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, jpegDimensions, pngDimensions } from "../media/imageDims.js";
-import { reencodeImage } from "../media/imageCodec.js";
+import { MAX_DIMENSION, POST_PROCESS_BYTE_BUDGET, bmpDimensions, jpegDimensions, pngDimensions } from "../media/imageDims.js";
+import { budgetMsForPixels, reencodeImage } from "../media/imageCodec.js";
 
 // ---------------------------------------------------------------------------------------------
 // Public result + DI types.
@@ -191,8 +191,12 @@ async function readLinuxImage(deps: ClipboardDeps): Promise<ClipboardImageResult
     // `POST_PROCESS_BYTE_BUDGET` in the same call — no separate oversized-BMP case to handle.
     const isBmp = bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d;
     if (isBmp) {
+      // Same scaling as the PNG path below — read the declared size from the header (no decode needed)
+      // so this belt gets the same pixel-proportional budget instead of the flat default.
+      const declared = bmpDimensions(bytes);
       const re = reencodeImage({ data: bytes, mediaType: "image/bmp" },
-        { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET });
+        { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET,
+          ...(declared ? { budgetMs: budgetMsForPixels(declared.width, declared.height) } : {}) });
       if (!re.ok) return { kind: "failed", reason: re.reason };
       return { kind: "image", data: re.value.data, mediaType: "image/png", dimensions: re.value.dimensions };
     }
@@ -332,8 +336,12 @@ export async function pasteClipboardImage(deps: ClipboardDeps = defaultClipboard
     if (!re) return { kind: "image-failed", reason: "image could not be reduced to fit the request size limit" };
     return { kind: "image", content: re.data.toString("base64"), mediaType: re.mediaType, dimensions: re.dimensions };
   }
+  // Scaled by the DECLARED dimensions already in hand (the PNG header read above, or the BMP rescue's
+  // own decode) rather than PROCESSING_BUDGET_MS's flat default (tech-debt-tracker "2026-08-31" — the
+  // owner's product call, resolved as "scale with pixel count") — a large legitimate paste keeps the
+  // same idle safety margin a small one gets, instead of shrinking as pixel count grows.
   const re = reencodeImage({ data: r.data, mediaType: r.mediaType },
-    { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET });
+    { maxDimension: MAX_DIMENSION, byteBudget: POST_PROCESS_BYTE_BUDGET, budgetMs: budgetMsForPixels(r.dimensions.width, r.dimensions.height) });
   if (!re.ok) return { kind: "image-failed", reason: re.reason };
   return { kind: "image", content: re.value.data.toString("base64"), mediaType: "image/png", dimensions: re.value.dimensions };
 }

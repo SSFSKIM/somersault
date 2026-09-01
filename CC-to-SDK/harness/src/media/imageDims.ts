@@ -48,6 +48,14 @@ export function jpegDimensions(buf: Buffer): { width: number; height: number } |
   return null;
 }
 
+/** BMP: 14-byte file header, then the DIB header's width(4 LE, offset 18) / height(4 LE signed,
+ *  offset 22 — negative means top-down; magnitude is what a caller wants). Only the two fields this
+ *  reader touches are validated; `decodeBmp` (imageCodec.ts) is what checks the rest of the header. */
+export function bmpDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 26 || buf[0] !== 0x42 || buf[1] !== 0x4d) return null;
+  return { width: buf.readInt32LE(18), height: Math.abs(buf.readInt32LE(22)) };
+}
+
 /** GIF87a/GIF89a: 6-byte version tag, then the Logical Screen Descriptor's width/height as two
  *  LE uint16s at bytes 6-10. Both GIF87a and GIF89a lay the descriptor out identically. */
 export function gifDimensions(buf: Buffer): { width: number; height: number } | null {

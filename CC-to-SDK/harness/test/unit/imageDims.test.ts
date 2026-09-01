@@ -9,8 +9,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  MAX_DIMENSION, MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET, gifDimensions, jpegDimensions,
-  pngDimensions, sniffImageMediaType, webpDimensions,
+  MAX_DIMENSION, MAX_IMAGES_PER_PROMPT, POST_PROCESS_BYTE_BUDGET, bmpDimensions, gifDimensions,
+  jpegDimensions, pngDimensions, sniffImageMediaType, webpDimensions,
 } from "../../src/media/imageDims.js";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
@@ -35,6 +35,17 @@ const jpegHeader = (width: number, height: number): Buffer => {
   buf.writeUInt8(8, 6);
   buf.writeUInt16BE(height, 7);
   buf.writeUInt16BE(width, 9);
+  return buf;
+};
+
+/** BMP: "BM" signature at bytes 0-2, then the DIB header's width(4 LE, offset 18) / height
+ *  (4 LE signed, offset 22). `negativeHeight` writes a top-down (negative) height to prove the
+ *  reader returns its magnitude. */
+const bmpHeader = (width: number, height: number, negativeHeight = false): Buffer => {
+  const buf = Buffer.alloc(26);
+  buf.write("BM", 0, "ascii");
+  buf.writeInt32LE(width, 18);
+  buf.writeInt32LE(negativeHeight ? -height : height, 22);
   return buf;
 };
 
@@ -72,6 +83,13 @@ describe("src/media/imageDims.ts — the neutral leaf", () => {
   it("reads JPEG SOF dimensions and rejects a non-JPEG", () => {
     expect(jpegDimensions(jpegHeader(320, 240))).toEqual({ width: 320, height: 240 });
     expect(jpegDimensions(Buffer.from([0x00, 0x01, 0x02, 0x03]))).toBeNull();
+  });
+
+  it("reads BMP DIB-header dimensions, takes the magnitude of a top-down (negative) height, and rejects a non-BMP", () => {
+    expect(bmpDimensions(bmpHeader(640, 480))).toEqual({ width: 640, height: 480 });
+    expect(bmpDimensions(bmpHeader(640, 480, true))).toEqual({ width: 640, height: 480 }); // top-down
+    expect(bmpDimensions(Buffer.from([0x00, 0x00]))).toBeNull(); // wrong signature
+    expect(bmpDimensions(bmpHeader(640, 480).subarray(0, 25))).toBeNull(); // truncated before height
   });
 
   it("reads GIF87a and GIF89a dimensions and rejects a bad tag", () => {

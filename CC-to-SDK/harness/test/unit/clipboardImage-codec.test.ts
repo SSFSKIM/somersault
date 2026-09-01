@@ -14,7 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as imageCodec from "../../src/media/imageCodec.js";
 import { pasteClipboardImage, defaultClipboardDeps, type ClipboardDeps } from "../../src/tui/clipboardImage.js";
-import { pngDimensions, MAX_DIMENSION } from "../../src/media/imageDims.js";
+import { pngDimensions, bmpDimensions, MAX_DIMENSION } from "../../src/media/imageDims.js";
 import { withFakeClipboard } from "../fixtures/fakeClipboardBin/install.js";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "images");
@@ -42,6 +42,39 @@ describe("I5c — Linux dispatch, through real fake binaries and the real exec",
       expect(Math.max(dims.width, dims.height)).toBeLessThanOrEqual(MAX_DIMENSION);
       expect(dims.width).toBeLessThan(3200);
     });
+  });
+
+  it("BL13 — the Linux PNG path forwards a budgetMs SCALED from the declared header dimensions, not the flat default", async () => {
+    const raw = readFileSync(join(FIXTURES_DIR, "oversized-3200x1800.png"));
+    const declared = pngDimensions(raw)!;
+    const codecSpy = vi.spyOn(imageCodec, "reencodeImage");
+    await withFakeClipboard({ mime: "image/png", fixture: "oversized-3200x1800.png" }, async () => {
+      const out = await pasteClipboardImage({ ...defaultClipboardDeps(), platform: "linux" });
+      expect(out.kind).toBe("image");
+    });
+    expect(codecSpy).toHaveBeenCalledTimes(1);
+    const opts = codecSpy.mock.calls[0]![1];
+    expect(opts?.budgetMs).toBe(imageCodec.budgetMsForPixels(declared.width, declared.height));
+    expect(opts?.budgetMs).not.toBe(imageCodec.PROCESSING_BUDGET_MS); // proves scaling actually applied
+    codecSpy.mockRestore();
+  });
+
+  it("BL13 — the Linux BMP rescue forwards a budgetMs scaled from the BMP's OWN declared header, read before decode", async () => {
+    const raw = readFileSync(join(FIXTURES_DIR, "clipboard-v5.bmp"));
+    const declared = bmpDimensions(raw)!;
+    const codecSpy = vi.spyOn(imageCodec, "reencodeImage");
+    await withFakeClipboard({ mime: "image/bmp", fixture: "clipboard-v5.bmp" }, async () => {
+      const out = await pasteClipboardImage({ ...defaultClipboardDeps(), platform: "linux" });
+      expect(out.kind).toBe("image");
+    });
+    // `readLinuxImage`'s BMP branch re-encodes BMP→PNG once (this is the call this test is about);
+    // the rescued result still reports `kind: "image"`, so `pasteClipboardImage`'s own non-darwin
+    // path re-encodes it a SECOND time (pre-existing, unrelated to BL13 — that call is scaled from
+    // the already-PNG output's own dimensions, covered by the sibling PNG-path test above).
+    expect(codecSpy).toHaveBeenCalledTimes(2);
+    const opts = codecSpy.mock.calls[0]![1];
+    expect(opts?.budgetMs).toBe(imageCodec.budgetMsForPixels(declared.width, declared.height));
+    codecSpy.mockRestore();
   });
 
   it("a HOSTILE clipboard image fails with the codec's own reason, and nothing is left behind", async () => {
