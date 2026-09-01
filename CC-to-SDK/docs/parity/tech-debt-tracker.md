@@ -63,8 +63,8 @@ the commit) or when a round's scope absorbs them.
   `descKeep`) to the frame budget; a long server error/URL/command or tall description survives
   intact in `mcpDialogModel`'s normalized rows but no view scrolls or expands to show the tail,
   so the omitted diagnostic is unreadable in the TUI. Safe direction (clip beats tall-frame
-  replay), same design tension as the Settings read-only entry above — resolve both with one
-  scrollable-detail primitive if either becomes a real-usage complaint.
+  replay). The Settings read-only tabs had the same tension and got a scroll window at bl10
+  wave 8 (`0b2e56076`) — reuse that pattern here if this becomes a real-usage complaint.
 - **McpDialog's view stack reads render-time state under batched stdin** (bl10 rereview6,
   2026-09-02; `McpDialog.tsx` `useSelectKeys` wiring). Multiple keys coalesced into one chunk all
   dispatch against the same render's `view`, so `Enter Enter` / `Esc Esc` would advance/pop one
