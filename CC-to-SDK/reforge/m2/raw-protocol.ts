@@ -14,6 +14,8 @@ import { diffTranscripts } from "../src/differ.js";
 import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX, saveTranscript, sdkEnv } from "../src/runTurn.js";
 import { requireRecordCredential, type EnvMode } from "../src/env.js";
+import { resetSandbox } from "../src/harness.js";
+import { seedGitRepo } from "../w3/scenarios.js";
 import { gateCacheCheck } from "../src/leakcheck.js";
 
 const args = process.argv.slice(2);
@@ -123,6 +125,24 @@ const ALL_CONTROL_CASES: ControlCase[] = [
     grades: "the mode setter: guard, unchanged-mode short circuit, transition",
   },
   {
+    name: "set_model-invalid",
+    request: { subtype: "set_model", model: 7 },
+    expect: "error",
+    errorContains: "set_model: model must be a string",
+    grades: "the model handler's own type refusal, above the normaliser",
+  },
+  {
+    // The wave's one required LIVE recording: this is the only control subtype
+    // that changes the model request body, so unlike every other case here it
+    // cannot be graded against a cassette that was already there. `haiku` is
+    // chosen because it actually MOVES the model — a same-family alias would
+    // have left the request identical and graded only the response frame.
+    name: "set_model-valid",
+    request: { subtype: "set_model", model: "haiku" },
+    expect: "success",
+    grades: "the model switch end to end, and into the turn's request body",
+  },
+  {
     name: "set_max_thinking_tokens-invalid",
     request: { subtype: "set_max_thinking_tokens", max_thinking_tokens: "lots" },
     expect: "error",
@@ -169,7 +189,22 @@ const CONTROL_CASES = process.env.REFORGE_RAW_CASES
 
 /** Speak stream-json to the engine binary directly; return every wire line. */
 function driveRaw(engine: string, baseUrl: string, mode: EnvMode): Promise<{ lines: unknown[]; exitCode: number | null; stderr: string }> {
-  mkdirSync(SANDBOX, { recursive: true });
+  // THE SANDBOX IS RESET AND SEEDED PER SIDE, and this driver did neither until
+  // W7. It only ever `mkdir -p`-ed, so the session's working directory was
+  // whatever the last suite left behind — and because the sandbox sits INSIDE
+  // this repository, an unseeded one made `git` resolve to the repository
+  // itself. That is C6's finding one suite over, and it stayed invisible for a
+  // simple reason: nothing in the raw lane read the system prompt. Adding
+  // `get_context_usage` — whose handler counts tokens section by section — put
+  // the prompt on the graded request surface, and the recording immediately
+  // showed the operator's own branch, git user and dirty file list inside the
+  // cassette, with five requests falling back positionally on replay.
+  //
+  // The seed is C6's, reused rather than re-derived: config-less `git`, pinned
+  // identity and both clocks, so every machine produces the same commit and the
+  // whole `gitStatus:` section is byte-stable and therefore gradable.
+  resetSandbox();
+  seedGitRepo(SANDBOX);
   const child = spawn(
     enginePath(engine),
     [

@@ -86,6 +86,11 @@ import * as brokerResponseMap from "../../strangle/modules/broker-response-map/r
 import * as brokerPermissionUpdates from "../../strangle/modules/broker-permission-updates/reference.js";
 import * as controlResponseSuccess from "../../strangle/modules/control-response-success/reference.js";
 import * as controlResponseError from "../../strangle/modules/control-response-error/reference.js";
+import * as thinkingConfig from "../../strangle/modules/thinking-config/reference.js";
+import * as permissionModeSetter from "../../strangle/modules/permission-mode-setter/reference.js";
+import * as modelSwitch from "../../strangle/modules/model-switch/reference.js";
+import * as initializePayload from "../../strangle/modules/initialize-payload/reference.js";
+import * as initializeHandler from "../../strangle/modules/initialize-handler/reference.js";
 import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
 import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
 import * as systemPromptWire from "../../strangle/modules/system-prompt-wire/reference.js";
@@ -215,6 +220,13 @@ const OWNED: [string, string, unknown][] = [
   ["broker-permission-updates", "subsystem/permissions", brokerPermissionUpdates.brokerPermissionUpdates],
   ["control-response-success", "subsystem/control-protocol", controlResponseSuccess.controlResponseSuccess],
   ["control-response-error", "subsystem/control-protocol", controlResponseError.controlResponseError],
+  // C10 / W7 — the named handlers the live dispatch arms delegate to. The
+  // ladder itself is not takeable (its arms carry loop control); these are.
+  ["thinking-config", "subsystem/control-protocol", thinkingConfig.resolveThinkingConfig],
+  ["permission-mode-setter", "subsystem/control-protocol", permissionModeSetter.applyPermissionModeRequest],
+  ["model-switch", "subsystem/control-protocol", modelSwitch.applyModelSwitchRequest],
+  ["initialize-payload", "subsystem/control-protocol", initializePayload.buildInitializeResponsePayload],
+  ["initialize-handler", "subsystem/control-protocol", initializeHandler.handleInitialize],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

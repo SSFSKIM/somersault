@@ -42,6 +42,7 @@
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
+import { runnerFor } from "./runners.js";
 
 // build.ts boot-checks the graph it writes, so a build that exits 0 has already
 // proven it boots at the pinned version; the gate only has to relay the failure.
@@ -108,6 +109,17 @@ for (const [label, argv] of [
   // builder's own case list. A pin that adds a mode, re-guards one or renames a
   // rule behaviour reddens here rather than silently narrowing the matrix.
   ["permission-surface fixture matches the pin", ["research/tools/extract-permission-surface.ts", "--check"]],
+  // The control wave's population under test, and the fifth pin-keyed fixture.
+  // W7's own scout counted the dispatch ladder's arms and the SDK's sendable
+  // subtypes by hand and got both numbers wrong, which is the enumeration
+  // failure C8 was corrected for twice. This one is derived from two artifacts
+  // that share no machinery — the engine's ladder, found by shape and confirmed
+  // by the `control_request` guard it sits under, and the installed SDK's
+  // sendable set — so a pin that adds an arm, retires one, or re-points a
+  // handler reddens here rather than silently narrowing the wave's claim. It
+  // also fails when the installed SDK moves, which is the intended reading: the
+  // set of subtypes a host can send is part of the population.
+  ["control-protocol fixture matches the pin", ["research/tools/extract-control-protocol.ts", "--check"]],
   // The other pin-keyed fixture, and the only §5 signal that can see a
   // subsystem move with every export inventory, anchor and footprint hash
   // byte-identical: the names the engine's barrel chunks re-export its own
@@ -229,6 +241,17 @@ for (const [label, script] of [
   // own resolveAnchor/selectExcision/assertSignature, so an oracle and a build
   // cannot grade different functions.
   ["permission-subsystem parity vs the pinned bundle", "strangle/permissions-parity.test.ts"],
+  // The same oracle for W7's control-protocol handlers. The corpus/domain gap
+  // here has a shape none of the five before it had: the raw driver DOES send
+  // ten control requests now, so this subsystem is not unrecordable — it is
+  // under-recordable by an order of magnitude. One request has one shape, and
+  // the model switch alone partitions into six refusals and three acceptances.
+  // Two whole regions are out of reach for structural reasons rather than
+  // budgetary ones: the REINITIALIZE arm answers a host reconnecting to a
+  // session in flight, which no scenario does; and the payload's two auto-mode
+  // fields appear only on a VS Code entrypoint, which the harness is not. Both
+  // are graded here because their gates are PORTS in the owned modules.
+  ["control-protocol parity vs the pinned bundle", "strangle/control-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
@@ -308,7 +331,10 @@ for (const t of TARGETS) {
     // instrumented and sabotaged builds cannot be the ones it grades).
     // Anything else is INCONCLUSIVE and fails the phase rather than passing it,
     // because "we could not measure it" is not "we measured it and it diverged".
-    const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"], SABOTAGE_TIMEOUT_MS);
+    // Not every covering tag is a corpus scenario: the control protocol is
+    // graded by the no-wrapper driver, because sdk.mjs consumes the frames a
+    // corpus scenario would have to see (strangle/runners.ts).
+    const r = run("npx", ["tsx", ...runnerFor(tag, "engine-strangled")], SABOTAGE_TIMEOUT_MS);
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
     // `spawnSync`'s own timeout report, not the exit code: the child here is
     // `npx`, which catches the SIGTERM and exits 143 of its own accord, so

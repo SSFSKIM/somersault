@@ -3684,6 +3684,564 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["hooks-file-watch"],
   },
+
+  // ---- the control protocol (subsystem/control-protocol) -------------------
+  // W7. The seam is NOT the dispatch ladder. `research/fixtures/
+  // control-protocol-<pin>.json` derives it from the bundle: fifty-two `else if`
+  // arms over fifty-four subtypes, seventeen of them carrying a `continue`
+  // relative to the enclosing `for await` and all of them closing over the
+  // frame-handler's locals. An excised arm would have to hand its loop control
+  // back through a return value, which is a different mechanism, not a
+  // generalisation of an existing one.
+  //
+  // What IS takeable is the named handler each live arm delegates to, and every
+  // one of them is a plain top-level function:
+  //
+  //   initialize-handler        the handshake every SDK session sends
+  //   initialize-payload        the ~1 KB answer that handshake returns
+  //   permission-mode-setter    set_permission_mode
+  //   model-switch              set_model
+  //   thinking-config           set_max_thinking_tokens
+  //
+  // W6 already owns the two response ENVELOPES these answer through
+  // (`control-response-success` / `control-response-error`), so the round trip
+  // is owned end to end for the subtypes above.
+  //
+  // ALL FIVE ARE SINGLE-CALLER, and that is fine here for a reason C7's rule
+  // makes explicit: the rule refuses a single-caller pure helper whose ONLY
+  // caller is itself owned. These callers are the arms, which stay upstream, so
+  // each delegation is a real seam the graph crosses.
+
+  {
+    // `Sf`. The session's thinking budget, and the only thing a host can change
+    // it with.
+    //
+    // ANCHOR: `budgetTokens:` is a STRUCTURAL anchor (§2.1) — this function
+    // emits no prose of its own. Nine carriers bundle-wide, ONE in this chunk,
+    // so the `coLiteral` scopes it to the chunk and it is unique there. The
+    // co-literal is the initialize arm's own validation sentence, which is
+    // unique bundle-wide and lives in the same frame handler; a chunk NAME would
+    // not survive a bump (strangle/anchor.ts).
+    name: "thinking-config",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: "budgetTokens:",
+    coLiteral: "initialize: sdkMcpServers and webSearchIsolationExemptMcpServers",
+    fn: "resolveThinkingConfig",
+    captures: [
+      {
+        // `nN` — true when no explicit thinking override is pinned, which is
+        // what makes an absent budget resolve to `adaptive` rather than to
+        // nothing.
+        as: "adaptiveThinkingAllowed",
+        kind: "effectful-port",
+        derive: pick("thinking-config", "adaptiveThinkingAllowed", new RegExp(`!==void 0&&(${ID})\\(\\)\\?\\{type:"adaptive"`)),
+      },
+    ],
+    coverage: ["raw-protocol"],
+  },
+
+  {
+    // `um`. The `set_permission_mode` handler — the campaign's SECOND candidate
+    // for this seam. C9 spliced `K0`, which composes the same guard with the
+    // same transition and reads exactly like a control handler, and measured it
+    // dark: the headless runtime never calls it. This one has a single call
+    // site and that call site is the arm.
+    //
+    // ANCHOR: `,context:t};return{ok:` is structural and true-substring-unique
+    // BUNDLE-WIDE, which is the strongest a function with no string literal at
+    // all can manage. It is also rename-fragile by construction — it names the
+    // minified parameter — so the expected failure at a pin bump is a loud
+    // missing anchor, not a mis-splice (§2.1 prices exactly this).
+    name: "permission-mode-setter",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: ",context:t};return{ok:",
+    fn: "applyPermissionModeRequest",
+    captures: [
+      {
+        // `GIe` — W6's `mode-change-guard`. Forwarded, never re-implemented:
+        // a second copy here would be two owned answers to one question.
+        as: "guardPermissionModeChange",
+        kind: "effectful-port",
+        derive: pick("permission-mode-setter", "guardPermissionModeChange", new RegExp(`let ${ID}=(${ID})\\(e\\.mode,t\\)`)),
+      },
+      {
+        // `V0` — W6's `mode-transition`, the eight side effects a real change has.
+        as: "transitionPermissionMode",
+        kind: "effectful-port",
+        derive: pick("permission-mode-setter", "transitionPermissionMode", new RegExp(`context:\\{\\.\\.\\.(${ID})\\(t\\.mode,${ID}\\.mode,t\\)`)),
+      },
+    ],
+    coverage: ["raw-protocol", "runtime-setters"],
+  },
+
+  {
+    // `_f`. The ~1 KB answer to the handshake, and the wave's clearest case of
+    // behaviour with no observer: `sdk.mjs` consumes the initialize response, so
+    // until the raw driver started sending `initialize` and reading the reply
+    // off the wire, not one field of this had ever been graded.
+    //
+    // ANCHOR: `available_output_styles` — one of the payload's own key names.
+    // Five carriers bundle-wide, ONE in this chunk, so the co-literal scopes it.
+    // Structural rather than prose (§2.1), and cheap to re-anchor if the key is
+    // renamed, which would be a wire-visible change anyway.
+    name: "initialize-payload",
+    target: "free-function",
+    signature: { params: 9, ancestry: ["SourceFile"] },
+    anchor: "available_output_styles",
+    coLiteral: "initialize: sdkMcpServers and webSearchIsolationExemptMcpServers",
+    fn: "buildInitializeResponsePayload",
+    captures: [
+      {
+        // `En` — the settings record the chosen output style comes from.
+        as: "settings",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "settings", new RegExp(`let ${ID}=(${ID})\\(\\)\\?\\.outputStyle\\|\\|`)),
+      },
+      {
+        // `Zw="default"` — owned as DEFAULT_OUTPUT_STYLE, forwarded so the
+        // adapter can equality-assert it.
+        as: "defaultOutputStyle",
+        kind: "primitive",
+        derive: pick("initialize-payload", "defaultOutputStyle", new RegExp(`\\?\\.outputStyle\\|\\|(${ID}),`)),
+      },
+      {
+        as: "listOutputStyles",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "listOutputStyles", new RegExp(`=await (${ID})\\(${ID}\\(\\),${ID}\\),`)),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "cwd", new RegExp(`=await ${ID}\\((${ID})\\(\\),${ID}\\),`)),
+      },
+      {
+        as: "accountInformation",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "accountInformation", new RegExp(`\\),${ID}=(${ID})\\(\\),${ID}=${ID}\\(\\)\\.toolPermissionContext\\.mode`)),
+      },
+      {
+        // `mN` — the VS-Code-entrypoint predicate. It gates BOTH the nudge
+        // computation and the two auto-mode payload fields, so one port, two uses.
+        as: "isVsCodeEntrypoint",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "isVsCodeEntrypoint", new RegExp(`\\.toolPermissionContext\\.mode,${ID}=(${ID})\\(\\)&&${ID}\\(\\)\\?`)),
+      },
+      {
+        as: "autoDefaultNudgeEligible",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "autoDefaultNudgeEligible", new RegExp(`\\.toolPermissionContext\\.mode,${ID}=${ID}\\(\\)&&(${ID})\\(\\)\\?`)),
+      },
+      {
+        as: "autoDefaultNudge",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "autoDefaultNudge", new RegExp(`\\?(${ID})\\(${ID}\\(\\)\\.toolPermissionContext,\\{requireOnboarding:!1\\}\\)`)),
+      },
+      {
+        as: "toSlashCommands",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "toSlashCommands", new RegExp(`\\{commands:(${ID})\\(e\\),agents:`)),
+      },
+      {
+        as: "apiProvider",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "apiProvider", new RegExp(`apiProvider:(${ID})\\(\\)\\},pid:process\\.pid`)),
+      },
+      {
+        // `sd` — a mode's host-facing name. Called twice: for the session's own
+        // mode and for the nudge's.
+        as: "renderPermissionMode",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "renderPermissionMode", new RegExp(`current_permission_mode:(${ID})\\(${ID}\\),hooks_applied:`)),
+      },
+      {
+        as: "modeIsDefaultFallback",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "modeIsDefaultFallback", new RegExp(`permission_mode_from_default_fallback:(${ID})\\(\\)&&`)),
+      },
+      {
+        as: "feedbackSurveyConfig",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "feedbackSurveyConfig", new RegExp(`feedback_survey_config:(${ID})\\(\\),`)),
+      },
+      {
+        as: "analyticsDisabled",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "analyticsDisabled", new RegExp(`analytics_disabled:(${ID})\\(\\),`)),
+      },
+      {
+        as: "footerIndicator",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "footerIndicator", new RegExp(`footer_indicator:(${ID})\\(\\)\\}`)),
+      },
+      {
+        as: "proactivity",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "proactivity", new RegExp(`proactivity:(${ID})\\(${ID}\\(\\)\\),footer_indicator:`)),
+      },
+      {
+        // `fNe` — the operator's stored remote-control preference. Read once and
+        // used twice: once as the value, once as the `=== undefined` test that
+        // decides whether the session was auto-enabled BY DEFAULT.
+        as: "remoteControlPreference",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "remoteControlPreference", new RegExp(`\\},${ID}=(${ID})\\(\\),${ID}=!${ID}\\(\\)&&\\(${ID}\\?\\?`)),
+      },
+      {
+        as: "remoteControlSuppressed",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "remoteControlSuppressed", new RegExp(`,${ID}=!(${ID})\\(\\)&&\\(${ID}\\?\\?${ID}\\(\\)\\);`)),
+      },
+      {
+        as: "remoteControlDefault",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "remoteControlDefault", new RegExp(`&&\\(${ID}\\?\\?(${ID})\\(\\)\\);`)),
+      },
+      {
+        as: "remoteControlAvailable",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "remoteControlAvailable", new RegExp(`\\.remote_control_available=(${ID})\\(\\)`)),
+      },
+      {
+        // `I` — the feature-gate resolver. §3.3 pins every gate to its
+        // compiled-in default, so the second argument is the answer this row
+        // always gets; the port stays forwarded because the RESOLUTION is what a
+        // pin bump can change.
+        as: "featureGate",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "featureGate", new RegExp(`\\.ide_rc_auto_enable_gate=(${ID})\\("tengu_ide_rc_auto_enable"`)),
+      },
+      {
+        as: "fastModeState",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "fastModeState", new RegExp(`\\.fast_mode_state=(${ID})\\(${ID}\\?\\?null,`)),
+      },
+      {
+        as: "fastModeDisabledReason",
+        kind: "effectful-port",
+        derive: pick("initialize-payload", "fastModeDisabledReason", new RegExp(`\\.fast_mode_disabled_reason=(${ID})\\(${ID}\\?\\?null\\)`)),
+      },
+    ],
+    coverage: ["raw-protocol"],
+  },
+
+  {
+    // `km`. The only control subtype that changes the model request body, and
+    // therefore the wave's single required live recording.
+    //
+    // ANCHOR: `set_model: system_prompt must be a non-empty string when present`
+    // — one of its own refusal sentences, true-substring-unique bundle-wide.
+    // Prose, which §2.1 measures as the stronger kind. Its sibling
+    // `set_model: model must be a string` has two carriers (the interactive
+    // driver emits the same sentence), and `set_model failed` lives in the ARM
+    // rather than here, so neither of the two more obvious choices would do.
+    name: "model-switch",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "set_model: system_prompt must be a non-empty string when present",
+    fn: "applyModelSwitchRequest",
+    captures: [
+      {
+        // `p` / logFeatureBad — six call sites, every refusal arm.
+        as: "logFeatureBad",
+        kind: "effectful-port",
+        derive: pick("model-switch", "logFeatureBad", new RegExp(`\\{if\\((${ID})\\("model_switch","invalid_model_type"\\)`)),
+      },
+      {
+        as: "normalizeModel",
+        kind: "effectful-port",
+        derive: pick("model-switch", "normalizeModel", new RegExp(`\\?\\?"default",${ID}=(${ID})\\(${ID}\\),`)),
+      },
+      {
+        as: "logEvent",
+        kind: "effectful-port",
+        derive: pick("model-switch", "logEvent", new RegExp(`if\\((${ID})\\("tengu_set_model_unrecognized"`)),
+      },
+      {
+        as: "enumShape",
+        kind: "effectful-port",
+        derive: pick("model-switch", "enumShape", new RegExp(`"tengu_set_model_unrecognized",\\{shape:(${ID})\\(`)),
+      },
+      {
+        as: "unrecognizedModelError",
+        kind: "effectful-port",
+        derive: pick("model-switch", "unrecognizedModelError", new RegExp(`return\\{ok:!1,error:(${ID})\\(${ID}\\(${ID}\\),${ID}\\.suggestion\\)\\}`)),
+      },
+      {
+        as: "describeModel",
+        kind: "effectful-port",
+        derive: pick("model-switch", "describeModel", new RegExp(`return\\{ok:!1,error:${ID}\\((${ID})\\(${ID}\\),${ID}\\.suggestion\\)\\}`)),
+      },
+      {
+        as: "authTokenSource",
+        kind: "effectful-port",
+        derive: pick("model-switch", "authTokenSource", new RegExp(`case"blocked":\\{let ${ID}=(${ID})\\(${ID}\\.getActiveModel\\(\\)\\)`)),
+      },
+      {
+        as: "restrictedModelError",
+        kind: "effectful-port",
+        derive: pick("model-switch", "restrictedModelError", new RegExp(`return\\{ok:!1,error:(${ID})\\(${ID},${ID}\\?\\?${ID}\\(\\)\\)\\}\\}case"default"`)),
+      },
+      {
+        // `at` / getMainLoopModel — four call sites, and the "before" half of
+        // the breadcrumb condition.
+        as: "activeMainLoopModel",
+        kind: "effectful-port",
+        derive: pick("model-switch", "activeMainLoopModel", new RegExp(`error:${ID}\\(${ID},${ID}\\?\\?(${ID})\\(\\)\\)\\}\\}case"default"`)),
+      },
+      {
+        as: "defaultMainLoopModel",
+        kind: "effectful-port",
+        derive: pick("model-switch", "defaultMainLoopModel", new RegExp(`case"default":${ID}=(${ID})\\(\\),${ID}=null`)),
+      },
+      {
+        as: "consultModelSwitchHooks",
+        kind: "effectful-port",
+        derive: pick("model-switch", "consultModelSwitchHooks", new RegExp(`${ID}=await (${ID})\\(${ID}\\.session,${ID},${ID},"sdk"\\);if\\(${ID}\\.decision`)),
+      },
+      {
+        // `g` / logFeatureSad — the hook refusal and the stepped-down alias.
+        as: "logFeatureSad",
+        kind: "effectful-port",
+        derive: pick("model-switch", "logFeatureSad", new RegExp(`\\{if\\((${ID})\\("model_switch","blocked_by_hook"\\)`)),
+      },
+      {
+        as: "hookRefusalError",
+        kind: "effectful-port",
+        derive: pick("model-switch", "hookRefusalError", new RegExp(`return\\{ok:!1,error:(${ID})\\(${ID}\\)\\}\\}let`)),
+      },
+      {
+        as: "recordModelChange",
+        kind: "effectful-port",
+        derive: pick("model-switch", "recordModelChange", new RegExp(`if\\((${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},"sdk"\\),${ID}\\.applyModel`)),
+      },
+      {
+        // `Ot` / parseUserSpecifiedModel — called twice inside the breadcrumb
+        // condition, once per side of the comparison.
+        as: "parseModel",
+        kind: "effectful-port",
+        derive: pick("model-switch", "parseModel", new RegExp(`\\|\\|(${ID})\\(${ID}\\)!==${ID}\\(${ID}\\?\\?${ID}\\)\\)&&`)),
+      },
+      {
+        as: "shouldInjectBreadcrumbs",
+        kind: "effectful-port",
+        derive: pick("model-switch", "shouldInjectBreadcrumbs", new RegExp(`\\)\\)&&(${ID})\\(\\{appliedModel:`)),
+      },
+      {
+        as: "logFeatureOk",
+        kind: "effectful-port",
+        derive: pick("model-switch", "logFeatureOk", new RegExp(`else (${ID})\\("model_switch"\\);`)),
+      },
+      {
+        as: "toNotice",
+        kind: "effectful-port",
+        derive: pick("model-switch", "toNotice", new RegExp(`\\{ok:!0,notices:${ID}\\.messages\\.map\\((${ID})\\)\\}`)),
+      },
+    ],
+    coverage: ["raw-protocol"],
+  },
+
+  {
+    // `Ey`. The handshake handler — maximal liveness in this wave, because every
+    // SDK-driven scenario sends exactly one `initialize` before its first prompt
+    // and this is where the whole configuration surface is applied.
+    //
+    // ANCHOR: `tengu_reinit_pending_redelivery`, its own telemetry event and
+    // true-substring-unique bundle-wide. Prose (§2.1's stronger kind), and it
+    // names the REINITIALIZE arm, which is the half no corpus scenario reaches —
+    // an anchor in dark code is fine, an EXCISION with no covering scenario is
+    // not, and this one's covering scenarios reach the other half.
+    //
+    // THIRTY PORTS AND NO OWNED HELPER, which is unusual and is the row's honest
+    // price. This handler's job is effects: it mutates the launch options,
+    // registers hook callbacks, rewrites app state and enqueues frames. There is
+    // nothing pure in its closure to own.
+    name: "initialize-handler",
+    target: "free-function",
+    signature: { params: 14, ancestry: ["SourceFile"] },
+    anchor: "tengu_reinit_pending_redelivery",
+    fn: "handleInitialize",
+    captures: [
+      {
+        // `ju` — may the host's hooks be applied at all? Answers `undefined`
+        // when the host does not own the stdin origin, which the telemetry and
+        // the payload both report as a distinct state from `false`.
+        as: "hostOwnsHooks",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "hostOwnsHooks", new RegExp(`let ${ID}=(${ID})\\(e,${ID}\\),${ID}=0;`)),
+      },
+      {
+        // `qu` — the deny-shaped answer a RETIRED host hook callback gives, so
+        // an in-flight consult cannot hang on a callback nobody will answer.
+        as: "retiredCallbackAnswer",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "retiredCallbackAnswer", new RegExp(`\\.retireSdkHostHookCallbacks\\((${ID})\\)`)),
+      },
+      {
+        // `El` — registers the callbacks. Two call sites: the reinitialize arm
+        // and the ordinary one.
+        as: "registerHookCallbacks",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "registerHookCallbacks", new RegExp(`\\.retireSdkHostHookCallbacks\\(${ID}\\),(${ID})\\(`)),
+      },
+      {
+        as: "logEvent",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "logEvent", new RegExp(`return (${ID})\\("tengu_reinit_pending_redelivery"`)),
+      },
+      {
+        as: "telemetryNumber",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "telemetryNumber", new RegExp(`\\{n_pending_permissions:(${ID})\\(`)),
+      },
+      {
+        // `_f` — the payload builder, itself an owned splice. Forwarded rather
+        // than imported so sabotaging it alone still reddens through here.
+        as: "buildPayload",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "buildPayload", new RegExp(`request_id:t,response:await (${ID})\\(_,`)),
+      },
+      {
+        as: "activeAgents",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "activeAgents", new RegExp(`request_id:t,response:await ${ID}\\(_,(${ID})\\(${ID}\\(\\)\\),`)),
+      },
+      {
+        as: "onReinitialized",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "onReinitialized", new RegExp(`pending_user_dialog_requests:${ID}\\}\\}\\),(${ID})\\(${ID}\\(\\)\\),\\{\\}`)),
+      },
+      {
+        as: "isEmptySystemPrompt",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "isEmptySystemPrompt", new RegExp(`\\.systemPrompt=(${ID})\\(e\\.systemPrompt\\)\\?""`)),
+      },
+      {
+        as: "normalizeDialogKinds",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "normalizeDialogKinds", new RegExp(`\\{let ${ID}=(${ID})\\(e\\.supportedDialogKinds\\);`)),
+      },
+      {
+        as: "recordDialogKinds",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "recordDialogKinds", new RegExp(`\\(e\\.supportedDialogKinds\\);(${ID})\\(${ID},`)),
+      },
+      {
+        as: "isRestartedWorkerEpoch",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "isRestartedWorkerEpoch", new RegExp(`\\(e\\.supportedDialogKinds\\);${ID}\\(${ID},(${ID})\\(${ID}\\.CLAUDE_CODE_WORKER_EPOCH\\)`)),
+      },
+      {
+        // the process-environment record, reached for one variable.
+        as: "env",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "env", new RegExp(`\\((${ID})\\.CLAUDE_CODE_WORKER_EPOCH\\)\\?"attach_time"`)),
+      },
+      {
+        as: "setPerTaskStopAffordance",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "setPerTaskStopAffordance", new RegExp(`perTaskStopAffordance===!0\\)(${ID})\\(!0\\)`)),
+      },
+      {
+        as: "applySkills",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "applySkills", new RegExp(`e\\.skills!==void 0\\)(${ID})\\(e\\.skills\\)`)),
+      },
+      {
+        as: "parseAgentDefinitions",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "parseAgentDefinitions", new RegExp(`if\\(e\\.agents\\)${ID}=(${ID})\\(e\\.agents,"flagSettings"\\)`)),
+      },
+      {
+        as: "mainThreadAgentType",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "mainThreadAgentType", new RegExp(`let ${ID}=(${ID})\\(\\)===${ID}\\.agent,`)),
+      },
+      {
+        as: "findAgentDefinition",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "findAgentDefinition", new RegExp(`===${ID}\\.agent,${ID}=(${ID})\\(${ID}\\(\\),${ID}\\.agent\\)`)),
+      },
+      {
+        as: "setActiveAgentType",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "setActiveAgentType", new RegExp(`if\\((${ID})\\(${ID}\\.agentType\\),`)),
+      },
+      {
+        as: "applyAgentDefinition",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "applyAgentDefinition", new RegExp(`\\(${ID}\\.agentType\\),(${ID})\\(${ID}\\),!${ID}\\.systemPrompt`)),
+      },
+      {
+        as: "isBuiltInAgent",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "isBuiltInAgent", new RegExp(`\\.systemPrompt&&!(${ID})\\(${ID}\\)\\)\\{let`)),
+      },
+      {
+        as: "parseModel",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "parseModel", new RegExp(`!=="inherit"\\)\\{let ${ID}=(${ID})\\(${ID}\\.model\\);`)),
+      },
+      {
+        as: "isExemptModelPick",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "isExemptModelPick", new RegExp(`\\(${ID}\\.model\\);if\\((${ID})\\(${ID}\\)\\|\\|`)),
+      },
+      {
+        as: "isModelAllowed",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "isModelAllowed", new RegExp(`\\(${ID}\\.model\\);if\\(${ID}\\(${ID}\\)\\|\\|(${ID})\\(${ID}\\)\\)`)),
+      },
+      {
+        as: "applyModelOverride",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "applyModelOverride", new RegExp(`\\|\\|${ID}\\(${ID}\\)\\)(${ID})\\(${ID}\\);else ${ID}=${ID}\\.model\\}`)),
+      },
+      {
+        as: "applyJsonSchema",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "applyJsonSchema", new RegExp(`if\\(e\\.jsonSchema\\)(${ID})\\(e\\.jsonSchema\\)`)),
+      },
+      {
+        as: "countBy",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "countBy", new RegExp(`mcp_pending_count:(${ID})\\(`)),
+      },
+      {
+        as: "mcpNonBlocking",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "mcpNonBlocking", new RegExp(`mcpNonBlocking:(${ID})\\(\\),session_mirror:`)),
+      },
+      {
+        // `iN` — the auth-status singleton, reached as a CLASS rather than a
+        // function, which is why the owned module calls `getInstance()` on it.
+        as: "authStatusService",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "authStatusService", new RegExp(`\\{let ${ID}=(${ID})\\.getInstance\\(\\)\\.getStatus\\(\\);`)),
+      },
+      {
+        as: "newUuid",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "newUuid", new RegExp(`error:${ID}\\.error,uuid:(${ID})\\(\\),session_id:`)),
+      },
+      {
+        as: "currentSessionId",
+        kind: "effectful-port",
+        derive: pick("initialize-handler", "currentSessionId", new RegExp(`,session_id:(${ID})\\(\\)\\}\\)\\}return\\{restrictedAgentModel`)),
+      },
+    ],
+    // `raw-protocol` reaches the handler and its answer; `sysprompt-append`
+    // reaches the half the driver cannot — the CONFIGURATION, which lands in the
+    // next request body rather than on the control wire.
+    //
+    // `sysprompt-preset` was listed here and MEASURED GREEN under the twin, so
+    // it is not a covering scenario and does not stay on the row: the SDK sends
+    // a preset selection outside the initialize payload, so the preset scenario
+    // reaches this handler with nothing for it to apply. A coverage tag that
+    // cannot go red is a row the gate passes without testing.
+    coverage: ["raw-protocol", "sysprompt-append"],
+  },
 ];
 
 

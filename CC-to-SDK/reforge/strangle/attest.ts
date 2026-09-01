@@ -30,6 +30,7 @@ import { branchSites, type BranchSite } from "./branches.js";
 import { adjudicate } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
+import { runnerFor } from "./runners.js";
 
 const checkOnly = process.argv.includes("--check");
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
@@ -85,7 +86,10 @@ if (built.status !== 0) {
 const scenarios = [...new Set(ATTESTED.flatMap((a) => a.scenarios))].sort();
 const red: string[] = [];
 for (const tag of scenarios) {
-  const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"]);
+  // Same routing the gate uses (strangle/runners.ts): a tag graded by its own
+  // suite must be replayed through that suite here too, or the instrumented
+  // build would never execute the branches it covers.
+  const r = run("npx", ["tsx", ...runnerFor(tag, "engine-strangled")]);
   const ok = r.status === 0;
   console.log(`  ${tag}: ${ok ? "GREEN" : "RED"}`);
   if (!ok) red.push(tag);

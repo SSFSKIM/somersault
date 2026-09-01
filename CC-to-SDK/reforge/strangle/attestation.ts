@@ -274,6 +274,21 @@ export const ATTESTED: AttestedModule[] = [
       "the success envelope's twin, and straight-line for the same reason. " +
       "What grades it is strangle/permissions-parity.test.ts, which runs it over the same six payload shapes AND over every refusal the mode-change guard can produce — read out of research/fixtures/permission-surface-<pin>.json, so a guard that gains a refusal upstream widens the case list — plus a control on reusing the success subtype.",
   },
+
+  // ---- W7: the control protocol's named handlers ---------------------------
+  // The scenario lists here are shorter than every wave before them and the
+  // reason is worth reading rather than assuming: `raw-protocol` is not a corpus
+  // scenario, it is the no-wrapper driver, and it is the ONLY thing in the
+  // harness that can execute a control handler's answer. `sdk.mjs` consumes
+  // control responses, so an SDK-driven scenario cannot render one however many
+  // of them there are. `strangle/runners.ts` is what routes the tag here and in
+  // the gate's liveness loop, so the two cannot grade a splice through different
+  // suites.
+  { module: "thinking-config", row: "thinking-config", scenarios: ["raw-protocol"] },
+  { module: "permission-mode-setter", row: "permission-mode-setter", scenarios: ["raw-protocol", "runtime-setters"] },
+  { module: "model-switch", row: "model-switch", scenarios: ["raw-protocol"] },
+  { module: "initialize-payload", row: "initialize-payload", scenarios: ["raw-protocol"] },
+  { module: "initialize-handler", row: "initialize-handler", scenarios: ["raw-protocol", "sysprompt-append"] },
 ];
 
 export interface Exclusion {
@@ -349,6 +364,48 @@ const ONECALLER_TEXT =
  */
 const INTERACTION_TEXT =
   "The corpus configures no MCP servers at all, so the only tools in play are the built-ins — of which the three that implement `requiresUserInteraction` (AskUserQuestion and the plan-mode pair) are interactive surfaces a headless session neither offers nor has the model reach for. That is a claim about this corpus's CONFIGURATION, not a structural impossibility: the generic MCP tool adapter builds `requiresUserInteraction()` from the server-declared `_meta[\"anthropic/requiresUserInteraction\"]` key (cli.pretty.js 30282/30296 and 115317/115331; key table at 818237), so the population is open and a future MCP-carrying scenario would overturn this exclusion.";
+
+
+// ---- W7 / C10: the control protocol --------------------------------------
+// The exclusion families here are narrower in KIND than W6's and wider in
+// COUNT, and the difference is worth naming. W6's subsystem was unrecordable by
+// construction: a rung that was reached and passed leaves the same transcript as
+// one that was never reached. This one is not unrecordable — the raw driver now
+// sends ten control requests and reads every answer off the wire — it is
+// UNDER-recordable by an order of magnitude. One control request has one shape,
+// and these handlers partition into dozens: the model switch alone has nine
+// outcome cells, the initialize handler seventeen configuration arms plus a
+// whole reconnect half.
+//
+// So every exclusion below names strangle/control-parity.test.ts and the block
+// inside it that runs the arm — 1,536 comparisons with 21 controls, over axes
+// taken from research/fixtures/control-protocol-<pin>.json and
+// research/fixtures/permission-surface-<pin>.json rather than chosen here.
+//
+// TWO FAMILIES ARE OUT OF REACH FOR STRUCTURAL REASONS RATHER THAN BUDGETARY
+// ONES, and they are called out so nobody re-budgets them as scenarios:
+//   - the initialize handler's REINITIALIZE half answers a host RECONNECTING to
+//     a session already in flight. Nothing in this harness reconnects, and
+//     building something that does would be a session-lifecycle surface of its
+//     own rather than a scenario.
+//   - the payload's two auto-mode fields appear only on a VS Code entrypoint,
+//     which the harness is not and will not become. Their gate is a PORT in the
+//     owned module, which is what makes the oracle able to grade both answers.
+
+const W7_THINKING_CONFIG =
+  "ONE thinking request per recording, and the resolver partitions on the REQUESTED value \u2014 so a recording reaches exactly one of its four arms and the driver's is `max_thinking_tokens: 2048`. The wire narrows it further, measured rather than assumed: the request builder decides `adaptive` vs `enabled` from the MODEL and discards the budget on an adaptive-capable one, so even a second recording would only ever move the disabled-ness and the display. Graded by strangle/control-parity.test.ts over the full cross-product of five requested budgets (absent, null, zero, one, 2048) x four displays x four configs already in force x both answers of the adaptive gate, with four controls including a resolver that keeps a disabled config's display and one that reads zero as a budget.";
+
+const W7_PERMISSION_MODE_SETTER =
+  "the driver's two mode requests are an invalid mode \u2014 refused by the ARM above this function, which never calls it \u2014 and a real change from bypassPermissions to default. So the guard's refusal and the unchanged-mode short circuit are both unreached, and both are the function's substance. Graded by strangle/control-parity.test.ts over every ordered pair of the six modes research/fixtures/permission-surface-<pin>.json enumerates, against three guard outcomes (refuse, accept as asked, accept normalised), with four controls including a setter that transitions on a no-op change and one that returns the caller's string instead of the guard's parsed mode.";
+
+const W7_INITIALIZE_PAYLOAD =
+  "the payload's conditional fields are decided by the ENTRYPOINT and the CREDENTIAL, neither of which a harness run can move: two of them appear only on a VS Code entrypoint, the account block is empty under the replay placeholder credential, no model is unavailable, no output style is chosen and no remote-control preference is stored. Both gates are PORTS in the owned module, which is what makes the other answers reachable at all \u2014 the same move that let W6 grade the auto-mode arms. Graded by strangle/control-parity.test.ts over ten payload cells (ordinary, chosen output style, authenticated account, three VS Code cells, four remote-control preference cells) x six permission modes x present/absent unavailable models x the three states of `hooks_applied`, with four controls including a payload that auto-enables remote control against an explicit `false` preference.";
+
+const W7_MODEL_SWITCH =
+  "nine outcome cells, and one recording occupies one. The driver sends a non-string model (refused above the normaliser) and `haiku` (allowed), so the unrecognised, blocked, default and stepped-down kinds, the whole system_prompt partition, the hook refusal and the breadcrumb condition's other answers are all unreached \u2014 and every one of them is a distinct sentence or a distinct side effect. Graded by strangle/control-parity.test.ts over six normaliser kinds x four system_prompt shapes x three hook decisions, plus the model argument's own three shapes against both answers of the breadcrumb predicate, plus three states of the active model, plus a kind outside the normaliser's union; five controls, including a switch that accepts an empty system_prompt and one that hands the hook a resolved model where upstream hands it null.";
+
+const W7_INITIALIZE_HANDLER =
+  "the handshake this corpus sends is nearly bare: the raw driver sends `{subtype:\"initialize\"}` with no configuration at all, and `sysprompt-append` sends one field. So sixteen of the seventeen configuration arms, the whole agent-selection arm and the entire REINITIALIZE half go unreached \u2014 and the reinitialize half is unreachable by construction rather than by budget, because it answers a host RECONNECTING to a session already in flight and nothing in this harness reconnects. Graded by strangle/control-parity.test.ts over eighteen request shapes x both auth-status answers, twelve agent-selection cells (unresolved, already active, built-in, prompt-donating, empty prompt, inherit model, exempt model, allowed model, restricted model, user-pinned model, initial prompt) and eight reinitialize cells (hooks resent or not x host ownership x pending requests present or not), with four controls including a handler that applies configuration during a reinitialize and one whose answer omits the pending-request fields.";
 
 export const EXCLUSIONS: Exclusion[] = [
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
@@ -699,11 +756,6 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "auto-compact-trigger#autoCompactTrigger@2:T",
     reason:
       "auto-compaction switched off. The setting defaults to true and `settingSources: []` leaves it there; the two kill-switch env vars (DISABLE_COMPACT, DISABLE_AUTO_COMPACT) are outside X6's allowlist. Graded by compaction-parity.test.ts ('auto-compaction switched off').",
-  },
-  {
-    branch: "auto-compact-trigger#autoCompactTrigger@3:T",
-    reason:
-      "the unconfigured-window refusal. MEASURED for the corpus's model, from the engine's own debug line: the window source is `model-default`, so the predicate passes this guard on every headless run — which is also why the auto-compaction scenario is recordable at all. Graded by compaction-parity.test.ts ('surface open but window unconfigured').",
   },
   {
     branch: "auto-compact-trigger#autoCompactTrigger@4:F",
@@ -2030,12 +2082,6 @@ export const EXCLUSIONS: Exclusion[] = [
       ORACLE_TRANSITION,
   },
   {
-    branch: "mode-transition#transitionPermissionMode@6:F",
-    reason:
-      "the plan-mode disjunct being false while the auto disjunct decides. Same condition as @5. " +
-      ORACLE_TRANSITION,
-  },
-  {
     branch: "mode-transition#transitionPermissionMode@7:T",
     reason:
       "ENTERING auto — the arm that STRIPS dangerous rules on the way in. Same uncreated condition as @5: the walk never visits `auto`. This is the arm the wave most wants a future walk to cover, because the strip and its restore are a matched pair and only the pair is safe. " +
@@ -2071,24 +2117,6 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "mode-transition#transitionPermissionMode@11:T",
     reason:
       "the `wasAuto` term of that test — the arm that RESTORES the rules the entry stripped. Same uncreated condition. " +
-      ORACLE_TRANSITION,
-  },
-  {
-    branch: "mode-transition#transitionPermissionMode@12:F",
-    reason:
-      "the plan-exit test failing on its saved-mode term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
-      ORACLE_TRANSITION,
-  },
-  {
-    branch: "mode-transition#transitionPermissionMode@13:F",
-    reason:
-      "it failing on its destination term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
-      ORACLE_TRANSITION,
-  },
-  {
-    branch: "mode-transition#transitionPermissionMode@14:F",
-    reason:
-      "it failing on its source term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
       ORACLE_TRANSITION,
   },
   {
@@ -2339,5 +2367,697 @@ export const EXCLUSIONS: Exclusion[] = [
     reason:
       "the whole exemption test — a remote-execution context OR an otherwise exempt one. X6's env allowlist forbids a graded run from producing the first, and the second is a context shape the headless broker seam does not construct. This is the branch that decides whether the update filter runs at all, so its true arm short-circuits everything below it. " +
       ORACLE_BROKERUPD,
+  },
+
+  // ---- W7 / C10: the control protocol's named handlers -------------------
+  {
+    branch: "thinking-config#resolveThinkingConfig@0:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: if 'requestedTokens == null', T arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@1:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: if 'currentExplicit', T arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@1:F",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: if 'currentExplicit', F arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@2:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: conditional 'currentExplicit.type !== \"disabled\"', T arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@2:F",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: conditional 'currentExplicit.type !== \"disabled\"', F arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@3:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: conditional 'display !== undefined && adaptiveThinkingAllowed()', T arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@3:F",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: conditional 'display !== undefined && adaptiveThinkingAllowed()', F arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@4:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: and 'display !== undefined', T arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@4:F",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: and 'display !== undefined', F arm.",
+  },
+  {
+    branch: "thinking-config#resolveThinkingConfig@5:T",
+    reason:
+      W7_THINKING_CONFIG +
+      " THIS ARM: if 'requestedTokens === 0', T arm.",
+  },
+  {
+    branch: "permission-mode-setter#applyPermissionModeRequest@0:T",
+    reason:
+      W7_PERMISSION_MODE_SETTER +
+      " THIS ARM: if '!guarded.ok', T arm.",
+  },
+  {
+    branch: "permission-mode-setter#applyPermissionModeRequest@1:T",
+    reason:
+      W7_PERMISSION_MODE_SETTER +
+      " THIS ARM: if 'context.mode === guarded.mode', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@1:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: and 'requested != null', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@2:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'request.system_prompt !== undefined', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@3:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'systemPrompt !== undefined && (typeof systemPrompt !== \"string\" || systemPrompt === \"\")', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@4:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: and 'systemPrompt !== undefined', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@5:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: or 'typeof systemPrompt !== \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@5:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: or 'typeof systemPrompt !== \"string\"', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@6:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: conditional 'typeof systemPrompt !== \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@6:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: conditional 'typeof systemPrompt !== \"string\"', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@7:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'requested', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@8:taken",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: clause '\"unrecognized\"', taken arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@9:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@9:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@10:taken",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: clause '\"blocked\"', taken arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@11:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@11:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@12:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'source', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@12:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'source', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@13:taken",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: clause '\"default\"', taken arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@15:taken",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: clause '\"steppedDown\"', taken arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@16:taken",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: clause 'default: break;', taken arm.",
+  },
+  {
+    branch: "model-switch#readState@0:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'state.mainLoopModel ?? surface.getActiveModel()', F arm.",
+  },
+  {
+    branch: "model-switch#readState@1:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'state.mainLoopModel', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@17:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: conditional 'classified.kind === \"default\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@18:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'consult.decision !== \"proceed\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@19:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@19:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@20:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if '(activeMainLoopModel() !== before || parseModel(applied) !== parseModel(previous ?? before', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@21:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: and '(activeMainLoopModel() !== before || parseModel(applied) !== parseModel(previous ?? before', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@22:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: or 'activeMainLoopModel() !== before', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@23:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'previous', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@23:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'previous', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@24:F",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: nullish 'previous', F arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@25:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'steppedDown !== null', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@26:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: if 'typeof systemPrompt === \"string\"', T arm.",
+  },
+  {
+    branch: "model-switch#applyModelSwitchRequest@27:T",
+    reason:
+      W7_MODEL_SWITCH +
+      " THIS ARM: conditional 'consult.messages.length > 0', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@0:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: or 'settings()?.outputStyle', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@1:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'settings()', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@2:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: conditional 'isVsCodeEntrypoint() && autoDefaultNudgeEligible()', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@3:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'isVsCodeEntrypoint()', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@4:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'unavailableModels.length > 0', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@5:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'account', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@6:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'account', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@7:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'account', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@8:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'account', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@9:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: optional 'account', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@10:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'isVsCodeEntrypoint()', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@11:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'modeIsDefaultFallback()', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@11:F",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'modeIsDefaultFallback()', F arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@12:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'nudge', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@12:F",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'nudge', F arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@13:F",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and '!remoteControlSuppressed()', F arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@14:F",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: nullish 'preference', F arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@15:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: and 'autoEnable', T arm.",
+  },
+  {
+    branch: "initialize-payload#buildInitializeResponsePayload@17:T",
+    reason:
+      W7_INITIALIZE_PAYLOAD +
+      " THIS ARM: nullish 'fastModeDisabledReason(fastModeInput ?? null)', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@0:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'isReinitialize', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@1:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'hostHooks', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@1:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'hostHooks', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@2:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: conditional 'request.hooks', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@2:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: conditional 'request.hooks', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@5:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.supportedDialogKinds !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@6:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: conditional 'isRestartedWorkerEpoch(env.CLAUDE_CODE_WORKER_EPOCH)', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@6:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: conditional 'isRestartedWorkerEpoch(env.CLAUDE_CODE_WORKER_EPOCH)', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@7:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.perTaskStopAffordance === true', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@9:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.planModeInstructions !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@10:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.appendSubagentSystemPrompt !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@11:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.toolAliases !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@12:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.excludeDynamicSections !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@13:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.promptSuggestions !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@14:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.forwardSubagentText !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@15:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.skills !== undefined', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@16:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.agents', T arm.",
+  },
+  {
+    branch: "initialize-handler#agentList@0:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: conditional 'mergedStdinAgents', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@17:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'options.agent', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@18:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition && !alreadyActive', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@18:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition && !alreadyActive', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@19:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and 'definition', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@19:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and 'definition', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@20:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if '!options.systemPrompt && !isBuiltInAgent(definition)', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@20:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if '!options.systemPrompt && !isBuiltInAgent(definition)', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@21:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.systemPrompt', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@21:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.systemPrompt', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@22:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'prompt', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@22:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'prompt', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@23:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if '!options.userSpecifiedModel && definition.model && definition.model !== \"inherit\"', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@23:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if '!options.userSpecifiedModel && definition.model && definition.model !== \"inherit\"', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@24:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.userSpecifiedModel && definition.model', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@24:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.userSpecifiedModel && definition.model', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@25:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.userSpecifiedModel', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@25:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: and '!options.userSpecifiedModel', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@26:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'isExemptModelPick(parsed) || isModelAllowed(parsed)', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@26:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'isExemptModelPick(parsed) || isModelAllowed(parsed)', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@27:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: or 'isExemptModelPick(parsed)', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@27:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: or 'isExemptModelPick(parsed)', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@28:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition.initialPrompt', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@28:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition.initialPrompt', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@29:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition?.initialPrompt', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@29:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'definition?.initialPrompt', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@30:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: optional 'definition', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@30:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: optional 'definition', F arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@32:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'request.jsonSchema', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@34:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'enableAuthStatus', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@35:T",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'status', T arm.",
+  },
+  {
+    branch: "initialize-handler#handleInitialize@35:F",
+    reason:
+      W7_INITIALIZE_HANDLER +
+      " THIS ARM: if 'status', F arm.",
   },
 ];
