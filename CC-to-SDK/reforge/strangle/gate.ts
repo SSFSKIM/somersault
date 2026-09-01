@@ -168,6 +168,13 @@ for (const [label, script] of [
   // It compares the telemetry events as well as the returned blocks, since two
   // of those three paths differ only in which event they emit.
   ["prompt-assembly parity vs the pinned bundle", "strangle/prompt-parity.test.ts"],
+  // The same oracle for W4's compaction modules, where the corpus/domain gap has
+  // a different shape: a recording can only ever show the ONE path that ended in
+  // the decision it recorded, so every refusal in the trigger predicate and every
+  // absence arm in the wire mapper is graded here and nowhere else. It compares
+  // the predicate's PORT TRACE as well as its answer, since two of its refusals
+  // differ from each other in nothing but which ports ran.
+  ["compaction parity vs the pinned bundle", "strangle/compaction-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);

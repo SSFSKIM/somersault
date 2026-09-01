@@ -84,7 +84,35 @@ export const ATTESTED: AttestedModule[] = [
       "the summarization prompt is a top-level constant with no branch-forming construct at all, so branch coverage is not the claim to make about it. " +
       "What grades it is stronger and runs more often: the build compares the owned initializer against the pinned chunk's own bytes on EVERY build " +
       "(strangle/ast.ts `gradeDeclaratorValue`, the variable-declarator shape's whole reason for existing), and " +
-      "strangle/prompt-parity.test.ts re-extracts the same constant and compares it again. A differential red could only ever see the prompt a scenario happened to send.",
+      "strangle/prompt-parity.test.ts re-extracts the same constant and compares it again. A differential red could only ever see the prompt a scenario happened to send. " +
+      "C7 added a third: strangle/compaction-parity.test.ts extracts the declarator and compares it too, so the claim is checked by something other than the build that makes it.",
+  },
+
+  // ---- W4: the compaction surface ------------------------------------------
+  // Scenario sets are the smallest ones that can move each module's branches.
+  // `slash-compact` compacts and stops; `compact-continue` sends one more
+  // exchange, which is what puts the continuation into a request body; and
+  // `auto-compact-threshold` is the only recording where the engine DECIDED to
+  // compact, so it is the only one that executes the trigger predicate at all.
+  {
+    module: "compact-boundary",
+    row: "compact-boundary",
+    scenarios: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+  {
+    module: "compact-boundary-wire",
+    row: "compact-boundary-wire",
+    scenarios: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+  {
+    module: "compact-continuation",
+    row: "compact-continuation",
+    scenarios: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+  {
+    module: "auto-compact-trigger",
+    row: "auto-compact-trigger",
+    scenarios: ["auto-compact-threshold"],
   },
 ];
 
@@ -332,5 +360,140 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "subagent-prompt#subagentPrompt@1:T",
     reason:
       "the null token-attachment arm. It is null only when an attachment kill-switch env var is set or the attachment mode is \"off\"; X6 forbids the first and the corpus's mode is not the second (measured: the `subagent` prompt ends with a `<total_tokens>` line). Graded by prompt-parity.test.ts ('tokens null' and 'both null').",
+  },
+
+  // ==========================================================================
+  // W4 — the compaction surface. Everything below is graded by
+  // `strangle/compaction-parity.test.ts`, which evaluates the pinned upstream
+  // bodies with stubbed ports over 94 comparisons and 27 mutation controls, and
+  // which compares the trigger predicate's PORT TRACE as well as its answer —
+  // two of its refusals differ from each other in nothing else.
+  //
+  // Three families, and only one of them is "the corpus happens not to":
+  //
+  //   1. FIELDS THE DRIVERS ALWAYS FILL. The boundary's metadata is written by
+  //      the compaction drivers before the SDK maps it, so the optional fields
+  //      they always set have no absence arm on any recording.
+  //   2. THE SEGMENT-COMPACTION PATH. Three arms are reachable only through
+  //      upstream's from/up_to variant (`hRt`), which no corpus scenario drives
+  //      and which no wave owns yet. Recorded as a DEFERRAL, not an
+  //      impossibility — see the ledger note for whose debt it is.
+  //   3. SEAM-FIXED FACTS. The headless query source is always "sdk",
+  //      auto-compaction is on, the surface is open and the window is
+  //      model-default, so every refusal in the trigger predicate is
+  //      unreachable by construction of the seam being graded.
+  // ==========================================================================
+
+  // ---- family 1: what the drivers always fill ------------------------------
+  {
+    branch: "compact-boundary#compactBoundary@0:F",
+    reason:
+      "the absent-parent arm. All three upstream call sites pass `messages.at(-1)?.uuid`, and a compaction with no messages cannot occur — the compactor refuses a conversation of fewer than two groups before it reaches the constructor. Graded by compaction-parity.test.ts, which runs the arm against FOUR falsy values (undefined, null, empty string, false), because the spread is `...parent && {…}` and a rewrite testing `!== undefined` would pass on three of them.",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@0:F",
+    reason:
+      "`post_tokens` absent. The drivers set `postTokens` on the boundary before the SDK maps it, on every successful compaction. Graded by compaction-parity.test.ts ('minimal'), and the zero case is graded separately ('zeros are measurements, not absences') because a truthiness rewrite would drop a real zero.",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@1:F",
+    reason: "`cumulative_dropped_tokens` absent; same driver-filled field, same oracle.",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@2:F",
+    reason: "`duration_ms` absent; the drivers stamp it immediately after constructing the boundary. Same oracle.",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@7:F",
+    reason: "no `preserved_segment`. Every compaction the corpus records preserves a segment. Graded by compaction-parity.test.ts ('minimal', 'preserved messages but no segment').",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@8:F",
+    reason: "no `preserved_messages`; same, and graded by ('minimal', 'a segment but no preserved messages').",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@9:F",
+    reason: "`all_uuids` absent. Upstream populates it alongside `uuids` on the paths the corpus drives. Graded by compaction-parity.test.ts ('preserved messages without allUuids').",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@5:T",
+    reason:
+      "`precomputed` present. The flag is stamped only when a PRECOMPUTED compaction swap was available (`fe.compactMetadata.precomputed = !0` behind the driver's `A`), which needs the background precompute path — feature-gated, and dark under §3.3's pinned gate state. Graded by compaction-parity.test.ts ('everything').",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@6:T",
+    reason:
+      "`pre_compact_discovered_tools` present. Upstream's collector walks the conversation for `tool_search_tool_result` blocks — SERVER-SIDE DYNAMIC TOOL LOADING, not ordinary tool use — and adds the tool names it finds; the set is empty unless the model was served such a block, which the headless corpus never is. Graded by compaction-parity.test.ts ('everything', 'an empty discovered-tool list').",
+  },
+
+  // ---- family 2: the segment-compaction path (a deferral) ------------------
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@3:T",
+    reason:
+      "`user_context` present. MEASURED at the call sites: of upstream's three, the two the corpus drives call the constructor with THREE arguments, so `userContext` is undefined even for `/compact <instructions>` — only the from/up_to SEGMENT variant passes it (five arguments). No scenario drives a segment compaction and no wave owns that path yet; recorded as a deferral rather than an impossibility. Graded by compaction-parity.test.ts ('everything').",
+  },
+  {
+    branch: "compact-boundary-wire#compactBoundaryWire@4:T",
+    reason: "`messages_summarized` present; the same five-argument segment call site, the same deferral, the same oracle.",
+  },
+  {
+    branch: "compact-continuation#compactContinuation@6:F",
+    reason:
+      "follow-up questions NOT suppressed. Two of the three upstream call sites pass `true` and the third passes a variable that is true on the paths the corpus drives; the only literal `false` is the segment variant's. Same deferral. Graded by compaction-parity.test.ts, which drives all nine option sets and specifically controls the early return ('the suppress arm falling through instead of returning').",
+  },
+
+  // ---- family 3: seam-fixed facts ------------------------------------------
+  {
+    branch: "compact-continuation#compactSummaryText@1:F",
+    reason:
+      "the empty-capture arm of `summary[1] || \"\"`. It needs a `<summary></summary>` block with nothing between the tags; the model writes a body every time it writes the tags. Graded by compaction-parity.test.ts ('empty summary', 'whitespace-only summary').",
+  },
+  {
+    branch: "compact-continuation#compactContinuation@0:F",
+    reason:
+      "no transcript path. Every upstream call site passes the session's own transcript path, and a headless session always has one. Graded by compaction-parity.test.ts ('opts=undefined', 'empty opts', 'every flag explicitly false').",
+  },
+  {
+    branch: "compact-continuation#compactContinuation@1:T",
+    reason:
+      "the nullish arm of `options?.transcriptPath`. All three call sites pass an object literal, so `options` is never nullish on a graded run — which is why all four of this module's optional-chain arms appear here rather than one. Graded by compaction-parity.test.ts ('opts=undefined').",
+  },
+  { branch: "compact-continuation#compactContinuation@3:T", reason: "the nullish arm of `options?.recentMessagesPreserved`, same call sites, same oracle." },
+  { branch: "compact-continuation#compactContinuation@5:T", reason: "the nullish arm of `options?.replStateCleared`, same call sites, same oracle." },
+  { branch: "compact-continuation#compactContinuation@7:T", reason: "the nullish arm of `options?.suppressFollowUpQuestions`, same call sites, same oracle." },
+  {
+    branch: "compact-continuation#compactContinuation@2:T",
+    reason:
+      "the recent-messages clause. MEASURED: NO call site in the pinned bundle passes `recentMessagesPreserved` at all — the three that build this message pass only `suppressFollowUpQuestions`, `transcriptPath` and `replStateCleared`. It is upstream's own dead option, kept because owning the function means owning its shape. Graded by compaction-parity.test.ts ('recent only', 'everything').",
+  },
+  {
+    branch: "compact-continuation#compactContinuation@4:T",
+    reason:
+      "the REPL clause. Gated on `ty()`, the same interactive-entrypoint test that makes the REPL tool dark for the whole corpus (W2's `glob-description` REPL exclusion): it requires `CLAUDE_CODE_ENTRYPOINT` to be \"cli\" or \"remote\", and X6 pins it to \"sdk-cli\". Graded by compaction-parity.test.ts ('repl only', 'everything').",
+  },
+  {
+    branch: "auto-compact-trigger#isSuppressedQuerySource@0:F",
+    reason:
+      "the `querySource !== undefined` guard's false arm. The headless main loop always names its source (\"sdk\"), so an unnamed one cannot occur — and the guard matters anyway, because an unnamed source must be treated as a REAL turn rather than suppressed. Graded by compaction-parity.test.ts ('an unnamed source is a real turn'), which compares the port trace as well as the answer.",
+  },
+  {
+    branch: "auto-compact-trigger#autoCompactTrigger@1:T",
+    reason:
+      "the non-conversational-source refusal. It fires for \"prompt_suggestion\", \"away_summary\", \"agent_summary\" and \"narration\"; the headless seam sends \"sdk\" on every turn, so no recording can reach it. Graded by compaction-parity.test.ts, which drives all four sources and compares the port trace — the refusals differ from each other in nothing but which ports ran.",
+  },
+  {
+    branch: "auto-compact-trigger#autoCompactTrigger@2:T",
+    reason:
+      "auto-compaction switched off. The setting defaults to true and `settingSources: []` leaves it there; the two kill-switch env vars (DISABLE_COMPACT, DISABLE_AUTO_COMPACT) are outside X6's allowlist. Graded by compaction-parity.test.ts ('auto-compaction switched off').",
+  },
+  {
+    branch: "auto-compact-trigger#autoCompactTrigger@3:T",
+    reason:
+      "the unconfigured-window refusal. MEASURED for the corpus's model, from the engine's own debug line: the window source is `model-default`, so the predicate passes this guard on every headless run — which is also why the auto-compaction scenario is recordable at all. Graded by compaction-parity.test.ts ('surface open but window unconfigured').",
+  },
+  {
+    branch: "auto-compact-trigger#autoCompactTrigger@4:F",
+    reason:
+      "the left conjunct's false arm — the compaction surface CLOSED. That happens only under `CLAUDE_CODE_REMOTE` with a closed circuit, which no reforge run has. Graded by compaction-parity.test.ts ('surface CLOSED, window unconfigured — the conjunct's other arm'), which is the case where an unconfigured window must NOT refuse.",
   },
 ];
