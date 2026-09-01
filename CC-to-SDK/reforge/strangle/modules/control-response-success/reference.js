@@ -2,11 +2,18 @@
 // leaves through (upstream `gK`, 2.1.251, chunk-g1qrzvef).
 //
 // One hundred and two bytes, zero free variables, and SEVEN call sites across
-// the headless runtime and the remote-control worker. Every `initialize`, every
-// `set_permission_mode`, every `set_model`, every `mcp_message` — every request
-// the SDK sends the engine that succeeds — comes back through here, which makes
-// it the highest-liveness-per-byte unit in the campaign so far: sabotaging it
-// reddens on `initialize` alone, and every SDK-driven scenario sends one.
+// the headless runtime and the remote-control worker.
+//
+// WITH ONE MEASURED EXCEPTION, and it is worth stating because the W5-W7 scout
+// got it backwards: `initialize` does NOT come through here. The headless
+// runtime builds the initialize and reinitialize responses as INLINE object
+// literals — two of the three `subtype:"success"` sites in its own chunk — and
+// routes every OTHER inbound subtype through this constructor, via the one
+// responder the request loop shares (`set_permission_mode`, `set_model`,
+// `set_max_thinking_tokens`, `interrupt`, `mcp_message`, remote-tools-announce).
+// So the first request of every run is the one request this never serves, and a
+// scenario that only says hello cannot see it at all. Measured by sabotage:
+// `plain` stays green, `runtime-setters` goes red.
 //
 // THE SHAPE IS THE PROTOCOL. Three levels of nesting, `request_id` echoed back
 // at the SECOND level rather than the first, and the payload under `response`.

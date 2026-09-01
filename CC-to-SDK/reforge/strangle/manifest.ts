@@ -1847,7 +1847,13 @@ export const SPLICES: Splice[] = [
     siblings: 3,
     fn: "controlResponseSuccess",
     captures: [],
-    coverage: ["plain"],
+    // MEASURED, and it corrects the scout: `initialize` does NOT go through
+    // here. The headless runtime builds the initialize and reinitialize
+    // responses as INLINE object literals and routes every OTHER subtype through
+    // this constructor, so the first request of every run is the one request it
+    // never serves. Sabotaging it leaves `plain` green and turns
+    // `runtime-setters` — a `set_permission_mode` over the channel — red.
+    coverage: ["runtime-setters"],
   },
 
   {
