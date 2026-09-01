@@ -160,10 +160,30 @@ describe("<HelpDialog> — the footers", () => {
     stdin.write("/");
     await waitFor(() => flat(lastFrame).includes("Search commands"));
     expect(flat(lastFrame)).not.toContain("switch tab");    // searching: Tabs is disableNavigation'd
-    expect(flat(lastFrame)).toContain("dismiss");            // help:dismiss is still live throughout
     stdin.write("\x1b");                                      // Esc clears the query, not the dialog
     await waitFor(() => flat(lastFrame).includes("/compact"));
     expect(flat(lastFrame)).toContain("switch tab");          // browsing again: tab navigation is back
+  });
+
+  // bl10 fix wave 2, finding 6: while a Commands/Custom search is active, Escape only clears the query (the
+  // browser's own footer already says "Esc to clear") — but the auto keyhint bar's `hintScope={["Help"]}`
+  // still walked `help:dismiss` and printed "esc dismiss" alongside it, two visible and CONTRADICTORY
+  // instructions for the same key. The bar must drop `help:dismiss` while searching; the browser footer's own
+  // "Esc to clear" text is untouched, and non-search state keeps advertising the real dismiss.
+  it("does not advertise 'dismiss' in the auto keyhint bar while searching — the browser footer already carries Esc's meaning", async () => {
+    const { stdin, lastFrame } = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} />);
+    await waitFor(() => flat(lastFrame).includes(HELP_INTRO));
+    stdin.write("\t");
+    await waitFor(() => flat(lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    expect(flat(lastFrame)).toContain("dismiss");             // browsing: the auto bar still advertises it
+    stdin.write("/");
+    await waitFor(() => flat(lastFrame).includes("Search commands"));
+    const f = flat(lastFrame);
+    expect(f).not.toContain("dismiss");                       // searching: the auto bar drops it
+    expect(f).toContain("esc to clear");                      // …but the browser's own footer still says so
+    stdin.write("\x1b");                                      // Esc clears the query, not the dialog
+    await waitFor(() => flat(lastFrame).includes("/compact"));
+    expect(flat(lastFrame)).toContain("dismiss");             // browsing again: the real dismiss hint is back
   });
 
   it("Escape dismisses from the General tab", async () => {

@@ -189,7 +189,13 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
       // Commands/Custom-commands query is open, tab/←/→ register NO handler (Tabs.tsx's own `NO_ACTIONS`
       // arm), but `Tabs`' table still binds them, so blindly walking that scope kept advertising "switch tab"
       // as live when it was not. Drop `Tabs` from the derived set for exactly the state that disables it.
-      hintScope={search !== null ? ["Help"] : ["Help", "Tabs"]}>
+      //
+      // bl10 fix wave 2, finding 6: while searching, Escape only clears the query — `browseSearchFooter`
+      // already prints "esc to clear" for that — but `hintScope={["Help"]}` still walked `help:dismiss` and
+      // printed a SECOND, contradictory "esc dismiss" beside it. `hintActions={[]}` replaces `hintScope`
+      // outright for that state (`Help` binds nothing else the registry describes — `app:interrupt` has no
+      // hint row — so an empty explicit set is the true reachable one, not an omission).
+      {...(search !== null ? { hintActions: [] as const } : { hintScope: ["Help", "Tabs"] as const })}>
       {/* T-MENU task 2 fix wave: the old hand-written `{escChord} to cancel` line (L459757's `<esc> to
           cancel`) is gone — `hintScope` derives the same "esc dismiss" from the `Help`/`Tabs` scopes this
           dialog already registers (`help:dismiss` needed its own `KEY_HINT_DESCRIPTIONS` row, added by this
