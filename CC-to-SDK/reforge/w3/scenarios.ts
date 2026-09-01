@@ -32,8 +32,7 @@
 // engine to do; it may not change the environment the whole corpus is graded
 // under.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { baseOptions, drive, resultText, type Scenario } from "../src/harness.js";
 import { SANDBOX } from "../src/runTurn.js";
@@ -124,8 +123,22 @@ export function seedGitRepo(dir: string): void {
  * the state surface (§3.2), which snapshots the sandbox, sees an empty tree for
  * this scenario; the filesystem effect being asserted is in the request body,
  * not on disk.
+ *
+ * WHY NOT `tmpdir()` (C6 boundary review, finding 3). The engine puts the loaded
+ * memory file's ABSOLUTE PATH into the first user message's context block, so the
+ * working directory is recorded data, not scaffolding. `os.tmpdir()` reads
+ * `$TMPDIR`, which on macOS is a per-user directory with a random component
+ * (`/var/folders/c1/l4z…/T`), so the cassette carried one operator's machine in
+ * its request bodies and could only ever replay there. The `<repo>`/`<home>`
+ * requirement above does not need a per-user root — only a fixed one outside
+ * both trees — so the constant is the fix, at the source, rather than a
+ * canonicalization rule scrubbing the symptom out of the hash.
+ *
+ * `realpathSync` because the engine reports the RESOLVED path (`/tmp` is a
+ * symlink to `/private/tmp` on macOS), so resolving it here makes the directory
+ * this scenario creates the same string the recording carries.
  */
-const MEMORY_DIR = join(tmpdir(), "reforge-w3-memory");
+const MEMORY_DIR = join(realpathSync("/tmp"), "reforge-w3-memory");
 
 export const W3_SCENARIOS: Scenario[] = [
   {
