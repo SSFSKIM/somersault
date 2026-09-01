@@ -629,7 +629,7 @@
         "scenario:edit-tool",
         "scenario:task-family"
       ],
-      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (§2.4), one per effectful-port capture that leaves this row: `tool/Read` — the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` — the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery §1.1 files under the Bash executor; `subsystem/subagent-dispatch` — TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (§3.3), so it is a port with no edge."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too \u2014 the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (\u00a72.4), one per effectful-port capture that leaves this row: `tool/Read` \u2014 the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` \u2014 the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery \u00a71.1 files under the Bash executor; `subsystem/subagent-dispatch` \u2014 TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (\u00a73.3), so it is a port with no edge."
     },
     {
       "id": "subsystem/tool-result-validators",
@@ -639,7 +639,7 @@
       "state": "unowned",
       "edges": [],
       "footprint": null,
-      "note": "Split out of §1.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads — mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it — the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
+      "note": "Split out of \u00a71.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads \u2014 mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it \u2014 the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -889,7 +889,7 @@
               "declStart": 2171,
               "declEnd": 3430,
               "sha256": "e212d4afb1c8445114a8c3e85e43690059bbadd2267d6952db913532c86f5ec6",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-qe0j59w7.js",
@@ -899,7 +899,7 @@
                   "declStart": 0,
                   "declEnd": 4188,
                   "sha256": "67e46af70a6bb035bcfbe20be524f402b35b26871ab9bb6646c1af1f6f0974af",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-04aem4bh.js",
@@ -909,7 +909,7 @@
                   "declStart": 0,
                   "declEnd": 5767,
                   "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-38213y7h.js",
@@ -919,7 +919,7 @@
                   "declStart": 0,
                   "declEnd": 94444,
                   "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-w3k8bej2.js",
@@ -929,7 +929,7 @@
                   "declStart": 0,
                   "declEnd": 57148,
                   "sha256": "2f1f54062ae10f93dff9c7771a6324067cbb78472e9452ac52c780f37cac36b1",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-nt3hxpjz.js",
@@ -939,7 +939,7 @@
                   "declStart": 0,
                   "declEnd": 1762,
                   "sha256": "bb8a594e87857dde76a57b3b22868c9aab77173166a3631f0b1133e9dda01966",
-                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             }
@@ -1345,7 +1345,7 @@
         "scenario:subagent",
         "attestation/coverage.md"
       ],
-      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first."
+      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt \u2014 plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first."
     },
     {
       "id": "subsystem/compaction",
@@ -1383,7 +1383,7 @@
               "declStart": 24074,
               "declEnd": 24090,
               "sha256": "a1e48f62bc230dadb386dbf8667b960613e4ae42daed051067c793faf9fc832d",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             }
           ]
         },
@@ -1984,7 +1984,7 @@
               "declStart": 2170797,
               "declEnd": 2170814,
               "sha256": "f8161e08e471529d29f435220ac614d67c6582c538536366659385c35f76571e",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "I_e",
@@ -2157,7 +2157,7 @@
               "declStart": 3005677,
               "declEnd": 3005694,
               "sha256": "e0a1938fa4ba991d87c6e49a0c76d07ccd34b43031e6d67ad34839f6e0ea7929",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -2220,7 +2220,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
             },
             {
               "name": "jy",
@@ -2285,6 +2285,357 @@
               "sha256": "94972f57132241aef1fe76da6030ea40309d3eac0a8fb6daea5b84641bbb078b"
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1072391,
+            "end": 1072785,
+            "sha256": "849c6f57f0623ebb497f06f9e42604d6c065d1dc25f5b7dc069ad68f0305b6f9"
+          },
+          "captures": [
+            {
+              "name": "oT",
+              "as": "hasHookForEvent",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3045074,
+              "declEnd": 3045309,
+              "sha256": "e377ca014658e5079db67373527b81473f50cd0c72bb4795c50d9e23ef62d097"
+            },
+            {
+              "name": "Hb",
+              "as": "hookAgentIds",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1070885,
+              "declEnd": 1071006,
+              "sha256": "38273d95841993cd6b4a71747fe8b9029e415977d6b2a276d546e4d0efffe872",
+              "closure": [
+                {
+                  "name": "DR",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 304500,
+                  "declEnd": 304586,
+                  "sha256": "42d898f863e1877c215d4fc2ead01d79012576e3f709f39bf0c12e6a86dc681a",
+                  "declKind": "function"
+                },
+                {
+                  "name": "Lon",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 1070847,
+                  "declEnd": 1070884,
+                  "sha256": "eb1b9c9243001c9b5ec750803e6609227b5c7a8e9b31ee549bd2df4a7d07f478",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "Dc",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 304250,
+                  "declEnd": 304264,
+                  "sha256": "152b1b99ed4faa2958686391a093a93e9271075ffe8f737be2e8df04e4ad6361",
+                  "declKind": "variable"
+                },
+                {
+                  "name": "D_e",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 2,
+                  "basis": "declaration",
+                  "declStart": 1070745,
+                  "declEnd": 1070846,
+                  "sha256": "2a3df1242842205707a33525e649f8dfbf4b6332d41e2ac3bb43ae3431e989bc",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Ea",
+              "as": "createBaseHookInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3012901,
+              "declEnd": 3013503,
+              "sha256": "33e263b24dc56ace83c37088fa6d1efbbc85645a0aee7a75826364dee900ee85"
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "Li",
+              "as": "defaultHookTimeoutMs",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1070693,
+              "declEnd": 1070702,
+              "sha256": "61eb9b1ed9aa5a9b3752af26b6570fd9abf365a635da2177886c452f2da65cb6"
+            },
+            {
+              "name": "jy",
+              "as": "executeHooks",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3049300,
+              "declEnd": 3049561,
+              "sha256": "94972f57132241aef1fe76da6030ea40309d3eac0a8fb6daea5b84641bbb078b"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3004256,
+            "end": 3004645,
+            "sha256": "e6e55b87cfcedc3e049949489a610613f7a03fcb61d3ad98847e579a8b1634ca"
+          },
+          "captures": [
+            {
+              "name": "Ea",
+              "as": "createBaseHookInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3012901,
+              "declEnd": 3013503,
+              "sha256": "33e263b24dc56ace83c37088fa6d1efbbc85645a0aee7a75826364dee900ee85"
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "Gu",
+              "as": "sessionId",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 622,
+              "declEnd": 624,
+              "sha256": "e4b6e66c3e338e97fc222a488fd59e1744cd8c5e255dc413abdc1caebaec815c",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "Gu",
+                "declStart": 1072,
+                "declEnd": 1096,
+                "sha256": "a895b93830a63b2b8dcf76ba1e3d630cce160571d808c24fe62af495f7d1a8c0"
+              }
+            },
+            {
+              "name": "Yc",
+              "as": "sessionTitle",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 233007,
+              "declEnd": 233072,
+              "sha256": "7d0cb461f213a77e441c868f4d09af029489f7c034b9ea546b261b248e61d4ae"
+            },
+            {
+              "name": "tx",
+              "as": "beginActivity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1293507,
+              "declEnd": 1294149,
+              "sha256": "a975b8ffdf5239ced25108cfd151359f72933b9035e7cd299f76b429893a46bc"
+            },
+            {
+              "name": "CMe",
+              "as": "uuid",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3004197,
+              "declEnd": 3004214,
+              "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+            },
+            {
+              "name": "jy",
+              "as": "executeHooks",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3049300,
+              "declEnd": 3049561,
+              "sha256": "94972f57132241aef1fe76da6030ea40309d3eac0a8fb6daea5b84641bbb078b"
+            },
+            {
+              "name": "ox",
+              "as": "endActivity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1294149,
+              "declEnd": 1294620,
+              "sha256": "2cdf31cbe5e249125e69a41862317599134c16acafc8d1666978ca2928db743f"
+            },
+            {
+              "name": "Li",
+              "as": "defaultHookTimeoutMs",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1070693,
+              "declEnd": 1070702,
+              "sha256": "61eb9b1ed9aa5a9b3752af26b6570fd9abf365a635da2177886c452f2da65cb6"
+            },
+            {
+              "name": "Uie",
+              "as": "activityHold",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3004232,
+              "declEnd": 3004255,
+              "sha256": "8431bdc5e43b3565e95e050408be976c372e08adb05958ebcbfe7e36d7e8be24"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3005254,
+            "end": 3005670,
+            "sha256": "06e88a5b5a2545de1737cbda53a5bd3b522de38069d59a266c5c1ada02b204a4"
+          },
+          "captures": [
+            {
+              "name": "Ea",
+              "as": "createBaseHookInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3012901,
+              "declEnd": 3013503,
+              "sha256": "33e263b24dc56ace83c37088fa6d1efbbc85645a0aee7a75826364dee900ee85"
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "AE",
+              "as": "executeHooksAwait",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3074990,
+              "declEnd": 3081313,
+              "sha256": "3a54c953f7a2924341c1cfddac0f99610cbe275ada71b118e242fa8745a04202"
+            },
+            {
+              "name": "oun",
+              "as": "sessionEndTimeoutMs",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 3011125,
+              "declEnd": 3011133,
+              "sha256": "cdfd9e931c43d0566aface741cb42f84e0f027eb452664088852dbfd1f5db188"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2999213,
+            "end": 3000310,
+            "sha256": "8e742abd927febee9d1486c4c9b15ce4d28bf2496847445a4d9c288273e5189b"
+          },
+          "captures": [
+            {
+              "name": "ka",
+              "as": "isDelegatedObservationSubagent",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 4146,
+              "declEnd": 4148,
+              "sha256": "3ebb1c99b12b77463e97c3a0f206e4fd46176cd1b8e183816a67338c04b25e5b",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "ka",
+                "declStart": 608658,
+                "declEnd": 608735,
+                "sha256": "3614af44304e2fd88b6d60bc7a4c80ab769a74f94fd27e84271c8a5131273a17"
+              },
+              "closure": []
+            },
+            {
+              "name": "Ea",
+              "as": "createBaseHookInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3012901,
+              "declEnd": 3013503,
+              "sha256": "33e263b24dc56ace83c37088fa6d1efbbc85645a0aee7a75826364dee900ee85"
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4844,
+              "declEnd": 4846,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1013,
+                "declEnd": 1063,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "AE",
+              "as": "executeHooksAwait",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3074990,
+              "declEnd": 3081313,
+              "sha256": "3a54c953f7a2924341c1cfddac0f99610cbe275ada71b118e242fa8745a04202"
+            },
+            {
+              "name": "Li",
+              "as": "defaultHookTimeoutMs",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1070693,
+              "declEnd": 1070702,
+              "sha256": "61eb9b1ed9aa5a9b3752af26b6570fd9abf365a635da2177886c452f2da65cb6"
+            }
+          ]
         }
       ],
       "evidence": [
@@ -2295,14 +2646,23 @@
         "strangle/manifest.ts:stop-hooks",
         "strangle/manifest.ts:subagent-start-hooks",
         "strangle/manifest.ts:message-display-hooks",
+        "strangle/manifest.ts:post-tool-failure-hooks",
+        "strangle/manifest.ts:session-start-hooks",
+        "strangle/manifest.ts:session-end-hooks",
+        "strangle/manifest.ts:pre-compact-hooks",
         "strangle/hooks-parity.test.ts",
+        "w5/probe-hook-events.ts",
         "scenario:hooks",
         "scenario:hooks-command",
         "scenario:hooks-batch",
         "scenario:hooks-prompt-submit",
-        "scenario:hooks-subagent"
+        "scenario:hooks-subagent",
+        "scenario:hooks-tool-failure",
+        "scenario:hooks-precompact",
+        "scenario:hooks-session-start",
+        "scenario:hooks-session-end"
       ],
-      "note": "W5 owns the DISPATCHERS: seven async-generator entry points covering all EIGHT events the engine fires headlessly (one function serves Stop and SubagentStop). Each owns one event's hook-input record — its field set and ORDER, which is the byte stream a command hook reads on stdin — plus the guard that decides whether to dispatch at all and the options the executor is asked for. Seven upstream helpers came with them as owned pure helpers rather than ports: the hook fan-out rule and its two agent-context predicates (strangle/modules/shared/hook-agent-context.js), the last-assistant-message pair (strangle/modules/shared/assistant-text.js), and the plain-object test that decides chain eligibility. The row is SPLICED, not standalone-complete, and the gap is one function: the 23 KB shared executor (upstream Qxt, reached through jy/Xxt) — hook matching, command/callback/http/mcp invocation, timeouts, cancellation — which the W5-W7 scout measured S-MODULE-shaped and which §2.3 says is owned behind a designed port rather than transcribed. Whichever wave takes it inherits getMatchingHooks (Rzn), the agent-context result filter (Xxt) and the headless-suppression wrapper (jy) with it. Five events have dispatchers here that no headless run reaches (PostToolUseFailure, SessionStart, SessionEnd, Notification, PreCompact) — measured, not assumed: w5/probe-hook-events.ts registered callbacks for thirteen events against the pinned engine and six fired; the two subagent events fire on an Agent dispatch. Edges, all effectful ports: the working-directory reader and the base hook-input builder (session identity + app state), the child agent's transcript path (session storage), the background-task registry's wire projection and the session cron list (moat tools / subagent dispatch). The row's title says \"+ hooks chunks\" and the census that named them was WRONG (W5-W7 scout §0, re-measured): chunk-7g4v1yq9 is a bundle-wide constants chunk with 521 consumers, chunk-x5kv85y3 is the remote device-hook templates and off the headless path, and chunk-scxwkz2z is a pure named-export barrel over the engine chunk with zero code of its own. There is no hooks chunk to own; every implementation is a free function in chunk-fy12d89p.js, which is why W5 is pure S-method."
+      "note": "W5 owns the DISPATCHERS: eleven entry points covering ELEVEN of the twelve hook events the engine is measured to fire headlessly (one function serves Stop and SubagentStop; the twelfth, Notification, is excluded below). Each owns one event's hook-input record -- its field set and ORDER, which is the byte stream a command hook reads on stdin -- plus the guard that decides whether to dispatch at all and the options the executor is asked for. Two of the eleven are NOT generators: tz/PreCompact and ZSe/SessionEnd await a second executor (AE) because their callers have no conversation left to stream results into, and tz goes further -- it reduces its results to a verdict the compactor obeys (custom instructions, a display message, a blocking reason), which is the only place in this subsystem where hook OUTPUT is behaviour rather than a stream. Six distinct upstream pure helpers came with them as owned helpers rather than ports, captured seven times (Hb by two dispatchers, the rest once each): the hook fan-out rule and its two agent-context predicates (strangle/modules/shared/hook-agent-context.js), the last-assistant-message pair (strangle/modules/shared/assistant-text.js), and the plain-object test that decides chain eligibility. The row is SPLICED, not standalone-complete, and the gap is the shared executors: the 23 KB generator executor (upstream Qxt, reached through jy/Xxt) and its awaiting sibling AE -- hook matching, command/callback/http/mcp invocation, timeouts, cancellation -- which the W5-W7 scout measured S-MODULE-shaped and which S2.3 says is owned behind a designed port rather than transcribed. Whichever wave takes them inherits getMatchingHooks (Rzn), the agent-context result filter (Xxt) and the headless-suppression wrapper (jy) with them. WHICH EVENTS FIRE, MEASURED TWICE. The wave's first probe drove ONE batched tool turn with CALLBACKS only and reported eight live events; C8's boundary review found that negative vacuous -- the turn created none of the missing firing conditions, and a callback reaches a dispatcher only if that dispatcher hands the executor a session hooks registry, which vUt/SessionStart, tz/PreCompact and EE/Notification do not. Re-measured with a phase per condition and both kinds of hook (w5/probe-hook-events.ts), TWELVE fire: the original eight plus PostToolUseFailure (on a failing tool call), PreCompact (on /compact), SessionStart (on every run, command path only) and SessionEnd (on teardown, and by callback on /clear). ONE event is excluded, and the exclusion is now two-sided: Notification's only call site in the pinned bundle is the MCP-elicitation completion notification in the headless runner chunk (chunk-dvbbv89q.js), which needs an external MCP server that elicits -- machinery out of proportion to the cell -- and EE calls AE with no registry, so no SDK callback could observe it however the condition were created. It was registered on BOTH paths in all four probe phases and fired in none. No claim is made about the SDK's other declared events: they are neither ruled in nor ruled out. Edges, all effectful ports: the working-directory reader and the base hook-input builder (session identity + app state), the child agent's transcript path (session storage), the background-task registry's wire projection and the session cron list (moat tools / subagent dispatch), and the two executors. The row's title says \"+ hooks chunks\" and the census that named them was WRONG (W5-W7 scout S0, re-measured): chunk-7g4v1yq9 is a bundle-wide constants chunk with 521 consumers, chunk-x5kv85y3 is the remote device-hook templates and off the headless path, and chunk-scxwkz2z is a pure named-export barrel over the engine chunk with zero code of its own. There is no hooks chunk to own; every implementation is a free function in chunk-fy12d89p.js, which is why W5 is pure S-method."
     },
     {
       "id": "subsystem/permissions",
@@ -2337,7 +2697,7 @@
         "scenario:permission-broker",
         "scenario:permission-bag"
       ],
-      "note": "C5x's arrow-initializer spike owns the chain's deny-stamping link (upstream kye, hasPermissionsToUseToolWithSink): a deny from the decision body is stamped with where it was decided, everything else passes through. The 11.6 KB mode-aware decision body it delegates to (von) stays a port and stays W6's — the W5-W7 scout measured it S-module-shaped. No outward edge: the port's far side is inside this same row."
+      "note": "C5x's arrow-initializer spike owns the chain's deny-stamping link (upstream kye, hasPermissionsToUseToolWithSink): a deny from the decision body is stamped with where it was decided, everything else passes through. The 11.6 KB mode-aware decision body it delegates to (von) stays a port and stays W6's \u2014 the W5-W7 scout measured it S-module-shaped. No outward edge: the port's far side is inside this same row."
     },
     {
       "id": "subsystem/control-protocol",
@@ -2472,7 +2832,7 @@
         "strangle/manifest.ts:session-materialize",
         "scenario:resume"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` \u2014 the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` \u2014 W9 owns the SessionPort."
     },
     {
       "id": "subsystem/bash-executor",
@@ -2623,7 +2983,7 @@
         "strangle/manifest.ts:text-delta",
         "scenario:plain"
       ],
-      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
+      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` \u2014 the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
     },
     {
       "id": "subsystem/sandboxing",
@@ -2637,7 +2997,7 @@
     {
       "id": "tool/Agent",
       "kind": "tool",
-      "title": "Agent — subagent dispatch tool",
+      "title": "Agent \u2014 subagent dispatch tool",
       "wave": "C15",
       "state": "unowned",
       "edges": [],
@@ -2889,7 +3249,7 @@
     {
       "id": "tool/WebSearch",
       "kind": "tool",
-      "title": "WebSearch — server-executed; the client-side surface is formatting only (§1.2)",
+      "title": "WebSearch \u2014 server-executed; the client-side surface is formatting only (\u00a71.2)",
       "wave": "C11",
       "state": "unowned",
       "edges": [],
