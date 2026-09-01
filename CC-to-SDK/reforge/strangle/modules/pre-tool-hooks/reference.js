@@ -61,8 +61,12 @@ export const DEFAULT_HOOK_TIMEOUT_MS = 600000;
  * tool call is offered to the function-hook chain at all, so its exact shape is
  * this dispatcher's behaviour: a tool input that is an ARRAY takes the settings
  * path even when the chain is armed.
+ *
+ * Exported so the parity oracle can compare THIS implementation against
+ * upstream's own bytes directly, rather than a second copy of it written in the
+ * test — a test that transcribes the thing it grades grades nothing.
  */
-function isPlainObject(value) {
+export function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -137,5 +141,7 @@ export async function* preToolHooks(
     }
     return;
   }
-  return yield* runSettingsHooks();
+  // A BARE `yield*`, deliberately — see the note in the sibling dispatchers:
+  // upstream discards the executor generator's completion value.
+  yield* runSettingsHooks();
 }

@@ -114,6 +114,41 @@ export const ATTESTED: AttestedModule[] = [
     row: "auto-compact-trigger",
     scenarios: ["auto-compact-threshold"],
   },
+
+  // ---- W5: the hook dispatchers --------------------------------------------
+  // Seven modules, one per dispatcher, covering all eight headlessly-live
+  // events. Scenario sets are the smallest ones that can move each module's
+  // branches: `hooks` for the two tool-scoped dispatchers, `hooks-command` for
+  // the same PostToolUse record read as a byte stream, `hooks-batch` for the
+  // batch guard, `hooks-prompt-submit` for the prompt/display/stop trio, and
+  // `hooks-subagent` for the subagent arm of the stop dispatcher.
+  //
+  // What grades every unexecuted arm is `strangle/hooks-parity.test.ts`, and it
+  // also grades what no branch inventory here can see: the OWNED SHARED HELPERS.
+  // `shared/hook-agent-context.js` (the fan-out rule and its two agent-context
+  // predicates) and `shared/assistant-text.js` (the last-assistant-message pair)
+  // are not modules in this layout's sense — they have no manifest row and no
+  // `reference.js` of their own — so their arms contribute no inventory rows.
+  // The oracle enumerates them against upstream's own bytes over the full
+  // context x event cross-product before it binds any dispatcher to them, which
+  // is the same bargain §2.4 strikes for a pure helper one level up.
+  { module: "post-tool-hooks", row: "post-tool-hooks", scenarios: ["hooks", "hooks-command"] },
+  { module: "pre-tool-hooks", row: "pre-tool-hooks", scenarios: ["hooks"] },
+  { module: "post-tool-batch-hooks", row: "post-tool-batch-hooks", scenarios: ["hooks-batch"] },
+  { module: "user-prompt-submit-hooks", row: "user-prompt-submit-hooks", scenarios: ["hooks-prompt-submit"] },
+  { module: "stop-hooks", row: "stop-hooks", scenarios: ["hooks-prompt-submit", "hooks-subagent"] },
+  { module: "subagent-start-hooks", row: "subagent-start-hooks", scenarios: ["hooks-subagent"] },
+  {
+    module: "message-display-hooks",
+    row: "message-display-hooks",
+    scenarios: ["hooks-prompt-submit"],
+    noBranchesReason:
+      "the body is one object literal and one delegation — no guard, no conditional, no optional chain, because this is the one dispatcher that neither checks a registration nor takes an options bag. " +
+      "Its AST inventory is legitimately empty rather than under-reported. " +
+      "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one over three message shapes (final, non-final delta, empty delta) and compares the EXECUTOR REQUEST as well as the record — " +
+      "which is where this dispatcher's distinctive claims live: a synthesised `${messageId}-${index}` correlation id, forced synchronous execution, and suppressed per-invocation telemetry. " +
+      "Four mutation controls hold that comparison to it.",
+  },
 ];
 
 export interface Exclusion {
@@ -495,5 +530,239 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "auto-compact-trigger#autoCompactTrigger@4:F",
     reason:
       "the left conjunct's false arm — the compaction surface CLOSED. That happens only under `CLAUDE_CODE_REMOTE` with a closed circuit, which no reforge run has. Graded by compaction-parity.test.ts ('surface CLOSED, window unconfigured — the conjunct's other arm'), which is the case where an unconfigured window must NOT refuse.",
+  },
+
+  // ==========================================================================
+  // W5 — the hook dispatchers. Five families, and the first two account for
+  // thirty of the forty.
+  //
+  // FAMILY 1: THE MANAGED-HOOKS OPTIONS BAG. Every dispatcher takes an optional
+  // options object carrying `managedHooksOnly` / `managedHooksExcluded`, and the
+  // headless seam passes none — so each `options?.…` chain resolves the same way
+  // on every recording. The oracle supplies the bag in all three states.
+  //
+  // FAMILY 2: THE FUNCTION-HOOK CHAIN. The PreToolUse dispatcher's second
+  // execution path is armed by an in-process module handler or a managed pass,
+  // neither of which exists on the SDK seam. It is fifteen branch outcomes plus
+  // the four of the plain-object test the corpus never even calls, and it is the
+  // largest single family this wave adjudicates.
+  //
+  // FAMILY 3: A REGISTRATION REFUSAL IS UNRECORDABLE BY CONSTRUCTION. A run with
+  // no hook registered for an event produces no consult, no record and no
+  // observable — so "the guard refused" and "the dispatcher was never called"
+  // are the same recording. This is the one exclusion family in the campaign so
+  // far whose reason is not "the corpus does not do that" but "no corpus could".
+  //
+  // FAMILY 4: THE STOP DISPATCHER'S GUARD MATRIX — two agent kinds the headless
+  // Agent tool cannot produce, two of three turn-end phases, and four shapes of
+  // the derived `last_assistant_message`.
+  //
+  // FAMILY 5: a prompt submitted inside a subagent context.
+  //
+  // What grades every one of them is strangle/hooks-parity.test.ts: 371
+  // comparisons of upstream's own bytes against the owned modules, each
+  // comparing the yielded sequence, the return value, the hook RECORD and the
+  // full port trace, held non-vacuous by 36 mutation controls. Demonstrated red:
+  // swapping `tool_use_id` and `duration_ms` in the PostToolUse record fails
+  // five of those comparisons.
+  {
+    branch: "post-tool-hooks#postToolHooks@0:T",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "post-tool-hooks#postToolHooks@1:T",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@2:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@3:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@7:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@8:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@13:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#runSettingsHooks@3:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "user-prompt-submit-hooks#userPromptSubmitHooks@2:F",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "subagent-start-hooks#subagentStartHooks@0:T",
+    reason:
+      "the managed-hooks OPTIONS BAG is never supplied on the headless seam: no dispatcher call the SDK drives passes `options`, so every `options?.…` chain resolves the same way on every recorded run. `managedHooksOnly`/`managedHooksExcluded` are the enterprise/plugin managed-hook path. Graded by strangle/hooks-parity.test.ts, which runs each dispatcher with the bag absent, with `managedHooksOnly`, and with `managedHooksExcluded`, and compares the EXECUTOR REQUEST the option ends up in.",
+  },
+  {
+    branch: "pre-tool-hooks#isPlainObject@0:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The plain-object test is reached only once the chain is armed, so the corpus never calls it at all.",
+  },
+  {
+    branch: "pre-tool-hooks#isPlainObject@0:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The plain-object test is reached only once the chain is armed, so the corpus never calls it at all.",
+  },
+  {
+    branch: "pre-tool-hooks#isPlainObject@1:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The plain-object test is reached only once the chain is armed, so the corpus never calls it at all.",
+  },
+  {
+    branch: "pre-tool-hooks#isPlainObject@1:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The plain-object test is reached only once the chain is armed, so the corpus never calls it at all.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@0:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@1:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@4:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. This arm needs a managed pass to be present on the tool-use context.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@5:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@6:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@9:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@11:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@12:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@14:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@15:iterated",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@16:T",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The signal fallback is evaluated only on the chain path.",
+  },
+  {
+    branch: "pre-tool-hooks#preToolHooks@16:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. The signal fallback is evaluated only on the chain path.",
+  },
+  {
+    branch: "pre-tool-hooks#runSettingsHooks@0:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. A REWRITTEN tool input reaches the closure only from the chain.",
+  },
+  {
+    branch: "pre-tool-hooks#runSettingsHooks@1:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. A per-call managed-hook override reaches the closure only from the chain.",
+  },
+  {
+    branch: "pre-tool-hooks#runSettingsHooks@2:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. A per-call option object reaches the closure only from the chain.",
+  },
+  {
+    branch: "pre-tool-hooks#runSettingsHooks@4:F",
+    reason:
+      "the PreToolUse function-hook CHAIN is unreachable through the SDK seam: it is armed only by an in-process module handler (`hasModuleHandlers`, an engine-internal registry the headless driver registers nothing in) or by a managed pass recorded for the same tool_use id and the same input. The corpus therefore renders the settings path on every tool call and never this one. Graded by strangle/hooks-parity.test.ts, whose PreToolUse block drives the chain through both arming conditions, an array and a null tool input, an empty chain, and the closure the chain calls back into with a rewritten input and per-call options — comparing upstream's yields, its return and its full port trace, with four mutation controls on the chain path alone. A per-call option object reaches the closure only from the chain.",
+  },
+  {
+    branch: "post-tool-batch-hooks#postToolBatchHooks@0:T",
+    reason:
+      "the REFUSAL arm of a registration guard cannot be rendered by a scenario, and that is a property of the guard rather than of the corpus: a run with no PostToolBatch hook registered produces no hook consult, no record and no observable of any kind, so the refusal and 'the dispatcher was never called' are the same recording. It is nevertheless the common case in production. Graded by strangle/hooks-parity.test.ts, which runs the batch dispatcher registered and unregistered and compares the port trace, plus a control that fails if an unregistered batch still reached the executor.",
+  },
+  {
+    branch: "user-prompt-submit-hooks#userPromptSubmitHooks@0:F",
+    reason:
+      "a prompt submitted INSIDE a subagent context: the headless driver submits user prompts on the main session only, so `context.agentId` is undefined on every recording and the lookup falls back to the session id. Graded by strangle/hooks-parity.test.ts, whose prompt-submit block includes an agent-scoped context and compares which id the registration guard was consulted under.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@1:T",
+    reason:
+      "a DELEGATED-OBSERVATION subagent, which reports through its parent and therefore dispatches no turn-end hooks. The headless Agent tool dispatches ordinary subagents; nothing in the corpus creates a delegated-observation one. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@4:F",
+    reason:
+      "the BUILT-IN WEB-FETCH subagent, the one agent kind that skips the registration guard and runs the executor in managed-hooks-only mode. It is dispatched by the engine's own web-fetch path, not by a tool a scenario can call. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@7:F",
+    reason:
+      "the `turn_end_reactions` phase with NO function hook registered for the event — a second guard behind a phase the SDK seam does not drive. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@8:F",
+    reason:
+      "a stop dispatched with NO message list at all. Every corpus turn ends with messages, so the arm that skips the last-assistant-message derivation entirely is unrendered. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@9:F",
+    reason:
+      "a message list with no assistant message in it — an arm reachable only when a turn ends before the model replied. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@10:F",
+    reason:
+      "an assistant message whose text is EMPTY once joined and trimmed, which upstream turns into `undefined` rather than \"\" so the field is omitted from the record. A turn that ended on a tool call with no prose would reach it; the corpus's do not. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@12:T",
+    reason:
+      "a SubagentStop for an agent with no declared type, which upstream stamps as the empty string. The Agent tool always supplies a subagent_type. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
+  },
+  {
+    branch: "stop-hooks#stopHooks@13:F",
+    reason:
+      "the turn-end phase argument: the headless driver dispatches one phase on every recording, so the two others — and the `skipSessionFunctionHooks`/`sessionFunctionHooksOnly` options they select — are unrendered. strangle/hooks-parity.test.ts grades it: the stop block runs thirteen cases across both arms of the dispatcher and compares upstream's record, its executor options and its port trace, with seven mutation controls.",
   },
 ];

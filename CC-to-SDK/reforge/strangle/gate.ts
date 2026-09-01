@@ -175,6 +175,14 @@ for (const [label, script] of [
   // the predicate's PORT TRACE as well as its answer, since two of its refusals
   // differ from each other in nothing but which ports ran.
   ["compaction parity vs the pinned bundle", "strangle/compaction-parity.test.ts"],
+  // The same oracle for W5's hook dispatchers, where the corpus/domain gap is
+  // structural rather than incidental: a registration guard's REFUSAL arm cannot
+  // be recorded by any scenario at all — a run with no hook registered produces
+  // no consult, no record and no observable — and the PreToolUse function-hook
+  // chain is armed by machinery the SDK seam does not expose. It compares the
+  // yielded sequence, the return value, the hook RECORD and the full port trace,
+  // since the executor request is where one dispatcher differs from another.
+  ["hook-dispatch parity vs the pinned bundle", "strangle/hooks-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);

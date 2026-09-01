@@ -50,7 +50,12 @@ export async function* subagentStartHooks(
     agent_id: agentId,
     agent_type: agentType,
   };
-  return yield* executeHooks({
+  // A BARE `yield*`, deliberately: upstream discards the executor generator's
+  // completion value, so this dispatcher returns `undefined`. Returning it
+  // instead is a difference NO SCENARIO CAN SEE — nothing on the corpus's paths
+  // reads a dispatcher's return value — and only the parity oracle does. C5x's
+  // spiked module had it, and this is the oracle that wave deferred.
+  yield* executeHooks({
     session: context.session,
     hookInput,
     toolUseID: uuid(),
