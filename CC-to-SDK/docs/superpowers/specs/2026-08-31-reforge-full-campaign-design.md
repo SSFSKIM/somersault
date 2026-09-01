@@ -1051,6 +1051,20 @@ Pending — written at finish.
   direction it actually catches. Gate **39/39 phases PASS**, corpus 25/25, 22 liveness phases.
   Ledger: `subsystem/hook-dispatch`, `subsystem/permissions` and `subsystem/compaction` → `spliced`
   (8 spliced rows, 39 unowned).
+- 2026-09-01 (C7/W4 boundary review, internal): verdict **sound** — every splice byte-faithful
+  (upstream bodies extracted and compared; all 8 footprint spans re-hashed), the `d1n` fold-in's
+  only-caller claim verified graph-wide, the differ/canonical machinery edits tight with their
+  new gate-phase tests. Three findings, all closed same-day (commits `abf32000`…`e28d2efcb`):
+  the trigger oracle had been grading itself (upstream bound to the OWNED helpers — a shared
+  defect compared equal; fixed by extracting upstream's helper bytes with a measured
+  before/after: the perturbed constant passed 94/27 pre-fix, fails 4 graders post-fix; parity
+  suite now 119/37), the port trace extended 3 → 8 ports so the recorded lesson is true as
+  written (the two source refusals are unseparable by any trace — scoped honestly in all three
+  prose sites), and the continuation-block position corrected. **Two generalizable lessons
+  handed to W5/W6:** bind extracted upstream bodies to upstream's helpers, never the wave's own;
+  and a single-caller pure helper cannot be a live splice (C7's own doctrine finding). Gate
+  measured **61 phases zero-FAIL** post-fix; C7's 56/56 figure predates the fix wave and the
+  +5 delta is a counting artifact flagged for the next gate-number touch, not added phases.
 - 2026-09-01 (C6/W3 boundary review, internal): verdict **sound**, four non-blocking findings,
   all closed same-day (gate 48 → 50): the git seed hardened against operator config with
   both-directions poison controls (real value: recorder portability — honestly scoped by the
