@@ -71,14 +71,19 @@ launch() {                                   # launch <session> <cols> <rows>
   # only `'CI' in env`, true for ANY value including `"false"`, and answers "no color support" once it is.
   # Under `CI=false` this script saw a real ccx frame with ZERO ANSI escapes anywhere; unsetting the
   # variable outright (rather than assigning a falsy string) satisfies both checks at once.
-  cmd="env -u CI HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CLAUDE_CODE_NO_FLICKER=1 node $BIN"
+  # `--permission-mode default` (bl10-t-click, resize-matrix.sh's own precedent — see its `launch`'s READY-
+  # NEEDLE comment): a fresh isolated HOME otherwise onboards into whatever the product default currently is
+  # (auto, as of this writing), which paints an extra explanatory tip block above the composer — real content
+  # h1's hardcoded row numbers never accounted for. Pinning `default` (manual) suppresses that tip and keeps
+  # the frame layout below deterministic.
+  cmd="env -u CI HOME=$home CCX_FLEET_ROOT=$home/.claude/ccx TERM=xterm-256color CLAUDE_CODE_NO_FLICKER=1 node $BIN --permission-mode default"
   tmux new-session -d -s "$s" -x "$x" -y "$y" -c "$proj" "$cmd" || return 1
   SESSIONS="$SESSIONS $s"
   tmux set-option -t "$s" remain-on-exit on >/dev/null
   local i=0
   while [ "$i" -lt 120 ]; do
-    # Mode-agnostic: a fresh isolated HOME may default to auto or manual mode depending on the build's own
-    # onboarding default, and this needle only needs to prove the footer painted, not which mode it is in.
+    # Kept mode-agnostic even though the pin above now always resolves to manual: this needle only needs to
+    # prove the footer painted, and neither cell below cares which mode's label it reads.
     tmux capture-pane -t "$s" -p 2>/dev/null | grep -qE 'mode on' && return 0
     sleep 0.5; i=$((i+1))
   done
@@ -115,13 +120,36 @@ sgr_press()   { send_bytes "$1" "$(printf '\033[<0;%s;%sM'  "$2" "$3")"; }
 sgr_release() { send_bytes "$1" "$(printf '\033[<0;%s;%sm'  "$2" "$3")"; }
 dim_rows()    { grep -c $'\033\[2m' "$1" || true; }   # `capture-pane -e` keeps the SGR runs
 
+# bl10-t-click: `/status`'s replacement, since T-MENU task 3 (spec A1/D13) turned `/status` into a Settings
+# dialog that owns the whole pane — see resize-matrix.sh's `stage_content` for the full reasoning, which this
+# mirrors exactly (same command, so the echo/output shapes below match that file's own measurements). `!`
+# bash mode echoes `! ${command}` verbatim and then appends `formatBashOutput`'s two-space-indented lines, one
+# per printf line — three here, so this cell has a genuine MIDDLE row to hover.
+STAGE_CMD="printf 'stg1\nstg2\nstg3'"
+STAGE_ECHO="! ${STAGE_CMD}"
+STAGE_LAST="  stg3"                          # the last output row — staging is only done once this paints
+
 # ═══ Cell h1 — message hover (H1, Task 1's transcript-row hover), keyless ═══════════════════════════════════
+#
+# ⚠ THIS CELL'S CORE ASSERTION IS EXPECTED TO FAIL, ON A DEFECT bl10-t-click DID NOT INTRODUCE. `/status` (the
+# original staging) and this bash-mode replacement are BOTH plain local/`visual` transcript events
+# (`projectLocalEvent`, toolRenderer.tsx), and no producer of that kind has ever stamped `clickable: true` —
+# only `toolRenderer.tsx`'s tool-result gutter-blocks and advisor results do. Hover-triggered un-dimming was
+# narrowed to `clickable`-stamped owners by T-CLICKGATE Task 2 (bl4, commit f06085c8e, merged into main a week
+# before this round), which is already unit-tested as the INTENDED behavior — see
+# `test/tui/hover.test.tsx`'s own "H1: message-level hover grouping over a multi-line local event — gated on
+# `clickable` now" describe block, whose fixture is literally two staged "status"-style local events and whose
+# comment says outright: "Pre-T-CLICKGATE this cell proved the OPPOSITE". Confirmed live here too: hovering a
+# staged bash-output row produces a byte-identical `capture-pane -e` frame before and after. No local, keyless
+# command — bash mode or otherwise — can ever un-dim under the current, intentional gate, so restaging alone
+# cannot make this assertion pass; the fix below only removes the SEPARATE, real failure mode bl10-t-click did
+# introduce (typing into a dialog that never returns control to the composer).
 run_h1_cell() {
   local s="hc-h1-$RUN_ID"
-  echo "  cell h1: /status hover un-dims, then restores off-block"
+  echo "  cell h1: staged local content hover — un-dims nothing (expected FAIL, see header: T-CLICKGATE Task 2)"
   launch "$s" 100 24 || { record h1 1; kill_cell "$s"; return; }
-  type_line "$s" "/status"; tmux send-keys -t "$s" Enter; settle
-  wait_for "$s" "Status" || { record h1 1; kill_cell "$s"; return; }
+  type_line "$s" "$STAGE_ECHO"; tmux send-keys -t "$s" Enter; settle
+  wait_for "$s" "$STAGE_LAST" || { record h1 1; kill_cell "$s"; return; }
   settle
   local before="$HC_ROOT/h1-before" after="$HC_ROOT/h1-after" restored="$HC_ROOT/h1-restored"
   tmux capture-pane -t "$s" -p -e > "$before"
@@ -129,13 +157,14 @@ run_h1_cell() {
   if [ "$before_dim" -lt 2 ]; then
     echo "      FAIL h1 premise: fewer than 2 dim rows before hover ($before_dim)"; record h1 1; kill_cell "$s"; return
   fi
-  # Hover the SECOND row of the /status block (row 6: prompt echo at ~5, block starts just under it).
-  sgr_motion "$s" 5 6; settle
+  # Hover the SECOND output row (row 7 at this launch size: row 4 is the echo, rows 6-8 are `  stg1`/`  stg2`/
+  # `  stg3` — measured with `--permission-mode default` pinned above, which is what keeps this deterministic).
+  sgr_motion "$s" 5 7; settle
   tmux capture-pane -t "$s" -p -e > "$after"
   local after_dim; after_dim=$(dim_rows "$after")
   local rc=0
   if [ "$after_dim" -ge "$before_dim" ]; then
-    echo "      FAIL h1: dim-row count did not drop on hover (before=$before_dim after=$after_dim)"; rc=1
+    echo "      FAIL h1: dim-row count did not drop on hover (before=$before_dim after=$after_dim) — expected, see this cell's header comment (T-CLICKGATE Task 2, pre-existing)"; rc=1
   fi
   # THE BAND NEGATION: no row anywhere gained a `48;2;` background it did not already have.
   local before_bg after_bg
