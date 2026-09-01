@@ -2,10 +2,24 @@
 // the CLASSIFIER's alone? (upstream `Uct` / `classifierOnlyStreakActive`,
 // 2.1.251, chunk-fy12d89p).
 //
-// Sixty-two bytes, five call sites, and it runs on EVERY allowed tool call in
-// every mode — including the twenty-two `bypassPermissions` scenarios, whose
-// allow arm evaluates it before anything else. That makes it the cheapest live
-// unit in the subsystem and the one that proves the chain is reached at all.
+// OWNED IN `shared/` RATHER THAN SPLICED, and the reason is a measurement that
+// corrected this header's own first paragraph. Sixty-two bytes, five call sites,
+// and it runs on EVERY allowed tool call in every mode — which reads like the
+// cheapest live unit in the subsystem, and is not one. Its answer is pinned:
+// §3.3 holds the streak gate at its disabled default, so upstream returns
+// `false` on every graded run, and the MAXIMAL twin — one that returns `true`
+// unconditionally, suppressing the reset on every allowed call — leaves both
+// covering scenarios byte-identical. What it changes is a counter that only the
+// auto-mode classifier reads, and the classifier's denial is this wave's
+// standing OPEN condition.
+//
+// The row was carried as live until the gate stopped reading a non-zero exit as
+// a RED. It was not a crash and not a divergence: the sabotaged run passed. So
+// the splice is dropped and the finding kept, as C1 did with the interrupt
+// clause and as this wave did with the message builder and the mode setter.
+// `strangle/permissions-parity.test.ts` still grades it against upstream's bytes
+// from a synthetic row, because the reason it is not a row says nothing about
+// whether it is right.
 //
 // WHAT IT GUARDS. The engine keeps a consecutive-denial counter that the
 // auto-mode classifier feeds and that a human answering a prompt would reset.

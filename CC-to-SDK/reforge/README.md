@@ -2578,11 +2578,11 @@ measured negative; it will not be a third time by treating these as one.
 
 ## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
 
-Eleven splices plus three owned pure helpers, eleven new recordings, and a fifth parity oracle
+Ten splices plus four owned-but-unspliced functions, eleven new recordings, and a fifth parity oracle
 grading **2,488 comparisons with 45 controls**. The wave's headline is not a count, though — it is
 **two corrections the campaign spec needed** and a set of measurements that changed how liveness is
-proven. Five more functions were spliced and then removed: each was measured off the headless path,
-and the wave kept the finding instead of the row.
+proven. Five more functions were spliced and then removed: each was measured dark, and the wave kept the
+finding instead of the row.
 
 ### `bypassPermissions` does not short-circuit the rule engine
 
@@ -2671,6 +2671,24 @@ change mode, believe it did, apply none of the transition, and produce a byte-id
 as long as nothing afterwards asks it to decide anything. The walk now makes a tool call after every
 change, and each change is chosen for the DECISION it flips rather than for the mode it visits.
 
+### The GATE had the same defect the sweep did, and it was hiding a dead row
+
+The sweep's vacuous positive (below) had a twin one level up. The gate's liveness block read
+**any non-zero exit as RED**, so a runner that crashed — or one an operator killed — counted as proof
+that a splice is live. Nothing bounded the replay either, so a twin that breaks a control-channel
+response left the gate waiting on a promise that never settles: the mode-transition phase sat there
+for twenty-five minutes before anyone noticed.
+
+A RED now needs **positive evidence** — the runner's own verdict line for the tag, or a timeout,
+which is itself a divergence because the faithful build replays the same cassette in seconds and the
+corpus phase establishes that on every run. Anything else is INCONCLUSIVE and **fails** the phase,
+because "we could not measure it" is not "we measured it and it diverged".
+
+Tightening it immediately turned one green row red: `classifier-streak` had been passing on an exit
+code, and under the new reading its sabotage leaves both covering scenarios byte-identical. That row
+is now dropped. **The instrument that grades liveness is itself a thing that can be vacuous, and
+nothing else in the harness was watching it.**
+
 ### A liveness sweep needs its own non-vacuity guard
 
 The wave's first sweep reported six splices live on a scenario tag **that does not exist**:
@@ -2679,9 +2697,9 @@ negative with the sign flipped — a vacuous POSITIVE, which is worse, because a
 investigated and a false positive gets committed. The sweep now runs its whole tag list against a
 known-good engine before it measures anything.
 
-### Four functions were spliced, measured dark, and un-spliced
+### Five functions were spliced, measured dark, and un-spliced
 
-This was the wave's largest single lesson, and it arrived in three different shapes.
+This was the wave's largest single lesson, and it arrived in four different shapes.
 
 **Two are dark because their remaining callers are.** `Ree`/`isAskRuleDrivenReason` (6 call sites)
 and `Fy`/`findSafetyCheckReason` (17, the most-called function this wave touches) are both anchorable
@@ -2707,10 +2725,20 @@ itself, and `K0`'s only call site in that chunk belongs to a different entry poi
 strongest mutant the seam admits, and still invisible. Its two ends are both owned and both live, so
 only the joint is unowned.
 
-All three of the takeable-but-dark pure functions live in `strangle/modules/shared/` as
-`pure-helper` captures, graded against their own upstream bytes by the oracle before any body is
-built on them. `K0` was dropped outright, as C1 dropped the interrupt clause, because a delegation
-is not a helper. **In every case the wave kept the written finding where the row would have been** —
+**And one is dark because its ANSWER is pinned.** `Uct`/`classifierOnlyStreakActive` is sixty-two
+bytes on the allow arm of every tool call in every mode, including the twenty-two bypass scenarios —
+by call count the cheapest live unit in the subsystem. §3.3 holds its feature gate at the disabled
+default, so upstream returns `false` on every graded run, and the MAXIMAL twin (return `true` always,
+suppressing the denial-streak reset on every allowed call) leaves both covering scenarios
+byte-identical. The counter it guards is read only by the auto-mode classifier. **A function can run
+constantly, be spliced faithfully, and still decide nothing a corpus can see.**
+
+That last one was carried as live for most of the wave, on a RED the gate inferred from a non-zero
+exit rather than from a graded verdict — see below.
+
+All four of the takeable-but-dark functions live in `strangle/modules/shared/`, graded against their
+own upstream bytes by the oracle before any body is built on them. `K0` was dropped outright, as C1
+dropped the interrupt clause, because a delegation is not a helper. **In every case the wave kept the written finding where the row would have been** —
 a row the gate cannot prove is worse than no row, because it goes green for free.
 
 ### The branch instrumenter learned a guarded body that returns

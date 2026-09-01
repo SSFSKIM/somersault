@@ -1433,37 +1433,22 @@ export const SPLICES: Splice[] = [
   // three tool names. A splice would be a row the gate could not prove live, and
   // the campaign's answer to that is C1's: drop the row, keep the finding.
 
-  {
-    // Sixty-two bytes on the allow arm of every tool call, in every mode —
-    // including the twenty-two bypass scenarios, which is where its liveness
-    // comes from.
-    //
-    // ANCHOR: `requestDialog!==void 0` has three carriers in this chunk and one
-    // in another, so it needs BOTH a chunk scope and a sibling count. The
-    // co-literal is the message builder's hook sentence, unique bundle-wide and
-    // in this chunk. The signature then separates the three: one parameter AND
-    // declared at the top level.
-    name: "classifier-streak",
-    target: "free-function",
-    signature: { params: 1, ancestry: ["SourceFile"] },
-    anchor: "requestDialog!==void 0",
-    coLiteral: "blocked this action:",
-    siblings: 3,
-    fn: "classifierOnlyStreakActive",
-    captures: [
-      {
-        as: "streakGateEnabled",
-        kind: "effectful-port",
-        derive: pick("classifier-streak", "streakGateEnabled", new RegExp(`return (${ID})\\(\\)&&${ID}\\.requestDialog`)),
-      },
-      {
-        as: "sdkDialogHostActive",
-        kind: "effectful-port",
-        derive: pick("classifier-streak", "sdkDialogHostActive", new RegExp(`requestDialog!==void 0&&!(${ID})\\(\\)`)),
-      },
-    ],
-    coverage: ["plain", "permission-broker"],
-  },
+  // A FIFTH FUNCTION MEASURED DARK, and the one that shows why the gate's own
+  // reading mattered. `Uct`/`classifierOnlyStreakActive` is sixty-two bytes on
+  // the allow arm of every tool call in every mode, including the twenty-two
+  // bypass scenarios — by call count the cheapest live unit in the subsystem.
+  // Its ANSWER is pinned: §3.3 holds the streak gate at its disabled default, so
+  // upstream returns false on every graded run, and the maximal twin (return
+  // `true` always, suppressing the denial-streak reset on every allowed call)
+  // leaves both covering scenarios byte-identical. The counter it guards is read
+  // only by the auto-mode classifier, whose denial is this wave's standing OPEN
+  // condition.
+  //
+  // It was carried as LIVE for most of the wave, on a RED the gate inferred from
+  // a non-zero exit rather than from a graded verdict. When the gate started
+  // requiring the runner's own verdict line, the phase turned green and stayed
+  // green under a manual re-run. Owned in `shared/` and graded by the parity
+  // oracle from a synthetic row; the splice is dropped.
 
   {
     // The only gate on the mode axis. Its refusals are what

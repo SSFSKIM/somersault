@@ -245,11 +245,6 @@ export const ATTESTED: AttestedModule[] = [
   },
   { module: "rule-based-permissions", row: "rule-based-permissions", scenarios: ["perm-hook-rewrite"] },
   { module: "allow-rule-decision", row: "allow-rule-decision", scenarios: ["perm-rule-allow", "bash-tool"] },
-  {
-    module: "classifier-streak",
-    row: "classifier-streak",
-    scenarios: ["bash-tool", "permission-broker"],
-  },
   { module: "mode-change-guard", row: "mode-change-guard", scenarios: ["runtime-setters", "perm-mode-walk"] },
   { module: "mode-transition", row: "mode-transition", scenarios: ["runtime-setters", "perm-mode-walk"] },
   { module: "permission-request-hook-decision", row: "permission-request-hook-decision", scenarios: ["permission-broker", "hooks-permission", "perm-hook-deny", "perm-hook-rewrite"] },
@@ -1841,19 +1836,6 @@ export const EXCLUSIONS: Exclusion[] = [
       "without one. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
       ORACLE_ALLOWRULE +
       " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
-  },
-  {
-    branch: "classifier-streak#classifierOnlyStreakActive@0:T",
-    reason:
-      "the full conjunction: the streak gate enabled AND a request dialog present. The gate is a feature gate §3.3 pins to its disabled default, and `requestDialog` is an interactive surface a headless session has no equivalent for — so the two terms fail for two independent and both structural reasons. " +
-      ORACLE_STREAK +
-      " The predicate's three terms are driven separately there, because a conjunction that short-circuits in the wrong order is invisible to any run that cannot reach the later terms.",
-  },
-  {
-    branch: "classifier-streak#classifierOnlyStreakActive@1:T",
-    reason:
-      "the gate term alone. Same pinned gate. " +
-      ORACLE_STREAK,
   },
   {
     branch: "mode-change-guard#guardPermissionModeChange@0:T",

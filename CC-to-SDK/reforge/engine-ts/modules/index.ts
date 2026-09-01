@@ -73,7 +73,6 @@ import * as permissionDecision from "../../strangle/modules/permission-decision/
 import * as permissionPrecheck from "../../strangle/modules/permission-precheck/reference.js";
 import * as ruleBasedPermissions from "../../strangle/modules/rule-based-permissions/reference.js";
 import * as allowRuleDecision from "../../strangle/modules/allow-rule-decision/reference.js";
-import * as classifierStreak from "../../strangle/modules/classifier-streak/reference.js";
 import * as modeChangeGuard from "../../strangle/modules/mode-change-guard/reference.js";
 import * as modeTransition from "../../strangle/modules/mode-transition/reference.js";
 import * as permissionRequestHookDecision from "../../strangle/modules/permission-request-hook-decision/reference.js";
@@ -200,7 +199,6 @@ const OWNED: [string, string, unknown][] = [
   ["permission-precheck", "subsystem/permissions", permissionPrecheck.permissionPrecheck],
   ["rule-based-permissions", "subsystem/permissions", ruleBasedPermissions.checkRuleBasedPermissions],
   ["allow-rule-decision", "subsystem/permissions", allowRuleDecision.allowRuleDecision],
-  ["classifier-streak", "subsystem/permissions", classifierStreak.classifierOnlyStreakActive],
   ["mode-change-guard", "subsystem/permissions", modeChangeGuard.guardPermissionModeChange],
   ["mode-transition", "subsystem/permissions", modeTransition.transitionPermissionMode],
   ["permission-request-hook-decision", "subsystem/permissions", permissionRequestHookDecision.permissionRequestHookDecision],

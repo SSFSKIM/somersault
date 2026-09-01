@@ -303,7 +303,11 @@ for (const t of TARGETS) {
     // is not "we measured it and it diverged".
     const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"], SABOTAGE_TIMEOUT_MS);
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-    const timedOut = r.signal !== null && r.status === null;
+    // `spawnSync`'s own timeout report, not the exit code: the child here is
+    // `npx`, which catches the SIGTERM and exits 143 of its own accord, so
+    // `signal` is null and `status` is an ordinary number. Only `error.code`
+    // distinguishes "we stopped it" from "it stopped".
+    const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const graded = out.includes(`FAIL  ${tag}`) || out.includes(`PASS  ${tag}`);
     if (timedOut) {
       console.log(`  ${tag}: RED (as required) — the sabotaged engine did not finish inside ${SABOTAGE_TIMEOUT_MS / 60_000}m, which the faithful one replays in seconds`);

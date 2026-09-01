@@ -71,7 +71,6 @@ import { readFixture } from "../research/tools/extract-permission-surface.js";
 import "./modules/permission-precheck.js";
 import "./modules/rule-based-permissions.js";
 import "./modules/allow-rule-decision.js";
-import "./modules/classifier-streak.js";
 import "./modules/mode-change-guard.js";
 import "./modules/mode-transition.js";
 import "./modules/permission-request-hook-decision.js";
@@ -83,6 +82,7 @@ import { pluralize } from "./modules/shared/pluralize.js";
 import { permissionMessage } from "./modules/shared/permission-message.js";
 import { isAskRuleDrivenReason } from "./modules/shared/ask-rule-reason.js";
 import { findSafetyCheckReason } from "./modules/shared/safety-check-reason.js";
+import { classifierOnlyStreakActive } from "./modules/shared/classifier-streak.js";
 
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => unknown> }).__reforge!;
 
@@ -180,6 +180,32 @@ const SHARED_HELPERS: Splice[] = [
     coverage: [],
   },
   {
+    // Sixty-two bytes on the allow arm of every tool call in every mode, and
+    // still not a row: §3.3 pins the streak gate off, so upstream answers
+    // `false` on every graded run and the maximal twin is invisible. Graded here
+    // exactly as a spliced row is.
+    name: "classifier-streak",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "requestDialog!==void 0",
+    coLiteral: "blocked this action:",
+    siblings: 3,
+    fn: "classifierOnlyStreakActive",
+    captures: [
+      {
+        as: "streakGateEnabled",
+        kind: "effectful-port",
+        derive: (b) => must(b, /return ([\w$]+)\(\)&&[\w$]+\.requestDialog/, 1, "streakGateEnabled"),
+      },
+      {
+        as: "sdkDialogHostActive",
+        kind: "effectful-port",
+        derive: (b) => must(b, /requestDialog!==void 0&&!([\w$]+)\(\)/, 1, "sdkDialogHostActive"),
+      },
+    ],
+    coverage: [],
+  },
+  {
     name: "safety-check-reason",
     target: "free-function",
     signature: { params: 2, ancestry: ["SourceFile"] },
@@ -267,6 +293,7 @@ function upstream(name: string, ports: Record<string, unknown>): (...args: unkno
  */
 const SHARED_ENTRY: Record<string, (...a: unknown[]) => unknown> = {
   "permission-message": permissionMessage as (...a: unknown[]) => unknown,
+  "classifier-streak": classifierOnlyStreakActive as (...a: unknown[]) => unknown,
 };
 
 function owned(name: string, params: unknown[], ports: Record<string, unknown>): unknown {
