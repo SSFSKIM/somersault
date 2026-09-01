@@ -597,7 +597,7 @@ follow as C4/C5.
   recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
   short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
   pinned defaults.
-- **Required.** Status: not-dispatched — **unblocked** (C5x landed 2026-09-01; see its Revision Note for what each wave inherits).
+- **Required.** Status: **C6 landed** 2026-09-01 (Revision Note below); C7–C10 not-dispatched, **unblocked** (C5x + C6 landed; see their Revision Notes for what each wave inherits).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -673,7 +673,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C4 | W1 | scout: `reforge/research/2026-08-31-w1-anchor-scout.md` | **landed** — 13 splices (10 tool-result formatters), corpus 24, every owned module standalone-complete + registered, contract tests and the cheap state surface online; validator row split out `unowned` |
 | C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | **landed** — S-chunk mechanism + `chunk-y30v0ja7` owned whole, 3 description splices, corpus 25, coverage attestation online (14/20 executed, 6 adjudicated), ledger folded into the gate |
 | C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
-| C6–C10 | W3–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x landed) |
+| C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48 |
+| C7–C10 | W4–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -1180,3 +1181,71 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C6 / W3 — environment block + system-prompt assembly): the wave's
+  first deliverable was a scenario, not a splice. **C6's coverage decision on the
+  preset: record it.** `baseOptions()` sets `settingSources: []` and passes no
+  `systemPrompt`, so all 25 recordings emitted the same two-block `system` array
+  and the engine's real prompt assembly was dark corpus-wide; owning it against
+  that corpus would have shipped a green gate that meant almost nothing. Four
+  scenarios landed (`sysprompt-preset`, `sysprompt-append`, `sysprompt-boundary`,
+  `claude-md-memory`; corpus 25 → 29), then six `free-function` splices covering
+  the whole pipeline — identity selector, context tail, block partition, wire
+  shaping, CLAUDE.md injection, subagent assembly. Gate **48/48 phases PASS**.
+  Six items change what the rest of the bloc inherits:
+  - **An anchor must be free of MINIFIED IDENTIFIERS; it does not have to be
+    prose.** The W3 scout filed `U8n`, `r6` and `NAt` as anchorless and the cut
+    was to re-assess them under C5x's sibling selection. Sibling selection was
+    not the answer; the doctrine read more precisely was. `cacheScope,ttl:` (two
+    property names), `?.isNonInteractive` + a `coLiteral`, and
+    `].filter(Boolean)}` + a `coLiteral` are all stable across a minifier and all
+    fail loudly. **Before filing a target unanchorable, enumerate its untainted
+    substrings and count them**, and reach for a `coLiteral` before reaching for
+    sibling selection, which is the narrower tool.
+  - **`selectExcision` counts CANDIDATES, not SPANS.** `U8n`'s other untainted
+    anchor occurs four times in one chunk, two of them inside `U8n`'s own body —
+    which the selector reads as a tie and refuses, though both name one span. It
+    blocked no target here (the anchor above makes it moot) and was left
+    unchanged rather than fixed opportunistically inside a wave that does not own
+    the mechanism; recorded so the next wave that meets the shape knows the
+    failure is the mechanism's rather than the anchor's.
+  - **Live recording is a determinism test the design pass cannot run.** Two
+    traps surfaced only on the first take, both fixed at the source rather than
+    scrubbed at the differ: the preset's prompt ends with a `gitStatus:` section
+    carrying the working tree's commit SHAs (so the first cassette embedded this
+    campaign's own commit log — fatal under §3.4 on the next commit), and
+    `settingSources: ["project"]` walks the working directory's ANCESTORS up to
+    and including the home directory, loading the operator's private
+    `~/.claude/CLAUDE.md` (the cassette leak check refused it, correctly). The
+    scenarios now seed a deterministic git repository and run the memory case
+    outside both the repository and the home tree. **Later waves recording any
+    scenario that turns on `settingSources` or the preset should budget for the
+    same class.**
+  - **The static-prompt gate is pinned false, measured rather than inferred**,
+    which makes two of the block partition's three paths unreachable and produces
+    the campaign's largest single adjudication: 38 of 88 branch outcomes are
+    reviewed exclusions. The evidence is one recording — the section builder
+    emits the boundary marker only when the same gate is true, and
+    `sysprompt-preset` renders the preset's whole section list without one. The
+    oracle is `strangle/prompt-parity.test.ts` (178 comparisons, including the
+    telemetry EVENTS, since two of the three paths differ only in which event
+    they emit; verified non-vacuous by mutation). **§2.4's "contract test where
+    the domain is wider than the corpus" now has two instances and one shape** —
+    extract upstream, stub the ports, compare the cross-product.
+  - **Two vacuity holes one level below the ones already closed.** A module with
+    NO branch-forming construct contributed zero rows and was attested by
+    omission; `AttestedModule` now requires a written `noBranchesReason` for an
+    empty inventory and refuses one that has stopped being true. And **contract
+    X7 had no gate phase at all**: C5x registered none of its three modules in
+    the skeleton, `skeleton.test.ts` would have caught it immediately, and a
+    green gate carried the omission until this wave's rows shifted the count.
+    Both `skeleton.test.ts` and `check-reachability.ts` are gate phases now.
+    Generalizing: **a contract nothing runs is a contract nothing enforces** —
+    every X-numbered contract should be able to name its gate phase.
+  - **C5x's deferred attestation is one third closed.** The summarization prompt
+    is a constant, so W3's oracle reaches it and the adjudication is recorded
+    (its parity IS the build-time comparison of the initializer against the
+    pinned chunk's bytes, which is stronger than a differential red and runs on
+    every build). `post-tool-hooks` and `permission-decision` remain C8's and
+    C9's. Also: `OS()`'s ~20 prose sections are now RENDERED by the corpus, so
+    the section inventory the scout deferred is unblocked — it is not W3's and
+    not automatically W4's, and the roadmap should place it deliberately.
