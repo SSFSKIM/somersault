@@ -153,8 +153,14 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
 
   useSelectKeys({
     count,
-    index: () => (view.type === "server-tools" ? toolFocusRef.current : serverFocusRef.current),
-    onMove: (i) => { if (view.type === "server-tools") setToolFocus(i); else setServerFocus(i); },
+    // bl10 fix wave 3, RF3: `server-menu` has at most ONE focusable row (the "View tools" affordance,
+    // `count` 0-or-1) — there is nothing to move a cursor BETWEEN there, so its index is a fixed `0` and its
+    // `onMove` below is a no-op. Reading/writing `serverFocusRef` here (the old behaviour) reused the ROOT
+    // LIST's own cursor for a view that isn't the root list: `useSelectKeys.step` calls `onMove` whenever
+    // `count > 0`, and with `count === 1` the clamped target is always `0`, so a single j/k press in a
+    // non-first server's menu silently reset the root cursor to the first server.
+    index: () => (view.type === "server-tools" ? toolFocusRef.current : view.type === "list" ? serverFocusRef.current : 0),
+    onMove: (i) => { if (view.type === "server-tools") setToolFocus(i); else if (view.type === "list") setServerFocus(i); },
     onAccept, onCancel: pop,
   });
 

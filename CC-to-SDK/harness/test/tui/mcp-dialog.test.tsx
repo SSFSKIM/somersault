@@ -217,6 +217,34 @@ describe("McpDialog — drill/pop cycle", () => {
 // number (or an `onAccept` closure that reads it) sees the PRE-chunk value for every event but the first.
 // `Select.tsx`'s own fix for the identical hazard is the house pattern: ref-backed focus, a getter passed to
 // `useSelectKeys`, the ref updated synchronously in `onMove`, and `onAccept` reading the ref.
+// bl10 fix wave 3, RF3: `server-menu`'s select-keys arm has `count` 0-or-1 (its only focusable row, the
+// "View tools" affordance) but the shared `onMove` below used to write the clamped result into
+// `serverFocus` — the ROOT LIST's own cursor. `useSelectKeys.step` calls `onMove` whenever `count > 0`, and
+// with `count === 1` the clamp always resolves to `0`, so a single j/k press in a non-first server's menu
+// silently reset the root cursor to the FIRST server.
+describe("McpDialog — server-menu navigation must not clobber root focus (bl10 fw3 RF3)", () => {
+  it("moving in a non-first server's menu leaves the root list focused on that same server after Esc", async () => {
+    const A: McpServerRow = { name: "a-server", status: "connected", scope: "project", tools: [{ name: "t1" }] };
+    const B: McpServerRow = { name: "b-server", status: "connected", scope: "project", tools: [{ name: "t2" }] };
+    const C: McpServerRow = { name: "c-server", status: "connected", scope: "project", tools: [{ name: "t3" }] };
+    const { stdin, lastFrame } = await mount([A, B, C]);
+    stdin.write("j"); await tick();
+    stdin.write("j"); await tick();           // root cursor -> c-server (index 2)
+    stdin.write("\r"); await tick();          // -> server-menu for c-server
+    expect(flat(lastFrame)).toContain("c-server");
+    stdin.write("j"); await tick();           // a movement key inside the (single-row) server-menu
+    stdin.write("k"); await tick();
+    stdin.write("\x1b"); await tick();        // Esc back to the root list
+    expect(flat(lastFrame)).toContain("Manage MCP servers");
+    // Re-entering from the root must land back on c-server — if the menu's own j/k had clobbered the root
+    // cursor to 0, this Enter would open a-server's menu instead.
+    stdin.write("\r"); await tick();
+    const f = flat(lastFrame);
+    expect(f).toContain("c-server");
+    expect(f).not.toContain("a-server");
+  });
+});
+
 describe("McpDialog — same-chunk move+accept lands on the post-move row (bl10 fw2 F4)", () => {
   const A: McpServerRow = { name: "a-server", status: "connected", scope: "project", tools: [] };
   const B: McpServerRow = { name: "b-server", status: "connected", scope: "project", tools: [] };
