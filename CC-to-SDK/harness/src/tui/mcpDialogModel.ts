@@ -150,6 +150,15 @@ export function flatIndexOfServer(rows: readonly McpListRow[], pos: number): num
 export const MCP_LIST_CHROME_ROWS = 8;
 export const mcpListVisibleRows = (rows: number): number => Math.max(1, Math.floor((rows - MCP_LIST_CHROME_ROWS) / 1));
 
+/** bl10 fix wave 2, finding 5: the `server-tools` view (McpDialog.tsx) used to reuse `mcpListVisibleRows`
+ *  verbatim, but it pays TWO chrome rows the root list never does — the bold server-name line above the list
+ *  and the `marginTop={1}` spacer under it — so borrowing the root's budget let the composed frame reach
+ *  `rows` (or past it) instead of stopping short of it. Charged here rather than folded into
+ *  `MCP_LIST_CHROME_ROWS` itself: that constant is the ROOT list's own true chrome, and inflating it would
+ *  under-count the root list's available rows for a view that never draws this extra pair. */
+export const MCP_TOOLS_EXTRA_CHROME_ROWS = 2;
+export const mcpToolsVisibleRows = (rows: number): number => mcpListVisibleRows(rows - MCP_TOOLS_EXTRA_CHROME_ROWS);
+
 /** The window over `count` rows that keeps `focus` visible — a thin re-export point so the dialog and its
  *  tests share one import rather than reaching into `select/selectModel.js` a second time. */
 export const mcpWindow = (count: number, focus: number, visible: number): SelectWindow => windowBounds(count, focus, visible);

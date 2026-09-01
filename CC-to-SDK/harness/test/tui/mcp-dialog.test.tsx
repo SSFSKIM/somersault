@@ -247,6 +247,39 @@ describe("McpDialog — same-chunk move+accept lands on the post-move row (bl10 
   });
 });
 
+// bl10 fix wave 2, finding 5: the `server-tools` view reuses `mcpListVisibleRows(rows)` — the ROOT list's
+// budget — but pays TWO extra chrome rows the root list never does (the bold server-name line, and the
+// `marginTop={1}` above the list), and the tool NAME is never truncated (only the description is), so a long
+// name wraps and breaks the one-physical-row-per-option accounting the window was sized against.
+describe("McpDialog — server-tools view budget and label truncation (bl10 fw2 F5)", () => {
+  const manyTools: McpServerRow = {
+    name: "srv", status: "connected", scope: "project",
+    tools: Array.from({ length: 20 }, (_, i) => ({ name: `tool-${i}` })),
+  };
+
+  it("keeps the composed frame STRICTLY under `rows` on a short terminal with many tools", async () => {
+    const { stdin, lastFrame } = await mount([manyTools], 14);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    const lines = frame(lastFrame).split("\n").length;
+    // Ink's own hazard is `outputHeight >= stdout.rows` (DialogFrame/SettingsDialog's own budgets all reserve
+    // a final "+1: the frame must end up STRICTLY shorter than the pane, not equal to it" term) — a frame
+    // exactly AT `rows` still trips the tall-frame replay, which is exactly what borrowing the root list's
+    // budget produces here (two extra chrome rows spent, none charged).
+    expect(lines, "the tools view's own extra chrome (name line + marginTop) must be charged, not borrowed from the root list's budget").toBeLessThan(14);
+  });
+
+  it("a very long, untruncated tool name wraps under Ink and blows the frame past `rows`", async () => {
+    const many = { name: "srv", status: "connected" as const, scope: "project",
+      tools: Array.from({ length: 5 }, (_, i) => ({ name: `tool-${i}-${"x".repeat(120)}`, description: "a description" })) };
+    const { stdin, lastFrame } = await mount([many], 14);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    const lines = frame(lastFrame).split("\n").length;
+    expect(lines, "an unclipped 120-char name wraps to several rows under one Select option's budget of one").toBeLessThan(14);
+  });
+});
+
 describe("McpDialog — onClose", () => {
   it("root Esc closes the dialog", async () => {
     let closed = false;

@@ -27,7 +27,7 @@ import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
 import { truncateLabel } from "./select/selectModel.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import {
-  buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpWindow,
+  buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpToolsVisibleRows, mcpWindow,
   MCP_ROOT_VIEW, enterServerMenu, enterServerTools, enterToolDetail, popMcpView, findServer,
   serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE,
   type McpServerRow, type McpToolInfo, type McpView,
@@ -73,6 +73,19 @@ function ServerLabel({ server, width }: { server: McpServerRow; width: number })
   if (stringWidth(server.name) >= width) return <Text>{truncateLabel(server.name, width)}</Text>;
   const statusWidth = width - stringWidth(server.name) - 2;   // 2 = the "  " separator between the two runs
   return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{truncateLabel(status, statusWidth)}</Text></>;
+}
+
+/** bl10 fix wave 2, finding 5: `ServerLabel`'s own discipline, for the `server-tools` view — only the
+ *  DESCRIPTION used to be clipped (`descWidth`), never the NAME, so a long tool name wraps under Ink and
+ *  costs its row more than the one physical line the window's budget counted it as. */
+function ToolLabel({ tool, width }: { tool: McpToolInfo; width: number }) {
+  const { name, description } = tool;
+  if (description === undefined) return <Text>{truncateLabel(name, width)}</Text>;
+  const full = `${name}  ${description}`;
+  if (stringWidth(full) <= width) return <><Text>{name}</Text><Text dimColor>{"  "}{description}</Text></>;
+  if (stringWidth(name) >= width) return <Text>{truncateLabel(name, width)}</Text>;
+  const descWidth = width - stringWidth(name) - 2;             // 2 = the "  " separator between the two runs
+  return <><Text>{name}</Text><Text dimColor>{"  "}{truncateLabel(description, descWidth)}</Text></>;
 }
 
 export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80 }: {
@@ -191,10 +204,14 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
 
     if (view.type === "server-tools") {
       const tools = currentServer.tools;
-      const visible = mcpListVisibleRows(rows);
+      // bl10 fix wave 2, finding 5: this view's OWN budget, not the root list's — it pays two chrome rows
+      // (the bold name line above, the `marginTop={1}` below) `mcpListVisibleRows` never charges for.
+      const visible = mcpToolsVisibleRows(rows);
       const win = mcpWindow(tools.length, toolFocus, visible);
       const { above, below } = overflowRows(win, tools.length);
-      const descWidth = Math.max(10, columns - 30);
+      // Same chrome the root list's `rootRowWidth` spends (`DialogFrame`'s paddingX + `Row`'s pointer+gap) —
+      // this view's rows sit behind the identical `Row` primitive, so the identical budget applies.
+      const toolRowWidth = Math.max(10, columns - 4);
       return (
         <Box flexDirection="column">
           <Text bold>{currentServer.name}</Text>
@@ -207,7 +224,7 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
                     const at = win.start + i;
                     return (
                       <Row key={t.name} focused={at === toolFocus}
-                        label={<><Text>{t.name}</Text>{t.description ? <Text dimColor>{"  "}{truncateLabel(t.description, descWidth)}</Text> : null}</>} />
+                        label={<ToolLabel tool={t} width={toolRowWidth} />} />
                     );
                   })}
                   {below > 0 ? <Box paddingLeft={2}><Text dimColor>{moreBelow(below)}</Text></Box> : null}
