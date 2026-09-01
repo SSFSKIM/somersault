@@ -131,22 +131,20 @@ STAGE_LAST="  stg3"                          # the last output row — staging i
 
 # ═══ Cell h1 — message hover (H1, Task 1's transcript-row hover), keyless ═══════════════════════════════════
 #
-# ⚠ THIS CELL'S CORE ASSERTION IS EXPECTED TO FAIL, ON A DEFECT bl10-t-click DID NOT INTRODUCE. `/status` (the
-# original staging) and this bash-mode replacement are BOTH plain local/`visual` transcript events
-# (`projectLocalEvent`, toolRenderer.tsx), and no producer of that kind has ever stamped `clickable: true` —
-# only `toolRenderer.tsx`'s tool-result gutter-blocks and advisor results do. Hover-triggered un-dimming was
-# narrowed to `clickable`-stamped owners by T-CLICKGATE Task 2 (bl4, commit f06085c8e, merged into main a week
-# before this round), which is already unit-tested as the INTENDED behavior — see
+# POSITIVE PIN of T-CLICKGATE Task 2 (bl4, commit f06085c8e): hover-triggered un-dimming is gated to
+# `clickable`-stamped owners (toolRenderer.tsx's tool-result gutter-blocks and advisor results). `/status`
+# (the original staging) and this bash-mode replacement are BOTH plain local/`visual` transcript events
+# (`projectLocalEvent`), and no producer of that kind has ever stamped `clickable: true` — so hovering staged
+# local output must leave the dim-row count UNCHANGED. This mirrors the unit coverage in
 # `test/tui/hover.test.tsx`'s own "H1: message-level hover grouping over a multi-line local event — gated on
-# `clickable` now" describe block, whose fixture is literally two staged "status"-style local events and whose
-# comment says outright: "Pre-T-CLICKGATE this cell proved the OPPOSITE". Confirmed live here too: hovering a
-# staged bash-output row produces a byte-identical `capture-pane -e` frame before and after. No local, keyless
-# command — bash mode or otherwise — can ever un-dim under the current, intentional gate, so restaging alone
-# cannot make this assertion pass; the fix below only removes the SEPARATE, real failure mode bl10-t-click did
-# introduce (typing into a dialog that never returns control to the composer).
+# `clickable` now" describe block (whose comment notes outright: "Pre-T-CLICKGATE this cell proved the
+# OPPOSITE"). A DROP in dim-row count here is the actual failure this cell watches for — it would mean the
+# clickgate regressed and untagged local output started un-dimming again.
+# (Tech debt: this fixture is a keyless local echo, not a genuinely hoverable `clickable`-stamped tool-result
+# owner; upgrading the staged fixture to one would let this cell also assert the positive un-dim path.)
 run_h1_cell() {
   local s="hc-h1-$RUN_ID"
-  echo "  cell h1: staged local content hover — un-dims nothing (expected FAIL, see header: T-CLICKGATE Task 2)"
+  echo "  cell h1: staged local content hover — dim-row count stays unchanged (T-CLICKGATE Task 2, f06085c8e)"
   launch "$s" 100 24 || { record h1 1; kill_cell "$s"; return; }
   type_line "$s" "$STAGE_ECHO"; tmux send-keys -t "$s" Enter; settle
   wait_for "$s" "$STAGE_LAST" || { record h1 1; kill_cell "$s"; return; }
@@ -163,8 +161,8 @@ run_h1_cell() {
   tmux capture-pane -t "$s" -p -e > "$after"
   local after_dim; after_dim=$(dim_rows "$after")
   local rc=0
-  if [ "$after_dim" -ge "$before_dim" ]; then
-    echo "      FAIL h1: dim-row count did not drop on hover (before=$before_dim after=$after_dim) — expected, see this cell's header comment (T-CLICKGATE Task 2, pre-existing)"; rc=1
+  if [ "$after_dim" -ne "$before_dim" ]; then
+    echo "      FAIL h1: dim-row count changed on hover (before=$before_dim after=$after_dim) — untagged local output should never un-dim; the T-CLICKGATE Task 2 gate (f06085c8e) regressed"; rc=1
   fi
   # THE BAND NEGATION: no row anywhere gained a `48;2;` background it did not already have.
   local before_bg after_bg
