@@ -21,6 +21,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkLedger, FOOTPRINTS_PATH, LEDGER_PATH, type CheckOptions, type Footprint, type FootprintCapture, type Ledger, type LedgerRow } from "./check.js";
 import { CANONICAL_ROWS } from "./rows.js";
+// The live X7 registry, imported for its side effects — the same view
+// ledger/check.ts takes when no `ownedSubsystems` override is given.
+import "../engine-ts/modules/index.js";
+import { ownedSubsystems } from "../engine-ts/registry.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 
 const real = JSON.parse(readFileSync(LEDGER_PATH, "utf8")) as Ledger;
@@ -61,8 +65,33 @@ writeFileSync(oldShape, JSON.stringify({
   engineVersion: ENGINE_VERSION,
   splices: allFootprints.map((f, i) => ({ name: `splice-${i}`, chunk: f.chunk, span: { start: f.target.start, end: f.target.end }, sha256: f.target.sha256 })),
 }));
-/** Default options for the row-level controls: real bundle, synthetic emission, live (empty) registry. */
+/** Default options for the row-level controls: real bundle, synthetic emission, live registry. */
 const BASE: CheckOptions = { footprintsPath: newShape };
+
+/**
+ * A subsystem row the campaign has not touched yet — still `unowned`, with no
+ * footprint, no evidence and no engine-ts registration.
+ *
+ * Derived from the committed ledger rather than named, because the controls that
+ * use it are about the ABSENCE of those things, and a named row stops being
+ * absent the moment its wave lands. `subsystem/tool-descriptions` was that name
+ * until C5 owned it, and three controls went quietly green: they still ran, still
+ * "passed", and no longer exercised the rule they were written for. A fixture
+ * that names a moving target is a control with an expiry date on it.
+ */
+const FRESH = ((): string => {
+  const registered = new Set(ownedSubsystems());
+  const row = real.rows.find(
+    (r) => r.kind === "subsystem" && r.state === "unowned" && r.footprint === null && (r.evidence ?? []).length === 0 && !registered.has(r.id),
+  );
+  if (!row) {
+    throw new Error(
+      "ledger/check.test.ts: no untouched subsystem row is left to use as a fixture. The absence-of-ownership controls " +
+        "need one; rewrite them against a synthetic row rather than deleting them.",
+    );
+  }
+  return row.id;
+})();
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
@@ -137,8 +166,8 @@ rejects("retitled row is rejected", (l) => (rowOf(l, "tool/Bash").title = "Bash 
 rejects("engineVersion drift is rejected", (l) => (l.engineVersion = "2.1.252"), /engineVersion/);
 rejects("missing footprint field is rejected", (l) => delete (rowOf(l, "tool/Bash") as Partial<LedgerRow>).footprint, /footprint: missing/);
 rejects("empty footprint array is rejected", (l) => (rowOf(l, "tool/Bash").footprint = []), /non-empty array/);
-rejects("standalone-complete without a footprint is rejected", (l) => (rowOf(l, "subsystem/tool-descriptions").state = "standalone-complete"), /requires a recorded upstream footprint/);
-rejects("assembled without a footprint is rejected", (l) => (rowOf(l, "subsystem/tool-descriptions").state = "assembled"), /requires a recorded upstream footprint/);
+rejects("standalone-complete without a footprint is rejected", (l) => (rowOf(l, FRESH).state = "standalone-complete"), /requires a recorded upstream footprint/);
+rejects("assembled without a footprint is rejected", (l) => (rowOf(l, FRESH).state = "assembled"), /requires a recorded upstream footprint/);
 rejects("stale without an adjudication note is rejected", (l) => (rowOf(l, "subsystem/compaction").state = "stale"), /adjudication note/);
 rejects("edges as a non-array is rejected", (l) => ((rowOf(l, "tool/Bash").edges as unknown) = "none"), /edges: missing/);
 
@@ -274,8 +303,8 @@ rejects("standalone-complete with no engine-ts registration is rejected", (l) =>
   r.footprint = [realFootprint()];
   r.evidence = ["commit:0a3e0681"];
 }, /engine-ts registers no module for this subsystem/, { ...BASE, ownedSubsystems: [] });
-rejects("standalone-complete is refused against the live (empty) registry too", (l) => {
-  const r = rowOf(l, "subsystem/tool-descriptions");
+rejects("standalone-complete is refused against the LIVE registry too", (l) => {
+  const r = rowOf(l, FRESH);
   r.state = "standalone-complete";
   r.footprint = [realFootprint()];
   r.evidence = ["commit:0a3e0681"];
