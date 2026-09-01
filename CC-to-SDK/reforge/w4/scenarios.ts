@@ -10,7 +10,9 @@
 //                               model's summary, rewrites `<summary>` to a
 //                               `Summary:` heading, and wraps the result in the
 //                               "This session is being continued…" preamble that
-//                               becomes the next request's first user block.
+//                               rides in the next request's first user message,
+//                               as its second text block (the system-reminder
+//                               block leads).
 //   the trigger policy        — the predicate that decides compaction is needed
 //                               at all. `/compact` bypasses it entirely: a manual
 //                               compaction is requested, not predicted.

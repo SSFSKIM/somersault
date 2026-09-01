@@ -96,9 +96,10 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 // the post-compaction transcript path (C7/W4) — the sixth enclosing shape.
 //
 // The continuation message the engine puts in front of a carried summary names
-// the session's own transcript file, and that message is the first user block of
-// EVERY request after a compact_boundary. Unscrubbed, no post-compaction request
-// can ever hash-match its recording.
+// the session's own transcript file, and it rides in the first user message of
+// EVERY request after a compact_boundary — as that message's SECOND text block,
+// behind the system-reminder block the engine leads with. Unscrubbed, no
+// post-compaction request can ever hash-match its recording.
 // ---------------------------------------------------------------------------
 {
   const path = (uuid: string) => `read the full transcript at: /reforge/config/projects/-sandbox/${uuid}.jsonl`;

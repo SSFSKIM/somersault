@@ -84,8 +84,9 @@ export const RUN_VALUE_SCRUBS: [RegExp, string][] = [
  *
  * The last one is the SIXTH shape this comment predicted, found by C7/W4 exactly
  * as described: the continuation message the engine puts in front of a carried
- * summary names the session's own transcript file, and that message becomes the
- * FIRST USER BLOCK of every request after a compact_boundary. No recording had
+ * summary names the session's own transcript file, and it rides in the FIRST USER
+ * MESSAGE of every request after a compact_boundary — as that message's SECOND
+ * text block, behind the system-reminder block the engine leads with. No recording had
  * carried it before, because `slash-compact` stops at the boundary and never
  * sends another request; the two scenarios that continue past one missed their
  * body hash on every post-compaction request. The scrub keeps the directory —

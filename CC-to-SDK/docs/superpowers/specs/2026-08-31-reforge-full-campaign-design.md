@@ -1245,7 +1245,9 @@ Pending — written at finish.
     inside that owned module.**
   - **Two normalization gaps, both found by continuing PAST a boundary, both
     fixed at the source.** The continuation message names the session's own
-    transcript file and is the first user block of every post-compaction request
+    transcript file and rides in the first user message of every post-compaction
+    request — as its SECOND text block, after the `claudeMd`/`currentDate`
+    system-reminder block that leads every user message
     — the sixth run-scoped id shape §3.4's canonicalization comment predicted, and
     without it every such request fell back positionally. And a
     `compact_boundary` names preserved messages the SDK never emits, so their ids
