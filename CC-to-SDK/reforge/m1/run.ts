@@ -23,9 +23,10 @@ import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
 import { W1_SCENARIOS } from "../w1/scenarios.js";
+import { W2_SCENARIOS } from "../w2/scenarios.js";
 import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
 
-const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS, ...W1_SCENARIOS];
+const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS, ...W1_SCENARIOS, ...W2_SCENARIOS];
 
 const args = process.argv.slice(2);
 // `--scenario` with no value used to leave `only` undefined, which silently ran
