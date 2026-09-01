@@ -29,6 +29,30 @@ describe("settingsPath", () => {
   it("userSettings honors the injected home", () => {
     expect(settingsPath("userSettings", "/repo", { home: "/fake/home" })).toBe("/fake/home/.claude/settings.json");
   });
+  it("userSettings honors CLAUDE_CONFIG_DIR — it REPLACES ~/.claude outright, no .claude segment (BL12, claudeHome.ts's rule)", () => {
+    expect(settingsPath("userSettings", "/repo", { env: { CLAUDE_CONFIG_DIR: "/tenant/cfg", HOME: "/fake/home" } }))
+      .toBe("/tenant/cfg/settings.json");
+  });
+  it("an exported-but-EMPTY CLAUDE_CONFIG_DIR is a value, not an absence — the engine reads ./settings.json AT THE SESSION CWD, so this path anchors there too", () => {
+    // `??` semantics, verbatim from claudeConfigDir: `CLAUDE_CONFIG_DIR="$SOMETHING_UNSET"` exports ''.
+    // Anchored on the cwd argument, never process.cwd() — userLayerDir's own G6 invariant, mirrored here.
+    expect(settingsPath("userSettings", "/repo", { env: { CLAUDE_CONFIG_DIR: "", HOME: "/fake/home" } }))
+      .toBe("/repo/settings.json");
+  });
+  it("a RELATIVE CLAUDE_CONFIG_DIR anchors on the session cwd, matching where the engine (running at that cwd) resolves it", () => {
+    expect(settingsPath("userSettings", "/repo", { env: { CLAUDE_CONFIG_DIR: "cfg", HOME: "/fake/home" } }))
+      .toBe("/repo/cfg/settings.json");
+  });
+  it("an injected home stays hermetic — a real CLAUDE_CONFIG_DIR in the test runner's shell cannot reach it", () => {
+    // deps.home builds a HOME-only env, so whatever process.env carries is out of the picture entirely.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = "/leaked/from/shell";
+    try {
+      expect(settingsPath("userSettings", "/repo", { home: "/fake/home" })).toBe("/fake/home/.claude/settings.json");
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  });
 });
 
 // The READ side (Wave C Task 9): `resolveStatusLineConfig` needs the parsed user settings, and this module —

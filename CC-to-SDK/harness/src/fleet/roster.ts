@@ -13,6 +13,14 @@ export interface RosterRow {
    *  `isPidLive(pid, undefined)` answers "live" for every dead-but-unfinalized session, so a crashed
    *  host would read `working`/unresponsive forever instead of `error`. */
   procStart?: string;
+  /** The host ENGINE's resolved config root (`claudeConfigDir` over `effectiveEngineEnv` — the same env
+   *  the SDK spawn receives, so a `config.env`/`extraOptions.env` override is honored — anchored on the
+   *  host's cwd, absolute by construction), so an attach client reads and writes the user-settings file
+   *  THIS engine actually loads, not the one the attach shell's own env points at (bl12 review rounds 2-3:
+   *  a client-only CLAUDE_CONFIG_DIR would otherwise redirect /statusline and remembered permission rules
+   *  into a namespace the host never opens). Absent on a pre-bl12 row — the attacher then falls back to
+   *  its own env, the old behavior, so skew degrades instead of breaking. */
+  configDir?: string;
 }
 
 /** Write-then-rename, not a bare write. `writeFileSync` truncates first, so a host killed mid-write

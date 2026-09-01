@@ -24,6 +24,14 @@ describe("prepareAttach — DI, no sockets", () => {
     expect(got.sessionId).toBe("u-live");
     expect(got.cwd).toBe("/repo/wt");
   });
+  it("the row's configDir rides through verbatim — the HOST's resolved root, so the client's settings I/O lands where that engine reads (bl12)", async () => {
+    const got = await prepareAttach("w1", { resolve: () => row({ sessionId: "u-live", configDir: "/tenant/cfg" }), messages: async () => [] });
+    expect(got.configDir).toBe("/tenant/cfg");
+  });
+  it("a pre-bl12 row without configDir yields undefined — the client falls back to its own env, the documented skew arm", async () => {
+    const got = await prepareAttach("w1", { resolve: () => row({ sessionId: "u-live" }), messages: async () => [] });
+    expect(got.configDir).toBeUndefined();
+  });
   it("reads history via the injected messages() fn, keyed by sessionId and the row's cwd", async () => {
     const seen: { id: string; opts: { cwd?: string } }[] = [];
     const r = row({ sessionId: "u-live", cwd: "/repo/wt" });

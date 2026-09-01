@@ -39,6 +39,33 @@ function connectClient(env: NodeJS.ProcessEnv) {
 const connectionCountOf = (host: SessionHost) =>
   (host as unknown as { server: { connectionCount(): number } }).server.connectionCount();
 
+describe("SessionHost roster mint carries the config root (bl12)", () => {
+  it("the row's configDir is claudeConfigDir over the ENGINE's effective env — a config.env override is honored, a RELATIVE value anchored on the host's cwd", async () => {
+    const env = tmpFleet();
+    const host = new SessionHost(
+      // config.env reaches the SDK spawn ({...process.env, ...env} — resolveOptions' own rule), so it is
+      // the channel that must move this field.
+      { short: "d1d1d1d1", name: "t", cwd: "/tmp", kind: "interactive", detached: false, config: { env: { CLAUDE_CONFIG_DIR: "cfg" } } as never, env },
+      { openSession: () => instantSession() as any, procStartOf: async () => "start" },
+    );
+    await host.start();
+    // resolve("/tmp", "cfg") — the same session-cwd anchoring settingsPath itself applies, so the row
+    // states where THIS engine actually reads, not a spelling the attacher would re-anchor differently.
+    expect(readRoster("d1d1d1d1", env)!.configDir).toBe("/tmp/cfg");
+    await host.stop();
+  });
+  it("opts.env alone does NOT move it — that env scopes fleet paths, and the engine never sees it (round-3 review's exact divergence)", async () => {
+    const env = { ...tmpFleet(), CLAUDE_CONFIG_DIR: "/roster-only/cfg" };
+    const host = new SessionHost(
+      { short: "d1d1d1d1", name: "t", cwd: "/tmp", kind: "interactive", detached: false, config: {} as never, env },
+      { openSession: () => instantSession() as any, procStartOf: async () => "start" },
+    );
+    await host.start();
+    expect(readRoster("d1d1d1d1", env)!.configDir).not.toBe("/roster-only/cfg");
+    await host.stop();
+  });
+});
+
 describe("SessionHost multi-turn state (A2b)", () => {
   it("after a successful turn, an interactive host reads 'working' (not 'done'); a bg host stays 'done'", async () => {
     const { host: ih } = hostFor("interactive");

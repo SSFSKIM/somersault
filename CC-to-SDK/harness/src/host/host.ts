@@ -1,3 +1,4 @@
+import { resolve as pathResolve } from "node:path";
 import { HostServer } from "./server.js";
 import type { ControlOp, HostStatus } from "./ops.js";
 import { fleetRoot, hostSocketPath, hostImageStagingDir } from "../fleet/paths.js";
@@ -9,7 +10,8 @@ import { removeArchiveMarker } from "../appserver/archive.js";
 import { procStartOf as realProcStartOf } from "../fleet/liveness.js";
 import type { FleetState, RosterRow } from "../fleet/roster.js";
 import { openSession as realOpenSession } from "../session/index.js";
-import { resolvedModel, resolvedPermissionMode } from "../config/resolveOptions.js";
+import { effectiveEngineEnv, resolvedModel, resolvedPermissionMode } from "../config/resolveOptions.js";
+import { claudeConfigDir } from "../config/claudeHome.js";
 import { isAutoSupportedModel, resolveAutoModel } from "../config/autoModel.js";
 import { resolveModelAlias } from "../config/models.js";
 import type { HarnessConfig } from "../config/types.js";
@@ -291,6 +293,12 @@ export class SessionHost {
     const row: RosterRow = {
       short: this.opts.short, pid: process.pid, cwd: this.opts.cwd, kind: this.opts.kind,
       name: this.opts.name, state: "working", startedAt: Date.now(),
+      // The root THIS host's engine resolved at spawn — over the ENGINE's effective env (round-3 review:
+      // a `config.env`/`extraOptions.env` override reaches the SDK, so `this.env` can advertise a root
+      // the engine does not use), through the same `engineConfig()` the open below is built from, and
+      // anchored on the session cwd when relative, the same rule settingsPath applies — so an attach
+      // client can read the file this engine actually loads (RosterRow.configDir's contract).
+      configDir: pathResolve(this.opts.cwd, claudeConfigDir(effectiveEngineEnv(this.engineConfig()))),
       ...(procStart ? { procStart } : {}),
       ...(this.opts.worktree ? { worktree: this.opts.worktree } : {}),
       ...(this.currentSessionId() ? { sessionId: this.currentSessionId() } : {}),

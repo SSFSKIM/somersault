@@ -4,18 +4,34 @@
 // is the only caller allowed to omit it (or a given field of it); an Ink test must always supply its own
 // read/write/home fakes, or it risks touching the developer's REAL ~/.claude/settings.json.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { claudeConfigDir } from "../config/claudeHome.js";
 
-export interface SettingsFileDeps { read?: (p: string) => string; write?: (p: string, s: string) => void; home?: string }
+export interface SettingsFileDeps { read?: (p: string) => string; write?: (p: string, s: string) => void; home?: string; env?: NodeJS.ProcessEnv }
 export type SettingsTarget = "localSettings" | "projectSettings" | "userSettings";
 
-/** target → the JSON file it maps to. `userSettings` resolves `home` from `deps` first, falling back to
- *  the real `os.homedir()` only when no deps (or no `home` field) were given. */
+/** target → the JSON file it maps to. `userSettings` is THE ENGINE'S user layer, so it resolves through
+ *  `claudeConfigDir` (BL12, closing parked #37): under `CLAUDE_CONFIG_DIR` the engine reads
+ *  `$CLAUDE_CONFIG_DIR/settings.json` and ignores `$HOME/.claude` entirely, so the old bare-homedir join
+ *  had /statusline reading — and a remembered userSettings permission rule writing — a file the engine
+ *  never opens whenever the variable is set, which this harness's own tenant preset does per tenant.
+ *  `deps.home` keeps its exact old meaning for the test seam (`$home/.claude/settings.json`, hermetic —
+ *  a real CLAUDE_CONFIG_DIR in the developer's shell cannot reach a test that injected `home`);
+ *  `deps.env` is the seam for testing the variable's own arm.
+ *
+ *  A RELATIVE (or empty) config root anchors on the SESSION cwd, never `process.cwd()` — the engine runs
+ *  at the session cwd and resolves `./settings.json` there, and `configDomain.ts`'s `userLayerDir` already
+ *  enforces the identical invariant (its own fix wave G / G6); a client launched with `--cwd` elsewhere
+ *  would otherwise read and write a file the engine never opens, the exact class this arm just closed.
+ *  Across an ATTACH the deciding env is the HOST's, not this shell's: the roster row carries the host's
+ *  resolved root (`RosterRow.configDir`) and `chatMain` hands it in as `deps.env` — only a pre-bl12 row
+ *  falls back to the client env, the documented skew arm. */
 export function settingsPath(target: SettingsTarget, cwd: string, deps?: SettingsFileDeps): string {
   if (target === "localSettings") return join(cwd, ".claude", "settings.local.json");
   if (target === "projectSettings") return join(cwd, ".claude", "settings.json");
-  return join(deps?.home ?? homedir(), ".claude", "settings.json");
+  const env = deps?.env ?? (deps?.home !== undefined ? { HOME: deps.home } : undefined);
+  const dir = claudeConfigDir(env);
+  return join(isAbsolute(dir) ? dir : resolve(cwd, dir), "settings.json");
 }
 
 /** The READ side (Wave C Task 9). Missing file, unreadable file, bad JSON, or a top-level non-object (a bare

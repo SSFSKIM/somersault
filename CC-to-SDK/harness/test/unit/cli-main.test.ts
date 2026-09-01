@@ -1248,6 +1248,21 @@ describe("attachToImpl — retry classification (Task 8)", () => {
     expect(calls).toBe(3);                              // two failures, then the success on the third try
     expect(clientCalls[0]).toMatchObject({ client: { kind: "attached", short: "00000000" }, initialPrompt: "hi" });
   });
+  it("attach threads the host's configDir into runChatClient, and omits the key entirely when the row has none (bl12)", async () => {
+    const clientCalls: any[] = [];
+    await attachToImpl("w1", {}, mainDeps({
+      prepareAttach: async () => prep({ configDir: "/tenant/cfg" }),
+      probeSocket: async () => {},
+      runChatClient: async (o) => { clientCalls.push(o); },
+    }));
+    expect(clientCalls[0].configDir).toBe("/tenant/cfg");
+    await attachToImpl("w1", {}, mainDeps({
+      prepareAttach: async () => prep(),
+      probeSocket: async () => {},
+      runChatClient: async (o) => { clientCalls.push(o); },
+    }));
+    expect("configDir" in clientCalls[1]).toBe(false);  // absent, not undefined — the spread's own contract
+  });
   it("fromSpawn retry is bounded at 20 attempts (21 total calls), then rethrows the last error", async () => {
     vi.useFakeTimers();
     try {
