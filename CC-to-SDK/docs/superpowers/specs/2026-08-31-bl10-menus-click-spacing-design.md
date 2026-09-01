@@ -276,7 +276,46 @@ argument, cloud/account/setup family (out of reach).
 
 ## 8. Outcomes & Retrospective
 
-Pending — written at finish.
+**Shipped in full (2026-09-02).** All three tickets landed and every acceptance item in §4 holds on
+the assembled main: the tabbed-dialog shell with the derived keyhint bar carries Settings,
+Permissions (six tabs incl. Auto mode), and Help; the status family opens the dialog on its tab with
+scrollable read-only bodies (D13 held, then *hardened* — see below); bare `/mcp` browses
+list → server menu → tools → tool detail off normalized `mcpServerStatus()`; every top-level
+transcript block sits one blank line above its predecessor (streaming included, D17 cluster
+exemption honored, dock at 16); expanded blocks paint and hit full-width via the `band` marker and
+collapse on a blank-tail click, pty-proven byte-identical. Final battery: unit 4420, tui 5098,
+resize-matrix 10/0, hover-cells 2/2, all green.
+
+**The review loop was the round's second half: 9 codex passes, 8 fix waves, 25 findings fixed, 5
+logged.** What it taught:
+
+- *New-surface geometry defects arrive as a CLASS, not a list.* Three classes — state-dependent hint
+  accuracy, unbounded strings reaching a dialog frame, flatten-at-normalization eating identity —
+  produced findings at successive sites across five reviews while we patched sites. The loop only
+  bent toward convergence when wave 7 switched to sweeps ("close the class everywhere, report the
+  sweep inventory"). For a new UI surface, the first fix of a kind should trigger the sweep
+  immediately.
+- *An adjudication can be wrong and the loop is the instrument that proves it.* The read-only clip
+  was logged (not fixed) three times under the anti-refine-loop rule; the fourth review produced a
+  new fact — `fetchSettingsUsage` orders `/cost`'s fields last, so the clip destroyed the command's
+  entire output on short terminals — flipping the outcome class from imprecision to D13 content
+  loss. Wave 8 shipped the scroll. The rule held (each disposition was evidence-based at the time);
+  what changed was the evidence.
+- *Converting a command's OUTPUT converts its dependents.* `/status` becoming a modal silently broke
+  the two PTY suites that used it as a staging command — outside the vitest gate every task ran, and
+  masked by a battery that had passed on a pre-conversion branch. A green result is evidence only
+  about the exact tree it ran on.
+- *The exit had to be pre-committed twice.* The original convergence rule ("after wave 3, log except
+  wave-introduced regressions") did not terminate against a 5.7k-line diff that a strong reviewer
+  can always find new P2s in; the loop closed only after the ledger pre-committed a final-disposition
+  round (rr8) whose findings could not extend it. Future rounds should pre-commit BOTH the per-wave
+  rule and the terminal round.
+
+Residuals: five tracker entries (h1's negative-only fixture; the scrolled-out expanded-header band;
+MCP detail full-text route; the latent batched-input view read, masked by Ink's Legacy Root; the
+dormant DialogFrame title bound) — `docs/parity/tech-debt-tracker.md`. One finding was bl12's
+surface and closed by that lane (PR #5). Round ledger:
+`.doperpowers/sdd/2026-08-31-bl10-round/round.md`.
 
 ## 9. Revision Notes
 

@@ -1058,6 +1058,52 @@ measurement, tie-break adopted as robustness) → whole-round review **ZERO find
 Ledger `.doperpowers/sdd/2026-08-28-bl6-round/round.md`; spec
 `docs/superpowers/specs/2026-08-28-bl6-attach-cluster-design.md`.
 
+**bl10 close-out (2026-09-02) — the dialog shell, the spacing invariant, the click band; and the
+longest review loop yet.** Three owner observations against canon 2.1.251 became three tickets.
+**T-MENU:** the shared tabbed-dialog shell canon builds every settings surface on (`Pg` tab shell
+L122645 / `Zi` pane L122728 / `me` frame L568952 / the `Ye`→`Z` auto keyhint bar L568825, ≤4 hints) —
+`Tabs` grew a `<Tab>` pane child, `DialogFrame` grew subtitle/titleEnd/onCancel and the derived hint
+bar, and Settings/Permissions/Help migrated onto it, deleting their per-dialog tab boilerplate;
+Permissions gained canon's Auto mode tab (display-only; the R1 research misread that would have
+REORDERED the already-correct tabs was caught by the plan review — 7th consecutive round that gate
+paid); `/status`/`/usage`/`/cost`/`/stats` now open the Settings dialog on the right tab under a D13
+information-equivalence gate (every field the old text dumps showed must be visible — enforced by
+equivalence tests, then hardened to a scrollable body when the review loop proved short terminals
+clipped `/cost`'s fields entirely); bare `/mcp` opens a canon-shaped view-stack browser
+(list → server menu → tools → tool detail, router L582270) over a defensive normalization of
+`session.mcpServerStatus()`. **T-SPACE:** canon puts one blank line above EVERY top-level transcript
+block (addMargin `gm` L18761, invariant across metadata modes) — ccx now emits a durable `:gap`
+separator item above each realized non-empty unit (streaming joins at first delta; expanded-cluster
+members carry their own leading blank, so the cluster's OUTER separator is exempted — D17, canon's
+verbose branch has no outer margin), the spinner slot takes its unconditional marginTop (Gn L77727),
+the composer's top margin drops under an open palette (L160599), and `MAIN_DOCK_ROWS` grew 14→16 to
+keep the taller blocks from starving the dock; 27 spacing-invariant cases plus rebaselined suites pin
+it. **T-CLICK:** the re-collapse defect was a hit-region asymmetry — canon paints an expanded block's
+background as a full-width rectangle of styled spaces (L376156) and gates clickability per CELL
+(`cellIsBlank` L372918), so an expanded block collapses on a click anywhere in its band while a
+collapsed row stays glyph-width; ccx now mints an explicit row-level `band` marker (spec D9-v2 —
+`expanded` was proven unusable as a proxy) that drives BOTH the full-width paint (gutter columns
+included) and the widened `HitRow` width, with separators never banded; the wrong bl4 test pin was
+flipped to canon's asymmetric rule and the fix pty-proven byte-identical in the real binary. **The
+review loop set a program record: 9 codex passes, 8 fix waves, 25 findings fixed, 5 logged.** The
+wave-1 P1 (MCP dialog absent from the overlay input-owner predicate) and the wave-2 P1 (the PTY
+suites staged content with `/status`, which had just become a modal — the merged tree had never run a
+green battery; restaged with `! printf`, re-derived row accounting, first genuinely green
+`resize-matrix` on the assembled main) were the structural catches. Mid-loop the waves themselves
+became the review target — three recurring classes (state-dependent hint accuracy, unbounded strings
+reaching a dialog frame, flatten-at-normalization eating identity) were closed by SWEEPS rather than
+site patches after site-patching provably didn't terminate, and one adjudication was REVERSED on
+evidence: four reviews insisted the read-only clip was wrong, and the fourth proved D13 content loss
+(`/cost`'s fields sorted after the usage rows), so wave 8 shipped the scroll the rule had been
+deferring. One finding was out of scope and closed by the concurrent bl12 lane (PR #5, the
+settings-path display). Mid-round the repository migrated (codex_somersault archived → somersault
+monorepo) and concurrent lanes rewrote main twice more; all content transplanted verified-intact.
+Final battery: unit 4420, tui 5098 (0 failed), resize-matrix 10/0, hover-cells 2/2 (h1 flipped to a
+positive pin of the T-CLICKGATE gate), t-click pty cell. Ledger
+`.doperpowers/sdd/2026-08-31-bl10-round/round.md` (old-repo checkout); spec
+`docs/superpowers/specs/2026-08-31-bl10-menus-click-spacing-design.md`; residuals in
+`docs/parity/tech-debt-tracker.md`.
+
 **bl9 close-out (2026-08-31) — the attach reconcile + three retired premises, one round.** Scope was
 bl8's carried candidates; research reshaped all three (fourth consecutive round a carried premise
 died under evidence). R1 executed the real `SessionHost` against the bl6 "follow() replay gap" entry:

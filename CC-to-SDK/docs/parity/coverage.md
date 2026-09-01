@@ -500,6 +500,27 @@
 >   fake-`osascript` run shows the hint appearing on focus-in and expiring at 8 s — re-proven again on
 >   the assembled `main` after merge slot 4 (`abe91cf252`). I6 is REACHABLE.
 
+> - **bl10 round close-out — dialog shell + spacing invariant + click band (2026-09-02)** — spec
+>   `docs/superpowers/specs/2026-08-31-bl10-menus-click-spacing-design.md`, ledger
+>   `.doperpowers/sdd/2026-08-31-bl10-round/` (old-repo checkout). **T-MENU**: the canon tabbed-dialog
+>   shell (`Pg`/`Zi`/`me` + the `Ye`-derived ≤4-hint keyhint bar) built and Settings/Permissions/Help
+>   migrated onto it; Permissions Auto mode tab added (display-only, canon order verified — a research
+>   misread that would have reordered correct tabs died at plan review); `/status`-family commands open
+>   the Settings dialog on their tab under a D13 information-equivalence gate (scrollable read-only
+>   bodies after the review loop proved short-terminal content loss); bare `/mcp` opens a view-stack
+>   browser over normalized `mcpServerStatus()` (raw-name identity, flattened display labels, every
+>   string bounded). **T-SPACE**: canon's one-blank-above-every-block margin as durable `:gap`
+>   separator items (streaming included; expanded-cluster outer exemption D17), spinner-slot margin,
+>   palette-aware composer margin, `MAIN_DOCK_ROWS` 14→16. **T-CLICK**: explicit row-level `band`
+>   marker (D9-v2) makes expanded blocks full-width paint AND full-width hit (collapse on blank-tail
+>   click; separators inert; collapsed rows glyph-width) — pty-proven byte-identical. Review loop: 9
+>   codex passes / 8 fix waves / 25 fixed / 5 logged; structural catches were the MCP overlay-owner
+>   gap and the PTY suites' `/status` staging (the merged tree's first genuinely green resize-matrix
+>   followed); recurring classes closed by sweeps; the clip-vs-scroll adjudication reversed on D13
+>   evidence at wave 8. Mid-round repo migration (→ somersault monorepo) + two more concurrent main
+>   rewrites absorbed content-intact. Final battery: unit 4420, tui 5098, resize-matrix 10/0,
+>   hover-cells 2/2, pty cell — all green. T-MENU/T-SPACE/geomtest content PUBLIC on origin/main via
+>   other lanes' pushes; later waves local-only at close-out.
 > - **bl9 round close-out — attach reconcile + three retired premises (2026-08-31)** — spec
 >   `docs/superpowers/specs/2026-08-31-bl9-followreplay-polish-design.md` (v3), ledger
 >   `.doperpowers/sdd/2026-08-31-bl9-round/`. **T-FOLLOW** (merge `1fdbfb3cb6` + waves through
