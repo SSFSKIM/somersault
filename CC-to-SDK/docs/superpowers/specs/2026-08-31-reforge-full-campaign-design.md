@@ -681,7 +681,12 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   `compact_boundary` constructor and the only one that leaves follow-up questions un-suppressed, so
   three of W4's adjudicated branch outcomes are reachable only through it — and `/compact
   <instructions>` does NOT reach it, so no cheap scenario buys them; whichever wave takes the variant
-  inherits the coverage).
+  inherits the coverage); **the hook executor** (C8 flow-back: upstream `Qxt`, ~23 KB, plus
+  `Rzn`/`Xxt`/`jy` — S-module-shaped, and the only thing between `subsystem/hook-dispatch` and
+  `standalone-complete`). **Routing decision (2026-09-01):** the accumulated S-method-sized
+  remainders — the OS() prompt sections, segment compaction — congeal into a proposed
+  bloc-closing **completions wave (W7.5)**, cut when C10 lands; the hook executor rides with it
+  or gets S-module treatment inside it per its own design pass.
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
