@@ -2484,8 +2484,8 @@ red.
 
 ### Ledger
 
-`subsystem/hook-dispatch` carries **twenty** upstream footprints with 120 rebased captures and four
-typed-port edges — and stays **`spliced`**. The gap now has two halves, both named in the note.
+`subsystem/hook-dispatch` carries **twenty** upstream footprints with 120 rebased captures, 22
+evidence links (the probe among them) and four typed-port edges — and stays **`spliced`**. The gap now has two halves, both named in the note.
 
 **The execution helpers**, three rather than one: the **23 KB shared executor** (upstream `Qxt`,
 reached through `jy`/`Xxt`), its awaiting sibling **`AE`**, and the watcher-hooks helper **`zxt`** that
