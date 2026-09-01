@@ -43,9 +43,10 @@
 //              separated by the verified signature — and when it cannot
 //              separate them, the tie must throw rather than pick one.
 //   generator  a generator target must delegate by `yield*`, carrying the
-//              yielded sequence, the completion value and `next`/`throw`
-//              signalling — and the signature must refuse a target whose
-//              generator-ness moved in either direction.
+//              yielded sequence, the completion value and all three caller
+//              signals — `next`, `throw` and the mid-stream `return` a consumer
+//              that stops reading sends — and the signature must refuse a target
+//              whose generator-ness moved in either direction.
 //
 // Plus the §2.4 contract test for the one capture pair whose ownership retrofit
 // has landed: text-delta's telemetry brands.
@@ -444,8 +445,9 @@ function footprintOf(owner: string, helper: string) {
 // delegation cannot carry a generator: the caller drives it with
 // `next`/`throw`/`return` and reads results as they arrive. The claim tested is
 // that all three parts of the contract cross the seam — the yielded sequence,
-// the completion value, and two-way signalling — and that the signature refuses
-// a target whose generator-ness moved.
+// the completion value, and two-way signalling in every direction the caller can
+// signal, INCLUDING the early `return()` an interrupted consumer sends — and
+// that the signature refuses a target whose generator-ness moved.
 {
   const gens =
     `async function*streamed(a,b){yield "GEN_ANCHOR"+a;yield b;return "done:"+a}\n` +
@@ -507,6 +509,44 @@ function footprintOf(owner: string, helper: string) {
   check("a throw() from the caller propagates INTO the delegate",
     (caughtInside as Error | null)?.message === "REFORGE_THROWN" && after.value === "caught",
     JSON.stringify({ caught: (caughtInside as Error | null)?.message, after }));
+
+  // …and the third signal, which is the one the engine actually sends: a
+  // consumer that stops reading mid-stream calls `.return()`. Upstream's hook
+  // dispatchers are driven by a loop that breaks on the first blocking decision,
+  // so the interrupt path is the COMMON path, not an edge case — and a seam that
+  // swallowed it would leave the delegate's `finally` unrun (its abort
+  // controllers, its temp files, its spans) while the caller believed the
+  // generator had been closed. `return yield*` forwards it: the delegation calls
+  // the delegate's own `.return()`, so the inner `finally` runs and the sentinel
+  // becomes the outer generator's completion value.
+  let ranFinally = false;
+  let resumedAfterReturn = false;
+  const closer = new Function(
+    "delegate",
+    `globalThis.__reforge={f:delegate};${gen.render("f", gen.shapeArgs)};return streamed;`,
+  )(async function* (): AsyncGenerator<string, string, unknown> {
+    try {
+      yield "first";
+      yield "second";
+      resumedAfterReturn = true;
+      return "ran to completion";
+    } finally {
+      ranFinally = true;
+    }
+  }) as () => AsyncGenerator<string, string, unknown>;
+  const c = closer();
+  const opened = await c.next();
+  const closed = await c.return("RETURN_SENTINEL" as unknown as string);
+  check("the first yield arrives before the interrupt", opened.value === "first" && opened.done === false);
+  check("a return() from the caller runs the delegate's finally",
+    ranFinally && !resumedAfterReturn, JSON.stringify({ ranFinally, resumedAfterReturn }));
+  check("…and the caller's sentinel becomes the generator's completion value",
+    closed.done === true && closed.value === "RETURN_SENTINEL", JSON.stringify(closed));
+  check("…and the outer generator's own `return` never runs — the return completion propagates through the yield*",
+    closed.value !== "done:A");
+  const afterClose = await c.next();
+  check("…and the generator stays closed afterwards",
+    afterClose.done === true && afterClose.value === undefined, JSON.stringify(afterClose));
 }
 
 // ---- FINDING 8: same-chunk sibling disambiguation (C5x unit 4) --------------
