@@ -325,7 +325,7 @@ async function main(): Promise<void> {
       extra: {
         maxTurns: 4,
         permissionMode: mode,
-        ...(mode === "bypassPermissions" ? { dangerouslySkipPermissions: true } : {}),
+        ...(mode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
         canUseTool: brokerFor(`spawn-${mode}`),
       } as Partial<Options>,
       next: (r) => (r === 0 ? WRITE_PROMPT : null),
@@ -378,7 +378,7 @@ async function main(): Promise<void> {
     extra: {
       maxTurns: 4,
       permissionMode: "bypassPermissions",
-      dangerouslySkipPermissions: true,
+      allowDangerouslySkipPermissions: true,
       settings: rules("deny", ["Write"]),
       canUseTool: brokerFor("bypass-vs-deny-rule"),
     } as Partial<Options>,
@@ -407,9 +407,15 @@ async function main(): Promise<void> {
     next: (r) => (r === 0 ? MKDIR_PROMPT : null),
   });
 
-  const only = process.argv.includes("--phase") ? process.argv[process.argv.indexOf("--phase") + 1] : null;
+  // `--phase a,b,c` — a comma list, because the decisive phases are a handful and
+  // a full sweep is twenty live turns. A `+` prefix selects by substring, so
+  // `--phase +auto` runs both of the mode's paths.
+  const arg = process.argv.includes("--phase") ? process.argv[process.argv.indexOf("--phase") + 1] : null;
+  const wanted = arg === null ? null : arg.split(",").map((p) => p.trim()).filter(Boolean);
+  const selected = (label: string) =>
+    wanted === null || wanted.some((w) => (w.startsWith("+") ? label.includes(w.slice(1)) : label === w));
   for (const spec of specs) {
-    if (only && spec.label !== only) continue;
+    if (!selected(spec.label)) continue;
     const r = await phase(spec);
     report(spec, r);
   }

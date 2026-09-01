@@ -453,7 +453,7 @@ export const W6_SCENARIOS: Scenario[] = [
       input.push(userMessage("Reply with exactly READY."));
       const q = sdk.query({
         prompt: input,
-        options: { ...baseOptions(ctx), maxTurns: 8, permissionMode: "bypassPermissions", dangerouslySkipPermissions: true },
+        options: { ...baseOptions(ctx), maxTurns: 8, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
       });
       const turns = [writePrompt(join(SANDBOX, "plan-mode.txt")), writePrompt(join(SANDBOX, "dont-ask.txt"))];
       let results = 0;

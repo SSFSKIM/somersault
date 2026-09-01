@@ -223,25 +223,39 @@ export const ATTESTED: AttestedModule[] = [
   // `strangle/permissions-parity.test.ts` and the block inside it that runs the
   // arm — 2,496 comparisons with 47 controls, over the fixture's own six modes,
   // three rule behaviours and eleven decisionReason kinds.
-  { module: "permission-precheck", row: "permission-precheck", scenarios: ["bash-tool", "file-tools", "permission-broker", "permission-bag"] },
+  // The pre-check's list is the LONGEST in the file, deliberately: its ladder has
+  // thirteen rungs and each mode reaches a different one, so the scenarios that
+  // move its branches are the whole matrix rather than a representative of it.
+  // Every scenario named across all attested modules is replayed once, so a long
+  // list here is cheap and buys measured coverage instead of adjudicated prose.
+  {
+    module: "permission-precheck",
+    row: "permission-precheck",
+    scenarios: [
+      "bash-tool", "file-tools", "permission-broker", "permission-bag",
+      "perm-accept-edits", "perm-plan-mode", "perm-dont-ask", "perm-rule-deny",
+      "perm-rule-allow", "perm-rule-ask", "perm-bypass-deny-rule", "perm-hook-rewrite",
+      "perm-hook-deny", "perm-broker-updates", "perm-mode-walk",
+    ],
+  },
   { module: "rule-based-permissions", row: "rule-based-permissions", scenarios: ["perm-hook-rewrite"] },
-  { module: "allow-rule-decision", row: "allow-rule-decision", scenarios: ["perm-rule-allow"] },
-  { module: "permission-message", row: "permission-message", scenarios: ["perm-hook-rewrite"] },
+  { module: "allow-rule-decision", row: "allow-rule-decision", scenarios: ["perm-rule-allow", "bash-tool"] },
+  { module: "permission-message", row: "permission-message", scenarios: ["perm-hook-rewrite", "perm-rule-ask", "bash-tool"] },
   {
     module: "classifier-streak",
     row: "classifier-streak",
     scenarios: ["bash-tool", "permission-broker"],
   },
-  { module: "mode-change-guard", row: "mode-change-guard", scenarios: ["runtime-setters", "perm-mode-switch"] },
-  { module: "mode-transition", row: "mode-transition", scenarios: ["runtime-setters", "perm-mode-switch"] },
-  { module: "set-permission-mode", row: "set-permission-mode", scenarios: ["runtime-setters", "perm-mode-switch"] },
-  { module: "permission-request-hook-decision", row: "permission-request-hook-decision", scenarios: ["permission-broker", "hooks-permission", "perm-hook-deny"] },
+  { module: "mode-change-guard", row: "mode-change-guard", scenarios: ["runtime-setters", "perm-mode-walk"] },
+  { module: "mode-transition", row: "mode-transition", scenarios: ["runtime-setters", "perm-mode-walk"] },
+  { module: "set-permission-mode", row: "set-permission-mode", scenarios: ["runtime-setters", "perm-mode-walk"] },
+  { module: "permission-request-hook-decision", row: "permission-request-hook-decision", scenarios: ["permission-broker", "hooks-permission", "perm-hook-deny", "perm-hook-rewrite"] },
   { module: "broker-response-map", row: "broker-response-map", scenarios: ["permission-bag", "perm-broker-updates"] },
   { module: "broker-permission-updates", row: "broker-permission-updates", scenarios: ["permission-bag", "perm-broker-updates"] },
   {
     module: "control-response-success",
     row: "control-response-success",
-    scenarios: ["plain"],
+    scenarios: ["runtime-setters"],
     noBranchesReason:
       "one object literal, three levels deep — no branch-forming construct at all, so its AST inventory is legitimately empty rather than under-reported. " +
       "What grades it is strangle/permissions-parity.test.ts, which builds the envelope from the pinned upstream body over six payload shapes and holds two controls on the NESTING: a request_id lifted to the top level and a payload spread into the response rather than nested under it. Both are wrong in a way that does not error — the SDK matches a response to its request by request_id and by nothing else, so a mis-nested envelope hangs.",
@@ -249,7 +263,7 @@ export const ATTESTED: AttestedModule[] = [
   {
     module: "control-response-error",
     row: "control-response-error",
-    scenarios: ["plain"],
+    scenarios: ["perm-mode-walk"],
     noBranchesReason:
       "the success envelope's twin, and straight-line for the same reason. " +
       "What grades it is strangle/permissions-parity.test.ts, which runs it over the same six payload shapes AND over every refusal the mode-change guard can produce — read out of research/fixtures/permission-surface-<pin>.json, so a guard that gains a refusal upstream widens the case list — plus a control on reusing the success subtype.",
