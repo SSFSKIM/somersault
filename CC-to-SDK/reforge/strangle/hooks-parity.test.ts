@@ -11,16 +11,31 @@
 // It also closes C5x's DEFERRED OBLIGATION. The mechanism wave shipped three
 // modules unattested, on the reasoning that an exclusion needs an oracle and
 // building one for a hook dispatcher is the owning wave's design work. This is
-// that oracle, and `post-tool-hooks` is graded here alongside W5's six.
+// that oracle, and `post-tool-hooks` is graded here alongside the ten dispatchers
+// W5 owns — six from its first pass, four more that C8's boundary review found
+// live after the wave's probe had recorded them as dead.
+//
+// TWO SHAPES, NOT ONE. Nine dispatchers are `async function*` and stream their
+// executor's results back to a caller that folds them into the conversation.
+// PreCompact and SessionEnd are plain `async function`s that AWAIT a different
+// executor (upstream `AE`), because a compaction and a session teardown have no
+// conversation to stream into — and PreCompact goes further: it reduces its
+// results to a verdict the compactor obeys. That reduction is the largest thing
+// this file grades that no scenario can reach at all, since a callback that
+// returns `{continue:true}` can neither add instructions nor block.
 //
 // WHY THIS SUBSYSTEM NEEDS IT, stated as what a callback corpus cannot see. A
 // scenario proves a dispatcher RAN and that its callback received a record. It
 // does not reach:
 //
-//   the REFUSALS. Five of the seven dispatchers return without building anything
-//       when no hook is registered — which is the common case on every session
-//       in the world and is exercised by no scenario, because a scenario that
-//       registers no hook produces no observable at all.
+//   the REFUSALS. Several dispatchers return without building anything when no
+//       hook is registered — which is the common case on every session in the
+//       world and is exercised by no scenario, because a scenario that registers
+//       no hook produces no observable at all.
+//   the FIELDS THE SEAM NEVER FILLS. Five of the SessionStart record's ten keys
+//       are undefined headlessly and vanish when the record is serialised onto a
+//       hook's stdin, so the corpus grades half a record. Here the ports can be
+//       given values the seam never supplies.
 //   the SECOND PATH. The PreToolUse dispatcher's function-hook chain needs an
 //       in-process module handler or a managed pass, neither of which the SDK
 //       seam exposes.
@@ -672,6 +687,44 @@ async function compare(
   return { upstream: up, trace: upSink };
 }
 
+/** Await a value-returning dispatcher, grading a throw rather than swallowing it. */
+async function settle(p: Promise<unknown>): Promise<{ returned?: unknown; threw?: string }> {
+  try {
+    return { returned: await p };
+  } catch (e) {
+    return { threw: `${(e as Error).name}: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * `compare`, for the two dispatchers that return a value instead of streaming.
+ *
+ * Both sides run with `process.stderr.write` swapped for a per-side collector:
+ * SessionEnd REPORTS through stderr, and that reporting policy — which results
+ * are named and which are silent — is behaviour no other surface here can see.
+ * The swap is per side and restored in a `finally`, so a throwing dispatcher
+ * cannot leave the process's stderr redirected into a dead sink.
+ */
+async function compareValue(
+  label: string,
+  spec: StubSpec,
+  runUpstream: (p: PortSet) => Promise<unknown>,
+  runOwned: (p: PortSet) => Promise<unknown>,
+): Promise<{ upstream: { returned?: unknown; threw?: string }; trace: Trace }> {
+  const upSink = emptyTrace();
+  const upPorts = makePorts(spec, upSink);
+  bindGlobals(upPorts);
+  const up = await upPorts.captureStderr(() => settle(runUpstream(upPorts)));
+
+  const ownSink = emptyTrace();
+  const ownPorts = makePorts(spec, ownSink);
+  const own = await ownPorts.captureStderr(() => settle(runOwned(ownPorts)));
+
+  eq(`${label} [returns]`, up, own);
+  eq(`${label} [ports]`, upSink, ownSink);
+  return { upstream: up, trace: upSink };
+}
+
 const SESSION = { id: "session-1", project: "/sandbox" };
 const registry = (functionHooks: number) => ({
   has: () => true,
@@ -1054,11 +1107,316 @@ const context = (over: Record<string, unknown> = {}) => ({
   mustDiffer("the common prefix built with a permission mode this event does not have", trace.base[0].length, 4);
 }
 
+// ============================================================================
+// 3. THE FOUR DISPATCHERS C8's BOUNDARY REVIEW FOUND LIVE.
+//    Each one's corpus scenario grades what its firing condition renders; these
+//    grade what no scenario can reach — the refusals, the arms the seam never
+//    supplies values for, and (for PreCompact) an entire reduction the engine
+//    obeys and a callback cannot influence.
+// ============================================================================
+
+// ---- PostToolUseFailure (upstream `zNt`) ------------------------------------
+{
+  const { upstream, forwarded, owned } = prepare("post-tool-failure-hooks", "PostToolUseFailure", 10);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const webFetch = context({ agentContext: { agentType: "subagent", isBuiltIn: true, subagentName: "web-fetch", parentAgentId: "parent-1" }, agentId: "agent-1" });
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["registered", { registered: true }, ["Bash", "tu-1", { command: "nope" }, "command not found", context(), false, "bypassPermissions", undefined, DEFAULT_HOOK_TIMEOUT_MS, 12]],
+    ["not registered", { registered: false }, ["Bash", "tu-1", { command: "nope" }, "command not found", context(), false, "bypassPermissions", undefined, DEFAULT_HOOK_TIMEOUT_MS, 12]],
+    ["an INTERRUPT rather than a failure", { registered: true }, ["Bash", "tu-2", { command: "sleep 60" }, "Interrupted", context(), true, "default", undefined, 1000, 900]],
+    ["no duration measured", { registered: true }, ["Read", "tu-3", { file_path: "/a" }, "ENOENT", context(), false, "acceptEdits", undefined, 1000, undefined]],
+    ["an empty error string", { registered: true }, ["Write", "tu-4", {}, "", context(), false, "default", undefined, 1000, 0]],
+    ["an explicit signal", { registered: true }, ["Bash", "tu-5", {}, "boom", context(), false, "default", new AbortController().signal, 1000, 5]],
+    ["the executor yields nothing", { registered: true, results: [] }, ["Bash", "tu-6", {}, "boom", context(), false, "default", undefined, 1, 1]],
+    // The fan-out set includes this event, so a built-in web-fetch subagent's
+    // failure is looked up under the PARENT session's ids as well as its own.
+    ["a web-fetch subagent fans the lookup out to its parent", { registered: true }, ["Bash", "tu-7", {}, "boom", webFetch, false, "default", undefined, 1000, 7]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `post-tool-failure-hooks ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 10), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    "post-tool-failure-hooks order control",
+    { registered: true },
+    constants,
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 10), ...forwarded(p, constants)),
+  );
+  const record = (trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  eq("post-tool-failure-hooks field order", Object.keys(record), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "tool_name",
+    "tool_input",
+    "tool_use_id",
+    "error",
+    "is_interrupt",
+    "duration_ms",
+  ]);
+  // The failure record carries an error where its sibling carries a response.
+  // A module that copied PostToolUse's record would pass every yield comparison
+  // and change what every failure hook in the world reads.
+  mustDiffer("the failure record carrying a tool_response like its sibling", Object.keys(record).includes("tool_response"), true);
+  mustDiffer("error and tool_use_id swapped in the record", Object.keys(record).join(","), [
+    "session_id", "transcript_path", "cwd", "prompt_id", "permission_mode", "effort",
+    "hook_event_name", "tool_name", "tool_input", "error", "tool_use_id", "is_interrupt", "duration_ms",
+  ].join(","));
+  const request = trace.executor[0][0] as Record<string, unknown>;
+  mustDiffer("a managed-hooks option forwarded, which this dispatcher does not take", "managedHooksOnly" in request, true);
+  const refused = await compare(
+    "post-tool-failure-hooks refusal control",
+    { registered: false },
+    constants,
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 10), ...forwarded(p, constants)),
+  );
+  mustDiffer("a refusal that still built the record", refused.trace.base.length, 1);
+  mustDiffer("a refusal that still called the executor", refused.trace.executor.length, 1);
+}
+
+// ---- SessionStart (upstream `vUt`) ------------------------------------------
+{
+  const { upstream, forwarded, owned } = prepare("session-start-hooks", "SessionStart", 12);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS, activityHold: ACTIVITY_HOLD };
+  const cases: [string, StubSpec, unknown[]][] = [
+    // What the corpus actually renders: every tail field undefined, which is why
+    // only five of the record's ten keys survive JSON onto a hook's stdin.
+    ["the headless shape", { registered: true }, [SESSION, "startup", undefined, undefined, undefined, undefined, undefined, DEFAULT_HOOK_TIMEOUT_MS, undefined, undefined, undefined, undefined]],
+    ["a session id OVERRIDE builds a synthetic session", { registered: true }, [SESSION, "resume", "other-session", undefined, undefined, undefined, undefined, DEFAULT_HOOK_TIMEOUT_MS, undefined, undefined, undefined, undefined]],
+    ["an explicit title beats the lookup", { registered: true }, [SESSION, "startup", undefined, "a given title", undefined, undefined, undefined, 1000, undefined, undefined, undefined, undefined]],
+    ["a subagent start", { registered: true }, [SESSION, "startup", undefined, undefined, "general-purpose", "claude-sonnet-5", undefined, 1000, true, undefined, { store: "v5" }, { kind: "k" }]],
+    ["extra fields are merged LAST and may override a named one", { registered: true }, [SESSION, "clear", undefined, undefined, "explorer", "claude-opus-5", undefined, 1000, false, { model: "overridden", extra: 1 }, undefined, undefined]],
+    ["an explicit signal", { registered: true }, [SESSION, "startup", undefined, undefined, undefined, undefined, new AbortController().signal, 1000, undefined, undefined, undefined, undefined]],
+    ["the executor yields nothing", { registered: true, results: [] }, [SESSION, "startup", undefined, undefined, undefined, undefined, undefined, 1, undefined, undefined, undefined, undefined]],
+    // The hold has to be released even when the executor throws — the `finally`
+    // is the difference between an idle session and one wedged open forever.
+    ["the executor THROWS and the hold is still released", { registered: true, executorThrows: "executor exploded" }, [SESSION, "startup", undefined, undefined, undefined, undefined, undefined, 1000, undefined, undefined, undefined, undefined]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `session-start-hooks ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 12), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    "session-start-hooks override control",
+    { registered: true },
+    constants,
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
+  );
+  const request = trace.executor[0][0] as { session: { id: string }; hookInput: Record<string, unknown> };
+  eq("session-start-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "source",
+    "agent_type",
+    "model",
+    "session_title",
+  ]);
+  // Two sessions in one call: the RECORD describes the override, the EXECUTOR is
+  // still given the real session. Collapsing them either stamps the wrong id or
+  // runs the hooks against the wrong registry, and nothing else here sees it.
+  mustDiffer("the executor handed the synthetic session instead of the real one", request.session.id, "coerced:other-session");
+  mustDiffer("the title derived from the REAL session id rather than the record's", trace.sessionTitle[0], ["session-1"]);
+  const spread = await compare(
+    "session-start-hooks spread control",
+    { registered: true },
+    constants,
+    () => upstream(...cases[4][2]),
+    (p) => owned(...(cases[4][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
+  );
+  const spreadRecord = (spread.trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  mustDiffer("the extra fields merged BEFORE the named ones, so the named one wins", spreadRecord.model, "claude-opus-5");
+  const threw = await compare(
+    "session-start-hooks hold control",
+    { registered: true, executorThrows: "executor exploded" },
+    constants,
+    () => upstream(...cases[7][2]),
+    (p) => owned(...(cases[7][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
+  );
+  mustDiffer("the hold left un-released when the executor throws", threw.trace.activity, [`begin(hook_exec,${ACTIVITY_HOLD})`]);
+  mustDiffer("the hold's reason string drifting from the pinned declaration", ACTIVITY_HOLD, "hook-hold");
+  mustDiffer("the timeout constant drifting from the pinned declaration", DEFAULT_HOOK_TIMEOUT_MS, 60000);
+}
+
+// ---- SessionEnd (upstream `ZSe`) — not a generator --------------------------
+{
+  const { upstream, forwarded, owned } = prepareAwaited("session-end-hooks", "SessionEnd", 3);
+  const constants = { sessionEndTimeoutMs: SESSION_END_TIMEOUT_MS };
+  const result = (over: Record<string, unknown>) => ({ succeeded: true, blocked: false, cancelled: false, output: "", command: "hook.sh", ...over });
+  const specs: [string, StubSpec][] = [
+    ["nothing ran", { registered: true, awaitResults: [] }],
+    ["one hook succeeded quietly", { registered: true, awaitResults: [result({})] }],
+    ["one hook succeeded with output", { registered: true, awaitResults: [result({ output: "all good" })] }],
+    // The reporting policy, which is the whole reason the results are drained.
+    ["one hook FAILED with output", { registered: true, awaitResults: [result({ succeeded: false, output: "it broke" })] }],
+    ["one hook failed with NO output", { registered: true, awaitResults: [result({ succeeded: false, output: "" })] }],
+    ["a mix of failures and successes", { registered: true, awaitResults: [result({ succeeded: false, output: "first" }), result({ output: "quiet" }), result({ succeeded: false, output: "second", command: "other.sh" })] }],
+  ];
+  const optionSets: [string, (p: PortSet) => unknown][] = [
+    ["with every option", (p) => ({ sessionHooks: p.sessionHooks, getAppState: () => ({ state: 1 }), signal: undefined, storageV5: { store: "v5" }, credentials: { kind: "k" } })],
+    // Upstream's `r||{}`: called with nothing, every option destructures to
+    // undefined and the executor still runs. That is the ordinary-teardown
+    // shape, where the settings layers resolve with no registry at all.
+    ["with no options at all", () => undefined],
+  ];
+  for (const [label, spec] of specs) {
+    for (const [optLabel, options] of optionSets) {
+      for (const reason of ["clear", "resume"]) {
+        await compareValue(
+          `session-end-hooks ${label}, ${optLabel}, reason=${reason}`,
+          spec,
+          (p) => upstream(SESSION, reason, options(p)),
+          (p) => owned(SESSION, reason, options(p), ...forwarded(p, constants)),
+        );
+      }
+    }
+  }
+  const { trace } = await compareValue(
+    "session-end-hooks report control",
+    specs[3][1],
+    (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
+    (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
+  );
+  eq("session-end-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "reason",
+  ]);
+  mustDiffer("a failed hook reported without naming the command that failed", trace.stderr, ["SessionEnd hook failed: it broke\n"]);
+  mustDiffer("the registry left uncleared", trace.registryClear, []);
+  const quiet = await compareValue(
+    "session-end-hooks silence control",
+    specs[2][1],
+    (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
+    (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
+  );
+  mustDiffer("a SUCCEEDED hook's output written to stderr as well", quiet.trace.stderr.length, 1);
+  const empty = await compareValue(
+    "session-end-hooks teardown control",
+    specs[0][1],
+    (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
+    (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
+  );
+  mustDiffer("the clear skipped when no hook ran", empty.trace.registryClear, []);
+  mustDiffer("this event's own 1500 ms timeout replaced by the shared one", SESSION_END_TIMEOUT_MS, DEFAULT_HOOK_TIMEOUT_MS);
+}
+
+// ---- PreCompact (upstream `tz`) — not a generator, and its result is obeyed --
+{
+  const { upstream, forwarded, owned } = prepareAwaited("pre-compact-hooks", "PreCompact", 5);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const r = (over: Record<string, unknown>) => ({ succeeded: true, blocked: false, cancelled: false, output: "", command: "hook.sh", ...over });
+  const delegated = context({ agentContext: { agentType: "subagent", delegatedObservation: true } });
+  const cases: [string, StubSpec, unknown[]][] = [
+    // Upstream's early return: ZERO results is not the same as results that said
+    // nothing — it returns `{}`, with none of the verdict's keys present.
+    ["nothing ran", { registered: true, awaitResults: [] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["one hook ran and said nothing", { registered: true, awaitResults: [r({})] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["one hook added instructions", { registered: true, awaitResults: [r({ output: "  keep the plan  " })] }, [SESSION, { trigger: "auto", customInstructions: "focus on X" }, context(), undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["two hooks added instructions", { registered: true, awaitResults: [r({ output: "first" }), r({ output: "second", command: "other.sh" })] }, [SESSION, { trigger: "auto", customInstructions: null }, context(), undefined, 1000]],
+    ["a hook FAILED with output", { registered: true, awaitResults: [r({ succeeded: false, output: "it broke" })] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, 1000]],
+    ["a hook failed with NO output", { registered: true, awaitResults: [r({ succeeded: false, output: "" })] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, 1000]],
+    ["a hook BLOCKED with a reason", { registered: true, awaitResults: [r({ blocked: true, output: "not now" })] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, 1000]],
+    ["a hook blocked with no reason", { registered: true, awaitResults: [r({ blocked: true, output: "" })] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), undefined, 1000]],
+    // A cancelled hook is narrated as nothing — but it is NOT excluded from the
+    // instruction filter, which reads succeeded/blocked/output alone. The
+    // asymmetry is upstream's, and it is invisible to every other surface.
+    ["a CANCELLED hook is silent but still contributes instructions", { registered: true, awaitResults: [r({ cancelled: true, output: "still counted" })] }, [SESSION, { trigger: "auto", customInstructions: null }, context(), undefined, 1000]],
+    ["everything at once", { registered: true, awaitResults: [r({ output: "instr" }), r({ succeeded: false, output: "broke", command: "b.sh" }), r({ blocked: true, output: "no", command: "c.sh" }), r({ cancelled: true, output: "hidden", command: "d.sh" })] }, [SESSION, { trigger: "manual", customInstructions: "given" }, context(), undefined, 1000]],
+    // The delegated-observation arm: blocking only, no instructions, no display.
+    ["a delegated-observation subagent gets a blocking-only verdict", { registered: true, awaitResults: [r({ output: "instr" }), r({ blocked: true, output: "no" })] }, [SESSION, { trigger: "auto", customInstructions: null }, delegated, undefined, 1000]],
+    ["a delegated-observation subagent with nothing blocking", { registered: true, awaitResults: [r({ output: "instr" })] }, [SESSION, { trigger: "auto", customInstructions: null }, delegated, undefined, 1000]],
+    ["an explicit signal", { registered: true, awaitResults: [r({})] }, [SESSION, { trigger: "manual", customInstructions: null }, context(), new AbortController().signal, 1000]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `pre-compact-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+    );
+  }
+  const { trace, upstream: verdict } = await compareValue(
+    "pre-compact-hooks verdict control",
+    cases[9][1],
+    () => upstream(...cases[9][2]),
+    (p) => owned(...(cases[9][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  eq("pre-compact-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "trigger",
+    "custom_instructions",
+  ]);
+  const v = verdict.returned as { newCustomInstructions?: string; userDisplayMessage?: string; blockedBy?: string };
+  // Each separator is a different message reaching the model or the operator.
+  mustDiffer("instructions joined by a newline rather than a blank line", v.newCustomInstructions, "instr");
+  mustDiffer("display lines joined by a blank line rather than a newline", v.userDisplayMessage, v.userDisplayMessage?.split("\n").join("\n\n"));
+  mustDiffer("a cancelled hook narrated in the display message", v.userDisplayMessage?.includes("hidden"), true);
+  mustDiffer("blocking computed from FAILURE rather than the blocked flag", v.blockedBy, "[b.sh]: broke\n[c.sh]: no");
+  const nothing = await compareValue(
+    "pre-compact-hooks empty-verdict control",
+    cases[0][1],
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  // `{}` and `{newCustomInstructions: undefined, userDisplayMessage: undefined}`
+  // are the same JSON, so the control asserts the KEYS: a module that fell
+  // through to the general return instead of taking the early one is a
+  // difference only this sees.
+  mustDiffer("the zero-results arm falling through to the full verdict", Object.keys(nothing.upstream.returned as object), [
+    "newCustomInstructions",
+    "userDisplayMessage",
+  ]);
+  const obs = await compareValue(
+    "pre-compact-hooks delegated-observation control",
+    cases[10][1],
+    () => upstream(...cases[10][2]),
+    (p) => owned(...(cases[10][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  mustDiffer("the delegated arm returning the full verdict", Object.keys(obs.upstream.returned as object), [
+    "newCustomInstructions",
+    "userDisplayMessage",
+    "blockedBy",
+  ]);
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 371) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 36) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 503) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 58) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 
 console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
