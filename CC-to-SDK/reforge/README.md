@@ -2155,7 +2155,7 @@ Nor is the auto-compaction path proven at its natural threshold. The corpus reac
 effective window because a scenario declares that; what runs at 167,000 tokens is the same predicate
 with a different number, and the gap is named rather than rounded up.
 
-## W5 — hook dispatch: eleven functions, eleven of twelve events (2026-09-01)
+## W5 — hook dispatch: twenty functions, twenty-one of twenty-three events (2026-09-01)
 
 One scenario in the corpus W5 inherited registered a hook at all — `hooks`, a PreToolUse and a
 PostToolUse callback around one `echo`. Two of the engine's live events were graded and the rest were
@@ -2163,13 +2163,16 @@ not, and each event has its **own** dispatcher building its own record. So W5 op
 did: with recordings, because almost every function it owns had no covering scenario and a splice
 whose solo sabotage cannot turn anything red is dead code the gate refuses.
 
-> **Read this section as a two-round wave.** It landed claiming seven functions covering all eight
-> headlessly-live events. C8's boundary review found that eight was wrong and, more importantly, that
-> the measurement behind it could not have been right — so the round below re-measured, added four
-> splices, and rewrote the claims. Both rounds are recorded here, because the mistake is the more
-> useful half.
+> **Read this section as a THREE-round wave, and read the rounds as one story about measurement.**
+> It landed claiming seven functions over all eight headlessly-live events. C8's boundary review found
+> eight wrong and the measurement behind it incapable of being right, re-measured twelve, and added
+> four splices. C8's SECOND round found that re-measurement still choosing its own watched list by
+> hand — so an event nobody thought of could not be measured as absent — derived the population from
+> upstream's own dispatcher registry, and found **twenty-three**. All three rounds are recorded,
+> because the mistakes are the more useful half: each round fixed the previous round's answer and left
+> its METHOD intact, and the method was the defect every time.
 
-### The live set was re-measured — and the first re-measurement was vacuous
+### The live set was re-measured three times, and the population was wrong until the third
 
 `docs/parity/coverage.md` has said "8 of 30 events fire headlessly" since 2026-06, against a
 different pin. `w5/probe-hook-events.ts` re-measured it against the **pinned** engine, registering
@@ -2185,15 +2188,17 @@ never ends a session inside the observation window and never completes an MCP el
 four of the five, a working dispatcher would have produced exactly the same silence. A negative that
 the healthy case also produces measures nothing.
 
-There was a second layer under it, and it is the one worth carrying forward. A dispatcher's hooks are
-looked up by `Wie`, which returns settings hooks unconditionally but FUNCTION hooks only out of the
-registry it is handed. `jy` (the generator executor) takes that registry off a `toolUseContext`; `AE`
-(the awaiting executor) consults only one passed explicitly — and `vUt`/SessionStart, `tz`/PreCompact
-and `EE`/Notification are all called without one. **A callback-only probe therefore measures the
-plumbing of the registration, not the dispatcher.** Registering only callbacks re-manufactures the
-same vacuous negative one level down.
+The boundary round also proposed a STRUCTURAL explanation — that a dispatcher's callback hooks come
+only from a session hooks registry it is handed, so `vUt`/SessionStart, `tz`/PreCompact and
+`EE`/Notification are unreachable from `Options.hooks` by construction. **That explanation is wrong
+and is withdrawn.** `Options.hooks` entries are not registry entries: the initialize handler tags them
+`origin:"sdkHost"` and pushes them into a GLOBAL store, and `IE(event)` (chunk-fy12d89p offset 538966)
+returns that store's entry unconditionally, merged with the settings layers. SessionStart's callback
+silence is **registration timing** — its dispatch precedes host-hook registration. The byte fact
+underneath survives and is why the owned modules forward no registry; the inference drawn from it did
+not.
 
-The probe now runs a PHASE per firing condition and registers BOTH a callback and a settings command
+The probe then ran a PHASE per firing condition and registered BOTH a callback and a settings command
 hook for every watched event, reading the command side back off marker files after the iterator ends
 so a teardown dispatcher's evidence survives. Four of the five negatives were wrong:
 
@@ -2205,17 +2210,65 @@ so a teardown dispatcher's evidence survives. Four of the five negatives were wr
 | SessionEnd | **FIRED** (command in every phase; callback on `/clear`) | ordinary teardown, and `/clear` |
 | Notification | not fired in any phase | — |
 
-So the headless-live set is **twelve events, not eight**, and the two the first probe called genuine
-negatives were artifacts of watching one path.
+That took the count to twelve. **It was still wrong, and for a reason no amount of care inside the
+probe could have fixed: the WATCHED LIST was written by hand.** Thirteen events, chosen as "every
+event with a dispatcher a single tool-using turn could plausibly reach". Notification's real firing
+condition was mis-stated (one MCP call site, when `EE` has eleven across five chunks, one of them a
+permission-notify timer); PostCompact and TaskCreated were not in the list at all. An event nobody
+thinks to watch cannot be measured as absent, and a list the tester writes can only ever confirm the
+tester.
 
-Notification keeps its exclusion, now on two grounds rather than a bare negative: its one call site in
-the pinned bundle is the MCP-elicitation completion notification in the headless runner chunk
-(`chunk-dvbbv89q.js`), which needs an external MCP server that elicits; and `EE` calls `AE` with no
-registry, so no SDK callback could observe it however the condition were created. It was registered on
-both paths in all four phases and fired in none. Nothing is claimed about the SDK's other declared
-events — they are neither ruled in nor ruled out.
+### The enumeration comes from the artifact now
 
-### Eight recordings
+Upstream keeps the enumeration of record: one object literal mapping every hook event to the function
+that dispatches it (`zCr`, chunk-fy12d89p offset 3010534). `research/tools/extract-hook-registry.ts`
+snapshots it into `research/fixtures/hook-registry-2.1.251.json` — found by SHAPE (a top-level
+identifier map of ≥20 entries) and CONFIRMED against a second, independent signal in the same bundle
+(the `hook_event_name:"…"` literals the dispatchers stamp; the candidate covers 100% of them). Then
+each dispatcher is resolved through the ESM graph to its defining chunk and its call sites are
+counted, which is what turns "this event exists" into "and here is where it could fire". A gate phase
+re-derives the fixture every run, so a pin that adds, drops or re-points an event reddens rather than
+silently narrowing what gets measured. **Same move as C3's bundle-generated override inventory: derive
+the enumeration from the artifact, not from judgment.**
+
+The static import graph alone was not enough, and the gap it left is instructive: **SessionEnd's third
+caller is the app's own `shutdown()`, reached by DYNAMIC import** through the barrel chunk. The
+static sweep saw two callers, which is what the wave had written down — and that miss is also why the
+ordinary-teardown fire the probe observed on every phase had no explanation. The extractor resolves
+dynamic-import sites too, scoped to the enclosing function.
+
+**33 events. 23 fire. 0 dead. 10 open.**
+
+| verdict | count | what it means |
+|---|---|---|
+| **FIRED** | 23 | observed, in a phase that created its condition |
+| **DEAD** | 0 | a condition was created here and the dispatcher did not run |
+| **OPEN** | 10 | the condition is NAMED but not created — no claim either way |
+
+The nine that were new to the measurement: **PostCompact** (the same `/compact` that fires PreCompact,
+after the summary exists), **Notification** (a permission consult answered past the 6000 ms notify
+timer), **PermissionRequest** (any tool call the permission system evaluates), **TaskCreated** and
+**TaskCompleted** (a TaskCreate/TaskUpdate pair), **StopFailure** (a turn ending in an api-error),
+**InstructionsLoaded** (a project CLAUDE.md loading), **UserPromptExpansion** (a project slash command
+expanding), **FileChanged** (a watcher event under a registered matcher), plus **PreModelSwitch** and
+**PostModelSwitch** on a `/model` turn.
+
+The ten OPEN rows each name what would create them — an eliciting MCP server, a teammate session, a
+`--worktree` launch, the auto-mode permission classifier, a setup trigger, an interactive config
+change, a cwd move, `/add-dir` (measured: it refuses headlessly). **OPEN is not a negative**, and the
+probe's table refuses to let it be counted as one.
+
+**Three gotchas cost real measurements**, all silent, all worth carrying forward:
+
+- `bypassPermissions` skips the permission system outright, so nothing permission-scoped can fire
+  under it — and every phase of the first two rounds ran under it.
+- a bare `allowedTools: ["Bash"]` **shadows** `canUseTool` (the SDK warns); the callback is never
+  consulted and no notify timer is armed.
+- default mode auto-approves read-only shell commands **without consulting `canUseTool` at all**, so a
+  phase built on `echo` measures nothing. `mkdir` is the cheapest command that is not read-only.
+- the file watcher is armed from a FileChanged hook's **matcher**, not from anything the hook prints.
+
+### Fourteen recordings
 
 | scenario | what it renders that nothing else does |
 |---|---|
@@ -2226,19 +2279,44 @@ events — they are neither ruled in nor ruled out.
 | `hooks-tool-failure` | the OTHER arm of a tool call — a command that does not exist, so the failure dispatcher runs and its sibling does not |
 | `hooks-precompact` | a real compaction, with three command hooks producing three different RESULT shapes, because PreCompact's verdict is a reduction over them |
 | `hooks-session-start` | the one live event `Options.hooks` cannot reach at all — graded on the sandbox, with the callback's silence asserted beside it |
-| `hooks-session-end` | `/clear`, upstream's one headlessly reachable SessionEnd call site, plus a failing hook so the drain's reporting arm renders |
+| `hooks-session-end` | `/clear`, one of upstream's three SessionEnd call sites and the one inside the observation window, plus a failing hook so the drain's reporting arm renders |
+| `hooks-permission` | a permission consult answered **7.5 s** later — past the 6000 ms notify timer — which fires PermissionRequest and Notification off one tool call |
+| `hooks-tasks` | a TaskCreate/TaskUpdate pair: two near-twin dispatchers that differ in one string, so grading one would state the twinning as a coincidence |
+| `hooks-stop-failure` | a turn that ends in an API error — the cassette is recorded healthy and then AUTHORED (see below) |
+| `hooks-memory` | a project CLAUDE.md loading, in a `/tmp` working directory so `settingSources: ["project"]` finds no ancestors |
+| `hooks-slash` | a project slash command being EXPANDED — the moment between the keystroke and UserPromptSubmit |
+| `hooks-file-watch` | a file changing under a registered FileChanged matcher, with a real `sleep` in the turn |
 
-Corpus **31 → 39**. The scout budgeted one scenario per uncovered event; a single no-tool turn fires
-three of them together, so `hooks-prompt-submit` carries all three. All eight replay offline with zero
-positional fallbacks and all surfaces identical.
+Corpus **31 → 45**. One recording per turn SHAPE rather than one per event: a no-tool turn fires three
+events together, one compaction fires PreCompact and then PostCompact, one slow permission consult
+fires two, one task pair fires two. All fourteen replay offline with zero positional fallbacks.
 
-Two of the eight were re-recorded after the first attestation run showed which arms a callback alone
-could not move — which is the same lesson as the probe's, one layer in: **a callback produces exactly
-one hook-result shape**, and a dispatcher that reduces over result shapes needs real hook PROCESSES to
-render its arms. That took the un-adjudicated count from 23 to 15 before a single exclusion was
-written. The bundle fact that made it work: a command hook's `output` is its **stdout when it succeeds
-and its stderr when it fails**, so a failing hook that printed to stdout renders as the silent-failure
-arm and grades the wrong phrasing.
+**Three of the six new ones needed a shape the corpus had no way to make.**
+
+`hooks-stop-failure`'s firing condition is a RESPONSE, and no prompt makes the real API return an
+api-error on demand. `Scenario.deriveFault` is the answer: the live take is a real recording, and the
+H2 fault derivation the fault suite already owns rewrites its first exchange into a 500 **before
+promotion**, so the committed cassette IS the graded one and a re-record cannot quietly promote the
+healthy take. Both engines then replay the same authored failure.
+
+`hooks-permission` really does wait out its 7.5-second delay again on every replay, on both sides.
+That is the point rather than the cost: the harness owns the answer timing, so the condition is
+*reproduced* offline rather than remembered.
+
+`hooks-file-watch` failed its first recording in a way worth keeping. The turn wrote the file twice
+and replied immediately; the debounced watcher fired **after the query had closed**, on both replay
+sides, and four requests were served positionally because the record and replay conversations had
+diverged. Adding a real `sleep 3` inside the turn fixed it. The sleep is not padding — it is the part
+of the firing condition the filesystem owns, and a scenario that omits it is racing the dispatch it
+exists to observe.
+
+Two older recordings were re-recorded after the boundary round's first attestation showed which arms a
+callback alone could not move, and the compaction recording gained a SECOND set of command hooks in
+this round for the same reason one level down — **a callback produces exactly one hook-result shape**,
+and PostCompact's verdict, like PreCompact's, is a narration of result shapes. Four exclusions became
+coverage. The bundle fact that makes it work: a command hook's `output` is its **stdout when it
+succeeds and its stderr when it fails**, so a failing hook that printed to stdout renders as the
+silent-failure arm and grades the wrong phrasing.
 
 ### The command-hook cell, and how it stopped being expensive
 
@@ -2258,7 +2336,7 @@ event-specific fields, and the TYPE of the two run-scoped ones. It is graded twi
 surface, where the file's hash is compared between engines, and on the events surface, where the
 scenario reads it back inside its own run.
 
-### Ten splices, two shapes, one anchor family
+### Nineteen splices, three shapes, one anchor family
 
 | splice | upstream | what only it does |
 |---|---|---|
@@ -2272,22 +2350,41 @@ scenario reads it back inside its own run.
 | `session-start-hooks` | `vUt` | two sessions in one call (the record's may be synthetic, the executor's is real), and an activity hold released in a `finally` |
 | `session-end-hooks` | `ZSe` | not a generator: it AWAITS its results, reports failures to stderr, and clears the session's registry — and its timeout is 1.5 s, not 600 s |
 | `pre-compact-hooks` | `tz` | not a generator, and the only dispatcher whose RESULTS the engine obeys: a reduction to custom instructions, a display message and a blocking reason |
+| `post-compact-hooks` | `kPe` | PreCompact's sibling with the verdict cut down — nothing left to block, so the reduction is the display message alone, and its delegated-observation guard returns BEFORE the executor rather than after |
+| `notification-hooks` | `EE` | the family's simplest: build, await, DROP the results — nothing reads them; its options bag is destructured in the PARAMETER list, so the delegation rebuilds it |
+| `instructions-loaded-hooks` | `Qqe` | six event-specific fields, three of them out of an options bag a top-level project memory does not fill |
+| `stop-failure-hooks` | `HPe` | the turn-end dispatcher's failure arm, and the only one that hands the executor both the session hooks registry and `getAppState` off its context |
+| `task-created-hooks` | `xUt` | dispatched inside the TaskCreate tool's own `call()`, not from the query loop; no `matchQuery`, so a matcher cannot narrow by task |
+| `task-completed-hooks` | `eGe` | `xUt`'s twin with one string changed — two rows, because two anchors and two footprints means an upstream edit to either fails on its own row |
+| `permission-request-hooks` | `Tee` | the only tool-scoped dispatcher that forwards the REAL tool-use id, and the only record carrying `permission_suggestions`; its results are obeyed by the permission system |
+| `user-prompt-expansion-hooks` | `Ldt` | the only guard that keys on the AGENT id when there is one and the session id otherwise; no timeout parameter at all |
+| `file-changed-hooks` | `CUt` | neither async nor a generator, and reaches NEITHER executor — it returns the watcher-hooks helper's promise for its caller to chain |
 
-All ten are `free-function` targets on `hook_event_name:"<Event>"`, the anchor family C5x's spike
-proved out, and all ten anchors are unique bundle-wide except one.
+All nineteen are `free-function` targets on `hook_event_name:"<Event>"`, the anchor family C5x's spike
+proved out, and all nineteen anchors are unique bundle-wide except one.
 `user-prompt-submit-hooks` is not: the literal occurs twice in ONE chunk, so a `coLiteral` cannot
 scope it (it scopes to a chunk). The other carrier is `Y4e`, the REPL-side dispatcher, which has six
 parameters where this one has five — so `siblings: 2` plus the verified signature selects, and an
 upstream edit to either arity makes the build refuse rather than splice the wrong function.
 
-**Two shapes, and the second was not anticipated.** Eight are `async function*` and stream their
-executor's results back to a caller that folds them into the conversation. `tz` and `ZSe` are plain
-`async function`s that await a DIFFERENT executor (`AE`, the sibling of `jy`), because a compaction
-and a session teardown have no conversation left to stream into — so their delegation is a plain
-`return`, and `executeHooksAwait` is a second unowned executor on the ledger row. `tz` goes further:
-it is the one place in this subsystem where hook OUTPUT is behaviour rather than a stream, and a
-callback returning `{continue:true}` can neither add instructions to the summarisation prompt nor
-block the compaction.
+**Three shapes, and each was found a round later than the last.** Thirteen are `async function*` and
+stream their executor's results back to a caller that folds them into the conversation. Six are plain
+`async function`s that await a DIFFERENT executor (`AE`, the sibling of `jy`), because a compaction, a
+teardown, a notification, a memory load and a failed turn have no conversation left to stream into —
+so their delegation is a plain `return`, and `executeHooksAwait` is a second unowned executor on the
+ledger row. `tz` goes further: it is the one place in this subsystem where hook OUTPUT is behaviour
+rather than a stream, and a callback returning `{continue:true}` can neither add instructions to the
+summarisation prompt nor block the compaction. And `CUt`/FileChanged is neither — a synchronous
+function that reaches no executor at all, handing the whole execution to the watcher-hooks helper it
+shares with CwdChanged. That helper is a THIRD unowned execution path on the ledger row.
+
+**Two registry events that FIRE are deliberately not spliced.** `mdt`/PreModelSwitch and
+`gdt`/PostModelSwitch are the family's only stateful members: between them a plugin loader, a model
+prefetch and validation preamble, a per-session decision holder that `gdt` MUTATES (`landedOn`, a
+`pending` queue, an `inFlight` promise set) and a fire-and-forget promise the caller never awaits —
+roughly seventeen forwarded ports each. §2.3 puts a stateful core behind a designed port rather than
+transcribing it, and doubling this subsystem's capture inventory for two events is not that design.
+Recorded as a ledger gap so the remainder is a decision rather than an omission.
 
 ### Six pure helpers became owned, and the call graph is why
 
@@ -2303,7 +2400,7 @@ counts as text — rather than another port.
 
 ### The oracle: `strangle/hooks-parity.test.ts`
 
-**503 comparisons, 58 controls.** The fourth instance of W2's shape, with two additions:
+**686 comparisons, 107 controls.** The fourth instance of W2's shape, with two additions:
 
 - **The bindings come from the MANIFEST.** Each dispatcher's free variables are re-derived with the
   manifest's own `derive` regexes against the extracted body, so the oracle cannot bind a port the
@@ -2316,7 +2413,13 @@ counts as text — rather than another port.
 
 The six distinct owned pure helpers are extracted and compared against their **own upstream bytes** before
 any dispatcher is bound to them — C7's boundary-review lesson, applied where it would otherwise have
-bitten: six of the eleven bodies call at least one of them.
+bitten: eight of the twenty bodies call at least one of them.
+
+The second round taught the oracle two things about its own extraction. It gained a **third shape** to
+reach FileChanged, which the two existing searches (`async function*` and `async function `) could not
+find. And its parameter splitter became **depth-aware**: Notification destructures its options bag in
+the parameter list, a naive comma split counted its three fields as three parameters, and the
+three-parameter search then failed with a message about the wrong thing entirely.
 
 The boundary round added a third thing the oracle has to do, and it is the largest surface here that no
 scenario can reach at all. `tz`/PreCompact's verdict is a **reduction over hook RESULTS** — which of them
@@ -2338,7 +2441,7 @@ and the oracle found the difference the corpus could not.
 
 ### Branch outcomes adjudicated, in six families
 
-**165 of 283 executed, 118 excluded, zero un-adjudicated**, across 26 attested modules. The two large
+**186 of 312 executed, 126 excluded, zero un-adjudicated**, across 35 attested modules. The two large
 families are the managed-hooks options bag (never supplied on the headless seam) and the PreToolUse
 function-hook chain (armed only by an in-process module handler or a managed pass, neither of which
 the SDK seam exposes).
@@ -2363,6 +2466,16 @@ is: genuinely unproducible on this seam, or producible by a scenario that would 
 something else. The blocked-hook family is the second kind and says so — a command hook exiting 2 does
 block, but a blocked PreCompact cancels the compaction the scenario exists to record.
 
+**The second round RETIRED an exclusion by accident, and the accident is the lesson.**
+PostToolUseFailure's registration-guard refusal was excluded as "unrecordable by construction" — the
+campaign's first entry in that family. The round's new recordings render it incidentally, because they
+make tool calls without registering a PostToolUseFailure hook, and every scenario that had made tool
+calls before happened to register one. So the arm looked like a property of the SEAM when it was a
+property of the corpus's habits. **An exclusion is a claim about reachability, and a claim about
+reachability is only as good as the population it was made over** — which is the same defect that
+produced this whole round, one level down. The note stays in `strangle/attestation.ts` where the
+exclusion used to be.
+
 Demonstrated red: swapping `tool_use_id` and `duration_ms` in the PostToolUse record fails five
 comparisons; and on the new modules, swapping `error` with `tool_use_id`, merging SessionStart's extra
 fields before the named ones, skipping SessionEnd's registry teardown, joining PreCompact's
@@ -2371,15 +2484,23 @@ red.
 
 ### Ledger
 
-`subsystem/hook-dispatch` carries **eleven** upstream footprints with 76 rebased captures, 22
-evidence links (the probe among them) and four typed-port edges — and stays **`spliced`**. The note
-says what the gap is, and it is now TWO functions rather than one: the **23 KB shared executor**
-(upstream `Qxt`, reached through `jy`/`Xxt`) and its awaiting sibling **`AE`**, which the boundary
-round surfaced when it spliced the two dispatchers that call it. Between them: hook matching,
-command/callback/http/mcp invocation, timeouts, cancellation. The W5–W7 scout measured the first
-**S-module-shaped**, and §2.3 says a stateful core is owned behind a designed port rather than
-transcribed. Whichever wave takes them inherits `getMatchingHooks`, the agent-context result filter
-and the headless-suppression wrapper with them.
+`subsystem/hook-dispatch` carries **twenty** upstream footprints with 120 rebased captures and four
+typed-port edges — and stays **`spliced`**. The gap now has two halves, both named in the note.
+
+**The execution helpers**, three rather than one: the **23 KB shared executor** (upstream `Qxt`,
+reached through `jy`/`Xxt`), its awaiting sibling **`AE`**, and the watcher-hooks helper **`zxt`** that
+FileChanged shares with CwdChanged. Between them: hook matching, command/callback/http/mcp
+invocation, timeouts, cancellation. The W5–W7 scout measured the first **S-module-shaped**, and §2.3
+says a stateful core is owned behind a designed port rather than transcribed. Whichever wave takes
+them inherits `getMatchingHooks`, the agent-context result filter and the headless-suppression wrapper
+with them.
+
+**The two model-switch dispatchers**, which fire and are not spliced, for the §2.3 reason given above.
+
+The note also corrects a claim the wave made about its own chunks. `chunk-scxwkz2z` was described as a
+"pure named-export barrel with zero code of its own", which is true and was read as meaning inert. It
+is not: the app's `shutdown()` reaches SessionEnd **through it**, by dynamic import, and that is the
+third SessionEnd caller and the source of the ordinary-teardown fire the probe sees on every phase.
 
 ### Gate
 
@@ -2433,30 +2554,44 @@ happens between the record and the results: which hooks match it, how a command 
 timed out, how a callback is dispatched over the control channel, how cancellation propagates. That
 is the two executors, and they are ports.
 
-Nor is the hooks matrix complete in the sense of §3.2's family. **Twelve events are measured to fire
-and eleven are graded.** The twelfth, Notification, is excluded on two named grounds. About the SDK's
-other declared events this wave now says nothing at all: the first round claimed five of them were
-dead "measured, not assumed", and four of those five were alive — so the honest statement is that they
-are outside what has been measured, neither claimed nor ruled out. The probe that would settle them
-exists and is cheap to extend; extending it is not this wave's.
+Nor is the hooks matrix complete in the sense of §3.2's family. **Twenty-three of the registry's
+thirty-three events are measured to fire and twenty-one are graded.** The two that fire and are not
+graded are the model-switch pair, deferred on §2.3 grounds and recorded in the ledger. The ten that
+are not measured are **OPEN** — each with the condition that would create it written down — and OPEN
+is not a synonym for dead. The wave has now been wrong twice by treating an unmeasured event as a
+measured negative; it will not be a third time by treating these as one.
 
 ## Next
 
 W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they
 inherit, newest first:
 
-- **A negative is only evidence if the healthy case would have produced a different one.** W5's probe
-  recorded five events as dead off a turn that created none of their firing conditions — so the
-  measurement and a working dispatcher were indistinguishable, and four of the five were alive. Before
-  writing "X did not happen", ask what run would have made it happen, and either make that run or say
-  plainly that the question is open. This generalises past probes: the same shape produced eight
-  attestation exclusions that turned out to be arms a real hook PROCESS renders and a callback does
-  not.
-- **Measure through every path a feature has, not the convenient one.** The SDK offers callbacks and
-  the settings layer, and they do not reach the same code: a dispatcher's function hooks come only
-  from a registry it is handed, so three dispatchers are invisible to `Options.hooks` however the run
-  is shaped. A single-path probe measures the plumbing of the registration, not the thing. W6 has the
-  same split — a permission rule can arrive from settings or from `canUseTool`.
+- **DERIVE THE ENUMERATION FROM THE ARTIFACT, NOT FROM JUDGMENT.** W5 chose the population under
+  test by hand twice — first from a stale doc line, then from a list of "events a tool-using turn
+  could plausibly reach" — and was wrong both times, because an event nobody thinks to watch cannot
+  be measured as absent. Upstream keeps a registry of every hook event and its dispatcher; deriving
+  the watched list from that fixture, and gating on it, took the live set from 12 to 23. This is the
+  same move C3 made for the feature-gate defaults, and it applies wherever the question is "what is
+  the complete set of X": tools, slash commands, settings keys, control-protocol methods. If the
+  artifact enumerates them, read it. **A list a tester writes can only ever confirm the tester.**
+- **A negative is only evidence if the healthy case would have produced a different one, AND the
+  thing was in the population.** W5 hit both halves. The first: five events read as dead off a turn
+  that created none of their firing conditions. The second: three live events outside the watched
+  list entirely. The verdict vocabulary that survives has three values, not two — **FIRED**, **DEAD**
+  (a condition was created and nothing happened), and **OPEN** (the condition is named and was not
+  created). OPEN is an absence of evidence and must never be counted as a negative.
+- **Measure through every path a feature has, not the convenient one — and re-check the MECHANISM you
+  used to explain a gap.** The boundary round explained SessionStart's callback silence structurally
+  ("the dispatcher passes no registry, so no callback can reach it") and the bundle refutes it: SDK
+  callbacks land in a global store the executor consults unconditionally, and the silence is
+  registration TIMING. The byte fact was right; the inference from it was not, and it had propagated
+  into two module headers, a scenario tripwire, a ledger note and the parity scorecard. **An
+  explanation that fits the evidence is not the same as the mechanism.**
+- **Watch for the modes that silently disable the thing you are measuring.** Three cost W5 real
+  measurements: `bypassPermissions` skips the permission system outright; a bare `allowedTools` entry
+  shadows `canUseTool`; and default mode auto-approves read-only shell commands without consulting it
+  at all. Each turned a live event into a clean-looking negative. Before believing a probe's silence,
+  check that the probe's own options did not switch the subsystem off.
 - **Extend the instrument, not the owned code, when the two disagree.** The branch inventory refused
   `try/finally` with no catch, and upstream's SessionStart dispatcher is exactly that. Rewriting the
   module to be measurable would have measured something other than upstream; teaching the instrumenter
@@ -2491,6 +2626,11 @@ inherit, newest first:
   **bind extracted upstream bodies to UPSTREAM's helpers, never the wave's own** (W4's boundary
   review). Both held in W5: the trace is what grades the executor request, and six of eleven bodies
   call a helper this wave owns.
+- **An exclusion is a claim about reachability, and it is only as good as the population it was made
+  over.** W5 excluded PostToolUseFailure's refusal arm as "unrecordable by construction"; six new
+  recordings later it executes, because they make tool calls without registering that hook and every
+  earlier tool-using scenario happened to register one. Before writing an exclusion, ask whether the
+  arm is unreachable or merely unreached by the scenarios that exist today.
 - **`kye`'s neighbours are not takeable the same way.** `Dd` has no string literal at all, and `von`
   ties with `kye` on every structural fact except its position. W6 should expect the chain's other
   links to need coverage-first scenarios rather than more anchor mechanism.
@@ -2506,9 +2646,14 @@ Named debts the roadmap owes an assignment:
   follow-on cut is unblocked; it was not W3's, W4's or W5's.
 - **Segment compaction** (upstream `hRt`) — three of W4's adjudicated branch outcomes are reachable
   only through it.
-- **The hook EXECUTORS** — the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`) and its
-  awaiting sibling `AE`, which the C8 boundary round surfaced. New with W5, S-module-shaped,
-  and the only thing standing between `subsystem/hook-dispatch` and `standalone-complete`.
+- **The hook EXECUTORS** — the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`), its
+  awaiting sibling `AE`, and the watcher-hooks helper `zxt` that the second round surfaced. New with
+  W5, S-module-shaped, and the largest thing standing between `subsystem/hook-dispatch` and
+  `standalone-complete`.
+- **The two MODEL-SWITCH dispatchers** (`mdt`, `gdt`) — they fire headlessly and are deferred on §2.3
+  grounds (a mutable per-session holder, a fire-and-forget promise, a plugin loader, ~17 ports each).
+  The `hooks-model-switch` recording they would need does not exist yet; the probe phase that proves
+  they fire does.
 
 And the deferrals now recorded on ledger rows rather than in research notes: the compaction DRIVERS
 (`zRe`, `Tte`) are C16/W13's, and the hook executor is unassigned.

@@ -602,14 +602,17 @@ follow as C4/C5.
   reviewed exclusion with evidence, not a scenario debt. Coverage debts quantified: ~5 hook
   recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
   short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
-  pinned defaults. **C8's outturn corrects the hook half of this, and its boundary round
-  corrected C8:** the live set is **12, not 8** — the first re-measurement registered callbacks
-  only, on one turn that created none of the missing firing conditions, and four events it
-  recorded as dead are alive (PostToolUseFailure, PreCompact, SessionStart, SessionEnd). Eight
-  recordings cover eleven of the twelve, and the matrix's command-hook cell needs no filesystem
-  setting source — `Options.settings` reaches the flag-settings layer with `settingSources: []`
-  in force, which is also the ONLY path to three dispatchers that hand their executor no session
-  hooks registry.
+  pinned defaults. **C8's outturn corrects the hook half of this, and C8 was then corrected
+  TWICE.** The live set is **23 of the engine's 33-event dispatcher registry**, not 8 and not 12.
+  The first re-measurement registered callbacks only, on one turn that created none of the missing
+  firing conditions; the second still chose its watched list by hand, so three live events were
+  never watched. The enumeration now comes from the registry itself
+  (`reforge/research/fixtures/hook-registry-2.1.251.json`, gate-checked per run), with a named
+  firing condition per event and a three-valued verdict — FIRED / DEAD / **OPEN**, the last for a
+  condition named but not created. Fourteen recordings cover 21 of the 23; the model-switch pair is
+  a §2.3 deferral recorded on the ledger row. The matrix's command-hook cell needs no filesystem
+  setting source — `Options.settings` reaches the flag-settings layer with `settingSources: []` in
+  force, which is the only path to a dispatcher whose dispatch precedes host-hook registration.
 - **Required.** Status: **C6, C7 and C8 landed** 2026-09-01 (Revision Notes below); C9–C10 not-dispatched, **unblocked** (see the Revision Notes for what each wave inherits — C8's in particular hands W6 the "a refusal that produces no observable is unrecordable by construction" family, which covers most of §2.1's permission chain under `bypassPermissions`).
 
 #### C11: W8 — moat tools — decomposing at dispatch
@@ -705,7 +708,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
 | C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
-| C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected by its boundary round** — eight scenarios (corpus 31 → 39) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`; ten dispatcher splices, which with C5x's spike make **eleven functions over eleven of the TWELVE events the engine is measured to fire headlessly** (Notification excluded on two named grounds). The wave first claimed seven functions over all eight, on a probe whose negatives were vacuous — see the C8-fix Revision Note. `strangle/hooks-parity.test.ts` grades 503 comparisons with 58 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 165/283 with 118 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction"; **both** hook executors (`Qxt` and its awaiting sibling `AE`) named as the row's remaining gap; gate 67/67 |
+| C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected TWICE** — fourteen scenarios (corpus 31 → 45) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`, a `canUseTool` answered past the notify timer, and an authored API failure (`Scenario.deriveFault`); nineteen dispatcher splices, which with C5x's spike make **twenty functions over twenty-one of the TWENTY-THREE events the engine is measured to fire headlessly** out of upstream's 33-event dispatcher registry (the model-switch pair is a §2.3 deferral on the ledger row; the other ten registry events are OPEN with named conditions, not dead). The wave first claimed seven functions over all eight on a probe whose negatives were vacuous, then eleven over twelve on a probe that still chose its own watched list — see the two C8-fix Revision Notes. `strangle/hooks-parity.test.ts` grades 686 comparisons with 107 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 186/312 with 126 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction" — one of which the new recordings then RETIRED by reaching it; all three hook execution helpers (`Qxt`, `AE`, `zxt`) named as the row's remaining gap; gate PLACEHOLDER_GATE |
 | C9–C10 | W6–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 + C8 landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
@@ -1236,6 +1239,91 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C8-fix-2 / W5 second boundary round — the measurement layer was
+  wrong, so the enumeration now comes from the artifact): a verification round on
+  the first fix confirmed all four new splices byte-faithful and the oracle,
+  differ, instrumenter and attestation sound. What it did not confirm was the
+  thing they all rest on. The first fix corrected the wave's ANSWER (8 → 12) and
+  left its METHOD in place: the probe still decided by hand which events to
+  watch — "every event with a dispatcher a single tool-using turn could plausibly
+  reach" — so three live events (PostCompact, TaskCreated, Notification) were
+  outside the measurement entirely and six more were never asked. **An event
+  nobody thinks to watch cannot be measured as absent.**
+  The population under test now comes from upstream's own dispatcher REGISTRY:
+  one object literal mapping every hook event to the function that dispatches it,
+  snapshotted as `reforge/research/fixtures/hook-registry-2.1.251.json` by
+  `research/tools/extract-hook-registry.ts` and re-derived on every gate run. It
+  is found by SHAPE and confirmed against a second independent signal in the same
+  bundle (the `hook_event_name:"…"` literals the dispatchers stamp — 100%
+  coverage), then each dispatcher is resolved through the ESM graph and its call
+  sites counted, INCLUDING dynamic-import sites: SessionEnd's third caller is the
+  app's own `shutdown()`, which a static sweep cannot see and which is the
+  ordinary-teardown fire the wave had left unexplained.
+  **33 events. 23 FIRED. 0 DEAD. 10 OPEN.** Nineteen splices now (nine new:
+  `post-compact-hooks`, `notification-hooks`, `instructions-loaded-hooks`,
+  `stop-failure-hooks`, `task-created-hooks`, `task-completed-hooks`,
+  `permission-request-hooks`, `user-prompt-expansion-hooks`,
+  `file-changed-hooks`), six new recordings (corpus 39 → 45), oracle 503 → **686
+  comparisons with 107 controls**, attestation 165/283 → **186/312 with 126
+  exclusions and zero un-adjudicated**, gate PLACEHOLDER_GATE. The two model-switch
+  dispatchers FIRE and are deliberately not spliced — a mutable per-session
+  holder, a fire-and-forget promise, a plugin loader, ~17 ports each — recorded as
+  a §2.3 ledger gap rather than an omission. What the rest of the campaign should
+  take from it:
+  - **DERIVE THE ENUMERATION FROM THE ARTIFACT, NOT FROM JUDGMENT.** This is C3's
+    move (the bundle-generated feature-gate override inventory) applied to a
+    different question, and it generalises to every "what is the complete set of
+    X" the campaign still has to answer: tools, slash commands, settings keys,
+    control-protocol methods, permission rule kinds. If the engine enumerates
+    them somewhere, extract that enumeration into a pin-keyed fixture, gate on
+    it, and derive the test's population from the fixture. A hand-written list
+    can only ever confirm the hand that wrote it, and it fails SILENTLY — the run
+    is green, the table is complete, and the missing rows are invisible.
+  - **A VERDICT VOCABULARY NEEDS THREE VALUES, NOT TWO.** FIRED, DEAD (a firing
+    condition was created here and nothing happened), and **OPEN** (the condition
+    is named and was not created). The first fix taught "a negative is only
+    evidence if the healthy case would have produced a different one"; OPEN is
+    what that rule looks like once it is enforced by the reporting format rather
+    than by remembering. Ten of the 33 rows are OPEN, each naming what would
+    create it. Two rounds of this wave were wrong by writing a negative where the
+    honest answer was OPEN.
+  - **RE-CHECK THE MECHANISM YOU USED TO EXPLAIN A GAP, NOT JUST THE GAP.** The
+    first fix explained SessionStart's callback silence structurally — "the
+    dispatcher hands the executor no session hooks registry, so no callback can
+    reach it" — and that explanation is refuted by the bundle: `Options.hooks`
+    entries are tagged `origin:"sdkHost"` and pushed into a GLOBAL store which
+    `IE(event)` consults unconditionally. The silence is registration TIMING. The
+    byte fact underneath was right and survives; the inference drawn from it was
+    wrong and had propagated into two module headers, a scenario tripwire, the
+    ledger note and `docs/parity/coverage.md`. An explanation that fits the
+    evidence is not the same thing as the mechanism.
+  - **CHECK THAT YOUR OWN OPTIONS DID NOT SWITCH THE SUBSYSTEM OFF.** Three modes
+    silently disabled what was being measured: `bypassPermissions` skips the
+    permission system outright (every phase of the first two rounds ran under it,
+    so nothing permission-scoped could fire); a bare `allowedTools` entry SHADOWS
+    `canUseTool`, so the callback is never consulted; and default mode
+    auto-approves read-only shell commands without consulting it either, so a
+    probe built on `echo` measures nothing. Each turned a live event into a
+    clean-looking negative. W6 inherits all three directly.
+  - **AN EXCLUSION IS A CLAIM ABOUT REACHABILITY, AND IT IS ONLY AS GOOD AS THE
+    POPULATION IT WAS MADE OVER.** The campaign's first "unrecordable by
+    construction" exclusion — PostToolUseFailure's registration-guard refusal —
+    was RETIRED by this round without anyone targeting it: the new recordings
+    make tool calls without registering that hook, and every earlier tool-using
+    scenario happened to register one. The arm looked like a property of the seam
+    when it was a property of the corpus's habits. Same defect as the headline
+    one, one level down.
+  - **A SCENARIO WHOSE CONDITION IS A RESPONSE CAN AUTHOR IT.** StopFailure fires
+    on the arm where a turn ends in an api-error, and no prompt makes the real API
+    return one on demand. `Scenario.deriveFault` records the take live and then
+    rewrites its first exchange into the H2 fault BEFORE promoting the cassette,
+    so the committed cassette is the graded one and both engines replay the same
+    authored failure. W7's control-protocol error paths are the same shape.
+  - **A DEBOUNCED CONDITION NEEDS TIME INSIDE THE TURN.** `hooks-file-watch`
+    failed its first recording because the turn ended the moment the file landed
+    and the watcher's dispatch arrived after the query had closed — on both replay
+    sides, with four requests served positionally. A real `sleep` inside the turn
+    is not padding; it is the part of the firing condition the filesystem owns.
 - 2026-09-01 (C8-fix / W5 boundary round — the hook set was mis-measured): the
   wave's headline claim, "seven functions covering all EIGHT headlessly-live
   events", was wrong in both halves, and the way it was wrong is the finding.

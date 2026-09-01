@@ -738,7 +738,7 @@ passthrough). The remaining ready-made levers are incremental — turn-level sur
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 (+4 in 0.3.211: `ReportFindings`, `ClaudeDesign`, `RefreshMcpTools`, `ReadMcpResourceDir`) | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead; **`Workflow` SURFACED opt-in** (`config.workflow`, probe 36 re-verified on 0.3.211) | rely-on, not consume; probes 35/35b/35c: MCP tools are **ToolSearch-deferred** (~11 tok/turn), not inline |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | 0.3.211 **deletes `/assistant`** (`runAssistantWorker` gone) + removes the `connectRemoteControl` exports — two 🚫 rows now nonexistent |
-| Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | **12 verified-fired headlessly** (re-measured 2026-09-01, `reforge/w5/probe-hook-events.ts`, pin 2.1.251) — the 2026-06 count of 8 was measured with CALLBACKS only, on one turn that created none of the missing firing conditions; **SessionStart and SessionEnd are NOT dormant**, they fire on the settings/command path, which `Options.hooks` cannot reach because their dispatchers hand the executor no session hooks registry. All 30 still reachable via passthrough; the other 18 are unmeasured, not ruled out |
+| Hook events (`HOOK_EVENTS`) | 30 declared by the SDK; **33 in the engine's own dispatcher registry** | first-class `config.hooks` + 4 builders + `mergeHooks` | **23 verified-fired headlessly** (re-measured 2026-09-01 over the whole registry, `reforge/w5/probe-hook-events.ts` + `reforge/research/fixtures/hook-registry-2.1.251.json`, pin 2.1.251). The 2026-06 count of 8 measured CALLBACKS only, on one turn that created none of the missing conditions; the 12 that replaced it still watched a hand-written list, so three live events were never watched at all. **SessionStart and SessionEnd are NOT dormant** — SessionStart fires on the settings/command path only, because its dispatch precedes host-hook registration. The other 10 registry events are **OPEN** with named conditions, not ruled out |
 | `permissionMode` values | 6 | **6 characterized** | default/plan/auto/bypass(gated) + `acceptEdits`/`dontAsk` (closeout). **Wave T / probe 99:** a runtime `setPermissionMode` is not guaranteed to take — `auto` off its supported model set and `bypassPermissions` at runtime are both **refused**, and the session stays in its previous mode (no silent fallback to `default`, correcting the earlier reading). Callers must treat the setter as fallible: swap the model before granting `auto`, and report a refusal rather than assuming it applied |
 | Session-store top-level fns | 10 | **7 used** (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`, **`renameSession`/`tagSession`/`deleteSession` via `sessions/mutate.ts`**); `resume`/`persistSession`/`sessionStore` (Options) wired | all documented store fns now wrapped |
 
@@ -771,29 +771,48 @@ from the transcript via `getSessionMessages()` — **not** from live stream fram
 `config.hooks` → `options.hooks` passthrough (all 30 `HOOK_EVENTS` reachable), the `injectContext` /
 `guardTool` / `blockTool` / `observe` builders + `mergeHooks`, public type re-exports, and the daemon path
 via the existing `sessionOptions` factory (no daemon code change). Live-probed first (`probes/probes/09-hooks-coverage.ts`,
-`10`): **8 of 30 events fire headlessly** (PreToolUse/PostToolUse/PostToolBatch/UserPromptSubmit/Stop/
+`10`): **8 of 30 events fire headlessly** — superseded, see the correction below (PreToolUse/PostToolUse/PostToolBatch/UserPromptSubmit/Stop/
 SubagentStart/SubagentStop/MessageDisplay); context-injection + tool-block + subagent-attribution all
 verified; `SessionStart`/`SessionEnd` dormant via the programmatic path (documented, no builder). Unit
 +15 (328 total), live 2/2 keyed. The **session cluster is also COMPLETE (3 of 3)**.
 
-> **CORRECTED 2026-09-01 — the number is 12, and two of the four additions were called "dormant" above.**
-> `reforge/w5/probe-hook-events.ts` re-measured the set against pin 2.1.251 with a phase per firing
-> condition and BOTH kinds of hook registered. Four more events fire: **PostToolUseFailure** (on a tool
-> call that fails), **PreCompact** (on a compaction), **SessionStart** (on every run) and **SessionEnd**
-> (on teardown, and by callback on `/clear`).
+> **CORRECTED 2026-09-01 — the number is 23 of 33, and the population itself was wrong.**
+> `reforge/w5/probe-hook-events.ts` re-measured the set against pin 2.1.251, twice. The first
+> re-measurement fixed the obvious defect — the measuring turn had created none of the missing firing
+> conditions, so its silence was the silence a working dispatcher also produces — and reported 12. The
+> second found the deeper one: the list of events being watched was still written by hand, so an event
+> nobody thought of could not be measured as absent, and three live events (**PostCompact**,
+> **TaskCreated**, **Notification**) were outside the measurement entirely.
 >
-> Two independent mistakes produced the old number, and both are worth carrying into any future probe.
-> The first is that the measuring turn never created three of the conditions — it failed no tool,
-> compacted nothing, and ended after the iterator closed — so the silence it recorded is the silence a
-> working dispatcher also produces. The second is structural and survives any amount of re-running: a
-> dispatcher's callback hooks come only from a session hooks registry it is HANDED, and the SessionStart,
-> PreCompact and Notification dispatchers are called without one. Those three are unreachable from
-> `Options.hooks` by construction and reachable from the settings layer, so a callback-only probe
-> measures the registration path rather than the dispatcher.
+> The enumeration now comes from **upstream's own dispatcher registry** — one object literal mapping
+> every hook event to the function that dispatches it, snapshotted as
+> `reforge/research/fixtures/hook-registry-2.1.251.json` and re-derived on every gate run. It holds
+> **33 events**, not the SDK's declared 30, and nothing outside it can fire.
 >
-> `Notification` remains unfired: its only call site in the pinned bundle is MCP-elicitation completion.
-> The remaining 18 declared events are **unmeasured**, not ruled out — the earlier "dormant" language
-> claimed more than the probe supported.
+> **23 of the 33 fire headlessly**, each with a named firing condition the probe creates: the six on an
+> ordinary tool turn, plus SubagentStart/SubagentStop, PostToolUseFailure, PreCompact, PostCompact,
+> SessionStart, SessionEnd, Notification, PermissionRequest, TaskCreated, TaskCompleted, StopFailure,
+> InstructionsLoaded, UserPromptExpansion, FileChanged, PreModelSwitch and PostModelSwitch. **No
+> created condition came back dead.** The other 10 stay **OPEN**: their conditions are named
+> (an eliciting MCP server, a teammate session, a `--worktree` launch, the auto-mode permission
+> classifier, a setup trigger, an interactive config change, a cwd move, `/add-dir` — which refuses
+> headlessly) and were not created, which is an absence of evidence rather than a negative.
+>
+> **Three gotchas cost real measurements** and are worth carrying into any future probe:
+> `bypassPermissions` skips the permission system entirely, so no permission-scoped event can fire
+> under it; a bare `allowedTools` entry **shadows** `canUseTool`, so the callback is never consulted;
+> and default mode auto-approves read-only shell commands without consulting it either, so a probe
+> built on `echo` measures nothing. The file watcher is armed by a FileChanged hook's **matcher**, not
+> by anything the hook prints.
+>
+> **The mechanism claim in the previous correction was wrong and is withdrawn.** It said a dispatcher's
+> callback hooks come only from a session hooks registry it is handed, making three dispatchers
+> unreachable from `Options.hooks` by construction. `Options.hooks` entries are not registry entries:
+> the initialize handler tags them `origin:"sdkHost"` and pushes them into a global store that the
+> executor's lookup consults unconditionally. SessionStart's callback silence is **registration
+> timing** — its dispatch precedes host-hook registration — not structural unreachability. What is
+> still true is the byte fact underneath: the SessionStart, PreCompact and Notification dispatchers do
+> call their executor with no registry.
 
 **SDK capability closeout (domains 1/3/5/6/9) — SHIPPED** (`sdk-capability-closeout`, 2026-06-18): the P1–P4
 turn-level + introspection + session-mutation frontiers, all live-probed first (probes 11–15) then built on
