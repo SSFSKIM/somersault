@@ -1,7 +1,7 @@
 # bl10 — Slash-command menu shell, expanded-click hit region, inter-block spacing
 
 **Round:** bl10 (2026-08-31) · **Canon:** Claude Code 2.1.251 (`~/claude-code-bundle/2.1.251/cli.pretty.js`,
-first round on the re-tooled ESM-chunk bundle) · **Status:** v1
+first round on the re-tooled ESM-chunk bundle) · **Status:** v3 (shipped; §8 retrospective written)
 **Research base (all cites resolved there):** `.doperpowers/sdd/2026-08-31-bl10-round/research-slash-menus.md`
 (R1), `research-click-collapse.md` (R2), `research-spacing.md` (R3).
 
