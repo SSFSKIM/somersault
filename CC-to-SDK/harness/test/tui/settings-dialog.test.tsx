@@ -365,3 +365,29 @@ describe("SettingsDialog — the auto keyhint bar replaces the browsing footers 
     r.unmount();
   });
 });
+
+// bl10 fix wave 2, finding 2: `readOnlyTabBody` rendered `tabLines[t]!.map(...)` with no windowing at all — a
+// tall fetched payload (a `/cost` usage table with many per-model rows) made the composed frame exceed `rows`,
+// which is exactly the tall-frame-replay hazard the rest of this file's chrome budgets exist to prevent.
+describe("SettingsDialog — read-only tab bodies window to the frame budget (bl10 fw2 F2)", () => {
+  const manyLines = (n: number) => Array.from({ length: n }, (_, i) => ({ text: `usage line ${i}` }));
+
+  it("keeps the composed frame within `rows` on a short terminal with a long fetched payload, and shows a truncation marker", async () => {
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => manyLines(40)} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    const f = plain(frame(r.lastFrame));
+    expect(f.split("\n").length, "the frame must not exceed the terminal's own row count").toBeLessThanOrEqual(15);
+    expect(f).toMatch(/… \+\d+ more lines/);
+    r.unmount();
+  });
+
+  it("renders an untruncated payload unchanged — every line present, no marker", async () => {
+    const lines = manyLines(4);
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={40} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    const f = plain(frame(r.lastFrame));
+    for (const l of lines) expect(f).toContain(l.text);
+    expect(f).not.toMatch(/more lines/);
+    r.unmount();
+  });
+});

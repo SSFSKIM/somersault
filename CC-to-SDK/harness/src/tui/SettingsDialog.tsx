@@ -66,6 +66,7 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { OutputStylePicker } from "./OutputStylePicker.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
+import { bodyWindow, MoreRow, paintedRows } from "./dialogs/rowBudget.js";
 import { Tabs, Tab as TabPane } from "./select/Tabs.js";
 import { Select } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
@@ -121,6 +122,19 @@ const SEARCH_FOOTER = "Type to filter · Enter/↓ to select · Esc to clear";
  *  occupies exactly 54 columns. The `/` search arm's own list is drawn OUTSIDE the `Select` with a two-space
  *  indent instead of that gutter+gap pair, so its body is the same 6 columns in and shares this number. */
 export const SETTINGS_ROW_INSET = 6;
+
+/** bl10 fix wave 2, finding 2 — the read-only tabs' (Status/Usage/Stats) OWN chrome budget, in the same spirit
+ *  as `SETTINGS_CHROME_ROWS` but for a body with no `Select` and no per-row wrapping concerns of its own: the
+ *  border rule, the title, the tab strip, the spacer under it, the body's own trailing blank spacer, the auto
+ *  keyhint bar, and Ink's own `>=` (the frame must end up strictly shorter than the pane, not equal to it,
+ *  `SETTINGS_CHROME_ROWS`'s own final term) — the rows the composed frame spends around whatever
+ *  `readOnlyTabBody` prints, measured against a real render. */
+export const READONLY_CHROME_ROWS = 7;
+/** The two columns `DialogFrame`'s own `paddingX={1}` spends either side of the body — there is no `Select`
+ *  gutter here (`SETTINGS_ROW_INSET`'s extra four), a read-only tab is a plain text read. */
+export const READONLY_ROW_INSET = 2;
+export const readOnlyRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
+  Math.max(1, columns - READONLY_ROW_INSET);
 export const settingsRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
   Math.max(1, columns - SETTINGS_ROW_INSET);
 
@@ -487,16 +501,42 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
 
   /** The Status/Usage/Stats bodies are byte-identical apart from which cached formatter output they read — one
    *  small helper instead of tripling the JSX across three `<Tab>` elements (T-MENU task 2: the migration
-   *  deletes the old three-way ternary, not re-spells it three times). */
-  const readOnlyTabBody = (t: Exclude<Tab, "Config">) => (
-    <>
-      {tabLines[t] === undefined ? <Text dimColor>Loading…</Text> : tabLines[t]!.map((l, i) => <Line key={i} l={l} />)}
-      {/* T-MENU task 2: the old `READONLY_FOOTER` line is gone — the blank spacer stays so the row this
-          dialog's chrome budget reserves for the footer is spent the same way, now by DialogFrame's own
-          auto keyhint bar (`hintScope`, below) instead of a hand-written string in this slot. */}
-      <Text> </Text>
-    </>
-  );
+   *  deletes the old three-way ternary, not re-spells it three times).
+   *
+   *  bl10 fix wave 2, finding 2: this used to `.map()` the fetched lines with no windowing at all — a dock-
+   *  pinned read (no `Select`, nothing to scroll) whose payload can scale with live data (a `/cost` table
+   *  grows a row per model) blew the composed frame past `rows`, tripping Ink's tall-frame replay. Reuses
+   *  `rowBudget.tsx`'s dock-pinned-consult machinery (`paintedRows`/`MoreRow`) rather than inventing a second
+   *  one: same shape as `GenericPermission`'s body — keep the head, mark what was clipped, inside the budget. */
+  const readOnlyTabBody = (t: Exclude<Tab, "Config">) => {
+    const lines = tabLines[t];
+    if (lines === undefined) return <><Text dimColor>Loading…</Text><Text> </Text></>;
+    const width = readOnlyRowWidth(columns);
+    const effectiveRows = rows ?? (process.stdout.rows ?? 24);
+    const budget = Math.max(0, effectiveRows - READONLY_CHROME_ROWS);
+    const costs = lines.map((l) => paintedRows(l.text, width).length);
+    const total = costs.reduce((a, b) => a + b, 0);
+    let shown = lines.length;
+    if (total > budget) {
+      const avail = Math.max(0, budget - 1);   // one row reserved for the marker itself
+      let used = 0; shown = 0;
+      for (; shown < costs.length; shown++) {
+        if (used + costs[shown]! > avail) break;
+        used += costs[shown]!;
+      }
+    }
+    const hidden = lines.length - shown;
+    return (
+      <>
+        {lines.slice(0, shown).map((l, i) => <Line key={i} l={l} />)}
+        {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
+        {/* T-MENU task 2: the old `READONLY_FOOTER` line is gone — the blank spacer stays so the row this
+            dialog's chrome budget reserves for the footer is spent the same way, now by DialogFrame's own
+            auto keyhint bar (`hintScope`, below) instead of a hand-written string in this slot. */}
+        <Text> </Text>
+      </>
+    );
+  };
 
   // bl10 fix wave 1, finding 3: `Settings`' own binding table binds select:*/search unconditionally, but
   // those are no-op keys on Status/Usage/Stats — there is no `Select` and no search box on those tabs (the
