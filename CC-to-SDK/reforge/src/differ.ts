@@ -85,6 +85,13 @@ const RUN_ID_KEYS = new Set([
   "head_uuid",
   "anchor_uuid",
   "tail_uuid",
+  // W5's C8 boundary round. `hook_id` correlates a `hook_started` frame with its
+  // `hook_response`; `new_conversation_id` is the fresh conversation `/clear`
+  // mints. Both are minted per RUN, so two runs of the same engine differ on
+  // them — and because the map is one-to-one, correlating them wrongly (one id
+  // for two hooks, or a response answering a different start) still diffs.
+  "hook_id",
+  "new_conversation_id",
 ]);
 
 /**

@@ -116,6 +116,54 @@ check(
   ),
 );
 
+// ---- W5's C8 round: the hook-dispatch and conversation-reset ids -----------
+// `hook_id` is minted per hook INVOCATION and correlates a `hook_started` frame
+// with its `hook_response`; `new_conversation_id` is what `/clear` mints. Both
+// are run-scoped, and both carry a relationship the map must not dissolve.
+const hookFrames = (start: string, response: string) => [
+  { type: "system", subtype: "hook_started", hook_id: start, hook_name: "SessionStart:startup", hook_event: "SessionStart" },
+  { type: "system", subtype: "hook_response", hook_id: response, hook_name: "SessionStart:startup", exit_code: 0, outcome: "success" },
+];
+check(
+  "two runs of the same engine agree once hook ids are mapped",
+  !differs(hookFrames(A.first, A.first), hookFrames(B.first, B.first)),
+);
+check(
+  "a response that answers a DIFFERENT hook invocation still diffs",
+  differs(hookFrames(A.first, A.first), hookFrames(B.first, B.second)),
+);
+check(
+  "two hook invocations collapsed onto one id still diff",
+  differs(
+    [...hookFrames(A.first, A.first), ...hookFrames(A.second, A.second)],
+    [...hookFrames(B.first, B.first), ...hookFrames(B.first, B.first)],
+  ),
+);
+check(
+  "a changed hook outcome still diffs (the map touches ids, not behaviour)",
+  differs(hookFrames(A.first, A.first), [
+    hookFrames(B.first, B.first)[0],
+    { ...hookFrames(B.first, B.first)[1], exit_code: 2, outcome: "failure" },
+  ]),
+);
+check(
+  "two runs agree once the reset's new conversation id is mapped",
+  !differs([{ type: "conversation_reset", new_conversation_id: A.internal }], [{ type: "conversation_reset", new_conversation_id: B.internal }]),
+);
+check(
+  "a second reset that reused the FIRST reset's conversation id still diffs",
+  differs(
+    [
+      { type: "conversation_reset", new_conversation_id: A.first },
+      { type: "conversation_reset", new_conversation_id: A.second },
+    ],
+    [
+      { type: "conversation_reset", new_conversation_id: B.first },
+      { type: "conversation_reset", new_conversation_id: B.first },
+    ],
+  ),
+);
+
 console.log(`=== differ run-id map: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(failures.length === 0 ? "PASS — engine-minted ids are mapped and every behavioural difference still fires" : `FAIL — ${failures.length} violation(s)`);

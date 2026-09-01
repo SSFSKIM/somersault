@@ -134,3 +134,34 @@ export function pushable<T>(): AsyncIterable<T> & { push(v: T): void; end(): voi
     },
   };
 }
+
+/**
+ * Drive a multi-exchange session over the streaming-input channel: `next(n)`
+ * returns the (n+1)-th user message given how many results have come back, or
+ * null to end the conversation. Returns every SDK message, in order.
+ *
+ * W4 wrote this for the compaction scenarios, which have to wait for a result
+ * before deciding what to send next; W5's PreCompact and SessionEnd recordings
+ * need the same shape (a conversation long enough to compact, a turn followed by
+ * `/clear`), so it lives here rather than in one wave's file.
+ */
+export async function converse(
+  options: Options,
+  next: (results: number) => string | null,
+): Promise<unknown[]> {
+  const input = pushable<SDKUserMessage>();
+  const messages: unknown[] = [];
+  const first = next(0);
+  if (first === null) throw new Error("converse: the conversation needs at least one user message");
+  input.push(userMessage(first));
+  let results = 0;
+  for await (const m of query({ prompt: input, options })) {
+    messages.push(m);
+    if ((m as { type?: string }).type !== "result") continue;
+    results++;
+    const following = next(results);
+    if (following === null) input.end();
+    else input.push(userMessage(following));
+  }
+  return messages;
+}

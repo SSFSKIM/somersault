@@ -48,8 +48,7 @@
 // source is ALREADY non-`auto` for the corpus's model, because the model carries
 // a compiled-in default window, so the threshold value is the only thing that
 // ever had to move.
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import { baseOptions, pushable, resultsOf, userMessage, type Scenario } from "../src/harness.js";
+import { baseOptions, converse, resultsOf, type Scenario } from "../src/harness.js";
 import { sdkEnv } from "../src/runTurn.js";
 
 /**
@@ -99,26 +98,6 @@ const FILLER = [
   "Name three planets, one per line, nothing else.",
   "Name three metals, one per line, nothing else.",
 ];
-
-/** Every message the engine emitted, in order, for a streaming-input session driven by `next`. */
-async function converse(options: Parameters<typeof query>[0]["options"], next: (results: number) => string | null): Promise<unknown[]> {
-  const input = pushable<ReturnType<typeof userMessage>>();
-  const messages: unknown[] = [];
-  const first = next(0);
-  if (first === null) throw new Error("w4: the conversation needs at least one user message");
-  input.push(userMessage(first));
-  let results = 0;
-  for await (const m of query({ prompt: input, options })) {
-    messages.push(m);
-    if ((m as { type?: string }).type === "result") {
-      results++;
-      const following = next(results);
-      if (following === null) input.end();
-      else input.push(userMessage(following));
-    }
-  }
-  return messages;
-}
 
 const boundaryOf = (msgs: unknown[]): { compact_metadata?: { trigger?: string; pre_tokens?: number } } | undefined =>
   msgs.find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as

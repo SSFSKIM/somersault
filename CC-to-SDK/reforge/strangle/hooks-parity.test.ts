@@ -74,6 +74,13 @@ import "./modules/user-prompt-submit-hooks.js";
 import "./modules/stop-hooks.js";
 import "./modules/subagent-start-hooks.js";
 import "./modules/message-display-hooks.js";
+// C8's boundary round: the four dispatchers the re-measured probe found live.
+import { SESSION_END_TIMEOUT_MS } from "./modules/session-end-hooks/reference.js";
+import { ACTIVITY_HOLD } from "./modules/session-start-hooks/reference.js";
+import "./modules/post-tool-failure-hooks.js";
+import "./modules/session-start-hooks.js";
+import "./modules/session-end-hooks.js";
+import "./modules/pre-compact-hooks.js";
 
 /** The adapters' registration surface — exactly what the strangled graph calls. */
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => AsyncGenerator<unknown, unknown>> }).__reforge!;
@@ -113,21 +120,29 @@ function mustDiffer(label: string, upstream: unknown, perturbedOwned: unknown): 
 // ---- extraction -------------------------------------------------------------
 
 /**
- * The span of the `async function*` that carries an event's anchor, found the
- * same way the SPLICE finds it: by the `hook_event_name:"<Event>"` literal, then
- * outward to the enclosing declaration. Locating the oracle's subject by a
- * different rule than the build's would let the two grade different functions.
+ * The span of the function that carries an event's anchor, found the same way
+ * the SPLICE finds it: by the `hook_event_name:"<Event>"` literal, then outward
+ * to the enclosing declaration. Locating the oracle's subject by a different
+ * rule than the build's would let the two grade different functions.
+ *
+ * `kind` distinguishes the two shapes this family has. Seven dispatchers are
+ * `async function*` and stream their executor's results; PreCompact and
+ * SessionEnd are plain `async function`s that await a different executor,
+ * because their callers have no conversation to stream into. The minifier
+ * writes the first with no space before the name and the second with one, so
+ * the two searches cannot pick up each other's declarations.
  *
  * Brace matching skips `'` and `"` strings; template literals are counted
  * through, which is safe here because every `${…}` in these bodies contributes a
  * balanced pair. A body that grew an unbalanced brace inside a template would
  * fail loudly at the `params` check below rather than silently truncate.
  */
-function dispatcherSource(event: string, params: number): string {
+function dispatcherSource(event: string, params: number, kind: "generator" | "awaited" = "generator"): string {
   const anchor = `hook_event_name:"${event}"`;
+  const declaration = kind === "generator" ? "async function*" : "async function ";
   const found: string[] = [];
   for (let at = ENGINE.indexOf(anchor); at >= 0; at = ENGINE.indexOf(anchor, at + 1)) {
-    const start = ENGINE.lastIndexOf("async function*", at);
+    const start = ENGINE.lastIndexOf(declaration, at);
     if (start < 0) continue;
     const open = ENGINE.indexOf("{", ENGINE.indexOf(")", start));
     let depth = 0;
@@ -335,6 +350,15 @@ interface Trace {
   sessionTitle: unknown[][];
   uuid: number;
   log: unknown[][];
+  /** the AWAITING executor (upstream `AE`) — PreCompact's and SessionEnd's */
+  executorAwait: unknown[][];
+  /** the session-id coercion SessionStart applies to an override */
+  sessionId: unknown[][];
+  /** the activity-hold bracket around a SessionStart dispatch, in call order */
+  activity: string[];
+  /** what SessionEnd wrote to stderr, and what it cleared from the registry */
+  stderr: string[];
+  registryClear: unknown[][];
 }
 const emptyTrace = (): Trace => ({
   hasHookForEvent: [],
@@ -351,6 +375,11 @@ const emptyTrace = (): Trace => ({
   sessionTitle: [],
   uuid: 0,
   log: [],
+  executorAwait: [],
+  sessionId: [],
+  activity: [],
+  stderr: [],
+  registryClear: [],
 });
 
 interface StubSpec {
@@ -362,6 +391,13 @@ interface StubSpec {
   results?: unknown[];
   /** what the function-hook chain yields (PreToolUse only) */
   chainResults?: unknown[];
+  /**
+   * What the AWAITING executor resolves to (PreCompact, SessionEnd). Defaults to
+   * the empty list, which is upstream's own "nothing ran" arm.
+   */
+  awaitResults?: unknown[];
+  /** make the executor THROW, so the SessionStart hold's `finally` is graded */
+  executorThrows?: string;
 }
 
 /** The common prefix every dispatcher spreads. A fixed object, so a difference is the dispatcher's. */
@@ -391,8 +427,45 @@ function makePorts(spec: StubSpec, sink: Trace) {
     },
     executeHooks: async function* (request: unknown) {
       sink.executor.push([request]);
+      if (spec.executorThrows !== undefined) throw new Error(spec.executorThrows);
       for (const r of results) yield r;
       return { executed: results.length };
+    },
+    executeHooksAwait: async (request: unknown) => {
+      sink.executorAwait.push([request]);
+      if (spec.executorThrows !== undefined) throw new Error(spec.executorThrows);
+      return spec.awaitResults ?? [];
+    },
+    sessionId: (...args: unknown[]) => {
+      sink.sessionId.push(args);
+      return `coerced:${String(args[0])}`;
+    },
+    beginActivity: (...args: unknown[]) => {
+      sink.activity.push(`begin(${args.join(",")})`);
+    },
+    endActivity: (...args: unknown[]) => {
+      sink.activity.push(`end(${args.join(",")})`);
+    },
+    // NOT a capture: SessionEnd reads the registry off its own options bag. It
+    // is stubbed here anyway so each side gets its own sink — an argument shared
+    // between the two runs would record both into one and grade neither.
+    sessionHooks: {
+      clear: (...args: unknown[]) => {
+        sink.registryClear.push(args);
+      },
+    },
+    /** Collect what a dispatcher wrote to stderr instead of printing it. */
+    captureStderr: async <T>(run: () => Promise<T>): Promise<T> => {
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        sink.stderr.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        return await run();
+      } finally {
+        process.stderr.write = original;
+      }
     },
     uuid: () => {
       sink.uuid++;
@@ -483,11 +556,18 @@ ports.__p_preToolChain = {
   },
 };
 ports.__p_stripConfinedHookApproval = (result: unknown, label: unknown) => live().stripConfinedHookApproval(result, label);
-// The two timeout constants: upstream's own parameter defaults, bound to the
-// OWNED values. They are not stubs — the owned copy IS the claim, and the
-// adapter equality-asserts the graph's copy against it on every delegation.
+ports.__p_executeHooksAwait = (request: unknown) => live().executeHooksAwait(request);
+ports.__p_sessionId = (...a: unknown[]) => live().sessionId(...a);
+ports.__p_beginActivity = (...a: unknown[]) => live().beginActivity(...a);
+ports.__p_endActivity = (...a: unknown[]) => live().endActivity(...a);
+// The timeout and hold constants: upstream's own parameter defaults and literals,
+// bound to the OWNED values. They are not stubs — the owned copy IS the claim,
+// and the adapter equality-asserts the graph's copy against it on every
+// delegation.
 ports.__p_defaultHookTimeoutMs = DEFAULT_HOOK_TIMEOUT_MS;
 ports.__p_promptSubmitTimeoutMs = PROMPT_SUBMIT_TIMEOUT_MS;
+ports.__p_sessionEndTimeoutMs = SESSION_END_TIMEOUT_MS;
+ports.__p_activityHold = ACTIVITY_HOLD;
 // The OWNED pure helpers are bound to UPSTREAM's bytes, never to the module's
 // own — the whole point of section 1 (C7's lesson).
 ports.__p_hookAgentIds = upstreamHookAgentIds;
@@ -508,10 +588,10 @@ function bindGlobals(p: PortSet): void {
  * captures appended in manifest order — the same argument list the build's
  * delegation synthesises.
  */
-function prepare(row: string, event: string, params: number) {
+function prepare(row: string, event: string, params: number, kind: "generator" | "awaited" = "generator") {
   const splice = SPLICES.find((s) => s.name === row);
   if (!splice) throw new Error(`${row}: no manifest row`);
-  const source = dispatcherSource(event, params);
+  const source = dispatcherSource(event, params, kind);
   const captures = deriveCaptures(splice, source);
   const seen = new Set<string>();
   const bindings = captures
@@ -529,6 +609,19 @@ function prepare(row: string, event: string, params: number) {
         throw new Error(`${row}: no stub for forwarded capture '${c.as}'`);
       });
   return { upstream, forwarded, captures, owned: reforge[splice.fn] };
+}
+
+/**
+ * The same, for the two dispatchers that are not generators. `prepare` is typed
+ * for the streaming shape because seven of the nine are; PreCompact and
+ * SessionEnd await a value instead, and the difference is in the CALLING
+ * convention only — the extraction, the manifest bindings and the forwarded
+ * argument list are identical.
+ */
+function prepareAwaited(row: string, event: string, params: number) {
+  const p = prepare(row, event, params, "awaited");
+  const cast = (fn: unknown) => fn as (...a: unknown[]) => Promise<unknown>;
+  return { ...p, upstream: cast(p.upstream), owned: cast(p.owned) };
 }
 
 /**

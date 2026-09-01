@@ -1880,6 +1880,273 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["hooks"],
   },
+
+  // ---- hook dispatch, the four events C8's boundary review found live -------
+  // The wave shipped believing eight events fire headlessly. Its probe drove ONE
+  // batched tool turn and registered CALLBACKS only, so its negatives were
+  // vacuous twice over: the turn created none of the missing firing conditions,
+  // and a callback reaches a dispatcher only if that dispatcher hands the
+  // executor a session hooks registry. Re-measured with a phase per condition
+  // and both kinds of hook, twelve events fire (`w5/probe-hook-events.ts`).
+  //
+  // These four are the difference, and they break the family's shape in ways the
+  // first seven did not:
+  //
+  //   two of them are NOT generators. `tz` and `ZSe` AWAIT a different executor
+  //       (upstream `AE`, the sibling of `jy`) because their callers have no
+  //       conversation left to stream results into — so the delegation is a
+  //       plain `return`, and `executeHooksAwait` is a second unowned executor
+  //       port on the ledger row.
+  //   one of them RETURNS A VERDICT the engine obeys. `tz` reduces its results
+  //       to custom instructions, a display message and a blocking reason, and
+  //       the compactor acts on all three. It is the only dispatcher in the
+  //       family whose output is behaviour rather than a stream.
+  //   one of them is unreachable by CALLBACK. `vUt` passes no registry, so the
+  //       corpus reaches it through a settings command hook and the state
+  //       surface — the second command-hook cell, and the mechanism that made a
+  //       live event look dead.
+
+  {
+    // The OTHER arm of a tool call: upstream runs failure and success through
+    // two dispatchers off one call site, and a corpus whose tools always succeed
+    // grades one of them. `hooks-tool-failure` runs a command that does not
+    // exist, which is the whole reason this row was missing.
+    name: "post-tool-failure-hooks",
+    target: "free-function",
+    signature: { params: 10, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PostToolUseFailure"',
+    fn: "postToolFailureHooks",
+    captures: [
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("post-tool-failure-hooks", "hasHookForEvent", new RegExp(`if\\(!(${ID})\\("PostToolUseFailure",`)),
+      },
+      {
+        as: "hookAgentIds",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "post-tool-failure-hooks",
+          "hookAgentIds",
+          new RegExp(`${ID}\\.sessionHooksRegistry,(${ID})\\(${ID},"PostToolUseFailure"`),
+        ),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "post-tool-failure-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PostToolUseFailure"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "post-tool-failure-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),hook_event_name:"PostToolUseFailure"`),
+        ),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("post-tool-failure-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID}\\)\\{if\\(!`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("post-tool-failure-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks-tool-failure"],
+  },
+
+  {
+    // The event no callback can observe. Its record is graded as the BYTE STREAM
+    // a command hook reads, on the state surface, because that is the only
+    // surface it has — and `hooks-session-start` also asserts the CALLBACK stays
+    // silent, so the executor request's missing registry is graded too.
+    name: "session-start-hooks",
+    target: "free-function",
+    signature: { params: 12, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"SessionStart"',
+    fn: "sessionStartHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "session-start-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"SessionStart"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "session-start-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"SessionStart"`),
+        ),
+      },
+      {
+        // `Gu` — the session-id coercion applied to the OVERRIDE only.
+        as: "sessionId",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "sessionId", new RegExp(`\\{id:(${ID})\\(${ID}\\),project:`)),
+      },
+      {
+        // `Yc` — reads the app's current session state, so a port.
+        as: "sessionTitle",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "sessionTitle", new RegExp(`session_title:${ID}\\?\\?(${ID})\\(${ID}\\.id\\)`)),
+      },
+      {
+        // `tx` — takes the activity refcount hold this dispatch is bracketed by.
+        as: "beginActivity",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "beginActivity", new RegExp(`;(${ID})\\("hook_exec",${ID}\\);try\\{`)),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),matchQuery:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        // `ox` — releases the hold, in a `finally`, so an executor that throws
+        // still releases it.
+        as: "endActivity",
+        kind: "effectful-port",
+        derive: pick("session-start-hooks", "endActivity", new RegExp(`\\}finally\\{(${ID})\\("hook_exec",`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("session-start-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID},${ID},${ID},${ID}\\)\\{let`)),
+      },
+      {
+        // `Uie` — the hold's reason string. A `primitive`, so it is forwarded
+        // and equality-asserted: its VALUE moving would move no anchor and no
+        // target hash.
+        as: "activityHold",
+        kind: "primitive",
+        derive: pick("session-start-hooks", "activityHold", new RegExp(`\\("hook_exec",(${ID})\\);try\\{`)),
+      },
+    ],
+    coverage: ["hooks-session-start"],
+  },
+
+  {
+    // Not a generator, and the first in the family: a session that is ending has
+    // no conversation to stream hook results into, so this one awaits them and
+    // consumes them itself — stderr for the failures, then an unconditional
+    // registry teardown. `/clear` is upstream's one headlessly reachable call
+    // site, and `hooks-session-end` drives it.
+    name: "session-end-hooks",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"SessionEnd"',
+    fn: "sessionEndHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "session-end-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"SessionEnd"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "session-end-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"SessionEnd"`),
+        ),
+      },
+      {
+        // `AE` — the AWAITING executor, the sibling of `jy` the generator
+        // dispatchers delegate into. A second unowned executor, and a second
+        // ledger edge.
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("session-end-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        // `oun` — 1500 ms, and NOT the shared 600,000 ms hook timeout. Forwarded
+        // so the adapter equality-asserts it: a session is ending, and the
+        // engine will not wait ten minutes for a hook holding it open.
+        as: "sessionEndTimeoutMs",
+        kind: "primitive",
+        derive: pick("session-end-hooks", "sessionEndTimeoutMs", new RegExp(`timeoutMs:(${ID}),storageV5:`)),
+      },
+    ],
+    coverage: ["hooks-session-end"],
+  },
+
+  {
+    // The only dispatcher whose RESULTS the engine acts on: it is awaited on the
+    // compaction path and returns a verdict — custom instructions, a display
+    // message, a blocking reason — that the compactor obeys. None of the
+    // reduction is reachable from a callback that returns `{continue:true}`, so
+    // `hooks-precompact` grades the record and the no-op arm and the parity
+    // oracle grades the rest.
+    name: "pre-compact-hooks",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"PreCompact"',
+    fn: "preCompactHooks",
+    captures: [
+      {
+        // `ka` — already owned by the stop dispatcher. Its callers are all over
+        // the engine, so upstream's copy stays live and this stays a capture.
+        as: "isDelegatedObservationSubagent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("pre-compact-hooks", "isDelegatedObservationSubagent", new RegExp(`\\{let ${ID}=(${ID})\\(${ID}\\.agentContext\\),`)),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "pre-compact-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"PreCompact"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "pre-compact-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"PreCompact"`),
+        ),
+      },
+      {
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("pre-compact-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("pre-compact-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID})\\)\\{let`)),
+      },
+    ],
+    coverage: ["hooks-precompact"],
+  },
 ];
 
 /**
