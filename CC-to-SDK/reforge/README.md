@@ -2062,13 +2062,22 @@ The third instance of the shape W2 established — extract the upstream bodies f
 stub the ports, compare the cross-product — and the corpus/domain gap here has a different shape from
 W3's. A recording can only ever show the ONE path that ended in the decision it recorded, so every
 refusal in the predicate and every absence arm in the wire mapper is graded here and nowhere else.
-94 comparisons, 27 mutation controls.
+119 comparisons, 37 mutation controls.
 
-It compares the predicate's **port trace** as well as its answer. Two of the four refusals differ
-from each other in nothing but which ports ran before they refused, so an output-only comparison
-would call a predicate that measured the context before refusing equivalent to one that refused
-first. The same file re-extracts C5x's summarization prompt and compares it, so that claim is checked
-by something other than the build that makes it.
+It compares the predicate's **port trace** as well as its answer, over **all eight ports**. The two
+refusals below the source guards — auto-compaction switched off, and the surface open with an
+unconfigured window — return the same `false` and differ from each other in nothing but which ports
+ran before they refused, so an output-only comparison would call a predicate that measured the
+context before refusing equivalent to one that refused first.
+
+The two **source** refusals call no port at all, so the trace cannot separate them; they are graded
+instead by extracting upstream's own `AZt`/`FD`/`tC` bytes and comparing those against the owned
+constant and helpers directly. That extraction is the C7 boundary review's fix, and it is load-bearing
+rather than belt-and-braces: the block previously bound upstream's body to the OWNED helpers, so a
+shared defect flowed through both sides and compared equal — a perturbed entry in the owned source
+list left all 94 comparisons green. It now fails four of them. The same file re-extracts C5x's
+summarization prompt and compares it, so that claim is checked by something other than the build that
+makes it.
 
 ### 25 branch outcomes adjudicated, in three families
 
@@ -2155,10 +2164,20 @@ order.** What they inherit, newest first:
   W4 gave `d1n` its own row and watched its solo sabotage come back GREEN: §2.4 makes a pure helper
   owned rather than called, so splicing its only caller makes upstream's copy unreachable and the
   separate row dead. Check a candidate helper's call graph before giving it a row.
-- **Compare a port TRACE, not just an output, wherever the target's arms differ by effect.** Two of
-  the auto-compaction predicate's four refusals differ from each other in nothing but which ports ran
-  before they refused. `compaction-parity.test.ts` compares which ports ran, with what, and how often.
-  W6's permission chain and W5's hook dispatchers are the same shape.
+- **Compare a port TRACE, not just an output, wherever the target's arms differ by effect — and trace
+  EVERY port, or the trace only separates the arms it happens to cover.** Two of the auto-compaction
+  predicate's four refusals differ from each other in nothing but which ports ran before they refused;
+  `compaction-parity.test.ts` compares which ports ran, with what, and how often, across all eight. The
+  other two refusals call no port at all, and no trace can separate those — an arm that refuses before
+  any effect needs its *guard* graded, not its trace. W6's permission chain and W5's hook dispatchers
+  are the same shape.
+- **Bind the upstream body to UPSTREAM's helpers, never to the owned ones.** The trigger predicate's
+  oracle bound upstream's two source guards to the owned implementations on the theory that a wrong
+  owned helper would make upstream's body take a different arm. It does not: the same defect flows
+  through both sides and the comparison comes back equal. Measured — a perturbed entry in the owned
+  non-conversational source list left all 94 comparisons green. Extract the helper's own bytes and
+  compare them separately, then bind the body to those. Every later oracle whose target calls a helper
+  the same wave owns inherits this.
 - **A predicate's coverage needs the conversation its CONSUMER requires.** Setting a threshold as low
   as possible made the trigger fire on the second exchange, where upstream refuses to compact at all —
   a `true` decision and no boundary. Grading a decision means recording the thing the decision causes.

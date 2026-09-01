@@ -479,7 +479,7 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "auto-compact-trigger#autoCompactTrigger@1:T",
     reason:
-      "the non-conversational-source refusal. It fires for \"prompt_suggestion\", \"away_summary\", \"agent_summary\" and \"narration\"; the headless seam sends \"sdk\" on every turn, so no recording can reach it. Graded by compaction-parity.test.ts, which drives all four sources and compares the port trace — the refusals differ from each other in nothing but which ports ran.",
+      "the non-conversational-source refusal. It fires for \"prompt_suggestion\", \"away_summary\", \"agent_summary\" and \"narration\"; the headless seam sends \"sdk\" on every turn, so no recording can reach it. Graded by compaction-parity.test.ts, which value-compares the owned source list against the pinned chunk's own `AZt`, compares the owned `tC` against upstream's extracted bytes over a twelve-source cross-product, and then drives all four sources through upstream's body bound to UPSTREAM's helpers — answer and full port trace both. This refusal calls no port at all, so the source cross-product, not the trace, is what grades it.",
   },
   {
     branch: "auto-compact-trigger#autoCompactTrigger@2:T",

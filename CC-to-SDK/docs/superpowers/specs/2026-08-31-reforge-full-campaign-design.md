@@ -1254,12 +1254,29 @@ Pending — written at finish.
     regression test of its own (`src/differ.test.ts`, a gate phase) — §3.4 has
     always required one per rule and the MAP half had none.
   - **The oracle should compare a port TRACE, not just an output, wherever the
-    target's arms differ by effect.** Two of the trigger predicate's four
-    refusals differ from each other in nothing but which ports ran before they
-    refused. `compaction-parity.test.ts` compares which ports ran, with what, and
-    how often, alongside the answer. This is the same lesson W3 learned about
-    telemetry events, one level more general, and every later predicate-shaped
-    target inherits it.
+    target's arms differ by effect — and the trace must cover EVERY port, or it
+    separates only the arms it happens to reach.** Two of the trigger predicate's
+    four refusals differ from each other in nothing but which ports ran before
+    they refused. `compaction-parity.test.ts` compares which ports ran, with what,
+    and how often, across all eight, alongside the answer. The other two refusals
+    call no port at all and no trace can separate them: an arm that refuses before
+    any effect needs its GUARD graded rather than its trace. This is the same
+    lesson W3 learned about telemetry events, one level more general, and every
+    later predicate-shaped target inherits it. (The scoping of the last two
+    sentences is C7's boundary review; the first take of this note claimed the
+    trace separated all four.)
+  - **Bind the extracted upstream body to UPSTREAM's helpers, never to the wave's
+    own.** The trigger oracle bound upstream's two source guards to the OWNED
+    implementations, reasoning that a wrong owned helper would make upstream's
+    body take a different arm and fire the comparison. It does not — the same
+    defect flows through both sides and the comparison comes back EQUAL.
+    Measured: a perturbed entry in the owned non-conversational source list left
+    all 94 comparisons green. The fix extracts the helpers' own bytes
+    (`AZt`/`FD`/`tC`), value-compares them against the owned constant and
+    helpers, and only then binds the body to the upstream pair; the same
+    perturbation now fails four comparisons. Every later oracle whose target
+    calls a helper the same wave owns inherits this — it is the general form of
+    "an oracle that shares an input with the thing it grades is not an oracle".
   - **Microcompaction is a reviewed exclusion, and the segment-compaction path is
     a new named debt.** The first is settled with the scout's evidence
     (`createContextHintController` is REPL-only; the headless driver sends
