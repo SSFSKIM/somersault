@@ -6,11 +6,52 @@
 // A derived cassette must stay *plausible* — same request shape, same headers —
 // so the engine takes the real error path rather than a parse path.
 import { readFileSync, writeFileSync } from "node:fs";
-import type { CassetteEntry } from "./proxy.js";
+import type { CassetteEntry, RecordInjector } from "./proxy.js";
 
 export type FaultKind = "overloaded" | "rate-limited" | "server-error" | "truncated-stream" | "malformed-event";
 
 const errorBody = (type: string, message: string) => JSON.stringify({ type: "error", error: { type, message } });
+
+/**
+ * Is this request the AUTO-MODE CLASSIFIER's own call, rather than the main loop's?
+ *
+ * Both go to `/v1/messages` on the same base URL, so the caller has to be
+ * identified from the body. Upstream's `querySource: "auto_mode"` is a
+ * client-side label and never reaches the wire; what does reach it is the shape
+ * the classifier builds and nothing else does — a toolless, non-streaming
+ * request whose stop sequence closes the verdict tag it asks the model to emit
+ * (`</severity>` for the two-stage severity arm, `</block>` for the older
+ * boolean one). MEASURED against a live `auto` recording, not assumed:
+ * `w6/probe-permissions.ts --phase auto-classifier --keep-cassettes` puts the
+ * classifier exchange in the cassette next to the two main-loop ones.
+ */
+export function isAutoModeClassifierRequest(body: string): boolean {
+  if (!body.includes("/severity>") && !body.includes("/block>")) return false;
+  let parsed: { stop_sequences?: unknown; tools?: unknown; stream?: unknown };
+  try {
+    parsed = JSON.parse(body) as typeof parsed;
+  } catch {
+    return false;
+  }
+  const stops = Array.isArray(parsed.stop_sequences) ? (parsed.stop_sequences as unknown[]) : [];
+  if (!stops.some((s) => s === "</severity>" || s === "</block>")) return false;
+  return parsed.stream !== true && (parsed.tools === undefined || (Array.isArray(parsed.tools) && parsed.tools.length === 0));
+}
+
+/**
+ * Make the auto-mode classifier UNAVAILABLE, at record time.
+ *
+ * The status is chosen against upstream's own retry predicate rather than for
+ * realism: the classifier retries `wall_clock_timeout`, `connection_*`, 429 and
+ * 5xx on an outer loop, so any of those would multiply the live take by the
+ * retry bound. A 400 is not retryable on either the SDK client's loop or the
+ * classifier's, so the fail-closed arm is reached on the first answer — which
+ * is what makes this cheap enough to keep in a corpus.
+ */
+export const classifierUnavailable: RecordInjector = (req) =>
+  req.path.includes("/v1/messages") && isAutoModeClassifierRequest(req.body)
+    ? { status: 400, contentType: "application/json", body: errorBody("invalid_request_error", "reforge W6: auto-mode classifier made unavailable at record time") }
+    : null;
 
 /** Rewrite the FIRST /v1/messages exchange of a cassette to exhibit `kind`. */
 export function deriveFaultCassette(source: string, dest: string, kind: FaultKind): CassetteEntry[] {

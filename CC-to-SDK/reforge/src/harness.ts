@@ -7,6 +7,7 @@ import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-a
 import { CONFIG_DIR, SANDBOX, sdkEnv } from "./runTurn.js";
 import type { EngineEnvKnobs, EnvMode } from "./env.js";
 import type { FaultKind } from "./faults.js";
+import type { RecordInjector } from "./proxy.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
@@ -61,6 +62,18 @@ export interface Scenario {
    * recording is still a real recording; only the response it serves is chosen.
    */
   deriveFault?: FaultKind;
+  /**
+   * Choose one response DURING the live take, instead of rewriting the cassette
+   * afterwards (`src/proxy.ts`'s `RecordInjector`).
+   *
+   * `deriveFault` above can only express a fault the engine does not recover
+   * from, because a post-hoc rewrite leaves the rest of the cassette answering a
+   * conversation that no longer happens. When the fault CHANGES the conversation
+   * — the auto-mode classifier failing turns an allowed tool call into a denied
+   * one — the choosing has to happen while the engine is still talking, so the
+   * requests recorded after it are the ones it really made.
+   */
+  recordInject?: RecordInjector;
 }
 
 // --- small assertion helpers for scenario checks ----------------------------
@@ -98,10 +111,23 @@ export function baseOptions(ctx: ScenarioContext): Options {
   };
 }
 
-/** Wipe the shared sandbox cwd so every engine run sees the same filesystem. */
+/**
+ * Wipe the shared sandbox cwd so every engine run sees the same filesystem.
+ *
+ * THE PLAN DIRECTORY GOES TOO, and it is not in the sandbox. Plan mode makes the
+ * engine render a plan-file preamble into the system prompt whose text depends on
+ * whether that file already exists, and the file lands in the harness CONFIG dir
+ * rather than the cwd — so a plan-mode recording that writes one leaves the next
+ * run a different prompt and a `Write` that comes back "File has not been read
+ * yet". Measured: the mode walk's plan turn recorded a successful write and then
+ * replayed as a tool error, three requests missing their body hash and being
+ * served positionally. Engine state a run creates has to be reset with the
+ * sandbox, wherever the engine happens to keep it.
+ */
 export function resetSandbox(): void {
   mkdirSync(SANDBOX, { recursive: true });
   for (const entry of readdirSync(SANDBOX)) rmSync(join(SANDBOX, entry), { recursive: true, force: true });
+  rmSync(join(CONFIG_DIR, "plans"), { recursive: true, force: true });
 }
 
 /** Drive a query to completion, capturing every SDK message. */

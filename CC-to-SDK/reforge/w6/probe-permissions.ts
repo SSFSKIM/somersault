@@ -57,7 +57,8 @@ import { join } from "node:path";
 import { query, type Options, type PermissionMode, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { baseOptions, pushable, resetSandbox, userMessage, type ScenarioContext } from "../src/harness.js";
 import { requireRecordCredential } from "../src/env.js";
-import { startRecordProxy } from "../src/proxy.js";
+import { classifierUnavailable, isAutoModeClassifierRequest } from "../src/faults.js";
+import { startRecordProxy, type RecordInjector } from "../src/proxy.js";
 import { enginePath, REFORGE_ROOT, SANDBOX } from "../src/runTurn.js";
 import { readFixture } from "../research/tools/extract-permission-surface.js";
 
@@ -127,6 +128,8 @@ interface PhaseResult {
   files: string[];
   warnings: string[];
   error?: string;
+  /** how many times the AUTO-MODE CLASSIFIER itself called the API in this phase */
+  classifierRequests: number;
 }
 
 interface PhaseSpec {
@@ -137,6 +140,8 @@ interface PhaseSpec {
   /** call `setPermissionMode` after this many results have come back */
   setModeAfter?: { results: number; mode: PermissionMode };
   focus?: string[];
+  /** serve a chosen response for some request instead of forwarding it (src/faults.ts) */
+  inject?: RecordInjector;
 }
 
 /** Answer immediately, allow everything, and record what was asked. Trap 4: never slow. */
@@ -164,7 +169,7 @@ async function phase(spec: PhaseSpec): Promise<PhaseResult> {
   mkdirSync(MARKERS, { recursive: true });
   resetSandbox();
 
-  const proxy = await startRecordProxy(cassette);
+  const proxy = await startRecordProxy(cassette, undefined, undefined, spec.inject ?? null);
   const hookFires = new Map<string, number>();
   const ctx: ScenarioContext = {
     engine: enginePath("engine-real"),
@@ -243,10 +248,23 @@ async function phase(spec: PhaseSpec): Promise<PhaseResult> {
     error = (e as Error).message.slice(0, 300);
   }
   await proxy.close();
-  rmSync(cassette, { force: true });
+  // THE CLASSIFIER IS NOT VISIBLE FROM THE BROKER'S SEAT, and reading it as if it
+  // were is the mistake this counter exists to make impossible. `auto` decides by
+  // asking a model; when that model ALLOWS, the engine returns an allow and
+  // `canUseTool` is never consulted — which looks identical to a fast path that
+  // skipped the classifier entirely. The two are only distinguishable on the
+  // wire, where the classifier's own `/v1/messages` call either is or is not.
+  const classifierRequests = existsSync(cassette)
+    ? readFileSync(cassette, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { path?: string; requestBody?: string })
+        .filter((e) => (e.path ?? "").includes("/v1/messages") && isAutoModeClassifierRequest(e.requestBody ?? "")).length
+    : 0;
+  if (!process.argv.includes("--keep-cassettes")) rmSync(cassette, { force: true });
 
   const files = existsSync(SANDBOX) ? readdirSync(SANDBOX).sort() : [];
-  return { consults: [], denials, resultDenials, hookFires, hookRecords: drainMarkers(), toolsUsed, said, modeChange, files, warnings, error };
+  return { consults: [], denials, resultDenials, hookFires, hookRecords: drainMarkers(), toolsUsed, said, modeChange, files, warnings, error, classifierRequests };
 }
 
 /**
@@ -267,7 +285,7 @@ function report(spec: PhaseSpec, r: PhaseResult): void {
   if (r.modeChange) {
     console.log(`  setPermissionMode(${r.modeChange.mode}): ${r.modeChange.ok ? "ACCEPTED" : `REFUSED — ${r.modeChange.error}`}`);
   }
-  console.log(`  canUseTool consulted ${consults.length}×`);
+  console.log(`  canUseTool consulted ${consults.length}×; auto-mode CLASSIFIER called the API ${r.classifierRequests}×`);
   for (const c of consults.slice(0, 6)) {
     console.log(
       `    consult tool=${c.tool} decisionReason=${JSON.stringify(c.decisionReason)?.slice(0, 110)} ` +
@@ -420,6 +438,51 @@ async function main(): Promise<void> {
           "If the tool is denied, do not retry; reply with exactly DENIED."
         : null,
     focus: ["PermissionRequest", "PermissionDenied"],
+  });
+
+  // ---- E3. the classifier's FAIL-CLOSED arm, created rather than waited for --
+  // E2 settles that the classifier RUNS for this command and that it allows it.
+  // What no prompt reliably creates is a classifier that BLOCKS — and the
+  // `classifier` decisionReason has exactly two producers, the block verdict and
+  // the fail-closed arm underneath it. The second one is reachable without
+  // finding a scary enough command: upstream denies with
+  // `{type:"classifier", classifier:"auto-mode"}` when the classifier call is
+  // UNAVAILABLE ("denying with retry guidance (fail closed)"), and that is
+  // byte-for-byte the guard on the PermissionDenied hook dispatcher's sole call
+  // site. So a chosen 400 on the classifier's own request creates both
+  // conditions at once, with a harmless command.
+  specs.push({
+    label: "auto-classifier-unavailable",
+    condition: "auto mode + the classifier's own API call made unavailable — the fail-closed deny, and what it dispatches",
+    extra: { maxTurns: 4, permissionMode: "auto" as PermissionMode, canUseTool: brokerFor("auto-classifier-unavailable") } as Partial<Options>,
+    inject: classifierUnavailable,
+    next: (r) =>
+      r === 0
+        ? "Use the Bash tool exactly once to run exactly `chmod 600 perm-probe.txt`. Do not run anything else and do not use any other tool. " +
+          "If the tool is denied, do not retry; reply with exactly DENIED."
+        : null,
+    focus: ["PermissionRequest", "PermissionDenied"],
+  });
+
+  // ---- E4. the workingDir decisionReason, and a plan-turn call the model will
+  // actually make.
+  //
+  // Two questions in one phase. (1) `workingDir` is a decisionReason kind no
+  // recording has reached; the condition named for it is "a tool call outside
+  // the allowed directories", and whether a READ outside them creates it is a
+  // measurement, not a reading. (2) The mode walk needs a tool call its plan
+  // turn will emit: plan mode's injected reminder forbids edits in terms the
+  // model obeys against any framing, and it permits READ-ONLY actions — so if a
+  // read outside the cwd is ask-worthy, it is both a decision the ladder makes
+  // and a call the model will make under plan.
+  specs.push({
+    label: "working-dir",
+    condition: "default mode + a Read of a file outside the cwd — does the ladder object, and with which reason?",
+    extra: { maxTurns: 4, permissionMode: "default", canUseTool: brokerFor("working-dir") } as Partial<Options>,
+    next: (r) =>
+      r === 0
+        ? "Use the Read tool exactly once on the file /etc/hosts. Do not use any other tool. If the tool is denied, do not retry; reply with exactly DENIED."
+        : null,
   });
 
   // ---- F. the shadowing trap, measured rather than inherited ---------------

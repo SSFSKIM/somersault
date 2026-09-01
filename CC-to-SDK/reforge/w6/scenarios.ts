@@ -47,6 +47,7 @@
 import { join } from "node:path";
 import type { Options, PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import { baseOptions, drive, resultText, resultsOf, usedTool, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { classifierUnavailable } from "../src/faults.js";
 import { SANDBOX } from "../src/runTurn.js";
 
 /** The file every Write cell targets. Absolute and inside the sandbox, so a model-chosen path cannot escape. */
@@ -96,6 +97,41 @@ const CHMOD_PROMPT =
 const ECHO_PROMPT =
   "Use the Bash tool exactly once to run exactly `echo REFORGE_W6_ECHO`. Do not run anything else and do not use any other tool. " +
   "If the tool is denied, do not retry; reply with exactly DENIED.";
+
+/**
+ * A file outside every allowed working directory. Absolute, tiny, and present on
+ * any machine this project runs on.
+ */
+const OUTSIDE_CWD = "/etc/hosts";
+
+const READ_OUTSIDE_PROMPT =
+  `Use the Read tool exactly once on the file ${OUTSIDE_CWD}. Do not use any other tool. ` +
+  "If the tool is denied, do not retry; reply with exactly DENIED.";
+
+/**
+ * THE MODE WALK'S PLAN TURN IS A READ, NOT A WRITE, and the substitution is a
+ * measured correction rather than a convenience.
+ *
+ * Changing to plan makes the engine inject a system reminder that forbids edits
+ * and declares itself to supersede every other instruction, and the model obeys
+ * it against any framing: three takes aimed a Write at that turn and none of them
+ * produced a tool call — the second answered, in as many words, that it would not
+ * emit the call "regardless of how the request is framed". The refusal is the
+ * ENGINE's behaviour (the reminder is the engine's own text), so no prompt is
+ * going to buy a Write here. Aiming at the one file the reminder does sanction,
+ * the plan file, gets the call but not a usable cell: the engine names that file
+ * with a per-session random word, so a replay looks it up under a different name
+ * than the recorded response wrote, and two requests miss their body hash.
+ *
+ * What the reminder DOES permit is read-only work — and a read outside the
+ * allowed directories is ask-worthy, so it is a decision and not a formality.
+ * Measured, in `w6/probe-permissions.ts` phase `working-dir`: in default mode the
+ * same call reaches `canUseTool` carrying "Path is outside allowed working
+ * directories" and two suggestions, and `perm-working-dir` records that half.
+ * Here the launch fact makes the bypass rung answer above it and the read simply
+ * succeeds, which is the asymmetry this turn is for.
+ */
+const PLAN_TURN_PROMPT = READ_OUTSIDE_PROMPT;
 
 /** A settings-layer permission-rule fixture, in the flag-settings layer. */
 const rules = (spec: Partial<Record<"allow" | "deny" | "ask", string[]>>) => ({ permissions: spec }) as Options["settings"];
@@ -176,21 +212,54 @@ const denials = (msgs: unknown[]) =>
  * else: a denied tool call's result content is the sentence the decision carried.
  * Reading the model's prose instead would grade the model's paraphrase.
  */
-const toolResults = (msgs: unknown[]): string[] => {
-  const out: string[] = [];
+const toolResultBlocks = (msgs: unknown[]): { text: string; isError: boolean }[] => {
+  const out: { text: string; isError: boolean }[] = [];
   for (const m of msgs) {
     const content = (m as { message?: { content?: unknown } }).message?.content;
     if (!Array.isArray(content)) continue;
-    for (const block of content as { type?: string; content?: unknown }[]) {
+    for (const block of content as { type?: string; content?: unknown; is_error?: boolean }[]) {
       if (block?.type !== "tool_result") continue;
-      out.push(typeof block.content === "string" ? block.content : JSON.stringify(block.content));
+      out.push({ text: typeof block.content === "string" ? block.content : JSON.stringify(block.content), isError: block.is_error === true });
     }
   }
   return out;
 };
 
+const toolResults = (msgs: unknown[]): string[] => toolResultBlocks(msgs).map((b) => b.text);
+
 const consults = (events: unknown[]) =>
   events.filter((e) => (e as { event?: string }).event === "consult").map((e) => (e as { payload: Record<string, unknown> }).payload);
+
+/**
+ * Split a multi-turn transcript at its `result` frames, so a check can ask what
+ * ONE turn did.
+ *
+ * A whole-transcript `usedTool` cannot enforce a per-turn design rule, and the
+ * one scenario in this file that has such a rule was passing without it: the
+ * mode walk requires a tool call after EVERY mode change, and its check asked
+ * only whether a Write appeared anywhere — so a recording in which the plan turn
+ * emitted no tool call at all satisfied it on the strength of the dontAsk turn's
+ * Write. That is precisely the hollow pass the walk's own comment says it exists
+ * to prevent, one level up: the design rule was written down and then graded by
+ * an assertion too coarse to see it.
+ *
+ * The frames of turn *n* are those between result *n-1* and result *n*, result
+ * frame included, which is what makes `denialsIn` below answer "did THIS turn
+ * refuse" rather than "did the session ever refuse".
+ */
+const turnsOf = (msgs: unknown[]): unknown[][] => {
+  const out: unknown[][] = [];
+  let current: unknown[] = [];
+  for (const m of msgs) {
+    current.push(m);
+    if ((m as { type?: string }).type === "result") {
+      out.push(current);
+      current = [];
+    }
+  }
+  if (current.length > 0) out.push(current);
+  return out;
+};
 
 export const W6_SCENARIOS: Scenario[] = [
   {
@@ -225,17 +294,45 @@ export const W6_SCENARIOS: Scenario[] = [
   },
 
   {
-    // MODE CELL: plan x Write. "Planning mode, no actual tool execution" — so
-    // the decision must not be an allow, and the file must not exist afterwards.
-    // The state surface grades the second half; this grades the first.
+    // MODE CELL: plan x Write, and it is a CORRECTION to the mode's own prose.
+    //
+    // Upstream describes `plan` as "Planning mode, no actual tool execution",
+    // and this cell was written to the obvious reading of that: the decision must
+    // not be an allow, and the file must not exist afterwards. The recording says
+    // otherwise, and the second half of that claim was graded by nothing — which
+    // is how it survived being wrong.
+    //
+    // WHAT THE RECORDING SHOWS. The Write reached the broker with
+    // `decisionReason: null`, the broker allowed, and `perm.txt` was created. The
+    // pre-check explains it exactly: its plan-mode refusal (`Cannot call ${name}
+    // while in plan mode`) is guarded on `e.mcpInfo`, so it is an MCP-tool rung
+    // and a built-in file tool never reaches it. `Write.checkPermissions` returns
+    // a plain `passthrough` under plan, the ladder converts that to an ASK with
+    // no reason attached, and the ask goes to the host.
+    //
+    // So plan mode does not enforce "no tool execution" in the permission chain
+    // at all. In an interactive session a human declines the prompt; headless,
+    // the model is steered by the plan-mode system reminder the engine injects
+    // ("you MUST NOT make any edits… This supercedes any other instructions"),
+    // and a host that answers `allow` gets the write. That reminder is a MODEL
+    // instruction, not a decision, which is why this cell grades the decision.
+    //
+    // The claim under test is therefore the one the recording can settle: plan
+    // mode DELEGATES a Write it neither allows nor denies. An engine that
+    // short-circuited plan mode to an allow would skip the consult and reach the
+    // same file; an engine that hard-refused would produce a denial frame. Both
+    // are excluded here.
     tag: "perm-plan-mode",
-    title: "plan mode refuses a Write",
+    title: "plan mode delegates a Write to the host rather than deciding it",
     run: (ctx) => drive(writePrompt(TARGET), { ...baseOptions(ctx), maxTurns: 4, permissionMode: "plan", canUseTool: broker(ctx) }),
     check: (msgs, events) => {
-      if (!usedTool(msgs, "Write")) return "the Write was never attempted, so plan mode refused nothing";
-      const consulted = consults(events).some((c) => c.toolName === "Write");
-      const denied = denials(msgs).some((d) => d.tool_name === "Write");
-      if (!consulted && !denied) return "plan mode neither brokered nor denied the Write — no permission decision was made";
+      if (!usedTool(msgs, "Write")) return "the Write was never attempted, so plan mode decided nothing";
+      const consult = consults(events).find((c) => c.toolName === "Write");
+      if (!consult) return "plan mode did not broker the Write — an engine that decided it itself, which is not what upstream does";
+      if (consult.decisionReason !== null) {
+        return `the consult carries decisionReason ${JSON.stringify(consult.decisionReason)}; plan mode reaches the host through the ladder's passthrough conversion, which attaches none`;
+      }
+      if (denials(msgs).some((d) => d.tool_name === "Write")) return "plan mode produced a denial frame — it delegates rather than refusing";
       return null;
     },
   },
@@ -585,6 +682,108 @@ export const W6_SCENARIOS: Scenario[] = [
   },
 
   {
+    // THE `workingDir` decisionReason, which §3.3 of the matrix carried as OPEN
+    // with the condition "a tool call outside the allowed directories" and no run
+    // behind it. It costs one scenario.
+    //
+    // A READ rather than a write, deliberately: the point is the DIRECTORY
+    // boundary, and a read isolates it from every other reason a mutation could
+    // be asked about. The reason arrives as the ladder's own sentence — "Path is
+    // outside allowed working directories" — together with the two permission
+    // suggestions the engine offers for widening the boundary, which no other
+    // cell in the corpus populates either.
+    //
+    // `settingSources: []` is what makes the condition hold: nothing on the
+    // filesystem adds an `additionalDirectories`, so the sandbox cwd is the whole
+    // allowed set and any absolute path outside it is outside all of them.
+    tag: "perm-working-dir",
+    title: "a read outside the allowed directories is asked about, and the reason names the boundary",
+    run: (ctx) => drive(READ_OUTSIDE_PROMPT, { ...baseOptions(ctx), maxTurns: 4, permissionMode: "default", canUseTool: broker(ctx) }),
+    check: (msgs, events) => {
+      if (!usedTool(msgs, "Read")) return "the Read was never attempted";
+      const consult = consults(events).find((c) => c.toolName === "Read");
+      if (!consult) return "the read outside the cwd did not reach the broker, so the working-directory boundary decided nothing";
+      if (!String(consult.decisionReason ?? "").includes("outside allowed working directories")) {
+        return `the consult's decisionReason is ${JSON.stringify(consult.decisionReason)}, which does not name the working-directory boundary`;
+      }
+      if ((consult.suggestions as number) === 0) return "the consult carried no permission suggestions, and the workingDir arm builds them";
+      return null;
+    },
+  },
+
+  {
+    // THE `auto` MODE'S CLASSIFIER, and the two cells nothing else in the corpus
+    // could reach.
+    //
+    // `auto` decides by ASKING A MODEL. Measured on the wire (the probe's
+    // `auto-classifier` phase, cassette kept): a `chmod` under `auto` produces a
+    // second `/v1/messages` call — toolless, non-streaming, stopping at
+    // `</severity>` — which came back `<severity>25`, below the block threshold,
+    // so the call was allowed and `canUseTool` was never consulted. THAT IS THE
+    // TRAP THIS CELL EXISTS PAST: from the broker's seat, a classifier that ran
+    // and allowed is indistinguishable from a fast path that skipped it, and the
+    // wave's first reading of this mode drew the wrong conclusion from exactly
+    // that silence.
+    //
+    // What no prompt reliably creates is a classifier that REFUSES, and the
+    // `classifier` decisionReason has two producers: the block verdict, and the
+    // FAIL-CLOSED arm beneath it — upstream denies with
+    // `{type:"classifier", classifier:"auto-mode"}` when the classifier call is
+    // unavailable. The second is reachable with a harmless command, by choosing
+    // the classifier's own response (`recordInject`, and see `src/faults.ts` for
+    // why the status is a 400 rather than something more realistic).
+    //
+    // Three things this buys that nothing else in the corpus does:
+    //
+    //   the `classifier` decisionReason, in a RECORDING rather than the oracle;
+    //   the PermissionDenied hook event, whose sole dispatch site is guarded on
+    //     that exact reason — C8 left it OPEN and C9's first round left it OPEN
+    //     with better evidence, and this is the condition both were naming;
+    //   the auto-mode arm of the pre-check, under a real classifier answer.
+    tag: "perm-auto-classifier-deny",
+    title: "an unavailable auto-mode classifier denies fail-closed, and that denial is what dispatches PermissionDenied",
+    recordInject: classifierUnavailable,
+    run: (ctx) =>
+      drive(
+        "Use the Bash tool exactly once to run exactly `chmod 600 perm.txt`. Do not run anything else and do not use any other tool. " +
+          "If the tool is denied, do not retry; reply with exactly DENIED.",
+        {
+          ...baseOptions(ctx),
+          maxTurns: 4,
+          permissionMode: "auto",
+          canUseTool: broker(ctx),
+          hooks: {
+            PermissionDenied: [
+              {
+                hooks: [
+                  async (input: unknown) => {
+                    const record = input as { tool_name?: string; reason?: string };
+                    ctx.collect("permissionDeniedHook", { toolName: record.tool_name, reason: record.reason });
+                    return { continue: true };
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ),
+    check: (msgs, events) => {
+      if (!usedTool(msgs, "Bash")) return "the Bash call was never attempted, so the classifier was never asked about anything";
+      if (consults(events).some((c) => c.toolName === "Bash")) {
+        return "the broker was consulted — the fail-closed arm denies outright, so a consult means the classifier's answer was not the deciding one";
+      }
+      const denial = denials(msgs).find((d) => d.tool_name === "Bash");
+      if (!denial) return "no permission_denied frame: the classifier's unavailability did not fail closed";
+      if (denial.decision_reason_type !== "classifier") {
+        return `the denial's decision_reason_type is ${JSON.stringify(denial.decision_reason_type)}, not "classifier" — a different arm decided it`;
+      }
+      const fired = events.filter((e) => (e as { event?: string }).event === "permissionDeniedHook");
+      if (fired.length === 0) return "the PermissionDenied hook did not fire on a denial carrying the reason its dispatch site is guarded on";
+      return null;
+    },
+  },
+
+  {
     // THE MODE-CHANGE SEAM, over the control channel rather than at spawn — the
     // two paths reach different code, and this is the one the guard lives on.
     //
@@ -603,12 +802,17 @@ export const W6_SCENARIOS: Scenario[] = [
     //
     //   launch bypassPermissions   the flag is a launch fact, and the transition
     //     (with the flag)          is the only thing that carries it forward
-    //   -> plan, then a Write      ALLOWED — the pre-check's rung 11 has a
-    //                              second disjunct nothing else in the corpus
-    //                              reaches: plan mode with bypass AVAILABLE
-    //                              allows. A transition that rebuilt the context
-    //                              instead of carrying it forward loses the
-    //                              launch fact and this becomes a refusal.
+    //   -> plan, then a Write      ALLOWED, with no broker consult — the bypass
+    //                              rung's SECOND disjunct, which nothing else in
+    //                              the corpus reaches: `F === "bypassPermissions"
+    //                              || F === "plan" && isBypassPermissionsModeAvailable`
+    //                              returns `{behavior:"allow", decisionReason:
+    //                              {type:"mode", mode:"plan"}}`. `perm-plan-mode`
+    //                              is the control — same mode, no launch flag,
+    //                              and there the Write is delegated to the host
+    //                              instead. A transition that rebuilt the context
+    //                              rather than carrying it forward loses the
+    //                              launch fact, and this cell becomes that ask.
     //   -> dontAsk, then a Write   DENIED, with a decision reason naming the
     //                              mode. A setter that reported success without
     //                              applying anything would still be in plan here
@@ -616,6 +820,16 @@ export const W6_SCENARIOS: Scenario[] = [
     //   -> a mode that does not    the guard's first refusal, surfaced by the SDK
     //      parse                   as a rejected promise carrying the error
     //                              envelope's own sentence.
+    //
+    // THE PLAN TURN'S PROMPT IS NOT THE ORDINARY ONE, and the reason is a
+    // measured re-record. Changing to plan makes the engine inject a plan-mode
+    // system reminder — "you MUST NOT make any edits … This supercedes any other
+    // instructions you have received" — and under it the model answered DENIED
+    // without ever emitting the Write. The turn then decided nothing, and the
+    // check, which asked only whether a Write appeared ANYWHERE, passed on the
+    // dontAsk turn's. The prompt below names the tool call as the object of the
+    // turn rather than the edit as a goal, which is what gets past a reminder
+    // that forbids edits; the per-turn check below is what would have caught it.
     tag: "perm-mode-walk",
     title: "set_permission_mode changes what the next tool call decides, twice, and then refuses a mode that does not parse",
     run: async (ctx) => {
@@ -626,9 +840,16 @@ export const W6_SCENARIOS: Scenario[] = [
       input.push(userMessage("Reply with exactly READY."));
       const q = sdk.query({
         prompt: input,
+        // NO BROKER, and the attempt to arm one is why it is worth saying so. A
+        // host would have made "the plan turn was never consulted" into evidence
+        // — but the SDK refuses to wire `canUseTool` at all for a session
+        // LAUNCHED in bypassPermissions (it warns as much), and the later change
+        // to plan does not re-wire it. The absence of a consult here is therefore
+        // a property of the seam, not of the decision, and asserting it would
+        // grade nothing. `perm-working-dir` is where the same call meets a host.
         options: { ...baseOptions(ctx), maxTurns: 8, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
       });
-      const turns = [writePrompt(join(SANDBOX, "plan-mode.txt")), writePrompt(join(SANDBOX, "dont-ask.txt"))];
+      const turns = [PLAN_TURN_PROMPT, writePrompt(join(SANDBOX, "dont-ask.txt"))];
       let results = 0;
       for await (const m of q) {
         messages.push(m);
@@ -657,6 +878,11 @@ export const W6_SCENARIOS: Scenario[] = [
       }
       return messages;
     },
+    // PER TURN, not per transcript. The design rule this scenario is built on is
+    // "every mode change is followed by a tool call"; the first version of this
+    // check asked `usedTool(msgs, "Write")` over the whole run, which one Write
+    // in one turn satisfies no matter how many changes went ungraded. The
+    // recording it passed had no tool call in the plan turn at all.
     check: (msgs, events) => {
       const setters = events
         .filter((e) => (e as { event?: string }).event === "setPermissionMode")
@@ -665,9 +891,34 @@ export const W6_SCENARIOS: Scenario[] = [
       const bad = setters[2];
       if (bad.accepted !== false) return "the guard ACCEPTED a mode that does not parse — its first refusal did not fire";
       if (bad.refusedWithMessage !== true) return "the refusal carried no message, so the error envelope's payload is ungraded";
-      if (!usedTool(msgs, "Write")) return "no Write was attempted, so no mode change changed a decision";
-      const denied = denials(msgs);
-      if (denied.length === 0) return "no permission_denied frame: the dontAsk turn did not refuse, so the setter's effect is ungraded";
+
+      const turns = turnsOf(msgs);
+      if (turns.length < 3) return `expected at least three turns (READY, plan, dontAsk), saw ${turns.length}`;
+      const [, planTurn, dontAskTurn] = turns;
+
+      // The plan turn: a Read outside the allowed directories, ALLOWED by the
+      // bypass rung's second disjunct — so no denial, no error, and no broker
+      // consult. `perm-working-dir` is the control that makes each half mean
+      // something: the same call in default mode reaches the host carrying "Path
+      // is outside allowed working directories".
+      if (!usedTool(planTurn, "Read")) return "the plan turn emitted no tool call, so the change to plan decided nothing";
+      if (denials(planTurn).length > 0) {
+        return `the plan turn was DENIED (${JSON.stringify(denials(planTurn).map((d) => d.decision_reason_type))}); with bypass available the pre-check allows, so the transition lost the launch fact`;
+      }
+      // The transcript's own evidence that the call RAN. Any error result fails
+      // it, not just one that says "permission": an earlier take of this scenario
+      // passed a narrower version of this assertion while its tool call was
+      // failing on replay for an unrelated reason. A cell that grades an ALLOW has
+      // to insist the call SUCCEEDED, or a broken call reads as a permitted one.
+      const planResults = toolResultBlocks(planTurn);
+      if (planResults.length === 0) return "the plan turn's Read produced no tool_result, so nothing came back to grade";
+      const failed = planResults.find((r) => r.isError);
+      if (failed) return `the plan turn's Read came back an error (${JSON.stringify(failed.text).slice(0, 160)}), so it was not allowed and executed`;
+
+      // The dontAsk turn: a Write, DENIED, and the reason names the mode.
+      if (!usedTool(dontAskTurn, "Write")) return "the dontAsk turn emitted no tool call, so the change to dontAsk decided nothing";
+      const denied = denials(dontAskTurn);
+      if (denied.length === 0) return "no permission_denied frame in the dontAsk turn, so the setter's effect is ungraded";
       if (denied.some((d) => d.decision_reason_type !== "mode")) {
         return `a denial's decision_reason_type is ${JSON.stringify(denied.map((d) => d.decision_reason_type))}, and dontAsk's must be "mode"`;
       }

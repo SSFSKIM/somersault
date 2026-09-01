@@ -69,7 +69,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   const observedFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}-observed-${side}.jsonl`);
   rmSync(observedFile, { force: true });
   const proxy =
-    mode === "record" ? await startRecordProxy(cassette) : await startReplayProxy(cassette, observedFile);
+    mode === "record" ? await startRecordProxy(cassette, undefined, undefined, s.recordInject ?? null) : await startReplayProxy(cassette, observedFile);
   const events: unknown[] = [];
   const ctx: ScenarioContext = {
     engine: enginePath(engineName),

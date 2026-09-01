@@ -160,15 +160,62 @@ function injectCredential(headers: Record<string, string>, credential: RecordCre
   else headers["x-api-key"] = credential.value;
 }
 
+/**
+ * A response chosen by the recorder instead of fetched from upstream.
+ *
+ * Return `null` to forward the request normally; return a response to serve and
+ * record that one instead. See `startRecordProxy` for why this exists.
+ */
+export type RecordInjector = (req: { method: string; path: string; body: string }) => { status: number; contentType: string; body: string } | null;
+
 export async function startRecordProxy(
   cassettePath: string,
   upstream = "https://api.anthropic.com",
   credential: RecordCredential | null = recordCredential(),
+  /**
+   * H2's derivation, moved to RECORD time — and it has to be here rather than in
+   * `src/faults.ts` whenever the fault CHANGES WHAT HAPPENS NEXT.
+   *
+   * `deriveFaultCassette` rewrites a healthy cassette after the fact, which works
+   * for a fault that ends the run (the engine retries the same request and gives
+   * up). It cannot express a fault the engine RECOVERS from into a different
+   * conversation: the auto-mode classifier failing turns an allowed tool call
+   * into a denied one, so every later request carries a tool_result the healthy
+   * take never produced. Replayed, those requests miss the body hash and are
+   * served positionally — which §3.4 makes fatal, and rightly.
+   *
+   * Injecting during the live take keeps the cassette SELF-CONSISTENT: the
+   * chosen response is followed by the requests the engine really made in answer
+   * to it. The recording is still a real recording, exactly as `deriveFault`
+   * argues; only one response is chosen rather than fetched.
+   */
+  inject: RecordInjector | null = null,
 ): Promise<ProxyHandle> {
   let seq = 0;
   const server = http.createServer(async (req, res) => {
     const requestBody = await readBody(req);
     const mySeq = seq++;
+    const chosen = inject?.({ method: req.method ?? "GET", path: req.url ?? "/", body: requestBody.toString("utf8") }) ?? null;
+    if (chosen) {
+      res.writeHead(chosen.status, { "content-type": chosen.contentType });
+      res.end(chosen.body);
+      appendFileSync(
+        cassettePath,
+        JSON.stringify({
+          seq: mySeq,
+          method: req.method ?? "GET",
+          path: req.url ?? "/",
+          requestBody: requestBody.toString("utf8"),
+          status: chosen.status,
+          contentType: chosen.contentType,
+          responseBody: chosen.body,
+          // The engine may retry a failed call before it gives up; a
+          // consume-once entry would leave the retry on the proxy's fallback.
+          repeat: true,
+        } satisfies CassetteEntry) + "\n",
+      );
+      return;
+    }
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (!REDACT_HEADERS.has(k.toLowerCase()) && typeof v === "string") headers[k] = v;
@@ -228,6 +275,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     .map((l) => JSON.parse(l));
   assertNoKeyCollisions(entries, cassettePath);
   const consumed = new Set<number>();
+  const served = new Set<number>();
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
   let fallbackServed = 0;
 
@@ -249,6 +297,12 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
       res.end(JSON.stringify({ error: "reforge-replay: no cassette entry", method, path }));
       return;
     }
+    // Two sets, because they answer different questions. `consumed` is about
+    // MATCHING — a repeat entry (a fault the engine retries) stays available.
+    // `served` is about COVERAGE, and reading the first for the second reported
+    // every repeat entry as "never served" on every run, which is a warning that
+    // is always wrong and therefore always ignored.
+    served.add(entry.seq);
     if (!entry.repeat) consumed.add(entry.seq);
     res.writeHead(entry.status, { "content-type": entry.contentType });
     if (entry.contentType.includes("text/event-stream")) {
@@ -265,7 +319,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
   return {
     port,
     close: () => new Promise((r) => server.close(() => r())),
-    unserved: () => entries.filter((e) => !consumed.has(e.seq)),
+    unserved: () => entries.filter((e) => !served.has(e.seq)),
     unmatched: () => unmatched,
     fallbackServed: () => fallbackServed,
   };
