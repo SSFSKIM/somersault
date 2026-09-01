@@ -80,6 +80,11 @@ the commit) or when a round's scope absorbs them.
   instrumentation during the wave-2A focus fix, which hit the identical masking). Fix direction
   when Ink/React root behavior changes or MCP key handling is next touched: ref-back `view`
   exactly as the wave-2A fix ref-backed focus.
+- **DialogFrame's `title`/`subtitle`/`titleEnd` props carry no width bound of their own** (bl10
+  wave-7 sweep, 2026-09-02). Every current caller passes a literal or an already-bounded value,
+  so this is dormant, not live — but the frame is the chrome every dialog shares, and a future
+  caller passing runtime text re-opens the unbounded-string class the wave closed. Bound at the
+  frame when DialogFrame is next touched; details in `fixwave7-report.md`.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
