@@ -394,6 +394,23 @@ describe("McpDialog — tool-detail name/annotations flatten and truncate (bl10 
   });
 });
 
+// bl10 fix wave 4, W4-3: a REJECTED `fetchServers()` kept `servers = []`, and the frame still rendered
+// `subtitle={mcpSubtitle(serverCount)}` -> "0 servers" beside the error line — a contradictory claim, since
+// the real count is UNKNOWN, not zero. The subtitle must be omitted while an error is live; a genuine empty
+// configuration (no fetch error) still shows the real "0 servers" count (covered by the root-list describe
+// block above).
+describe("McpDialog — subtitle omitted beside a fetch error (bl10 fw4 W4-3)", () => {
+  it("does not claim \"0 servers\" next to a fetch-error line", async () => {
+    const instance = render(<McpDialog fetchServers={() => Promise.reject(new Error("ECONNRESET"))} onClose={() => {}} rows={30} columns={100} />);
+    mounted = instance;
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    const f = flat(instance.lastFrame);
+    expect(f).toContain(mcpFetchErrorText("ECONNRESET"));
+    expect(f).not.toContain("0 servers");
+  });
+});
+
 describe("McpDialog — onClose", () => {
   it("root Esc closes the dialog", async () => {
     let closed = false;

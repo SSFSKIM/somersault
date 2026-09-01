@@ -303,8 +303,13 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
   // directly rather than pulled from the whole scope.
   const mcpHintScope = count > 0 ? (["Select"] as const) : undefined;
   const mcpHintActions = count > 0 ? undefined : ([{ action: "select:cancel", scope: "Select" }] as const);
+  // bl10 fix wave 4, W4-3: a REJECTED fetch keeps `servers = []` (so the frame/body chrome stays intact — see
+  // the `fetchError` state comment above), which makes `serverCount` 0 — but "0 servers" next to the error
+  // text is a false claim: the count is UNKNOWN, not zero. Omit the subtitle entirely while an error is live;
+  // a genuine empty configuration (no `fetchError`) still shows the real "0 servers" count.
+  const mcpDialogSubtitle = fetchError === undefined ? mcpSubtitle(serverCount) : undefined;
   return (
-    <DialogFrame title={MCP_TITLE} subtitle={mcpSubtitle(serverCount)}
+    <DialogFrame title={MCP_TITLE} subtitle={mcpDialogSubtitle}
       {...(mcpHintScope ? { hintScope: mcpHintScope } : {})} {...(mcpHintActions ? { hintActions: mcpHintActions } : {})}>
       {body}
     </DialogFrame>
