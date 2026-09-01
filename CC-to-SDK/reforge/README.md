@@ -2383,9 +2383,9 @@ and the headless-suppression wrapper with them.
 
 ### Gate
 
-**Sixty-three phases**, up from fifty-six: the hook-dispatch parity oracle and six new liveness rows.
-Corpus **35/35**, full acceptance **5/5**, **38** liveness phases, coverage attestation
-**132/235 executed with 103 adjudicated and zero un-adjudicated**.
+**Sixty-seven phases**, up from fifty-six: the hook-dispatch parity oracle and ten new liveness rows.
+Corpus **39/39**, full acceptance **5/5**, **42** liveness phases, coverage attestation
+**165/283 executed with 118 adjudicated and zero un-adjudicated**.
 
 ```
   PASS  hook-dispatch parity vs the pinned bundle
@@ -2396,19 +2396,32 @@ Corpus **35/35**, full acceptance **5/5**, **38** liveness phases, coverage atte
   PASS  liveness stop-hooks                 (hooks-prompt-submit, hooks-subagent)
   PASS  liveness pre-tool-hooks             (hooks)
   PASS  liveness post-tool-hooks            (hooks, hooks-command)
+  PASS  liveness post-tool-failure-hooks    (hooks-tool-failure)
+  PASS  liveness session-start-hooks        (hooks-session-start)
+  PASS  liveness session-end-hooks          (hooks-session-end)
+  PASS  liveness pre-compact-hooks          (hooks-precompact)
   PASS  coverage attestation
   PASS  equivalence (faithful)
 
 GATE PASS — every splice is live AND the faithful build is equivalent
 ```
 
+Each of the four new sabotages reddens its scenario for its own reason, not by crashing the run:
+PostToolUseFailure never fires, PreCompact never fires, SessionEnd never fires on `/clear`, and the
+SessionStart command hook writes no record into the sandbox.
+
+**The engine-ts skeleton caught the one thing four green scenarios could not.** Its acceptance phase
+requires one registered module per manifest row, and the four splices landed without registering —
+which is exactly the coupling that check exists to enforce, and the only failure in the round's first
+full gate.
+
 **The 56-vs-61 counting artifact is resolved, and it was a counting one.** C7 reported 56 phases and
 its fix round measured 61 with no phases added — the fix commits touched neither `gate.ts` nor the
 manifest, and recomputing the phase count from that tree gives exactly 56. The five extra come from
 counting the LOG rather than the summary: the equivalence phase relays `m2/all.ts`'s five suite
 verdicts in the gate's own `  PASS  <label>` format before the summary prints, so a transcript-wide
-count double-counts them. Measured on this run: 68 such lines in the whole log, 63 in the summary,
-and the five in between are the suites. **The number to quote is the summary's** — it is a property
+count double-counts them. Measured on the wave's run: 68 such lines in the whole log, 63 in the
+summary, and the five in between are the suites (the boundary round's run: 72 and 67). **The number to quote is the summary's** — it is a property
 of the manifest plus the fixed blocks, not of the transcript.
 
 ### What W5 does NOT claim
