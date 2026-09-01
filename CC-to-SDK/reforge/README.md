@@ -2576,6 +2576,162 @@ are not measured are **OPEN** — each with the condition that would create it w
 is not a synonym for dead. The wave has now been wrong twice by treating an unmeasured event as a
 measured negative; it will not be a third time by treating these as one.
 
+## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
+
+Thirteen splices plus two owned pure helpers, and a fifth parity oracle grading **2,496 comparisons
+with 47 controls**. The wave's headline is not a count, though — it is a correction the campaign
+spec needed and a set of measurements that changed how liveness is proven.
+
+### `bypassPermissions` does not short-circuit the rule engine
+
+The campaign spec and the W5–W7 scout both record that it does, and that "22 of 24 scenarios grade
+none of the chain W6 owns". Upstream's pre-check puts the bypass arm at **rung 11 of 13** — below
+the tool deny rule, the input deny rule, the allow rule and its delegation, the tool's own
+`checkPermissions`, the ask rule, the interaction check, the MCP ask ceiling and the safety floor.
+Only the ASK is short-circuited. A deny rule still bites under bypass.
+
+Measured twice, by different means: the pre-check sabotaged alone turns eight inherited scenarios
+red, every one of them a bypass run; and the parity oracle carries "bypass short-circuits the deny
+rules" as a mutant that must differ from upstream, and it does.
+
+The claim came from reading the **Bash tool's own** mode handler (`T8e`: "Bypass mode is handled in
+main permission flow") as a statement about the chain. It is a statement about that tool's
+`checkPermissions`. The general form is worth keeping: *a claim read off one function's comment is a
+claim about that function.*
+
+### The axes are derived, not chosen
+
+`research/tools/extract-permission-surface.ts` snapshots five enumerations out of the pinned bundle
+into `research/fixtures/permission-surface-2.1.251.json`, each located by SHAPE and confirmed
+against an independent signal collected elsewhere in the graph:
+
+- **modes** — six, from **four independent enumerations that must agree on the set** or the
+  extraction fails, with every member confirmed present in `mode`/`permissionMode` comparison
+  position bundle-wide, and upstream's own one-line semantics parsed out of the schema's
+  `describe()`;
+- **rule behaviors** — `allow`/`deny`/`ask`, confirmed against `ruleBehavior` comparands;
+- **rule destinations** — six, confirmed against `destination`/`source` comparands;
+- **decisionReason kinds** — eleven RENDERED by the message builder's own switch versus ten
+  CONSTRUCTED graph-wide; the asymmetry is recorded rather than smoothed (`permissionPromptTool` is
+  only ever assigned as a whole object, by the broker's response mapper — which is another module in
+  this same wave);
+- **mode guards** — the mode-change seam's refusals, with upstream's own error text, ternary arms
+  included.
+
+`--check` re-derives on every gate run, so a pin that adds a mode or re-guards one cannot land
+silently. This is C8's "derive the enumeration from the artifact" applied to a different question.
+
+### A liveness twin has one job, and it is not plausibility
+
+Five of this wave's sabotage twins were written as the most plausible wrong implementation, and five
+were **measured inert**:
+
+| twin | why it was invisible |
+|---|---|
+| allow-rule decision returns the prepared ask | differs only in a message no scenario renders |
+| mode transition returns the context unchanged | skips only side effects nothing headless reads |
+| setter reports success without applying | invisible until something asks the subsystem to decide again |
+| response mapper spreads the host's answer | carries the host's `updatedInput` along with it |
+| control-response envelope emptied of its payload | nothing in the corpus reads a control response |
+
+Each twin now changes a **decision**, and the plausible-wrong-implementation mutants moved to the
+oracle, where they belong. **A twin that cannot be observed proves nothing about the splice, and it
+fails in the quiet direction: the gate goes green on a dead row.**
+
+The same question has to be asked of the SCENARIO. The mode-walk originally changed mode four times
+and then said READY, and all three mode-seam splices measured inert on it — a session can be told to
+change mode, believe it did, apply none of the transition, and produce a byte-identical transcript,
+as long as nothing afterwards asks it to decide anything. The walk now makes a tool call after every
+change, and each change is chosen for the DECISION it flips rather than for the mode it visits.
+
+### A liveness sweep needs its own non-vacuity guard
+
+The wave's first sweep reported six splices live on a scenario tag **that does not exist**:
+`m1/run.ts` exits non-zero on an unknown tag, and the sweep read non-zero as RED. It is C8's vacuous
+negative with the sign flipped — a vacuous POSITIVE, which is worse, because a false negative gets
+investigated and a false positive gets committed. The sweep now runs its whole tag list against a
+known-good engine before it measures anything.
+
+### Two takeable functions are owned without being spliced
+
+`Ree`/`isAskRuleDrivenReason` (6 call sites) and `Fy`/`findSafetyCheckReason` (17, the most-called
+function this wave owns) are both anchorable and both have zero free variables. Both were spliced,
+built and solo-sabotaged; **neither turned a scenario red.** After the pre-check and the rule checker
+take their own copies, upstream's remaining callers are the mode-aware body's gate-dead auto/dontAsk
+arms and the broker's ask path, where the corpus's decisions carry no `decisionReason` at all — so a
+finder that never finds anything returns exactly what the healthy one does.
+
+C7's "a single-caller pure helper cannot be a live splice" is the special case of **a many-caller
+helper whose remaining callers are all dark cannot be either.** Both live in `strangle/modules/shared/`
+as `pure-helper` captures, graded against their own upstream bytes before either body is built on
+them.
+
+### The branch instrumenter learned a guarded body that returns
+
+`strangle/branches.ts` refused a `try` block that can `return`, because the end-of-block marker is
+exactly what a `return` skips. Three of this subsystem's four most-called functions do exactly that,
+and rewriting them to hoist a result into a variable would have measured something other than what
+upstream wrote — so the instrument was extended, not the code (C8's rule, second instance).
+
+Every escaping `return` now carries its own recorder for the same completed arm, written as an
+EXPRESSION (`return (__covS(id:F), EXPR)`) so a braceless `if (x) return y` keeps owning its own
+statement; the end-of-block marker is emitted only when the body can actually fall off its end.
+Nine new controls, including the false-RED direction the old refusal was protecting against. Still
+refused, for a reason a `return` does not share: a `break` or `continue` that leaves the guarded
+body, labelled ones included — a jump has no expression position to record in.
+
+### The oracle: `strangle/permissions-parity.test.ts`
+
+The fifth instance of W2's oracle, with one addition to the family: **it finds its subject by the
+build's own rule.** Rather than hand-rolling a brace matcher, it calls `resolveAnchor` +
+`selectExcision` + `assertSignature` against the pinned bundle — the same three functions
+`strangle/build.ts` calls — so an oracle and a build cannot grade different functions, and a row
+whose anchor drifted fails here as well as at the build.
+
+It compares the **port trace** alongside the value, because two refusals returning the same thing can
+differ in nothing but which ports ran and in what order: the update filter's short-circuit, the
+streak predicate's three-term conjunction, the pre-check's two reads of the permission context. And
+it walks the fixture's own axes — the mode transition's thirty ordered pairs, the guard's six modes ×
+four context shapes × the gate, the message builder's eleven reason kinds × three tool names — so a
+mode added upstream widens the cross-product instead of leaving a hole nobody wrote a case for.
+
+### `gK` does not carry `initialize`
+
+The scout calls `gK`/`$U` "the highest-leverage pair in W7 — every headless `control_response` passes
+through them, so sabotage reddens on `initialize` alone". Measured: the headless runtime builds the
+`initialize` and `reinitialize` responses as **inline object literals** and routes every OTHER
+inbound subtype through the shared responder. Sabotaging the success constructor leaves `plain`
+green and turns `runtime-setters` red.
+
+W6 took both envelopes anyway — the `can_use_tool` round trip is the only control request the
+permission chain itself issues, and leaving the return leg unowned would have stopped that chain's
+ownership mid-round-trip. W7 inherits the request leg, and should re-verify the rest of the scout's
+§3.2 table the same way.
+
+### What W6 does NOT claim
+
+**The subsystem is not owned**, and three gaps are named on the ledger row rather than implied:
+
+- `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check — sixty free variables, a
+  model-classifier call, a mutable per-session denial counter. A §2.3 designed port, not a
+  transcription.
+- `createCanUseTool`, the broker's own class method — five mutable maps on its receiver plus
+  thirty-five module imports. The same shape.
+- `Dd`, the chain's two-line entry point — **no string literal at all**, so the anchor mechanism
+  cannot reach it. Both of its neighbours are owned.
+
+(`eln`/`initializeToolPermissionContext`, 5.4 KB of settings and filesystem I/O, belongs with the
+settings layer rather than with the decision chain.)
+
+**And the corpus half of the wave is authored but not recorded.** Eleven scenarios covering the mode
+matrix, the three rule behaviours and the two hook paths are written, committed and type-checked; the
+account's subscription rate limit was exhausted during the recording batch, and `m1/run.ts` correctly
+DISCARDED every rate-limited take rather than committing a cassette that captured an infrastructure
+failure. `research/2026-09-01-w6-permission-matrix.md` marks those cells **AUTHORED-UNRECORDED**
+rather than rounding them up — a fourth verdict value, invented for exactly the reason the other
+three were. Until the cassettes exist, five of the thirteen splices have no covering scenario and the
+gate cannot run its liveness block end to end.
+
 ## Next
 
 W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they
