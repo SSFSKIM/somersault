@@ -1412,8 +1412,13 @@ Three properties are load-bearing, and each answers a way this mechanism could p
   diverges is measuring a different engine. No env var carries the recorder's output path (X6
   forbids one); the directory is baked in at generation time, and it appends on first hit rather
   than flushing at exit, so a killed engine still reports what it ran.
-- **A stale exclusion fails, in both directions** — one naming a branch that no longer exists, and
-  one the corpus has since started to execute. Verified with two negative controls.
+- **A stale exclusion fails, in both directions** — one naming a branch that no longer exists (the
+  code moved, so the reason now protects nothing), and one the corpus has since started to execute
+  (the reason is obsolete, and leaving it would excuse the next real gap on that branch id). The
+  adjudication rules live in `strangle/adjudicate.ts`, pure, and `strangle/attest.test.ts` is the
+  committed control: both stale directions, an unadjudicated branch and an empty inventory each
+  fail, and a fresh attestation passes — 10 checks, in the gate's mechanism block. (W2 asserted
+  these controls existed before they did; C5x wrote them.)
 
 The six exclusions are all *environment*-pinned rather than unexamined: the subagent-steer arm of
 Glob and Grep (its four sources are an env var X6 forbids, empty clientData, a GrowthBook flag §3.3

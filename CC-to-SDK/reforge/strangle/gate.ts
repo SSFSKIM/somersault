@@ -108,6 +108,10 @@ for (const [label, script] of [
   // control — including the faithfulness half, which executes the instrumented
   // fixture and compares it against the same module uninstrumented.
   ["branch instrumenter", "strangle/branches.test.ts"],
+  // …and the adjudicator that reads what the instrumenter recorded: an
+  // unadjudicated branch, a stale exclusion in either direction and an empty
+  // inventory must each fail, while a fresh attestation passes.
+  ["attestation adjudicator", "strangle/attest.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);

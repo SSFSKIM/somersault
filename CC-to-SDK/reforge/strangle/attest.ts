@@ -24,7 +24,8 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { branchSites, outcomesOf, type BranchSite } from "./branches.js";
+import { branchSites, type BranchSite } from "./branches.js";
+import { adjudicate } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 
@@ -40,13 +41,14 @@ const sites = new Map<string, BranchSite[]>();
 for (const a of ATTESTED) {
   sites.set(a.module, branchSites(a.module, join(SOURCE_MODULES, a.module, "reference.js")));
 }
-const inventory = [...sites.values()].flat().flatMap(outcomesOf);
-if (inventory.length === 0) {
+const allSites = [...sites.values()].flat();
+if (adjudicate(allSites, [], new Set()).vacuous) {
   // The canonical failure this whole mechanism exists to forbid: an empty
   // inventory that reports 100% coverage.
   console.log("FAIL — the branch inventory is empty; an attestation over nothing passes vacuously");
   process.exit(1);
 }
+const inventory = adjudicate(allSites, [], new Set()).inventory;
 
 // ---- 2. build instrumented ---------------------------------------------------
 console.log(`coverage attestation @ ${ENGINE_VERSION} — ${sites.size} module(s), ${inventory.length} branch outcome(s)`);
@@ -77,22 +79,13 @@ if (existsSync(COVERAGE_DIR)) {
     for (const line of readFileSync(join(COVERAGE_DIR, f), "utf8").split("\n")) if (line) executed.add(line);
   }
 }
-const excluded = new Map(EXCLUSIONS.map((e) => [e.branch, e.reason]));
-
-const rows: { branch: string; site: BranchSite; outcome: string; state: "executed" | "excluded" | "UNADJUDICATED"; reason?: string }[] = [];
-for (const [, list] of sites) {
-  for (const site of list) {
-    for (const outcome of outcomesOf(site)) {
-      const state = executed.has(outcome) ? "executed" : excluded.has(outcome) ? "excluded" : "UNADJUDICATED";
-      rows.push({ branch: outcome, site, outcome: outcome.slice(outcome.lastIndexOf(":") + 1), state, reason: excluded.get(outcome) });
-    }
-  }
-}
-const unadjudicated = rows.filter((r) => r.state === "UNADJUDICATED");
-// An exclusion for a branch that no longer exists, or that the corpus now
-// reaches, is stale bookkeeping — and a stale exclusion is how a real gap hides.
-const stale = [...excluded.keys()].filter((b) => !inventory.includes(b) || executed.has(b));
-const nExecuted = rows.filter((r) => r.state === "executed").length;
+// The rules themselves live in strangle/adjudicate.ts — pure, so
+// strangle/attest.test.ts can put each one in front of the fixture that violates
+// it without running a build (an unexecuted branch, a stale exclusion in either
+// direction, an empty inventory).
+const verdict = adjudicate(allSites, EXCLUSIONS, executed);
+const { rows, unadjudicated, stale } = verdict;
+const nExecuted = verdict.executedCount;
 
 const lines: string[] = [
   `# Coverage attestation — W2 tool descriptions (${ENGINE_VERSION})`,
@@ -104,7 +97,7 @@ const lines: string[] = [
   `- modules attested: **${sites.size}** — ${[...sites.keys()].join(", ")}`,
   `- branch sites: **${[...sites.values()].flat().length}**, outcomes: **${inventory.length}**`,
   `- executed by the corpus: **${nExecuted}**`,
-  `- reviewed exclusions: **${rows.filter((r) => r.state === "excluded").length}**`,
+  `- reviewed exclusions: **${verdict.excludedCount}**`,
   `- un-adjudicated: **${unadjudicated.length}**`,
   `- scenarios replayed: ${scenarios.join(", ")}`,
   "",
@@ -135,7 +128,7 @@ if (!checkOnly) {
 
 console.log(`\n=== coverage attestation: ${nExecuted}/${inventory.length} executed, ${rows.length - nExecuted - unadjudicated.length} excluded ===`);
 for (const r of unadjudicated) console.log(`  FAIL  ${r.branch} — ${r.site.kind} '${r.site.text}' never took the ${r.outcome} arm and carries no reviewed exclusion`);
-for (const b of stale) console.log(`  FAIL  stale exclusion ${b} — ${inventory.includes(b) ? "the corpus now executes it" : "no such branch in the inventory"}`);
-const ok = unadjudicated.length === 0 && stale.length === 0;
+for (const s of stale) console.log(`  FAIL  stale exclusion ${s.branch} — ${s.why}`);
+const ok = verdict.ok;
 console.log(ok ? "\nPASS — every branch of every attested module is executed or carries a reviewed exclusion" : "\nFAIL");
 process.exit(ok ? 0 : 1);
