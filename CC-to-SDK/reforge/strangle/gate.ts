@@ -46,8 +46,20 @@ import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
 // build.ts boot-checks the graph it writes, so a build that exits 0 has already
 // proven it boots at the pinned version; the gate only has to relay the failure.
 
-const run = (cmd: string, args: string[]) =>
-  spawnSync(cmd, args, { cwd: REFORGE_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const run = (cmd: string, args: string[], timeoutMs?: number) =>
+  spawnSync(cmd, args, { cwd: REFORGE_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
+
+/**
+ * How long a SABOTAGED replay may take before the gate stops waiting.
+ *
+ * A faithful replay of the slowest scenario in the corpus finishes in well under
+ * a minute — it is offline, served from a cassette. Five minutes is therefore a
+ * bound no healthy run approaches, and it exists because a sabotaged one can
+ * fail to finish AT ALL: a twin that breaks a control-channel response leaves
+ * the driver awaiting a promise that never settles, and the gate waited on one
+ * such phase for over twenty-five minutes before an operator noticed.
+ */
+const SABOTAGE_TIMEOUT_MS = 5 * 60_000;
 
 function buildAndBoot(buildArgs: string[]): boolean {
   const built = run("npx", ["tsx", "strangle/build.ts", ...buildArgs]);
@@ -278,8 +290,31 @@ for (const t of TARGETS) {
   }
   let allRed = true;
   for (const tag of t.coverage) {
-    const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"]);
-    const red = r.status !== 0;
+    // THREE OUTCOMES, NOT TWO. `status !== 0` used to mean RED on its own, which
+    // is the vacuous-positive shape this campaign has now hit twice: a runner
+    // that CRASHES, or one an operator kills, exits non-zero without having
+    // graded anything, and the gate reads that as proof of liveness.
+    //
+    // So a RED now needs POSITIVE evidence — either the runner's own verdict
+    // line for this tag, or a timeout, which is itself a divergence because the
+    // faithful build replays the same cassette in seconds (the corpus phase
+    // above establishes that on every run). Anything else is INCONCLUSIVE and
+    // fails the phase rather than passing it, because "we could not measure it"
+    // is not "we measured it and it diverged".
+    const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"], SABOTAGE_TIMEOUT_MS);
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    const timedOut = r.signal !== null && r.status === null;
+    const graded = out.includes(`FAIL  ${tag}`) || out.includes(`PASS  ${tag}`);
+    if (timedOut) {
+      console.log(`  ${tag}: RED (as required) — the sabotaged engine did not finish inside ${SABOTAGE_TIMEOUT_MS / 60_000}m, which the faithful one replays in seconds`);
+      continue;
+    }
+    if (!graded) {
+      console.log(`  ${tag}: INCONCLUSIVE — the runner produced no verdict (exit ${r.status}); a run that graded nothing is not evidence of liveness`);
+      allRed = false;
+      continue;
+    }
+    const red = out.includes(`FAIL  ${tag}`);
     console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — the target is dead code on this scenario"}`);
     allRed &&= red;
   }
