@@ -447,3 +447,22 @@ form would be a pre-commit or CI assertion that a commit touching `reforge/stran
 also touches `reforge/ledger.json`. That is deliberately not built yet — one occurrence is not
 enough evidence that a rule needs enforcement machinery, and the check would fire on manifest edits
 that genuinely change no ownership.
+
+## 2026-09-02 — three debt-grade residues from the C9-fix verification round (CONVERGED)
+
+The round that closed W6's review loop confirmed every fix-wave claim (gate 92/92 reproduced,
+355/669/314 attestation, both reversal splices re-measured with the old twins restored) and left
+three findings, none contradicting a claim:
+
+1. **The record-time fault injector's predicate has no unit fixture control.**
+   `isAutoModeClassifierRequest`/`classifierUnavailable` (`reforge/src/faults.ts`) are guarded only
+   indirectly, by the scenario's substance checks — which do fail loudly in both directions
+   (fault missed → "no permission_denied frame"; mis-aimed → "the Bash call was never attempted").
+   A fixture control (a classifier-shaped request and three near-misses) would pin the predicate
+   itself. Do it when the primitive gains its second user.
+2. **The campaign-total splice count exists only in build output.** No committed doc states it
+   (and none states a stale total, so there is no drift). If a doc ever starts quoting it, make the
+   gate or a check derive it.
+3. **`firedIn` provenance in the W5 probe's verdict table is prose**, not machine-checked against
+   the scenario it names. The named artifacts exist and are gate-covered today; a checker would
+   only matter if a `firedIn` row's scenario were ever renamed or dropped.

@@ -1248,6 +1248,26 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-02 (C9-fix verification round — **CONVERGED**, W6's review loop closed):
+  a bounded round over the five fix commits reproduced every claim under its own
+  runs — the full gate re-run at exactly 92 summary phases (and the old 121
+  figure's arithmetic verified as a log-line count: 89 + 3 new targets = 92),
+  corpus 58/58, attestation 355/669/314 with the committed report byte-identical
+  to a fresh regeneration and the new drift guard proven non-vacuous by
+  perturbation, both reversal splices (`Ree`/`Fy`) and `VNt` extracted and
+  compared byte-level, the record-time fault cassette shown self-consistent and
+  deterministic across 8 replays over 6 build variants with a genuinely
+  differential graded surface, and the mode-walk's per-turn segmentation shown
+  to fail the exact hollow shape it replaced. The strongest result exceeded the
+  wave's own claim: with the OLD twin shapes restored, every permission scenario
+  including the new auto cell stays green — so the darkness verdict's overturn
+  needed both the inverted twins and the population change, which is the
+  "a darkness verdict is a measurement" lesson confirmed by experiment rather
+  than argument. Three findings, all debt-grade, logged in the tracker (the
+  fault predicate's missing unit control; the splice total living only in build
+  output; `firedIn` provenance as prose). **Stop-signal honored** — W6 closes at
+  two rounds + one bounded verification: review → fix (which itself overturned
+  one review conclusion by measurement) → converged.
 - 2026-09-02 (C9-fix / W6 boundary round — **NOT CONVERGED on the record side**;
   the code side held): a boundary review over the wave's ten splices found every
   splice byte-faithful, every darkness claim verified against the bundle and the
