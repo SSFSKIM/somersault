@@ -56,9 +56,13 @@ export function normalizeMcpServers(raw: unknown): McpServerRow[] {
     if (!entry || typeof entry !== "object") continue;
     const e = entry as Record<string, unknown>;
     if (typeof e.name !== "string" || e.name === "") continue;
+    // bl10 fix wave 2, finding 3: the pre-dialog `/mcp` formatter (`commands.ts`'s `formatMcpStatus`) always
+    // read `r.status ?? r.state` — an older or loosely typed host reporting `state` instead of `status` must
+    // still normalize to that value rather than reading as "failed" (the unknown-status fallback).
+    const rawStatus = e.status ?? e.state;
     const row: McpServerRow = {
       name: e.name,
-      status: KNOWN_STATUSES.includes(e.status as McpStatus) ? (e.status as McpStatus) : "failed",
+      status: KNOWN_STATUSES.includes(rawStatus as McpStatus) ? (rawStatus as McpStatus) : "failed",
       tools: [],
     };
     if (typeof e.error === "string") row.error = e.error;

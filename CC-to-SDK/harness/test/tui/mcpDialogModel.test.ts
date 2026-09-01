@@ -78,6 +78,24 @@ describe("normalizeMcpServers", () => {
     expect(rows[5]!.tools).toEqual([{ name: "t" }]);                             // non-boolean annotation field -> omitted
   });
 
+  // bl10 fix wave 2, finding 3: the pre-dialog `/mcp` formatter (commands.ts's `formatMcpStatus`) always
+  // accepted `r.status ?? r.state` — an older or loosely typed host that reports `state` instead of `status`
+  // must still normalize to that state, not fall back to "failed" as though the connection were unknown.
+  it("falls back to the legacy `state` field when `status` is absent", () => {
+    const rows = normalizeMcpServers([{ name: "legacy", state: "connected" }]);
+    expect(rows[0]!.status).toBe("connected");
+  });
+
+  it("still falls back to failed when neither `status` nor `state` is a known literal", () => {
+    const rows = normalizeMcpServers([{ name: "legacy", state: "bogus" }, { name: "neither" }]);
+    expect(rows.map((r) => r.status)).toEqual(["failed", "failed"]);
+  });
+
+  it("prefers `status` over `state` when both are present", () => {
+    const rows = normalizeMcpServers([{ name: "both", status: "connected", state: "failed" }]);
+    expect(rows[0]!.status).toBe("connected");
+  });
+
   it("drops a server with no usable name and never throws on non-array/garbage input", () => {
     expect(normalizeMcpServers([{ status: "connected" }, { name: "", status: "connected" }, { name: 7, status: "connected" }])).toEqual([]);
     expect(normalizeMcpServers(null)).toEqual([]);
