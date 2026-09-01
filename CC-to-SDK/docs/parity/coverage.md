@@ -738,7 +738,7 @@ passthrough). The remaining ready-made levers are incremental — turn-level sur
 | In-process MCP servers built | — | 5 (`cc-tasks`, `cc-swarm`, `cc-brief`, `cc-context`, `cc-compact`) | `cc-context` = self-introspection (`GetContextUsage`); `cc-compact` = self-compaction (`RequestCompaction`) |
 | Native model tools | 37 (+4 in 0.3.211: `ReportFindings`, `ClaudeDesign`, `RefreshMcpTools`, `ReadMcpResourceDir`) | 0 reimplemented; 2 deliberately shadowed by our MCP (Task→swarm, Tasks); `CronCreate` probed dead; **`Workflow` SURFACED opt-in** (`config.workflow`, probe 36 re-verified on 0.3.211) | rely-on, not consume; probes 35/35b/35c: MCP tools are **ToolSearch-deferred** (~11 tok/turn), not inline |
 | Subpath exports | 7 | 1 used (`.`), 2 probed-and-rejected (`/assistant`, `/bridge`), 1 types-only (`/sdk-tools`) | 0.3.211 **deletes `/assistant`** (`runAssistantWorker` gone) + removes the `connectRemoteControl` exports — two 🚫 rows now nonexistent |
-| Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | 8 verified-fired headlessly; all 30 reachable via passthrough; SessionStart/End dormant (documented) |
+| Hook events (`HOOK_EVENTS`) | 30 | first-class `config.hooks` + 4 builders + `mergeHooks` | **12 verified-fired headlessly** (re-measured 2026-09-01, `reforge/w5/probe-hook-events.ts`, pin 2.1.251) — the 2026-06 count of 8 was measured with CALLBACKS only, on one turn that created none of the missing firing conditions; **SessionStart and SessionEnd are NOT dormant**, they fire on the settings/command path, which `Options.hooks` cannot reach because their dispatchers hand the executor no session hooks registry. All 30 still reachable via passthrough; the other 18 are unmeasured, not ruled out |
 | `permissionMode` values | 6 | **6 characterized** | default/plan/auto/bypass(gated) + `acceptEdits`/`dontAsk` (closeout). **Wave T / probe 99:** a runtime `setPermissionMode` is not guaranteed to take — `auto` off its supported model set and `bypassPermissions` at runtime are both **refused**, and the session stays in its previous mode (no silent fallback to `default`, correcting the earlier reading). Callers must treat the setter as fallible: swap the model before granting `auto`, and report a refusal rather than assuming it applied |
 | Session-store top-level fns | 10 | **7 used** (`listSessions`/`getSessionMessages`/`getSessionInfo` via `sessions/reader.ts`, `forkSession` via `sessions/fork.ts`, **`renameSession`/`tagSession`/`deleteSession` via `sessions/mutate.ts`**); `resume`/`persistSession`/`sessionStore` (Options) wired | all documented store fns now wrapped |
 
@@ -775,6 +775,25 @@ via the existing `sessionOptions` factory (no daemon code change). Live-probed f
 SubagentStart/SubagentStop/MessageDisplay); context-injection + tool-block + subagent-attribution all
 verified; `SessionStart`/`SessionEnd` dormant via the programmatic path (documented, no builder). Unit
 +15 (328 total), live 2/2 keyed. The **session cluster is also COMPLETE (3 of 3)**.
+
+> **CORRECTED 2026-09-01 — the number is 12, and two of the four additions were called "dormant" above.**
+> `reforge/w5/probe-hook-events.ts` re-measured the set against pin 2.1.251 with a phase per firing
+> condition and BOTH kinds of hook registered. Four more events fire: **PostToolUseFailure** (on a tool
+> call that fails), **PreCompact** (on a compaction), **SessionStart** (on every run) and **SessionEnd**
+> (on teardown, and by callback on `/clear`).
+>
+> Two independent mistakes produced the old number, and both are worth carrying into any future probe.
+> The first is that the measuring turn never created three of the conditions — it failed no tool,
+> compacted nothing, and ended after the iterator closed — so the silence it recorded is the silence a
+> working dispatcher also produces. The second is structural and survives any amount of re-running: a
+> dispatcher's callback hooks come only from a session hooks registry it is HANDED, and the SessionStart,
+> PreCompact and Notification dispatchers are called without one. Those three are unreachable from
+> `Options.hooks` by construction and reachable from the settings layer, so a callback-only probe
+> measures the registration path rather than the dispatcher.
+>
+> `Notification` remains unfired: its only call site in the pinned bundle is MCP-elicitation completion.
+> The remaining 18 declared events are **unmeasured**, not ruled out — the earlier "dormant" language
+> claimed more than the probe supported.
 
 **SDK capability closeout (domains 1/3/5/6/9) — SHIPPED** (`sdk-capability-closeout`, 2026-06-18): the P1–P4
 turn-level + introspection + session-mutation frontiers, all live-probed first (probes 11–15) then built on
