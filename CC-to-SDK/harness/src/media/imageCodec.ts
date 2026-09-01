@@ -50,6 +50,22 @@ export const MAX_PIXELS = 25_000_000;
  *  future reader mistakes it for anything stronger than a cooperative checkpoint. */
 export const PROCESSING_BUDGET_MS = 2000;
 
+/** Cost is proportional to pixel count, so the FLAT belt above squeezes large legitimate images while
+ *  giving tiny ones enormous slack (tech-debt-tracker "2026-08-31": a 3200x1800 PNG spent ~820ms of the
+ *  2s belt at idle and tripped outright at 4x CPU oversubscription — an ordinary busy-laptop paste).
+ *  `budgetMsForPixels` scales at the SAME rate `PROCESSING_BUDGET_MS` was implicitly calibrated for
+ *  that fixture (2000ms / 5.76 megapixels ≈ 347ms/MP), so any legitimate image keeps that fixture's
+ *  idle safety margin instead of losing it as pixel count grows — this does not touch the security
+ *  boundary above (`maxOutputLength`/`MAX_PIXELS`), only how patient the cooperative checkpoint is with
+ *  a decode that is legitimately doing more work. Floored so a tiny image still gets a workable budget
+ *  rather than a number dominated by call overhead unrelated to pixel count. */
+export const PROCESSING_BUDGET_MS_PER_MEGAPIXEL = 347;
+export const PROCESSING_BUDGET_FLOOR_MS = 500;
+export function budgetMsForPixels(width: number, height: number): number {
+  const megapixels = (width * height) / 1_000_000;
+  return Math.max(PROCESSING_BUDGET_FLOOR_MS, Math.round(PROCESSING_BUDGET_MS_PER_MEGAPIXEL * megapixels));
+}
+
 export interface Deadline { expired(): boolean }
 export function deadlineFrom(now: () => number = Date.now, budgetMs: number = PROCESSING_BUDGET_MS): Deadline {
   const start = now();

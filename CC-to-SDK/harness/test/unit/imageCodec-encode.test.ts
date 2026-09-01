@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   downscale, encodePng, encodePngWithFixedFilter, reencodeImage, RETRY_FLOOR_DIMENSION,
-  decodePng, NEVER_EXPIRES,
+  decodePng, NEVER_EXPIRES, budgetMsForPixels, PROCESSING_BUDGET_FLOOR_MS, PROCESSING_BUDGET_MS_PER_MEGAPIXEL,
+  PROCESSING_BUDGET_MS,
   type DecodedImage, type DecodedPixels, type CodecResult,
 } from "../../src/media/imageCodec.js";
 import { pngDimensions } from "../../src/media/imageDims.js";
@@ -178,5 +179,48 @@ describe("I5b boundary matrix", () => {
     expect(seen).toHaveLength(rungs);
     expect((r as any).value.data.length).toBeLessThanOrEqual(budget);
     if (rungs === 0) expect((r as any).value.dimensions.width).toBe(EXACT_ENCODE_WIDTH);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// tech-debt-tracker "2026-08-31" — the owner's call, resolved as "scale with pixel count": a flat
+// PROCESSING_BUDGET_MS punished large legitimate images while giving tiny ones slack they never
+// needed. `budgetMsForPixels` is the scaled replacement a caller with declared dimensions opts into.
+describe("budgetMsForPixels — the pixel-proportional belt (owner's call, BL13)", () => {
+  it("scales linearly with megapixels at the documented rate (above the floor)", () => {
+    expect(budgetMsForPixels(1500, 1500)).toBe(Math.round(PROCESSING_BUDGET_MS_PER_MEGAPIXEL * 2.25)); // 2.25 MP
+    expect(budgetMsForPixels(2000, 2000)).toBe(Math.round(PROCESSING_BUDGET_MS_PER_MEGAPIXEL * 4)); // 4 MP
+  });
+
+  it("reproduces ~PROCESSING_BUDGET_MS at the exact fixture the flat budget was calibrated for (3200x1800)", () => {
+    // The tracker's own measurement: idle cost against this fixture is what PROCESSING_BUDGET_MS's
+    // 2000ms was implicitly sized for. The scaled formula must land back near that number here —
+    // this is the calibration anchor, not a coincidence.
+    expect(budgetMsForPixels(3200, 1800)).toBeCloseTo(2000, -2); // within 100ms
+  });
+
+  it("floors at PROCESSING_BUDGET_FLOOR_MS for a tiny image, never going below it", () => {
+    expect(budgetMsForPixels(10, 10)).toBe(PROCESSING_BUDGET_FLOOR_MS);
+    expect(budgetMsForPixels(1, 1)).toBe(PROCESSING_BUDGET_FLOOR_MS);
+  });
+
+  it("a large legitimate image gets proportionally MORE budget than the old flat 2000ms — the actual fix", () => {
+    // 12 MP (a common phone-screenshot scale) — under the OLD flat budget this had the same 2000ms
+    // as a 64x64 icon; the whole point of BL13 is that it no longer does.
+    expect(budgetMsForPixels(4000, 3000)).toBeGreaterThan(PROCESSING_BUDGET_MS);
+  });
+
+  it("degrades safely to the floor on a malformed (negative/zero) declared size, never throwing or going negative", () => {
+    expect(budgetMsForPixels(-1, 100)).toBe(PROCESSING_BUDGET_FLOOR_MS);
+    expect(budgetMsForPixels(0, 0)).toBe(PROCESSING_BUDGET_FLOOR_MS);
+  });
+
+  it("a scaled budget reaches the ladder — an image whose declared size earns extra time still succeeds within it", () => {
+    // Real (non-frozen) clock, so this proves the VALUE actually buys usable time, not just that
+    // the number is computed correctly in isolation.
+    const src = syntheticPng(3200, 1800);
+    const r = reencodeImage({ data: src, mediaType: "image/png" },
+      { maxDimension: 2000, byteBudget: 512_000, budgetMs: budgetMsForPixels(3200, 1800) });
+    expect(r.ok).toBe(true);
   });
 });

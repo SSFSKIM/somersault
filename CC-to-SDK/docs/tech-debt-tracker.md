@@ -102,40 +102,6 @@ D3's explicit-refusal scope, which is the owner's decision to revisit and not th
 
 ---
 
-## 2026-08-31 — an oversized clipboard paste can lose to the codec's 2 s belt on a busy machine
-
-**Source:** BL7 Task 5, which diagnosed and paid off the `imageCodec-encode.test.ts` entry that stood here
-and found the same race still live on the production path · `src/tui/clipboardImage.ts` with
-`test/unit/clipboardImage-codec.test.ts`.
-
-**What:** `reencodeImage` BUILDS its own deadline (`Date.now` against the 2 s `PROCESSING_BUDGET_MS`)
-spanning the decode and every rung of the retry ladder; when it trips, the ladder returns
-`budget-exceeded` and the paste becomes an `image-failed` chip. The encode test's cells were fixed by
-handing `reencodeImage` a frozen clock; `pasteClipboardImage` cannot be, because it takes no clock —
-`ClipboardDeps` has no seam for one — and a real paste would not want a stubbed one anyway. Measured on a
-10-core machine against the 3200x1800 fixture: idle, the Linux cell spends ~820 ms of the 2 s budget; at
-2x CPU oversubscription ~1.7 s; at 4x the Linux and Windows cells both red,
-`expected 'image-failed' to be 'image'`.
-
-**Cost:** two costs, and the larger one is the user's. A trip on a real paste is USER-FACING: the
-`image-failed` chip renders into the submitted turn as `[Image could not be processed: <reason>]`
-(`src/tui/pasteChips.ts:204`), so on a machine that happens to be busy an ordinary oversized screenshot
-reaches the model as an apology instead of an image. The measurements above say that is not a remote
-corner: the margin is only ~2.4x at idle and is gone by 2x oversubscription — a laptop compiling, on a
-call, or running a couple of agents. The second, smaller cost is the familiar one: those two test cells
-red under the same conditions, costing whoever runs the gate a re-run and a judgement call.
-
-**Why deferred:** the belt is a deliberate cooperative guard, so the fix is not "remove the deadline" — it
-is a product decision this task has no mandate to make: raise `PROCESSING_BUDGET_MS` for the interactive
-paste path, make the budget scale with pixel count, or let a trip fall back to shipping the image
-unresized rather than dropping it. Each changes what a user gets from a slow paste, which is a taste call
-for the owner, not a mechanical fix. What is settled and recorded here is the measurement, so that call
-can be made on numbers. Revisit alongside any work on the clipboard paste path; do not re-derive the
-2x/4x curve, and do not close this by stubbing a clock into the test — that would hide the user-facing
-half while paying only the flake half.
-
----
-
 ## 2026-08-31 — a FOREIGN sender's literal closing tag truncates that sender's own text
 
 **Source:** M9 branch external review, round 2 (P2); re-adjudicated in BL7 (D-BL7-4), where the half this
