@@ -308,6 +308,25 @@ const ORACLE_IL =
 const ORACLE_UPE =
   "strangle/hooks-parity.test.ts grades it: the UserPromptExpansion block runs six cases across both guard keys and the refusal, compares the executor request and the port trace, and holds seven controls on them.";
 
+const ORACLE_PRECHECK =
+  "strangle/permissions-parity.test.ts grades it: the pre-check block drives the whole thirteen-rung ladder over the fixture's six modes and three tool shapes, compares the returned decision AND the port trace, and holds controls on the rung ORDER — which is what an unexecuted rung would otherwise be free to change.";
+const ORACLE_RULECHECK =
+  "strangle/permissions-parity.test.ts grades it: the rule-checker block runs the same cross-product against upstream's own bytes and compares the port trace, which is the only instrument that can separate this function from the pre-check it twins — two ladders that agree on every recorded transcript and differ in which input they read.";
+const ORACLE_ALLOWRULE =
+  "strangle/permissions-parity.test.ts grades it: the allow-rule block runs the delegation over a tool that allows, one that denies, one that asks and one that throws, on both `crashIsObjection` settings, and compares the value and the trace.";
+const ORACLE_STREAK =
+  "strangle/permissions-parity.test.ts grades it: the streak block drives all three terms of the conjunction independently and asserts the short-circuit order, which no run that cannot reach the later terms could observe.";
+const ORACLE_GUARD =
+  "strangle/permissions-parity.test.ts grades it: the guard block runs six modes x four context shapes x the gate, comparing every refusal against the text research/fixtures/permission-surface-<pin>.json reads out of the bundle — so a guard that gains a refusal upstream widens the case list instead of leaving a hole.";
+const ORACLE_TRANSITION =
+  "strangle/permissions-parity.test.ts grades it: the transition block walks all thirty ordered mode pairs plus the six identity pairs, on both settings of the auto gate, and compares the resulting context field by field.";
+const ORACLE_HOOKDEC =
+  "strangle/permissions-parity.test.ts grades it: the hook-decision block runs every result shape the PermissionRequest contract allows — allow, deny, rewrite, silence — against both tool capability shapes, and compares the decision and the port trace.";
+const ORACLE_BROKERMAP =
+  "strangle/permissions-parity.test.ts grades it: the response-mapper block runs every host answer shape including the empty updated input and the interrupting deny, and holds a control on the mutant that spreads the host's answer instead of rebuilding it.";
+const ORACLE_BROKERUPD =
+  "strangle/permissions-parity.test.ts grades it: the update-filter block runs both context shapes and both tool suppression hooks, compares the surviving update list, and asserts the exemption short-circuits before the tool is consulted.";
+
 export const EXCLUSIONS: Exclusion[] = [
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded
@@ -1088,5 +1107,1108 @@ export const EXCLUSIONS: Exclusion[] = [
     reason:
       "the refusal arm: an expansion with no UserPromptExpansion hook registered produces no consult, no record and no frame, so \"the guard refused\" and \"nothing was expanded\" are the same recording. Unlike PostToolUseFailure's refusal — which another scenario's tool call now renders incidentally — nothing else in the corpus expands a slash command at all, so this one stays unrecordable until a second expanding scenario exists. " +
       ORACLE_UPE + " Two controls sit on it: a refusal that still reached the executor, and one that still minted a tool-use id.",
+  },
+
+  // ==== W6 / C9: the permission subsystem ==================================
+  //
+  // The widest exclusion set in the campaign, and the reason is structural.
+  // This subsystem's job is to DECIDE, and a rung that is reached and passes
+  // leaves the same transcript as one that was never reached — so a decision
+  // ladder is the one shape where transcript-level coverage says least. Four
+  // families account for most of it, and each is named on its own entries:
+  // arms behind a pinned environment (sandboxing, remote execution, the
+  // feature gates §3.3 fixes at their disabled defaults), arms behind a tool
+  // CAPABILITY no headless tool implements, arms behind an interactive surface
+  // a headless session does not have, and arms behind a condition this project
+  // has deliberately not created (a real safety-check trigger).
+  //
+  // Three entries below are MEASURED negatives rather than deferrals, and they
+  // are the ones worth reading: the pre-check's whole-tool deny rung (a
+  // whole-tool deny rule removes the tool from the session, so the rung cannot
+  // see one), its input-deny rung (three rule spellings tried live, none
+  // landed on it), and the guard's auto refusal (the mode was ACCEPTED through
+  // both paths, so the refusal needs a condition this environment does not
+  // produce).
+  {
+    branch: "permission-precheck#permissionPrecheck@0:T",
+    reason:
+      "the ABORT arm at the top of the ladder: a turn cancelled while a permission decision is in flight. The corpus aborts a turn (`interrupt`), and that abort lands BETWEEN tool calls — the SDK's interrupt cancels the query, not a decision already inside the pre-check, so replaying it reaches this line with a signal that is not yet aborted. Named condition, not created. " +
+      ORACLE_PRECHECK +
+      " One case drives an already-aborted context and asserts the throw happens before the permission context is even read.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@1:T",
+    reason:
+      "the WHOLE-TOOL DENY rung, and this one is MEASURED rather than deferred. A whole-tool deny rule never reaches this line: upstream applies it by REMOVING the tool from the session (a `deny: [\"Write\"]` run offers twenty-four tools in its init frame instead of twenty-five), so the model is told the tool does not exist and nothing decides anything. Two of this wave's scenarios were written that way, passed every assertion they carried, and were caught by this branch reading zero. The remaining condition is a whole-tool deny arriving MID-session through `updatedPermissions`, after the tool list for the turn is already fixed. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@2:T",
+    reason:
+      "the INPUT-DENY rung. Reaching it needs a rule upstream's input matcher accepts, and the grammar is narrower than the docs suggest: only `Tool(field:pattern)`, and the tool's OWN rule-content field is explicitly skipped. Three spellings were measured live and none landed — `Write(*)` is read as a whole-tool grant and filtered the tool out of the session, `Write(<path>)` and `Write(//<abs>)` fall on the skipped `file_path` field, and `Write(content:<glob>)` let the call through to the broker. Named with its condition and its three refuted spellings, which is more than the row had before. " +
+      ORACLE_PRECHECK +
+      " Both deny rungs are graded there against upstream's bytes, including the message each builds and the fact that rung 1's is the only permission sentence in the subsystem built INLINE rather than by the message builder.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@4:T",
+    reason:
+      "the Bash SANDBOX carve-out inside the allow-rule arm. `sandbox.isSandboxingEnabled()` is false in the graded environment (§3.3 pins the gate state and X6 forbids the env overrides that would flip it), so no run can make a call `sandboxable`. This is the full five-term conjunction. " +
+      ORACLE_PRECHECK +
+      " The oracle drives the sandbox port on both settings and asserts the delegation is SUPPRESSED while a sandboxable call is unconfirmed.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@5:T",
+    reason:
+      "the Bash SANDBOX carve-out inside the allow-rule arm. `sandbox.isSandboxingEnabled()` is false in the graded environment (§3.3 pins the gate state and X6 forbids the env overrides that would flip it), so no run can make a call `sandboxable`. The fourth term, `isAutoAllowBashIfSandboxedEnabled`, is a second gate below the first. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@6:T",
+    reason:
+      "the `tool.name === bashToolName && context.forRemoteExecution !== true` prefix of the sandbox conjunction. Unlike the terms below it this one is not gate-blocked — it needs a Bash call that also matches a WHOLE-TOOL Bash allow rule, which no scenario carries. It would buy two booleans of a five-term conjunction whose remaining three are pinned off, so it is deferred rather than recorded. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@7:T",
+    reason:
+      "the same prefix's first term. Same condition and same deferral as the branch above. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@8:T",
+    reason:
+      "`confirmed` — a sandboxable call the sandbox has already confirmed. Unreachable while sandboxing is off. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@9:T",
+    reason:
+      "`awaitingSandbox` — a sandboxable call the sandbox has NOT confirmed, which is the arm that suppresses the allow-rule delegation. Unreachable while sandboxing is off, and the arm the oracle spends two cases on for exactly that reason. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@10:T",
+    reason:
+      "the MCP-SERVER-POLICY remote exemption. It needs `CLAUDE_CODE_REMOTE` set, which X6's env allowlist forbids a graded run from setting, AND an allow rule sourced from a server policy, which a local session has no way to acquire. The full four-term conjunction, including the feature gate at its end. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@11:T",
+    reason:
+      "the MCP-SERVER-POLICY remote exemption. It needs `CLAUDE_CODE_REMOTE` set, which X6's env allowlist forbids a graded run from setting, AND an allow rule sourced from a server policy, which a local session has no way to acquire. The `env.CLAUDE_CODE_REMOTE` term. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@12:T",
+    reason:
+      "the MCP-SERVER-POLICY remote exemption. It needs `CLAUDE_CODE_REMOTE` set, which X6's env allowlist forbids a graded run from setting, AND an allow rule sourced from a server policy, which a local session has no way to acquire. The rule-source term. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@13:F",
+    reason:
+      "the guard that SUPPRESSES the allow-rule delegation. Its false arm needs either the sandbox carve-out or the remote-policy exemption above, both of which are unreachable in the graded environment. This is the branch that decides whether an allow rule delegates at all, so the oracle carries controls on both arms. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@14:F",
+    reason:
+      "the `!awaitingSandbox` half of the same guard; unreachable for the same pinned reason. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@15:T",
+    reason:
+      "the tool's own `checkPermissions` THROWING. Every tool the corpus calls parses its input and answers; a throw needs a tool whose schema rejects the model's arguments or whose check crashes, which no recording creates deliberately. This is also the arm the `crashIsObjection` option exists for, and its consequences are what the oracle spends its error cases on. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@16:T",
+    reason:
+      "the PLAN-MODE MCP OVERRIDE, whole. It needs an MCP tool, called in PLAN mode, that is not read-only and whose own check returns passthrough. The corpus calls an MCP tool (`mcp-tool`) and enters plan mode (`perm-plan-mode`, `perm-mode-walk`), but never both at once, and the MCP tool it has is read-only. Named condition; one scenario would create it. " +
+      ORACLE_PRECHECK +
+      " The override is graded there across all five of its terms, because it is written inside an assignment in upstream and the evaluation order is the thing a transcription can silently change.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@17:T",
+    reason:
+      "the same override's four-term prefix, up to the plan-mode read. Same condition. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@21:T",
+    reason:
+      "the tool-error CLASSIFIER returning a decision. Downstream of the throw at @15, so it inherits that condition. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@21:F",
+    reason:
+      "the classifier returning UNDEFINED, which leaves the passthrough default in place. Downstream of the same unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@23:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@26:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@26:F",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@30:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@30:F",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@33:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@41:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@44:T",
+    reason:
+      "an optional read of `decision` where the tool's check left it UNDEFINED. Upstream seeds `decision` with a passthrough object and every corpus path either keeps that object or replaces it with the tool's answer, so the optional never short-circuits; it can only be undefined on the arm where the classifier returns undefined for a THROWN error and the seed has already been overwritten. Downstream of @15's unreached throw. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@24:T",
+    reason:
+      "the ASK-RULE rung firing inside the PRE-CHECK. The corpus has an ask-rule cell (`perm-rule-ask`) and it lands on the mode-aware body's own copy of the rung rather than on this one — the same twin-function shape that makes `Gx` and `Aon` two rule checkers rather than one. Named condition: an ask rule matching a call that reaches THIS body, which needs a tool the mode-aware body passes through. " +
+      ORACLE_PRECHECK +
+      " The rung's two arms — annotating an existing ask versus creating one — are the pair the oracle exists to separate, and `matchedAskRule` is stamped on only one of them.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@25:T",
+    reason:
+      "the ANNOTATING arm of that rung: an ask rule matching a decision the tool was ALREADY asking about, which is the only place `matchedAskRule` is attached. Downstream of @24. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@25:F",
+    reason:
+      "the CREATING arm of the same rung. Downstream of @24. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@27:T",
+    reason:
+      "a tool that REQUIRES USER INTERACTION. Only interactive tools implement the hook — AskUserQuestion and the plan-mode pair — and a headless session neither offers them a surface nor has the model reach for them. Named condition, and one the SDK's own headless shape argues against creating. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@29:T",
+    reason:
+      "the interaction rung's arm that keeps an ask the tool already made. Downstream of @27. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@29:F",
+    reason:
+      "the same rung's arm that CREATES an ask with `requiresUserInteraction` as its reason. Downstream of @27. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@34:T",
+    reason:
+      "an MCP server's ASK CEILING (`effectiveMaxPermission === \"ask\"`). The corpus's MCP server is configured without one; setting it means a second MCP fixture whose only difference is the ceiling. Named condition. " +
+      ORACLE_PRECHECK +
+      " The ceiling's reason object is one of the eleven decisionReason kinds the oracle walks.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@37:T",
+    reason:
+      "PLAN mode with bypass AVAILABLE — the second disjunct of the bypass test, which turns rung 11 into an ALLOW rather than a refusal. It needs a session launched with bypass available that is then put into plan mode; the corpus's plan-mode cells launch in plan mode without the bypass affordance. Named condition, and the one the mode-walk was designed around rather than into. " +
+      ORACLE_PRECHECK +
+      " Both disjuncts are graded there over the fixture's six modes.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@45:T",
+    reason:
+      "the BYPASS-IMMUNE safety check — the one thing bypass mode may not override. It needs a safety check to fire at all, which §3.3 of the matrix records as a condition this project should design deliberately rather than improvise, because creating it means running something genuinely dangerous in the sandbox. Named, not created. " +
+      ORACLE_PRECHECK +
+      " The floor's asymmetry (under bypass only an immune check holds; outside it any safety check, a sandbox override or a plan-mode floor does) is graded there in both directions.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@48:T",
+    reason:
+      "the ordinary SAFETY FLOOR outside bypass. Same uncreated condition as @45. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@55:T",
+    reason:
+      "a tool that OPTS OUT of whole-tool allow rules (`ignoresWholeToolAllowRule`). One tool in the bundle implements it, and it is not one a headless corpus calls. Named condition. " +
+      ORACLE_PRECHECK +
+      " The opt-out is one of three independent escapes from the whole-tool allow, and the oracle drives each separately because a transcription that merges them is invisible to any recording.",
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@56:T",
+    reason:
+      "the CHROME-TOOL escape from the whole-tool allow. The Chrome tools are not present in a headless session's tool list at all, so no input can make `isChromeTool` true. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@57:T",
+    reason:
+      "the chrome CLASSIFIER floor, the first of the two Chrome conditions. Unreachable for the same reason. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "permission-precheck#permissionPrecheck@57:F",
+    reason:
+      "its false arm, which hands off to the context's chrome floor flag. Unreachable for the same reason. " +
+      ORACLE_PRECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@0:T",
+    reason:
+      "the whole-tool deny rung of the rule-only checker. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. It also inherits the pre-check's measured obstacle: a whole-tool deny rule removes the tool from the session, so it is not enough to add one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@1:T",
+    reason:
+      "its input-deny rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. Same input-rule grammar obstacle as the pre-check's, with the same three refuted spellings. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@2:F",
+    reason:
+      "the arm where NO allow rule matches, which is the gateway to this function's whole lower body. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@3:T",
+    reason:
+      "the Bash sandbox carve-out (the full sandbox conjunction). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@4:T",
+    reason:
+      "the Bash sandbox carve-out (its four-term prefix). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@5:T",
+    reason:
+      "the Bash sandbox carve-out (its `tool.name === bashToolName && !forRemoteExecution` prefix). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@6:T",
+    reason:
+      "the Bash sandbox carve-out (its tool-name term). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@7:T",
+    reason:
+      "the Bash sandbox carve-out (`sandboxable`). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@9:T",
+    reason:
+      "the Bash sandbox carve-out (`sandboxable` on the confirmation read). Sandboxing is off in the graded environment (§3.3), and this function is additionally behind `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@8:F",
+    reason:
+      "the arm that SUPPRESSES this checker's allow-rule delegation for an unconfirmed sandboxable call. Unreachable while sandboxing is off. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@10:T",
+    reason:
+      "the tool's own check THROWING in the rule-only checker. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@10:F",
+    reason:
+      "the same try completing without a throw in the rule-only checker. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@11:T",
+    reason:
+      "the tool-error classifier returning a decision, downstream of the unreached try. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@11:F",
+    reason:
+      "it returning undefined, downstream of the unreached try. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@12:T",
+    reason:
+      "`crashIsObjection` set on the crash path — the option that turns a tool's crash into an objection, which is this function's own reason for existing separately. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@12:F",
+    reason:
+      "it unset on the crash path — the option that turns a tool's crash into an objection, which is this function's own reason for existing separately. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@13:T",
+    reason:
+      "the optional read of the options bag with the bag present on the crash path — the option that turns a tool's crash into an objection, which is this function's own reason for existing separately. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@13:F",
+    reason:
+      "the same read with no bag on the crash path — the option that turns a tool's crash into an objection, which is this function's own reason for existing separately. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@14:T",
+    reason:
+      "a tool DENY winning outright. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@14:F",
+    reason:
+      "no tool deny. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@15:T",
+    reason:
+      "the optional read behind it with a decision present. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@15:F",
+    reason:
+      "the same read with none. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@16:T",
+    reason:
+      "an ask rule matching at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@16:F",
+    reason:
+      "no ask rule at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@17:T",
+    reason:
+      "its annotating arm at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@17:F",
+    reason:
+      "its creating arm at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@18:T",
+    reason:
+      "the optional read behind them with a decision present at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@18:F",
+    reason:
+      "the same read with none at this checker's ask rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@19:T",
+    reason:
+      "the interaction rung firing. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@19:F",
+    reason:
+      "it not firing. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@20:T",
+    reason:
+      "its two-term prefix true. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@20:F",
+    reason:
+      "false. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@21:T",
+    reason:
+      "the `interactionSatisfied` term true. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@21:F",
+    reason:
+      "false. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@22:T",
+    reason:
+      "the optional options read with a bag. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@22:F",
+    reason:
+      "without one. This rung is the one that reads the HOOK's updated input rather than the raw one, which is the difference between the twins. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@23:T",
+    reason:
+      "the arm that keeps an existing ask at the interaction rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@23:F",
+    reason:
+      "the arm that creates one at the interaction rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@24:T",
+    reason:
+      "the optional read with a decision at the interaction rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@24:F",
+    reason:
+      "without one at the interaction rung. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@25:T",
+    reason:
+      "an ask the USER's own ask rule drove, kept as-is — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@25:F",
+    reason:
+      "the same test failing — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@26:T",
+    reason:
+      "its behaviour term — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@26:F",
+    reason:
+      "that term false — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@27:T",
+    reason:
+      "the optional read with a decision — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@27:F",
+    reason:
+      "without one — the rung that consumes the owned `isAskRuleDrivenReason` helper. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK +
+      " The helper itself is graded against upstream's own bytes before this body is built on it.",
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@28:T",
+    reason:
+      "an MCP ask CEILING in the rule-only checker. Needs an MCP tool reaching this function, which needs a hook rewrite on an MCP call. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@28:F",
+    reason:
+      "no ceiling in the rule-only checker. Needs an MCP tool reaching this function, which needs a hook rewrite on an MCP call. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@29:T",
+    reason:
+      "the optional mcpInfo read with MCP info in the rule-only checker. Needs an MCP tool reaching this function, which needs a hook rewrite on an MCP call. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@29:F",
+    reason:
+      "without it in the rule-only checker. Needs an MCP tool reaching this function, which needs a hook rewrite on an MCP call. `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@31:T",
+    reason:
+      "the safety floor's behaviour term true at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@31:F",
+    reason:
+      "false at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@32:T",
+    reason:
+      "the optional read with a decision at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@32:F",
+    reason:
+      "without one at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@33:T",
+    reason:
+      "a safety check found at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@33:F",
+    reason:
+      "none found at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@34:T",
+    reason:
+      "the optional decisionReason read with a reason at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "rule-based-permissions#checkRuleBasedPermissions@34:F",
+    reason:
+      "without one at this checker's safety floor. Compounds two uncreated conditions: the safety check itself (§3.3 of the matrix defers creating one deliberately) and `Gx` is the pre-check's twin — the same ladder without the mode arms — and it has exactly one live headless caller: the re-check the engine runs on a PermissionRequest hook's REWRITTEN input. Every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs. Reaching what is below needs a hook rewrite onto an input with no matching allow rule — one scenario, and a named one. " +
+      ORACLE_RULECHECK,
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@0:T",
+    reason:
+      "the tool's `checkPermissions` THROWING inside the delegation. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. A throw needs a tool whose schema rejects the model's arguments. " +
+      ORACLE_ALLOWRULE,
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@1:T",
+    reason:
+      "a tool DENY overriding an allow rule — the module's whole point, stated as a branch: an allow rule does not allow, it lets the tool object. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. Reaching it needs a tool that denies its own call while a whole-tool allow rule is in force. Named condition. " +
+      ORACLE_ALLOWRULE +
+      " Both the deny and the ask overrides are graded there, which is what makes this module's claim testable at all.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@2:T",
+    reason:
+      "the optional read behind that deny test with the decision present-but-not-deny. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE,
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@3:F",
+    reason:
+      "the arm where the tool neither denies nor asks, so the allow rule actually allows. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. The recorded shape takes the ASK arm, so the plain allow is the one that is not created. Named condition: a whole-tool allow rule over a tool whose own check passes through. " +
+      ORACLE_ALLOWRULE,
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@4:T",
+    reason:
+      "the optional read behind the ask test with no decision at all — downstream of the unreached throw at @0. " +
+      ORACLE_ALLOWRULE,
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@5:T",
+    reason:
+      "the classifier returning a DENY for a thrown error. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@5:F",
+    reason:
+      "it returning something else. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@6:T",
+    reason:
+      "the classifier returning any decision. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@6:F",
+    reason:
+      "it returning undefined. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@7:T",
+    reason:
+      "`crashIsObjection` set on an unclassifiable crash. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@7:F",
+    reason:
+      "that test failing. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@8:T",
+    reason:
+      "the classifier returning undefined. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@8:F",
+    reason:
+      "it returning a decision. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@9:T",
+    reason:
+      "the optional options read with a bag. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "allow-rule-decision#allowRuleDecision@9:F",
+    reason:
+      "without one. Every one of these is downstream of the tool's check THROWING at @0, which the corpus does not create. this module is the pre-check's rung-3 delegation, and the corpus reaches it on ONE shape: a whole-tool allow rule on a Write, whose own check returns an ask. That is the shape `perm-rule-allow` was rewritten to create after its content-rule take measured the tool instead of the rung. " +
+      ORACLE_ALLOWRULE +
+      " The crash path is where this module differs most from a naive transcription — it decides whether a crash is an objection or a passthrough — so the oracle runs it over both option settings and both classifier outcomes.",
+  },
+  {
+    branch: "classifier-streak#classifierOnlyStreakActive@0:T",
+    reason:
+      "the full conjunction: the streak gate enabled AND a request dialog present. The gate is a feature gate §3.3 pins to its disabled default, and `requestDialog` is an interactive surface a headless session has no equivalent for — so the two terms fail for two independent and both structural reasons. " +
+      ORACLE_STREAK +
+      " The predicate's three terms are driven separately there, because a conjunction that short-circuits in the wrong order is invisible to any run that cannot reach the later terms.",
+  },
+  {
+    branch: "classifier-streak#classifierOnlyStreakActive@1:T",
+    reason:
+      "the gate term alone. Same pinned gate. " +
+      ORACLE_STREAK,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@0:T",
+    reason:
+      "the guard called with NO mode at all — the arm that lets a caller clear the mode. The control channel's `setPermissionMode` always carries one, so nothing headless can omit it. " +
+      ORACLE_GUARD +
+      " The oracle drives the guard over the fixture's six modes AND the undefined case, and the refusal texts it compares come from the same fixture, so a guard that gains a refusal upstream widens the case list rather than leaving a hole.",
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@1:T",
+    reason:
+      "the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. This is the arm's entry test. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@2:T",
+    reason:
+      "a RESTRICTED context refusing bypass — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@2:F",
+    reason:
+      "an unrestricted one — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@3:T",
+    reason:
+      "the bypass feature gate disabling it — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@3:F",
+    reason:
+      "the gate allowing it — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@4:T",
+    reason:
+      "the session not offering bypass at all — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@4:F",
+    reason:
+      "it offering bypass — downstream of the guard's BYPASS arm. `bypassPermissions` is set at SPAWN in every scenario that uses it, and the spawn path does not consult this guard — the CLI's own mode parser accepts it directly. A run that asks the guard for bypass needs `setPermissionMode(\"bypassPermissions\")` over the control channel, which the SDK refuses upstream of the guard. Measured through both paths by `w6/probe-permissions.ts`. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@5:T",
+    reason:
+      "the guard REFUSING `auto`, and this is a MEASURED negative rather than an unreached one. The wave probed `auto` through both paths and both ACCEPTED it: upstream's auto gate is `!circuitBreaker && !settingsDisabled && modelSupportsAuto`, three local conditions rather than the remote feature flag the campaign spec assumed, and none of them is off in this environment. So the refusal arm needs a circuit-breaker trip, a settings-level disable or a model without auto support — none of which §3.3's pinned environment produces. " +
+      ORACLE_GUARD +
+      " The refusal and its two message shapes are graded there against the fixture's own guard texts.",
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@6:T",
+    reason:
+      "the `mode === \"auto\"` term of that refusal. Executed only when the gate below it is false, so it inherits @5's condition. " +
+      ORACLE_GUARD,
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@7:T",
+    reason:
+      "the refusal message WITH a reason from the gate layer. Both are downstream of the auto refusal at @5, which this environment does not produce. " +
+      ORACLE_GUARD +
+      " The two message shapes are exactly what the fixture records verbatim, and the oracle compares both.",
+  },
+  {
+    branch: "mode-change-guard#guardPermissionModeChange@7:F",
+    reason:
+      "the bare refusal with none. Both are downstream of the auto refusal at @5, which this environment does not produce. " +
+      ORACLE_GUARD +
+      " The two message shapes are exactly what the fixture records verbatim, and the oracle compares both.",
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@0:T",
+    reason:
+      "the NO-OP transition, `from === to`. The control channel short-circuits above this function — the headless runtime's handler compares the modes itself and returns before calling the transition — so a redundant `setPermissionMode` never reaches this line. That short-circuit is the same fact that made `K0` a dead splice and got it dropped from the manifest. " +
+      ORACLE_TRANSITION +
+      " The oracle walks all thirty ordered mode pairs INCLUDING the six identity pairs, which is where this arm is graded.",
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@5:T",
+    reason:
+      "leaving `auto` as the FROM mode. The mode walk enters and leaves five modes; `auto` is not one of them, because the walk was recorded before the wave measured that `auto` is settable at all. Named condition, and now a cheap one: one more leg on the walk. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@6:F",
+    reason:
+      "the plan-mode disjunct being false while the auto disjunct decides. Same condition as @5. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@7:T",
+    reason:
+      "ENTERING auto — the arm that STRIPS dangerous rules on the way in. Same uncreated condition as @5: the walk never visits `auto`. This is the arm the wave most wants a future walk to cover, because the strip and its restore are a matched pair and only the pair is safe. " +
+      ORACLE_TRANSITION +
+      " Both are graded there across the fixture's full mode cross-product with the gate driven on both settings.",
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@8:T",
+    reason:
+      "the `nowAuto` term of that test — the arm that STRIPS dangerous rules on the way in. Same uncreated condition as @5: the walk never visits `auto`. This is the arm the wave most wants a future walk to cover, because the strip and its restore are a matched pair and only the pair is safe. " +
+      ORACLE_TRANSITION +
+      " Both are graded there across the fixture's full mode cross-product with the gate driven on both settings.",
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@9:T",
+    reason:
+      "the auto gate DISABLED on the way in, downstream of the unvisited auto entry at @7. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@9:F",
+    reason:
+      "it enabled, downstream of the unvisited auto entry at @7. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@10:T",
+    reason:
+      "LEAVING auto — the arm that RESTORES the rules the entry stripped. Same uncreated condition. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@11:T",
+    reason:
+      "the `wasAuto` term of that test — the arm that RESTORES the rules the entry stripped. Same uncreated condition. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@12:F",
+    reason:
+      "the plan-exit test failing on its saved-mode term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@13:F",
+    reason:
+      "it failing on its destination term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "mode-transition#transitionPermissionMode@14:F",
+    reason:
+      "it failing on its source term. The mode walk leaves plan mode, so the TRUE path through this test is covered; its false arms need a transition that looks like a plan exit and is not — a different `from`, or a plan-to-plan move, or a plan exit with no saved mode. The last is the interesting one and it is unreachable by construction: entering plan mode always saves. " +
+      ORACLE_TRANSITION,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@5:F",
+    reason:
+      "the hook answering with NO updated input, so the raw input is carried forward. the corpus arms this hook twice — a rewrite and a deny — and both answer with a decision. Both recorded hooks rewrite or deny explicitly. Named condition: a hook that allows without touching the input. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@6:F",
+    reason:
+      "the same absence on the branch that decides whether to RE-CHECK the rewritten input. Its true arm is the whole reason `perm-hook-rewrite` exists; the false arm is a hook that changes nothing. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@7:F",
+    reason:
+      "the re-check raising NO objection — a hook rewrite onto an input the rules are happy with. The recorded rewrite lands on a path an ask rule names, which is what makes the re-check object; the quiet rewrite is one more scenario. Named condition. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@8:F",
+    reason:
+      "the objection being something other than an ask. Downstream of @7's objection, and needs the re-check to DENY rather than ask. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@9:F",
+    reason:
+      "the objection carrying no decisionReason of its own. Downstream of the same. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@10:T",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the full test. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@10:F",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the test failing as a whole. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@11:T",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is its two-term prefix. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@11:F",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is that prefix false. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@12:T",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the `interactionSatisfied` term. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@12:F",
+    reason:
+      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is that term false. " +
+      ORACLE_HOOKDEC +
+      " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@13:T",
+    reason:
+      "the tool-level SUPPRESSION of permission updates. `suppressesAllPermissionUpdates` is implemented by a handful of tools and by none the corpus calls, so neither arm of the test can be created from a recording. This is the full conditional. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@13:F",
+    reason:
+      "the tool-level SUPPRESSION of permission updates. `suppressesAllPermissionUpdates` is implemented by a handful of tools and by none the corpus calls, so neither arm of the test can be created from a recording. This is it false. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@14:T",
+    reason:
+      "the tool-level SUPPRESSION of permission updates. `suppressesAllPermissionUpdates` is implemented by a handful of tools and by none the corpus calls, so neither arm of the test can be created from a recording. This is the null-check term. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@14:F",
+    reason:
+      "the tool-level SUPPRESSION of permission updates. `suppressesAllPermissionUpdates` is implemented by a handful of tools and by none the corpus calls, so neither arm of the test can be created from a recording. This is that term false. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@15:T",
+    reason:
+      "the `updatedPermissions ?? []` default — the nullish default on the suppressed branch. The corpus's hooks either send updates or omit the key, and the two branches this default sits on are split by the suppression test above, which no corpus tool triggers. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@15:F",
+    reason:
+      "the `updatedPermissions ?? []` default — its other arm. The corpus's hooks either send updates or omit the key, and the two branches this default sits on are split by the suppression test above, which no corpus tool triggers. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@16:T",
+    reason:
+      "the `updatedPermissions ?? []` default — the same default on the unsuppressed branch. The corpus's hooks either send updates or omit the key, and the two branches this default sits on are split by the suppression test above, which no corpus tool triggers. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@16:F",
+    reason:
+      "the `updatedPermissions ?? []` default — its other arm. The corpus's hooks either send updates or omit the key, and the two branches this default sits on are split by the suppression test above, which no corpus tool triggers. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@17:T",
+    reason:
+      "updates surviving the filter on the hook path. Downstream of the same suppression split. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@17:F",
+    reason:
+      "none surviving on the hook path. Downstream of the same suppression split. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "permission-request-hook-decision#permissionRequestHookDecision@18:F",
+    reason:
+      "the hook answering with NO message, so the module falls back to the built one. Both recorded hooks send a message. Named condition, and one line of a scenario. " +
+      ORACLE_HOOKDEC,
+  },
+  {
+    branch: "broker-response-map#brokerResponseMap@3:F",
+    reason:
+      "the host answering ALLOW with no updated input, so the raw input is carried. Every broker in this corpus echoes an input back — `permission-bag` deliberately rewrites one — so the empty case is the one no fixture creates. Named condition: a broker returning a bare allow. " +
+      ORACLE_BROKERMAP +
+      " The mapper is graded there over both shapes AND over the empty-object case, which is the one a naive `answer.updatedInput ?? input` would get wrong.",
+  },
+  {
+    branch: "broker-response-map#brokerResponseMap@4:F",
+    reason:
+      "the `answer.updatedInput` term of that test being absent. Same condition. " +
+      ORACLE_BROKERMAP,
+  },
+  {
+    branch: "broker-response-map#brokerResponseMap@5:T",
+    reason:
+      "a deny that also INTERRUPTS the turn. `interrupt` is a field the SDK's host-side type does not expose, so an SDK host cannot set it — it is reachable only from the engine's own prompt surface. Structurally unreachable through the seam this project owns. " +
+      ORACLE_BROKERMAP +
+      " The interrupting deny is graded there because the field changes the turn's control flow, not just its message.",
+  },
+  {
+    branch: "broker-response-map#brokerResponseMap@6:F",
+    reason:
+      "the behaviour term of that test on a non-deny answer. Downstream of the same unreachable field. " +
+      ORACLE_BROKERMAP,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@1:T",
+    reason:
+      "a REMOTE-EXECUTION context, which exempts the whole update filter. X6's env allowlist forbids a graded run from setting the variable that produces one. " +
+      ORACLE_BROKERUPD +
+      " The exemption is graded there on both context shapes, and the oracle asserts it short-circuits BEFORE the tool is consulted — which is the ordering a transcription can silently invert.",
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@2:T",
+    reason:
+      "a tool suppressing ALL permission updates. Same structural condition as the hook module's: no tool the corpus calls implements the hook. " +
+      ORACLE_BROKERUPD,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@5:T",
+    reason:
+      "some updates surviving the always-allow filter. The split above them is decided by `suppressesAlwaysAllowRule`, which no corpus tool implements, so both arms of the survivor test sit behind an uncreatable condition. " +
+      ORACLE_BROKERUPD,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@5:F",
+    reason:
+      "none surviving. The split above them is decided by `suppressesAlwaysAllowRule`, which no corpus tool implements, so both arms of the survivor test sit behind an uncreatable condition. " +
+      ORACLE_BROKERUPD,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@6:T",
+    reason:
+      "the always-allow strip firing. Needs a tool implementing `suppressesAlwaysAllowRule`, or a context the exemption covers. " +
+      ORACLE_BROKERUPD +
+      " This is the branch that decides whether a broker's `alwaysAllow` suggestion becomes a durable rule, so the oracle spends four cases on it.",
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@8:T",
+    reason:
+      "the tool-implemented disjunct of that strip. Same condition. " +
+      ORACLE_BROKERUPD,
+  },
+  {
+    branch: "broker-permission-updates#brokerPermissionUpdates@9:T",
+    reason:
+      "its null-check term. Same condition. " +
+      ORACLE_BROKERUPD,
   },
 ];

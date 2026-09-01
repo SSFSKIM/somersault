@@ -6,10 +6,10 @@ it cannot instrument fails the run rather than reporting a partial inventory.
 
 - modules attested: **46** — glob-description, read-description, grep-description, webfetch-description, system-prompt-blocks, system-prompt-wire, identity-prompt, context-reminder, context-prompt-lines, subagent-prompt, compaction-prompt, compact-boundary, compact-boundary-wire, compact-continuation, auto-compact-trigger, post-tool-hooks, pre-tool-hooks, post-tool-batch-hooks, user-prompt-submit-hooks, stop-hooks, subagent-start-hooks, message-display-hooks, post-tool-failure-hooks, session-start-hooks, session-end-hooks, pre-compact-hooks, post-compact-hooks, notification-hooks, permission-request-hooks, instructions-loaded-hooks, stop-failure-hooks, task-created-hooks, task-completed-hooks, user-prompt-expansion-hooks, file-changed-hooks, permission-precheck, rule-based-permissions, allow-rule-decision, classifier-streak, mode-change-guard, mode-transition, permission-request-hook-decision, broker-response-map, broker-permission-updates, control-response-success, control-response-error
 - branch sites: **325**, outcomes: **645**
-- executed by the corpus: **336**
+- executed by the corpus: **342**
 - reviewed exclusions: **126**
-- un-adjudicated: **183**
-- scenarios replayed: api-error, auto-compact-threshold, bash-tool, claude-md-memory, compact-continue, file-tools, hooks, hooks-batch, hooks-command, hooks-file-watch, hooks-memory, hooks-permission, hooks-precompact, hooks-prompt-submit, hooks-session-end, hooks-session-start, hooks-slash, hooks-stop-failure, hooks-subagent, hooks-tasks, hooks-tool-failure, perm-accept-edits, perm-broker-updates, perm-bypass-deny-rule, perm-dont-ask, perm-hook-deny, perm-hook-rewrite, perm-mode-walk, perm-plan-mode, perm-rule-allow, perm-rule-ask, perm-rule-deny, permission-bag, permission-broker, plain, runtime-setters, search-tools, search-tools-lean, slash-compact, subagent, sysprompt-append, sysprompt-boundary, sysprompt-preset
+- un-adjudicated: **177**
+- scenarios replayed: api-error, auto-compact-threshold, bash-tool, claude-md-memory, compact-continue, file-tools, hooks, hooks-batch, hooks-command, hooks-file-watch, hooks-memory, hooks-permission, hooks-precompact, hooks-prompt-submit, hooks-session-end, hooks-session-start, hooks-slash, hooks-stop-failure, hooks-subagent, hooks-tasks, hooks-tool-failure, interrupt, mcp-tool, perm-accept-edits, perm-broker-updates, perm-bypass-deny-rule, perm-dont-ask, perm-hook-deny, perm-hook-rewrite, perm-mode-walk, perm-plan-mode, perm-rule-allow, perm-rule-ask, perm-rule-deny, permission-bag, permission-broker, plain, runtime-setters, search-tools, search-tools-lean, slash-compact, subagent, sysprompt-append, sysprompt-boundary, sysprompt-preset
 
 Modules with NO branch-forming construct, and what grades them instead:
 
@@ -374,15 +374,15 @@ Modules with NO branch-forming construct, and what grades them instead:
 | `permission-precheck#permissionPrecheck@16:F` | if | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough" && toolPer` | F | executed | — |
 | `permission-precheck#permissionPrecheck@17:T` | and | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough" && toolPer` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@17:F` | and | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough" && toolPer` | F | executed | — |
-| `permission-precheck#permissionPrecheck@18:T` | and | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough"` | T | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@18:T` | and | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough"` | T | executed | — |
 | `permission-precheck#permissionPrecheck@18:F` | and | `tool.mcpInfo && !tool.isReadOnly(parsed) && decision.behavior === "passthrough"` | F | executed | — |
-| `permission-precheck#permissionPrecheck@19:T` | and | `tool.mcpInfo && !tool.isReadOnly(parsed)` | T | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@19:T` | and | `tool.mcpInfo && !tool.isReadOnly(parsed)` | T | executed | — |
 | `permission-precheck#permissionPrecheck@19:F` | and | `tool.mcpInfo && !tool.isReadOnly(parsed)` | F | executed | — |
-| `permission-precheck#permissionPrecheck@20:T` | and | `tool.mcpInfo` | T | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@20:T` | and | `tool.mcpInfo` | T | executed | — |
 | `permission-precheck#permissionPrecheck@20:F` | and | `tool.mcpInfo` | F | executed | — |
 | `permission-precheck#permissionPrecheck@21:T` | if | `classified !== undefined` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@21:F` | if | `classified !== undefined` | F | UNADJUDICATED | **MISSING** |
-| `permission-precheck#permissionPrecheck@22:T` | if | `decision?.behavior === "deny"` | T | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@22:T` | if | `decision?.behavior === "deny"` | T | executed | — |
 | `permission-precheck#permissionPrecheck@22:F` | if | `decision?.behavior === "deny"` | F | executed | — |
 | `permission-precheck#permissionPrecheck@23:T` | optional | `decision` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@23:F` | optional | `decision` | F | executed | — |
@@ -394,7 +394,7 @@ Modules with NO branch-forming construct, and what grades them instead:
 | `permission-precheck#permissionPrecheck@26:F` | optional | `decision` | F | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@27:T` | if | `tool.requiresUserInteraction != null && tool.requiresUserInteraction()` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@27:F` | if | `tool.requiresUserInteraction != null && tool.requiresUserInteraction()` | F | executed | — |
-| `permission-precheck#permissionPrecheck@28:T` | and | `tool.requiresUserInteraction != null` | T | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@28:T` | and | `tool.requiresUserInteraction != null` | T | executed | — |
 | `permission-precheck#permissionPrecheck@28:F` | and | `tool.requiresUserInteraction != null` | F | executed | — |
 | `permission-precheck#permissionPrecheck@29:T` | conditional | `decision?.behavior === "ask"` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@29:F` | conditional | `decision?.behavior === "ask"` | F | UNADJUDICATED | **MISSING** |
@@ -409,7 +409,7 @@ Modules with NO branch-forming construct, and what grades them instead:
 | `permission-precheck#permissionPrecheck@34:T` | if | `tool.mcpInfo?.effectiveMaxPermission === "ask"` | T | UNADJUDICATED | **MISSING** |
 | `permission-precheck#permissionPrecheck@34:F` | if | `tool.mcpInfo?.effectiveMaxPermission === "ask"` | F | executed | — |
 | `permission-precheck#permissionPrecheck@35:T` | optional | `tool.mcpInfo` | T | executed | — |
-| `permission-precheck#permissionPrecheck@35:F` | optional | `tool.mcpInfo` | F | UNADJUDICATED | **MISSING** |
+| `permission-precheck#permissionPrecheck@35:F` | optional | `tool.mcpInfo` | F | executed | — |
 | `permission-precheck#permissionPrecheck@36:T` | or | `mode === "bypassPermissions"` | T | executed | — |
 | `permission-precheck#permissionPrecheck@36:F` | or | `mode === "bypassPermissions"` | F | executed | — |
 | `permission-precheck#permissionPrecheck@37:T` | and | `mode === "plan" && current.isBypassPermissionsModeAvailable` | T | UNADJUDICATED | **MISSING** |

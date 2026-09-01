@@ -2755,6 +2755,37 @@ permission chain itself issues, and leaving the return leg unowned would have st
 ownership mid-round-trip. W7 inherits the request leg, and should re-verify the rest of the scout's
 §3.2 table the same way.
 
+### The attestation is what grades the SCENARIOS
+
+W6's exclusion set is the widest in the campaign — 173 new entries — and the reason is structural
+rather than sloppy. **This subsystem's job is to decide, and a rung that is reached and passes leaves
+the same transcript as one that was never reached.** A decision ladder is the one shape where
+transcript-level coverage says least, which is precisely why the branch inventory earns its cost
+here.
+
+It paid for itself three times over:
+
+- it caught the two rule cells above, which no check could have;
+- it showed that the pre-check's own **deny rungs never fire** — 71 of 118 outcomes execute, and the
+  two rungs the subsystem is named for are not among them, because the engine has faster paths above
+  them for both rule shapes a corpus can express (a whole-tool rule removes the tool; a Bash content
+  rule is decided by the Bash tool's own subcommand pass);
+- and chasing the second of those into the bundle turned up the **input-rule grammar**: upstream's
+  matcher takes only `Tool(field:pattern)` and explicitly skips the tool's own rule-content field, so
+  every path spelling of a `Write` rule misses the rung. Three spellings were measured live before
+  the row was left OPEN with its condition and its refutations written down.
+
+Four exclusion families, each named on its own entries: arms behind the pinned environment
+(sandboxing, remote execution, disabled-default gates), arms behind a tool CAPABILITY no headless
+tool implements, arms behind an interactive surface a headless session lacks, and arms behind a
+condition this project has deliberately not created — a real safety-check trigger means running
+something genuinely dangerous in the sandbox, and that is a scenario to design rather than improvise.
+
+Three of the entries are MEASURED negatives rather than deferrals, which is the distinction C8's
+vocabulary exists to protect: the whole-tool deny rung (the rule removes the tool), the input-deny
+rung (three spellings refuted), and the guard's `auto` refusal (the mode was accepted through both
+paths, so the refusal now needs a condition this environment does not produce).
+
 ### What W6 does NOT claim
 
 **The subsystem is not owned**, and three gaps are named on the ledger row rather than implied:
@@ -2776,7 +2807,7 @@ improvise), `subcommandResults`, `sandboxOverride`, `workingDir`, `asyncAgent` �
 which §4.1 below turned from unreachable into merely uncreated. Each is a row in
 `research/2026-09-01-w6-permission-matrix.md` with its condition written out, not a blank.
 
-### The corpus: eleven recordings, three of which measured the wrong thing first
+### The corpus: eleven recordings, five of which measured the wrong thing first
 
 The mode matrix, the three rule behaviours and the two hook paths cost eleven scenarios. Three
 passed on their first take while grading something other than their claim, and all three failures
@@ -2787,6 +2818,22 @@ were the same shape — **the engine has a shortcut ABOVE the rung the scenario 
 | `perm-accept-edits` (Bash half) | `acceptEdits` auto-allows `mkdir`: upstream hard-codes `mkdir, touch, rm, rmdir, mv, cp, sed` as edit-shaped commands. The "must still be brokered" arm measured the mode's other arm | use `chmod`; the list is now a derived fixture axis |
 | `perm-rule-allow` | a CONTENT-scoped allow rule is matched by the tool's own `checkPermissions`, above the ladder's allow rung | a whole-tool `Write` rule |
 | `perm-hook-rewrite` | four takes; the PermissionRequest hook's output shape is `{hookSpecificOutput:{hookEventName,decision}}`, and the host broker won the race | correct shape, plus a 1500 ms broker delay so the hook answers first |
+| `perm-rule-deny` and `perm-bypass-deny-rule` | a WHOLE-TOOL deny rule is applied by removing the tool from the session, so the model got "No such tool available" and the chain never ran. Both cells PASSED every assertion they carried | command-scoped rules; see below |
+
+The last row is the one worth generalising, because no check caught it. **The
+branch attestation did.** A filtered tool and a denied tool leave the same
+transcript — tool attempted, no consult, no effect — so every transcript-level
+signal agreed with the cell's claim; what disagreed was the pre-check's deny
+rungs reading ZERO executions across the entire corpus. Twenty-four tools in
+that session's init frame instead of twenty-five was the tell, and nothing but a
+per-branch inventory of the OWNED code would have surfaced it.
+
+Both cells came back from the re-recording stronger than they were designed. A
+rule denial does emit a `permission_denied` frame once it reaches the chain; the
+bypass correction is now confirmed by a recording rather than only by reading the
+bytes; and the frame's reason kind is `subcommandResults` — which the matrix had
+listed OPEN and expected to need a compound command, since the Bash tool
+decomposes unconditionally and every Bash denial is an aggregate of one.
 
 Two more scenarios kept their cassette but had their CLAIM narrowed, which is the same lesson from
 the other side. A rule denial produces **no `permission_denied` frame** — the SDK's own types say the

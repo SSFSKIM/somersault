@@ -224,3 +224,33 @@ has a run behind it instead of only a reading.
 All six modes were driven through both paths (`spawn-<mode>`, `channel-<mode>`), which is the sweep
 that makes §4.1's answer a measurement rather than a spot check. No mode was refused on either path
 in the pinned environment.
+
+## 5. What the branch attestation added that the matrix could not
+
+The matrix above is a table of CONDITIONS. The attestation is a table of BRANCHES, and running the
+two against each other is what made this wave's coverage honest rather than plausible.
+
+Three findings came only from the branch side:
+
+1. **Two cells were measuring the tool filter.** §1 tells the story. The transcript-level checks all
+   agreed with the cells' claims; the pre-check's deny rungs reading zero is what disagreed.
+2. **The input-deny rung has a grammar, and it is narrower than the documentation implies.**
+   Upstream's input-rule matcher takes only `Tool(field:pattern)` and explicitly SKIPS the tool's own
+   rule-content field. For `Write` that field is `file_path`, so every path spelling misses the rung
+   entirely. Three spellings were measured live: `Write(*)` is read as a whole-tool grant and
+   filtered the tool out of the session, `Write(<path>)` and `Write(//<abs>)` fell on the skipped
+   field, and `Write(content:<glob>)` let the call through to the broker. The rung stays **OPEN**
+   with its condition and its three refuted spellings written down, which is a better row than the
+   one it replaces.
+3. **The ladder's rungs are covered far less evenly than a mode matrix suggests.** The pre-check runs
+   on every tool call in every mode, and 71 of its 118 branch outcomes execute — but the two rungs
+   the whole subsystem is named for are not among them, because the engine has faster paths above
+   them for the two rule shapes a corpus can express.
+
+The exclusion families, all named on the entries themselves: arms behind the pinned environment
+(sandboxing, remote execution, the feature gates §3.3 fixes at their disabled defaults), arms behind
+a tool CAPABILITY no headless tool implements (`requiresUserInteraction`,
+`suppressesAllPermissionUpdates`, `suppressesAlwaysAllowRule`, `ignoresWholeToolAllowRule`), arms
+behind an interactive surface a headless session does not have, and arms behind a condition this
+project has deliberately not created — a real safety-check trigger, which means running something
+genuinely dangerous in the sandbox and should be designed rather than improvised.
