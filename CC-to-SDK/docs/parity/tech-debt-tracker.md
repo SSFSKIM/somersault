@@ -46,12 +46,25 @@ the commit) or when a round's scope absorbs them.
   `dist/` regenerates on any build, and the trigger needs a rebuild to fail right after an identical
   success. Fix when the script is next touched: check `cp` before `rm`, propagate rebuild failure, add a
   dist-freshness check.
-- ~~**The D21-true branch is latent behind production callers**~~ **RESOLVED-REFUTED bl9** (R2
-  binary research: canon's verbose unfolds clusters unconditionally — a folded-and-verbose state
-  is unrepresentable; the `|| verbose` disjunct was redundant, not dormant, and bl9 T-POLISH
-  deleted it, commit in merge `4e3494927f`). Carried risk recorded at the deletion sites: a
-  future inline verbose toggle feeds fold/unfold, NEVER the extras gate. Entry kept one round
-  for the pointer, delete next close-out.
+- **Settings read-only tabs clip without scrolling** (bl10 review loop, rereview2-F1 restated
+  rereview3, 2026-09-01). `readOnlyTabBody` windows Status/Usage/Stats to the frame budget with a
+  dim `… +N more lines` marker (wave-2 F2, `5df713990`) — the bounded-frame invariant holds and is
+  tested, but the clipped tail is unreachable: the tabs register no scroll/pageing handler. Only
+  bites on short terminals with tall `/cost`-class payloads; the safe direction (clip) was chosen
+  over tall-frame replay. Fix when it matters: navigable scrolling for the read-only tab body
+  (canon's pane scrolls); adjudicated log-not-fix under the round's anti-refine-loop rule.
+- **hover-cells h1 pins the negative gate only** (bl10 waves 2B/4, 2026-09-01). The cell now
+  asserts hovering staged local output un-dims nothing (the intended T-CLICKGATE `f06085c8e`
+  behavior) — but its fixture is a keyless `! printf` echo, so no PTY cell asserts the POSITIVE
+  un-dim path over a genuinely `clickable`-stamped tool-result block. Needs a keyed or fake-host
+  staged tool result; upgrade when hover next changes or a keyed battery run is scheduled.
+- **Expanded header's band is click-inert when its body scrolls out of the viewport** (bl10
+  rereview4, 2026-09-01; `toolRenderer.tsx` ~:581). `clickableOwnersOf()` derives owner
+  clickability from painted body rows, so a long expanded result scrolled to show only its banded
+  header paints (and hit-tests) full-width yet fails the owner gate in `clickTargetAt()` — the
+  click is a no-op, no state/content loss, and paint==hit still holds. Pre-bl10 owner-gate
+  design; fix direction: stamp headers clickable for expandable/expanded results. Logged per the
+  post-wave-3 convergence rule.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
