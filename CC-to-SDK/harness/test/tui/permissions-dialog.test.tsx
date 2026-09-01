@@ -785,4 +785,34 @@ describe("PermissionsDialog — the auto keyhint bar replaces the browsing foote
     expect(f).not.toContain("select");
     auto.unmount();
   });
+
+  // bl10 fix wave 6: the Workspace tab's `activate()` is a deliberate no-op on cwd/launch rows (immutable —
+  // only a session-added directory, or the "Add directory…" affordance, does anything on Enter), but the
+  // uniform four-hint set above claims "select" regardless of which row is focused. The bar must track focus.
+  it("drops the select hint on Workspace only while an immutable (cwd/launch) row is focused", async () => {
+    const dirs = [
+      { path: "/tmp", source: "cwd" as const },
+      { path: "/tmp/added", source: "session" as const },
+    ];
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props({ tab: "Workspace", fetchDirs: async () => dirs })} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add directory…"), "the workspace list to load");
+    // Focused on the affordance row — Enter opens AddDirDialog, a real action — so the hint is present.
+    expect(plain(lastFrame), "affordance row is activatable").toContain("select");
+    stdin.write(DOWN);
+    await waitFor(() => plain(lastFrame).includes("❯ /tmp (Original working directory)"), "the cursor to reach the cwd row");
+    // cwd is immutable: this is the assertion that must fail before the fix.
+    expect(plain(lastFrame), "cwd row is immutable — Enter does nothing").not.toContain("select");
+    stdin.write(DOWN);
+    await waitFor(() => plain(lastFrame).includes("❯ /tmp/added"), "the cursor to reach the session-added row");
+    expect(plain(lastFrame), "session-added row is activatable again").toContain("select");
+  });
+
+  it("leaves the Allow tab's fixed hint set alone regardless of which row is focused", async () => {
+    const { stdin, lastFrame } = render(<PermissionsDialog {...props()} />);
+    await waitFor(() => plain(lastFrame).includes("❯ Add a new rule…"));
+    expect(plain(lastFrame)).toContain("select");
+    stdin.write(DOWN);
+    await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"), "the cursor to reach the rule row");
+    expect(plain(lastFrame), "every row on Allow is activatable — no focus-derived carve-out here").toContain("select");
+  });
 });

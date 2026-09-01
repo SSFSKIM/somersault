@@ -47,7 +47,7 @@ import wrapAnsi from "wrap-ansi";
 import { useKeyActions, useKeyFallback, useKeyScope } from "./keys/KeymapProvider.js";
 import { toKeyFlags } from "./keys/editorAdapter.js";
 import { useRefState } from "./keys/refState.js";
-import type { KeyEvent, TextEvent } from "./keys/types.js";
+import type { KeyContextName, KeyEvent, TextEvent } from "./keys/types.js";
 import { ruleRows, workspaceRows, SOURCE_LABELS, type RuleRow, type DenialEntry } from "./permissionsModel.js";
 import type { RenderLine } from "./render.js";
 import type { SettingsTarget } from "./settingsFile.js";
@@ -681,12 +681,22 @@ export function PermissionsDialog({
   // would just crowd "switch tab" out a different way. So the precise, priority-ordered set is named
   // directly: cancel, navigate, select, then switch tab — the four that matter most, guaranteed to survive
   // the cap because there is no fifth candidate left to evict them.
-  const hintActions = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : ([
-    { action: "select:cancel", scope: "Select" },
-    { action: "select:previous", scope: "Select" },
-    { action: "select:accept", scope: "Select" },
-    { action: "tabs:next", scope: "Tabs" },
-  ] as const);
+  //   bl10 fix wave 6: on Workspace, "select" is only sometimes true. `activate()` above is a deliberate
+  // no-op on a cwd/launch row (immutable — the user did not add it and cannot remove it here); only the
+  // "Add directory…" affordance and a session-added directory row do anything on Enter. The other three
+  // rule tabs have no such carve-out (every row there IS activatable), so only Workspace's set is derived
+  // from the LIVE focused row — `focusValue` is `Select`'s own cursor (`onFocus`, reported on mount and
+  // every move), looked back up into `items`/`values` the same way `activate` itself does. Cancel/navigate/
+  // switch-tab stay first and last so "switch tab" survives the cap whether or not "select" is in the middle.
+  const focusedItem = activeTab === "Workspace" && focusValue !== undefined ? items[values.indexOf(focusValue)] : undefined;
+  const workspaceSelectIsNoOp = focusedItem?.kind === "dir" && focusedItem.d.source !== "session";
+  const hint = (action: string, scope: KeyContextName): { action: string; scope: KeyContextName } => ({ action, scope });
+  const hintActions = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : [
+    hint("select:cancel", "Select"),
+    hint("select:previous", "Select"),
+    ...(workspaceSelectIsNoOp ? [] : [hint("select:accept", "Select")]),
+    hint("tabs:next", "Tabs"),
+  ];
 
   /** T-MENU task 2: ONE shared body, computed once per render from the already tab-scoped variables above
    *  (`items`/`loading`/`INTRO[activeTab]`/`footerText`) — unlike Settings/Help, this dialog never had a
