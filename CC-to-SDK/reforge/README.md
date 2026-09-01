@@ -2950,6 +2950,13 @@ Three things generalise past this wave:
 - **A committed artifact that nothing diffs will go stale, and regenerating it only resets the
   clock.** The fix is the guard.
 
+After the round: gate **92 of 92 phases** (the figure is the SUMMARY block's, not the log's — the
+earlier 121 counted printed lines, and a liveness phase prints one per covering scenario), corpus
+**58 of 58** green against the strangled build, attestation **355 of 669 outcomes executed, 314
+excluded, zero unadjudicated**, the permission oracle unchanged at 2,508 comparisons with 49
+controls, and the hook oracle at **707 comparisons with 116 controls** after the new dispatcher's
+eight cases.
+
 ## Next
 
 W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they

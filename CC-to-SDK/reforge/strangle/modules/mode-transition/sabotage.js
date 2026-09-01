@@ -11,10 +11,18 @@
 // into a refusal.
 //
 // EXPECTED: THIS TWIN MAKES THE MODE WALK HANG, and that is its verdict rather
-// than a defect. The walk arms no `canUseTool`, because a bypass-available
-// session never needs one; strip the launch fact and the plan-mode Write falls
-// through to an ASK that nobody in the session can answer, so the turn produces
-// no result, the driver's `for await` never advances, and the query never ends.
+// than a defect. The walk arms no `canUseTool` — the SDK refuses to wire one for
+// a session LAUNCHED in bypassPermissions anyway — so strip the launch fact and
+// the plan turn's call falls through to an ASK that nobody in the session can
+// answer: the turn produces no result, the driver's `for await` never advances,
+// and the query never ends.
+//
+// THE PLAN TURN'S CALL IS A READ OUTSIDE THE ALLOWED DIRECTORIES, not a Write,
+// and this header said otherwise for one round. The walk's earlier recording had
+// no tool call in that turn at all, so the hang — which is real — was attributed
+// to a call the cassette did not contain. Plan mode's injected reminder stops the
+// model writing under any framing; a read outside the cwd is both permitted by
+// the reminder and ask-worthy, which is what this twin needs.
 // The gate reads a sabotaged replay that exceeds its bound as RED — the faithful
 // build replays the same cassette in seconds — so this phase costs the gate its
 // full sabotage timeout every run. That is the honest price of a twin whose

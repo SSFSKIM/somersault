@@ -312,9 +312,9 @@ one exclusion was DELETED rather than added — `permission-precheck@37:T`, the 
 disjunct, whose own text said it was "the one the mode-walk was designed around rather than into".
 The re-recorded walk executes it.
 
-The gate's phase count is quoted from the gate's own SUMMARY block and not from its log lines: an
-earlier figure of 121 counted printed lines, of which the per-scenario verdicts inside a liveness
-phase are several per phase. Quote the summary.
+The gate passes **92 of 92 phases**, quoted from the gate's own SUMMARY block and not from its log
+lines: the earlier figure of 121 counted printed lines, and a liveness phase prints one per covering
+scenario. Quote the summary.
 
 The exclusion families, all named on the entries themselves: arms behind the pinned environment
 (sandboxing, remote execution, the feature gates §3.3 fixes at their disabled defaults), arms behind
