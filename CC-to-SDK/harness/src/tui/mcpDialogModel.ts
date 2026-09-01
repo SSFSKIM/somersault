@@ -31,8 +31,8 @@ function normalizeTool(raw: unknown): McpToolInfo | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
   if (typeof t.name !== "string" || t.name === "") return null;
-  const tool: McpToolInfo = { name: t.name };
-  if (typeof t.description === "string") tool.description = t.description;
+  const tool: McpToolInfo = { name: flattenLabel(t.name) };
+  if (typeof t.description === "string") tool.description = flattenLabel(t.description);
   if (t.annotations && typeof t.annotations === "object") {
     const a = t.annotations as Record<string, unknown>;
     const annotations: McpToolAnnotations = {};
@@ -61,17 +61,17 @@ export function normalizeMcpServers(raw: unknown): McpServerRow[] {
     // still normalize to that value rather than reading as "failed" (the unknown-status fallback).
     const rawStatus = e.status ?? e.state;
     const row: McpServerRow = {
-      name: e.name,
+      name: flattenLabel(e.name),
       status: KNOWN_STATUSES.includes(rawStatus as McpStatus) ? (rawStatus as McpStatus) : "failed",
       tools: [],
     };
-    if (typeof e.error === "string") row.error = e.error;
+    if (typeof e.error === "string") row.error = flattenLabel(e.error);
     if (typeof e.scope === "string") row.scope = e.scope;
     if (e.config && typeof e.config === "object") {
       const c = e.config as Record<string, unknown>;
-      if (typeof c.type === "string") row.type = c.type;
-      if (typeof c.url === "string") row.url = c.url;
-      if (typeof c.command === "string") row.command = c.command;
+      if (typeof c.type === "string") row.type = flattenLabel(c.type);
+      if (typeof c.url === "string") row.url = flattenLabel(c.url);
+      if (typeof c.command === "string") row.command = flattenLabel(c.command);
     }
     if (Array.isArray(e.tools)) row.tools = e.tools.map(normalizeTool).filter((t): t is McpToolInfo => t !== null);
     out.push(row);
@@ -229,12 +229,13 @@ export function serverMenuFields(row: McpServerRow): McpFieldRow[] {
   return fields;
 }
 
-/** bl10 fix wave 3, RF2: `stringWidth` treats `\n` (and other control whitespace) as zero-width while Ink's
- *  `<Text>` paints it as a real line break — a tool description or server field carrying one measures as ONE
- *  row (what every single-row option's width budget counts it as) but PAINTS as several, overflowing a window
- *  sized against the smaller count. A valid MCP description is not obligated to be single-line, so every
- *  label folded into a single-row option (server name/status, tool name/description, a server-menu field
- *  value) is flattened through this FIRST, so measurement, truncation and paint all agree on one row. */
+/** bl10 fix wave 3, RF2 (promoted to a normalization-boundary invariant in fix wave 5): `stringWidth` treats
+ *  `\n` (and other control whitespace) as zero-width while Ink's `<Text>` paints it as a real line break — a
+ *  server/tool string carrying one measures as ONE row (what every single-row option's width budget counts
+ *  it as) but PAINTS as several, overflowing a window sized against the smaller count. A valid MCP server or
+ *  tool is not obligated to report single-line metadata, so `normalizeMcpServers`/`normalizeTool` flatten
+ *  EVERY string field they read through this FIRST (name, error, type, url, command, tool name/description)
+ *  — one site closes the class, rather than each new render site needing to remember to call this itself. */
 export function flattenLabel(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
