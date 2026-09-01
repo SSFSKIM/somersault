@@ -20,6 +20,7 @@ import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import stringWidth from "string-width";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
+import { paintedRows, bodyWindow, MoreRow } from "./dialogs/rowBudget.js";
 import { useSelectKeys } from "./keys/selectKeys.js";
 import { useRefState } from "./keys/refState.js";
 import { POINTER } from "./select/Select.js";
@@ -28,8 +29,8 @@ import { truncateLabel } from "./select/selectModel.js";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "./theme.js";
 import {
   buildListRows, flatIndexOfServer, mcpListVisibleRows, mcpToolsVisibleRows, mcpWindow, flattenLabel,
-  MCP_ROOT_VIEW, enterServerMenu, enterServerTools, enterToolDetail, popMcpView, findServer,
-  serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE,
+  mcpToolDetailDescriptionRows, MCP_ROOT_VIEW, enterServerMenu, enterServerTools, enterToolDetail, popMcpView,
+  findServer, serverMenuFields, statusText, toolAnnotationLabels, mcpSubtitle, MCP_TITLE,
   type McpServerRow, type McpToolInfo, type McpView,
 } from "./mcpDialogModel.js";
 
@@ -197,13 +198,19 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
 
     if (view.type === "server-menu") {
       const fields = serverMenuFields(currentServer);
+      // bl10 fix wave 3, RF4: a field VALUE (e.g. `error`, `command`, `url`) used to render verbatim — a long
+      // diagnostic wraps under Ink past this view's own one-row-per-field accounting, the same tall-frame
+      // hazard F5's tools-view budget exists to remove. Clipped to one physical row, same discipline as
+      // `ServerLabel`/`ToolLabel`: flattened first (RF2), then truncated to what's left after the frame's own
+      // `paddingX` (2) and this row's `gap={1}` between the bold label and its value.
+      const fieldValueWidth = (label: string) => Math.max(10, columns - 3 - stringWidth(label));
       return (
         <Box flexDirection="column">
           <Text bold>{currentServer.name}</Text>
           <Box flexDirection="column" marginTop={1}>
             {fields.map((f) => (
               <Box key={f.label} flexDirection="row" gap={1}>
-                <Text bold>{f.label}</Text><Text dimColor>{f.value}</Text>
+                <Text bold>{f.label}</Text><Text dimColor>{truncateLabel(flattenLabel(f.value), fieldValueWidth(f.label))}</Text>
               </Box>
             ))}
           </Box>
@@ -250,6 +257,16 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     const tool: McpToolInfo | undefined = currentServer.tools.find((t) => t.name === view.tool);
     if (!tool) return <Text dimColor>Tool not found.</Text>;
     const annotations = toolAnnotationLabels(tool);
+    // bl10 fix wave 3, RF4: the description used to render verbatim, unbounded — a many-line description
+    // exceeds the frame's own row budget the same way an unclipped `server-tools` label did (F5). Wrapped to
+    // this view's real width (`DialogFrame`'s `paddingX` either side, no `Row` gutter here) and windowed to
+    // the rows left after this view's own fixed chrome (`mcpToolDetailDescriptionRows`), mirroring
+    // `SettingsDialog`'s `readOnlyTabBody` clip: `paintedRows` for the wrap, `bodyWindow` for the cut, a dim
+    // `MoreRow` naming what was hidden rather than silently dropping it.
+    const detailWidth = Math.max(1, columns - 2);
+    const descLines = tool.description !== undefined ? paintedRows(tool.description, detailWidth) : [];
+    const descBudget = mcpToolDetailDescriptionRows(rows, annotations.length > 0);
+    const { keep: descKeep, hidden: descHidden } = bodyWindow(descLines.length, descBudget);
     return (
       <Box flexDirection="column">
         <Text dimColor>{currentServer.name}</Text>
@@ -257,7 +274,8 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
         {tool.description ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Description:</Text>
-            <Text>{tool.description}</Text>
+            <Text>{descLines.slice(0, descKeep).join("\n")}</Text>
+            {descHidden > 0 ? <MoreRow hidden={descHidden} /> : null}
           </Box>
         ) : null}
         {annotations.length > 0 ? (

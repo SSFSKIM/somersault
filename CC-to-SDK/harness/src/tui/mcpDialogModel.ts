@@ -163,6 +163,17 @@ export const mcpToolsVisibleRows = (rows: number): number => mcpListVisibleRows(
  *  tests share one import rather than reaching into `select/selectModel.js` a second time. */
 export const mcpWindow = (count: number, focus: number, visible: number): SelectWindow => windowBounds(count, focus, visible);
 
+/** bl10 fix wave 3, RF4: `server-tool-detail`'s own fixed chrome — every row it spends that is NOT the
+ *  description's own body: the dim server-name line, the bold tool-name line, the `marginTop={1}` spacer
+ *  above the `Description:` block and that label's own line (4), plus — only when the tool carries
+ *  annotations — the `marginTop={1}` spacer and the `Annotations:` line below the description (2 more).
+ *  Charged the same way `MCP_TOOLS_EXTRA_CHROME_ROWS` is charged on top of `mcpListVisibleRows`'s own frame
+ *  budget: both views sit behind the identical `DialogFrame`. */
+export const MCP_DETAIL_FIXED_ROWS = 4;
+export const MCP_DETAIL_ANNOTATIONS_ROWS = 2;
+export const mcpToolDetailDescriptionRows = (rows: number, hasAnnotations: boolean): number =>
+  mcpListVisibleRows(rows - MCP_DETAIL_FIXED_ROWS - (hasAnnotations ? MCP_DETAIL_ANNOTATIONS_ROWS : 0));
+
 // ---- View stack --------------------------------------------------------------------------------------
 
 export type McpView =

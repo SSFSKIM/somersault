@@ -308,6 +308,40 @@ describe("McpDialog — server-tools view budget and label truncation (bl10 fw2 
   });
 });
 
+// bl10 fix wave 3, RF4: `server-menu` renders field VALUES (e.g. a server's `error` string) and
+// `server-tool-detail` renders a tool's full description, both verbatim and unbounded — a long diagnostic or
+// a many-line description exceeds terminal height, tripping the same tall-frame hazard F5's own tools-view
+// budget exists to remove.
+describe("McpDialog — server-menu and tool-detail are bounded to the row budget (bl10 fw3 RF4)", () => {
+  it("a server-menu whose error field is very long stays within the short-terminal row budget", async () => {
+    const longError: McpServerRow = {
+      name: "srv", status: "failed",
+      error: Array.from({ length: 10 }, (_, i) => `diagnostic detail segment number ${i} of a very long connection failure`).join(" "),
+      scope: "project", tools: [],
+    };
+    const { stdin, lastFrame } = await mount([longError], 14);
+    stdin.write("\r"); await tick();          // -> server-menu
+    const lines = frame(lastFrame).split("\n").length;
+    expect(lines, "an unclipped long error field must not wrap past the frame's own row budget").toBeLessThan(14);
+    expect(flat(lastFrame)).toContain("failed:");
+  });
+
+  it("a tool-detail description with many lines stays within the short-terminal row budget", async () => {
+    const manyLineDescription: McpServerRow = {
+      name: "srv", status: "connected", scope: "project",
+      tools: [{ name: "verbose-tool", description: Array.from({ length: 40 }, (_, i) => `description line ${i}`).join("\n") }],
+    };
+    const { stdin, lastFrame } = await mount([manyLineDescription], 14);
+    stdin.write("\r"); await tick();          // -> server-menu
+    stdin.write("\r"); await tick();          // -> server-tools
+    stdin.write("\r"); await tick();          // -> server-tool-detail
+    const lines = frame(lastFrame).split("\n").length;
+    expect(lines, "a 40-line description must not paint past the frame's own row budget").toBeLessThan(14);
+    // Bounded, not silently truncated with no trace: a dim indicator names how much was clipped.
+    expect(flat(lastFrame)).toMatch(/more lines/);
+  });
+});
+
 // bl10 fix wave 3, RF2: `stringWidth` (both `ToolLabel`'s own measurement and `truncateLabel`'s clip) treats
 // `\n` as zero-width while Ink's `<Text>` paints it as a real line break, so a description carrying embedded
 // newlines measures as ONE option (the tools-view budget's unit) but PAINTS as several — a valid MCP
