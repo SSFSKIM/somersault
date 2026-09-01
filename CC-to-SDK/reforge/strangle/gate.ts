@@ -80,6 +80,13 @@ for (const [label, argv] of [
   ["differ run-id map + its negative controls", ["src/differ.test.ts"]],
   ["state surface catches what it claims", ["src/state.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
+  // The hook wave's population under test, and the third pin-keyed fixture. W5
+  // enumerated "the events that exist" by judgment twice and was wrong twice —
+  // an event nobody thought to watch cannot be measured as absent. The registry
+  // is upstream's own enumeration, so the probe's watched list now derives from
+  // this fixture and a pin that adds, drops or re-points an event reddens here
+  // rather than silently narrowing what gets measured.
+  ["hook-registry fixture matches the pin", ["research/tools/extract-hook-registry.ts", "--check"]],
   // The other pin-keyed fixture, and the only §5 signal that can see a
   // subsystem move with every export inventory, anchor and footprint hash
   // byte-identical: the names the engine's barrel chunks re-export its own

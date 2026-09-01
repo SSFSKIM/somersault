@@ -1,0 +1,512 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-hook-registry.ts",
+  "registry": {
+    "chunk": "chunk-fy12d89p.js",
+    "binding": "zCr",
+    "offset": 3010534
+  },
+  "counts": {
+    "events": 33,
+    "dispatchers": 32,
+    "stampedEventNames": 33,
+    "confirmationRatio": 1
+  },
+  "sharedDispatchers": {
+    "y9": [
+      "Stop",
+      "SubagentStop"
+    ]
+  },
+  "events": [
+    {
+      "event": "ConfigChange",
+      "dispatcher": "Vpt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-g461tywa.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "CwdChanged",
+      "dispatcher": "AUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "DirectoryAdded",
+      "dispatcher": "YSe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-7q3zktx6.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-dvbbv89q.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "Elicitation",
+      "dispatcher": "JSe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-5ww6p4vy.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-9hmmefv0.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "ElicitationResult",
+      "dispatcher": "QSe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-5ww6p4vy.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-9hmmefv0.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "FileChanged",
+      "dispatcher": "CUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "InstructionsLoaded",
+      "dispatcher": "Qqe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "MessageDisplay",
+      "dispatcher": "Zqe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-hbajkq8y.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "Notification",
+      "dispatcher": "EE",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-5ww6p4vy.js",
+          "calls": 4,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-9hmmefv0.js",
+          "calls": 4,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-dvbbv89q.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-jjge0405.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 11
+    },
+    {
+      "event": "PermissionDenied",
+      "dispatcher": "VNt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "PermissionRequest",
+      "dispatcher": "Tee",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-aay952q0.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "event": "PostCompact",
+      "dispatcher": "kPe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 3,
+          "via": "static"
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "event": "PostModelSwitch",
+      "dispatcher": "gdt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-g461tywa.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "PostToolBatch",
+      "dispatcher": "Fct",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "PostToolUse",
+      "dispatcher": "b3e",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "PostToolUseFailure",
+      "dispatcher": "zNt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "PreCompact",
+      "dispatcher": "tz",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 4,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-gxg1d6px.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 5
+    },
+    {
+      "event": "PreModelSwitch",
+      "dispatcher": "mdt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-9gqmx4zx.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "PreToolUse",
+      "dispatcher": "Tye",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 3,
+          "via": "static"
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "event": "SessionEnd",
+      "dispatcher": "ZSe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-6thm48px.js",
+          "calls": 1,
+          "via": "static"
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "dynamic"
+        },
+        {
+          "chunk": "chunk-ht7zfm7n.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "event": "SessionStart",
+      "dispatcher": "vUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "Setup",
+      "dispatcher": "RUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "Stop",
+      "dispatcher": "y9",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 4,
+          "via": "static"
+        }
+      ],
+      "calls": 4
+    },
+    {
+      "event": "StopFailure",
+      "dispatcher": "HPe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 4,
+          "via": "static"
+        }
+      ],
+      "calls": 4
+    },
+    {
+      "event": "SubagentStart",
+      "dispatcher": "kUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "SubagentStop",
+      "dispatcher": "y9",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 4,
+          "via": "static"
+        }
+      ],
+      "calls": 4
+    },
+    {
+      "event": "TaskCompleted",
+      "dispatcher": "eGe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "event": "TaskCreated",
+      "dispatcher": "xUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "TeammateIdle",
+      "dispatcher": "HUt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "UserPromptExpansion",
+      "dispatcher": "Ldt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-304awr1a.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "UserPromptSubmit",
+      "dispatcher": "bSe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 1,
+          "via": "static"
+        }
+      ],
+      "calls": 1
+    },
+    {
+      "event": "WorktreeCreate",
+      "dispatcher": "tGe",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 3,
+          "via": "static"
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "event": "WorktreeRemove",
+      "dispatcher": "Kpt",
+      "definedIn": "chunk-fy12d89p.js",
+      "callSites": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "calls": 2,
+          "via": "static"
+        }
+      ],
+      "calls": 2
+    }
+  ]
+}
