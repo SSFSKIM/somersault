@@ -184,7 +184,12 @@ export function HelpDialog({ commands, onClose, rows = process.stdout.rows ?? 24
   // `dei = rows < _Hf` (L459651): a short terminal loses the outer padding and the gap between the blocks.
   const compact = rows < HELP_TALL_ROWS;
   return (
-    <DialogFrame title="Help" color="permission" hintScope={["Help", "Tabs"]}>
+    <DialogFrame title="Help" color="permission"
+      // bl10 fix wave 1, finding 3: `Tabs` is handed `disableNavigation={search !== null}` below — while a
+      // Commands/Custom-commands query is open, tab/←/→ register NO handler (Tabs.tsx's own `NO_ACTIONS`
+      // arm), but `Tabs`' table still binds them, so blindly walking that scope kept advertising "switch tab"
+      // as live when it was not. Drop `Tabs` from the derived set for exactly the state that disables it.
+      hintScope={search !== null ? ["Help"] : ["Help", "Tabs"]}>
       {/* T-MENU task 2 fix wave: the old hand-written `{escChord} to cancel` line (L459757's `<esc> to
           cancel`) is gone — `hintScope` derives the same "esc dismiss" from the `Help`/`Tabs` scopes this
           dialog already registers (`help:dismiss` needed its own `KEY_HINT_DESCRIPTIONS` row, added by this

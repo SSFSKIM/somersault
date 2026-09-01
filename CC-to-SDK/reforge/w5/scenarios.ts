@@ -50,10 +50,28 @@
 // layer with `settingSources: []` still in force, and the command ran with the
 // engine's serialised record on stdin. `hooks-command` writes a normalised
 // projection of that stdin into the sandbox, where the state surface grades it.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { baseOptions, converse, drive, resultText, resultsOf, usedTool, type Scenario, type ScenarioContext } from "../src/harness.js";
-import { SANDBOX } from "../src/runTurn.js";
+import { SANDBOX, sdkEnv } from "../src/runTurn.js";
+import { seedGitRepo } from "../w3/scenarios.js";
+
+/**
+ * Working directories OUTSIDE the sandbox, for the two scenarios that must open
+ * a filesystem setting source.
+ *
+ * `settingSources: ["project"]` is the only way to make the engine load a
+ * project CLAUDE.md or a project slash command — and it walks ANCESTORS, so
+ * running it in the sandbox would drag this repository's own CLAUDE.md chain
+ * into the recording (the W3 trap, measured again by the hook probe: three
+ * ancestor memories loaded before the seeded one). A `/tmp` directory has no
+ * ancestors to find. Realpath'd because macOS resolves `/tmp` to `/private/tmp`
+ * and the engine reports the resolved path.
+ */
+const MEMORY_DIR = join(realpathSync("/tmp"), "reforge-w5-memory");
+const SLASH_DIR = join(realpathSync("/tmp"), "reforge-w5-slash");
+/** The file the watcher scenario changes; the FileChanged matcher is the sandbox that holds it. */
+const WATCHED_FILE = "watched.txt";
 
 /** Where the command hook writes its projection — inside the sandbox, so the state surface sees it. */
 const HOOK_STDIN_FILE = join(SANDBOX, "hook-stdin.txt");
@@ -81,6 +99,43 @@ const watch = (ctx: ScenarioContext, event: string, project: (input: Record<stri
     ],
   },
 ];
+
+/**
+ * How long `hooks-permission` makes the permission answer take.
+ *
+ * Upstream arms a 6000 ms notify timer (`S3e`, chunk-g1qrzvef) immediately
+ * before every `can_use_tool` sendRequest, and Notification is what that timer
+ * fires. Just past it: the condition is the overrun, and waiting longer only
+ * makes the scenario slower on every replay.
+ */
+const NOTIFY_ANSWER_DELAY_MS = 7500;
+
+/**
+ * The record projection both task dispatchers are graded on — ONE function,
+ * because the two records are the same shape and writing two would state the
+ * twinning as a coincidence rather than as the contract.
+ *
+ * `task_id` is a run-scoped uuid, so its VALUE cannot go on a diffed surface;
+ * what can is whether the completion dispatcher named the task the creation
+ * dispatcher made. Held in a module-scoped box that each run overwrites on its
+ * TaskCreated fire, the way the subagent scenario links its two agent ids.
+ */
+let createdTaskId: unknown;
+const taskRecord = (i: Record<string, unknown>) => {
+  if (i.hook_event_name === "TaskCreated") createdTaskId = i.task_id;
+  return {
+    event: i.hook_event_name,
+    subject: i.task_subject,
+    description: i.task_description,
+    hasTaskId: typeof i.task_id === "string" && (i.task_id as string).length > 0,
+    sameTaskAsCreated: i.task_id === createdTaskId,
+    // Upstream stamps the teammate and team names into both records; on a
+    // headless run there is no teammate, so JSON drops both — and their absence
+    // is what distinguishes this seam from a teammate session.
+    hasTeammateName: "teammate_name" in i,
+    hasTeamName: "team_name" in i,
+  };
+};
 
 /** The context a UserPromptSubmit hook injects — graded on the REQUEST surface, not just the event log. */
 const INJECTED_CONTEXT = "REFORGE_INJECTED_CONTEXT: the codeword is REFORGE_PROMPT_HOOK_OK.";
@@ -484,8 +539,12 @@ export const W5_SCENARIOS: Scenario[] = [
     // would refuse the compaction this scenario exists to record), a CANCELLED
     // one (which needs a timeout), and the delegated-observation arm (which
     // needs an agent kind the headless Agent tool cannot produce).
+    // C8's second round added PostCompact to this scenario rather than giving
+    // it one of its own: upstream's manual-compaction function awaits `tz` and
+    // then `kPe` on the SAME path, so one compaction is the firing condition for
+    // both and a second recording would record the same HTTP traffic twice.
     tag: "hooks-precompact",
-    title: "PreCompact fires on a real compaction, and its results become the engine's verdict",
+    title: "PreCompact and PostCompact fire on a real compaction, and PreCompact's results become the engine's verdict",
     run: (ctx) =>
       converse({ ...baseOptions(ctx), allowedTools: [], permissionMode: "bypassPermissions",
         hooks: {
@@ -496,6 +555,18 @@ export const W5_SCENARIOS: Scenario[] = [
             // "manual" or "auto" where a tool-scoped one matches a tool name.
             trigger: i.trigger,
             customInstructions: i.custom_instructions,
+          })),
+          // The same compaction, after the summary exists. Its record carries
+          // `compact_summary` where PreCompact carries `custom_instructions`,
+          // and its verdict is display-only: by the time it runs there is
+          // nothing left to block, so unlike PreCompact a hook here cannot
+          // change what happens — only what the operator is told.
+          PostCompact: watch(ctx, "PostCompact", (i) => ({
+            event: i.hook_event_name,
+            trigger: i.trigger,
+            hasCompactSummary: typeof i.compact_summary === "string" && (i.compact_summary as string).length > 0,
+            // Present on the PreCompact record, absent here.
+            hasCustomInstructions: "custom_instructions" in i,
           })),
         },
         settings: {
@@ -525,6 +596,11 @@ export const W5_SCENARIOS: Scenario[] = [
       if (p?.customInstructions !== null) return `custom_instructions was ${JSON.stringify(p?.customInstructions)}, not null`;
       const boundary = msgs.find((m) => (m as { subtype?: string }).subtype === "compact_boundary");
       if (!boundary) return "no compact_boundary frame — PreCompact fired but nothing compacted";
+      const post = events.filter((e) => (e as { event?: string }).event === "PostCompact");
+      if (post.length === 0) return "PostCompact never fired — the compaction did not reach the post arm";
+      const q = (post[0] as { payload?: { hasCompactSummary?: unknown; hasCustomInstructions?: unknown } }).payload;
+      if (q?.hasCompactSummary !== true) return "the PostCompact record carried no compact_summary";
+      if (q?.hasCustomInstructions !== false) return "the PostCompact record carried custom_instructions, which is PreCompact's field";
       const rs = resultsOf(msgs);
       return rs.length === COMPACT_FILLER.length + 1 ? null : `expected ${COMPACT_FILLER.length + 1} results, saw ${rs.length}`;
     },
@@ -634,6 +710,371 @@ export const W5_SCENARIOS: Scenario[] = [
       if (ends.length === 0) return "SessionEnd never fired — /clear did not end the session";
       const reason = (ends[0] as { payload?: { reason?: unknown } }).payload?.reason;
       return reason === "clear" ? null : `SessionEnd carried reason ${JSON.stringify(reason)}, not "clear"`;
+    },
+  },
+
+  // ==========================================================================
+  // The events C8's SECOND round found live. The first round's probe still chose
+  // its own watched list; this one derives it from upstream's dispatcher
+  // registry and creates a firing condition per event, which took the live set
+  // from twelve to twenty-three. These six scenarios are the recordings for the
+  // dispatchers that became spliceable as a result.
+  // ==========================================================================
+
+  {
+    // Notification AND PermissionRequest, off one tool call — and the whole
+    // reason the wave read Notification as dead is the option that makes this
+    // scenario work at all.
+    //
+    // Every earlier hook scenario runs `bypassPermissions`, which skips the
+    // permission system outright: no PermissionRequest dispatch, and no
+    // can_use_tool request for the notify timer to be armed around. Upstream
+    // arms a 6000 ms timer immediately before every `can_use_tool` sendRequest
+    // and fires Notification when it expires, so the condition is a permission
+    // answer that takes LONGER THAN SIX SECONDS. This scenario's `canUseTool`
+    // sleeps past it deliberately.
+    //
+    // Two further gotchas, both measured and both silent: naming the tool in
+    // `allowedTools` SHADOWS `canUseTool` (the SDK warns and never consults it),
+    // and default mode auto-approves read-only shell commands without consulting
+    // it either — so the command has to be one that writes. `mkdir` is the
+    // cheapest that qualifies.
+    //
+    // On replay this scenario really does wait out the delay again, on both
+    // sides. That is the point rather than a cost: the harness owns the answer
+    // timing, so the condition is reproduced offline rather than remembered.
+    tag: "hooks-permission",
+    title: "PermissionRequest fires on a permission consult, and Notification when the answer is slow",
+    run: (ctx) =>
+      drive("Use the Bash tool to run exactly `mkdir -p reforge-permission-probe` and then reply with exactly REFORGE_PERMISSION_OK.", {
+        ...baseOptions(ctx),
+        // deliberately NOT allowedTools: ["Bash"] — see above
+        maxTurns: 4,
+        permissionMode: "default",
+        canUseTool: async (tool: string, input: Record<string, unknown>) => {
+          ctx.collect("canUseTool", { tool });
+          await new Promise((r) => setTimeout(r, NOTIFY_ANSWER_DELAY_MS));
+          return { behavior: "allow" as const, updatedInput: input };
+        },
+        hooks: {
+          PermissionRequest: watch(ctx, "PermissionRequest", (i) => ({
+            event: i.hook_event_name,
+            toolName: i.tool_name,
+            // `permission_suggestions` exists on this record and on no other:
+            // it is what upstream offers a hook that wants to rewrite the rule
+            // rather than the call. Absent on this seam, and its ABSENCE is the
+            // claim — a dispatcher that stamped suggestions would differ here.
+            hasSuggestions: "permission_suggestions" in i,
+            suggestions: i.permission_suggestions ?? null,
+          })),
+          Notification: watch(ctx, "Notification", (i) => ({
+            event: i.hook_event_name,
+            // `notification_type` is also this dispatcher's matchQuery, so a
+            // settings matcher for this event selects on it.
+            notificationType: i.notification_type,
+            hasMessage: typeof i.message === "string" && (i.message as string).length > 0,
+            // Upstream builds `title` into the record; JSON drops it when the
+            // caller passes none, which is what the permission-timer caller does.
+            hasTitle: "title" in i,
+          })),
+        },
+      }),
+    check: (msgs, events) => {
+      const fired = (name: string) => events.filter((e) => (e as { event?: string }).event === name).length;
+      if (fired("canUseTool") === 0) return "canUseTool was never consulted — the permission condition was not created";
+      if (fired("PermissionRequest") === 0) return "PermissionRequest never fired on a consulted tool call";
+      if (fired("Notification") === 0) return "Notification never fired — the answer did not outlast the notify timer";
+      const n = events.find((e) => (e as { event?: string }).event === "Notification") as
+        | { payload?: { notificationType?: unknown; hasMessage?: boolean } }
+        | undefined;
+      if (n?.payload?.hasMessage !== true) return "the Notification record carried no message";
+      return resultText(msgs).includes("REFORGE_PERMISSION_OK") ? null : "the turn did not complete";
+    },
+  },
+
+  {
+    // TaskCreated and TaskCompleted, off one conversation. Neither is dispatched
+    // from the query loop: TaskCreated runs inside the TaskCreate tool's own
+    // `call()`, and TaskCompleted on the TaskUpdate arm that moves a status to
+    // `completed` — so the condition is not "a turn" but "these two tool calls,
+    // in this order", and no other scenario in the corpus makes them.
+    //
+    // The two dispatchers are near-twins (the same nine parameters, the same
+    // record shape, the same executor request) and differ only in the event name
+    // they stamp. That is exactly the pair a single-event recording would grade
+    // hollowly, so both callbacks are registered and the check asserts BOTH.
+    tag: "hooks-tasks",
+    title: "TaskCreated fires on TaskCreate, TaskCompleted when a task is marked completed",
+    run: (ctx) =>
+      drive(
+        "Do these two things with the task tools, in order, and nothing else. FIRST: use the TaskCreate tool exactly once to create a task with subject 'REFORGE_TASK_SUBJECT' and description 'REFORGE_TASK_DESCRIPTION'. SECOND: use the TaskUpdate tool exactly once on that same task to set its status to completed. Then reply with exactly REFORGE_TASKS_OK.",
+        {
+          ...baseOptions(ctx),
+          allowedTools: ["TaskCreate", "TaskUpdate"],
+          maxTurns: 8,
+          permissionMode: "bypassPermissions",
+          hooks: {
+            // One projection for both, because the records ARE the same shape —
+            // writing two would state the twinning as a coincidence rather than
+            // as the contract.
+            TaskCreated: watch(ctx, "TaskCreated", taskRecord),
+            TaskCompleted: watch(ctx, "TaskCompleted", taskRecord),
+          },
+        },
+      ),
+    check: (msgs, events) => {
+      const of = (name: string) => events.filter((e) => (e as { event?: string }).event === name);
+      for (const e of ["TaskCreated", "TaskCompleted"]) {
+        if (of(e).length === 0) return `${e} never fired`;
+      }
+      const created = (of("TaskCreated")[0] as { payload?: Record<string, unknown> }).payload;
+      const completed = (of("TaskCompleted")[0] as { payload?: Record<string, unknown> }).payload;
+      if (created?.subject !== "REFORGE_TASK_SUBJECT") return `TaskCreated carried subject ${JSON.stringify(created?.subject)}`;
+      // The SAME task, through both dispatchers. A run-scoped id cannot be
+      // collected (it would diff between engines for reasons unrelated to hook
+      // dispatch), but whether the two records named one task is not run-scoped
+      // and is a real plumbing claim — the W5 subagent scenario grades the
+      // agent-id link the same way.
+      if (completed?.sameTaskAsCreated !== true) return "TaskCompleted named a different task than TaskCreated";
+      return resultText(msgs).includes("REFORGE_TASKS_OK") ? null : "the turn did not complete";
+    },
+  },
+
+  {
+    // StopFailure, whose condition is a RESPONSE rather than a prompt: upstream
+    // dispatches it on the arms where a turn ends in an api-error, a
+    // prompt-too-long or an exhausted malformed-tool-use retry. No prompt makes
+    // the real API return one on demand, so the cassette is recorded healthy and
+    // then AUTHORED (`Scenario.deriveFault`, the H2 derivation the fault suite
+    // already owns): its first exchange becomes a 500, and both engines replay
+    // the same failure.
+    //
+    // What that buys is the guard as much as the record. This dispatcher refuses
+    // twice — for a delegated-observation subagent, and for a session with no
+    // StopFailure hook registered — and the second refusal is the common case on
+    // every session in the world. A recording can only ever show the arm that
+    // ran; the parity oracle grades the refusals.
+    //
+    // The retry bound is declared here (X6) because the fault entry is served
+    // repeatedly: without it the engine's default backoff turns a two-second
+    // scenario into a multi-minute one for no extra evidence.
+    tag: "hooks-stop-failure",
+    title: "StopFailure fires when a turn ends in an API error",
+    deriveFault: "server-error",
+    run: (ctx) =>
+      drive("Reply with exactly REFORGE_STOP_FAILURE_OK and nothing else.", {
+        ...baseOptions(ctx),
+        env: sdkEnv(ctx.mode, ctx.baseUrl, { ...ctx.knobs, maxRetries: "1" }),
+        allowedTools: [],
+        maxTurns: 2,
+        permissionMode: "bypassPermissions",
+        hooks: {
+          StopFailure: watch(ctx, "StopFailure", (i) => ({
+            event: i.hook_event_name,
+            // The two fields only this record carries. `error` is also the
+            // matchQuery, so a matcher for this event selects on the error kind.
+            error: i.error,
+            hasErrorDetails: "error_details" in i,
+            // Present only when the failing turn had produced assistant text;
+            // upstream coerces an empty join to undefined, and JSON then drops
+            // the key — so the key's ABSENCE here is the graded claim.
+            hasLastAssistantMessage: "last_assistant_message" in i,
+          })),
+          Stop: watch(ctx, "Stop", (i) => ({ event: i.hook_event_name })),
+        },
+      }),
+    check: (_msgs, events) => {
+      const sf = events.filter((e) => (e as { event?: string }).event === "StopFailure");
+      if (sf.length === 0) return "StopFailure never fired — the injected fault did not reach the api-error arm";
+      const p = (sf[0] as { payload?: { error?: unknown } }).payload;
+      if (typeof p?.error !== "string" || p.error.length === 0) return `StopFailure carried error ${JSON.stringify(p?.error)}`;
+      // The other half of the split: a turn that FAILED must not also report a
+      // clean stop. Without this, an engine that fired both would pass.
+      if (events.some((e) => (e as { event?: string }).event === "Stop")) {
+        return "Stop fired on a failing turn — the failure and success arms are not separated";
+      }
+      return null;
+    },
+  },
+
+  {
+    // InstructionsLoaded — one dispatch per memory file the engine loads, which
+    // means the condition is a project CLAUDE.md and a filesystem setting source
+    // to make it visible. It runs in a `/tmp` directory rather than the sandbox
+    // for the reason MEMORY_DIR states: `project` walks ancestors, and this
+    // repository has a CLAUDE.md chain the recording must not absorb.
+    //
+    // Its record is the family's oddest: three of its five event-specific fields
+    // (`globs`, `trigger_file_path`, `parent_file_path`) come out of an options
+    // bag that a top-level project memory does not fill, so they are undefined
+    // and JSON drops them. Their absence is graded here; the oracle supplies
+    // values this seam never does.
+    tag: "hooks-memory",
+    title: "InstructionsLoaded fires when a project CLAUDE.md is loaded",
+    run: (ctx) => {
+      rmSync(MEMORY_DIR, { recursive: true, force: true });
+      mkdirSync(MEMORY_DIR, { recursive: true });
+      seedGitRepo(MEMORY_DIR);
+      writeFileSync(
+        join(MEMORY_DIR, "CLAUDE.md"),
+        "# Sandbox conventions\n\nWhen the user's message is exactly PING, reply with exactly the single word REFORGE_MEMORY_HOOKED and nothing else.\n",
+      );
+      return drive("PING", {
+        ...baseOptions(ctx),
+        cwd: MEMORY_DIR,
+        settingSources: ["project"],
+        allowedTools: [],
+        maxTurns: 2,
+        permissionMode: "bypassPermissions",
+        hooks: {
+          InstructionsLoaded: watch(ctx, "InstructionsLoaded", (i) => ({
+            event: i.hook_event_name,
+            // The path is run-scoped only in its directory, so the BASENAME is
+            // what can be compared; the memory type and the load reason are the
+            // dispatcher's own classification and are fully diffable.
+            fileName: String(i.file_path ?? "").split("/").pop(),
+            memoryType: i.memory_type,
+            // Also this dispatcher's matchQuery.
+            loadReason: i.load_reason,
+            hasGlobs: "globs" in i,
+            hasTriggerFilePath: "trigger_file_path" in i,
+            hasParentFilePath: "parent_file_path" in i,
+          })),
+        },
+      });
+    },
+    check: (msgs, events) => {
+      const il = events.filter((e) => (e as { event?: string }).event === "InstructionsLoaded");
+      if (il.length === 0) return "InstructionsLoaded never fired — no memory file was loaded";
+      const p = (il[0] as { payload?: Record<string, unknown> }).payload;
+      if (p?.fileName !== "CLAUDE.md") return `the record named ${JSON.stringify(p?.fileName)}, not the seeded CLAUDE.md`;
+      if (p?.memoryType !== "Project") return `the record classified the memory as ${JSON.stringify(p?.memoryType)}, not Project`;
+      return resultText(msgs).includes("REFORGE_MEMORY_HOOKED") ? null : "the seeded CLAUDE.md did not reach the prompt";
+    },
+  },
+
+  {
+    // UserPromptExpansion — dispatched when a slash command, a skill or an MCP
+    // prompt is EXPANDED into the prompt the model sees, which is a moment no
+    // other scenario in the corpus reaches. A project command file is the
+    // cheapest of the three conditions, and it needs the same `/tmp` working
+    // directory as the memory scenario for the same ancestor reason.
+    //
+    // This dispatcher also carries a registration guard keyed on the AGENT id
+    // when there is one and the session id otherwise — the only one in the
+    // family that chooses between them — and that choice is invisible to any
+    // recording, because a run with no hook registered produces no observable.
+    tag: "hooks-slash",
+    title: "UserPromptExpansion fires when a project slash command is expanded",
+    run: (ctx) => {
+      rmSync(SLASH_DIR, { recursive: true, force: true });
+      mkdirSync(join(SLASH_DIR, ".claude", "commands"), { recursive: true });
+      seedGitRepo(SLASH_DIR);
+      writeFileSync(
+        join(SLASH_DIR, ".claude", "commands", "reforgeprobe.md"),
+        "Reply with exactly REFORGE_SLASH_OK and nothing else.\n",
+      );
+      return drive("/reforgeprobe", {
+        ...baseOptions(ctx),
+        cwd: SLASH_DIR,
+        settingSources: ["project"],
+        allowedTools: [],
+        maxTurns: 2,
+        permissionMode: "bypassPermissions",
+        hooks: {
+          UserPromptExpansion: watch(ctx, "UserPromptExpansion", (i) => ({
+            event: i.hook_event_name,
+            // The four fields that exist only on this record, and the prompt the
+            // expansion produced. `expansion_type` distinguishes a slash command
+            // from an MCP prompt; `command_source` says which layer supplied it.
+            expansionType: i.expansion_type,
+            commandName: i.command_name,
+            commandArgs: i.command_args,
+            commandSource: i.command_source,
+            prompt: i.prompt,
+          })),
+        },
+      });
+    },
+    check: (msgs, events) => {
+      const ex = events.filter((e) => (e as { event?: string }).event === "UserPromptExpansion");
+      if (ex.length === 0) return "UserPromptExpansion never fired — the command was probably not expanded";
+      const p = (ex[0] as { payload?: Record<string, unknown> }).payload;
+      if (p?.commandName !== "reforgeprobe") return `the record named ${JSON.stringify(p?.commandName)}`;
+      if (p?.expansionType !== "slash_command") return `the record classified the expansion as ${JSON.stringify(p?.expansionType)}`;
+      return resultText(msgs).includes("REFORGE_SLASH_OK") ? null : "the expanded command did not reach the model";
+    },
+  },
+
+  {
+    // FileChanged — the one dispatcher in the family reached by the FILESYSTEM
+    // rather than by the conversation. Upstream arms a chokidar watcher from the
+    // registered FileChanged hooks' MATCHERS (each is split on `|` and resolved
+    // against the cwd); nothing a hook prints arms it, and a hook with no
+    // matcher arms nothing. So this scenario registers a matcher over the
+    // sandbox through the settings layer, and then writes a file inside it.
+    //
+    // WHAT IS COLLECTED, AND WHY IT IS ONE EVENT RATHER THAN ONE PER FIRE. The
+    // watcher debounces with a 500 ms stability threshold, so how many times it
+    // fires for a create-then-overwrite is a property of the filesystem's
+    // timing, not of the dispatcher — collecting per fire would put that timing
+    // on a diffed surface. The scenario accumulates instead and emits ONE
+    // observation at the end: that the dispatcher ran, which files it named, and
+    // that it stamped an event kind. A sabotaged dispatcher never reaches the
+    // watcher helper, so it collects `fired: false` and the scenario reddens.
+    tag: "hooks-file-watch",
+    title: "FileChanged fires for a file under a registered matcher",
+    substanceOnly:
+      "the watcher's fire COUNT and ordering are filesystem timing (chokidar debounces with a 500 ms stability " +
+      "threshold), so the per-fire event stream is not a contract; the accumulated observation is, and the check asserts it",
+    run: async (ctx) => {
+      const seen = new Set<string>();
+      let kinds = 0;
+      // ONE write, then a real sleep inside the same turn. The watcher debounces
+      // with a 500 ms stability threshold, so a turn that ends the moment the
+      // file lands races the dispatch it exists to observe — measured: the first
+      // take wrote twice and replied immediately, and the fire arrived after the
+      // query had closed on BOTH replay sides. The sleep is not padding; it is
+      // the part of the condition the filesystem owns.
+      const msgs = await drive(
+        `Do exactly three things, in order, and nothing else. FIRST: use the Write tool to create a file named ${WATCHED_FILE} containing exactly \`one\`. SECOND: use the Bash tool to run exactly \`sleep 3\`. THIRD: reply with exactly REFORGE_WATCHED_OK.`,
+        {
+          ...baseOptions(ctx),
+          allowedTools: ["Write", "Bash"],
+          maxTurns: 6,
+          permissionMode: "bypassPermissions",
+          hooks: {
+            FileChanged: [
+              {
+                hooks: [
+                  async (input: unknown) => {
+                    const i = input as { file_path?: string; event?: string };
+                    const name = String(i.file_path ?? "").split("/").pop() ?? "";
+                    if (name.endsWith(".txt")) seen.add(name);
+                    if (typeof i.event === "string" && i.event.length > 0) kinds++;
+                    return { continue: true } as const;
+                  },
+                ],
+              },
+            ],
+          },
+          // The matcher is what arms the watcher, and `Options.hooks` carries no
+          // matcher — so the arming registration has to go through the settings
+          // layer even though the grading one is a callback.
+          settings: { hooks: { FileChanged: [{ matcher: SANDBOX, hooks: [{ type: "command", command: "true" }] }] } },
+        },
+      );
+      ctx.collect("FileChanged:accumulated", { fired: seen.size > 0 || kinds > 0, files: [...seen].sort(), everyFireNamedAKind: kinds > 0 });
+      return msgs;
+    },
+    check: (msgs, events) => {
+      const acc = events.find((e) => (e as { event?: string }).event === "FileChanged:accumulated") as
+        | { payload?: { fired?: boolean; files?: string[]; everyFireNamedAKind?: boolean } }
+        | undefined;
+      if (acc?.payload?.fired !== true) return "FileChanged never fired — the matcher did not arm the watcher";
+      if (!acc.payload.files?.includes(WATCHED_FILE)) return `the watcher named ${JSON.stringify(acc.payload.files)}, not ${WATCHED_FILE}`;
+      if (acc.payload.everyFireNamedAKind !== true) return "the record carried no event kind";
+      return resultText(msgs).includes("REFORGE_WATCHED_OK") ? null : "the turn did not complete";
     },
   },
 ];

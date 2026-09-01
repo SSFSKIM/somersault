@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { deriveFaultCassette } from "../src/faults.js";
 import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { gateCacheCheck } from "../src/leakcheck.js";
 import { scrubRequestBody } from "../src/canonical.js";
@@ -280,6 +281,15 @@ for (const s of SCENARIOS) {
       );
       verdicts.push({ tag: s.tag, pass: false });
       continue;
+    }
+    // A scenario whose firing condition is an API FAILURE authors it here (see
+    // `Scenario.deriveFault`): the live take is a real recording, and the
+    // derivation rewrites its first exchange into the fault both engines then
+    // replay. Done before promotion so the committed cassette IS the graded one
+    // and a re-record cannot quietly promote the healthy take.
+    if (s.deriveFault) {
+      deriveFaultCassette(staged, staged, s.deriveFault);
+      console.log(`  derived the '${s.deriveFault}' fault into the cassette before promoting it`);
     }
     renameSync(staged, cassette);
   } else {

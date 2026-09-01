@@ -498,8 +498,16 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
     </>
   );
 
+  // bl10 fix wave 1, finding 3: `Settings`' own binding table binds select:*/search unconditionally, but
+  // those are no-op keys on Status/Usage/Stats — there is no `Select` and no search box on those tabs (the
+  // `readOnlyTabBody` above), just a static formatted read. Blindly walking `Settings` there advertised three
+  // dead hints AND, at the 4-hint cap, evicted `Tabs`' own working "switch tab" entirely. A read-only tab
+  // names its true set directly instead: `confirm:no` (still live — Escape closes the dialog everywhere) plus
+  // whatever `Tabs` itself contributes.
+  const hintActions = activeTab === "Config" ? undefined : ([{ action: "confirm:no", scope: "Settings" }] as const);
+  const hintScope = activeTab === "Config" ? (["Settings", "Tabs"] as const) : (["Tabs"] as const);
   return (
-    <DialogFrame title="Settings" color="permission" hintScope={["Settings", "Tabs"]}>
+    <DialogFrame title="Settings" color="permission" hintScope={hintScope} {...(hintActions ? { hintActions } : {})}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) — the tab list is derived from the `<Tab>` children below
           instead of the deleted `TABS`/`TAB_SPECS` array, and `Tabs` is CONTROLLED via `selectedTab`+
           `onTabChange` because `activeTab` already lives in `useChat`'s hook state (it must survive the

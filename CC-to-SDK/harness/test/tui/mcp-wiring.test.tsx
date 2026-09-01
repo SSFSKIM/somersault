@@ -19,6 +19,8 @@ import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { ChatApp } from "../../src/tui/ChatApp.js";
 import { fakeRemote } from "./helpers/fakeRemote.js";
 import { normalizeMcpServers } from "../../src/tui/mcpDialogModel.js";
+import type { PendingEntry } from "../../src/permissions/pending.js";
+import type { ChatSession } from "../../src/tui/useChat.js";
 
 const frame = (f: () => string | undefined) => f() ?? "";
 const stripAnsiAll = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -64,6 +66,66 @@ describe("T-MENU task 4 — /mcp wiring (spec A2/D5-bl10)", () => {
     await waitFor(() => flat(lastFrame).includes("disabled"));
     expect(toggled).toEqual({ name: "linear", enabled: false });
     expect(flat(lastFrame)).not.toContain("Manage MCP servers");
+  });
+});
+
+// ── bl10 fix wave 1, finding 1 ────────────────────────────────────────────────────────────────────────────
+// `state.mcpDialog.open` joined `paneOwned` (ChatApp.tsx:1390, T-MENU task 4/D15) but was missing from
+// `inputOwnerRef`'s overlay-arm disjunction (ChatApp.tsx:593) — the SAME class of "one term short of the
+// disjunction" defect the file's own header comment already sabotage-checks `themeDialog.open` against. The
+// symptom is two-fold: `seamActive` (:1693, `inputOwnerRef.current === "overlay"`) never goes true for
+// `/mcp` in fullscreen, so its rows-sized root list renders in the half-height DOCK instead of the seam; and
+// a permission decision arriving while `/mcp` is open reads `inputOwnerRef.current === "decision"` instead
+// of `"overlay"`, so `inlineDecision` renders the PermissionDialog into the dock ALONGSIDE the browser
+// instead of staying suppressed behind it — exactly `fullscreen-overlays.test.tsx`'s own "gives a permission
+// dialog the dock" mechanism, just missing the one gate every other user-opened overlay already has.
+const isSeamRule = (line: string): boolean => /^▔+$/.test(line.replace(/\x1b\[[0-9;]*m/g, "").trim());
+const seamRuleAt = (frame: string): number => frame.split("\n").findIndex(isSeamRule);
+const permissionEntry = (toolUseID = "t"): PendingEntry =>
+  ({ sessionId: "s", toolUseID, toolName: "Edit", kind: "permission", input: { file_path: "f.ts" }, createdAt: Date.now() });
+
+describe("bl10 fix wave 1, finding 1 — /mcp joins the seam-owning overlay class", () => {
+  it("fullscreen: /mcp draws in the seam slot (▔ rule, transcript squeezed above), not the half-height dock", async () => {
+    const fake = fakeRemote({ mcpServerStatus: () => [{ name: "linear", status: "connected" }] });
+    const r = render(
+      <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+        renderer={{ mode: "fullscreen", reason: "env_on" }} deps={{ columns: () => 80, rows: () => 24 }} />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    await tick();
+    r.stdin.write("/mcp");
+    await waitFor(() => frame(r.lastFrame).includes("/mcp"));
+    r.stdin.write("\r");
+    await waitFor(() => frame(r.lastFrame).includes("Manage MCP servers"));
+    await tick();
+    const f = r.lastFrame() ?? "";
+    const rule = seamRuleAt(f);
+    expect(rule).toBeGreaterThan(0);                                    // the seam's own ▔ rule is present…
+    expect(f).not.toContain("❯ ");                                 // …the composer is gone, exactly like /model
+  });
+
+  it("/mcp open + a permission arriving mid-browse: the browser keeps input, the decision stays suppressed behind it", async () => {
+    const fake = fakeRemote({ mcpServerStatus: () => [{ name: "linear", status: "connected" }] });
+    const r = render(
+      <ChatApp makeSession={() => fake as unknown as ChatSession} client={{ kind: "loopback" }} cwd="/work"
+        renderer={{ mode: "fullscreen", reason: "env_on" }} deps={{ columns: () => 80, rows: () => 24 }} />,
+    );
+    await waitFor(() => frame(r.lastFrame).includes("❯ "));
+    await tick();
+    r.stdin.write("/mcp");
+    await waitFor(() => frame(r.lastFrame).includes("/mcp"));
+    r.stdin.write("\r");
+    await waitFor(() => frame(r.lastFrame).includes("Manage MCP servers"));
+    await tick();
+    fake.parkPermission(permissionEntry());
+    await tick();
+    // The decision never gets its own dialog while the browser owns the seam — it stays parked, not rendered.
+    expect(frame(r.lastFrame)).not.toContain("Edit file");
+    expect(frame(r.lastFrame)).toContain("Manage MCP servers");
+    // Closing the browser reveals the decision that was waiting behind it all along.
+    r.stdin.write("\x1b");
+    await waitFor(() => frame(r.lastFrame).includes("Edit file"));
+    expect(frame(r.lastFrame)).not.toContain("Manage MCP servers");
   });
 });
 

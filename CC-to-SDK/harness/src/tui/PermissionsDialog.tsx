@@ -673,7 +673,20 @@ export function PermissionsDialog({
     : undefined;
   // Same carve-out, read by the `DialogFrame` call below: Recently denied/Auto mode keep their OWN literal
   // footer (just above) instead of the derived bar.
-  const hintScope = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : (["Settings", "Tabs"] as const);
+  //   bl10 fix wave 1, finding 3: the other four tabs blindly walked `Settings`' own table for cancel/
+  // navigate/select, which also carries `settings:search` — a hard no-op here (`useKeyActions` above binds
+  // it to nothing, per this dialog's own comment: "`/` opens no query here"). At the 4-hint cap that dead
+  // "search" hint filled the slot `Tabs`' own working "switch tab" needed. `Select`'s table is not a clean
+  // substitute either — its own pageUp/pageDown/first/last actions (W-S11's divergence, real but secondary)
+  // would just crowd "switch tab" out a different way. So the precise, priority-ordered set is named
+  // directly: cancel, navigate, select, then switch tab — the four that matter most, guaranteed to survive
+  // the cap because there is no fifth candidate left to evict them.
+  const hintActions = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : ([
+    { action: "select:cancel", scope: "Select" },
+    { action: "select:previous", scope: "Select" },
+    { action: "select:accept", scope: "Select" },
+    { action: "tabs:next", scope: "Tabs" },
+  ] as const);
 
   /** T-MENU task 2: ONE shared body, computed once per render from the already tab-scoped variables above
    *  (`items`/`loading`/`INTRO[activeTab]`/`footerText`) — unlike Settings/Help, this dialog never had a
@@ -733,7 +746,7 @@ export function PermissionsDialog({
   );
 
   return (
-    <DialogFrame title="Permissions" color="permission" hintScope={hintScope}>
+    <DialogFrame title="Permissions" color="permission" {...(hintActions ? { hintActions } : {})}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) replaces the deleted `TABS`/`TAB_SPECS`-fed explicit
           `<Tabs tabs active onChange>` call. `Tabs` is CONTROLLED via `selectedTab`+`onTabChange` (the tab id
           already lives in `useChat`'s hook state, the same reason SettingsDialog is controlled). The blank

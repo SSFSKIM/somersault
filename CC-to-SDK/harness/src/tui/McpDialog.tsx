@@ -37,6 +37,12 @@ const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
 const STATUS_COLOR: Partial<Record<McpServerRow["status"], ThemeTokenName>> = { connected: "success", failed: "error", "needs-auth": "warning" };
 
 export const MCP_EMPTY = "No MCP servers configured.";
+/** bl10 fix wave 1, finding 2: a REJECTED `mcpServerStatus()` (an older host, a transport failure) used to be
+ *  swallowed into `setServers([])`, which reads onscreen as `MCP_EMPTY` — "No MCP servers configured." is not
+ *  the truth when the real answer is "the call failed and we don't know". The old text-only `/mcp` command
+ *  surfaced a failure; this dialog must too. `SettingsDialog`'s own read-only-tab fetch failure (`✗ ${message}`)
+ *  is the house style this borrows. */
+export const mcpFetchErrorText = (message: string): string => `✗ Couldn't load MCP servers: ${message}`;
 
 function Row({ label, focused }: { label: React.ReactNode; focused: boolean }) {
   return (
@@ -59,11 +65,16 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
   columns?: number;
 }) {
   const [servers, setServers] = useState<McpServerRow[] | undefined>(undefined);
+  // bl10 fix wave 1, finding 2: a rejected fetch is a DISTINCT state from "fetched zero servers" — the empty
+  // list still renders (so the frame/subtitle/footer chrome stays intact) but the body says so instead of
+  // silently reading as `MCP_EMPTY`.
+  const [fetchError, setFetchError] = useState<string | undefined>(undefined);
   // Fetched once per MOUNT (D13's own philosophy — a fresh measurement on open — via the caller unmounting
   // and remounting this component on every `/mcp` open, exactly like `bgPanelOpen`'s conditional overlay arm).
   useEffect(() => {
     let cancelled = false;
-    void fetchServers().then((s) => { if (!cancelled) setServers(s); }).catch(() => { if (!cancelled) setServers([]); });
+    void fetchServers().then((s) => { if (!cancelled) setServers(s); })
+      .catch((e: unknown) => { if (!cancelled) { setFetchError(e instanceof Error ? e.message : String(e)); setServers([]); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -201,8 +212,17 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     );
   })();
 
+  // bl10 fix wave 1, finding 3: `Select`'s own table binds navigate/select unconditionally, but `count === 0`
+  // means there is nothing to move a cursor onto or accept — the empty root list (no servers configured), a
+  // server-menu with no tools (no "View tools" row), server-tools with an empty tool array, and the leaf
+  // server-tool-detail view (which is never a list at all) all land here. Advertising "navigate"/"select" in
+  // those states is exactly the no-op-hint defect: only `select:cancel`'s Esc-to-pop is ever live, named
+  // directly rather than pulled from the whole scope.
+  const mcpHintScope = count > 0 ? (["Select"] as const) : undefined;
+  const mcpHintActions = count > 0 ? undefined : ([{ action: "select:cancel", scope: "Select" }] as const);
   return (
-    <DialogFrame title={MCP_TITLE} subtitle={mcpSubtitle(serverCount)} hintScope={["Select"]}>
+    <DialogFrame title={MCP_TITLE} subtitle={mcpSubtitle(serverCount)}
+      {...(mcpHintScope ? { hintScope: mcpHintScope } : {})} {...(mcpHintActions ? { hintActions: mcpHintActions } : {})}>
       {body}
     </DialogFrame>
   );

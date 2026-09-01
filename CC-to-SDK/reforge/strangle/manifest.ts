@@ -2147,7 +2147,538 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["hooks-precompact"],
   },
+  // ---- hook dispatch, the nine events C8's SECOND round found live ---------
+  // The first round re-measured the hook set and got twelve. It still chose its
+  // own watched list, though, so three live events sat outside the measurement
+  // entirely and the six whose conditions nobody created were never asked. This
+  // round derives the population from upstream's own dispatcher registry
+  // (`research/fixtures/hook-registry-2.1.251.json`, 33 events) and creates a
+  // firing condition per event: TWENTY-THREE fire, none of the created
+  // conditions came back dead, and ten remain OPEN with their conditions named.
+  //
+  // These nine are the dispatchers that became spliceable as a result. They add
+  // no new SHAPE to the family — every one is a free function that builds one
+  // record and hands it to an executor — but they do widen it in three ways:
+  //
+  //   `CUt` (FileChanged) reaches NEITHER executor. It hands the whole execution
+  //       to the watcher-hooks helper it shares with CwdChanged, so its port is
+  //       a third unowned execution path and a ledger edge to the file-watcher
+  //       subsystem. It is also the only dispatcher in the family that is not
+  //       async and takes no timeout.
+  //   `kPe` (PostCompact) is PreCompact's sibling with the verdict cut down:
+  //       the compaction has already happened, so there is nothing left to block
+  //       and no summarisation prompt left to extend, and the reduction is the
+  //       display message alone.
+  //   `xUt`/`eGe` (TaskCreated/TaskCompleted) are near-twins — same nine
+  //       parameters, same record shape, same executor request, one differing
+  //       string — and `hooks-tasks` grades both, because a corpus that graded
+  //       one would be stating the twinning as a coincidence.
+  //
+  // TWO REGISTRY EVENTS THAT FIRE ARE DELIBERATELY NOT HERE: PreModelSwitch
+  // (`mdt`) and PostModelSwitch (`gdt`). They are the family's only stateful
+  // members — between them they reach a plugin loader, a model prefetch and
+  // validation preamble, a per-session decision holder that `gdt` MUTATES
+  // (`landedOn`, a `pending` queue, an `inFlight` promise set) and a
+  // fire-and-forget promise the caller never awaits — about seventeen forwarded
+  // ports each. §2.3 puts a stateful core behind a designed port rather than
+  // transcribing it, and doubling this wave's capture inventory for two events
+  // is not that design. Recorded as a ledger gap, not as an omission.
+
+  {
+    // PreCompact's sibling, and the second half of one compaction: upstream's
+    // compaction function awaits `tz` and then, after the summary exists, `kPe`.
+    // Same awaited shape, same executor, and a verdict cut down to its display
+    // half — by the time this runs there is nothing left to block and no
+    // summarisation prompt left to extend, so a hook here can change what the
+    // operator is TOLD and nothing else.
+    //
+    // The reduction is therefore PreCompact's display loop exactly, and the
+    // early return on zero results is still observable: `{}` has no
+    // `userDisplayMessage` key at all, where every later arm sets it (to
+    // `undefined` when nothing was said, which JSON then drops — a different
+    // thing from never having had the key).
+    name: "post-compact-hooks",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"PostCompact"',
+    fn: "postCompactHooks",
+    captures: [
+      {
+        // `ka` — already owned by the stop and pre-compact dispatchers.
+        as: "isDelegatedObservationSubagent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("post-compact-hooks", "isDelegatedObservationSubagent", new RegExp(`\\{if\\((${ID})\\(${ID}\\.agentContext\\)\\)return\\{\\}`)),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "post-compact-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"PostCompact"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "post-compact-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"PostCompact"`),
+        ),
+      },
+      {
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("post-compact-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("post-compact-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID})\\)\\{if\\(`)),
+      },
+    ],
+    coverage: ["hooks-precompact"],
+  },
+
+  {
+    // The event the first round called the one genuine negative. It was not: its
+    // condition is a can_use_tool request left unanswered past the 6000 ms notify
+    // timer, and every phase that round ran was under `bypassPermissions`, which
+    // skips the permission system entirely — so no timer was ever armed. The
+    // dispatcher itself is the family's simplest awaited one: build a record,
+    // await the executor, DROP the results. Nothing reads them.
+    //
+    // Its third parameter is a destructured options bag with a default, so the
+    // delegation forwards the bag REBUILT from the bound names (ast.ts,
+    // `paramArgs`) — the timeout default is applied once, in the graph, before it
+    // crosses. The owned module keeps upstream's own default anyway, so it
+    // observes what the excised body observed under either caller.
+    name: "notification-hooks",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"Notification"',
+    fn: "notificationHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "notification-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"Notification"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "notification-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"Notification"`),
+        ),
+      },
+      {
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("notification-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("notification-hooks", "defaultHookTimeoutMs", new RegExp(`\\{timeoutMs:${ID}=(${ID}),storageV5:`)),
+      },
+    ],
+    coverage: ["hooks-permission"],
+  },
+
+  {
+    // One dispatch per memory file the engine loads. Its record is the family's
+    // oddest: three of its five event-specific fields come out of an options bag
+    // that a top-level project memory does not fill, so on the recorded seam
+    // they are undefined and JSON drops them — the corpus grades their absence
+    // and the parity oracle grades the values.
+    //
+    // It is also the only dispatcher whose options bag is destructured INSIDE
+    // the body (`u ?? {}`) rather than in the parameter list, so unlike
+    // Notification the whole bag crosses the seam intact.
+    name: "instructions-loaded-hooks",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"InstructionsLoaded"',
+    fn: "instructionsLoadedHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "instructions-loaded-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"InstructionsLoaded"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "instructions-loaded-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"InstructionsLoaded"`),
+        ),
+      },
+      {
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("instructions-loaded-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("instructions-loaded-hooks", "defaultHookTimeoutMs", new RegExp(`timeoutMs:${ID}=(${ID}),storageV5:`)),
+      },
+    ],
+    coverage: ["hooks-memory"],
+  },
+
+  {
+    // The turn-end dispatcher's failure arm. `y9` runs when a turn ENDS; this
+    // one runs when a turn ends BADLY — an api_error, a prompt_too_long, an
+    // exhausted malformed-tool-use retry — and the two are mutually exclusive,
+    // which `hooks-stop-failure` asserts as a split rather than as a presence.
+    //
+    // Two refusals, and the second is the one that matters most: a session with
+    // no StopFailure hook registered returns before building anything, which is
+    // the common case on every session in the world and is reachable by no
+    // scenario at all (a run with no hook produces no observable). The parity
+    // oracle grades it.
+    //
+    // It is also the only dispatcher in the family that hands the executor BOTH
+    // the session hooks registry and `getAppState` off its context — the
+    // executor request, not the record, is where this one differs from its
+    // siblings.
+    name: "stop-failure-hooks",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"StopFailure"',
+    fn: "stopFailureHooks",
+    captures: [
+      {
+        as: "isDelegatedObservationSubagent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-failure-hooks", "isDelegatedObservationSubagent", new RegExp(`\\{if\\((${ID})\\(${ID}\\.agentContext\\)\\)return;`)),
+      },
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("stop-failure-hooks", "hasHookForEvent", new RegExp(`if\\(!(${ID})\\("StopFailure",`)),
+      },
+      {
+        // `zr` — already owned by the stop dispatcher.
+        as: "textOfContent",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("stop-failure-hooks", "textOfContent", new RegExp(`let ${ID}=(${ID})\\(${ID}\\.message\\.content,`)),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "stop-failure-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),void 0,${ID}\\),hook_event_name:"StopFailure"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "stop-failure-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),void 0,${ID}\\),hook_event_name:"StopFailure"`),
+        ),
+      },
+      {
+        as: "executeHooksAwait",
+        kind: "effectful-port",
+        derive: pick("stop-failure-hooks", "executeHooksAwait", new RegExp(`await (${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("stop-failure-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID})\\)\\{if\\(`)),
+      },
+    ],
+    coverage: ["hooks-stop-failure"],
+  },
+
+  {
+    // Dispatched inside the TaskCreate tool's own `call()` rather than from the
+    // query loop, which is why no turn-shaped scenario ever reached it. The
+    // record's five event-specific fields are the task's identity plus the
+    // teammate and team names, and on a headless run the last two are undefined.
+    name: "task-created-hooks",
+    target: "free-function",
+    signature: { params: 9, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"TaskCreated"',
+    fn: "taskCreatedHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "task-created-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID}\\),hook_event_name:"TaskCreated"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "task-created-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID}\\),hook_event_name:"TaskCreated"`),
+        ),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("task-created-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),signal:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("task-created-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("task-created-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID}\\)\\{let`)),
+      },
+    ],
+    coverage: ["hooks-tasks"],
+  },
+
+  {
+    // `xUt`'s twin, and the only thing that differs between them is the event
+    // name each stamps. Two rows rather than one because they are two functions
+    // with two anchors and two footprints: an upstream edit to either has to
+    // fail on its own row, and a shared row would hide it.
+    //
+    // Its call sites are not twins, though. TaskCreated is dispatched from the
+    // TaskCreate tool; this one from the TaskUpdate arm that moves a status to
+    // `completed`, and again from the teammate loop when an owned in-progress
+    // task finishes. `hooks-tasks` reaches the first.
+    name: "task-completed-hooks",
+    target: "free-function",
+    signature: { params: 9, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"TaskCompleted"',
+    fn: "taskCompletedHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "task-completed-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID}\\),hook_event_name:"TaskCompleted"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "task-completed-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID}\\),hook_event_name:"TaskCompleted"`),
+        ),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("task-completed-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),signal:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("task-completed-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("task-completed-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID}\\)\\{let`)),
+      },
+    ],
+    coverage: ["hooks-tasks"],
+  },
+
+  {
+    // The dispatcher whose results the PERMISSION system obeys: a hook for this
+    // event can allow a tool call, deny it, or hand back a rewritten input, and
+    // three separate call sites read `permissionRequestResult` off the stream.
+    // It is also the only tool-scoped dispatcher that forwards the REAL
+    // tool-use id instead of minting one, because at this point the call exists
+    // and has not run.
+    //
+    // Its record carries `permission_suggestions`, which exists nowhere else:
+    // upstream's offer to a hook that wants to rewrite the RULE rather than the
+    // call. The seam supplies none, so `hooks-permission` grades its absence.
+    name: "permission-request-hooks",
+    target: "free-function",
+    signature: { params: 8, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PermissionRequest"',
+    fn: "permissionRequestHooks",
+    captures: [
+      {
+        // Forwarded AND CALLED, like the PreToolUse dispatcher's: the verbose
+        // log stream is an observable surface, and a dispatcher that stopped
+        // logging would be a difference this wave should not introduce.
+        as: "log",
+        kind: "effectful-port",
+        derive: pick("permission-request-hooks", "log", new RegExp("(" + ID + ")\\(`executePermissionRequestHooks called for tool:")),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-request-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PermissionRequest"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-request-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),hook_event_name:"PermissionRequest"`),
+        ),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("permission-request-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("permission-request-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID})\\)\\{${ID}\\(`)),
+      },
+    ],
+    coverage: ["hooks-permission"],
+  },
+
+  {
+    // Fires when a slash command, a skill or an MCP prompt is EXPANDED into the
+    // prompt the model will see — a moment between the user's keystroke and the
+    // UserPromptSubmit dispatch that nothing else in the corpus reaches.
+    //
+    // Two things are its alone. Its registration guard keys on the AGENT id when
+    // there is one and the session id otherwise, where every other guarded
+    // dispatcher passes a registry and a session id; and its signal comes off
+    // the context's own abort controller with the timeout hard-coded to the
+    // shared constant, so unlike its siblings it has no timeout parameter at all.
+    name: "user-prompt-expansion-hooks",
+    target: "free-function",
+    signature: { params: 7, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"UserPromptExpansion"',
+    fn: "userPromptExpansionHooks",
+    captures: [
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("user-prompt-expansion-hooks", "hasHookForEvent", new RegExp(`if\\(!(${ID})\\("UserPromptExpansion",`)),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "user-prompt-expansion-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID}\\),hook_event_name:"UserPromptExpansion"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "user-prompt-expansion-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID}\\),hook_event_name:"UserPromptExpansion"`),
+        ),
+      },
+      {
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("user-prompt-expansion-hooks", "uuid", new RegExp(`toolUseID:(${ID})\\(\\),signal:`)),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("user-prompt-expansion-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("user-prompt-expansion-hooks", "defaultHookTimeoutMs", new RegExp(`timeoutMs:(${ID}),toolUseContext:`)),
+      },
+    ],
+    coverage: ["hooks-slash"],
+  },
+
+  {
+    // The only dispatcher the FILESYSTEM reaches rather than the conversation,
+    // the only one that is neither async nor a generator, the only one with no
+    // timeout, and the only one that talks to neither executor: it hands the
+    // whole execution to the watcher-hooks helper it shares with CwdChanged,
+    // which awaits the executor and folds the results into the shape the file
+    // watcher needs (the results, the union of every `watchPaths` a hook
+    // returned, the system messages). That helper is a third unowned execution
+    // path and a ledger edge to the file-watcher subsystem.
+    //
+    // How it is armed is not what the field names suggest: upstream reads the
+    // registered FileChanged hooks' MATCHERS, splits each on `|`, resolves the
+    // pieces against the cwd and watches those. A hook with no matcher arms
+    // nothing, and nothing a hook prints arms it either.
+    name: "file-changed-hooks",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"FileChanged"',
+    fn: "fileChangedHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "file-changed-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"FileChanged"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "file-changed-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"FileChanged"`),
+        ),
+      },
+      {
+        // `zxt` — the shared watcher-hook helper. Unowned, and the only
+        // execution port in the family that is neither `jy` nor `AE`.
+        as: "executeWatcherHooks",
+        kind: "effectful-port",
+        derive: pick("file-changed-hooks", "executeWatcherHooks", new RegExp(`return (${ID})\\(${ID},${ID},${ID}\\)\\}`)),
+      },
+    ],
+    coverage: ["hooks-file-watch"],
+  },
 ];
+
 
 /**
  * Whole chunks the strangler owns (§2.2). One row so far: the campaign's S-chunk

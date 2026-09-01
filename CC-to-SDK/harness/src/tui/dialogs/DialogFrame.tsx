@@ -27,7 +27,7 @@ import stringWidth from "string-width";
 import { resolveThemeColor, themeTokens, type ThemeTokenName } from "../theme.js";
 import { truncateLabel } from "../select/selectModel.js";
 import { useKeyActions, useKeyScope } from "../keys/KeymapProvider.js";
-import { useKeyHints, CANCEL_HINT_ENTRY } from "./keyhints.js";
+import { useKeyHints, CANCEL_HINT_ENTRY, type KeyHintEntry } from "./keyhints.js";
 import type { KeyContextName } from "../keys/types.js";
 
 const role = (name: ThemeTokenName) => resolveThemeColor(themeTokens()[name]);
@@ -75,6 +75,14 @@ export interface DialogFrameProps {
    *  migrated keeps its own footer untouched. When `onCancel` is also given, its `confirm:no` hint is folded
    *  in ahead of these scopes' own entries. */
   hintScope?: KeyContextName | readonly KeyContextName[];
+  /** bl10 fix wave 1, finding 3: `hintScope` walks EVERY action a named scope's default table binds, which
+   *  over-advertises the moment a caller's own state makes some of those actions unreachable (a read-only
+   *  Settings tab with no `Select` mounted still inherits `Settings`' own select/search bindings; a
+   *  disableNavigation'd `Tabs` still inherits its own tab-switch keys). Rather than a per-scope registration
+   *  framework, the caller names its OWN precise reachable set here — the same shape `CANCEL_HINT_ENTRY` already
+   *  uses — ahead of whatever `hintScope` still contributes. A caller with a fully precise set for this render
+   *  passes `hintActions` and omits `hintScope` outright, so nothing is walked at all. */
+  hintActions?: readonly KeyHintEntry[];
   /** `Ed`'s `innerPaddingX`, default 1 (L437993). */
   innerPaddingX?: number;
   children?: React.ReactNode;
@@ -104,13 +112,14 @@ Pick<DialogFrameProps, "title" | "subtitle" | "subagentType" | "workflowName"> &
 /** `Ed` L437992-438014, extended by `me`'s `titleEnd`/`onCancel`/auto keyhint bar (L568952). */
 export function DialogFrame({
   title, subtitle, color = "permission", titleColor, subagentType, workflowName, titleRight, titleEnd,
-  onCancel, hintScope, innerPaddingX = 1, children,
+  onCancel, hintScope, hintActions, innerPaddingX = 1, children,
 }: DialogFrameProps) {
   // `me`: claims a `Confirmation` scope and binds `confirm:no → onCancel` — INACTIVE (out of resolution
   // entirely) when no caller passes onCancel, so an unmigrated dialog's own Escape handling is unaffected.
   useKeyScope("Confirmation", { active: onCancel !== undefined });
   useKeyActions(onCancel ? { "confirm:no": onCancel } : NO_ACTIONS);
-  const hints = useKeyHints(hintScope, onCancel !== undefined ? CANCEL_HINT_ENTRY : undefined);
+  const extraHints = [...(onCancel !== undefined ? CANCEL_HINT_ENTRY : []), ...(hintActions ?? [])];
+  const hints = useKeyHints(hintScope, extraHints.length > 0 ? extraHints : undefined);
 
   const rightSlot = titleRight ?? (titleEnd !== undefined ? <Text dimColor wrap="truncate-start">{titleEnd}</Text> : null);
 
@@ -128,7 +137,7 @@ export function DialogFrame({
         </Box>
       </Box>
       <Box flexDirection="column" paddingX={innerPaddingX}>{children}</Box>
-      {hintScope !== undefined && hints.length > 0
+      {(hintScope !== undefined || hintActions !== undefined) && hints.length > 0
         ? <Box paddingX={innerPaddingX}><Text dimColor>{hints.join(" · ")}</Text></Box>
         : null}
     </Box>

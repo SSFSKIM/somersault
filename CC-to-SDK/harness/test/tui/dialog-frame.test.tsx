@@ -172,4 +172,23 @@ describe("DialogFrame — auto keyhint bar (canon `Ye`/`Z`, L568825/568835)", ()
     const out = plain(frameOf(<DialogFrame title="t" onCancel={() => {}} hintScope="Tabs">{body}</DialogFrame>));
     expect(out).toContain("Esc cancel · Tab switch tab");
   });
+
+  // bl10 fix wave 1, finding 3: `hintScope` walks EVERY action a scope's table binds — the caller needs a way
+  // to name its own PRECISE reachable set instead, for a state where the scope's full table over-advertises
+  // (a read-only tab with no Select mounted still inherits Settings' select:*/search bindings). `hintActions`
+  // is that escape hatch: the same `{action,scope}` shape `CANCEL_HINT_ENTRY` already uses, supplied directly
+  // by the caller instead of derived from a whole scope's table.
+  it("hintActions names a precise action set, independent of hintScope's whole-table walk", () => {
+    const out = plain(frameOf(<DialogFrame title="t" hintActions={[{ action: "confirm:no", scope: "Confirmation" }]}>{body}</DialogFrame>));
+    expect(out).toContain("Esc cancel");
+    // `Confirmation`'s OTHER actions (confirm:yes/previous/next/cycleMode) never appear — only the one named.
+    expect(out).not.toContain("confirm");
+    expect(out).not.toContain("navigate");
+    expect(out).not.toContain("cycle mode");
+  });
+
+  it("hintActions renders even with no hintScope and no onCancel at all — the caller opted in explicitly", () => {
+    const out = plain(frameOf(<DialogFrame title="t" hintActions={[{ action: "help:dismiss", scope: "Help" }]}>{body}</DialogFrame>));
+    expect(out).toContain("Esc dismiss");
+  });
 });

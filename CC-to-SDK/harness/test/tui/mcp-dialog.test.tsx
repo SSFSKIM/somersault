@@ -83,6 +83,17 @@ describe("McpDialog — root list", () => {
     expect(flat(lastFrame)).toContain("0 servers");
   });
 
+  // bl10 fix wave 1, finding 3: `Select`'s own table binds navigate/select unconditionally, but an empty
+  // root list has nothing to move a cursor onto or accept — advertising them here is the no-op-hint defect.
+  // Only `select:cancel`'s Esc-to-close is ever live in this state.
+  it("advertises only cancel — no navigate/select — over the empty server list", async () => {
+    const { lastFrame } = await mount([]);
+    const f = flat(lastFrame);
+    expect(f).toContain("cancel");
+    expect(f).not.toContain("navigate");
+    expect(f).not.toContain("select");
+  });
+
   it("windows the list with counted ↑/↓ more-above/below indicators", async () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ name: `server-${i}`, status: "connected" as const, scope: "project", tools: [] }));
     // rows=14 -> mcpListVisibleRows(14) = 6, well under the 11 combined heading+server rows, so the window
@@ -178,6 +189,11 @@ describe("McpDialog — drill/pop cycle", () => {
     expect(flat(lastFrame)).not.toContain("Tools (");
     stdin.write("\r"); await tick();          // no-op — no tools to drill into
     expect(flat(lastFrame)).not.toContain("No tools.");     // still on server-menu, not server-tools
+    // bl10 fix wave 1, finding 3: no "View tools" row means count is 0 here too — navigate/select are no-ops.
+    const f = flat(lastFrame);
+    expect(f).toContain("cancel");
+    expect(f).not.toContain("navigate");
+    expect(f).not.toContain("select");
   });
 });
 

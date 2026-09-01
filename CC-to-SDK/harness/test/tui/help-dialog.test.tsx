@@ -148,6 +148,24 @@ describe("<HelpDialog> — the footers", () => {
     b.unmount();
   });
 
+  // bl10 fix wave 1, finding 3: `Tabs` is handed `disableNavigation={search !== null}` — while a Commands
+  // query is open, tab/←/→ register no handler at all (Tabs.tsx's own `NO_ACTIONS` arm), but `Tabs`' table
+  // still binds them, so blindly walking that scope kept advertising "switch tab" as live when it was not.
+  it("drops the 'switch tab' hint while a Commands/Custom search query disables tab navigation", async () => {
+    const { stdin, lastFrame } = render(<HelpDialog commands={CATALOG} onClose={() => {}} rows={40} columns={100} />);
+    await waitFor(() => flat(lastFrame).includes(HELP_INTRO));
+    stdin.write("\t");
+    await waitFor(() => flat(lastFrame).includes(BROWSE_DEFAULT_TITLE));
+    expect(flat(lastFrame)).toContain("switch tab");        // browsing: tab navigation is live
+    stdin.write("/");
+    await waitFor(() => flat(lastFrame).includes("Search commands"));
+    expect(flat(lastFrame)).not.toContain("switch tab");    // searching: Tabs is disableNavigation'd
+    expect(flat(lastFrame)).toContain("dismiss");            // help:dismiss is still live throughout
+    stdin.write("\x1b");                                      // Esc clears the query, not the dialog
+    await waitFor(() => flat(lastFrame).includes("/compact"));
+    expect(flat(lastFrame)).toContain("switch tab");          // browsing again: tab navigation is back
+  });
+
   it("Escape dismisses from the General tab", async () => {
     let closed = 0;
     const { stdin, lastFrame } = render(<HelpDialog commands={CATALOG} onClose={() => { closed++; }} rows={40} columns={100} />);

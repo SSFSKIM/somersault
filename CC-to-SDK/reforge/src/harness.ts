@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { CONFIG_DIR, SANDBOX, sdkEnv } from "./runTurn.js";
 import type { EngineEnvKnobs, EnvMode } from "./env.js";
+import type { FaultKind } from "./faults.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
@@ -48,6 +49,18 @@ export interface Scenario {
    * and such a scenario grades strictly less than the others.
    */
   substanceOnly?: string;
+  /**
+   * Rewrite the recorded cassette into a FAULT before promoting it, using the
+   * H2 derivation (`src/faults.ts`).
+   *
+   * For a scenario whose condition is a RESPONSE the API will not produce on
+   * demand. StopFailure's dispatcher runs on the arm where a turn ends in an
+   * api-error message, and no prompt reliably makes the real API return one — so
+   * the cassette is recorded healthy and then authored, exactly as the H2 suite
+   * already does, and both engines replay the same authored failure. The
+   * recording is still a real recording; only the response it serves is chosen.
+   */
+  deriveFault?: FaultKind;
 }
 
 // --- small assertion helpers for scenario checks ----------------------------

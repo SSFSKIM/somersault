@@ -757,12 +757,16 @@ describe("PermissionsDialog — the auto keyhint bar replaces the browsing foote
     const f = plain(lastFrame);
     // The old literal is gone outright...
     expect(f).not.toContain("↑/↓ to navigate · Enter to select · ←/→ to switch · Esc to cancel");
-    // ...replaced by the derived bar: `confirm:no`'s "cancel", `select:previous`'s "navigate" and
-    // `select:accept`'s "select" — `tabs:next`'s "switch tab" is bumped past the 4-hint cap by these three
-    // plus `settings:search`'s "search", exactly MAX_HINTS' own dedup-by-description rule at work.
+    // ...replaced by the derived bar: `select:cancel`'s "cancel", `select:previous`'s "navigate",
+    // `select:accept`'s "select" and `tabs:next`'s "switch tab" — the true reachable set at exactly the
+    // 4-hint cap (bl10 fix wave 1, finding 3). The scope this derives from is `Select`, not `Settings`:
+    // `Settings`' own table also carries `settings:search`, a hard no-op here (this dialog binds it to
+    // nothing — "`/` opens no query here", above) that used to fill the 4th slot and evict "switch tab".
     expect(f).toContain("cancel");
     expect(f).toContain("navigate");
     expect(f).toContain("select");
+    expect(f).toContain("switch tab");
+    expect(f).not.toContain("search");
   });
 
   it("leaves Recently denied's and Auto mode's own false-affordance-safe footers untouched", async () => {

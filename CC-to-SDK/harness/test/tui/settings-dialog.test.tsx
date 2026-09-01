@@ -340,6 +340,22 @@ describe("SettingsDialog — the auto keyhint bar replaces the browsing footers 
     r.unmount();
   });
 
+  // bl10 fix wave 1, finding 3: a read-only tab (Status/Usage/Stats) has no `Select` mounted and no search
+  // box — `readOnlyTabBody` is a static formatted read. `Settings`' own binding table still binds
+  // select:previous/select:accept/settings:search regardless of tab, so blindly walking that scope advertised
+  // three dead hints here AND, at the 4-hint cap, evicted `Tabs`' genuinely working "switch tab" entirely.
+  it("advertises only the true reachable set on a read-only tab — cancel + switch tab, no navigate/select/search", async () => {
+    const r = render(<SettingsDialog {...props()} tab="Usage" rows={40} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    const f = plain(frame(r.lastFrame));
+    expect(f).toContain("cancel");
+    expect(f).toContain("switch tab");
+    expect(f).not.toContain("navigate");
+    expect(f).not.toContain("select");
+    expect(f).not.toContain("search");
+    r.unmount();
+  });
+
   it("still shows SEARCH_FOOTER's own text while a query is open — the bar does not replace it", async () => {
     const r = render(<SettingsDialog {...props()} rows={40} columns={100} />);
     await waitFor(() => frame(r.lastFrame).includes("Theme"));
