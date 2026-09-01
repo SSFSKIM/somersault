@@ -60,8 +60,32 @@ import { captureRoot, freeIdentifiers, resolveDeclaration, resolveExport, type D
  * whose callees fan out into dozens of declarations has stopped being a helper
  * and is reaching into a subsystem (or a vendored library), and enumerating that
  * would record a closure so wide it is indistinguishable from the chunk itself.
- * The measured closures on the pinned graph are 0–4 declarations at depth ≤ 2,
- * so these are room, not a ceiling anything is pressed against.
+ * Every enumerated closure on the pinned graph is 0–4 declarations at depth ≤ 2.
+ *
+ * ## The one row that falls back, and why the bound is not what to change
+ *
+ * WebFetch's usage-notes helper is the single capture that degrades to
+ * whole-chunk hashes, and C5x measured what is actually behind it rather than
+ * raising a number to make the message go away:
+ *
+ *  - at 20 declarations it abandoned on an import of `fs`. That was a real
+ *    defect, and not a bound at all — an EXTERNAL module is a boundary, not a
+ *    hole (`isExternalSpecifier` below), and degrading the whole row for one
+ *    was worse than useless: it staled the row on unrelated edits and still
+ *    covered nothing extra.
+ *  - with that fixed and the bounds lifted to depth 40 / 500 declarations, the
+ *    walk still does not terminate: it exceeds **500 declarations across 17
+ *    chunks and 272 KB** of upstream. The helper genuinely reaches a subsystem.
+ *
+ * So the fallback here is the DESIGNED behaviour, not a gap: no reachable bound
+ * enumerates this closure, and a larger one would only produce a wider record
+ * that is still not a record of a helper. The considered alternative — cut the
+ * walk at declarations that read `process.env` or a feature gate, on the theory
+ * that they are ports by nature — is rejected: an OWNED capture is one the
+ * reforge module REIMPLEMENTED, so everything it called is part of what was
+ * replaced, and stopping at an env reader would silently narrow the contract in
+ * exactly the direction §5 exists to prevent. Five whole-chunk hashes that
+ * over-stale are the right way to be wrong.
  */
 export const CLOSURE_MAX_DEPTH = 6;
 export const CLOSURE_MAX_DECLARATIONS = 20;
@@ -138,6 +162,17 @@ export interface FootprintInput {
   upstream: (text: string) => string;
 }
 
+/**
+ * Is this specifier outside the extracted graph entirely?
+ *
+ * Every intra-graph edge is a PATH: the bundle writes `/$bunfs/root/chunk-….js`
+ * and prepare.ts rewrites it to an absolute one. A bare specifier is therefore
+ * something the bundle did not contain — measured at 2.1.251, all of them are
+ * Node builtins (`path`, `fs/promises`, `fs`, `crypto`, `os`, `child_process`, …)
+ * plus `ws`. None of them can move when the pin moves.
+ */
+export const isExternalSpecifier = (specifier: string) => !specifier.startsWith("/") && !specifier.startsWith(".");
+
 /** Where the closure walk currently stands: a declaration node and the chunk it lives in. */
 interface Site {
   sf: ts.SourceFile;
@@ -179,10 +214,39 @@ export function spliceFootprint(input: FootprintInput): SpliceFootprint {
             break;
           }
           if (decl.kind === "import") {
-            const mod = decl.moduleSpecifier ? resolveModule(decl.moduleSpecifier) : null;
+            const specifier = decl.moduleSpecifier;
+            const mod = specifier ? resolveModule(specifier) : null;
             const far = mod && decl.importedName ? resolveExport(mod.sf, decl.importedName) : null;
             if (!mod || !far) {
-              abandoned = `'${identifier}' is imported from ${decl.moduleSpecifier ?? "an unresolvable specifier"}, whose declaration the graph cannot reach`;
+              // An EXTERNAL module — `fs`, `path`, `crypto` — is a boundary, not
+              // a hole (campaign spec C5x, unit 6). It is not in the extracted
+              // graph, so no bundle bump can change it; what pins its behaviour
+              // is the runtime pin (§3.5). Degrading the whole row to
+              // whole-chunk hashes here would be worse than useless: it stales
+              // the row on unrelated edits and STILL does not cover the callee
+              // it could not reach. So the IMPORT SITE is recorded as a leaf —
+              // which is exactly what catches upstream swapping `fs` for
+              // something else, or dropping the import — and the walk continues.
+              // A specifier that IS a graph path and still does not resolve is a
+              // real hole and still abandons.
+              if (specifier !== undefined && isExternalSpecifier(specifier)) {
+                const key = `${where}:${decl.start}-${decl.end}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                records.push({
+                  name: identifier,
+                  chunk: where,
+                  depth,
+                  basis: "declaration",
+                  declKind: "import",
+                  ...cover(source, decl),
+                  note:
+                    `resolves to external module '${specifier}', outside the extracted graph — no bundle bump can change it ` +
+                    `(the runtime pin does, §3.5). The import site is covered; there is no bundle-side far side to hash.`,
+                });
+                continue;
+              }
+              abandoned = `'${identifier}' is imported from ${specifier ?? "an unresolvable specifier"}, whose declaration the graph cannot reach`;
               break;
             }
             decl = far;
