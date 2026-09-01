@@ -1116,6 +1116,34 @@ describe("useChat", () => {
     expect(submitted).toBe(0);
   });
 
+  // bl10 fix wave 8, W8-2: local commands dispatch fire-and-forget, so the OLD order (`await refreshCtx()`
+  // then `openSettings("Status")`) left the composer live for as long as `getContextUsage()` took — a slow
+  // read gave the user a window to open another overlay, and the delayed continuation then stacked Settings
+  // on top of it. `getContextUsage` here never resolves during the first half of this test, which is the red
+  // half: under the old order `settings.open` would never flip until this test's own timeout, since
+  // `openSettings` sat behind the `await`. The dialog's own `fetchSettingsStatus` re-measures independently
+  // (status-family-dialog.test.tsx), so this only has to prove the ORDER — the dialog opens first, and the
+  // status-line chip (`ctxPct`) still lands once the slow read finally answers.
+  it("/status opens the Settings dialog before the context re-measure resolves, and still refreshes the chip after", async () => {
+    let resolveCtx!: (v: { totalTokens: number; maxTokens: number }) => void;
+    const ctxPromise = new Promise<{ totalTokens: number; maxTokens: number }>((res) => { resolveCtx = res; });
+    const fake = fakeRemote({ getContextUsage: () => ctxPromise });
+    const api: { run?: (s: string) => void; state?: any } = {};
+    function H() {
+      const c = useChat(() => fake);
+      api.run = c.submit; api.state = c.state;
+      return <Text>ctx:{c.state.ctxPct ?? "-"} {c.state.busy ? "BUSY" : "IDLE"}</Text>;
+    }
+    const { lastFrame } = render(<H />);
+    await waitFor(() => frame(lastFrame).includes("IDLE"));
+    api.run!("/status");
+    // The dialog opens WITHOUT waiting on the still-pending context read.
+    await waitFor(() => api.state!.settings.open === true && api.state!.settings.tab === "Status");
+    expect(frame(lastFrame)).toContain("ctx:-");
+    resolveCtx({ totalTokens: 42, maxTokens: 100 });
+    await waitFor(() => frame(lastFrame).includes("ctx:42"));   // the chip still refreshes once the read lands
+  });
+
   // FSW T5: the renderer decision is made once in `chatMain` and handed to the hook, and BOTH reporting
   // surfaces read it through the one `statusRenderer()` helper — the `/status` command and the Settings
   // dialog's Status tab. They are pinned together deliberately: wave 2 already caught the effort axis

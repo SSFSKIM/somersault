@@ -2275,12 +2275,17 @@ export function useChat(
           //   T-MENU task 3 (D13): `fetchSettingsStatus` now takes this SAME fresh reading on its own, so the
           // Status tab re-measures on EVERY entry (a typed `/status`, or an arrow into the tab from Config) —
           // not only the one this arm keeps here. Both call `refreshCtx()` because this arm's own reading
-          // updates `ctxPct` (and pokes the status-line chip) the instant the command runs, without waiting on
-          // the dialog to mount; `fetchSettingsStatus` repeats it so a tab-arrow entry (which never goes
-          // through this arm at all) is equally fresh. Two round trips on one explicit command is the accepted
-          // cost of both entry points being independently correct.
-          await refreshCtx();
+          // updates `ctxPct` (and pokes the status-line chip), NOT because the dialog needs it to mount —
+          // `fetchSettingsStatus` repeats the same reading independently, so a tab-arrow entry (which never
+          // goes through this arm at all) is equally fresh. Two round trips on one explicit command is the
+          // accepted cost of both entry points being independently correct.
+          //   bl10 fix wave 8, W8-2: `openSettings` runs FIRST, `refreshCtx()` after. Local commands dispatch
+          // fire-and-forget, so with the old await-then-open order a slow `getContextUsage()` left the
+          // composer live for as long as the read took — long enough for the user to open a second overlay,
+          // which the delayed `openSettings` then stacked Settings on top of (two overlay flags set at once).
+          // Opening first makes the dialog's own overlay gate win the race instead of losing it.
           openSettings("Status");
+          await refreshCtx();
           break;
         }
         case "usage": openSettings("Usage"); break;
