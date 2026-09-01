@@ -1901,10 +1901,13 @@ export const SPLICES: Splice[] = [
   //       to custom instructions, a display message and a blocking reason, and
   //       the compactor acts on all three. It is the only dispatcher in the
   //       family whose output is behaviour rather than a stream.
-  //   one of them is unreachable by CALLBACK. `vUt` passes no registry, so the
-  //       corpus reaches it through a settings command hook and the state
-  //       surface — the second command-hook cell, and the mechanism that made a
-  //       live event look dead.
+  //   one of them is never seen by a CALLBACK. `vUt`'s dispatch precedes
+  //       host-hook registration, so the corpus reaches it through a settings
+  //       command hook and the state surface — the second command-hook cell.
+  //       (The first fix read that silence as structural, on the reasoning that
+  //       `vUt` passes no registry. The registry fact is true; the inference is
+  //       not, and C8's second round withdrew it — `Options.hooks` entries live
+  //       in a global store the executor's lookup consults unconditionally.)
 
   {
     // The OTHER arm of a tool call: upstream runs failure and success through
@@ -1965,10 +1968,12 @@ export const SPLICES: Splice[] = [
   },
 
   {
-    // The event no callback can observe. Its record is graded as the BYTE STREAM
-    // a command hook reads, on the state surface, because that is the only
-    // surface it has — and `hooks-session-start` also asserts the CALLBACK stays
-    // silent, so the executor request's missing registry is graded too.
+    // The event no callback observes — not structurally (SDK callbacks land in a
+    // global store the executor consults unconditionally) but because this
+    // dispatch precedes host-hook registration. Its record is graded as the BYTE
+    // STREAM a command hook reads, on the state surface, because that is the
+    // only surface it has, and `hooks-session-start` asserts the callback stays
+    // silent beside it.
     name: "session-start-hooks",
     target: "free-function",
     signature: { params: 12, ancestry: ["SourceFile"], generator: true },

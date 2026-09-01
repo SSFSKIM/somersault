@@ -1,13 +1,12 @@
-// SABOTAGE LAYER (§2.5), and the one twin in this family that NO RECORDING can
-// turn red. Notification fired in no phase of `w5/probe-hook-events.ts`, and
-// `EE` hands the executor no session hooks registry, so no callback could see it
-// however the condition were created — a dispatcher that never asks the executor
-// for anything is invisible to every scenario the corpus can hold.
+// SABOTAGE LAYER (§2.5). `hooks-permission` MUST go red with this built: the
+// scenario answers a permission consult 7.5 s later — past upstream's 6000 ms
+// notify timer — and registers a Notification callback, so a dispatcher that
+// never asks the executor for anything leaves an events transcript the oracle's
+// does not have.
 //
-// It is written to the family's shape anyway: the non-vacuity that grades this
-// row is the parity oracle's own control, which perturbs the owned side and
-// requires the result to differ, and the day the condition becomes reachable the
-// row already has the twin a recording would need.
+// This twin was written when the wave believed the event was unreachable, on a
+// probe that ran every phase under `bypassPermissions` and therefore armed no
+// notify timer at all. It has a recording now.
 export const DEFAULT_HOOK_TIMEOUT_MS = 600000;
 
 export async function notificationHooks() {

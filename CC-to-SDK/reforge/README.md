@@ -1541,7 +1541,7 @@ already verified, so each spike is also a permanent owned splice rather than a r
 
 | shape | why the mechanism had no target | spike | covering scenario |
 |---|---|---|---|
-| generator (`yield*`) | all eight hook dispatchers are `async function*`, and a `return`-shaped delegation cannot carry a generator at all | `b3e` / `executePostToolHooks` (363 chars) | `hooks` |
+| generator (`yield*`) | the hook dispatchers known at the time were all `async function*`, and a `return`-shaped delegation cannot carry a generator at all (W5's full set turned out to have three shapes, but this one is thirteen of the twenty) | `b3e` / `executePostToolHooks` (363 chars) | `hooks` |
 | `arrow-initializer` | the permission chain's three entry points are ONE `var` statement with three arrow declarators | `kye` / `hasPermissionsToUseToolWithSink` (121 chars) | `permission-broker`, `permission-bag` |
 | `variable-declarator` | the engine's prompt text lives in `var` initializers, not in functions | `l1n`, the 5,810-character compaction summarization prompt | `slash-compact` |
 
@@ -2206,7 +2206,7 @@ so a teardown dispatcher's evidence survives. Four of the five negatives were wr
 |---|---|---|
 | PostToolUseFailure | **FIRED** (callback + command) | a Bash call that exits non-zero |
 | PreCompact | **FIRED** (callback + command) | `/compact` |
-| SessionStart | **FIRED** (command only) | every run — `vUt` passes no registry, so no callback can see it |
+| SessionStart | **FIRED** (command only) | every run — no callback sees it, for the reason the round below gets wrong and the next one corrects |
 | SessionEnd | **FIRED** (command in every phase; callback on `/clear`) | ordinary teardown, and `/clear` |
 | Notification | not fired in any phase | — |
 
@@ -2278,7 +2278,7 @@ probe's table refuses to let it be counted as one.
 | `hooks-command` | a COMMAND hook: the record read as the byte stream it is serialised into |
 | `hooks-tool-failure` | the OTHER arm of a tool call — a command that does not exist, so the failure dispatcher runs and its sibling does not |
 | `hooks-precompact` | a real compaction, with three command hooks producing three different RESULT shapes, because PreCompact's verdict is a reduction over them |
-| `hooks-session-start` | the one live event `Options.hooks` cannot reach at all — graded on the sandbox, with the callback's silence asserted beside it |
+| `hooks-session-start` | the one live event no callback observes (its dispatch precedes host-hook registration) — graded on the sandbox, with the callback's silence asserted beside it |
 | `hooks-session-end` | `/clear`, one of upstream's three SessionEnd call sites and the one inside the observation window, plus a failing hook so the drain's reporting arm renders |
 | `hooks-permission` | a permission consult answered **7.5 s** later — past the 6000 ms notify timer — which fires PermissionRequest and Notification off one tool call |
 | `hooks-tasks` | a TaskCreate/TaskUpdate pair: two near-twin dispatchers that differ in one string, so grading one would state the twinning as a coincidence |

@@ -173,11 +173,13 @@ const STDIN_PROJECTION = [
 ].join("");
 
 /**
- * The same projection for the SessionStart record, which no callback can see.
+ * The same projection for the SessionStart record, which no callback observes.
  *
- * `vUt` hands its executor no session hooks registry, so `Options.hooks` cannot
- * reach it however the run is shaped — the settings layer is the only path, and
- * a file the state surface hashes is the only grading surface.
+ * Not because a callback COULD not — SDK callbacks land in a global store the
+ * executor's lookup consults unconditionally — but because this dispatch runs
+ * before the host's hooks are registered. Measured on every phase of every probe
+ * run. The settings layer is therefore the only path a recording can use, and a
+ * file the state surface hashes is the only grading surface.
  *
  * WHAT THE BYTES SHOW, AND WHY IT IS FEWER FIELDS THAN THE DISPATCHER BUILDS.
  * The record is JSON-serialised onto the hook's stdin, and JSON drops keys whose
