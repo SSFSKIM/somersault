@@ -63,19 +63,47 @@ const PRESET = { type: "preset", preset: "claude_code" } as const;
  * Verified: two seeds produce identical `.git` trees, and neither `git status`
  * nor `git log` mutates one afterwards (no tracked files means no stat cache to
  * refresh), so the state surface stays clean over the seeded repository too.
+ *
+ * "On every machine" is a claim about the ENVIRONMENT as much as about the
+ * arguments, and the first version of this helper only pinned the arguments (C6
+ * boundary review, finding 2). `git` reads the operator's global and system
+ * config and their `GIT_*` overrides, so a recorder with `commit.gpgsign=true`,
+ * `init.defaultObjectFormat=sha256`, `init.templateDir`, `core.hooksPath` or an
+ * exported `GIT_COMMITTER_NAME` would have seeded a DIFFERENT baseline — the
+ * env identity vars in particular override the repository-local `user.*` set
+ * below, so pinning config alone leaves half the hash outside our control. So
+ * the seed now runs config-less with every identity and clock input declared,
+ * and `w3/seed.test.ts` proves a poisoned parent environment cannot move it.
  */
-function seedGitRepo(dir: string): void {
-  const git = (args: string[], env?: Record<string, string>): void => {
-    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, ...env } });
+const SEED_ENV: Record<string, string> = {
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "reforge",
+  GIT_AUTHOR_EMAIL: "reforge@example.invalid",
+  GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
+  GIT_COMMITTER_NAME: "reforge",
+  GIT_COMMITTER_EMAIL: "reforge@example.invalid",
+  GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z",
+};
+
+/** What `SEED_ENV` + the arguments below hash to. Rendered into every preset recording. */
+export const SEED_COMMIT = "1fa63698cb73adc5506950ae8dff1b91a6dd0dc1";
+
+export function seedGitRepo(dir: string): void {
+  const git = (args: string[]): void => {
+    const r = spawnSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, ...SEED_ENV } });
     if (r.status !== 0) throw new Error(`w3: git ${args.join(" ")} failed — ${r.stderr?.trim() ?? r.error?.message}`);
   };
   git(["init", "-q", "-b", "main", "."]);
+  // Repository-LOCAL, because the ENGINE reads this repository later, under the
+  // operator's own environment rather than `SEED_ENV`: `user.*` is what the
+  // preset's "Git user:" line renders, and `core.abbrev` is what decides the
+  // width of the `%h` in its commit list. Local config outranks the operator's
+  // global, so both stay pinned on the read side too.
   git(["config", "user.name", "reforge"]);
   git(["config", "user.email", "reforge@example.invalid"]);
-  git(["commit", "-q", "--allow-empty", "-m", "reforge sandbox baseline"], {
-    GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
-    GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z",
-  });
+  git(["config", "core.abbrev", "7"]);
+  git(["commit", "-q", "--allow-empty", "-m", "reforge sandbox baseline"]);
 }
 
 /**

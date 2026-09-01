@@ -102,6 +102,12 @@ for (const [label, argv] of [
   // vacuity the phase above exists to refuse, one level down. Build-free and
   // ~0.8s measured, so it sits here rather than in the auxiliary block.
   ["reachability checker rejects and accepts (§3.1)", ["engine-ts/reachability.test.ts"]],
+  // The corpus SEED's environment independence (C6 fix, finding 2). Belongs in
+  // this block by the same argument as the scrubs above it: the W3 recordings
+  // render the seeded repository's branch, git user and commit list into every
+  // preset prompt, so a recorder whose git config moved the baseline is
+  // measuring a different corpus. Build-free and ~1.1s measured.
+  ["corpus git seed ignores the recorder's config", ["w3/seed.test.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const tail = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+plausibility)/.test(l)).slice(-2);
