@@ -39,6 +39,40 @@
 > Evidence: `reforge/research/2026-09-01-w6-permission-matrix.md`; the `perm-bypass-deny-rule` and
 > `perm-auto-classifier-deny` recordings; `reforge/w6/probe-permissions.ts`.
 
+> **SUPERSEDED IN PART — 2026-09-02, by W7/C10 running the subsystem §3 only read.**
+> Four of §3's assertions were true-as-believed at scouting time and are false as claims. They are left
+> in the body for the same reason the permission corrections above are: a scout records what was
+> believed when a wave was budgeted, and editing that away destroys the evidence that a premise was
+> refuted. Read §3 with these corrections.
+>
+> 1. **§3.1 — "the dispatch is inside `runHeadless` (`GH`)."** It is not. `runHeadless` DRIVES the
+>    dispatch: its last act is `for await (… of ky(…))`, and the ladder lives inside the anonymous
+>    frame handler inside `ky` — which the bundle re-exports as `_runHeadlessStreamingForTesting`.
+>    §3.1 dismissed `ky` as "a separate testing entry point, not the production path" on the strength
+>    of that name. It IS the production streaming loop, exported so tests can drive it. The general
+>    form: **an export name is a claim about who MAY call a function, not about who does.**
+> 2. **§3.1 — "55 `else if` arms."** Fifty-two, over fifty-four subtypes (two arms carry two subtypes
+>    each). And "~39 sendable subtypes" is thirty-seven. Both counts are now derived rather than read:
+>    `research/fixtures/control-protocol-2.1.251.json`, re-derived on every gate run.
+> 3. **§3.2's anchor table is wrong in two rows.** `initialize: sdkMcpServers and
+>    webSearchIsolationExemptMcpServers` is the ARM's own validation sentence, not a literal inside
+>    `Ey` — anchoring `Ey` on it would have excised the frame handler. `Ey`'s own anchor is
+>    `tengu_reinit_pending_redelivery`. And `set_model failed` likewise lives in the arm, not in `km`;
+>    `km`'s anchor is `set_model: system_prompt must be a non-empty string when present`.
+> 4. **§3.2 — "take the interrupt arm's four/five named helpers."** They are not this subsystem's.
+>    `Uq` is `killAutoReactSubscriptions` and `jG`/`Ddt`/`Odt`/`O4e` partition artifact and
+>    task-notification rows; four of the five live in `chunk-fy12d89p`. Their firing condition is an
+>    interrupt with live tasks, artifact subscriptions or a queued command, which the corpus's
+>    `interrupt` scenario creates none of — so the row is OPEN with that condition named and belongs
+>    with W8's task family. Not dark, and not W7's.
+>
+> Also inherited and confirmed: C9's correction that `gK`/`$U` do NOT carry `initialize` (the headless
+> runtime builds that response inline) held up — W7 re-verified the rest of §3.2's table the same way.
+>
+> Evidence: `reforge/research/fixtures/control-protocol-2.1.251.json`; `strangle/manifest.ts` rows
+> `initialize-handler` / `initialize-payload` / `permission-mode-setter` / `model-switch` /
+> `thinking-config`; `w7/probe-control-subtypes.ts`; `strangle/control-parity.test.ts`.
+
 Scope: C8 (W5 hook dispatch), C9 (W6 permission decisions + rule chunks), C10 (W7 control protocol).
 Method: substring counts across all 2074 `modules/*.js`; TypeScript-parser spans over
 `chunk-fy12d89p.js` / `chunk-dvbbv89q.js`; windowed reads of `cli.pretty.js`. READ-ONLY — no build,
@@ -240,6 +274,9 @@ loop: `cli.pretty.js` **360,614–362,051** (≈1,437 pretty lines), **55 `else 
 (The 140 KB `_runHeadlessStreamingForTesting` / `ky` is a separate testing entry point, not the
 production path.)
 
+[SUPERSEDED — banner items 1 and 2: the ladder is inside `ky`, which `runHeadless` DRIVES and which is
+the production loop despite its export name; and it has 52 arms over 54 subtypes, not 55.]
+
 ### 3.2 The if/else-arm shape is a trap — take the handler bodies instead
 
 Excising an arm as a delegated block is **not** a small generalization of the four shapes:
@@ -257,7 +294,7 @@ every one is a top-level `free-function` in an already-owned-shape node:
 
 | subtype | handler | chunk | size | anchor | count |
 |---|---|---|---|---|---|
-| `initialize` | `Ey` | dvbbv89q | 2,948 B | `initialize: sdkMcpServers and webSearchIsolationExemptMcpServers` | 1 |
+| `initialize` | `Ey` | dvbbv89q | 2,948 B | `initialize: sdkMcpServers and webSearchIsolationExemptMcpServers` | 1 — **SUPERSEDED (banner item 3): that literal is the ARM's, not `Ey`'s** |
 | `set_permission_mode` | `um` → `GIe`/`K0` | dvbbv89q / fy12d89p | 181 B / 608 B | the `GIe` literal above | 1 |
 | `set_model` | `km` | dvbbv89q | 2,052 B | `set_model failed` | 2 (coLiteral) |
 | `set_max_thinking_tokens` | `Sf` | dvbbv89q | 222 B | its validation message | 2 (coLiteral) |
@@ -265,6 +302,8 @@ every one is a top-level `free-function` in an already-owned-shape node:
 | `rewind_files` | `Tf` | dvbbv89q | 485 B | — | out of corpus |
 | **every** subtype's response | `gK` / `$U` (`chunk-g1qrzvef.js`) | 100 B / 96 B | `subtype:"success",request_id:` | 24 (coLiteral) |
 
+[SUPERSEDED — banner item 4: the five helpers named below belong to the auto-react and
+task-notification subsystems, not to the control protocol.]
 `interrupt` is the exception: its arm is **inlined**, no named handler, ~22 lines, and it is the one
 arm whose body is genuinely arm-shaped. It has a unique literal (`interrupt cleared the queue`,
 count 1) and delegates to four named helpers (`Uq`, `jG`, `Ddt`, `Odt`, `O4e`). **Take the helpers,

@@ -618,7 +618,7 @@ follow as C4/C5.
   a §2.3 deferral recorded on the ledger row. The matrix's command-hook cell needs no filesystem
   setting source — `Options.settings` reaches the flag-settings layer with `settingSources: []` in
   force, which is the only path to a dispatcher whose dispatch precedes host-hook registration.
-- **Required.** Status: **C6, C7, C8 and C9 landed** 2026-09-01 (Revision Notes below); C10 not-dispatched, **unblocked**. C8's "a refusal that produces no observable is unrecordable by construction" family did cover most of §2.1's permission chain — but not for the reason given: the family holds because a rung that is REACHED and passes leaves the same transcript as one that was never reached, not because `bypassPermissions` skips the chain (C9 measured that it does not). W7 inherits the control-response envelopes already owned and one correction to the scout's §3.2 table (see C9's Revision Note).
+- **Required.** Status: **C6, C7, C8, C9 and C10 all landed** (C6–C9 2026-09-01, C10 2026-09-02; Revision Notes below). **The bloc is closed, which is W7.5's cut trigger** (see Deferred / out of scope). C8's "a refusal that produces no observable is unrecordable by construction" family did cover most of §2.1's permission chain — but not for the reason given: the family holds because a rung that is REACHED and passes leaves the same transcript as one that was never reached, not because `bypassPermissions` skips the chain (C9 measured that it does not). W7 inherits the control-response envelopes already owned and one correction to the scout's §3.2 table (see C9's Revision Note).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -698,7 +698,14 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   `subsystem/hook-dispatch` and `standalone-complete`). **Routing decision (2026-09-01):** the accumulated S-method-sized
   remainders — the OS() prompt sections, segment compaction — congeal into a proposed
   bloc-closing **completions wave (W7.5)**, cut when C10 lands; the hook executors ride with it
-  or get S-module treatment inside it per their own design pass.
+  or get S-module treatment inside it per their own design pass. **C10 landed 2026-09-02, so the
+  trigger has fired.** W7 leaves it three seam notes rather than a to-do list: the `interrupt` arm's
+  five helpers are the auto-react and task-notification subsystems (four in `chunk-fy12d89p`) with a
+  named firing condition W8's task family creates more cheaply than W7.5 could; `rewind_files` (`Tf`,
+  485 B) is takeable and anchorable today and wants only a scenario of its own — the probe already
+  fires the arm and nothing grades its answer; and `mcp_message` (`QKn`, 58 B) is one line into the
+  MCP transport and belongs with W11. None of the three is control-protocol work in anything but
+  where its arm happens to sit.
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -715,7 +722,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
 | C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected TWICE** — fourteen scenarios (corpus 31 → 45) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`, a `canUseTool` answered past the notify timer, and an authored API failure (`Scenario.deriveFault`); nineteen dispatcher splices, which with C5x's spike make **twenty functions over twenty-one of the TWENTY-THREE events the engine is measured to fire headlessly** out of upstream's 33-event dispatcher registry (the model-switch pair is a §2.3 deferral on the ledger row; the other ten registry events are OPEN with named conditions, not dead). The wave first claimed seven functions over all eight on a probe whose negatives were vacuous, then eleven over twelve on a probe that still chose its own watched list — see the two C8-fix Revision Notes. `strangle/hooks-parity.test.ts` grades 686 comparisons with 107 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 186/312 with 126 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction" — one of which the new recordings then RETIRED by reaching it; all three hook execution helpers (`Qxt`, `AE`, `zxt`) named as the row's remaining gap; gate **77/77** |
 | C9 | W6 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md`; matrix: `reforge/research/2026-09-01-w6-permission-matrix.md` | **landed, then corrected once** (2026-09-02 boundary round: **NOT CONVERGED on the record side**, the code side sound — five things the artifacts claimed that the recordings did not support; see the C9-fix Revision Note) — thirteen splices over the decision chain, the mode axis and the headless broker's return leg, plus **three functions spliced, measured dark and un-spliced** (an output absorbed before any observable, at 45 call sites; a seam the headless handler bypasses; and an answer pinned by a disabled gate) — **two more were adjudicated dark and were not**, and the fix round spliced them: their twins returned what the healthy functions return on every corpus input, and their surviving callers live in the mode-aware body, under a mode the corpus had never entered. Thirteen new recordings (corpus 45 → 58), the last three from the fix round: `perm-working-dir` closes the `workingDir` decisionReason, `perm-auto-classifier-deny` closes the `classifier` one AND fires `PermissionDenied` (OPEN across two waves) by choosing a 400 for the auto-mode classifier's OWN API call at record time, and the re-recorded `perm-mode-walk` finally makes a decision in every turn. Gate **92/92** — quoted from the gate's own SUMMARY block, which is the fix round's correction to the earlier **121/121**: that figure counted printed LOG LINES, and a liveness phase prints one per covering scenario. Attestation **355/669 with 314 exclusions and zero unadjudicated**; `strangle/permissions-parity.test.ts` grades **2,508 comparisons with 49 controls** over axes derived from the bundle (`research/fixtures/permission-surface-2.1.251.json`: six modes agreed by four independent enumerations, three rule behaviours, eleven decisionReason kinds) and finds every module byte-faithful. **A measured correction to this spec: `bypassPermissions` does NOT short-circuit the rule engine** — the bypass arm is rung 11 of 13 in upstream's pre-check, so a deny rule still bites under bypass and the corpus's bypass scenarios exercise most of the pre-check rather than none of it. Five sabotage twins and one whole scenario were rewritten after being MEASURED INERT (a twin that cannot be observed proves nothing, and it fails in the quiet direction); the branch instrumenter gained a guarded body that returns (nine controls); the oracle now locates its subject by the build's own anchor rule. **A second: `auto` is NOT gate-dead** — accepted through both the spawn and the control-channel paths, because upstream's auto gate is three local conditions rather than a remote flag. **A third, from the fix round: `auto` DOES consult the classifier** — the wave read "the tool ran with no broker consult" as "the classifier was not reached", and the classifier makes its OWN `/v1/messages` call, which for the probed command answered `<severity>25` and allowed. Only its BLOCK verdict stays OPEN. **Two scenarios were caught by the BRANCH ATTESTATION rather than by any check** — both used a whole-tool deny rule, which upstream applies by removing the tool from the session, so both passed while executing none of the chain; re-recorded command-scoped, they fired `subcommandResults` (a kind the matrix had OPEN) and confirmed the bypass correction live. **And the GATE itself had the vacuity defect**: it read any non-zero exit as a RED, so a crashed or killed runner proved liveness, and one dead row was passing on exactly that — a RED now needs the runner's own verdict line or a timeout, and anything else FAILS as inconclusive. Three §2.3 gaps named on the ledger row: `von`, `createCanUseTool`, and `Dd` (no string literal at all). **And the fix round's structural deliverable: `attest --check` now diffs the COMMITTED report against the one the run would write**, so a stale attestation artifact fails the gate loudly instead of drifting — it had gone stale twice |
-| C10 | W7 | scout: `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked**. Inherits from C9: the control-response ENVELOPES are already owned (`gK`/`$U`), and the scout's claim that they carry every headless `control_response` is **wrong** — `initialize` and `reinitialize` are built inline by the headless runtime, so sabotaging the success constructor leaves `plain` green and reddens `runtime-setters`. Re-verify the rest of §3.2's table the same way |
+| C10 | W7 | scout: `…w5-w7-anchor-scout.md` (now carrying a second supersession banner, for §3) | **landed** 2026-09-02 — five splices over the named handlers the live dispatch arms delegate to (`initialize` + the ~1 KB payload it answers with, `set_permission_mode`, `set_model`, `set_max_thinking_tokens`), which with W6's two response envelopes makes the round trip owned end to end for those subtypes. **The wave's substance is the measurement hole it closed**: `sdk.mjs` consumes control responses, so the protocol had ZERO coverage and no scenario could have given it any — `m2/raw-protocol.ts` now sends ten control requests ahead of its prompt and grades each answer on both engines. `strangle/control-parity.test.ts` grades 1,536 comparisons with 21 controls over axes read from `research/fixtures/control-protocol-2.1.251.json` (the fifth pin-keyed fixture: 52 arms / 54 subtypes / 37 sendable, derived from the engine's ladder AND from `sdk.mjs`, two artifacts sharing no machinery) and from the permission surface. `w7/probe-control-subtypes.ts` measures the whole population one subtype per session: **FIRED 38, DEAD 0, OPEN 16 of 54**, each OPEN with a written reason. Attestation 427/851 with 424 exclusions and zero unadjudicated, and **five of W6's exclusions RETIRED** because the driver's mode change executes them. Four scout corrections (the ladder is in the generator `runHeadless` drives, not in `runHeadless`; 52 arms not 55; two anchors that live in the arm rather than the handler; the interrupt helpers are W8's), one harness defect fixed at the source (the raw driver never reset or seeded its sandbox, so its recording captured the operator's own repository — invisible until a subtype that reads the system prompt was added), and one instrument defect caught by its own controls (two arms reported DEAD by a probe that closed stdin before their deferred answer landed). Gate **97/97** |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -1248,6 +1255,109 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-02 (C10 / W7 — the control protocol): the wave owns the REQUEST leg of
+  the four control subtypes that have a named handler, graded by a sixth parity
+  oracle (`strangle/control-parity.test.ts`, 1,536 comparisons with 21 controls)
+  over axes derived from two artifacts rather than chosen. Corpus 58 unchanged
+  and one cassette re-recorded; gate **97/97** (quoted from the gate's own
+  SUMMARY block, per C9's correction); attestation **427/851 with 424 exclusions
+  and zero unadjudicated**. Nine items change what the rest of the campaign
+  inherits.
+  - **THE PROTOCOL HAD ZERO COVERAGE, AND THE REASON IS THE WRAPPER RATHER THAN
+    THE CORPUS.** `sdk.mjs` CONSUMES control responses. An `initialize` answer, a
+    validation refusal and an unsupported-subtype error reach no surface an
+    SDK-driven scenario can see, whatever the scenario does — so the ~1 KB
+    initialize payload naming the session's commands, agents, models, output
+    styles, account shape and permission mode had never been observed by
+    anything in this project. `m2/raw-protocol.ts` sent one user message and no
+    control request at all; it now sends ten ahead of the prompt and grades each
+    answer on BOTH engines by the `request_id` it named. **The general form: a
+    wrapper's convenience is a measurement hole, and the only instrument that can
+    see through one is a driver that does not use the wrapper.**
+  - **THE LADDER IS NOT THE SEAM, and the fixture says so in numbers.** 52
+    `else if` arms over 54 subtypes, seventeen carrying a loop-control jump
+    relative to the enclosing `for await`, all of them closing over the frame
+    handler's locals. An excised arm would have to hand loop control back through
+    a return value, which is a different mechanism rather than a generalisation
+    of an existing one. C1 struck the switch-case shape from this row; W7 strikes
+    the arm shape too, and the seam is the named handler each live arm delegates
+    to — every one a plain top-level `free-function`.
+  - **THE SCOUT WAS WRONG IN FOUR PLACES AND THE FIRST IS THE INSTRUCTIVE ONE.**
+    §3.1 says the dispatch is inside `runHeadless`. It is inside the async
+    generator `runHeadless` DRIVES, which the bundle re-exports as
+    `_runHeadlessStreamingForTesting` — and the scout dismissed that function as
+    "a separate testing entry point, not the production path" on the strength of
+    the name. It is the production streaming loop, exported so tests can drive
+    it. **An export NAME is a claim about who may call a function, not about who
+    does.** The other three: 52 arms rather than 55 and 37 sendable subtypes
+    rather than ~39; two anchor-table rows naming literals that live in the ARM
+    rather than in the handler (anchoring `Ey` on the scout's literal would have
+    excised the frame handler); and the interrupt arm's five "named helpers",
+    which are the auto-react and task-notification subsystems rather than this
+    one. The scout keeps its history and gains a dated banner plus four inline
+    markers, per C9's rule.
+  - **THE POPULATION IS DERIVED FROM TWO ARTIFACTS THAT SHARE NO MACHINERY.**
+    `research/tools/extract-control-protocol.ts` finds the ladder by SHAPE (the
+    longest `if/else if` chain over `<expr>.subtype`), confirms it against a
+    guard in the same artifact (it must sit under `type === "control_request"`)
+    and then against a DIFFERENT artifact entirely — the installed SDK's sendable
+    set, recovered from three construction shapes in `sdk.mjs`. At this pin the
+    chain serves 37 of 37. The fixture is a gate phase, so an arm added, retired
+    or re-pointed reddens rather than silently narrowing the wave's claim — and
+    so does an SDK bump, which is the intended reading: what a host can send is
+    part of the population.
+  - **38 OF 54 SUBTYPES FIRE, NONE IS DEAD, 16 ARE OPEN.**
+    `w7/probe-control-subtypes.ts` sends each subtype into its own session on the
+    no-wrapper wire and reads the answer. A REFUSAL counts as FIRED — an arm that
+    validates its input and answers with its own sentence has run. The 16 OPEN
+    rows each name what creating their condition would cost (an OAuth browser
+    flow, a relay socket, a feedback endpoint, a second model call; for
+    `apply_flag_settings`, changing the gate state the whole corpus is graded
+    under). **Two rows were reported DEAD by the probe's first take and were
+    not**: `get_workspace_diff` and `register_repo_root` defer through the
+    command-lifecycle wrapper, and the probe closed stdin on the same tick, so
+    the session ended before the answer arrived. **A DEAD verdict earned by the
+    instrument's own impatience is the vacuous negative one layer down from
+    C8's** — the probe now holds the session open until the answer lands.
+  - **THE RAW DRIVER HAD NEVER RESET ITS SANDBOX, AND `get_context_usage` IS WHAT
+    EXPOSED IT.** The driver only ever `mkdir -p`-ed, so the session's working
+    directory was whatever the last suite left behind — and because the sandbox
+    sits inside this repository, an unseeded one made `git` resolve to the
+    repository ITSELF. That is C6's finding one suite over, and it stayed
+    invisible because nothing in the raw lane read the system prompt. Adding a
+    subtype whose handler counts tokens SECTION BY SECTION put the prompt on the
+    graded request surface, and the recording immediately carried the operator's
+    own branch, git user and dirty file list, with five requests falling back
+    positionally under §3.4's fatal rule. Fixed by reusing C6's seed rather than
+    re-deriving one. **A surface nothing reads is a surface nothing guards.**
+  - **`get_context_usage` IS NOT A FREE READ.** Its handler makes twenty-one
+    further `count_tokens` calls of its own — the cassette went from 1 exchange
+    to 23 — which is why it HUNG against the one-exchange recording. A control
+    subtype that looks like a query can be the most model-expensive frame in the
+    protocol, and this one is invisible to the SDK lane entirely.
+  - **FIVE PREVIOUSLY EXCLUDED ARMS ARE NOW EXECUTED, and the wave that retires
+    an exclusion is not the wave that wrote it.** The driver's `set_permission_mode`
+    is a real transition out of `bypassPermissions`, which reaches four of W6's
+    mode-transition arms and the auto-compact trigger's threshold arm — all five
+    had reviewed exclusions, and the attestation's stale-exclusion rule caught
+    them the moment the raw driver joined the replay set. That rule has now
+    earned its keep twice.
+  - **A COVERAGE TAG THAT CANNOT GO RED IS A ROW THE GATE PASSES WITHOUT TESTING.**
+    `sysprompt-preset` was listed as covering the initialize handler and MEASURED
+    GREEN under the twin: the SDK sends a preset selection outside the initialize
+    payload, so that scenario reaches the handler with nothing for it to apply.
+    Dropped from the row rather than kept as a scenario that looks like coverage.
+    And the routing that lets a non-corpus tag be graded at all lives in ONE place
+    (`strangle/runners.ts`), shared by the gate's liveness loop and the coverage
+    attestation, so a splice cannot be graded live by a suite whose branches
+    nothing attested.
+  - **THE GAPS, all named rather than implied.** The interrupt arm is inlined and
+    its helpers are W8's (condition named: an interrupt with a live task, an
+    artifact subscription or a queued command). `rewind_files` is takeable and
+    anchorable and has no scenario of its own — the probe fires the arm and
+    nothing grades its answer. `mcp_message` is one line into the MCP transport
+    and belongs with W11. The remaining 48 arms are peripheral: 16 serve subtypes
+    no installed SDK can send, and a dozen more reach outside the harness.
 - 2026-09-02 (C9-fix verification round — **CONVERGED**, W6's review loop closed):
   a bounded round over the five fix commits reproduced every claim under its own
   runs — the full gate re-run at exactly 92 summary phases (and the old 121
