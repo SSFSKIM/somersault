@@ -1045,6 +1045,15 @@ Pending — written at finish.
   direction it actually catches. Gate **39/39 phases PASS**, corpus 25/25, 22 liveness phases.
   Ledger: `subsystem/hook-dispatch`, `subsystem/permissions` and `subsystem/compaction` → `spliced`
   (8 spliced rows, 39 unowned).
+- 2026-09-01 (C6/W3 boundary review, internal): verdict **sound**, four non-blocking findings,
+  all closed same-day (gate 48 → 50): the git seed hardened against operator config with
+  both-directions poison controls (real value: recorder portability — honestly scoped by the
+  fix); the memory scenario moved to a stable path + one re-record; the reachability liveness
+  controls and seed control gated; eight parity mutation controls committed. The doctrine
+  calibration stands in §2.1: C6's two non-prose anchors would have collided at 3 of 4 prior
+  pins (17×/2× pre-chunk-split, independently re-measured) — loud availability churn, logged in
+  the tech-debt tracker as inherent. The reviewer also verified all six splice bodies byte-level
+  and recomputed the seeded SHA by hand.
 - 2026-09-01 (C5x boundary review, internal): verdict **sound — no false-green path**; the
   reviewer extracted `b3e`/`l1n` from the bundle itself, resolved the symbol-map 831-vs-832
   delta empirically (one non-semantic alias filtered), and confirmed upstream's bare `yield*`
