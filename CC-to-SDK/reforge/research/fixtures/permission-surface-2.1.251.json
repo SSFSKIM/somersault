@@ -1,0 +1,197 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-permission-surface.ts",
+  "modes": {
+    "names": [
+      "default",
+      "acceptEdits",
+      "plan",
+      "auto",
+      "bypassPermissions",
+      "dontAsk"
+    ],
+    "semantics": {
+      "default": "Standard behavior, prompts for dangerous operations.",
+      "acceptEdits": "Auto-accept file edit operations.",
+      "plan": "Planning mode, no actual tool execution.",
+      "auto": "Use a model classifier to approve/deny permission prompts.",
+      "bypassPermissions": "Bypass all permission checks (requires allowDangerouslySkipPermissions).",
+      "dontAsk": "Don't prompt for permissions, deny if not pre-approved."
+    },
+    "sources": [
+      {
+        "chunk": "chunk-0f4kthen.js",
+        "offset": 1132,
+        "members": [
+          "default",
+          "acceptEdits",
+          "plan",
+          "auto",
+          "bypassPermissions",
+          "dontAsk"
+        ]
+      },
+      {
+        "chunk": "chunk-af80z9sa.js",
+        "offset": 764,
+        "members": [
+          "acceptEdits",
+          "auto",
+          "bypassPermissions",
+          "default",
+          "dontAsk",
+          "plan"
+        ]
+      },
+      {
+        "chunk": "chunk-bsdtxcdc.js",
+        "offset": 334951,
+        "members": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "plan",
+          "dontAsk",
+          "auto"
+        ]
+      },
+      {
+        "chunk": "chunk-k1887f87.js",
+        "offset": 3614,
+        "members": [
+          "dontAsk",
+          "auto",
+          "default",
+          "acceptEdits",
+          "plan",
+          "bypassPermissions"
+        ]
+      }
+    ],
+    "confirmed": 6,
+    "comparandsNotEnumerated": []
+  },
+  "ruleBehaviors": {
+    "names": [
+      "allow",
+      "deny",
+      "ask"
+    ],
+    "sources": [
+      {
+        "chunk": "chunk-8c6qx8qp.js",
+        "offset": 24685
+      },
+      {
+        "chunk": "chunk-9e2ns8ty.js",
+        "offset": 199137
+      },
+      {
+        "chunk": "chunk-bsdtxcdc.js",
+        "offset": 333561
+      },
+      {
+        "chunk": "chunk-bsdtxcdc.js",
+        "offset": 351171
+      },
+      {
+        "chunk": "chunk-c6d1y7xy.js",
+        "offset": 12993
+      },
+      {
+        "chunk": "chunk-c6d1y7xy.js",
+        "offset": 17171
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "offset": 646947
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "offset": 649513
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "offset": 1056075
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "offset": 1056220
+      }
+    ],
+    "confirmed": 3
+  },
+  "ruleDestinations": {
+    "names": [
+      "userSettings",
+      "projectSettings",
+      "localSettings",
+      "flagSettings",
+      "cliArg",
+      "session"
+    ],
+    "sources": [
+      {
+        "chunk": "chunk-bcjzjdf4.js",
+        "offset": 862
+      }
+    ],
+    "confirmed": 6
+  },
+  "decisionReasons": {
+    "rendered": [
+      "hook",
+      "rule",
+      "subcommandResults",
+      "permissionPromptTool",
+      "sandboxOverride",
+      "workingDir",
+      "safetyCheck",
+      "other",
+      "mode",
+      "asyncAgent",
+      "classifier"
+    ],
+    "constructed": [
+      "asyncAgent",
+      "classifier",
+      "hook",
+      "mode",
+      "other",
+      "rule",
+      "safetyCheck",
+      "sandboxOverride",
+      "subcommandResults",
+      "workingDir"
+    ],
+    "constructedNotRendered": [],
+    "renderedNotConstructed": [
+      "permissionPromptTool"
+    ],
+    "builder": {
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1031335
+    }
+  },
+  "modeGuards": {
+    "chunk": "chunk-fy12d89p.js",
+    "offset": 1852975,
+    "guarded": [
+      {
+        "mode": "auto",
+        "refusals": [
+          "Cannot set permission mode to auto: ${n2(o)}",
+          "Cannot set permission mode to auto"
+        ]
+      },
+      {
+        "mode": "bypassPermissions",
+        "refusals": [
+          "bypassPermissions not supported in restricted mode",
+          "Cannot set permission mode to bypassPermissions because it is disabled by settings or configuration",
+          "Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions"
+        ]
+      }
+    ]
+  }
+}
