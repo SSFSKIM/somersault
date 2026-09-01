@@ -398,6 +398,11 @@ export const DEFAULT_BINDINGS: readonly ContextBindings[] = [
     "escape": "confirm:no", "up": "select:previous", "down": "select:next", "k": "select:previous",
     "j": "select:next", "ctrl+p": "select:previous", "ctrl+n": "select:next",
     "space": "select:accept", "enter": "select:accept", "/": "settings:search",
+    // bl10 fix wave 8, W8-1: the read-only tabs (Status/Usage/Stats) had no page keys at all — only
+    // "Select"'s own context bound pageup/pagedown, and that context is never pushed here (there is no
+    // `Select` mounted on those tabs). Naming them under `Settings` too is what lets a read-only tab's own
+    // scroll window answer them, the same free-riding shape up/down/k/j already have on this line.
+    "pageup": "select:pageUp", "pagedown": "select:pageDown",
     // SettingsDialog (with PermissionsDialog/ThemeDialog/AddDirDialog) is an "overlay" owner — same suppression,
     // ctrl+c excepted (CTRL-C-FALLS-THROUGH).
     "ctrl+d": null, "ctrl+o": null, "ctrl+t": null, "ctrl+r": null, "ctrl+b": null,

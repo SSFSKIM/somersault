@@ -415,28 +415,113 @@ describe("SettingsDialog — the `/` query echo and no-match message clip to the
   });
 });
 
-// bl10 fix wave 2, finding 2: `readOnlyTabBody` rendered `tabLines[t]!.map(...)` with no windowing at all — a
-// tall fetched payload (a `/cost` usage table with many per-model rows) made the composed frame exceed `rows`,
-// which is exactly the tall-frame-replay hazard the rest of this file's chrome budgets exist to prevent.
-describe("SettingsDialog — read-only tab bodies window to the frame budget (bl10 fw2 F2)", () => {
+// bl10 fix wave 2, finding 2 (SUPERSEDED by fix wave 8, W8-1 below): `readOnlyTabBody` rendered
+// `tabLines[t]!.map(...)` with no windowing at all — a tall fetched payload (a `/cost` usage table with many
+// per-model rows) made the composed frame exceed `rows`, which is exactly the tall-frame-replay hazard the
+// rest of this file's chrome budgets exist to prevent. Wave 2's fix was a STATIC clip from line 0 (a passive
+// "… +N more lines" marker) — good enough to stop the frame overrun, but it made everything past the fold
+// permanently unreachable: `fetchSettingsUsage` (useChat.ts) returns `[...formatUsage, blank, ...formatCost]`,
+// so on a short terminal `/cost` could show NONE of its cost/duration/per-model fields at all (spec D13's
+// information-equivalence rule). W8-1 replaces the static clip with an actual scroll window.
+describe("SettingsDialog — read-only tab bodies scroll instead of clipping (bl10 fw8 W8-1)", () => {
   const manyLines = (n: number) => Array.from({ length: n }, (_, i) => ({ text: `usage line ${i}` }));
+  // The killer case from the brief, shaped like `fetchSettingsUsage`'s real payload: a long usage table
+  // followed by the cost/duration fields a `/cost` on a short terminal used to lose entirely.
+  const withCostTail = (n: number) => [...manyLines(n), { text: "" }, { text: "Total cost:            $0.0456" }, { text: "Total duration (API):  12.3s" }];
 
-  it("keeps the composed frame within `rows` on a short terminal with a long fetched payload, and shows a truncation marker", async () => {
+  it("keeps the composed frame within `rows` at the top of a long payload, and shows a truncation marker", async () => {
     const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => manyLines(40)} rows={15} columns={100} />);
     await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
     const f = plain(frame(r.lastFrame));
     expect(f.split("\n").length, "the frame must not exceed the terminal's own row count").toBeLessThanOrEqual(15);
-    expect(f).toMatch(/… \+\d+ more lines/);
+    expect(f).toMatch(/↓ \d+ more below/);
     r.unmount();
   });
 
-  it("renders an untruncated payload unchanged — every line present, no marker", async () => {
+  it("renders an untruncated payload unchanged — every line present, no marker (today's behaviour, unaffected)", async () => {
     const lines = manyLines(4);
     const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={40} columns={100} />);
     await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
     const f = plain(frame(r.lastFrame));
     for (const l of lines) expect(f).toContain(l.text);
-    expect(f).not.toMatch(/more lines/);
+    expect(f).not.toMatch(/more (above|below)/);
     r.unmount();
+  });
+
+  it("the killer case: /cost's trailing fields are unreachable on a short terminal before scrolling, and reachable after paging down (drives the key handler)", async () => {
+    const lines = withCostTail(40);
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    expect(plain(frame(r.lastFrame)), "unreachable before scrolling").not.toContain("Total duration (API)");
+    for (let i = 0; i < 10 && !plain(frame(r.lastFrame)).includes("Total duration (API)"); i++) {
+      r.stdin.write("\x1b[6~");                                  // pagedown
+      await tick();
+    }
+    expect(plain(frame(r.lastFrame)), "reachable after scrolling down").toContain("Total duration (API)");
+    r.unmount();
+  });
+
+  it("moves one line at a time on the plain arrow keys", async () => {
+    const lines = withCostTail(40);
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    expect(plain(frame(r.lastFrame))).toContain("usage line 0");
+    r.stdin.write("\x1b[B");                                     // down
+    await tick();
+    expect(plain(frame(r.lastFrame)), "one line advanced — line 0 scrolled off the top").not.toContain("usage line 0");
+    expect(plain(frame(r.lastFrame))).toMatch(/↑ \d+ more above/);
+    r.unmount();
+  });
+
+  it("frame height stays <= rows at every scroll position, walking the whole payload one line at a time", async () => {
+    const lines = withCostTail(40);
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    for (let i = 0; i < lines.length + 5; i++) {
+      r.stdin.write("\x1b[B");
+      await tick();
+      expect(plain(frame(r.lastFrame)).split("\n").length).toBeLessThanOrEqual(15);
+    }
+    r.unmount();
+  });
+
+  it("resets the scroll position when the active tab changes", async () => {
+    const lines = withCostTail(40);
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    r.stdin.write("\x1b[6~");                                    // pagedown — now scrolled
+    await tick();
+    expect(plain(frame(r.lastFrame))).toMatch(/↑ \d+ more above/);
+    r.rerender(<SettingsDialog {...props()} tab="Stats" fetchStats={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    expect(plain(frame(r.lastFrame)), "a freshly entered tab starts at the top, not wherever Usage left off").not.toMatch(/more above/);
+    r.unmount();
+  });
+
+  it("resets the scroll position on a bumped openSeq even when the tab stays the same", async () => {
+    const lines = withCostTail(40);
+    const r = render(<SettingsDialog {...props()} tab="Usage" openSeq={1} fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    r.stdin.write("\x1b[6~");
+    await tick();
+    expect(plain(frame(r.lastFrame))).toMatch(/↑ \d+ more above/);
+    r.rerender(<SettingsDialog {...props()} tab="Usage" openSeq={2} fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    expect(plain(frame(r.lastFrame)), "a fresh /cost re-open starts at the top, not the previous visit's scroll position").not.toMatch(/more above/);
+    r.unmount();
+  });
+
+  // bl10 fix wave 1, finding 3's hint-accuracy rule extended: a read-only tab that CAN scroll now has a live
+  // select:previous/select:next, so the bar should say so — but only then, not on a payload that already fits.
+  it("advertises 'navigate' on the keyhint bar once a read-only tab actually overflows, and not before", async () => {
+    const short = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => manyLines(4)} rows={40} columns={100} />);
+    await waitFor(() => !plain(frame(short.lastFrame)).includes("Loading…"));
+    expect(plain(frame(short.lastFrame))).not.toContain("navigate");
+    short.unmount();
+
+    const tall = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => manyLines(40)} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(tall.lastFrame)).includes("Loading…"));
+    expect(plain(frame(tall.lastFrame))).toContain("navigate");
+    tall.unmount();
   });
 });

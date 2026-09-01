@@ -66,7 +66,8 @@ import { ThemeDialog } from "./ThemeDialog.js";
 import { OutputStylePicker } from "./OutputStylePicker.js";
 import { savePrefs as realSavePrefs } from "./prefs.js";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
-import { bodyWindow, MoreRow, paintedRows } from "./dialogs/rowBudget.js";
+import type { KeyHintEntry } from "./dialogs/keyhints.js";
+import { bodyWindow, paintedRows } from "./dialogs/rowBudget.js";
 import { Tabs, Tab as TabPane } from "./select/Tabs.js";
 import { Select } from "./select/Select.js";
 import { moreAbove, moreBelow, overflowRows } from "./select/overflow.js";
@@ -135,6 +136,43 @@ export const READONLY_CHROME_ROWS = 7;
 export const READONLY_ROW_INSET = 2;
 export const readOnlyRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
   Math.max(1, columns - READONLY_ROW_INSET);
+
+/** bl10 fix wave 8, W8-1 — the read-only tabs' SCROLL window, replacing the wave-2 static clip. `/cost`
+ *  (`fetchSettingsUsage`, useChat.ts) returns `[...formatUsage, blank, ...formatCost]`, so a clip that
+ *  always started at line 0 could leave a short terminal showing NONE of the cost/duration/per-model fields
+ *  — a hard violation of the round's information-equivalence rule (spec D13). `costs`/`total` are PAINTED
+ *  rows at `width` (`paintedRows`, same unit the old clip used — a wrapped line still costs the frame more
+ *  than one row).
+ *
+ *  A payload that already fits (`total <= plainBudget`) takes the untouched fast path: every line, no
+ *  markers — byte-identical to the dialog's pre-scroll output, which is what lets a no-overflow payload
+ *  render "exactly as today". One that doesn't reserves BOTH counted indicator rows unconditionally, the
+ *  same "+2" idiom `SETTINGS_CHROME_ROWS` and `mcpDialogModel.ts`'s `MCP_LIST_CHROME_ROWS` use for their own
+ *  windowed lists: the content region is sized as though `↑`/`↓` both always drew, so scrolling from one end
+ *  of the payload to the other never grows or shrinks how much is on screen — only which marker(s) actually
+ *  render (conditionally, McpDialog's own shape) toggles. `maxOffset` is the bottom-anchored start (the
+ *  earliest line whose suffix still fits the budget) — clamping scroll there is what stops paging down from
+ *  running past the content into trailing blank space. */
+export interface ReadOnlyScrollWindow { overflow: boolean; start: number; end: number; maxOffset: number; budget: number }
+export function readOnlyScrollWindow(lines: readonly RenderLine[], width: number, effectiveRows: number, offset: number): ReadOnlyScrollWindow {
+  const plainBudget = Math.max(0, effectiveRows - READONLY_CHROME_ROWS);
+  const costs = lines.map((l) => paintedRows(l.text, width).length);
+  const total = costs.reduce((a, b) => a + b, 0);
+  if (total <= plainBudget) return { overflow: false, start: 0, end: lines.length, maxOffset: 0, budget: plainBudget };
+  const budget = Math.max(0, plainBudget - 2);
+  let maxOffset = costs.length, used = 0;
+  for (let i = costs.length - 1; i >= 0; i--) {
+    if (used + costs[i]! > budget) break;
+    used += costs[i]!; maxOffset = i;
+  }
+  const start = Math.max(0, Math.min(offset, maxOffset));
+  let end = start, shown = 0;
+  for (; end < costs.length; end++) {
+    if (shown + costs[end]! > budget) break;
+    shown += costs[end]!;
+  }
+  return { overflow: true, start, end, maxOffset, budget };
+}
 export const settingsRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
   Math.max(1, columns - SETTINGS_ROW_INSET);
 
@@ -404,6 +442,13 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
   // a caller that never passes it) reads as one constant value throughout, so behaviour there is unchanged:
   // fetch once per tab-entry, exactly as before this task.
   const [fetchedAt, setFetchedAt] = useState<Partial<Record<Tab, number | undefined>>>({});
+  // bl10 fix wave 8, W8-1 — the read-only tabs' scroll position, a LINE index into `tabLines[activeTab]`.
+  // One offset, not one per tab: only ONE read-only tab is ever visible/interactable at a time (the same
+  // shape `focusId`/`view` already keep for the Config list), and it resets below on every tab change AND
+  // on a bumped `openSeq` — a fresh fetch (an explicit re-open, exactly the case the effect above already
+  // keys off) starts its own read at the top, not wherever the previous payload's scroll left off.
+  const [scrollOffset, setScrollOffset] = useState(0);
+  useEffect(() => { setScrollOffset(0); }, [activeTab, openSeq]);
 
   // Fetch a read-only tab's lines once per entry, and again whenever `openSeq` bumps — Status/Usage/Stats only.
   useEffect(() => {
@@ -475,20 +520,39 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
     else if (row.id === "model") onOpenModelPicker();
     else if (row.id === "outputStyle") setSub("outputStyle");
   };
+  // bl10 fix wave 8, W8-1 — the ACTIVE read-only tab's scroll window (undefined on Config, where scrolling
+  // has no meaning). Computed once here rather than inside `readOnlyTabBody`: this copy is what the key
+  // handlers and the keyhint bar's "is there anything to scroll" question read, and both need the window for
+  // whichever tab keys can actually reach right now, not whichever tab a given render happens to format.
+  const activeReadOnlyLines = activeTab !== "Config" ? tabLines[activeTab] : undefined;
+  const activeReadOnlyWindow = activeReadOnlyLines !== undefined
+    ? readOnlyScrollWindow(activeReadOnlyLines, readOnlyRowWidth(columns), rows ?? (process.stdout.rows ?? 24), scrollOffset)
+    : undefined;
+  const scrollReadOnly = (delta: number) => {
+    if (activeTab === "Config" || !activeReadOnlyWindow) return;
+    setScrollOffset((o) => Math.max(0, Math.min(activeReadOnlyWindow.maxOffset, o + delta)));
+  };
   // The scopes stay pushed in every state (their null bindings are this overlay's gate).
   useKeyScope("Settings");
   useKeyScope("Tabs");
-  // WAVE S t5 — MOVEMENT AND ACCEPTANCE BELONG TO THE INNER `Select` NOW (W-S3). It pushes the `Select`
-  // context innermost, so its eight actions resolve there, including the four — select:pageUp/pageDown/first/
-  // last — this component never had at all. Registering them here as well would only shadow it, and the
-  // migration is the fix rather than binding four new handlers: this list renders every row it has today, so
-  // bound paging keys would resolve, match, reach a handler and move nothing.
-  //   Both surfaces this component still owns keep their registrations, both still `route()`d. While the `/`
-  // query is open the `Select` is NOT MOUNTED, so select:* resolves to an action with no handler and falls
-  // through to the fallback below — which is `route` → `onSearchKey`, exactly where those keys landed before.
+  // WAVE S t5 — MOVEMENT AND ACCEPTANCE BELONG TO THE INNER `Select` NOW (W-S3) on the CONFIG tab. It pushes
+  // the `Select` context innermost, so its eight actions resolve there, including the four —
+  // select:pageUp/pageDown/first/last — this component never had at all. Registering select:previous/next
+  // here as well would only shadow it there, which is exactly what `scrollReadOnly`'s own `activeTab ===
+  // "Config"` guard makes harmless: on Config, Select's more-nested registration wins regardless.
+  //   bl10 fix wave 8, W8-1: Status/Usage/Stats have no `Select` at all, so before this task these same four
+  // actions (already bound unconditionally by `Settings`' own table — see up/down/k/j above, and now
+  // pageup/pagedown too, bindings.ts) resolved to nothing on those tabs. Wiring them here is what makes a
+  // `/cost` table's trailing fields reachable on a short terminal (spec D13) instead of forever clipped past
+  // the frame budget. `select:first`/`select:last` stay unbound — this is a scroll, not a picker; jumping to
+  // an arbitrary line has no natural target home/end weren't asked to cover here.
   useKeyActions({
     "settings:search": route(onConfig(() => setSearch(""))),
     "confirm:no": route(() => onDone()),
+    "select:previous": route(() => scrollReadOnly(-1)),
+    "select:next": route(() => scrollReadOnly(1)),
+    "select:pageUp": route(() => scrollReadOnly(-Math.max(1, activeReadOnlyWindow?.budget ?? 1))),
+    "select:pageDown": route(() => scrollReadOnly(Math.max(1, activeReadOnlyWindow?.budget ?? 1))),
     // `tabs:next`/`tabs:previous` belong to the embedded <Tabs> now (see the header). Enum rows still cycle
     // via enter/space only — the recorded simplification is unchanged.
   });
@@ -503,36 +567,38 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
    *  small helper instead of tripling the JSX across three `<Tab>` elements (T-MENU task 2: the migration
    *  deletes the old three-way ternary, not re-spells it three times).
    *
-   *  bl10 fix wave 2, finding 2: this used to `.map()` the fetched lines with no windowing at all — a dock-
-   *  pinned read (no `Select`, nothing to scroll) whose payload can scale with live data (a `/cost` table
-   *  grows a row per model) blew the composed frame past `rows`, tripping Ink's tall-frame replay. Reuses
-   *  `rowBudget.tsx`'s dock-pinned-consult machinery (`paintedRows`/`MoreRow`) rather than inventing a second
-   *  one: same shape as `GenericPermission`'s body — keep the head, mark what was clipped, inside the budget. */
+   *  bl10 fix wave 2, finding 2 (SUPERSEDED by fix wave 8, W8-1): this used to `.map()` the fetched lines
+   *  with no windowing at all, then a static clip from line 0 with `rowBudget.tsx`'s dock-pinned-consult
+   *  machinery (`MoreRow`) once a tall payload blew the composed frame past `rows`. `readOnlyScrollWindow`
+   *  (above) now windows from `scrollOffset` instead of always 0 — a body with a live scroll position uses
+   *  the counted `↑`/`↓` markers (`select/overflow.ts`) every other windowed list in this file draws, not
+   *  the passive "there is more, unreachable" marker a dock-pinned read (nothing to scroll) still wants. */
   const readOnlyTabBody = (t: Exclude<Tab, "Config">) => {
     const lines = tabLines[t];
     if (lines === undefined) return <><Text dimColor>Loading…</Text><Text> </Text></>;
     const width = readOnlyRowWidth(columns);
     const effectiveRows = rows ?? (process.stdout.rows ?? 24);
-    const budget = Math.max(0, effectiveRows - READONLY_CHROME_ROWS);
-    const costs = lines.map((l) => paintedRows(l.text, width).length);
-    const total = costs.reduce((a, b) => a + b, 0);
-    let shown = lines.length;
-    if (total > budget) {
-      const avail = Math.max(0, budget - 1);   // one row reserved for the marker itself
-      let used = 0; shown = 0;
-      for (; shown < costs.length; shown++) {
-        if (used + costs[shown]! > avail) break;
-        used += costs[shown]!;
-      }
+    // Recomputed per tab (not reused from `activeReadOnlyWindow`, which is only the ACTIVE tab's): an
+    // inactive-but-previously-visited tab's cached lines still render here every pass (all three `<TabPane>`
+    // children are constructed on every render regardless of which one `Tabs` shows — see the return below).
+    const win = readOnlyScrollWindow(lines, width, effectiveRows, scrollOffset);
+    if (!win.overflow) {
+      return (
+        <>
+          {lines.map((l, i) => <Line key={i} l={l} />)}
+          {/* T-MENU task 2: the old `READONLY_FOOTER` line is gone — the blank spacer stays so the row this
+              dialog's chrome budget reserves for the footer is spent the same way, now by DialogFrame's own
+              auto keyhint bar (`hintScope`, below) instead of a hand-written string in this slot. */}
+          <Text> </Text>
+        </>
+      );
     }
-    const hidden = lines.length - shown;
+    const above = win.start, below = lines.length - win.end;
     return (
       <>
-        {lines.slice(0, shown).map((l, i) => <Line key={i} l={l} />)}
-        {hidden > 0 ? <MoreRow hidden={hidden} /> : null}
-        {/* T-MENU task 2: the old `READONLY_FOOTER` line is gone — the blank spacer stays so the row this
-            dialog's chrome budget reserves for the footer is spent the same way, now by DialogFrame's own
-            auto keyhint bar (`hintScope`, below) instead of a hand-written string in this slot. */}
+        {above > 0 ? <Text dimColor>{moreAbove(above)}</Text> : null}
+        {lines.slice(win.start, win.end).map((l, i) => <Line key={win.start + i} l={l} />)}
+        {below > 0 ? <Text dimColor>{moreBelow(below)}</Text> : null}
         <Text> </Text>
       </>
     );
@@ -555,11 +621,20 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
   // true set for this state ("Type to filter · Enter/↓ to select · Esc to clear"), so the bar has nothing left
   // to add and DialogFrame's `hints.length > 0` gate keeps it from rendering at all.
   const searching = activeTab === "Config" && search !== null;
+  // bl10 fix wave 8, W8-1: a read-only tab's `select:previous`/`select:next` are only live once its own
+  // window actually overflows (`scrollReadOnly` no-ops otherwise, clamped to `maxOffset` 0) — so the bar
+  // says "navigate" only then, the same hint-accuracy rule fix wave 1 established for this dialog: a hint
+  // for a key that would move nothing is exactly the "resolves but moves nothing" defect that rule exists
+  // to keep off the bar.
+  const readOnlyOverflow = activeReadOnlyWindow?.overflow ?? false;
+  const readOnlyHintActions: readonly KeyHintEntry[] = readOnlyOverflow
+    ? [{ action: "confirm:no", scope: "Settings" }, { action: "select:previous", scope: "Settings" }]
+    : [{ action: "confirm:no", scope: "Settings" }];
   const hintProps = searching
     ? { hintActions: [] as const }
     : activeTab === "Config"
       ? { hintScope: ["Settings", "Tabs"] as const }
-      : { hintScope: ["Tabs"] as const, hintActions: [{ action: "confirm:no", scope: "Settings" }] as const };
+      : { hintScope: ["Tabs"] as const, hintActions: readOnlyHintActions };
   return (
     <DialogFrame title="Settings" color="permission" {...hintProps}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) — the tab list is derived from the `<Tab>` children below

@@ -46,13 +46,6 @@ the commit) or when a round's scope absorbs them.
   `dist/` regenerates on any build, and the trigger needs a rebuild to fail right after an identical
   success. Fix when the script is next touched: check `cp` before `rm`, propagate rebuild failure, add a
   dist-freshness check.
-- **Settings read-only tabs clip without scrolling** (bl10 review loop, rereview2-F1 restated
-  rereview3, 2026-09-01). `readOnlyTabBody` windows Status/Usage/Stats to the frame budget with a
-  dim `… +N more lines` marker (wave-2 F2, `5df713990`) — the bounded-frame invariant holds and is
-  tested, but the clipped tail is unreachable: the tabs register no scroll/pageing handler. Only
-  bites on short terminals with tall `/cost`-class payloads; the safe direction (clip) was chosen
-  over tall-frame replay. Fix when it matters: navigable scrolling for the read-only tab body
-  (canon's pane scrolls); adjudicated log-not-fix under the round's anti-refine-loop rule.
 - **hover-cells h1 pins the negative gate only** (bl10 waves 2B/4, 2026-09-01). The cell now
   asserts hovering staged local output un-dims nothing (the intended T-CLICKGATE `f06085c8e`
   behavior) — but its fixture is a keyless `! printf` echo, so no PTY cell asserts the POSITIVE
