@@ -71,6 +71,13 @@ console.log("━━━ determinism: env schema, canonicalization, state surface,
 for (const [label, argv] of [
   ["env schema + credential matrix", ["src/env.test.ts"]],
   ["canonicalization scrubs", ["src/canonical.test.ts"]],
+  // The differ's other half of the same spec. §3.4 asks every normalization rule
+  // to carry a regression test; the value-level scrubs have had one since W0, the
+  // run-ID MAP had none — and W4 widened it to the compact_boundary's uuid fields,
+  // which name messages the SDK never emits. Each mapped key is paired with the
+  // reimplementation defect that must still diff, so the phase is the control on
+  // a normalizer that could otherwise blind the surface it normalizes.
+  ["differ run-id map + its negative controls", ["src/differ.test.ts"]],
   ["state surface catches what it claims", ["src/state.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
   // The other pin-keyed fixture, and the only §5 signal that can see a

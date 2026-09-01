@@ -79,8 +79,20 @@ export const RUN_VALUE_SCRUBS: [RegExp, string][] = [
  *   - `/tasks/a8b1….output`                — the task output path
  *   - `<task-id>a8b1…</task-id>`           — the background task-notification
  *   - `…/<uuid>/tasks/`                    — the session directory in those paths
+ *   - `read the full transcript at: …/<uuid>.jsonl`
+ *                                          — the post-compaction continuation
  *
- * A future scenario that mints an id into a SIXTH shape will miss its body hash
+ * The last one is the SIXTH shape this comment predicted, found by C7/W4 exactly
+ * as described: the continuation message the engine puts in front of a carried
+ * summary names the session's own transcript file, and that message becomes the
+ * FIRST USER BLOCK of every request after a compact_boundary. No recording had
+ * carried it before, because `slash-compact` stops at the boundary and never
+ * sends another request; the two scenarios that continue past one missed their
+ * body hash on every post-compaction request. The scrub keeps the directory —
+ * which is harness state and discriminates a project — and replaces only the
+ * per-run session uuid in the file name.
+ *
+ * A future scenario that mints an id into a SEVENTH shape will miss its body hash
  * and fail loudly as a positional fallback — the safe direction. The unsafe
  * direction, a wrong match, is what the tightening removes; `assertNoKeyCollisions`
  * in `proxy.ts` is the structural backstop that makes any residual over-reach
@@ -96,6 +108,10 @@ export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
   [/\/tasks\/a[0-9a-f]{16}\.output\b/g, "/tasks/<agent-id>.output"],
   [/<task-id>a[0-9a-f]{16}<\/task-id>/g, "<task-id><agent-id></task-id>"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/tasks\/)/g, "<uuid>$1"],
+  [
+    /(read the full transcript at: \S*\/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.jsonl)/g,
+    "$1<session-uuid>$2",
+  ],
 ];
 
 /**

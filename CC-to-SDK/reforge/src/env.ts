@@ -136,6 +136,31 @@ export interface EngineEnvKnobs {
   gateOverrides?: Record<string, string>;
   /** Extra platform vars a specific driver needs (e.g. GIT_* pinning). Names are asserted. */
   platform?: Record<string, string>;
+  /**
+   * `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` — the auto-compaction threshold, as a
+   * percentage of the effective context window, for the ONE scenario that grades
+   * the trigger policy. A string because the engine parses it with `parseFloat`.
+   *
+   * WHY AN ENV VAR IS THE RIGHT ANSWER HERE, and why it is not a precedent for
+   * inheriting one. The natural reactive trigger is `effectiveWindow − 13,000`
+   * tokens, which for the corpus's model is ≈167,000 — reaching it live would
+   * take on the order of a hundred exchanges with deliberately enormous tool
+   * outputs and a multi-megabyte cassette, for one predicate. Upstream ships the
+   * cheap path itself: `W3()` reads this variable as `testPctOverride` and
+   * lowers the threshold to a percentage of the same window, so two exchanges
+   * reach it. There is no SDK option for it, which is the distinction contract
+   * X6 actually draws — a scenario may declare what it asks the engine to do,
+   * and where upstream exposes that only as a variable, the variable is the
+   * declaration.
+   *
+   * APPROVED BY THE X6 OWNER: campaign spec
+   * `docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md`, the
+   * C6–C10 bloc's scout-driven corrections — "`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
+   * is approved for the X6 allowlist (C3 sign-off recorded here) to make
+   * compaction-depth recordable cheaply". Set identically for both engines by
+   * the scenario that declares it, so it moves no differential.
+   */
+  autoCompactPct?: string;
 }
 
 export interface EngineEnvOptions {
@@ -237,6 +262,7 @@ export const HARNESS_SET_VARS = [
   "BUN", //                          §3.5: the pinned compile-target runtime the engine wrappers exec
   "CLAUDE_CODE_ENTRYPOINT", //       pinned (see PINNED_ENTRYPOINT) — the engine writes it into every request body
   "CLAUDE_AGENT_SDK_VERSION", //     set by sdk.mjs from its own version; listed so assertSchema accepts it
+  "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", // C7/W4: the auto-compact threshold knob (see `autoCompactPct`; C3 sign-off in the spec's C6–C10 bloc)
 ] as const;
 
 /**
@@ -320,6 +346,10 @@ export function engineEnv(opts: EngineEnvOptions): Record<string, string> {
   if (env.CLAUDE_CONFIG_DIR === "") delete env.CLAUDE_CONFIG_DIR;
   if (opts.baseUrl) env.ANTHROPIC_BASE_URL = opts.baseUrl;
   if (knobs.maxRetries !== undefined) env.CLAUDE_CODE_MAX_RETRIES = knobs.maxRetries;
+  // Absent unless a scenario asks for it, like the retry bound above: the whole
+  // corpus is graded at the engine's own threshold, and exactly one scenario
+  // lowers it (X6, see `autoCompactPct`).
+  if (knobs.autoCompactPct !== undefined) env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = knobs.autoCompactPct;
   if (opts.bun) env.BUN = opts.bun;
 
   if (opts.mode === "record") {

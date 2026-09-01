@@ -60,8 +60,40 @@ const VALUE_SCRUBS = RUN_VALUE_SCRUBS;
  * … in first-seen order, everywhere it appears. That keeps the *consistency*
  * check alive (an engine that used two different ids where the oracle used one
  * still diffs) while discarding the unmatchable random value.
+ *
+ * THE COMPACTION KEYS (C7/W4) ARE HERE FOR ONE REASON: the messages they name
+ * are not all in the transcript. A `compact_boundary` reports which messages it
+ * preserved by uuid, and some of those are engine-internal frames the SDK never
+ * emits — so their ids appear ONLY under these keys and nowhere as a message
+ * `uuid`. Without them in this set the map has no entry to make, and two runs of
+ * the SAME engine disagree on `preserved_messages.uuids[1]`. Adding them keeps
+ * the consistency check rather than weakening it: the map is built over the
+ * whole transcript in traversal order, so an engine that preserved a DIFFERENT
+ * message names a uuid the map already bound to another placeholder, and the
+ * diff still fires. What is discarded is only the value of an id nothing else
+ * can pin.
  */
-const RUN_ID_KEYS = new Set(["session_id", "uuid", "agentId", "task_id", "request_id", "message_id"]);
+const RUN_ID_KEYS = new Set([
+  "session_id",
+  "uuid",
+  "agentId",
+  "task_id",
+  "request_id",
+  "message_id",
+  // compact_boundary's own wire fields (upstream `rSe`).
+  "logical_parent_uuid",
+  "head_uuid",
+  "anchor_uuid",
+  "tail_uuid",
+]);
+
+/**
+ * The same keys, whose values are ARRAYS of uuids rather than one uuid. Kept
+ * separate so the walk cannot mistake an arbitrary string array for identifiers.
+ */
+const RUN_ID_ARRAY_KEYS = new Set(["uuids", "all_uuids"]);
+
+const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >= 6;
 
 function collectRunIds(v: unknown, into: Map<string, string>): void {
   if (Array.isArray(v)) {
@@ -70,8 +102,10 @@ function collectRunIds(v: unknown, into: Map<string, string>): void {
   }
   if (v === null || typeof v !== "object") return;
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (RUN_ID_KEYS.has(k) && typeof val === "string" && val.length >= 6 && !into.has(val)) {
+    if (RUN_ID_KEYS.has(k) && isRunId(val) && !into.has(val)) {
       into.set(val, `<id${into.size}>`);
+    } else if (RUN_ID_ARRAY_KEYS.has(k) && Array.isArray(val)) {
+      for (const id of val) if (isRunId(id) && !into.has(id)) into.set(id, `<id${into.size}>`);
     }
     collectRunIds(val, into);
   }

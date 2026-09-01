@@ -93,6 +93,35 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 }
 
 // ---------------------------------------------------------------------------
+// the post-compaction transcript path (C7/W4) — the sixth enclosing shape.
+//
+// The continuation message the engine puts in front of a carried summary names
+// the session's own transcript file, and that message is the first user block of
+// EVERY request after a compact_boundary. Unscrubbed, no post-compaction request
+// can ever hash-match its recording.
+// ---------------------------------------------------------------------------
+{
+  const path = (uuid: string) => `read the full transcript at: /reforge/config/projects/-sandbox/${uuid}.jsonl`;
+  const A = path("ac3f6c34-213f-4e2c-b142-a1b0940e7398");
+  const B = path("a2660536-9727-42c0-8c2b-202c5e9daa4c");
+  check("transcript path: two runs canonicalize alike", sameKey(A, B));
+  check("transcript path: the directory survives", hashed(A).includes("/reforge/config/projects/-sandbox/"));
+  check("transcript path: a DIFFERENT project directory still discriminates", !sameKey(A, path("ac3f6c34-213f-4e2c-b142-a1b0940e7398").replace("-sandbox", "-elsewhere")));
+  // NEGATIVE CONTROLS — the scrub is bound to the engine's own sentence and to
+  // the `.jsonl` file name, so neither a uuid a user pasted nor a differently
+  // named file in the same directory may be eaten.
+  check(
+    "transcript path: a uuid in an unrelated sentence survives",
+    hashed("open the transcript at /reforge/config/projects/-sandbox/ac3f6c34-213f-4e2c-b142-a1b0940e7398.jsonl").includes("ac3f6c34-213f-4e2c-b142-a1b0940e7398"),
+  );
+  check(
+    "transcript path: a non-jsonl neighbour still discriminates",
+    !sameKey("read the full transcript at: /d/ac3f6c34-213f-4e2c-b142-a1b0940e7398.txt", "read the full transcript at: /d/a2660536-9727-42c0-8c2b-202c5e9daa4c.txt"),
+  );
+  check("transcript path: the differ path leaves it for the id MAP", differed(A).includes("ac3f6c34-213f-4e2c-b142-a1b0940e7398"));
+}
+
+// ---------------------------------------------------------------------------
 // inline clocks — two renderings, both measured in real request bodies.
 // ---------------------------------------------------------------------------
 {

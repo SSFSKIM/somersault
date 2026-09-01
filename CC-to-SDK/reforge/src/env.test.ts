@@ -216,6 +216,21 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
   check("a parent entrypoint cannot override the pin",
     engineEnv({ ...BASE, mode: "record", parent: { ...parent, CLAUDE_CODE_ENTRYPOINT: "operator-shell" } }).CLAUDE_CODE_ENTRYPOINT === PINNED_ENTRYPOINT);
   check("no retries var when the knob is unset", !("CLAUDE_CODE_MAX_RETRIES" in engineEnv({ ...BASE, mode: "record", parent })));
+  // C7/W4's addition. Two halves, and the second is the one that matters: the
+  // knob has to reach the child when a scenario declares it, and the variable
+  // has to be ABSENT for every scenario that does not — a corpus-wide
+  // auto-compact threshold would silently change what the other 30 recordings
+  // are grading. Inheriting it is refused by the same allowlist as everything
+  // else: an operator export never reaches the child, only the knob does.
+  check(
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE comes from the knob",
+    engineEnv({ ...BASE, mode: "record", parent, knobs: { autoCompactPct: "1" } }).CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === "1",
+  );
+  check("no auto-compact override when the knob is unset", !("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in engineEnv({ ...BASE, mode: "record", parent })));
+  check(
+    "an INHERITED auto-compact override is dropped",
+    !("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in engineEnv({ ...BASE, mode: "record", parent: { ...parent, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "99" } })),
+  );
   // configDir: null is how the isolation probe asks for the UNISOLATED env.
   check("configDir null omits the var", !("CLAUDE_CONFIG_DIR" in engineEnv({ ...BASE, mode: "replay", parent, knobs: { configDir: null } })));
 
