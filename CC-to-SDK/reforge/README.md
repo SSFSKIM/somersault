@@ -2578,9 +2578,11 @@ measured negative; it will not be a third time by treating these as one.
 
 ## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
 
-Thirteen splices plus two owned pure helpers, and a fifth parity oracle grading **2,496 comparisons
-with 47 controls**. The wave's headline is not a count, though — it is a correction the campaign
-spec needed and a set of measurements that changed how liveness is proven.
+Eleven splices plus three owned pure helpers, eleven new recordings, and a fifth parity oracle
+grading **2,488 comparisons with 45 controls**. The wave's headline is not a count, though — it is
+**two corrections the campaign spec needed** and a set of measurements that changed how liveness is
+proven. Five more functions were spliced and then removed: each was measured off the headless path,
+and the wave kept the finding instead of the row.
 
 ### `bypassPermissions` does not short-circuit the rule engine
 
@@ -2598,6 +2600,31 @@ The claim came from reading the **Bash tool's own** mode handler (`T8e`: "Bypass
 main permission flow") as a statement about the chain. It is a statement about that tool's
 `checkPermissions`. The general form is worth keeping: *a claim read off one function's comment is a
 claim about that function.*
+
+### `auto` mode is not gate-dead, and its gate is not a feature flag
+
+The campaign spec carried `auto` as a delegated unknown expected to be REFUSED, because the pinned
+environment holds every feature gate at its compiled-in disabled default and the mode-change guard
+refuses `auto` unless the auto-mode gate answers true. Both paths **accepted** it: at spawn
+(`Options.permissionMode`, which never consults the guard) and over the control channel
+(`setPermissionMode`, which does).
+
+The premise was wrong about what the gate IS. Upstream's `hE()` is
+`!circuitBreaker && !settingsDisabled && modelSupportsAuto` — three local conditions, none of them
+something this environment turns off. **"Gated" was read as "remote flag" when the code says
+"guarded by three local facts".**
+
+What this does not buy is the classifier. `chmod 777 /etc/hosts` under `auto` was ALLOWED with no
+consult and no hook, so the mode is live and its BLOCKING arm is still OPEN — a strictly better
+state than the spec predicted, and an honest one: the condition is named and no input has created it.
+This also unblocks C8's `PermissionDenied` row halfway. An ordinary broker denial was created with
+both hook paths armed and `PermissionDenied` stayed silent while `PermissionRequest` fired, which
+confirms C8's call-site reading with a run behind it; the remaining condition is a classifier denial,
+which now needs an input rather than a gate.
+
+Both corrections have the same shape as the bypass one: **a premise about the engine, inherited
+through a document, that the artifact does not support.** Two out of two, in a single wave, is the
+argument for §2.1's live-probe-first rule stated as a measurement.
 
 ### The axes are derived, not chosen
 
@@ -2630,7 +2657,7 @@ were **measured inert**:
 |---|---|
 | allow-rule decision returns the prepared ask | differs only in a message no scenario renders |
 | mode transition returns the context unchanged | skips only side effects nothing headless reads |
-| setter reports success without applying | invisible until something asks the subsystem to decide again |
+| setter reports success without applying | invisible until something asks the subsystem to decide again — and the honest twin that REFUSED every change turned out to be invisible too, for a different reason (see below) |
 | response mapper spreads the host's answer | carries the host's `updatedInput` along with it |
 | control-response envelope emptied of its payload | nothing in the corpus reads a control response |
 
@@ -2652,19 +2679,39 @@ negative with the sign flipped — a vacuous POSITIVE, which is worse, because a
 investigated and a false positive gets committed. The sweep now runs its whole tag list against a
 known-good engine before it measures anything.
 
-### Two takeable functions are owned without being spliced
+### Four functions were spliced, measured dark, and un-spliced
 
-`Ree`/`isAskRuleDrivenReason` (6 call sites) and `Fy`/`findSafetyCheckReason` (17, the most-called
-function this wave owns) are both anchorable and both have zero free variables. Both were spliced,
-built and solo-sabotaged; **neither turned a scenario red.** After the pre-check and the rule checker
-take their own copies, upstream's remaining callers are the mode-aware body's gate-dead auto/dontAsk
-arms and the broker's ask path, where the corpus's decisions carry no `decisionReason` at all — so a
-finder that never finds anything returns exactly what the healthy one does.
+This was the wave's largest single lesson, and it arrived in three different shapes.
 
-C7's "a single-caller pure helper cannot be a live splice" is the special case of **a many-caller
-helper whose remaining callers are all dark cannot be either.** Both live in `strangle/modules/shared/`
-as `pure-helper` captures, graded against their own upstream bytes before either body is built on
-them.
+**Two are dark because their remaining callers are.** `Ree`/`isAskRuleDrivenReason` (6 call sites)
+and `Fy`/`findSafetyCheckReason` (17, the most-called function this wave touches) are both anchorable
+and both have zero free variables. Both were spliced, built and solo-sabotaged; neither turned a
+scenario red. After the pre-check and the rule checker take their own copies, upstream's remaining
+callers are the mode-aware body's gate-dead auto/dontAsk arms and the broker's ask path, where the
+corpus's decisions carry no `decisionReason` at all — so a finder that never finds anything returns
+exactly what the healthy one does. C7's "a single-caller pure helper cannot be a live splice" is the
+special case of **a many-caller helper whose remaining callers are all dark cannot be either.**
+
+**One is dark because its output is absorbed.** `ql`/`permissionMessage` has **45 call sites** and
+RUNS on essentially every tool call — it is the opposite of a dark function — and it is still
+unprovable headlessly. An ask's message is consumed by a prompt surface that does not exist in a
+headless session, and the one path on which it reaches the model takes the rule checker's annotating
+arm, which keeps the TOOL's message rather than this one. **Call-site count is not liveness**; what
+matters is whether the value reaches an observable.
+
+**One is dark because the seam is not the seam.** `K0`/`setPermissionModeWithGuards` joins the mode
+guard to the mode transition and reads like the `set_permission_mode` handler; the W5–W7 scout tables
+it as exactly that. The headless runtime's handler calls the **guard directly** and applies the mode
+itself, and `K0`'s only call site in that chunk belongs to a different entry point's
+`onSetPermissionMode` callback. A twin that REFUSED every mode change left the mode walk green — the
+strongest mutant the seam admits, and still invisible. Its two ends are both owned and both live, so
+only the joint is unowned.
+
+All three of the takeable-but-dark pure functions live in `strangle/modules/shared/` as
+`pure-helper` captures, graded against their own upstream bytes by the oracle before any body is
+built on them. `K0` was dropped outright, as C1 dropped the interrupt clause, because a delegation
+is not a helper. **In every case the wave kept the written finding where the row would have been** —
+a row the gate cannot prove is worse than no row, because it goes green for free.
 
 ### The branch instrumenter learned a guarded body that returns
 
@@ -2723,14 +2770,31 @@ ownership mid-round-trip. W7 inherits the request leg, and should re-verify the 
 (`eln`/`initializeToolPermissionContext`, 5.4 KB of settings and filesystem I/O, belongs with the
 settings layer rather than with the decision chain.)
 
-**And the corpus half of the wave is authored but not recorded.** Eleven scenarios covering the mode
-matrix, the three rule behaviours and the two hook paths are written, committed and type-checked; the
-account's subscription rate limit was exhausted during the recording batch, and `m1/run.ts` correctly
-DISCARDED every rate-limited take rather than committing a cassette that captured an infrastructure
-failure. `research/2026-09-01-w6-permission-matrix.md` marks those cells **AUTHORED-UNRECORDED**
-rather than rounding them up — a fourth verdict value, invented for exactly the reason the other
-three were. Until the cassettes exist, five of the thirteen splices have no covering scenario and the
-gate cannot run its liveness block end to end.
+And **four decisionReason kinds are named but not created**: `safetyCheck` (creating it means
+running something genuinely dangerous, which this project should design deliberately rather than
+improvise), `subcommandResults`, `sandboxOverride`, `workingDir`, `asyncAgent` — plus `classifier`,
+which §4.1 below turned from unreachable into merely uncreated. Each is a row in
+`research/2026-09-01-w6-permission-matrix.md` with its condition written out, not a blank.
+
+### The corpus: eleven recordings, three of which measured the wrong thing first
+
+The mode matrix, the three rule behaviours and the two hook paths cost eleven scenarios. Three
+passed on their first take while grading something other than their claim, and all three failures
+were the same shape — **the engine has a shortcut ABOVE the rung the scenario aims at**:
+
+| scenario | what it actually measured | fix |
+|---|---|---|
+| `perm-accept-edits` (Bash half) | `acceptEdits` auto-allows `mkdir`: upstream hard-codes `mkdir, touch, rm, rmdir, mv, cp, sed` as edit-shaped commands. The "must still be brokered" arm measured the mode's other arm | use `chmod`; the list is now a derived fixture axis |
+| `perm-rule-allow` | a CONTENT-scoped allow rule is matched by the tool's own `checkPermissions`, above the ladder's allow rung | a whole-tool `Write` rule |
+| `perm-hook-rewrite` | four takes; the PermissionRequest hook's output shape is `{hookSpecificOutput:{hookEventName,decision}}`, and the host broker won the race | correct shape, plus a 1500 ms broker delay so the hook answers first |
+
+Two more scenarios kept their cassette but had their CLAIM narrowed, which is the same lesson from
+the other side. A rule denial produces **no `permission_denied` frame** — the SDK's own types say the
+field is populated for `canUseTool` denials only, and a rule deny never reaches the broker — so
+`perm-rule-deny` grades the ORDERING (rule before consult) and the oracle grades the stamp. And an
+ask rule's consult carries **no `matchedAskRule`** when the tool passed its own check, because only
+the pre-check's annotating arm stamps it. **When a recording cannot see a field, say which instrument
+can, and grade the claim the recording can actually support.**
 
 ## Next
 
