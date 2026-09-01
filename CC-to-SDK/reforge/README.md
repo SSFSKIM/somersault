@@ -2115,7 +2115,7 @@ drivers themselves).
 ### Gate
 
 **Fifty-six phases**, up from fifty: the differ's run-id map, the compaction parity oracle, and four
-new liveness rows. Corpus **31/31**, full acceptance **5/5**, **34** liveness phases, coverage
+new liveness rows. Corpus **31/31**, full acceptance **5/5**, **32** liveness phases, coverage
 attestation **83/146 executed with 63 adjudicated and zero un-adjudicated**.
 
 ```
