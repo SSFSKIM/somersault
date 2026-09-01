@@ -987,6 +987,19 @@ Pending — written at finish.
   the frontier, distant waves coarse), cross-child contracts X1–X7, ordering, tracking map. The
   design sections above are unchanged; authority grades on inherited content are marked in the
   child sections and contracts.
+- 2026-09-01 (W2 boundary review): **Codex became unavailable mid-campaign** — the account's
+  ChatGPT-plan Codex entitlement now rejects every model ("not supported when using Codex with a
+  ChatGPT account"; setup shows auth active, so it is an entitlement/plan change, surfaced to the
+  user). The round ran as an internal fresh-context fable reviewer instead, same challenge brief.
+  Verdict: **sound — no false-green path found**; all six claims verified (S-chunk faithfulness
+  line-by-line vs the bundle incl. port call order; parity extraction; derivation
+  false-equality; attestation exclusions re-derived empirically; per-export sabotage; lean
+  scenario substance via the requests surface). Three non-blocking findings routed to C5x:
+  attest.ts's stale-exclusion detector has no committed controls though the README claims two
+  (the campaign's own defect class — fix, don't log); `auditTopLevel` accepts effectful
+  variable initializers (bounded today by whole-chunk staling); rule-5 value derivations are
+  self-referential-but-loud, oversold in comments. Cross-model review resumes when Codex is
+  restored.
 - 2026-09-01 (W1 boundary review): one consolidated Codex lens over C4's nine commits. Verdict:
   formatter translations faithful to upstream, the destructuring-defaults overturn and coLiteral
   scoping both sound. Two findings, both fixed (commits `65f5f000`…`16a5ccf98`): **pure-helper
