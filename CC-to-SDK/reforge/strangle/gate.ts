@@ -100,10 +100,18 @@ for (const [label, argv] of [
 // footprint that under-covers, an inventory that cannot detect its own gaps or
 // a target guard that never fires would make every phase below optimistic.
 console.log("━━━ mechanism: footprint closure surface, capture inventory, target guard, computed keys ━━━");
-{
-  const r = run("npx", ["tsx", "strangle/mechanism.test.ts"]);
+for (const [label, script] of [
+  ["splice mechanism", "strangle/mechanism.test.ts"],
+  // The branch INVENTORY is machinery too, and the same argument applies to it:
+  // an instrumenter that silently skips a construct reports full coverage of the
+  // subset it understood, so every refusal and every recorded form has a fixture
+  // control — including the faithfulness half, which executes the instrumented
+  // fixture and compares it against the same module uninstrumented.
+  ["branch instrumenter", "strangle/branches.test.ts"],
+] as [string, string][]) {
+  const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
-  results.push({ label: "splice mechanism", pass: r.status === 0 });
+  results.push({ label, pass: r.status === 0 });
 }
 
 // ---- contracts: the owned implementations, over partitioned inputs ---------

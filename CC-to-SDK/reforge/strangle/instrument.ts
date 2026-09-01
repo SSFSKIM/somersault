@@ -53,6 +53,9 @@ export function __covN(id, value) {
   record(id + (value === null || value === undefined ? ":T" : ":F"));
   return value;
 }
+export function __covS(outcome) {
+  record(outcome);
+}
 `;
 
 /**

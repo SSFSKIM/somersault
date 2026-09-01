@@ -1395,10 +1395,17 @@ PASS — every branch of every attested module is executed or carries a reviewed
 Three properties are load-bearing, and each answers a way this mechanism could pass vacuously:
 
 - **The inventory is machine-made and complete.** `strangle/branches.ts` walks the AST for every
-  branching construct and **refuses** any it cannot record — a switch, a loop, a try/catch, an
-  optional chain — rather than skipping it. A tool that silently ignores what it does not understand
-  reports full coverage of the subset it understood. §3.1 says "major branches" is not a category;
-  this is what makes that enforceable.
+  branching construct and **refuses** any it cannot record, rather than skipping it. A tool that
+  silently ignores what it does not understand reports full coverage of the subset it understood.
+  §3.1 says "major branches" is not a category; this is what makes that enforceable. C5x widened
+  what it *can* record — switch clauses (marked per arm), try/catch (two arms on one site), loops
+  (by their condition, which makes the zero-iteration arm exact) and single-link optional chains —
+  and left four forms refused **by name and with a reason**: a switch with no `default` (the
+  no-match path is an arm of no clause), `for(;;)`, a try block that can `return` (the
+  end-of-try marker would be skipped on a non-throwing path), and the two optional-chain forms that
+  cannot be recorded without over-reporting or moving `this`. `strangle/branches.test.ts` is the
+  control: every refusal has a fixture, every recordable form has one too, and each is instrumented,
+  executed and compared against the same module uninstrumented — 29 checks.
 - **Measurement is on the graded code, not a copy of it.** `strangle/build.ts --instrument` rebuilds
   the strangled graph against an instrumented copy of `strangle/modules`, and every covering
   scenario must stay **GREEN** on it before any coverage is read. An instrumented build that

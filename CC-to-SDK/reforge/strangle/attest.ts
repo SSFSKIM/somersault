@@ -84,7 +84,7 @@ for (const [, list] of sites) {
   for (const site of list) {
     for (const outcome of outcomesOf(site)) {
       const state = executed.has(outcome) ? "executed" : excluded.has(outcome) ? "excluded" : "UNADJUDICATED";
-      rows.push({ branch: outcome, site, outcome: outcome.endsWith(":T") ? "true" : "false", state, reason: excluded.get(outcome) });
+      rows.push({ branch: outcome, site, outcome: outcome.slice(outcome.lastIndexOf(":") + 1), state, reason: excluded.get(outcome) });
     }
   }
 }
