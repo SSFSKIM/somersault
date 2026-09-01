@@ -33,8 +33,10 @@ import { BUN, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { resolveAnchor } from "./anchor.js";
 import { assertSignature, chunkAst, excise } from "./ast.js";
+import { assertOwnedValues, planChunkReplacement } from "./chunk.js";
 import { spliceFootprint, type FootprintFile } from "./footprint.js";
-import { deriveCaptures, SPLICES } from "./manifest.js";
+import { CHUNK_REPLACEMENTS, deriveCaptures, SABOTAGE_TARGETS, SPLICES } from "./manifest.js";
+import { instrumentModules } from "./instrument.js";
 import { bootCheck, BUILD_DIR, materializeGraph, STRANGLED_DIR, textModules } from "./prepare.js";
 import { assertCaptureInventory } from "./scope.js";
 
@@ -48,15 +50,24 @@ if (sabotageIdx >= 0) {
   // whole corpus.
   const v = args[sabotageIdx + 1];
   if (v === undefined || v.startsWith("--")) {
-    console.error(`ABORT: --sabotage requires a value: all, ${SPLICES.map((sp) => sp.name).join(", ")}`);
+    console.error(`ABORT: --sabotage requires a value: all, ${SABOTAGE_TARGETS.join(", ")}`);
     process.exit(2);
   }
   sabotageTarget = v;
-  if (sabotageTarget !== "all" && !SPLICES.some((sp) => sp.name === sabotageTarget)) {
-    console.error(`ABORT: unknown splice '${sabotageTarget}'. Known: all, ${SPLICES.map((sp) => sp.name).join(", ")}`);
+  if (sabotageTarget !== "all" && !SABOTAGE_TARGETS.includes(sabotageTarget)) {
+    console.error(`ABORT: unknown sabotage target '${sabotageTarget}'. Known: all, ${SABOTAGE_TARGETS.join(", ")}`);
     process.exit(2);
   }
 }
+/**
+ * §3.1's coverage attestation needs the owned modules to say which of their
+ * branches ran. `--instrument` builds against an instrumented COPY of
+ * strangle/modules — identical behaviour, plus a branch recorder — so the
+ * attestation measures the same code the gate grades rather than a second
+ * transcription of it. See strangle/instrument.ts and strangle/attest.ts.
+ */
+const instrumented = args.includes("--instrument");
+const MODULES_ROOT = instrumented ? instrumentModules() : join(REFORGE_ROOT, "strangle", "modules");
 
 // ---- helpers ----------------------------------------------------------------
 /** Place a statement after the leading banner//comment block, never before it. */
@@ -151,7 +162,7 @@ for (const sp of SPLICES) {
   const wholeChunk = closures.flatMap((c) => c.closure!).filter((n) => n.basis === "whole-chunk");
 
   const sabotaged = sabotageTarget === "all" || sabotageTarget === sp.name;
-  const moduleFile = join(REFORGE_ROOT, "strangle", "modules", `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);
+  const moduleFile = join(MODULES_ROOT, `${sp.name}${sabotaged ? ".sabotage" : ""}.js`);
   readFileSync(moduleFile); // fail loudly here rather than at boot
   preludesFor.set(path, [...(preludesFor.get(path) ?? []), moduleFile]);
   console.log(
@@ -160,6 +171,46 @@ for (const sp of SPLICES) {
       `${captures.length > 0 ? ` (derived: ${captures.map((c) => `${c.as}=${c.identifier}${c.owned ? "*" : ""}`).join(", ")})` : " (no free variables)"}` +
       `${closures.length > 0 ? ` [closure: ${closures.map((c) => `${c.as}+${c.closure!.length}`).join(", ")}${wholeChunk.length > 0 ? `, ${wholeChunk.length} WHOLE-CHUNK` : ""}]` : ""}` +
       `${sabotaged ? " [SABOTAGE]" : ""}`,
+  );
+}
+
+// ---- S-chunk: whole-file replacement (§2.2) ---------------------------------
+// Planned BEFORE the excisions are applied, so every derivation reads upstream's
+// own bytes; written AFTER them, so a chunk that is both spliced and replaced
+// would fail loudly rather than race (no such chunk exists today, and the check
+// below is what keeps that true).
+const chunkPlans = CHUNK_REPLACEMENTS.map((row) => planChunkReplacement(sources, row, (p) => relative(STRANGLED_DIR, p)));
+for (const plan of chunkPlans) {
+  if (editsFor.has(plan.path) || preludesFor.has(plan.path)) {
+    throw new Error(`${plan.row.name}: ${plan.chunk} is both spliced and replaced whole — the splice would be written into a file that no longer exists`);
+  }
+  const checked = await assertOwnedValues(plan, MODULES_ROOT);
+  const sabotaged = new Set(
+    plan.exports
+      .filter((e) => sabotageTarget === "all" || sabotageTarget === `${plan.row.name}:${e.as}`)
+      .map((e) => e.as),
+  );
+  const replacement = plan.render(MODULES_ROOT, sabotaged);
+  writeFileSync(plan.path, replacement);
+  footprints.push({
+    name: plan.row.name,
+    shape: "chunk",
+    fn: "-",
+    node: "<whole chunk>",
+    anchor: plan.row.anchor,
+    signature: { params: 0, ancestry: [] },
+    coverage: [...new Set(plan.exports.flatMap((e) => e.coverage))],
+    ...plan.footprint(upstreamBytes, (specifier) => {
+      const text = sources.get(specifier);
+      if (text === undefined) return null;
+      return { name: relative(STRANGLED_DIR, specifier), sf: chunkAst(specifier, text) };
+    }),
+  });
+  console.log(
+    `replaced ${plan.chunk} [chunk] with ${plan.row.module}: ${plan.source.length} chars -> ${replacement.length} ` +
+      `(exports: ${plan.exports.map((e) => `${e.as}=${e.name}${sabotaged.has(e.as) ? " [SABOTAGE]" : ""}${e.darkReason ? " [dark]" : ""}`).join(", ")}` +
+      `; ports: ${plan.imports.map((i) => `${i.as}=${i.name}`).join(", ")}` +
+      `${checked.length > 0 ? `; values verified: ${checked.join(", ")}` : ""})`,
   );
 }
 

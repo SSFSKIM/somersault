@@ -108,6 +108,57 @@ export interface Splice {
   coverage: string[];
 }
 
+// ============================================================================
+// S-CHUNK (§2.2) — whole-chunk ownership. A parallel manifest, because the unit
+// is different: a splice row claims ONE node inside a chunk upstream still owns;
+// a chunk row claims the whole FILE, so its schema is about the export surface
+// rather than about one body's captures. The mechanism, its derivation rules and
+// its refusals live in strangle/chunk.ts.
+// ============================================================================
+
+/** One binding of the original chunk — an export or an import — re-derived per build. */
+export interface ChunkBinding {
+  /** the handle the manifest and the replacement refer to it by */
+  as: string;
+  /** §2.4 class. For an export it describes what the OWNED module provides. */
+  kind: CaptureClass;
+  /** recover the minified identifier from the ORIGINAL chunk source; must throw when the shape moved */
+  derive: (source: string) => string;
+}
+
+export interface ChunkExportSpec extends ChunkBinding {
+  /** the owned binding in `<module>/reference.js` (or `sabotage.js`) this export is bound to */
+  owned: string;
+  /**
+   * For a constant export: recover its VALUE from the pinned chunk. The build
+   * compares it against the owned module's live export, which is the entire
+   * parity claim for a constant no scenario renders (chunk.ts rule 5).
+   */
+  value?: (source: string) => string;
+  /** how the replacement declares this export, given the derived name, the owned binding and a port lookup */
+  declare: (name: string, owned: string, port: (as: string) => string) => string;
+  /** corpus scenarios that make THIS export observable (§2.2 per-export acceptance) */
+  coverage: string[];
+  /** required when `coverage` is empty: why the corpus cannot observe it, reviewed */
+  darkReason?: string;
+}
+
+export interface ChunkReplacement {
+  /** row name; also the `--sabotage <name>:<export>` prefix */
+  name: string;
+  /** true-substring-unique literal that identifies the chunk (never its NAME — see anchor.ts) */
+  anchor: string;
+  coLiteral?: string;
+  /** the owned module directory under strangle/modules/ */
+  module: string;
+  exports: ChunkExportSpec[];
+  imports: ChunkBinding[];
+  /** owned bindings the prologue needs, by path relative to strangle/modules/ */
+  helpers?: { from: string; names: string[] }[];
+  /** statements emitted before the declarations — the `primitive` equality assertions */
+  prologue?: (port: (as: string) => string) => string;
+}
+
 /** A capture with its per-build identifier resolved — what the build actually wires. */
 export interface DerivedCapture {
   as: string;
@@ -474,6 +525,126 @@ export const SPLICES: Splice[] = [
     coverage: ["task-family"],
   },
 
+  // ---- tool descriptions (subsystem/tool-descriptions) ---------------------
+  // The three description functions whose chunks are NOT clean for whole-file
+  // ownership (15 / 17 / 4 exports carrying real behaviour), so §2.2's fallback
+  // applies and only the description function is excised. The fourth — Glob's —
+  // sits in a chunk that IS clean, and is owned whole; see CHUNK_REPLACEMENTS.
+  //
+  // All four share one upstream shape: `leanPrompt(model) ? brief : full`. What
+  // reaches the differential surface is the tool object's `prompt({model})`
+  // method, which is what calls these; the sibling `description()` returns a
+  // one-liner that never appears in a request.
+
+  {
+    name: "read-description",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: "Assume this tool is able to read all files on the machine.",
+    fn: "readDescription",
+    captures: [
+      {
+        // `var jVe=2000` — the default line budget, in BOTH arms' prose.
+        as: "lineBudget",
+        kind: "primitive",
+        derive: pick("read-description", "lineBudget", new RegExp(`- Reads up to \\$\\{(${ID})\\} lines by default`)),
+      },
+      {
+        // `var n` — the "Do NOT re-read" tail both arms append.
+        as: "noRereadNote",
+        kind: "primitive",
+        derive: pick("read-description", "noRereadNote", new RegExp(`rather than content\\.\\$\\{(${ID})\\}`)),
+      },
+      {
+        as: "leanPrompt",
+        kind: "effectful-port",
+        derive: pick("read-description", "leanPrompt", new RegExp(`\\{if\\((${ID})\\(${ID}\\)\\)return\`Reads a file`)),
+      },
+      {
+        // `BVe()` — `!at().toLowerCase().includes("claude-3-haiku")`, i.e. a read
+        // of the SESSION model. Pure in form, runtime state in substance.
+        as: "pdfCapable",
+        kind: "effectful-port",
+        derive: pick("read-description", "pdfCapable", new RegExp(`presents them visually\\.\\$\\{(${ID})\\(\\)\\?`)),
+      },
+    ],
+    // Read's description is in 23 of the 24 scenarios' requests; `api-error` is
+    // the one carrying the LEAN arm (its deliberately invalid model id falls
+    // outside the lean-prompt family test). The pair is chosen to cover both
+    // `leanPrompt` arms rather than to enumerate every red.
+    coverage: ["plain", "api-error"],
+  },
+
+  {
+    name: "grep-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "Content search built on ripgrep. Prefer this over",
+    fn: "grepDescription",
+    captures: [
+      {
+        as: "grepToolName",
+        kind: "primitive",
+        derive: pick("grep-description", "grepToolName", new RegExp(`- ALWAYS use \\$\\{(${ID})\\} for search tasks`)),
+      },
+      {
+        as: "bashToolName",
+        kind: "primitive",
+        // The bundle escapes non-ASCII in its template literals, so the em dash
+        // is the six characters of a \\u2014 escape in the SOURCE, not the character.
+        derive: pick("grep-description", "bashToolName", new RegExp(`via \\$\\{(${ID})\\} \\\\u2014 results integrate`)),
+      },
+      {
+        as: "agentToolName",
+        kind: "primitive",
+        derive: pick("grep-description", "agentToolName", new RegExp(`- Use \\$\\{(${ID})\\} tool \\(if available\\)`)),
+      },
+      {
+        as: "leanPrompt",
+        kind: "effectful-port",
+        derive: pick("grep-description", "leanPrompt", new RegExp(`\\{if\\((${ID})\\(${ID}\\)\\)return\`Content search built`)),
+      },
+      {
+        // latches on first call and emits telemetry when non-default.
+        as: "subagentSteer",
+        kind: "effectful-port",
+        derive: pick("grep-description", "subagentSteer", new RegExp(`\\$\\{(${ID})\\(\\)==="default"\\?`)),
+      },
+    ],
+    coverage: ["search-tools", "search-tools-lean"],
+  },
+
+  {
+    name: "webfetch-description",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "Fetches a URL, converts the page to markdown, and answers",
+    fn: "webFetchDescription",
+    captures: [
+      {
+        as: "leanPrompt",
+        kind: "effectful-port",
+        derive: pick("webfetch-description", "leanPrompt", new RegExp(`\\{if\\((${ID})\\(${ID}\\)\\)return\`Fetches a URL`)),
+      },
+      {
+        // `r()` renders "15 minutes" from a per-host memo over
+        // CLAUDE_CODE_WEBFETCH_CACHE_TTL_MS (default 900000) — a port, and a
+        // ledger edge to the WebFetch execution wave.
+        as: "cacheTtlPhrase",
+        kind: "effectful-port",
+        derive: pick("webfetch-description", "cacheTtlPhrase", new RegExp(`- Responses are cached for \\$\\{(${ID})\\(\\)\\} per URL`)),
+      },
+      {
+        // `u()` — the usage-notes block, i.e. description text, so it is owned.
+        as: "usageNotes",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("webfetch-description", "usageNotes", new RegExp(`\\$\\{(${ID})\\(\\)\\}\`\\}$`)),
+      },
+    ],
+    coverage: ["plain", "api-error"],
+  },
+
   // ---- W0a mechanism spikes: one real splice per new target shape ----------
 
   {
@@ -667,6 +838,115 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["resume"],
   },
+];
+
+/**
+ * Whole chunks the strangler owns (§2.2). One row so far: the campaign's S-chunk
+ * debut, chosen because it is the smallest surface that exercises the whole
+ * mechanism — three exports, two of them constants thirteen other chunks read,
+ * one function with a single consumer, and two effectful imports that must stay
+ * ports.
+ */
+export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
+  {
+    name: "glob-description",
+    module: "glob-description",
+    // The Glob lean description. Unique graph-wide, and the only literal INSIDE
+    // this chunk that is: the full-arm bullets live in a module-level `var`.
+    anchor: 'Fast file pattern matching. Supports glob patterns like "**/*.js"',
+    exports: [
+      {
+        // `var ti="Glob"` — the tool-name literal. Thirteen chunks read it: the
+        // tool object's `name`, permission-rule matching, hook matchers, prompt
+        // prose, tool-name sets, the tool-use counter.
+        as: "globToolName",
+        kind: "primitive",
+        owned: "GLOB_TOOL_NAME",
+        derive: pick("glob-description", "globToolName", new RegExp(`var (${ID})="Glob"`)),
+        value: pick("glob-description", "globToolName value", new RegExp(`var ${ID}="(Glob)"`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: ["search-tools"],
+      },
+      {
+        // `var $s="REPL"` — the grab-bag half, unrelated to Glob.
+        as: "replToolName",
+        kind: "primitive",
+        owned: "REPL_TOOL_NAME",
+        derive: pick("glob-description", "replToolName", new RegExp(`var (${ID})="REPL"`)),
+        value: pick("glob-description", "replToolName value", new RegExp(`var ${ID}="(REPL)"`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        // No corpus scenario can observe it, and that is a property of the
+        // ENGINE rather than of the corpus: the REPL tool is gated behind
+        // `ty()`, which requires an interactive entrypoint ("cli"/"remote") and
+        // is false on every headless run. Its four readers — REPL content-block
+        // matching, `tool_progress` emission, disallowedTools assembly, an
+        // allowed-tools predicate — are all downstream of that gate. Measured:
+        // the literal "REPL" appears in no recorded request except as prose
+        // inside an unrelated tool's description.
+        //
+        // What grades it instead is stronger than a scenario would be: chunk.ts
+        // rule 5 compares the owned constant against the value the PINNED CHUNK
+        // declares, every build. A differential red can only see a constant a
+        // scenario happens to render; this sees any change at all.
+        coverage: [],
+        darkReason:
+          "the REPL tool is unreachable headlessly (`ty()` requires an interactive entrypoint), so no corpus request can carry this name; " +
+          "graded instead by the build-time value comparison against the pinned chunk (chunk.ts rule 5)",
+      },
+      {
+        // `O_n(e)` — the Glob description. One consumer, called both as
+        // `description()` (no model) and as `prompt({model})` (the one that
+        // fills requestBody.tools[].description).
+        as: "globDescription",
+        kind: "pure-helper",
+        owned: "globDescription",
+        derive: pick(
+          "glob-description",
+          "globDescription",
+          new RegExp(`function (${ID})\\(${ID}\\)\\{if\\(${ID}\\(${ID}\\)\\)return'Fast file pattern matching`),
+        ),
+        declare: (name, owned, port) =>
+          `function ${name}(model){return ${owned}(model,${port("leanPrompt")},${port("subagentSteer")})}`,
+        coverage: ["search-tools", "search-tools-lean"],
+      },
+    ],
+    imports: [
+      {
+        // `yt="Agent"` from the pure-constants chunk.
+        as: "agentToolName",
+        kind: "primitive",
+        derive: pick("glob-description", "agentToolName", new RegExp(`use the \\$\\{(${ID})\\} tool instead`)),
+      },
+      {
+        as: "leanPrompt",
+        kind: "effectful-port",
+        derive: pick("glob-description", "leanPrompt", new RegExp(`\\{if\\((${ID})\\(${ID}\\)\\)return'Fast file pattern`)),
+      },
+      {
+        as: "subagentSteer",
+        kind: "effectful-port",
+        derive: pick("glob-description", "subagentSteer", new RegExp(`return (${ID})\\(\\)==="default"\\?`)),
+      },
+    ],
+    helpers: [
+      { from: "shared/assert.js", names: ["assertGraphValue"] },
+      { from: "shared/tool-names.js", names: ["AGENT_TOOL_NAME"] },
+    ],
+    // The one `primitive` that crosses INTO the replacement rather than out of
+    // it. Asserted once at module load, which is where upstream interpolated it.
+    prologue: (port) => `assertGraphValue("glob-description","agentToolName",${port("agentToolName")},AGENT_TOOL_NAME);`,
+  },
+];
+
+/**
+ * Everything `--sabotage` accepts, and everything the gate's liveness loop walks.
+ * A splice is one target; a chunk replacement is one target PER EXPORT, because
+ * §2.2 asks for sabotage evidence per retained export and a whole-chunk twin
+ * would pass on any single live export.
+ */
+export const SABOTAGE_TARGETS: string[] = [
+  ...SPLICES.map((sp) => sp.name),
+  ...CHUNK_REPLACEMENTS.flatMap((cr) => cr.exports.map((e) => `${cr.name}:${e.as}`)),
 ];
 
 /**
