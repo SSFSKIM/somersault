@@ -1,0 +1,3534 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-control-protocol.ts",
+  "chain": {
+    "chunk": "chunk-dvbbv89q.js",
+    "enclosing": [
+      {
+        "binding": null,
+        "kind": "ArrowFunction",
+        "bytes": 67310,
+        "exportedAs": []
+      },
+      {
+        "binding": "ky",
+        "kind": "FunctionDeclaration",
+        "bytes": 140599,
+        "exportedAs": [
+          "_runHeadlessStreamingForTesting"
+        ]
+      }
+    ],
+    "offset": 269311,
+    "bytes": 57679,
+    "terminalElse": "Ge(d,`Unsupported control request subtype: ${Qn(String(d.request.subtype))}`)"
+  },
+  "sdk": {
+    "package": "@anthropic-ai/claude-agent-sdk",
+    "version": "0.3.251",
+    "sendable": [
+      "apply_flag_settings",
+      "background_tasks",
+      "cancel_async_message",
+      "channel_enable",
+      "claude_authenticate",
+      "claude_oauth_callback",
+      "claude_oauth_wait_for_completion",
+      "generate_session_title",
+      "get_context_usage",
+      "get_settings",
+      "get_usage",
+      "initialize",
+      "interrupt",
+      "mcp_authenticate",
+      "mcp_clear_auth",
+      "mcp_message",
+      "mcp_oauth_callback_url",
+      "mcp_reconnect",
+      "mcp_set_servers",
+      "mcp_status",
+      "mcp_toggle",
+      "message_rated",
+      "read_file",
+      "reload_plugins",
+      "reload_skills",
+      "remote_control",
+      "rewind_files",
+      "seed_read_state",
+      "set_cwd",
+      "set_max_thinking_tokens",
+      "set_mcp_permission_mode_override",
+      "set_model",
+      "set_permission_mode",
+      "side_question",
+      "stop_task",
+      "submit_feedback",
+      "ultrareview_launch"
+    ]
+  },
+  "counts": {
+    "arms": 52,
+    "subtypes": 54,
+    "sendable": 37,
+    "servedSendable": 37,
+    "armsWithoutSender": 16,
+    "confirmationRatio": 1
+  },
+  "arms": [
+    {
+      "subtypes": [
+        "interrupt"
+      ],
+      "bytes": 844,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "hD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "hD",
+          "bytes": 1786
+        },
+        {
+          "local": "Uq",
+          "chunk": "chunk-jmdx1n3e.js",
+          "name": "Uq",
+          "bytes": 1003
+        },
+        {
+          "local": "Odt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Odt",
+          "bytes": 340
+        },
+        {
+          "local": "Ddt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ddt",
+          "bytes": 302
+        },
+        {
+          "local": "jG",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "jG",
+          "bytes": 276
+        },
+        {
+          "local": "oi",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "oi",
+          "bytes": 235
+        },
+        {
+          "local": "vue",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "vue",
+          "bytes": 235
+        },
+        {
+          "local": "O4e",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "O4e",
+          "bytes": 69
+        },
+        {
+          "local": "Su",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "Su",
+          "bytes": 27
+        }
+      ],
+      "messages": [
+        "interrupt cleared the queue",
+        "remote-cancel"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "end_session"
+      ],
+      "bytes": 441,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": true,
+      "usesBreak": true,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "W_",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "W_",
+          "bytes": 62
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Su",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "Su",
+          "bytes": 27
+        },
+        {
+          "local": "Ca",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Ca",
+          "bytes": 22
+        }
+      ],
+      "messages": [
+        "[print.ts] end_session received, reason=${…}",
+        "[print.ts] stale 'archived' end_session ignored on epoch>1 — from prior lifecycle"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "initialize"
+      ],
+      "bytes": 2357,
+      "respondsSuccess": false,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Ey",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Ey",
+          "bytes": 2948
+        },
+        {
+          "local": "zqn",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "zqn",
+          "bytes": 147
+        },
+        {
+          "local": "wdt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "wdt",
+          "bytes": 125
+        },
+        {
+          "local": "Nrr",
+          "chunk": "chunk-seset5dr.js",
+          "name": "Nrr",
+          "bytes": 99
+        },
+        {
+          "local": "I9n",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "I9n",
+          "bytes": 88
+        },
+        {
+          "local": "mHn",
+          "chunk": "chunk-38213y7h.js",
+          "name": "mHn",
+          "bytes": 82
+        },
+        {
+          "local": "Fge",
+          "chunk": "chunk-d2gdz17q.js",
+          "name": "Fge",
+          "bytes": 78
+        },
+        {
+          "local": "uF",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "uF",
+          "bytes": 74
+        },
+        {
+          "local": "He",
+          "chunk": "chunk-79e2v0j6.js",
+          "name": "He",
+          "bytes": 71
+        },
+        {
+          "local": "OQe",
+          "chunk": "chunk-38213y7h.js",
+          "name": "OQe",
+          "bytes": 64
+        },
+        {
+          "local": "Td",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "Td",
+          "bytes": 55
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Us",
+          "chunk": "chunk-yprfjz48.js",
+          "name": "Us",
+          "bytes": 45
+        }
+      ],
+      "messages": [
+        "initialize: SDK MCP server '${…}",
+        "initialize: hooks must map hook events to arrays of matchers carrying hookCallbackIds arrays and string matchers",
+        "initialize: ignoring invalid timeout for SDK MCP server '${…}",
+        "initialize: ignoring sdkMcpServerConfigs (not an object keyed by server name)",
+        "initialize: sdkMcpServers and webSearchIsolationExemptMcpServers must be arrays of strings",
+        "initialize: skills must be an array of strings"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "set_permission_mode"
+      ],
+      "bytes": 268,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "um",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "um",
+          "bytes": 181
+        },
+        {
+          "local": "Of",
+          "chunk": "chunk-af80z9sa.js",
+          "name": "Of",
+          "bytes": 55
+        },
+        {
+          "local": "_N",
+          "chunk": "chunk-af80z9sa.js",
+          "name": "_N",
+          "bytes": 35
+        }
+      ],
+      "messages": [],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "set_model"
+      ],
+      "bytes": 232,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "km",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "km",
+          "bytes": 2052
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "ng",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ng",
+          "bytes": 127
+        },
+        {
+          "local": "mD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "mD",
+          "bytes": 85
+        },
+        {
+          "local": "we",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "we",
+          "bytes": 60
+        }
+      ],
+      "messages": [
+        "set_model failed"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "set_max_thinking_tokens"
+      ],
+      "bytes": 481,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Sf",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Sf",
+          "bytes": 222
+        },
+        {
+          "local": "XFe",
+          "chunk": "chunk-38213y7h.js",
+          "name": "XFe",
+          "bytes": 73
+        }
+      ],
+      "messages": [
+        "set_max_thinking_tokens: max_thinking_tokens must be an integer or null and thinking_display must be \"summarized\", \"omitted\", or null"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "set_cwd"
+      ],
+      "bytes": 2085,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-6cr0dax0.js"
+      ],
+      "delegates": [
+        {
+          "local": "he",
+          "chunk": "chunk-3k4hb7pf.js",
+          "name": "he",
+          "bytes": 1114
+        },
+        {
+          "local": "hln",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "hln",
+          "bytes": 374
+        },
+        {
+          "local": "Nnt",
+          "chunk": "chunk-km4np6mj.js",
+          "name": "Nnt",
+          "bytes": 277
+        },
+        {
+          "local": "gln",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "gln",
+          "bytes": 106
+        },
+        {
+          "local": "Mpe",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Mpe",
+          "bytes": 104
+        },
+        {
+          "local": "cm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "cm",
+          "bytes": 100
+        },
+        {
+          "local": "et",
+          "chunk": "chunk-38213y7h.js",
+          "name": "et",
+          "bytes": 99
+        },
+        {
+          "local": "Se",
+          "chunk": "chunk-38213y7h.js",
+          "name": "Se",
+          "bytes": 63
+        },
+        {
+          "local": "Zo",
+          "chunk": "chunk-2s2q3hwy.js",
+          "name": "Zo",
+          "bytes": 62
+        },
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "ee",
+          "chunk": "chunk-z9mp80s2.js",
+          "name": "ee",
+          "bytes": 50
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Yt",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Yt",
+          "bytes": 44
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "(error detail withheld)",
+        "(error detail withheld: it contains control or invisible characters)",
+        "/$bunfs/root/chunk-6cr0dax0.js",
+        "The session stayed in its previous working directory.",
+        "The session's working directory is ${…}",
+        "set_cwd: re-homing plugins/MCP for the new directory failed (continuing): ${…}",
+        "set_cwd: relocation failed — ${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_status"
+      ],
+      "bytes": 31,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "hpn",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "hpn",
+          "bytes": 88
+        }
+      ],
+      "messages": [],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "get_binary_version"
+      ],
+      "bytes": 997,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "C0",
+          "chunk": "chunk-x4m0zpdz.js",
+          "name": "C0",
+          "bytes": 509
+        }
+      ],
+      "messages": [],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "get_context_usage"
+      ],
+      "bytes": 423,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Sye",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Sye",
+          "bytes": 548
+        },
+        {
+          "local": "t0e",
+          "chunk": "chunk-nawg9q0j.js",
+          "name": "t0e",
+          "bytes": 477
+        },
+        {
+          "local": "at",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "at",
+          "bytes": 74
+        },
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        }
+      ],
+      "messages": [
+        "get_context_usage"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "list_models"
+      ],
+      "bytes": 60,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "iwe",
+          "chunk": "chunk-sy4gk1aq.js",
+          "name": "iwe",
+          "bytes": 931
+        },
+        {
+          "local": "hX",
+          "chunk": "chunk-sy4gk1aq.js",
+          "name": "hX",
+          "bytes": 541
+        }
+      ],
+      "messages": [],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "get_session_cost"
+      ],
+      "bytes": 22,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "DG",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "DG",
+          "bytes": 459
+        },
+        {
+          "local": "Et",
+          "chunk": "chunk-nag2zkkq.js",
+          "name": "Et",
+          "bytes": 39
+        }
+      ],
+      "messages": [],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "get_usage"
+      ],
+      "bytes": 137,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "P2e",
+          "chunk": "chunk-vmnmg6bn.js",
+          "name": "P2e",
+          "bytes": 917
+        },
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        }
+      ],
+      "messages": [],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_message"
+      ],
+      "bytes": 108,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "QKn",
+          "chunk": "chunk-h4hvhzbw.js",
+          "name": "QKn",
+          "bytes": 58
+        }
+      ],
+      "messages": [],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "rewind_files"
+      ],
+      "bytes": 356,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Tf",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Tf",
+          "bytes": 485
+        },
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "Failed to rewind"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "cancel_async_message"
+      ],
+      "bytes": 313,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "oi",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "oi",
+          "bytes": 235
+        },
+        {
+          "local": "vue",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "vue",
+          "bytes": 235
+        }
+      ],
+      "messages": [
+        "cancelled by the host"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "poll_event"
+      ],
+      "bytes": 2913,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "dht",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "dht",
+          "bytes": 2209
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "Y4e",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Y4e",
+          "bytes": 275
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "It",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "It",
+          "bytes": 163
+        },
+        {
+          "local": "gne",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "gne",
+          "bytes": 147
+        },
+        {
+          "local": "NVe",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "NVe",
+          "bytes": 97
+        },
+        {
+          "local": "Q7",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Q7",
+          "bytes": 86
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        },
+        {
+          "local": "U2",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "U2",
+          "bytes": 76
+        },
+        {
+          "local": "FXn",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "FXn",
+          "bytes": 60
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "Q",
+          "chunk": "chunk-4vdmpx05.js",
+          "name": "Q",
+          "bytes": 59
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "gl",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "gl",
+          "bytes": 39
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "envelope_too_large",
+        "kind_mismatch",
+        "mode_not_auto",
+        "poll event rejected by hook",
+        "poll event rejected: ${…}",
+        "poll event rejected: poll events require permission mode \"auto\" (got \"${…}",
+        "poll-event delivery is not enabled for this session",
+        "poll-event enqueue hook pass aborted",
+        "poll_event enqueue",
+        "poll_event failed",
+        "poll_event: kind and event must be strings; wake, when present, a boolean; authority, when present, one of human-principal|human-other|peer-agent|world-event; sender_id and sender_text, when present, strings",
+        "poll_event: sender_text dropped from provenance — its escaped form is not embedded in the event element (derivation contract violated)",
+        "poll_event_delivery",
+        "queue_cap_peek",
+        "reserved_kind",
+        "validation_failed"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "rewind_conversation"
+      ],
+      "bytes": 5038,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Zg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zg",
+          "bytes": 968
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "R7",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "R7",
+          "bytes": 411
+        },
+        {
+          "local": "ne",
+          "chunk": "chunk-tey8avmn.js",
+          "name": "ne",
+          "bytes": 399
+        },
+        {
+          "local": "UXn",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "UXn",
+          "bytes": 396
+        },
+        {
+          "local": "$Se",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "$Se",
+          "bytes": 314
+        },
+        {
+          "local": "ys",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "ys",
+          "bytes": 290
+        },
+        {
+          "local": "Sy",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Sy",
+          "bytes": 223
+        },
+        {
+          "local": "xpt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "xpt",
+          "bytes": 221
+        },
+        {
+          "local": "J1",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "J1",
+          "bytes": 188
+        },
+        {
+          "local": "qzn",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "qzn",
+          "bytes": 184
+        },
+        {
+          "local": "It",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "It",
+          "bytes": 163
+        },
+        {
+          "local": "j6t",
+          "chunk": "chunk-tnzz80z8.js",
+          "name": "j6t",
+          "bytes": 148
+        },
+        {
+          "local": "Ol",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Ol",
+          "bytes": 134
+        },
+        {
+          "local": "bAe",
+          "chunk": "chunk-mk4am7jk.js",
+          "name": "bAe",
+          "bytes": 126
+        },
+        {
+          "local": "pte",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "pte",
+          "bytes": 121
+        },
+        {
+          "local": "wQe",
+          "chunk": "chunk-38213y7h.js",
+          "name": "wQe",
+          "bytes": 78
+        },
+        {
+          "local": "Tp",
+          "chunk": "chunk-38213y7h.js",
+          "name": "Tp",
+          "bytes": 77
+        },
+        {
+          "local": "ZB",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ZB",
+          "bytes": 61
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Su",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "Su",
+          "bytes": 27
+        },
+        {
+          "local": "Wle",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Wle",
+          "bytes": 19
+        }
+      ],
+      "messages": [
+        "remote-cancel",
+        "rewind persist-failure remote heal failed (persistence already degraded)",
+        "rewind-refusal heal aborted by stream teardown",
+        "rewind_conversation: target_message_uuid must be a string"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "read_file"
+      ],
+      "bytes": 258,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-mjskvnqg.js"
+      ],
+      "delegates": [
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-mjskvnqg.js",
+        "headless_stream"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "get_workspace_diff"
+      ],
+      "bytes": 196,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-yn8ff6y8.js"
+      ],
+      "delegates": [],
+      "messages": [
+        "/$bunfs/root/chunk-yn8ff6y8.js",
+        "get_workspace_diff"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "get_plan"
+      ],
+      "bytes": 311,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-sd4b27f1.js"
+      ],
+      "delegates": [
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-sd4b27f1.js"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "stage_file"
+      ],
+      "bytes": 306,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-1meq2tsx.js"
+      ],
+      "delegates": [
+        {
+          "local": "jy",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "jy",
+          "bytes": 281
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-1meq2tsx.js",
+        "stage_file failed"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "register_repo_root"
+      ],
+      "bytes": 33,
+      "respondsSuccess": false,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [],
+      "messages": [],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "add_directory"
+      ],
+      "bytes": 74,
+      "respondsSuccess": false,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [],
+      "messages": [],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "file_suggestions"
+      ],
+      "bytes": 242,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-fcr2b5p5.js"
+      ],
+      "delegates": [],
+      "messages": [
+        "/$bunfs/root/chunk-fcr2b5p5.js",
+        "file_suggestions"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "seed_read_state"
+      ],
+      "bytes": 1184,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-mjskvnqg.js"
+      ],
+      "delegates": [
+        {
+          "local": "pT",
+          "chunk": "chunk-2q90zhqs.js",
+          "name": "pT",
+          "bytes": 1285
+        },
+        {
+          "local": "gt",
+          "chunk": "chunk-vvj94wew.js",
+          "name": "gt",
+          "bytes": 540
+        },
+        {
+          "local": "fa",
+          "chunk": "chunk-9e2ns8ty.js",
+          "name": "fa",
+          "bytes": 523
+        },
+        {
+          "local": "dK",
+          "chunk": "chunk-g461tywa.js",
+          "name": "dK",
+          "bytes": 227
+        },
+        {
+          "local": "YE",
+          "chunk": "chunk-1c7d1hr6.js",
+          "name": "YE",
+          "bytes": 50
+        },
+        {
+          "local": "V4",
+          "chunk": "chunk-g461tywa.js",
+          "name": "V4",
+          "bytes": 32
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-mjskvnqg.js"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_set_servers"
+      ],
+      "bytes": 455,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Wy",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Wy",
+          "bytes": 249
+        },
+        {
+          "local": "b",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "b",
+          "bytes": 80
+        }
+      ],
+      "messages": [
+        "mcp_set_servers",
+        "mcp_set_servers: servers must be an object of config objects"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "reload_plugins"
+      ],
+      "bytes": 1133,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "ig",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ig",
+          "bytes": 1842
+        },
+        {
+          "local": "x0",
+          "chunk": "chunk-w8wsreh2.js",
+          "name": "x0",
+          "bytes": 1701
+        },
+        {
+          "local": "Nm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Nm",
+          "bytes": 774
+        },
+        {
+          "local": "qm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "qm",
+          "bytes": 715
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "is",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "is",
+          "bytes": 430
+        },
+        {
+          "local": "Hm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Hm",
+          "bytes": 329
+        },
+        {
+          "local": "zWn",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "zWn",
+          "bytes": 202
+        },
+        {
+          "local": "ba",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "ba",
+          "bytes": 160
+        },
+        {
+          "local": "ft",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "ft",
+          "bytes": 153
+        },
+        {
+          "local": "jt",
+          "chunk": "chunk-tey8avmn.js",
+          "name": "jt",
+          "bytes": 115
+        },
+        {
+          "local": "UQ",
+          "chunk": "chunk-e8ykvyax.js",
+          "name": "UQ",
+          "bytes": 89
+        },
+        {
+          "local": "hpn",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "hpn",
+          "bytes": 88
+        },
+        {
+          "local": "c3e",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "c3e",
+          "bytes": 75
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "we",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "we",
+          "bytes": 60
+        },
+        {
+          "local": "Rce",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Rce",
+          "bytes": 54
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "iX",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "iX",
+          "bytes": 38
+        },
+        {
+          "local": "HNt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "HNt",
+          "bytes": 37
+        },
+        {
+          "local": "bKn",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "bKn",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "reload_plugins",
+        "reload_plugins: applyPluginMcpDiff failed: ${…}",
+        "reload_plugins: loadAllPlugins failed"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "reload_skills"
+      ],
+      "bytes": 344,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "oX",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "oX",
+          "bytes": 478
+        },
+        {
+          "local": "ne",
+          "chunk": "chunk-tey8avmn.js",
+          "name": "ne",
+          "bytes": 399
+        },
+        {
+          "local": "HIn",
+          "chunk": "chunk-g461tywa.js",
+          "name": "HIn",
+          "bytes": 107
+        },
+        {
+          "local": "bD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "bD",
+          "bytes": 91
+        },
+        {
+          "local": "RIn",
+          "chunk": "chunk-g461tywa.js",
+          "name": "RIn",
+          "bytes": 88
+        },
+        {
+          "local": "QA",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "QA",
+          "bytes": 71
+        },
+        {
+          "local": "Se",
+          "chunk": "chunk-38213y7h.js",
+          "name": "Se",
+          "bytes": 63
+        },
+        {
+          "local": "Jle",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Jle",
+          "bytes": 54
+        },
+        {
+          "local": "ei",
+          "chunk": "chunk-1k1bn8e4.js",
+          "name": "ei",
+          "bytes": 51
+        },
+        {
+          "local": "Bx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Bx",
+          "bytes": 36
+        },
+        {
+          "local": "z8",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "z8",
+          "bytes": 26
+        }
+      ],
+      "messages": [
+        "reload_skills"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_reconnect"
+      ],
+      "bytes": 1197,
+      "respondsSuccess": false,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "ui",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "ui",
+          "bytes": 712
+        },
+        {
+          "local": "Zx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zx",
+          "bytes": 267
+        },
+        {
+          "local": "As",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "As",
+          "bytes": 200
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "u_",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "u_",
+          "bytes": 111
+        },
+        {
+          "local": "fet",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "fet",
+          "bytes": 89
+        },
+        {
+          "local": "Ul",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Ul",
+          "bytes": 39
+        },
+        {
+          "local": "Ho",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ho",
+          "bytes": 36
+        },
+        {
+          "local": "$l",
+          "chunk": "chunk-8c6qx8qp.js",
+          "name": "$l",
+          "bytes": 5
+        },
+        {
+          "local": "Hy",
+          "chunk": "chunk-g461tywa.js",
+          "name": "Hy",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "Server not found: ${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_call"
+      ],
+      "bytes": 4289,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-fv1kq5rv.js"
+      ],
+      "delegates": [
+        {
+          "local": "uer",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "uer",
+          "bytes": 208
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "O9t",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "O9t",
+          "bytes": 159
+        },
+        {
+          "local": "ya",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "ya",
+          "bytes": 146
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        },
+        {
+          "local": "on",
+          "chunk": "chunk-vb9my8xr.js",
+          "name": "on",
+          "bytes": 65
+        },
+        {
+          "local": "O_",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "O_",
+          "bytes": 60
+        },
+        {
+          "local": "w_",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "w_",
+          "bytes": 47
+        },
+        {
+          "local": "Yt",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Yt",
+          "bytes": 44
+        },
+        {
+          "local": "I",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "I",
+          "bytes": 37
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "(detail withheld)",
+        "/$bunfs/root/chunk-fv1kq5rv.js",
+        "MCP server not connected: ${…}",
+        "Not a fully-qualified MCP tool name: ${…}",
+        "ccr_mcp_call_staged",
+        "dispatch_failed",
+        "mcp_call cancelled by client: ${…}",
+        "mcp_call: tool must be a string",
+        "mcp_session_recovery",
+        "not_connected",
+        "session_expired_no_retry",
+        "staged mcp_call is disabled",
+        "tengu_ptc_enabled"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "mcp_toggle"
+      ],
+      "bytes": 1676,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "ui",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "ui",
+          "bytes": 712
+        },
+        {
+          "local": "MSe",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "MSe",
+          "bytes": 416
+        },
+        {
+          "local": "Zx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zx",
+          "bytes": 267
+        },
+        {
+          "local": "As",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "As",
+          "bytes": 200
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "u_",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "u_",
+          "bytes": 111
+        },
+        {
+          "local": "lW",
+          "chunk": "chunk-ehxmqyb4.js",
+          "name": "lW",
+          "bytes": 46
+        },
+        {
+          "local": "Yt",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Yt",
+          "bytes": 44
+        },
+        {
+          "local": "Ul",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Ul",
+          "bytes": 39
+        },
+        {
+          "local": "Ho",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ho",
+          "bytes": 36
+        },
+        {
+          "local": "$l",
+          "chunk": "chunk-8c6qx8qp.js",
+          "name": "$l",
+          "bytes": 5
+        },
+        {
+          "local": "Hy",
+          "chunk": "chunk-g461tywa.js",
+          "name": "Hy",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "Server not found: ${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "set_mcp_permission_mode_override"
+      ],
+      "bytes": 1158,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "n2",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "n2",
+          "bytes": 315
+        },
+        {
+          "local": "Zx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zx",
+          "bytes": 267
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "_tr",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "_tr",
+          "bytes": 137
+        },
+        {
+          "local": "A7",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "A7",
+          "bytes": 113
+        },
+        {
+          "local": "hE",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "hE",
+          "bytes": 81
+        },
+        {
+          "local": "Of",
+          "chunk": "chunk-af80z9sa.js",
+          "name": "Of",
+          "bytes": 55
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "$l",
+          "chunk": "chunk-8c6qx8qp.js",
+          "name": "$l",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "Permission mode override over the control channel is tighten-only ('default', 'auto', or null); rejected '${…}",
+        "set_mcp_permission_mode_override: rejected mode='${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "channel_enable"
+      ],
+      "bytes": 93,
+      "respondsSuccess": false,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Py",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Py",
+          "bytes": 1153
+        }
+      ],
+      "messages": [],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_authenticate"
+      ],
+      "bytes": 2646,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "bx",
+          "chunk": "chunk-z7r0b9sw.js",
+          "name": "bx",
+          "bytes": 295
+        },
+        {
+          "local": "Zx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zx",
+          "bytes": 267
+        },
+        {
+          "local": "$7",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "$7",
+          "bytes": 240
+        },
+        {
+          "local": "XQ",
+          "chunk": "chunk-k6qpjct6.js",
+          "name": "XQ",
+          "bytes": 223
+        },
+        {
+          "local": "As",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "As",
+          "bytes": 200
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "_i",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "_i",
+          "bytes": 125
+        },
+        {
+          "local": "s",
+          "chunk": "chunk-qw5jhqey.js",
+          "name": "s",
+          "bytes": 117
+        },
+        {
+          "local": "u_",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "u_",
+          "bytes": 111
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "lr",
+          "chunk": "chunk-3d4srg8m.js",
+          "name": "lr",
+          "bytes": 44
+        },
+        {
+          "local": "di",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "di",
+          "bytes": 42
+        },
+        {
+          "local": "Ul",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Ul",
+          "bytes": 39
+        },
+        {
+          "local": "Ho",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ho",
+          "bytes": 36
+        },
+        {
+          "local": "$l",
+          "chunk": "chunk-8c6qx8qp.js",
+          "name": "$l",
+          "bytes": 5
+        },
+        {
+          "local": "Hy",
+          "chunk": "chunk-g461tywa.js",
+          "name": "Hy",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "MCP OAuth failed for ${…}",
+        "Server not found: ${…}",
+        "Server type \"${…}",
+        "Unable to build claude.ai connector auth URL (missing org or server id)",
+        "[mcp_authenticate] AS rejected custom redirectUri for ${…}",
+        "mcp_authenticate",
+        "tengu_claudeai_mcp_auth_started"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_oauth_callback_url"
+      ],
+      "bytes": 617,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "di",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "di",
+          "bytes": 42
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "Invalid callback URL: missing authorization code. Please paste the full redirect URL including the code parameter.",
+        "No active OAuth flow for server: ${…}",
+        "OAuth authentication failed",
+        "mcp_oauth_callback_url"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "claude_authenticate"
+      ],
+      "bytes": 2150,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Yk",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "Yk",
+          "bytes": 3000
+        },
+        {
+          "local": "ka",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "ka",
+          "bytes": 2572
+        },
+        {
+          "local": "rW",
+          "chunk": "chunk-8rzvgzkc.js",
+          "name": "rW",
+          "bytes": 2226
+        },
+        {
+          "local": "ose",
+          "chunk": "chunk-a1m6f4p3.js",
+          "name": "ose",
+          "bytes": 734
+        },
+        {
+          "local": "Lre",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "Lre",
+          "bytes": 694
+        },
+        {
+          "local": "hm",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "hm",
+          "bytes": 446
+        },
+        {
+          "local": "$9",
+          "chunk": "chunk-xq87sx04.js",
+          "name": "$9",
+          "bytes": 289
+        },
+        {
+          "local": "s",
+          "chunk": "chunk-qw5jhqey.js",
+          "name": "s",
+          "bytes": 117
+        },
+        {
+          "local": "jt",
+          "chunk": "chunk-tey8avmn.js",
+          "name": "jt",
+          "bytes": 115
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        },
+        {
+          "local": "H1n",
+          "chunk": "chunk-3d4srg8m.js",
+          "name": "H1n",
+          "bytes": 69
+        },
+        {
+          "local": "y",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "y",
+          "bytes": 63
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Yt",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Yt",
+          "bytes": 44
+        },
+        {
+          "local": "En",
+          "chunk": "chunk-cx07awjk.js",
+          "name": "En",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "OAuth flow completed without producing auth URLs",
+        "claude_authenticate",
+        "claude_authenticate flow ended: ${…}",
+        "force_login_method_refused",
+        "oauth_flow_failed",
+        "org_pin_refused",
+        "sdk_claude_authenticate",
+        "tengu_oauth_flow_start",
+        "tengu_oauth_success",
+        "tengu_oauth_token_exchange_error"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "claude_oauth_callback",
+        "claude_oauth_wait_for_completion"
+      ],
+      "bytes": 539,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "xY",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "xY",
+          "bytes": 474
+        },
+        {
+          "local": "Ne",
+          "chunk": "chunk-znxmbm58.js",
+          "name": "Ne",
+          "bytes": 316
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "l",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "l",
+          "bytes": 60
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        }
+      ],
+      "messages": [
+        "No active claude_authenticate flow",
+        "claude_oauth_callback",
+        "claude_oauth_callback failed"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "mcp_clear_auth"
+      ],
+      "bytes": 874,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Zx",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zx",
+          "bytes": 267
+        },
+        {
+          "local": "As",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "As",
+          "bytes": 200
+        },
+        {
+          "local": "Qn",
+          "chunk": "chunk-p7jtryaa.js",
+          "name": "Qn",
+          "bytes": 172
+        },
+        {
+          "local": "u_",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "u_",
+          "bytes": 111
+        },
+        {
+          "local": "di",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "di",
+          "bytes": 42
+        },
+        {
+          "local": "Ul",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Ul",
+          "bytes": 39
+        },
+        {
+          "local": "Ho",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ho",
+          "bytes": 36
+        },
+        {
+          "local": "$l",
+          "chunk": "chunk-8c6qx8qp.js",
+          "name": "$l",
+          "bytes": 5
+        },
+        {
+          "local": "Hy",
+          "chunk": "chunk-g461tywa.js",
+          "name": "Hy",
+          "bytes": 5
+        }
+      ],
+      "messages": [
+        "Cannot clear auth for server type \"${…}",
+        "Server not found: ${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "apply_flag_settings"
+      ],
+      "bytes": 5299,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "kr",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "kr",
+          "bytes": 1072
+        },
+        {
+          "local": "om",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "om",
+          "bytes": 941
+        },
+        {
+          "local": "CS",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "CS",
+          "bytes": 737
+        },
+        {
+          "local": "ii",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "ii",
+          "bytes": 699
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "Y6",
+          "chunk": "chunk-4k4029wq.js",
+          "name": "Y6",
+          "bytes": 336
+        },
+        {
+          "local": "il",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "il",
+          "bytes": 311
+        },
+        {
+          "local": "nA",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "nA",
+          "bytes": 301
+        },
+        {
+          "local": "E_",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "E_",
+          "bytes": 300
+        },
+        {
+          "local": "Yge",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "Yge",
+          "bytes": 221
+        },
+        {
+          "local": "xk",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "xk",
+          "bytes": 206
+        },
+        {
+          "local": "Mm",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "Mm",
+          "bytes": 196
+        },
+        {
+          "local": "Fm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Fm",
+          "bytes": 195
+        },
+        {
+          "local": "Hl",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Hl",
+          "bytes": 179
+        },
+        {
+          "local": "Lm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Lm",
+          "bytes": 172
+        },
+        {
+          "local": "_y",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "_y",
+          "bytes": 136
+        },
+        {
+          "local": "Y",
+          "chunk": "chunk-7v2mj9b2.js",
+          "name": "Y",
+          "bytes": 128
+        },
+        {
+          "local": "ng",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ng",
+          "bytes": 127
+        },
+        {
+          "local": "CTe",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "CTe",
+          "bytes": 110
+        },
+        {
+          "local": "yy",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "yy",
+          "bytes": 109
+        },
+        {
+          "local": "i3",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "i3",
+          "bytes": 104
+        },
+        {
+          "local": "df",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "df",
+          "bytes": 103
+        },
+        {
+          "local": "mD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "mD",
+          "bytes": 85
+        },
+        {
+          "local": "g",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "g",
+          "bytes": 79
+        },
+        {
+          "local": "tg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "tg",
+          "bytes": 79
+        },
+        {
+          "local": "tKe",
+          "chunk": "chunk-9e2ns8ty.js",
+          "name": "tKe",
+          "bytes": 78
+        },
+        {
+          "local": "at",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "at",
+          "bytes": 74
+        },
+        {
+          "local": "R1",
+          "chunk": "chunk-waecyvyb.js",
+          "name": "R1",
+          "bytes": 71
+        },
+        {
+          "local": "Sve",
+          "chunk": "chunk-38213y7h.js",
+          "name": "Sve",
+          "bytes": 69
+        },
+        {
+          "local": "Cj",
+          "chunk": "chunk-38213y7h.js",
+          "name": "Cj",
+          "bytes": 66
+        },
+        {
+          "local": "aD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "aD",
+          "bytes": 61
+        },
+        {
+          "local": "we",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "we",
+          "bytes": 60
+        },
+        {
+          "local": "dd",
+          "chunk": "chunk-38213y7h.js",
+          "name": "dd",
+          "bytes": 59
+        },
+        {
+          "local": "XOe",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "XOe",
+          "bytes": 59
+        },
+        {
+          "local": "GC",
+          "chunk": "chunk-38213y7h.js",
+          "name": "GC",
+          "bytes": 54
+        },
+        {
+          "local": "ac",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "ac",
+          "bytes": 47
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "Ik",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "Ik",
+          "bytes": 44
+        },
+        {
+          "local": "xm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "xm",
+          "bytes": 42
+        },
+        {
+          "local": "Yz",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "Yz",
+          "bytes": 41
+        },
+        {
+          "local": "el",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "el",
+          "bytes": 30
+        }
+      ],
+      "messages": [
+        "agent switch not applied: the session's model changed while PreModelSwitch hooks ran; send the request again${…}",
+        "apply_flag_settings",
+        "apply_flag_settings failed${…}",
+        "apply_flag_settings requires `settings` to be an object, got ${…}",
+        "apply_flag_settings: ${…}",
+        "blocked_by_hook",
+        "plugin_forwarding_patch_refused"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "get_settings"
+      ],
+      "bytes": 406,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "UMt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "UMt",
+          "bytes": 729
+        },
+        {
+          "local": "lg",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "lg",
+          "bytes": 360
+        },
+        {
+          "local": "il",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "il",
+          "bytes": 311
+        },
+        {
+          "local": "ob",
+          "chunk": "chunk-cx07awjk.js",
+          "name": "ob",
+          "bytes": 172
+        },
+        {
+          "local": "iEn",
+          "chunk": "chunk-cx07awjk.js",
+          "name": "iEn",
+          "bytes": 153
+        },
+        {
+          "local": "yT",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "yT",
+          "bytes": 145
+        },
+        {
+          "local": "at",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "at",
+          "bytes": 74
+        },
+        {
+          "local": "PE",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "PE",
+          "bytes": 61
+        },
+        {
+          "local": "Wv",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "Wv",
+          "bytes": 58
+        }
+      ],
+      "messages": [
+        "get_settings is not available on this connection"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "stop_task"
+      ],
+      "bytes": 303,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Zg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zg",
+          "bytes": 968
+        },
+        {
+          "local": "V4e",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "V4e",
+          "bytes": 507
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        }
+      ],
+      "messages": [
+        "invalid_task_id",
+        "stop_task: task_id must be a string",
+        "task_stop_user"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "background_tasks"
+      ],
+      "bytes": 144,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Zg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zg",
+          "bytes": 968
+        },
+        {
+          "local": "o9",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "o9",
+          "bytes": 196
+        },
+        {
+          "local": "Vdt",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Vdt",
+          "bytes": 174
+        }
+      ],
+      "messages": [
+        "background_tasks"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "generate_session_title"
+      ],
+      "bytes": 347,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "Aq",
+          "chunk": "chunk-3rgyb6mc.js",
+          "name": "Aq",
+          "bytes": 346
+        },
+        {
+          "local": "eJt",
+          "chunk": "chunk-3rgyb6mc.js",
+          "name": "eJt",
+          "bytes": 232
+        },
+        {
+          "local": "l2",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "l2",
+          "bytes": 218
+        },
+        {
+          "local": "gr",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "gr",
+          "bytes": 66
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "K",
+          "chunk": "chunk-38213y7h.js",
+          "name": "K",
+          "bytes": 43
+        },
+        {
+          "local": "RF",
+          "chunk": "chunk-00p5gaye.js",
+          "name": "RF",
+          "bytes": 42
+        },
+        {
+          "local": "Ht",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "Ht",
+          "bytes": 31
+        }
+      ],
+      "messages": [
+        "generate_session_title",
+        "saveAiGeneratedTitle failed: ${…}"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "rename_session"
+      ],
+      "bytes": 182,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "tI",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "tI",
+          "bytes": 392
+        },
+        {
+          "local": "uF",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "uF",
+          "bytes": 74
+        },
+        {
+          "local": "ml",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ml",
+          "bytes": 53
+        },
+        {
+          "local": "Us",
+          "chunk": "chunk-yprfjz48.js",
+          "name": "Us",
+          "bytes": 45
+        },
+        {
+          "local": "K",
+          "chunk": "chunk-38213y7h.js",
+          "name": "K",
+          "bytes": 43
+        }
+      ],
+      "messages": [
+        "rename_session",
+        "title must be non-empty"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "submit_feedback"
+      ],
+      "bytes": 774,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-0jfp0mjc.js"
+      ],
+      "delegates": [
+        {
+          "local": "wme",
+          "chunk": "chunk-g461tywa.js",
+          "name": "wme",
+          "bytes": 1985
+        },
+        {
+          "local": "pvt",
+          "chunk": "chunk-g461tywa.js",
+          "name": "pvt",
+          "bytes": 319
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-0jfp0mjc.js",
+        "submit_feedback"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "side_question"
+      ],
+      "bytes": 1446,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "$Yt",
+          "chunk": "chunk-gbkyrr94.js",
+          "name": "$Yt",
+          "bytes": 2219
+        },
+        {
+          "local": "rke",
+          "chunk": "chunk-x5zjbx2r.js",
+          "name": "rke",
+          "bytes": 2215
+        },
+        {
+          "local": "nF",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "nF",
+          "bytes": 257
+        },
+        {
+          "local": "s",
+          "chunk": "chunk-qw5jhqey.js",
+          "name": "s",
+          "bytes": 117
+        },
+        {
+          "local": "gr",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "gr",
+          "bytes": 66
+        },
+        {
+          "local": "Hs",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Hs",
+          "bytes": 43
+        }
+      ],
+      "messages": [
+        "Session is shutting down",
+        "Side question cancelled",
+        "side_question",
+        "tengu_sdk_side_question_cancelled"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "ultrareview_launch"
+      ],
+      "bytes": 510,
+      "respondsSuccess": true,
+      "respondsError": false,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "Ese",
+          "chunk": "chunk-pk63xgv4.js",
+          "name": "Ese",
+          "bytes": 3328
+        },
+        {
+          "local": "Zg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zg",
+          "bytes": 968
+        },
+        {
+          "local": "G_",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "G_",
+          "bytes": 400
+        },
+        {
+          "local": "OQ",
+          "chunk": "chunk-2cfn2b2p.js",
+          "name": "OQ",
+          "bytes": 93
+        },
+        {
+          "local": "gr",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "gr",
+          "bytes": 66
+        },
+        {
+          "local": "K",
+          "chunk": "chunk-38213y7h.js",
+          "name": "K",
+          "bytes": 43
+        }
+      ],
+      "messages": [
+        "ultrareview_launch"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "message_rated"
+      ],
+      "bytes": 409,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": true,
+      "usesBreak": false,
+      "dynamicImports": [],
+      "delegates": [
+        {
+          "local": "cbt",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "cbt",
+          "bytes": 711
+        },
+        {
+          "local": "Mt",
+          "chunk": "chunk-y97hdknc.js",
+          "name": "Mt",
+          "bytes": 263
+        },
+        {
+          "local": "s",
+          "chunk": "chunk-qw5jhqey.js",
+          "name": "s",
+          "bytes": 117
+        },
+        {
+          "local": "ve",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "ve",
+          "bytes": 97
+        },
+        {
+          "local": "c",
+          "chunk": "chunk-9rhc0mtn.js",
+          "name": "c",
+          "bytes": 26
+        }
+      ],
+      "messages": [
+        "allow_product_feedback",
+        "message_rated: messageUuid must be a string, sentiment \"positive\" or \"negative\", surface \"tool_use\" or \"assistant_text\", and cleared a boolean",
+        "tengu_message_rated"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "remote_control"
+      ],
+      "bytes": 7036,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-ew5rqxht.js"
+      ],
+      "delegates": [
+        {
+          "local": "ast",
+          "chunk": "chunk-waecyvyb.js",
+          "name": "ast",
+          "bytes": 1466
+        },
+        {
+          "local": "kr",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "kr",
+          "bytes": 1072
+        },
+        {
+          "local": "Zg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Zg",
+          "bytes": 968
+        },
+        {
+          "local": "CS",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "CS",
+          "bytes": 737
+        },
+        {
+          "local": "Vje",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "Vje",
+          "bytes": 731
+        },
+        {
+          "local": "tb",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "tb",
+          "bytes": 608
+        },
+        {
+          "local": "V4e",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "V4e",
+          "bytes": 507
+        },
+        {
+          "local": "gRt",
+          "chunk": "chunk-9tspdcrw.js",
+          "name": "gRt",
+          "bytes": 492
+        },
+        {
+          "local": "Xje",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "Xje",
+          "bytes": 478
+        },
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "sVe",
+          "chunk": "chunk-00p5gaye.js",
+          "name": "sVe",
+          "bytes": 334
+        },
+        {
+          "local": "ene",
+          "chunk": "chunk-00p5gaye.js",
+          "name": "ene",
+          "bytes": 315
+        },
+        {
+          "local": "il",
+          "chunk": "chunk-8ynempjj.js",
+          "name": "il",
+          "bytes": 311
+        },
+        {
+          "local": "uZ",
+          "chunk": "chunk-jtg5esas.js",
+          "name": "uZ",
+          "bytes": 306
+        },
+        {
+          "local": "nA",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "nA",
+          "bytes": 301
+        },
+        {
+          "local": "E_",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "E_",
+          "bytes": 300
+        },
+        {
+          "local": "pet",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "pet",
+          "bytes": 241
+        },
+        {
+          "local": "Yje",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "Yje",
+          "bytes": 235
+        },
+        {
+          "local": "cae",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "cae",
+          "bytes": 225
+        },
+        {
+          "local": "Sf",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Sf",
+          "bytes": 222
+        },
+        {
+          "local": "Yge",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "Yge",
+          "bytes": 221
+        },
+        {
+          "local": "K0",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "K0",
+          "bytes": 187
+        },
+        {
+          "local": "Hje",
+          "chunk": "chunk-jtg5esas.js",
+          "name": "Hje",
+          "bytes": 186
+        },
+        {
+          "local": "zZe",
+          "chunk": "chunk-g461tywa.js",
+          "name": "zZe",
+          "bytes": 173
+        },
+        {
+          "local": "G$e",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "G$e",
+          "bytes": 161
+        },
+        {
+          "local": "J0e",
+          "chunk": "chunk-jtg5esas.js",
+          "name": "J0e",
+          "bytes": 156
+        },
+        {
+          "local": "Mje",
+          "chunk": "chunk-jtg5esas.js",
+          "name": "Mje",
+          "bytes": 152
+        },
+        {
+          "local": "Kje",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "Kje",
+          "bytes": 144
+        },
+        {
+          "local": "det",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "det",
+          "bytes": 141
+        },
+        {
+          "local": "ng",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "ng",
+          "bytes": 127
+        },
+        {
+          "local": "Hme",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "Hme",
+          "bytes": 126
+        },
+        {
+          "local": "Lh",
+          "chunk": "chunk-3kxn5jvk.js",
+          "name": "Lh",
+          "bytes": 113
+        },
+        {
+          "local": "Lje",
+          "chunk": "chunk-jtg5esas.js",
+          "name": "Lje",
+          "bytes": 111
+        },
+        {
+          "local": "df",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "df",
+          "bytes": 103
+        },
+        {
+          "local": "Dm",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Dm",
+          "bytes": 102
+        },
+        {
+          "local": "et",
+          "chunk": "chunk-38213y7h.js",
+          "name": "et",
+          "bytes": 99
+        },
+        {
+          "local": "mD",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "mD",
+          "bytes": 85
+        },
+        {
+          "local": "zje",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "zje",
+          "bytes": 84
+        },
+        {
+          "local": "R$e",
+          "chunk": "chunk-g461tywa.js",
+          "name": "R$e",
+          "bytes": 83
+        },
+        {
+          "local": "Zde",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "Zde",
+          "bytes": 83
+        },
+        {
+          "local": "Gh",
+          "chunk": "chunk-89sa2r2x.js",
+          "name": "Gh",
+          "bytes": 81
+        },
+        {
+          "local": "g",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "g",
+          "bytes": 79
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        },
+        {
+          "local": "tg",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "tg",
+          "bytes": 79
+        },
+        {
+          "local": "Ma",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Ma",
+          "bytes": 78
+        },
+        {
+          "local": "V$e",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "V$e",
+          "bytes": 77
+        },
+        {
+          "local": "z$e",
+          "chunk": "chunk-hbajkq8y.js",
+          "name": "z$e",
+          "bytes": 75
+        },
+        {
+          "local": "at",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "at",
+          "bytes": 74
+        },
+        {
+          "local": "d7e",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "d7e",
+          "bytes": 74
+        },
+        {
+          "local": "Ea",
+          "chunk": "chunk-dvbbv89q.js",
+          "name": "Ea",
+          "bytes": 74
+        },
+        {
+          "local": "XFe",
+          "chunk": "chunk-38213y7h.js",
+          "name": "XFe",
+          "bytes": 73
+        },
+        {
+          "local": "R1",
+          "chunk": "chunk-waecyvyb.js",
+          "name": "R1",
+          "bytes": 71
+        },
+        {
+          "local": "mie",
+          "chunk": "chunk-38213y7h.js",
+          "name": "mie",
+          "bytes": 67
+        },
+        {
+          "local": "yW",
+          "chunk": "chunk-waecyvyb.js",
+          "name": "yW",
+          "bytes": 65
+        },
+        {
+          "local": "we",
+          "chunk": "chunk-qr1avfxy.js",
+          "name": "we",
+          "bytes": 60
+        },
+        {
+          "local": "By",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "By",
+          "bytes": 59
+        },
+        {
+          "local": "dd",
+          "chunk": "chunk-38213y7h.js",
+          "name": "dd",
+          "bytes": 59
+        },
+        {
+          "local": "ost",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "ost",
+          "bytes": 53
+        },
+        {
+          "local": "mce",
+          "chunk": "chunk-fy12d89p.js",
+          "name": "mce",
+          "bytes": 48
+        },
+        {
+          "local": "p8e",
+          "chunk": "chunk-3r67mqsq.js",
+          "name": "p8e",
+          "bytes": 48
+        },
+        {
+          "local": "ac",
+          "chunk": "chunk-9gqmx4zx.js",
+          "name": "ac",
+          "bytes": 47
+        },
+        {
+          "local": "n",
+          "chunk": "chunk-ynzt0fm1.js",
+          "name": "n",
+          "bytes": 45
+        },
+        {
+          "local": "K",
+          "chunk": "chunk-38213y7h.js",
+          "name": "K",
+          "bytes": 43
+        },
+        {
+          "local": "RF",
+          "chunk": "chunk-00p5gaye.js",
+          "name": "RF",
+          "bytes": 42
+        },
+        {
+          "local": "uae",
+          "chunk": "chunk-w7kp28xr.js",
+          "name": "uae",
+          "bytes": 40
+        },
+        {
+          "local": "dI",
+          "chunk": "chunk-97w12rvf.js",
+          "name": "dI",
+          "bytes": 36
+        },
+        {
+          "local": "sd",
+          "chunk": "chunk-af80z9sa.js",
+          "name": "sd",
+          "bytes": 36
+        },
+        {
+          "local": "xo",
+          "chunk": "chunk-29shcjw2.js",
+          "name": "xo",
+          "bytes": 33
+        },
+        {
+          "local": "el",
+          "chunk": "chunk-bsdtxcdc.js",
+          "name": "el",
+          "bytes": 30
+        },
+        {
+          "local": "Su",
+          "chunk": "chunk-t0q53bgm.js",
+          "name": "Su",
+          "bytes": 27
+        },
+        {
+          "local": "mY",
+          "chunk": "chunk-3r67mqsq.js",
+          "name": "mY",
+          "bytes": 23
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-ew5rqxht.js",
+        "Remote Control cannot be enabled from inside a remote session",
+        "Remote Control initialization failed",
+        "[bridge:sdk] State change: ${…}",
+        "[bridge:sdk] onInboundMessage failed: ${…}",
+        "blocked_by_hook",
+        "bridge:onInboundMessage: dropped before attachment materialization",
+        "bridge_interrupt_sweep_throw",
+        "client_initialize",
+        "per_task_stop_sparing",
+        "remote-cancel",
+        "remote_control"
+      ],
+      "sendable": true
+    },
+    {
+      "subtypes": [
+        "register_device_hooks",
+        "upload_device_hook_template"
+      ],
+      "bytes": 699,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-8dmyrf1h.js"
+      ],
+      "delegates": [
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "Y",
+          "chunk": "chunk-7v2mj9b2.js",
+          "name": "Y",
+          "bytes": 128
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-8dmyrf1h.js",
+        "device_hooks_handler_failed",
+        "device_hooks_register",
+        "hook_forwarding_disabled: ${…}",
+        "hook_forwarding_not_ready: internal_error; retry",
+        "internal_error"
+      ],
+      "sendable": false
+    },
+    {
+      "subtypes": [
+        "remote_tools_announce"
+      ],
+      "bytes": 681,
+      "respondsSuccess": true,
+      "respondsError": true,
+      "usesContinue": false,
+      "usesBreak": false,
+      "dynamicImports": [
+        "chunk-9q0g9wwm.js"
+      ],
+      "delegates": [
+        {
+          "local": "h",
+          "chunk": "chunk-qpcjd2zp.js",
+          "name": "h",
+          "bytes": 476
+        },
+        {
+          "local": "Y",
+          "chunk": "chunk-7v2mj9b2.js",
+          "name": "Y",
+          "bytes": 128
+        },
+        {
+          "local": "p",
+          "chunk": "chunk-xtqqhw5t.js",
+          "name": "p",
+          "bytes": 79
+        }
+      ],
+      "messages": [
+        "/$bunfs/root/chunk-9q0g9wwm.js",
+        "internal_error",
+        "remote_tools_announce",
+        "remote_tools_announce_handler_failed",
+        "remote_tools_disabled: ${…}",
+        "remote_tools_not_ready: internal_error; retry"
+      ],
+      "sendable": false
+    }
+  ]
+}
