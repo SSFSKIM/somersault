@@ -32,13 +32,18 @@
 // plain stdout path. The image, persisted-output, interrupted and background
 // arms are graded by strangle/contracts.test.ts.
 import { formatBytes } from "../shared/format-bytes.js";
+import { READ_TOOL_NAME } from "../shared/tool-names.js";
 
 /** Upstream `$De`: the persisted-output preview budget, in characters. */
 export const PREVIEW_BYTES = 2000;
 /** Upstream `kK`: the separator between stderr and the abort marker. */
 export const NEWLINE = "\n";
-/** Upstream `_t`: the Read tool's name, as it appears in prose. */
-export const READ_TOOL_NAME = "Read";
+/**
+ * Upstream `_t`: the Read tool's name, as it appears in prose. Re-exported from
+ * the shared catalog since W2, which owns the same literals for the description
+ * functions — one binding rather than two transcriptions (see shared/tool-names.js).
+ */
+export { READ_TOOL_NAME };
 
 const PERSISTED_OPEN = "<persisted-output>";
 const PERSISTED_CLOSE = "</persisted-output>";
