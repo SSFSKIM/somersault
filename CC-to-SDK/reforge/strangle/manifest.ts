@@ -1250,7 +1250,161 @@ export const SPLICES: Splice[] = [
     anchor: "Your task is to create a detailed summary of the conversation",
     fn: "summarizationPrompt",
     captures: [],
-    coverage: ["slash-compact"],
+    coverage: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+
+  // ---- compaction (subsystem/compaction, C7 / W4) --------------------------
+  // The four units downstream of the summarization prompt C5x already owns:
+  // what the model's answer becomes, what the session wakes up with, what the
+  // boundary records, and what decides a compaction is needed at all.
+
+  {
+    // The `compact_boundary` constructor. Anchored on the prose it stamps into
+    // every boundary plus the property name after it — "Conversation compacted"
+    // occurs five times graph-wide (a zod schema and two renderers say it too),
+    // and the `content:`/`,isMeta` frame is what makes this the CONSTRUCTOR's
+    // occurrence rather than a description of one. No minified identifier in it.
+    name: "compact-boundary",
+    target: "free-function",
+    signature: { params: 5, ancestry: ["SourceFile"] },
+    anchor: 'content:"Conversation compacted",isMeta',
+    fn: "compactBoundary",
+    captures: [
+      {
+        // `randomUUID` from node's `crypto`, imported under a minified alias.
+        // An external module is a boundary rather than a hole (C5x's correction
+        // to W2's closure-walk debt), and identity minting belongs to the
+        // session subsystem — a ledger edge to C12, not something to own here.
+        as: "uuid",
+        kind: "effectful-port",
+        derive: pick("compact-boundary", "uuid", new RegExp(`uuid:(${ID})\\(\\),level:"info"`)),
+      },
+    ],
+    coverage: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+
+  {
+    // Boundary metadata -> the SDK's `compact_metadata`. The scout proposed
+    // `pre_tokens:e.preTokens`, which carries the minified parameter name; the
+    // anchor doctrine asks for no minified identifiers, not for prose, so the
+    // nested wire keys serve instead. `{preserved_segment:{head_uuid:` occurs
+    // once graph-wide and is pure wire contract.
+    name: "compact-boundary-wire",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "{preserved_segment:{head_uuid:",
+    fn: "compactBoundaryWire",
+    // Verified zero free variables.
+    captures: [],
+    coverage: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+
+  {
+    // The post-compaction continuation message, AND the summary rewriter it
+    // calls (upstream `d1n`). Two upstream functions, one owned module, one row:
+    // `d1n` is a pure helper with exactly one caller, so once `Cq` is owned the
+    // graph's copy is unreachable and a separate splice of it would be a dead
+    // one. Measured, not assumed — it was tried as its own row and its solo
+    // sabotage came back GREEN on both covering scenarios. See the module header.
+    name: "compact-continuation",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: "This session is being continued from a previous conversation that ran out of context.",
+    fn: "compactContinuation",
+    captures: [
+      {
+        // `d1n` — the summary rewriter, which this wave also owns. A pure
+        // helper, so the module ships it and upstream's copy is neither called
+        // nor compared; the build still footprints the binding.
+        as: "summaryText",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("compact-continuation", "summaryText", new RegExp(`\\$\\{(${ID})\\(e\\)\\}`)),
+      },
+    ],
+    coverage: ["slash-compact", "compact-continue", "auto-compact-threshold"],
+  },
+
+  {
+    // The auto-compaction predicate. Anchored on the decision line it logs,
+    // which is unique graph-wide and is the only externally visible trace the
+    // predicate leaves.
+    //
+    // Ten captures — the largest inventory in the manifest — and that is the
+    // honest shape of a policy that reads its inputs from four subsystems. Two
+    // are owned pure helpers; the other eight stay ports because their far
+    // sides (settings, the model registry, the token estimator, the threshold
+    // arithmetic) belong to waves that have not run.
+    name: "auto-compact-trigger",
+    target: "free-function",
+    signature: { params: 6, ancestry: ["SourceFile"] },
+    anchor: "autocompact: tokens=",
+    fn: "autoCompactTrigger",
+    captures: [
+      {
+        // `FD` — `querySource === "compact"`. Pure, two lines, owned.
+        as: "isCompactQuerySource",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("auto-compact-trigger", "isCompactQuerySource", new RegExp(`\\{if\\((${ID})\\(${ID}\\)\\)return!1;if\\(`)),
+      },
+      {
+        // `tC` — membership in a frozen four-string set. Pure, owned with the set.
+        as: "isSuppressedQuerySource",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("auto-compact-trigger", "isSuppressedQuerySource", new RegExp(`return!1;if\\((${ID})\\(${ID}\\)\\)return!1;if\\(!`)),
+      },
+      {
+        // `Qf()` — the `autoCompactEnabled` setting plus two kill-switch env vars.
+        as: "autoCompactEnabled",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "autoCompactEnabled", new RegExp(`return!1;if\\(!(${ID})\\(\\)\\)return!1;if\\(`)),
+      },
+      {
+        // `QB()` — false only while a remote surface's circuit is closed.
+        as: "compactionSurfaceOpen",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "compactionSurfaceOpen", new RegExp(`if\\((${ID})\\(\\)&&!${ID}\\(`)),
+      },
+      {
+        // `$G(model, window)` — the window's source is not "auto".
+        as: "windowIsConfigured",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "windowIsConfigured", new RegExp(`\\(\\)&&!(${ID})\\(${ID},${ID}\\)\\)return!1`)),
+      },
+      {
+        // `Ih(messages, charsPerToken)` — last reported usage plus an estimate
+        // of everything after it. The query loop's context accounting (C16).
+        as: "contextTokens",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "contextTokens", new RegExp(`=(${ID})\\(${ID},${ID}\\(${ID}\\)\\)-`)),
+      },
+      {
+        // `If(model)` — 3 or 4, from the model registry.
+        as: "charsPerToken",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "charsPerToken", new RegExp(`=${ID}\\(${ID},(${ID})\\(${ID}\\)\\)-`)),
+      },
+      {
+        // `Nee(tokens, model, window)` — ok / warn / compact / blocked.
+        as: "classifyContextLevel",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "classifyContextLevel", new RegExp(`,${ID}=(${ID})\\(${ID},${ID},${ID}\\);return`)),
+      },
+      {
+        as: "log",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "log", new RegExp("return (" + ID + ")\\(`autocompact: tokens=")),
+      },
+      {
+        // `eF(model, window)` — evaluated EAGERLY inside the log line.
+        as: "effectiveWindow",
+        kind: "effectful-port",
+        derive: pick("auto-compact-trigger", "effectiveWindow", new RegExp(`effectiveWindow=\\$\\{(${ID})\\(`)),
+      },
+    ],
+    coverage: ["auto-compact-threshold"],
   },
 ];
 

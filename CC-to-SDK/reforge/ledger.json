@@ -1353,7 +1353,10 @@
       "title": "Compaction: summarization prompt, compact_boundary emit, trigger policy",
       "wave": "C7",
       "state": "spliced",
-      "edges": [],
+      "edges": [
+        "subsystem/session-storage",
+        "subsystem/query-loop"
+      ],
       "footprint": [
         {
           "chunk": "chunk-fy12d89p.js",
@@ -1363,13 +1366,196 @@
             "sha256": "c7e21f66d91f6b8e1d5e75dafcb546e0ef718e5e27e9b5f579c174a4c9da3361"
           },
           "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3964580,
+            "end": 3964856,
+            "sha256": "92f9376dae3570eabcd043a5428a20d049ad55af047499d799ccae48ef16aa88"
+          },
+          "captures": [
+            {
+              "name": "bg",
+              "as": "uuid",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 24074,
+              "declEnd": 24090,
+              "sha256": "a1e48f62bc230dadb386dbf8667b960613e4ae42daed051067c793faf9fc832d",
+              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1656134,
+            "end": 1656942,
+            "sha256": "b5d3894cfc5c3a31aa606b888dde94e4aa489732aa3e393a52d0c8583d5eede5"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2779902,
+            "end": 2780911,
+            "sha256": "4d4ed332a10e72a0c4c5b2fa0304a303174a230c8db1fae80a463bddc160b3a2"
+          },
+          "captures": [
+            {
+              "name": "d1n",
+              "as": "summaryText",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 2779650,
+              "declEnd": 2779902,
+              "sha256": "ce3e30895c37ce515e61e8c67d0b1b96fd0fa53e7629b85448dee1d41f3a053a",
+              "closure": []
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2832300,
+            "end": 2832570,
+            "sha256": "5af4fe4a3d9ad913aff53b6df99527f7693b97de8e406d574e5f2ea6bfe885cd"
+          },
+          "captures": [
+            {
+              "name": "FD",
+              "as": "isCompactQuerySource",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 746646,
+              "declEnd": 746696,
+              "sha256": "4b7dba187ef58854d0d1d270392354bf6ca8d4a1e282e68eaf3f41d2046b72bb",
+              "closure": []
+            },
+            {
+              "name": "tC",
+              "as": "isSuppressedQuerySource",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 746601,
+              "declEnd": 746646,
+              "sha256": "7634d0b483900a6459de7a5f6cb67c129c141b64ef308130c0b54e8990fed0b0",
+              "closure": [
+                {
+                  "name": "AZt",
+                  "chunk": "chunk-fy12d89p.js",
+                  "depth": 1,
+                  "basis": "declaration",
+                  "declStart": 746523,
+                  "declEnd": 746600,
+                  "sha256": "dff1de1599393af526eb0e418757c05fc0c5b98f14eea2ea0932cddc07d207fe",
+                  "declKind": "variable"
+                }
+              ]
+            },
+            {
+              "name": "Qf",
+              "as": "autoCompactEnabled",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 746014,
+              "declEnd": 746087,
+              "sha256": "ff079213e97243919bfcad775058f7f4644edf0db36223e5861d74fa42ed0dba"
+            },
+            {
+              "name": "QB",
+              "as": "compactionSurfaceOpen",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 746445,
+              "declEnd": 746519,
+              "sha256": "dd359e610a519159ac05dd0f898652fda269a23a79699a983be1cce45efc4a19"
+            },
+            {
+              "name": "$G",
+              "as": "windowIsConfigured",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 750598,
+              "declEnd": 750646,
+              "sha256": "4930280114c0ef93637abd75561bb822c242ca4dd62c78e277e06eadf376414c"
+            },
+            {
+              "name": "Ih",
+              "as": "contextTokens",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 755139,
+              "declEnd": 755240,
+              "sha256": "7763643aac1c53fa4c9d10c64b5858d107b32c0251b84dcb2519c79956fee0d3"
+            },
+            {
+              "name": "If",
+              "as": "charsPerToken",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3648,
+              "declEnd": 3650,
+              "sha256": "1e3abf61a37e3cad36b11b459b1cc39e76feb6a0c369fe5270957468288dcc5c",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "If",
+                "declStart": 303262,
+                "declEnd": 303358,
+                "sha256": "630960362b80f38921bd624968f2d15d9e6da3efa1e4ea93e8b51ffc4e742554"
+              }
+            },
+            {
+              "name": "Nee",
+              "as": "classifyContextLevel",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 751950,
+              "declEnd": 752203,
+              "sha256": "ed4bd3b4af46884a1f7b3ee7fb093fc7a8ed053e37dab977a9d5cef70fffc72e"
+            },
+            {
+              "name": "n",
+              "as": "log",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2619,
+              "declEnd": 2620,
+              "sha256": "1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "n",
+                "declStart": 44725,
+                "declEnd": 44770,
+                "sha256": "944bdb6f70ef86431b84c7c7c68bce2c2ab5647cdd59053efdfbd1d74106f260"
+              }
+            },
+            {
+              "name": "eF",
+              "as": "effectiveWindow",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 750686,
+              "declEnd": 750776,
+              "sha256": "73ee299667b2ee6389d189754b57aa222bddad2ce675269c63eba876fe17e2fe"
+            }
+          ]
         }
       ],
       "evidence": [
         "strangle/manifest.ts:compaction-prompt",
-        "scenario:slash-compact"
+        "strangle/manifest.ts:compact-boundary",
+        "strangle/manifest.ts:compact-boundary-wire",
+        "strangle/manifest.ts:compact-continuation",
+        "strangle/manifest.ts:auto-compact-trigger",
+        "strangle/compaction-parity.test.ts",
+        "scenario:slash-compact",
+        "scenario:compact-continue",
+        "scenario:auto-compact-threshold"
       ],
-      "note": "C5x's variable-declarator spike owns the summarization prompt text (upstream l1n) outright: captures: [] is the verified claim that the initializer reads nothing from its scope, and the build compares the owned 5,810 characters against the pinned chunk's own bytes on every run. The wrappers (nie/hRt), the boundary emitters (H1/rSe) and the trigger policy (nKn) remain W4's."
+      "note": "W4 owns the client-side compaction surface EXCEPT its drivers. Five splices: the summarization prompt (C5x's variable-declarator spike, graded by the build-time comparison against the pinned chunk's bytes), the compact_boundary constructor (upstream H1, both triggers rendered - 'manual' by slash-compact/compact-continue, 'auto' by auto-compact-threshold), the boundary's wire shaping (rSe, zero captures), the post-compaction continuation message together with the summary rewriter it calls (Cq + d1n in one owned module: d1n is a pure helper with one caller, so a separate splice of it was measurably dead - its solo sabotage came back GREEN), and the auto-compaction trigger predicate (nKn, 10 captures). EDGES: session-storage owns the identity minting behind the boundary's uuid; the query loop owns the context accounting the trigger reads (contextTokens, charsPerToken, classifyContextLevel, effectiveWindow) AND the compaction drivers themselves. NOT owned, and why: the DRIVERS (upstream zRe, the async generator that routes a true decision through the reactive path, and Tte, the reactive driver that runs the PreCompact hooks and calls the summarizer) are query-loop-shaped and deferred to C16/W13 with the rest of the turn driver; the summarization-prompt WRAPPERS (nie/hRt) share a byte-identical five-line preamble inside one chunk, which no coLiteral can separate; and MICROCOMPACTION is a reviewed exclusion rather than a scenario debt - createContextHintController returns null unless querySource starts with 'repl_main_thread' and the headless driver sends 'sdk', so the controller is null, onRequestError short-circuits and v4n can never run. Grading it would need the synthetic response corpus plus a patched querySource, i.e. an engine-behaviour change rather than fault injection."
     },
     {
       "id": "subsystem/hook-dispatch",

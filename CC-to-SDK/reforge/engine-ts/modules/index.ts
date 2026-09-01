@@ -52,6 +52,10 @@ import * as identityPrompt from "../../strangle/modules/identity-prompt/referenc
 import * as contextReminder from "../../strangle/modules/context-reminder/reference.js";
 import * as contextPromptLines from "../../strangle/modules/context-prompt-lines/reference.js";
 import * as subagentPrompt from "../../strangle/modules/subagent-prompt/reference.js";
+import * as compactBoundary from "../../strangle/modules/compact-boundary/reference.js";
+import * as compactBoundaryWire from "../../strangle/modules/compact-boundary-wire/reference.js";
+import * as compactContinuation from "../../strangle/modules/compact-continuation/reference.js";
+import * as autoCompactTrigger from "../../strangle/modules/auto-compact-trigger/reference.js";
 
 /** name, closure-ledger subsystem row, and the module's entry point. */
 const OWNED: [string, string, unknown][] = [
@@ -104,6 +108,16 @@ const OWNED: [string, string, unknown][] = [
   ["context-reminder", "subsystem/environment-and-system-prompt", contextReminder.contextReminderMessages],
   ["context-prompt-lines", "subsystem/environment-and-system-prompt", contextPromptLines.contextPromptLines],
   ["subagent-prompt", "subsystem/environment-and-system-prompt", subagentPrompt.subagentPrompt],
+  // W4's compaction units (C7). Four modules, and with C5x's summarization
+  // prompt the row now holds the whole client-side compaction surface EXCEPT the
+  // drivers: what the model is asked, what its answer becomes, what the session
+  // wakes up with, what the boundary records, and what decides to compact. The
+  // async generators that act on that decision are the query loop's (C16), so
+  // the row is `spliced`, not `standalone-complete` — reforge/ledger.json says so.
+  ["compact-boundary", "subsystem/compaction", compactBoundary.compactBoundary],
+  ["compact-boundary-wire", "subsystem/compaction", compactBoundaryWire.compactBoundaryWire],
+  ["compact-continuation", "subsystem/compaction", compactContinuation.compactContinuation],
+  ["auto-compact-trigger", "subsystem/compaction", autoCompactTrigger.autoCompactTrigger],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {
