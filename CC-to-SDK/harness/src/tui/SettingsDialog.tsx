@@ -153,7 +153,16 @@ export const readOnlyRowWidth = (columns: number = process.stdout.columns ?? 80)
  *  render (conditionally, McpDialog's own shape) toggles. `maxOffset` is the bottom-anchored start (the
  *  earliest line whose suffix still fits the budget) — clamping scroll there is what stops paging down from
  *  running past the content into trailing blank space. */
-export interface ReadOnlyScrollWindow { overflow: boolean; start: number; end: number; maxOffset: number; budget: number }
+export interface ReadOnlyScrollWindow {
+  overflow: boolean; start: number; end: number; maxOffset: number; budget: number;
+  /** bl10 fix wave 9 — set only when the LOGICAL line at `start` alone paints more rows than `budget`: the
+   *  `end` loop below then has nothing it can add without exceeding the budget on its very first line, which
+   *  used to leave `end === start` (an empty slice — that line skipped at every offset that reaches it, the
+   *  wave's own finding). `end` is forced to `start + 1` instead so the line still counts as "shown" and
+   *  scrolling moves past it, and this field tells `readOnlyTabBody` to paint only this line's first
+   *  `oversizedRows` `paintedRows(l.text, width)` rows rather than the whole (un-renderable-in-budget) line. */
+  oversizedRows?: number;
+}
 export function readOnlyScrollWindow(lines: readonly RenderLine[], width: number, effectiveRows: number, offset: number): ReadOnlyScrollWindow {
   const plainBudget = Math.max(0, effectiveRows - READONLY_CHROME_ROWS);
   const costs = lines.map((l) => paintedRows(l.text, width).length);
@@ -171,7 +180,12 @@ export function readOnlyScrollWindow(lines: readonly RenderLine[], width: number
     if (shown + costs[end]! > budget) break;
     shown += costs[end]!;
   }
-  return { overflow: true, start, end, maxOffset, budget };
+  // bl10 fix wave 9: `end === start` here means the very first candidate line (`costs[start]`) already
+  // exceeded `budget` on its own — the loop broke before shown anything. Rather than an empty, permanently
+  // unreachable slice, claim this one line and paint only its head.
+  const oversized = end === start && start < costs.length;
+  if (oversized) end = start + 1;
+  return { overflow: true, start, end, maxOffset, budget, oversizedRows: oversized ? budget : undefined };
 }
 export const settingsRowWidth = (columns: number = process.stdout.columns ?? 80): number =>
   Math.max(1, columns - SETTINGS_ROW_INSET);
@@ -593,11 +607,21 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
         </>
       );
     }
-    const above = win.start, below = lines.length - win.end;
+    const above = win.start;
+    // bl10 fix wave 9: `win.oversizedRows` set means `win.end === win.start + 1` and that ONE line alone
+    // painted more rows than `budget` — the case the old `end === start` (empty slice) skipped entirely.
+    // Paint its head (`paintedRows` — the same wrap the cost above was computed from — sliced to the rows
+    // that fit) instead of the whole, over-budget line, and force `below` to account for its own hidden
+    // tail truthfully even when nothing after it is left out (a bare `lines.length - win.end` would read 0
+    // and silently claim nothing more remains, which is false by construction here).
+    const below = win.oversizedRows !== undefined ? Math.max(lines.length - win.end, 1) : lines.length - win.end;
+    const bodyLines = win.oversizedRows !== undefined
+      ? [{ ...lines[win.start]!, text: paintedRows(lines[win.start]!.text, width).slice(0, win.oversizedRows).join("\n") }]
+      : lines.slice(win.start, win.end);
     return (
       <>
         {above > 0 ? <Text dimColor>{moreAbove(above)}</Text> : null}
-        {lines.slice(win.start, win.end).map((l, i) => <Line key={win.start + i} l={l} />)}
+        {bodyLines.map((l, i) => <Line key={win.start + i} l={l} />)}
         {below > 0 ? <Text dimColor>{moreBelow(below)}</Text> : null}
         <Text> </Text>
       </>

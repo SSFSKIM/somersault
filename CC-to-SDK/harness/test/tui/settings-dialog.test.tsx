@@ -525,3 +525,52 @@ describe("SettingsDialog — read-only tab bodies scroll instead of clipping (bl
     tall.unmount();
   });
 });
+
+// bl10 fix wave 9 — `readOnlyScrollWindow` (SettingsDialog.tsx) windows by LOGICAL lines: the `end` loop
+// keeps adding `costs[end]` (that line's own wrapped-row cost) until the budget is exceeded. When ONE line's
+// wrapped cost alone exceeds the whole budget, the loop breaks on its very first iteration (`end === start`)
+// and `readOnlyTabBody` slices `[start, start)` — an empty range — so that line renders at NO scroll offset:
+// permanent, unconditional content loss, on a payload the scroll window exists specifically to keep every
+// line of reachable (W8-1's own D13 rule). At `rows={15} columns={100}` the overflow budget is 6 painted rows
+// (`plainBudget` 8 minus the 2 reserved for the counted markers); a 600-character line with no spaces to wrap
+// on paints `ceil(600/98) = 7` rows at the tab's own body width (`readOnlyRowWidth(100) = 98`) — one more
+// than the budget, and enough on its own to trigger the skip while every other line here is a single row.
+describe("SettingsDialog — an oversized logical line stays reachable instead of being skipped (bl10 fw9)", () => {
+  const oversizedPayload = () => [
+    { text: "before line 0" }, { text: "before line 1" }, { text: "before line 2" },
+    { text: "X".repeat(600) },                                    // index 3 — costs 7 painted rows, budget is 6
+    { text: "after line 0" }, { text: "after line 1" }, { text: "after line 2" },
+  ];
+
+  it("renders the oversized line's head at its offset instead of skipping it, and the frame stays within `rows`", async () => {
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => oversizedPayload()} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    for (let i = 0; i < 3; i++) { r.stdin.write("\x1b[B"); await tick(); }   // down x3 — scrolls start to index 3, the oversized line
+    const f = plain(frame(r.lastFrame));
+    expect(f, "the oversized line's head paints instead of nothing").toMatch(/X{10,}/);
+    expect(f, "a truthful down marker — more of this line (and the lines after it) remain offscreen").toMatch(/↓ \d+ more below/);
+    expect(f.split("\n").length, "the frame must not exceed the terminal's own row count").toBeLessThanOrEqual(15);
+    r.unmount();
+  });
+
+  it("frame height stays <= rows at every scroll position, walking past the oversized line (wave-2/wave-8 invariant)", async () => {
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => oversizedPayload()} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    for (let i = 0; i < oversizedPayload().length + 5; i++) {
+      r.stdin.write("\x1b[B");
+      await tick();
+      expect(plain(frame(r.lastFrame)).split("\n").length).toBeLessThanOrEqual(15);
+    }
+    r.unmount();
+  });
+
+  it("a normal (non-oversized) payload is unaffected", async () => {
+    const lines = Array.from({ length: 40 }, (_, i) => ({ text: `usage line ${i}` }));
+    const r = render(<SettingsDialog {...props()} tab="Usage" fetchUsage={async () => lines} rows={15} columns={100} />);
+    await waitFor(() => !plain(frame(r.lastFrame)).includes("Loading…"));
+    const f = plain(frame(r.lastFrame));
+    expect(f.split("\n").length).toBeLessThanOrEqual(15);
+    expect(f).toMatch(/↓ \d+ more below/);
+    r.unmount();
+  });
+});
