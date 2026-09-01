@@ -1749,14 +1749,223 @@ is the owning wave's design work, not a mechanism round's. Recorded here so the 
 adjudication rather than an oversight: **C8, C9 and C7 inherit the attestation obligation for the
 modules C5x spliced.**
 
+## W3 — the prompt-assembly pipeline, and the corpus that never rendered it (2026-09-01)
+
+The wave's headline finding is not a splice. `src/harness.ts:baseOptions()` sets `settingSources: []`
+and passes no `systemPrompt`, so all 25 recordings emitted the SAME two-block `system` array — the
+billing header and `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` The engine's
+real prompt assembly was **dark on the whole corpus**, and a wave that owned it against that corpus
+would have shipped a green gate meaning almost nothing: solo sabotage would still redden, while the
+branches actually reimplemented went unexecuted.
+
+So C6's coverage decision was to **record the preset rather than reviewed-exclude it**, and the wave
+opens with four new scenarios (`w3/scenarios.ts`).
+
+### Recording the preset sprang two determinism traps that reasoning did not
+
+Both were fixed at the source rather than scrubbed at the differ, and both are the kind of thing only
+a live take shows you.
+
+**The preset's prompt ends with a `gitStatus:` section** carrying the working tree's branch, git
+user, porcelain status and the subjects and SHAs of the five most recent commits. The sandbox lives
+inside this repository, so the first take embedded the campaign's own commit log in the system
+prompt — a cassette that misses on the next commit, and under §3.4's fatal-fallback rule that is a
+red gate rather than a stale recording. The scenarios now seed the sandbox with **their own git
+repository**: an empty commit with pinned author, message and both dates hashes to the same SHA on
+every run (verified: two seeds, identical `.git` trees, and neither `git status` nor `git log`
+mutates one afterwards). The section is byte-stable, so it is graded rather than discarded — which is
+what gives the context tail its coverage.
+
+**`settingSources: ["project"]` walks the working directory's ANCESTORS** for `CLAUDE.md` and
+`.claude/CLAUDE.md`, up to and including the home directory. It does not stop at a git root — the
+seeded sandbox repository did not bound it. The probe recording loaded four memory files, one of them
+the operator's private `~/.claude/CLAUDE.md`, and the harness's cassette leak check refused the take.
+The memory scenario now runs in a working directory outside both the repository and the home tree, so
+the only `CLAUDE.md` discoverable is the one it wrote.
+
+### Four scenarios, each buying a named branch
+
+| scenario | what it renders that nothing else does |
+|---|---|
+| `sysprompt-preset` | the preset's full section list — 3 system blocks, 27.9 KB, and the context tail's `gitStatus:` paragraph |
+| `sysprompt-append` | `append:` flips the identity line to the append-aware sentence (94 chars, in no other recording) |
+| `sysprompt-boundary` | a custom `string[]` prompt carrying the SDK's exported `SYSTEM_PROMPT_DYNAMIC_BOUNDARY`; grades the sentinel's REMOVAL, and is the corpus's only recording of the path where a custom prompt replaces the preset |
+| `claude-md-memory` | a project `CLAUDE.md` in the context block — the only two-entry context, so the only place the entry JOIN is observable |
+
+Corpus **25 → 29**.
+
+### Six splices, and two the scout had written off
+
+The pipeline, in the order a request goes through it:
+
+| module | upstream | what it decides |
+|---|---|---|
+| `identity-prompt` | `r6` | which of three sentences the prompt opens with |
+| `context-prompt-lines` | `NAt` | the ambient context appended as `key: value` lines |
+| `system-prompt-blocks` | `tOe` | the partition into billing / identity / outcomes / static / dynamic, and each block's cache scope |
+| `system-prompt-wire` | `U8n` | those blocks as the API's `system` array, with `cache_control` |
+| `context-reminder` | `HAt` | the same context as the first user message — this is CLAUDE.md injection |
+| `subagent-prompt` | `zH` | a dispatched agent's whole system prompt |
+
+The scout filed `U8n`, `r6` and `NAt` as **anchorless**, and W3 was to re-assess them under C5x's
+sibling selection. Sibling selection turned out not to be the answer; **reading the doctrine more
+precisely was**. The rule anchors have to satisfy is being free of MINIFIED IDENTIFIERS — the thing
+that churns per bump — not being prose:
+
+- `U8n` → `cacheScope,ttl:`, two property names and punctuation, one occurrence graph-wide;
+- `r6` → `?.isNonInteractive`, one occurrence in the engine chunk, scoped by a `coLiteral` (the
+  append-aware identity sentence, declared immediately above it and read by nothing else);
+- `NAt` → `].filter(Boolean)}`, the manifest's weakest anchor and pure punctuation, takeable because
+  it is unique inside the chunk its `coLiteral` scopes it to.
+
+**The sibling mechanism would NOT have taken `U8n`, and the reason is worth recording.** Its other
+untainted candidate, `skipGlobalCacheForSystemPrompt`, occurs four times in one chunk — but two of
+those four are inside `U8n`'s own body, and `selectExcision` counts matching CANDIDATES rather than
+distinct SPANS, so a same-node duplicate reads as a tie and throws. The anchor above makes the
+question moot for this row; a later wave that meets the same shape should expect it.
+
+`xMt` stays unspliced, as the scout said: it calls the partition to hash the result for telemetry, so
+its sabotage would be green — the W0a `interrupt` precedent.
+
+### Four primitives on one splice, and a Set that needed a new assertion
+
+`system-prompt-blocks` carries the highest micro-differential yield in the manifest: four of its six
+captures are `primitive` — the boundary marker, the billing-header prefix, the three identity
+sentences, and the 907-character reporting-outcomes section — so every delegation compares four
+prompt constants against the graph. That is the only cheap thing in the whole mechanism that can see
+a **reworded** prompt constant, which moves no anchor, no target hash and no capture hash.
+
+The identity trio arrives as a frozen `Set`, and `Object.is` cannot see inside one: a blanket
+equality assertion over a Set is vacuous in both directions (two different Sets are never equal, the
+same Set always is). `shared/assert.js` gained `assertGraphMembers`, which compares the members in
+declaration order. The three sentences live in `shared/identity-prompts.js` because two owned modules
+need them — the selector PRODUCES one and the partition RECOGNISES it.
+
+### The static-prompt gate is pinned false, and that is measured
+
+`Kde()` is two feature gates and a provider test. Under §3.3's pinned gate state it is FALSE, which
+makes two of the partition's three paths — the tool-based-cache path and the whole boundary/global-
+scope path — unreachable for the corpus by construction.
+
+That is not an inference from reading the gate. The section builder emits the boundary marker only
+when the same gate is true, and `sysprompt-preset` renders the preset's entire section list with **no
+marker in the request**. One recording settles it.
+
+The consequence is the campaign's largest single adjudication so far: 38 of 88 branch outcomes are
+reviewed exclusions. Which is why the wave's other deliverable is an oracle.
+
+### The oracle: `strangle/prompt-parity.test.ts`
+
+W2's pattern, pointed at prompt assembly. It extracts the six upstream bodies from the pinned bundle,
+evaluates them with stubbed ports, and requires identity with the owned module over the full
+cross-product — **178 comparisons**, including the TELEMETRY EVENTS, because two of the partition's
+three paths differ only in which event they emit. Nothing in it hand-writes an expectation, so
+nothing in it can encode a transcription error.
+
+Verified non-vacuous by mutation: giving the boundary path's identity block the wrong cache scope, and
+the Vertex arm the wrong sentence, each turns it red.
+
+Every one of the 38 exclusions names it as what grades that branch, and the exclusions fall into four
+families rather than 38 separate stories — paths behind the static-prompt gate, block kinds the
+assembler never produces, the wire's caller-fixed arguments, and seam-fixed session facts.
+
+### One exclusion was bought back rather than written
+
+`partition@1:T` — the arm that drops the boundary sentinel — would have been the 39th exclusion. It
+is executed instead, because `sysprompt-boundary` passes the marker through a custom prompt. **The
+marker is the one input to this whole subsystem a caller fully controls**, so it was the one dark
+branch a scenario could reach without moving the environment the corpus is graded under. That is the
+W2 `search-tools-lean` judgement applied again: when a scenario can turn an adjudication into
+coverage for one recording, record it.
+
+### Two attestation gaps, one level below the ones already closed
+
+- **A module with no branches was attested by omission.** `branchSites` legitimately returns nothing
+  for a body that is a map, a join and a filter — so the module contributed zero rows and the report
+  listed it as attested. That is the vacuity failure one level below the empty-inventory check.
+  `AttestedModule` now requires a written `noBranchesReason` for an empty inventory, refuses one that
+  has stopped being true, and prints it in the report. Two modules carry it: `context-prompt-lines`
+  and `compaction-prompt`.
+- **Contract X7 had no gate phase.** C5x shipped three modules and registered none of them in the
+  skeleton; `skeleton.test.ts` asserts one registration per manifest row and would have caught it
+  immediately, but it was not a gate phase, so a green gate carried the omission until this wave's
+  rows shifted the count. Both `skeleton.test.ts` and `check-reachability.ts` are gate phases now, and
+  the three modules are registered.
+
+### C5x's deferred attestation, one third closed
+
+C5x deliberately did not attest its three modules, on the reasoning that an exclusion needs an oracle
+and building one belongs to the owning wave. W3's oracle reaches one of the three: the summarization
+prompt is a constant, so `prompt-parity.test.ts` grades it in the same run. Its adjudication is
+recorded rather than assumed — a constant's parity IS the build-time comparison of its initializer
+against the pinned chunk's bytes, which runs on every build and is strictly stronger than a
+differential red. **The hook dispatcher and the permission link remain C8's and C9's.**
+
+### Ledger
+
+`subsystem/environment-and-system-prompt` carries seven upstream footprints now (W0a's env block plus
+this wave's six) with 25 rebased captures. It stays **`spliced`**, not standalone-complete, and the
+note says why: the SECTION BUILDERS behind the preset's 27 KB block (upstream `OS()` and its ~45 free
+variables) are still upstream's, and so is the per-tool serializer the scout referred to the
+tool-runtime wave.
+
+Two typed-port edges leave the row — the message constructor (session/transcript) and the
+cache-control builder plus token attachment (query loop) — and one edge is new in kind:
+`subagent-prompt` reaches the env block through a port whose far side **this same row already owns**,
+the campaign's first intra-row edge.
+
+### Gate
+
+**Forty-eight phases**, up from thirty-nine: X7 registration, engine-ts reachability, the
+prompt-assembly parity oracle, and six new liveness rows. Corpus **29/29**, full acceptance **5/5**,
+**29** liveness phases, coverage attestation **50/88 executed with 38 adjudicated and zero
+un-adjudicated**.
+
+```
+  PASS  engine-ts skeleton + X7 registration
+  PASS  engine-ts reaches no extracted artifact
+  PASS  prompt-assembly parity vs the pinned bundle
+  PASS  liveness system-prompt-blocks      (29 scenarios, all RED under solo sabotage)
+  PASS  liveness system-prompt-wire
+  PASS  liveness identity-prompt
+  PASS  liveness context-reminder
+  PASS  liveness context-prompt-lines
+  PASS  liveness subagent-prompt
+  PASS  coverage attestation
+  PASS  equivalence (faithful)
+
+GATE PASS — every splice is live AND the faithful build is equivalent
+```
+
+### What W3 does NOT claim
+
+The subsystem is not owned. What is owned is the ASSEMBLY — how blocks are chosen, ordered, scoped and
+shaped. What the sections SAY is still upstream's: `OS()` builds ~20 prose sections from gate reads
+and session state, and every one of them is a candidate for its own decomposition. The scout
+recommended deferring that inventory until the preset had a scenario; it does now, so the follow-on
+cut is unblocked and no longer speculative.
+
 ## Next
 
-The C6–C10 bloc is unblocked: every transform gap the W3–W7 scouts measured is closed, and each
-closure ships with a real target already owned. Three things the bloc inherits:
+W3 has landed; **C7–C10 (compaction, hooks, permissions, control protocol) are next in the bloc's
+priority order.** What they inherit:
 
-- **The attestation obligation above**, one per spiked module.
+- **The attestation obligation C5x deferred, minus one.** `compaction-prompt` is closed by W3's
+  oracle; `post-tool-hooks` and `permission-decision` still need one, and building it is C8's and
+  C9's design work.
+- **An anchor is required to be free of MINIFIED IDENTIFIERS, not to be prose.** Three targets two
+  scouts had written off as unanchorable were taken on property-name and punctuation anchors. Before
+  filing a target as unanchorable, enumerate its untainted substrings and count them — and reach for
+  a `coLiteral` before reaching for sibling selection, which is the narrower tool.
+- **`selectExcision` counts candidates, not spans.** An anchor occurring twice inside ONE target node
+  ties and throws, even though the two occurrences name the same span. Not a blocker for any target
+  yet taken, but the next wave that meets it should know the failure is the mechanism's shape rather
+  than the anchor's.
 - **`kye`'s neighbours are not takeable the same way.** `Dd` has no string literal at all, and `von`
   ties with `kye` on every structural fact except its position. W6 should expect the chain's other
   links to need coverage-first scenarios rather than more anchor mechanism.
+- **W4 owes the section inventory a decision.** `OS()` and its ~20 prose sections are now RENDERED by
+  the corpus (`sysprompt-preset`), so the follow-on cut the W3 scout deferred is unblocked. It is not
+  W3's, and it is not automatically W4's either — the roadmap should place it deliberately.
 - Still open from W1: `subsystem/tool-result-validators` is an `unowned` ledger row with no wave. It
   is filed under C4 because C4 subdivided it; the roadmap owes it an assignment.
