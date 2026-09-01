@@ -95,6 +95,13 @@ for (const [label, argv] of [
   // count. A contract nothing runs is a contract nothing enforces.
   ["engine-ts skeleton + X7 registration", ["engine-ts/skeleton.test.ts"]],
   ["engine-ts reaches no extracted artifact", ["engine-ts/check-reachability.ts"]],
+  // …and the checker's own liveness proof, which the wave that promoted the
+  // CHECKER left out (C6 boundary review, finding 4). The checker is the only
+  // thing standing between engine-ts and a quiet delegation back to the
+  // extracted graph, so "nobody has watched it reject anything" is the same
+  // vacuity the phase above exists to refuse, one level down. Build-free and
+  // ~0.8s measured, so it sits here rather than in the auxiliary block.
+  ["reachability checker rejects and accepts (§3.1)", ["engine-ts/reachability.test.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const tail = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+plausibility)/.test(l)).slice(-2);
