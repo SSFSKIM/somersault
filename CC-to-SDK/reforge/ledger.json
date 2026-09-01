@@ -1109,9 +1109,71 @@
       "kind": "subsystem",
       "title": "Hook dispatch + hooks chunks",
       "wave": "C8",
-      "state": "unowned",
-      "edges": [],
-      "footprint": null
+      "state": "spliced",
+      "edges": [
+        "subsystem/environment-and-system-prompt",
+        "subsystem/session-storage"
+      ],
+      "footprint": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1090568,
+            "end": 1090931,
+            "sha256": "ed4881252d26f1d0ab6353e1eb2ff04f5eb4c586279eef80a90f52a812265101"
+          },
+          "captures": [
+            {
+              "name": "Ea",
+              "as": "createBaseHookInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3038761,
+              "declEnd": 3039363,
+              "sha256": "33e263b24dc56ace83c37088fa6d1efbbc85645a0aee7a75826364dee900ee85"
+            },
+            {
+              "name": "ee",
+              "as": "cwd",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6104,
+              "declEnd": 6106,
+              "sha256": "27a84712e4b22c415fc544d55cdee82327a829f96d03329457f76ebf9af4dcaa",
+              "from": {
+                "chunk": "chunk-z9mp80s2.js",
+                "exportedAs": "ee",
+                "declStart": 1133,
+                "declEnd": 1183,
+                "sha256": "9dd4f005c82c20f1d7bf25cb5f32d05ed99415dacea87a7eda6c51e8d4b163c7"
+              }
+            },
+            {
+              "name": "Li",
+              "as": "defaultHookTimeoutMs",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1089233,
+              "declEnd": 1089242,
+              "sha256": "61eb9b1ed9aa5a9b3752af26b6570fd9abf365a635da2177886c452f2da65cb6"
+            },
+            {
+              "name": "jy",
+              "as": "executeHooks",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3075160,
+              "declEnd": 3075421,
+              "sha256": "94972f57132241aef1fe76da6030ea40309d3eac0a8fb6daea5b84641bbb078b"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:post-tool-hooks",
+        "scenario:hooks"
+      ],
+      "note": "C5x's generator-shape spike owns the PostToolUse dispatcher (upstream b3e, executePostToolHooks): the hook-input record's field set and the executor's call contract. The other seven per-event dispatchers and the 23 KB shared executor (a port here, and S-module-shaped per the W5-W7 scout) remain W5's. Edges: the working-directory reader and the base hook-input builder, which reads session identity and app state."
     },
     {
       "id": "subsystem/permissions",

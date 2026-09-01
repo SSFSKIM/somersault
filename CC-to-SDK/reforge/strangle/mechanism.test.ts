@@ -32,6 +32,10 @@
 //              while a nested pattern stays refused.
 //   anchoring  a `coLiteral`-scoped anchor must still resolve to exactly one
 //              node, and every way of mis-declaring the scope must throw.
+//   generator  a generator target must delegate by `yield*`, carrying the
+//              yielded sequence, the completion value and `next`/`throw`
+//              signalling — and the signature must refuse a target whose
+//              generator-ness moved in either direction.
 //
 // Plus the §2.4 contract test for the one capture pair whose ownership retrofit
 // has landed: text-delta's telemetry brands.
@@ -400,11 +404,81 @@ function footprintOf(owner: string, helper: string) {
     /anchor not found anywhere/);
 }
 
+// ---- FINDING 7: `yield*` delegation for generator targets (C5x unit 1) ------
+// The eight hook dispatchers are `async function*`, and a `return`-shaped
+// delegation cannot carry a generator: the caller drives it with
+// `next`/`throw`/`return` and reads results as they arrive. The claim tested is
+// that all three parts of the contract cross the seam — the yielded sequence,
+// the completion value, and two-way signalling — and that the signature refuses
+// a target whose generator-ness moved.
+{
+  const gens =
+    `async function*streamed(a,b){yield "GEN_ANCHOR"+a;yield b;return "done:"+a}\n` +
+    `async function plainly(a,b){return "PLAIN_ANCHOR"+a+b}\n`;
+  const sf = parse(gens, "gens");
+  const gen = excise(sf, gens.indexOf("GEN_ANCHOR"), "free-function");
+  const plain = excise(sf, gens.indexOf("PLAIN_ANCHOR"), "free-function");
+  check("a generator target renders a yield* delegation, not a return",
+    gen.render("f", gen.shapeArgs) === `async function*streamed(a,b){return yield*globalThis.__reforge.f(a,b)}`,
+    gen.render("f", gen.shapeArgs));
+  check("…and a non-generator sibling still renders the return form",
+    plain.render("f", plain.shapeArgs) === `async function plainly(a,b){return globalThis.__reforge.f(a,b)}`);
+  check("the signature records generator-ness", gen.signature.generator === true && plain.signature.generator === undefined);
+  throws("a target that stopped being a generator fails the identity guard",
+    () => assertSignature("fixture", plain, { params: 2, ancestry: ["SourceFile"], generator: true }),
+    /no longer resolves to the verified target/);
+  throws("…and so does one that became one",
+    () => assertSignature("fixture", gen, { params: 2, ancestry: ["SourceFile"] }),
+    /no longer resolves to the verified target/);
+  check("the failure says which one it saw", formatSignature(gen.signature).includes("generator"));
+
+  // The behavioural half: run the rendered delegation against a stub delegate.
+  const delegation = new Function(
+    "delegate",
+    `globalThis.__reforge={f:delegate};${gen.render("f", gen.shapeArgs)};return streamed;`,
+  )(async function* (a: string, b: string): AsyncGenerator<string, string, string> {
+    const sent = yield `d:${a}`;
+    yield `${b}:${sent}`;
+    return `ret:${a}`;
+  }) as (a: string, b: string) => AsyncGenerator<string, string, string>;
+
+  const it = delegation("A", "B");
+  const first = await it.next("ignored");
+  const second = await it.next("SENT");
+  const done = await it.next("x");
+  check("the delegate's yields reach the caller in order", first.value === "d:A" && second.value === "B:SENT",
+    JSON.stringify([first.value, second.value]));
+  check("…the value the caller sends reaches the delegate", second.value === "B:SENT");
+  check("…and the delegate's RETURN value becomes the generator's", done.done === true && done.value === "ret:A",
+    JSON.stringify(done));
+
+  // `throw()` must reach the delegate rather than being swallowed by the seam.
+  let caughtInside: unknown = null;
+  const thrower = new Function(
+    "delegate",
+    `globalThis.__reforge={f:delegate};${gen.render("f", gen.shapeArgs)};return streamed;`,
+  )(async function* (): AsyncGenerator<string, string, unknown> {
+    try {
+      yield "first";
+    } catch (e) {
+      caughtInside = e;
+      return "caught";
+    }
+    return "not caught";
+  }) as () => AsyncGenerator<string, string, unknown>;
+  const t = thrower();
+  await t.next();
+  const after = await t.throw(new Error("REFORGE_THROWN"));
+  check("a throw() from the caller propagates INTO the delegate",
+    (caughtInside as Error | null)?.message === "REFORGE_THROWN" && after.value === "caught",
+    JSON.stringify({ caught: (caughtInside as Error | null)?.message, after }));
+}
+
 console.log(`=== splice mechanism: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0
-    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous"
+    ? "PASS — footprint covers the closure surface, the inventory is exhaustive, the target guard holds, computed keys are refused, defaults forward once, anchor scoping is unambiguous, generators delegate by yield*"
     : `FAIL — ${failures.length} violation(s)`,
 );
 process.exitCode = failures.length === 0 ? 0 : 1;

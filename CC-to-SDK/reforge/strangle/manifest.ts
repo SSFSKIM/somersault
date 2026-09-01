@@ -838,6 +838,66 @@ export const SPLICES: Splice[] = [
     ],
     coverage: ["resume"],
   },
+
+  {
+    // GENERATOR shape (campaign spec C5x, unit 1) — the mechanism spike for
+    // `async function*` targets, and W5's hard blocker: all eight per-event hook
+    // dispatchers are async generators, so before this the hook-dispatch wave
+    // had no target at all. `signature.generator` records what was verified;
+    // ast.ts renders `return yield* …` rather than `return …`, which is the only
+    // delegation that preserves a generator's three-part contract (the yielded
+    // sequence, the completion value, and `next`/`throw`/`return` signalling).
+    //
+    // PostToolUse is the smallest of the eight (363 minified chars) and the
+    // `hooks` scenario registers a PostToolUse callback, so it is live under
+    // solo sabotage. The 23 KB shared executor it delegates to stays a port —
+    // the scout flagged it S-module-shaped, and it belongs to W5's own cut.
+    name: "post-tool-hooks",
+    target: "free-function",
+    signature: { params: 10, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PostToolUse"',
+    fn: "postToolHooks",
+    // Capture ORDER is the delegation's argument order after the parameters —
+    // it must match the owned adapter's signature, and nothing but reading both
+    // enforces that (a mismatch shows up as a faithful build going red, which is
+    // how this row's first draft announced itself).
+    captures: [
+      {
+        // `Ea` / createBaseHookInput: reads app state, the model registry and
+        // the permission layers, so a port and a ledger edge to W5.
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "post-tool-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PostToolUse"`),
+        ),
+      },
+      {
+        // the same working-directory reader the env block captures.
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick("post-tool-hooks", "cwd", new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),`)),
+      },
+      {
+        // `C=Li` — the parameter DEFAULT, evaluated in the chunk's scope and so
+        // a free variable of the body. Forwarded (never used) so the adapter can
+        // equality-assert it: 600000 changing to 300000 upstream would move no
+        // anchor, no target hash and no capture-hash shape.
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("post-tool-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID}=(${ID}),${ID},${ID}\\)\\{let`)),
+      },
+      {
+        // `jy` / executeHooks — itself an async generator, which is why the
+        // owned module has to `yield*` it rather than await it.
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("post-tool-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+    ],
+    coverage: ["hooks"],
+  },
 ];
 
 /**

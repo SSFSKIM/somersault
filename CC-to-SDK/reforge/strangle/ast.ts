@@ -68,6 +68,14 @@ export interface TargetSignature {
   params: number;
   /** enclosing shape-forming syntax kinds, innermost first, ending at SourceFile */
   ancestry: string[];
+  /**
+   * Set when the target is a generator — the delegation is `yield*` rather than
+   * `return`, so this is not decoration: an upstream function that becomes (or
+   * stops being) a generator needs a different delegation AND a differently
+   * shaped owned module, and nothing else in the signature would notice.
+   * Minification-stable, like the other two.
+   */
+  generator?: true;
 }
 
 export interface Excision {
@@ -137,18 +145,22 @@ const SHAPE_FORMING = new Set<ts.SyntaxKind>([
 ]);
 
 /** @see TargetSignature */
-export function signatureOf(node: ts.Node, params: number): TargetSignature {
+export function signatureOf(node: ts.Node, params: number, extra: Partial<TargetSignature> = {}): TargetSignature {
   const ancestry: string[] = [];
   for (let n = node.parent; n; n = n.parent) {
     if (SHAPE_FORMING.has(n.kind)) ancestry.push(ts.SyntaxKind[n.kind]);
   }
-  return { params, ancestry };
+  return { params, ancestry, ...extra };
 }
 
-const sameSignature = (a: TargetSignature, b: TargetSignature) =>
-  a.params === b.params && a.ancestry.length === b.ancestry.length && a.ancestry.every((k, i) => k === b.ancestry[i]);
+export const sameSignature = (a: TargetSignature, b: TargetSignature) =>
+  a.params === b.params &&
+  a.ancestry.length === b.ancestry.length &&
+  a.ancestry.every((k, i) => k === b.ancestry[i]) &&
+  a.generator === b.generator;
 
-export const formatSignature = (s: TargetSignature) => `params=${s.params} ancestry=${s.ancestry.join("<")}`;
+export const formatSignature = (s: TargetSignature) =>
+  `params=${s.params} ancestry=${s.ancestry.join("<")}${s.generator ? " generator" : ""}`;
 
 /**
  * The target-identity guard. A mismatch is never auto-healed: re-verify which
@@ -255,22 +267,44 @@ function exciseMethod(sf: ts.SourceFile, n: ts.MethodDeclaration, shape: TargetS
   };
 }
 
+/**
+ * A free function, including the GENERATOR form (campaign spec C5x, unit 1).
+ *
+ * All eight of the engine's hook dispatchers are `async function*`, so W5 has no
+ * target at all without this. A generator cannot delegate by `return`: the
+ * caller drives it with `next`/`throw`/`return`, and a returned promise would
+ * hand back a value where an async iterator is expected. `yield*` is the exact
+ * transform — it iterates the delegate, forwards every `next` argument,
+ * `throw()` and `return()` into it, and EVALUATES to the delegate's own return
+ * value, which `return yield* …` then makes the outer generator's return value.
+ * So the three things a generator's contract is made of — the yielded sequence,
+ * the completion value, and two-way signalling — all cross the seam unchanged.
+ *
+ * The owned module must therefore itself be a generator function; a plain async
+ * function returning an array would type-check nowhere and would break the first
+ * caller that reads results as they arrive. `generator` is recorded in the
+ * signature so an upstream target that stops being one fails the identity guard
+ * rather than being spliced with the wrong delegation.
+ */
 function exciseFunction(sf: ts.SourceFile, n: ts.FunctionDeclaration): Excision {
   const name = n.name?.text;
   if (!name) throw new Error("free-function target has no name — cannot re-declare the binding");
-  if (n.asteriskToken) throw new Error(`${name}: generator functions need a yield-preserving delegation`);
+  const generator = n.asteriskToken !== undefined;
   const params = paramText(sf, n.parameters);
   const prefix = has(n, ts.SyntaxKind.AsyncKeyword) ? "async " : "";
   return {
     shape: "free-function",
     label: name,
     node: n,
-    signature: signatureOf(n, n.parameters.length),
+    signature: signatureOf(n, n.parameters.length, generator ? { generator: true } : {}),
     start: n.getStart(sf),
     end: n.getEnd(),
     original: sf.text.slice(n.getStart(sf), n.getEnd()),
     shapeArgs: paramArgs(name, n.parameters),
-    render: (fn, args) => `${prefix}function ${name}(${params}){return globalThis.__reforge.${fn}(${args.join(",")})}`,
+    render: (fn, args) =>
+      generator
+        ? `${prefix}function*${name}(${params}){return yield*globalThis.__reforge.${fn}(${args.join(",")})}`
+        : `${prefix}function ${name}(${params}){return globalThis.__reforge.${fn}(${args.join(",")})}`,
   };
 }
 
