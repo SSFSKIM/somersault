@@ -603,7 +603,7 @@ follow as C4/C5.
   recordings, ~10–12 permission-matrix recordings (22/24 scenarios run `bypassPermissions`,
   short-circuiting the chain W6 owns), one probe on whether `auto` mode is gate-dead under
   pinned defaults.
-- **Required.** Status: **C6 landed** 2026-09-01 (Revision Note below); C7–C10 not-dispatched, **unblocked** (C5x + C6 landed; see their Revision Notes for what each wave inherits).
+- **Required.** Status: **C6 and C7 landed** 2026-09-01 (Revision Notes below); C8–C10 not-dispatched, **unblocked** (C5x + C6 + C7 landed; see their Revision Notes for what each wave inherits).
 
 #### C11: W8 — moat tools — decomposing at dispatch
 - Scenario-led; per-tool reachability probing first, then its own cut (the tool set is too wide
@@ -672,7 +672,12 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   them, so W14's ledger gate enforces eventual placement; route into a prompt-sections follow-up
   wave when the bloc clears); **`selectExcision` counts candidates, not distinct spans** (C6
   flow-back: a same-node duplicate literal reads as a tie and throws — a wrinkle for the next
-  mechanism round, blocked nothing yet).
+  mechanism round, blocked nothing yet); **segment compaction** (C7 flow-back: upstream's from/up_to
+  variant `hRt` is the only path that passes `userContext` and `messagesSummarized` to the
+  `compact_boundary` constructor and the only one that leaves follow-up questions un-suppressed, so
+  three of W4's adjudicated branch outcomes are reachable only through it — and `/compact
+  <instructions>` does NOT reach it, so no cheap scenario buys them; whichever wave takes the variant
+  inherits the coverage).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -686,7 +691,8 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C5 | W2 | scout: `reforge/research/2026-08-31-w2-schunk-scout.md` | **landed** — S-chunk mechanism + `chunk-y30v0ja7` owned whole, 3 description splices, corpus 25, coverage attestation online (14/20 executed, 6 adjudicated), ledger folded into the gate |
 | C5x | mech r2 | scouts (flow-back) | **landed** — 3 new target shapes each spiked on a real target (generator `yield*` → PostToolUse dispatcher, `arrow-initializer` → the permission deny stamp, `variable-declarator` → the summarization prompt), signature-based sibling selection, the 831-name symbol map committed + gate-checked, the instrumenter extended to switch/try/loops/optional chains, and the three W2 review findings fixed; gate 39/39 |
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
-| C7–C10 | W4–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 landed) |
+| C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
+| C8–C10 | W5–W7 | scouts: `…w3-w4-…` / `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked** (C5x + C6 + C7 landed) |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -1202,6 +1208,71 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-01 (C7 / W4 — compaction): the wave owns everything in the
+  subsystem except its drivers. Two scenarios first (`compact-continue`,
+  `auto-compact-threshold`; corpus 29 → 31), then four splices — the
+  `compact_boundary` constructor, its wire shaping, the post-compaction
+  continuation message with the summary rewriter it calls, and the
+  auto-compaction trigger predicate — plus a parity oracle over all five owned
+  bodies. Gate **{GATE}**. Seven items change what the rest of the bloc and the
+  roadmap inherit:
+  - **The X6 addition was needed and the cleaner-looking alternative was
+    disproved.** `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` landed on the C3 sign-off
+    recorded in this bloc, as a scenario-declared knob. But
+    `managedSettings: { autoCompactWindow }` — an SDK option, i.e. the lever that
+    would have needed no allowlist change at all — does NOT reach
+    `options.autoCompactWindow` on the headless seam: with it set the engine
+    still reported `thresholdSource=model-default`. Recorded because "declared
+    surface ≠ reachable surface" applies to SDK options exactly as it applies to
+    engine capability, and the next wave tempted by `managedSettings` should
+    probe before designing on it.
+  - **A predicate's coverage needs the conversation its CONSUMER requires.** The
+    first take set the threshold as low as possible on the theory that lower is
+    safer. The predicate fired on the second exchange and upstream refused to
+    compact a conversation that short ("no assistant messages in summarize set,
+    bailing"), so the recording carried a `true` decision and no boundary. The
+    scenario now crosses a threshold chosen to sit in a wide gap, after enough
+    exchanges for the compactor to have something to summarize.
+  - **A pure helper with one caller cannot also be a live splice.** `d1n` was
+    given its own row and its solo sabotage came back GREEN on both covering
+    scenarios: §2.4 makes a pure helper owned rather than called, so splicing its
+    only caller makes upstream's copy unreachable and the row dead. It moved
+    inside the owning module, where its arms stay in the branch inventory and the
+    build still footprints its upstream declaration. Generalizing for every later
+    wave: **a pure helper reachable only through a function the wave owns belongs
+    inside that owned module.**
+  - **Two normalization gaps, both found by continuing PAST a boundary, both
+    fixed at the source.** The continuation message names the session's own
+    transcript file and is the first user block of every post-compaction request
+    — the sixth run-scoped id shape §3.4's canonicalization comment predicted, and
+    without it every such request fell back positionally. And a
+    `compact_boundary` names preserved messages the SDK never emits, so their ids
+    exist under no other key and the differ's run-id map had no entry to make.
+    The map now covers the boundary's uuid fields and, for the first time, has a
+    regression test of its own (`src/differ.test.ts`, a gate phase) — §3.4 has
+    always required one per rule and the MAP half had none.
+  - **The oracle should compare a port TRACE, not just an output, wherever the
+    target's arms differ by effect.** Two of the trigger predicate's four
+    refusals differ from each other in nothing but which ports ran before they
+    refused. `compaction-parity.test.ts` compares which ports ran, with what, and
+    how often, alongside the answer. This is the same lesson W3 learned about
+    telemetry events, one level more general, and every later predicate-shaped
+    target inherits it.
+  - **Microcompaction is a reviewed exclusion, and the segment-compaction path is
+    a new named debt.** The first is settled with the scout's evidence
+    (`createContextHintController` is REPL-only; the headless driver sends
+    `"sdk"`). The second is new and measured at the call sites: `user_context`,
+    `messages_summarized` and the un-suppressed continuation arm are reachable
+    ONLY through upstream's from/up_to segment variant (`hRt`), which passes five
+    arguments to the boundary constructor where the paths the corpus drives pass
+    three — and `/compact <instructions>` does not reach it. Whichever wave takes
+    the segment variant inherits the coverage.
+  - **The compaction DRIVERS are formally C16/W13's.** `zRe` (the async generator
+    that routes a true decision through the reactive path) and `Tte` (the reactive
+    driver that runs the PreCompact hooks and calls the summarizer) are
+    query-loop-shaped, as the scout judged; the ledger row now records the
+    deferral rather than leaving it in a research note. C16's charter is
+    correspondingly wider than §6's row says.
 - 2026-09-01 (C6 / W3 — environment block + system-prompt assembly): the wave's
   first deliverable was a scenario, not a splice. **C6's coverage decision on the
   preset: record it.** `baseOptions()` sets `settingSources: []` and passes no

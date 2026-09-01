@@ -1072,6 +1072,8 @@ export const SPLICES: Splice[] = [
       "sysprompt-append",
       "sysprompt-boundary",
       "claude-md-memory",
+      "compact-continue",
+      "auto-compact-threshold",
     ],
   },
 
