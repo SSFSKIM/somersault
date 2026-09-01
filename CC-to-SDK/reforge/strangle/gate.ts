@@ -73,6 +73,12 @@ for (const [label, argv] of [
   ["canonicalization scrubs", ["src/canonical.test.ts"]],
   ["state surface catches what it claims", ["src/state.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
+  // The other pin-keyed fixture, and the only §5 signal that can see a
+  // subsystem move with every export inventory, anchor and footprint hash
+  // byte-identical: the names the engine's barrel chunks re-export its own
+  // symbols under. Build-free and a few seconds, so it sits with the rest of
+  // the pin's determinism rather than in a recipe someone remembers to run.
+  ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so
   // it belongs in this block rather than in a recipe someone remembers to run:
