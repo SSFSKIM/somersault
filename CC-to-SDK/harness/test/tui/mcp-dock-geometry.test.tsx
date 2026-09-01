@@ -246,4 +246,36 @@ describe.skipIf(isInCi)("bl10 merge-battery (D15) — /mcp dialog + chrome margi
     await settle();
     tty.unmount();
   });
+
+  // bl10 fix wave 1, finding 4: `mcpListVisibleRows` budgets exactly ONE row per root-list entry, but
+  // `ServerLabel` used to render the name and the full status/failure text verbatim — a long name or a long
+  // `failed: <error>` string wraps under Ink the moment it exceeds the pane's width, so one entry silently
+  // costs two-plus lines and the window overflows the budget it was sized to, at a narrow pane clipping the
+  // footer/counters off the bottom (the same "tall-frame replay" signal this file's own battery reads
+  // elsewhere for an overflowing dock).
+  it("clips a long server name + failure detail to one line at a narrow width — no tall-frame replay, footer survives", async () => {
+    const LONG_FAIL = {
+      name: "a-very-long-mcp-server-name-that-would-not-fit-on-one-narrow-line",
+      status: "failed" as const,
+      error: "connection refused after multiple retries against a very long diagnostic endpoint address",
+      scope: "project" as const, tools: [] as never[],
+    };
+    const geo = { columns: 30, rows: 16 };
+    const fake = fakeRemote({ mcpServerStatus: () => [LONG_FAIL] });
+    const tree = <KeymapProvider><ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd="/work"
+      deps={{ now: () => 0, columns: () => geo.columns, rows: () => geo.rows, scheduleRepaint: () => () => {} }} /></KeymapProvider>;
+    const tty = renderRealInk(tree, geo);
+    const mark = tty.mark();
+    tty.stdin.write("/mcp");
+    await waitFor(() => tty.textSince(mark).includes("/mcp"));
+    tty.stdin.write("\r");
+    await waitFor(() => tty.textSince(mark).includes("Manage MCP servers"));
+    await settle();
+    // One entry, one line: nothing about opening the dialog overflowed the pane and forced a scrollback replay.
+    expect(tty.tallWritesSince(mark)).toBe(0);
+    const f = tty.textSince(0);
+    expect(f).toContain("…");                                           // the label was clipped, not wrapped
+    expect(f).toMatch(/cancel|navigate/);                                // the hint bar still made it onto the frame
+    tty.unmount();
+  });
 });

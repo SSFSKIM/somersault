@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
-import { McpDialog, MCP_EMPTY } from "../../src/tui/McpDialog.js";
+import { McpDialog, MCP_EMPTY, mcpFetchErrorText } from "../../src/tui/McpDialog.js";
 import { type McpServerRow } from "../../src/tui/mcpDialogModel.js";
 
 // Every render in this file leaves an Ink instance mounted with LIVE `useSelectKeys`/keymap subscriptions
@@ -81,6 +81,20 @@ describe("McpDialog — root list", () => {
     const { lastFrame } = await mount([]);
     expect(flat(lastFrame)).toContain(MCP_EMPTY);
     expect(flat(lastFrame)).toContain("0 servers");
+  });
+
+  // bl10 fix wave 1, finding 2: a rejected `mcpServerStatus()` (an older host, a transport failure) used to
+  // be swallowed by `.catch(() => setServers([]))`, which read onscreen as "No MCP servers configured." —
+  // indistinguishable from a host that genuinely has none. The old text-only `/mcp` command surfaced a
+  // failure; this dialog must too, with a distinct error line that carries the failure's own message.
+  it("shows a distinct error line when fetchServers rejects, never the empty-list literal", async () => {
+    const instance = render(<McpDialog fetchServers={() => Promise.reject(new Error("ECONNRESET"))} onClose={() => {}} rows={30} columns={100} />);
+    mounted = instance;
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    const f = flat(instance.lastFrame);
+    expect(f).toContain(mcpFetchErrorText("ECONNRESET"));
+    expect(f).not.toContain(MCP_EMPTY);
   });
 
   // bl10 fix wave 1, finding 3: `Select`'s own table binds navigate/select unconditionally, but an empty

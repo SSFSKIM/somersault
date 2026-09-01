@@ -54,6 +54,17 @@ import * as postToolFailureHooks from "../../strangle/modules/post-tool-failure-
 import * as sessionStartHooks from "../../strangle/modules/session-start-hooks/reference.js";
 import * as sessionEndHooks from "../../strangle/modules/session-end-hooks/reference.js";
 import * as preCompactHooks from "../../strangle/modules/pre-compact-hooks/reference.js";
+// C8's second round: the nine dispatchers the registry-derived re-measurement
+// made spliceable.
+import * as postCompactHooks from "../../strangle/modules/post-compact-hooks/reference.js";
+import * as notificationHooks from "../../strangle/modules/notification-hooks/reference.js";
+import * as instructionsLoadedHooks from "../../strangle/modules/instructions-loaded-hooks/reference.js";
+import * as stopFailureHooks from "../../strangle/modules/stop-failure-hooks/reference.js";
+import * as taskCreatedHooks from "../../strangle/modules/task-created-hooks/reference.js";
+import * as taskCompletedHooks from "../../strangle/modules/task-completed-hooks/reference.js";
+import * as permissionRequestHooks from "../../strangle/modules/permission-request-hooks/reference.js";
+import * as userPromptExpansionHooks from "../../strangle/modules/user-prompt-expansion-hooks/reference.js";
+import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 import * as compactionPrompt from "../../strangle/modules/compaction-prompt/reference.js";
 import * as systemPromptBlocks from "../../strangle/modules/system-prompt-blocks/reference.js";
@@ -128,17 +139,24 @@ const OWNED: [string, string, unknown][] = [
   ["compact-boundary-wire", "subsystem/compaction", compactBoundaryWire.compactBoundaryWire],
   ["compact-continuation", "subsystem/compaction", compactContinuation.compactContinuation],
   ["auto-compact-trigger", "subsystem/compaction", autoCompactTrigger.autoCompactTrigger],
-  // W5's hook dispatchers (C8). Ten modules, and with C5x's PostToolUse
-  // dispatcher that is ELEVEN functions covering ELEVEN of the TWELVE events the
-  // engine is measured to fire headlessly — `stop-hooks` serves Stop and
-  // SubagentStop through one internal conditional, and Notification is excluded
-  // on two named grounds. The last four landed with C8's boundary round, which
-  // found that the wave's "all eight" claim rested on a probe whose negatives
-  // were vacuous. The row stays `spliced`, not `standalone-complete`: what these
-  // delegate INTO — the 23 KB shared executor and its awaiting sibling, with
-  // matching, command/callback/http/mcp invocation, timeouts and cancellation —
-  // is a port and S-module-shaped, so the subsystem does not close on the
-  // dispatchers. reforge/ledger.json says so.
+  // W5's hook dispatchers (C8). NINETEEN modules, and with C5x's PostToolUse
+  // dispatcher that is TWENTY functions covering TWENTY-ONE of the TWENTY-THREE
+  // events the engine is measured to fire headlessly — `stop-hooks` serves Stop
+  // and SubagentStop through one internal conditional, and the two model-switch
+  // dispatchers are a recorded ledger gap rather than an omission.
+  //
+  // The count moved twice, and both moves were measurement rather than work.
+  // C8's boundary round found the wave's "all eight" claim resting on a probe
+  // whose negatives were vacuous; its second round found the re-measurement
+  // still choosing its own watched list, and derived the population from
+  // upstream's dispatcher registry instead — which took the live set from twelve
+  // events to twenty-three.
+  //
+  // The row stays `spliced`, not `standalone-complete`: what these delegate
+  // INTO — the 23 KB shared executor, its awaiting sibling and the watcher-hooks
+  // helper, with matching, command/callback/http/mcp invocation, timeouts and
+  // cancellation — is a port and S-module-shaped, so the subsystem does not
+  // close on the dispatchers. reforge/ledger.json says so.
   ["pre-tool-hooks", "subsystem/hook-dispatch", preToolHooks.preToolHooks],
   ["post-tool-batch-hooks", "subsystem/hook-dispatch", postToolBatchHooks.postToolBatchHooks],
   ["user-prompt-submit-hooks", "subsystem/hook-dispatch", userPromptSubmitHooks.userPromptSubmitHooks],
@@ -149,6 +167,15 @@ const OWNED: [string, string, unknown][] = [
   ["session-start-hooks", "subsystem/hook-dispatch", sessionStartHooks.sessionStartHooks],
   ["session-end-hooks", "subsystem/hook-dispatch", sessionEndHooks.sessionEndHooks],
   ["pre-compact-hooks", "subsystem/hook-dispatch", preCompactHooks.preCompactHooks],
+  ["post-compact-hooks", "subsystem/hook-dispatch", postCompactHooks.postCompactHooks],
+  ["notification-hooks", "subsystem/hook-dispatch", notificationHooks.notificationHooks],
+  ["instructions-loaded-hooks", "subsystem/hook-dispatch", instructionsLoadedHooks.instructionsLoadedHooks],
+  ["stop-failure-hooks", "subsystem/hook-dispatch", stopFailureHooks.stopFailureHooks],
+  ["task-created-hooks", "subsystem/hook-dispatch", taskCreatedHooks.taskCreatedHooks],
+  ["task-completed-hooks", "subsystem/hook-dispatch", taskCompletedHooks.taskCompletedHooks],
+  ["permission-request-hooks", "subsystem/hook-dispatch", permissionRequestHooks.permissionRequestHooks],
+  ["user-prompt-expansion-hooks", "subsystem/hook-dispatch", userPromptExpansionHooks.userPromptExpansionHooks],
+  ["file-changed-hooks", "subsystem/hook-dispatch", fileChangedHooks.fileChangedHooks],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

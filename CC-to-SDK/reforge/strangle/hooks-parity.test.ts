@@ -11,18 +11,23 @@
 // It also closes C5x's DEFERRED OBLIGATION. The mechanism wave shipped three
 // modules unattested, on the reasoning that an exclusion needs an oracle and
 // building one for a hook dispatcher is the owning wave's design work. This is
-// that oracle, and `post-tool-hooks` is graded here alongside the ten dispatchers
-// W5 owns — six from its first pass, four more that C8's boundary review found
-// live after the wave's probe had recorded them as dead.
+// that oracle, and `post-tool-hooks` is graded here alongside the NINETEEN
+// dispatchers W5 owns — six from its first pass, four that C8's boundary review
+// found live after the wave's probe had recorded them as dead, and nine more
+// that C8's SECOND round found once the population under test came from
+// upstream's dispatcher registry rather than from a hand-written list.
 //
-// TWO SHAPES, NOT ONE. Nine dispatchers are `async function*` and stream their
-// executor's results back to a caller that folds them into the conversation.
-// PreCompact and SessionEnd are plain `async function`s that AWAIT a different
-// executor (upstream `AE`), because a compaction and a session teardown have no
-// conversation to stream into — and PreCompact goes further: it reduces its
-// results to a verdict the compactor obeys. That reduction is the largest thing
-// this file grades that no scenario can reach at all, since a callback that
-// returns `{continue:true}` can neither add instructions nor block.
+// THREE SHAPES, NOT ONE. Thirteen dispatchers are `async function*` and stream
+// their executor's results back to a caller that folds them into the
+// conversation. Six are plain `async function`s that AWAIT a different executor
+// (upstream `AE`), because a compaction, a session teardown, a notification, a
+// memory load and a failed turn have no conversation to stream into — and
+// PreCompact goes further: it reduces its results to a verdict the compactor
+// obeys. That reduction is the largest thing this file grades that no scenario
+// can reach at all, since a callback that returns `{continue:true}` can neither
+// add instructions nor block. FileChanged is the third shape: a synchronous
+// function that reaches NEITHER executor, returning the watcher-hooks helper's
+// promise for its caller to chain.
 //
 // WHY THIS SUBSYSTEM NEEDS IT, stated as what a callback corpus cannot see. A
 // scenario proves a dispatcher RAN and that its callback received a record. It
@@ -46,6 +51,13 @@
 //       options the executor was asked for — timeouts, match queries,
 //       `skipSessionFunctionHooks`, `managedHooksOnly` — and those options are
 //       most of what distinguishes one dispatcher from another.
+//
+// AND WHAT IT GRADES THAT ONLY IT CAN, in this round: five REFUSAL arms (a
+// StopFailure or UserPromptExpansion dispatch with no hook registered is the
+// common case on every session in the world and produces no observable at all),
+// the fields the seam never fills (InstructionsLoaded builds six event-specific
+// keys and a top-level project memory fills three), and the executor requests —
+// where these nine differ from each other far more than their records do.
 //
 // HOW IT BINDS, and the lesson it inherits (C7's boundary review). Where an
 // upstream body calls a helper this wave also OWNS, the helper is extracted and
@@ -96,6 +108,17 @@ import "./modules/post-tool-failure-hooks.js";
 import "./modules/session-start-hooks.js";
 import "./modules/session-end-hooks.js";
 import "./modules/pre-compact-hooks.js";
+// C8's second round: the nine dispatchers the registry-derived re-measurement
+// made spliceable.
+import "./modules/post-compact-hooks.js";
+import "./modules/notification-hooks.js";
+import "./modules/instructions-loaded-hooks.js";
+import "./modules/stop-failure-hooks.js";
+import "./modules/task-created-hooks.js";
+import "./modules/task-completed-hooks.js";
+import "./modules/permission-request-hooks.js";
+import "./modules/user-prompt-expansion-hooks.js";
+import "./modules/file-changed-hooks.js";
 
 /** The adapters' registration surface — exactly what the strangled graph calls. */
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => AsyncGenerator<unknown, unknown>> }).__reforge!;
@@ -140,21 +163,24 @@ function mustDiffer(label: string, upstream: unknown, perturbedOwned: unknown): 
  * to the enclosing declaration. Locating the oracle's subject by a different
  * rule than the build's would let the two grade different functions.
  *
- * `kind` distinguishes the two shapes this family has. Seven dispatchers are
- * `async function*` and stream their executor's results; PreCompact and
- * SessionEnd are plain `async function`s that await a different executor,
- * because their callers have no conversation to stream into. The minifier
- * writes the first with no space before the name and the second with one, so
- * the two searches cannot pick up each other's declarations.
+ * `kind` distinguishes the three shapes this family has. Ten dispatchers are
+ * `async function*` and stream their executor's results; six are plain
+ * `async function`s that await a different executor, because their callers have
+ * no conversation to stream into; and FileChanged is neither — a synchronous
+ * `function` that returns the watcher helper's promise for its caller to chain.
+ * The minifier writes the generator with no space before the name and the async
+ * one with a space, so those two searches cannot pick up each other's
+ * declarations; `plain` searches the bare keyword, which an `async function`
+ * also contains, and is separated from it by the parameter count below.
  *
  * Brace matching skips `'` and `"` strings; template literals are counted
  * through, which is safe here because every `${…}` in these bodies contributes a
  * balanced pair. A body that grew an unbalanced brace inside a template would
  * fail loudly at the `params` check below rather than silently truncate.
  */
-function dispatcherSource(event: string, params: number, kind: "generator" | "awaited" = "generator"): string {
+function dispatcherSource(event: string, params: number, kind: "generator" | "awaited" | "plain" = "generator"): string {
   const anchor = `hook_event_name:"${event}"`;
-  const declaration = kind === "generator" ? "async function*" : "async function ";
+  const declaration = kind === "generator" ? "async function*" : kind === "awaited" ? "async function " : "function ";
   const found: string[] = [];
   for (let at = ENGINE.indexOf(anchor); at >= 0; at = ENGINE.indexOf(anchor, at + 1)) {
     const start = ENGINE.lastIndexOf(declaration, at);
@@ -179,15 +205,50 @@ function dispatcherSource(event: string, params: number, kind: "generator" | "aw
     const source = ENGINE.slice(start, end + 1);
     // The signature the manifest verified is what selects among same-anchored
     // siblings — `UserPromptSubmit` has two carriers in this chunk.
-    const declared = source.slice(source.indexOf("(") + 1, source.indexOf(")"));
+    // The whole list, not up to the first `)`: matched to the OPENING paren's
+    // partner, so a destructured parameter with a nested default cannot cut it
+    // short. (Flat lists are unaffected — their first `)` is the closer.)
+    const openParen = source.indexOf("(");
+    let paren = 0;
+    let closeParen = openParen;
+    for (; closeParen < source.length; closeParen++) {
+      if (source[closeParen] === "(") paren++;
+      else if (source[closeParen] === ")" && --paren === 0) break;
+    }
+    const declared = source.slice(openParen + 1, closeParen);
     if (splitParams(declared).length === params) found.push(source);
   }
   if (found.length !== 1) throw new Error(`${event}: expected exactly one ${params}-parameter dispatcher, found ${found.length}`);
   return found[0];
 }
 
-/** Top-level commas of a minified parameter list (defaults may contain none here, but `!1`/`"turn_end"` do not nest). */
-const splitParams = (text: string): string[] => (text.trim() === "" ? [] : text.split(","));
+/**
+ * Top-level commas of a minified parameter list.
+ *
+ * Depth-aware, because one dispatcher needs it: Notification destructures its
+ * options bag IN THE PARAMETER LIST (`{timeoutMs:r=Li,storageV5:o,credentials:u}={}`),
+ * and a naive split counts its three fields as three parameters — so the
+ * three-parameter search found nothing and the extraction failed with a message
+ * about the wrong thing. Every other member has a flat list, where this is the
+ * same split it always was.
+ */
+function splitParams(text: string): string[] {
+  if (text.trim() === "") return [];
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{" || c === "[" || c === "(") depth++;
+    else if (c === "}" || c === "]" || c === ")") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
 
 /** One shape-anchored extraction of a helper. Throws when the shape is gone. */
 function extract(source: string, label: string, re: RegExp): string {
@@ -374,6 +435,8 @@ interface Trace {
   /** what SessionEnd wrote to stderr, and what it cleared from the registry */
   stderr: string[];
   registryClear: unknown[][];
+  /** the watcher-hooks helper (upstream `zxt`) — FileChanged's, and neither executor */
+  watcher: unknown[][];
 }
 const emptyTrace = (): Trace => ({
   hasHookForEvent: [],
@@ -395,6 +458,7 @@ const emptyTrace = (): Trace => ({
   activity: [],
   stderr: [],
   registryClear: [],
+  watcher: [],
 });
 
 interface StubSpec {
@@ -413,6 +477,8 @@ interface StubSpec {
   awaitResults?: unknown[];
   /** make the executor THROW, so the SessionStart hold's `finally` is graded */
   executorThrows?: string;
+  /** what the watcher-hooks helper resolves to (FileChanged) */
+  watcherResult?: unknown;
 }
 
 /** The common prefix every dispatcher spreads. A fixed object, so a difference is the dispatcher's. */
@@ -445,6 +511,10 @@ function makePorts(spec: StubSpec, sink: Trace) {
       if (spec.executorThrows !== undefined) throw new Error(spec.executorThrows);
       for (const r of results) yield r;
       return { executed: results.length };
+    },
+    executeWatcherHooks: async (...args: unknown[]) => {
+      sink.watcher.push(args);
+      return spec.watcherResult ?? { results: [], watchPaths: [], systemMessages: [] };
     },
     executeHooksAwait: async (request: unknown) => {
       sink.executorAwait.push([request]);
@@ -572,6 +642,7 @@ ports.__p_preToolChain = {
 };
 ports.__p_stripConfinedHookApproval = (result: unknown, label: unknown) => live().stripConfinedHookApproval(result, label);
 ports.__p_executeHooksAwait = (request: unknown) => live().executeHooksAwait(request);
+ports.__p_executeWatcherHooks = (...a: unknown[]) => live().executeWatcherHooks(...a);
 ports.__p_sessionId = (...a: unknown[]) => live().sessionId(...a);
 ports.__p_beginActivity = (...a: unknown[]) => live().beginActivity(...a);
 ports.__p_endActivity = (...a: unknown[]) => live().endActivity(...a);
@@ -603,7 +674,7 @@ function bindGlobals(p: PortSet): void {
  * captures appended in manifest order — the same argument list the build's
  * delegation synthesises.
  */
-function prepare(row: string, event: string, params: number, kind: "generator" | "awaited" = "generator") {
+function prepare(row: string, event: string, params: number, kind: "generator" | "awaited" | "plain" = "generator") {
   const splice = SPLICES.find((s) => s.name === row);
   if (!splice) throw new Error(`${row}: no manifest row`);
   const source = dispatcherSource(event, params, kind);
@@ -627,14 +698,15 @@ function prepare(row: string, event: string, params: number, kind: "generator" |
 }
 
 /**
- * The same, for the two dispatchers that are not generators. `prepare` is typed
- * for the streaming shape because seven of the nine are; PreCompact and
- * SessionEnd await a value instead, and the difference is in the CALLING
- * convention only — the extraction, the manifest bindings and the forwarded
- * argument list are identical.
+ * The same, for the dispatchers that are not generators — the awaited ones and
+ * FileChanged, which is not even async. `prepare` is typed for the streaming
+ * shape because that is the family's majority; the difference here is in the
+ * CALLING convention only, since the extraction, the manifest bindings and the
+ * forwarded argument list are identical. `settle` awaits either way, so a
+ * synchronous function that returns a promise is graded on what it returns.
  */
-function prepareAwaited(row: string, event: string, params: number) {
-  const p = prepare(row, event, params, "awaited");
+function prepareAwaited(row: string, event: string, params: number, kind: "awaited" | "plain" = "awaited") {
+  const p = prepare(row, event, params, kind);
   const cast = (fn: unknown) => fn as (...a: unknown[]) => Promise<unknown>;
   return { ...p, upstream: cast(p.upstream), owned: cast(p.owned) };
 }
@@ -1412,11 +1484,560 @@ const context = (over: Record<string, unknown> = {}) => ({
   ]);
 }
 
+// ============================================================================
+// 4. THE NINE DISPATCHERS C8's SECOND ROUND FOUND LIVE.
+//    The first round re-measured the hook set but still chose its own watched
+//    list; this one derives the population from upstream's dispatcher registry
+//    and creates a firing condition per event. Twenty-three fire. Each of these
+//    nine has a corpus scenario that grades what its condition renders; this
+//    section grades what no scenario can — the refusals, the fields the seam
+//    never fills, and the executor requests that are where one dispatcher
+//    differs from another.
+// ============================================================================
+
+// ---- PostCompact (upstream `kPe`) — not a generator; PreCompact's sibling ----
+{
+  const { upstream, forwarded, owned } = prepareAwaited("post-compact-hooks", "PostCompact", 5);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const r = (over: Record<string, unknown>) => ({ succeeded: true, blocked: false, cancelled: false, output: "", command: "hook.sh", ...over });
+  const delegated = context({ agentContext: { agentType: "subagent", delegatedObservation: true } });
+  const req = (over: Record<string, unknown> = {}) => ({ trigger: "manual", compactSummary: "the summary text", ...over });
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["nothing ran", { registered: true, awaitResults: [] }, [SESSION, req(), context(), undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["one hook ran and said nothing", { registered: true, awaitResults: [r({})] }, [SESSION, req(), context(), undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["one hook succeeded with output", { registered: true, awaitResults: [r({ output: "  narrate me  " })] }, [SESSION, req({ trigger: "auto" }), context(), undefined, 1000]],
+    ["a hook FAILED with output", { registered: true, awaitResults: [r({ succeeded: false, output: "it broke" })] }, [SESSION, req(), context(), undefined, 1000]],
+    ["a hook failed with NO output", { registered: true, awaitResults: [r({ succeeded: false, output: "" })] }, [SESSION, req(), context(), undefined, 1000]],
+    // Upstream's loop tests `succeeded` alone here, where PreCompact's tests
+    // `succeeded && !blocked` — so a BLOCKED-but-succeeded result is narrated as
+    // a SUCCESS by this dispatcher and as nothing by its sibling. There is
+    // nothing left to block once the summary exists, and this is the byte-level
+    // trace of that.
+    ["a hook that blocked but succeeded", { registered: true, awaitResults: [r({ blocked: true, output: "too late" })] }, [SESSION, req(), context(), undefined, 1000]],
+    ["a CANCELLED hook is narrated as nothing", { registered: true, awaitResults: [r({ cancelled: true, output: "hidden" })] }, [SESSION, req(), context(), undefined, 1000]],
+    ["everything at once", { registered: true, awaitResults: [r({ output: "one" }), r({ succeeded: false, output: "two", command: "b.sh" }), r({ cancelled: true, output: "hidden", command: "c.sh" }), r({ succeeded: false, output: "", command: "d.sh" })] }, [SESSION, req(), context(), undefined, 1000]],
+    // Decided BEFORE the executor and returned immediately: unlike PreCompact,
+    // whose delegated arm still RUNS the hooks and only drops their reporting,
+    // this one never reaches the executor at all.
+    ["a delegated-observation subagent", { registered: true, awaitResults: [r({ output: "one" })] }, [SESSION, req(), delegated, undefined, 1000]],
+    ["an explicit signal", { registered: true, awaitResults: [r({})] }, [SESSION, req({ trigger: "auto" }), context(), new AbortController().signal, 1000]],
+    ["an empty summary", { registered: true, awaitResults: [r({})] }, [SESSION, req({ compactSummary: "" }), context(), undefined, 1000]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `post-compact-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+    );
+  }
+  const { trace, upstream: verdict } = await compareValue(
+    "post-compact-hooks verdict control",
+    cases[7][1],
+    () => upstream(...cases[7][2]),
+    (p) => owned(...(cases[7][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  eq("post-compact-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "trigger",
+    "compact_summary",
+  ]);
+  const v = verdict.returned as { userDisplayMessage?: string };
+  mustDiffer("display lines joined by a blank line rather than a newline", v.userDisplayMessage, v.userDisplayMessage?.split("\n").join("\n\n"));
+  mustDiffer("a cancelled hook narrated in the display message", v.userDisplayMessage?.includes("hidden"), true);
+  mustDiffer("the sibling's PreCompact prefix on this event's lines", v.userDisplayMessage?.includes("PostCompact ["), false);
+  mustDiffer("this dispatcher gaining PreCompact's instruction reduction", Object.keys(verdict.returned as object), ["newCustomInstructions", "userDisplayMessage"]);
+  const nothing = await compareValue(
+    "post-compact-hooks empty-verdict control",
+    cases[0][1],
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  // `{}` and `{userDisplayMessage: undefined}` are the same JSON, so the control
+  // asserts the KEYS: falling through to the general return instead of taking
+  // the early one is a difference nothing else here sees.
+  mustDiffer("the zero-results arm falling through to the full verdict", Object.keys(nothing.upstream.returned as object), ["userDisplayMessage"]);
+  const obs = await compareValue(
+    "post-compact-hooks delegated-observation control",
+    cases[8][1],
+    () => upstream(...cases[8][2]),
+    (p) => owned(...(cases[8][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  mustDiffer("the delegated arm still running the hooks", obs.trace.executorAwait.length, 1);
+}
+
+// ---- Notification (upstream `EE`) — the family's simplest awaited one --------
+{
+  const { upstream, forwarded, owned } = prepareAwaited("notification-hooks", "Notification", 3);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const note = (over: Record<string, unknown> = {}) => ({ message: "a tool needs your approval", notificationType: "permission_request", ...over });
+  const cases: [string, StubSpec, unknown[]][] = [
+    // The permission-timer caller's shape: a message and a type, no title. The
+    // record still BUILDS a `title` key, set to undefined — which JSON drops on
+    // the way to a command hook's stdin, and which the corpus therefore grades
+    // as an absence while this grades it as a present-but-undefined key.
+    ["no title, no options", { registered: true }, [SESSION, note(), undefined]],
+    ["no title, an empty options bag", { registered: true }, [SESSION, note(), {}]],
+    ["with a title", { registered: true }, [SESSION, note({ title: "Claude Code" }), {}]],
+    ["with every option", { registered: true }, [SESSION, note({ title: "t" }), { timeoutMs: 1000, storageV5: { store: "v5" }, credentials: { kind: "k" } }]],
+    ["a different notification type", { registered: true }, [SESSION, note({ notificationType: "idle" }), {}]],
+    ["a notification with no type at all", { registered: true }, [SESSION, { message: "bare" }, {}]],
+    // The results ARE returned by the executor and are dropped on the floor —
+    // nothing reads them, and the dispatcher returns undefined either way.
+    ["results that nothing reads", { registered: true, awaitResults: [{ succeeded: true, output: "ignored", command: "hook.sh" }] }, [SESSION, note(), {}]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `notification-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compareValue(
+    "notification-hooks request control",
+    cases[3][1],
+    () => upstream(...cases[3][2]),
+    (p) => owned(...(cases[3][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  const request = trace.executorAwait[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
+  eq("notification-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "message",
+    "title",
+    "notification_type",
+  ]);
+  mustDiffer("the message used as the match query instead of the notification TYPE", request.matchQuery, "a tool needs your approval");
+  mustDiffer("the common prefix built with a permission mode this event does not pass", trace.base[0].length, 4);
+  const defaulted = await compareValue(
+    "notification-hooks timeout-default control",
+    cases[0][1],
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  mustDiffer(
+    "the timeout left undefined when the caller passes no options",
+    (defaulted.trace.executorAwait[0][0] as { timeoutMs: unknown }).timeoutMs,
+    undefined,
+  );
+}
+
+// ---- InstructionsLoaded (upstream `Qqe`) ------------------------------------
+{
+  const { upstream, forwarded, owned } = prepareAwaited("instructions-loaded-hooks", "InstructionsLoaded", 5);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const cases: [string, StubSpec, unknown[]][] = [
+    // The recorded seam: a top-level project memory, no options at all. Three of
+    // the record's six event-specific fields are undefined here, which is
+    // exactly what `hooks-memory` grades as absence.
+    ["a project memory with no options", { registered: true }, [SESSION, "/repo/CLAUDE.md", "Project", "startup", undefined]],
+    ["an empty options bag", { registered: true }, [SESSION, "/repo/CLAUDE.md", "Project", "startup", {}]],
+    ["a glob-matched memory", { registered: true }, [SESSION, "/repo/src/CLAUDE.md", "Project", "path_glob_match", { globs: ["src/**"], triggerFilePath: "/repo/src/a.ts" }]],
+    ["an included memory with a parent", { registered: true }, [SESSION, "/repo/inc.md", "Project", "include", { parentFilePath: "/repo/CLAUDE.md" }]],
+    ["a nested traversal", { registered: true }, [SESSION, "/repo/a/b/CLAUDE.md", "Local", "nested_traversal", { globs: undefined, triggerFilePath: undefined, parentFilePath: undefined }]],
+    ["a user memory", { registered: true }, [SESSION, "/home/u/.claude/CLAUDE.md", "User", "startup", {}]],
+    ["a managed memory with every option", { registered: true }, [SESSION, "/etc/managed.md", "Managed", "startup", { globs: ["**"], triggerFilePath: "/t", parentFilePath: "/p", timeoutMs: 1000, storageV5: { store: "v5" }, credentials: { kind: "k" } }]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `instructions-loaded-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compareValue(
+    "instructions-loaded-hooks request control",
+    cases[6][1],
+    () => upstream(...cases[6][2]),
+    (p) => owned(...(cases[6][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  const request = trace.executorAwait[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
+  eq("instructions-loaded-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "file_path",
+    "memory_type",
+    "load_reason",
+    "globs",
+    "trigger_file_path",
+    "parent_file_path",
+  ]);
+  mustDiffer("the memory TYPE used as the match query instead of the load reason", request.matchQuery, "Managed");
+  mustDiffer("the options bag's own keys copied through verbatim rather than renamed to snake_case", request.hookInput.triggerFilePath, "/t");
+  const bare = await compareValue(
+    "instructions-loaded-hooks absent-options control",
+    cases[0][1],
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
+  );
+  const bareRequest = bare.trace.executorAwait[0][0] as { timeoutMs: unknown; hookInput: Record<string, unknown> };
+  mustDiffer("the three optional fields dropped rather than set to undefined", Object.keys(bareRequest.hookInput).length, 10);
+  mustDiffer("the timeout left undefined when the caller passes no options", bareRequest.timeoutMs, undefined);
+}
+
+// ---- StopFailure (upstream `HPe`) — the turn-end dispatcher's failure arm ----
+{
+  const { upstream, forwarded, owned } = prepareAwaited("stop-failure-hooks", "StopFailure", 3);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const message = (content: unknown[], over: Record<string, unknown> = {}) => ({ message: { content }, error: "api_error", errorDetails: "500 from upstream", ...over });
+  const delegated = context({ agentContext: { agentType: "subagent", delegatedObservation: true } });
+  const cases: [string, StubSpec, unknown[]][] = [
+    // The REFUSALS, which are the common case and which no scenario can record:
+    // a run with no hook registered produces no consult, no record, no observable.
+    ["no hook registered", { registered: false }, [message([{ type: "text", text: "partial answer" }]), context(), DEFAULT_HOOK_TIMEOUT_MS]],
+    ["a delegated-observation subagent", { registered: true }, [message([{ type: "text", text: "partial answer" }]), delegated, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["a failing turn that had produced text", { registered: true }, [message([{ type: "text", text: "partial answer" }]), context(), DEFAULT_HOOK_TIMEOUT_MS]],
+    // The empty-join coercion: `"" || undefined` is undefined, which JSON drops.
+    ["a failing turn with NO text at all", { registered: true }, [message([{ type: "tool_use", name: "Bash" }]), context(), 1000]],
+    ["a failing turn whose text is whitespace", { registered: true }, [message([{ type: "text", text: "   " }]), context(), 1000]],
+    ["two text blocks, joined by a NEWLINE", { registered: true }, [message([{ type: "text", text: "a" }, { type: "text", text: "b" }]), context(), 1000]],
+    // `e.error ?? "unknown"` — the record never carries an undefined error, and
+    // the fallback is also the match query.
+    ["no error kind at all", { registered: true }, [message([{ type: "text", text: "x" }], { error: undefined }), context(), 1000]],
+    ["no error details", { registered: true }, [message([{ type: "text", text: "x" }], { errorDetails: undefined }), context(), 1000]],
+    ["a prompt_too_long failure", { registered: true }, [message([{ type: "text", text: "x" }], { error: "prompt_too_long" }), context(), 1000]],
+    ["an app-state reader on the context", { registered: true }, [message([{ type: "text", text: "x" }]), context({ getAppState: () => ({ state: 1 }) }), 1000]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `stop-failure-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compareValue(
+    "stop-failure-hooks request control",
+    cases[2][1],
+    () => upstream(...cases[2][2]),
+    (p) => owned(...(cases[2][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  const request = trace.executorAwait[0][0] as { matchQuery: string; sessionHooks: unknown; getAppState: unknown; hookInput: Record<string, unknown> };
+  eq("stop-failure-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "error",
+    "error_details",
+    "last_assistant_message",
+  ]);
+  // The registration guard is called with the SESSION ID, not with the
+  // permission-scoped agent fan-out every tool event uses.
+  eq("stop-failure-hooks guard arguments", trace.hasHookForEvent[0], ["StopFailure", trace.hasHookForEvent[0][1], "session-1"]);
+  mustDiffer("the guard keyed on the agent fan-out rather than the session id", trace.hasHookForEvent[0][2], ["agent-1"]);
+  mustDiffer("the session hooks registry left off the executor request", request.sessionHooks, undefined);
+  mustDiffer("the app-state reader left off the executor request", "getAppState" in request, false);
+  mustDiffer("the error kind not used as the match query", request.matchQuery, "StopFailure");
+  const refused = await compareValue(
+    "stop-failure-hooks refusal control",
+    cases[0][1],
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  mustDiffer("an unregistered session still reaching the executor", refused.trace.executorAwait.length, 1);
+  mustDiffer("an unregistered session still building a record", refused.trace.base.length, 1);
+  const obs = await compareValue(
+    "stop-failure-hooks delegated-observation control",
+    cases[1][1],
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  mustDiffer("the delegated guard checked AFTER the registration guard", obs.trace.hasHookForEvent.length, 1);
+  const silent = await compareValue(
+    "stop-failure-hooks empty-text control",
+    cases[3][1],
+    () => upstream(...cases[3][2]),
+    (p) => owned(...(cases[3][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  mustDiffer(
+    "an empty join left as the empty string rather than coerced to undefined",
+    (silent.trace.executorAwait[0][0] as { hookInput: { last_assistant_message: unknown } }).hookInput.last_assistant_message,
+    "",
+  );
+  const unknownError = await compareValue(
+    "stop-failure-hooks unknown-error control",
+    cases[6][1],
+    () => upstream(...cases[6][2]),
+    (p) => owned(...(cases[6][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
+  );
+  mustDiffer(
+    "a missing error kind left undefined rather than falling back to 'unknown'",
+    (unknownError.trace.executorAwait[0][0] as { hookInput: { error: unknown } }).hookInput.error,
+    undefined,
+  );
+}
+
+// ---- TaskCreated / TaskCompleted (upstream `xUt` / `eGe`) — near-twins -------
+for (const [row, event] of [
+  ["task-created-hooks", "TaskCreated"],
+  ["task-completed-hooks", "TaskCompleted"],
+] as [string, string][]) {
+  const { upstream, forwarded, owned } = prepare(row, event, 9);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const cases: [string, StubSpec, unknown[]][] = [
+    // The headless seam: no teammate, no team. Both fields are BUILT and left
+    // undefined, so JSON drops them — which is what `hooks-tasks` grades.
+    ["a solo task", { registered: true }, ["task-1", "the subject", "the description", undefined, undefined, "bypassPermissions", undefined, DEFAULT_HOOK_TIMEOUT_MS, context()]],
+    ["a teammate's task", { registered: true }, ["task-2", "s", "d", "ada", "the team", "default", undefined, 1000, context()]],
+    ["no permission mode", { registered: true }, ["task-3", "s", "d", undefined, undefined, undefined, undefined, 1000, context()]],
+    ["an explicit signal", { registered: true }, ["task-4", "s", "d", undefined, undefined, "default", new AbortController().signal, 1000, context()]],
+    ["an empty subject and description", { registered: true }, ["task-5", "", "", undefined, undefined, "default", undefined, 1000, context()]],
+    ["a subagent context", { registered: true }, ["task-6", "s", "d", undefined, undefined, "default", undefined, 1000, context({ agentId: "agent-1", agentContext: { agentType: "subagent", isBuiltIn: false, subagentName: "explore" } })]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `${row} ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 9), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    `${row} request control`,
+    { registered: true },
+    constants,
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
+  );
+  const request = trace.executor[0][0] as { toolUseID: string; hookInput: Record<string, unknown> };
+  eq(`${row} field order`, Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "task_id",
+    "task_subject",
+    "task_description",
+    "teammate_name",
+    "team_name",
+  ]);
+  eq(`${row} stamps its own event`, request.hookInput.hook_event_name, event);
+  // Three claims a twin could quietly break: these two dispatchers pass NO match
+  // query (so a matcher cannot narrow by task), MINT a tool-use id (there is no
+  // real tool call to correlate to), and build the common prefix with THREE
+  // arguments — the tool-use context is in hand and handed to the executor, but
+  // is not passed to the prefix builder, so `agent_id` and `effort` come out
+  // undefined and `agent_type` falls back to the ambient default.
+  mustDiffer("a match query added, letting a matcher narrow by task", "matchQuery" in request, true);
+  mustDiffer("a real tool-use id expected where this event mints one", request.toolUseID, "tu-1");
+  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.base[0].length, 4);
+  mustDiffer("the twin's event name stamped instead of this one's", request.hookInput.hook_event_name, event === "TaskCreated" ? "TaskCompleted" : "TaskCreated");
+  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+}
+
+// ---- PermissionRequest (upstream `Tee`) -------------------------------------
+{
+  const { upstream, forwarded, owned } = prepare("permission-request-hooks", "PermissionRequest", 8);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["a plain consult", { registered: true }, ["Bash", "toolu_1", { command: "mkdir -p x" }, context(), "default", undefined, undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["with permission suggestions", { registered: true }, ["Bash", "toolu_2", { command: "rm -rf /" }, context(), "default", [{ type: "addRules", rules: [{ toolName: "Bash" }] }], undefined, 1000]],
+    ["an empty suggestion list", { registered: true }, ["Write", "toolu_3", { file_path: "/a" }, context(), "acceptEdits", [], undefined, 1000]],
+    ["an explicit signal", { registered: true }, ["Read", "toolu_4", { file_path: "/a" }, context(), "plan", undefined, new AbortController().signal, 1000]],
+    ["a subagent context", { registered: true }, ["Bash", "toolu_5", {}, context({ agentId: "agent-1", agentContext: { agentType: "subagent", isBuiltIn: true, subagentName: "web-fetch", parentAgentId: "p" } }), "default", undefined, undefined, 1000]],
+    // The permission chain calls this with a result-shaped stream, and a hook
+    // for this event can allow, deny or rewrite — so the yielded sequence is
+    // the contract, not a side effect.
+    ["hooks that answer the request", { registered: true, results: [{ permissionRequestResult: { behavior: "allow", updatedInput: { command: "safe" } } }, { permissionRequestResult: { behavior: "deny", message: "no" } }] }, ["Bash", "toolu_6", { command: "x" }, context(), "default", undefined, undefined, 1000]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `permission-request-hooks ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 8), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    "permission-request-hooks request control",
+    cases[1][1],
+    constants,
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
+  );
+  const request = trace.executor[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
+  eq("permission-request-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "tool_name",
+    "tool_input",
+    "permission_suggestions",
+  ]);
+  eq("permission-request-hooks logs its entry", trace.log[0], ["executePermissionRequestHooks called for tool: Bash"]);
+  mustDiffer("the entry log dropped", trace.log.length, 0);
+  mustDiffer("a log level passed where upstream passes one argument", trace.log[0].length, 2);
+  // The only tool-scoped dispatcher that forwards the REAL tool-use id: at this
+  // point the call exists and has not run, so there is something to correlate to.
+  mustDiffer("a minted uuid used where the real tool-use id is in hand", request.toolUseID, "44444444-4444-4444-8444-444444444444");
+  mustDiffer("the tool-use id used as the match query instead of the tool name", request.matchQuery, "toolu_2");
+  mustDiffer("a tool_use_id field added to the record", "tool_use_id" in request.hookInput, true);
+  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+}
+
+// ---- UserPromptExpansion (upstream `Ldt`) -----------------------------------
+{
+  const { upstream, forwarded, owned } = prepare("user-prompt-expansion-hooks", "UserPromptExpansion", 7);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["no hook registered", { registered: false }, ["slash_command", "reforgeprobe", undefined, "project", "/reforgeprobe", "bypassPermissions", context()]],
+    ["a project slash command", { registered: true }, ["slash_command", "reforgeprobe", undefined, "project", "/reforgeprobe", "bypassPermissions", context()]],
+    ["a slash command with arguments", { registered: true }, ["slash_command", "review", "--base main", "user", "/review --base main", "default", context()]],
+    ["an MCP prompt", { registered: true }, ["mcp_prompt", "server__prompt", "arg", "mcp", "/server__prompt arg", "default", context()]],
+    // The guard keys on the AGENT id when there is one — the only guarded
+    // dispatcher in the family that chooses between the agent and the session.
+    ["inside a subagent", { registered: true }, ["slash_command", "x", undefined, "project", "/x", "default", context({ agentId: "agent-1" })]],
+    ["no permission mode", { registered: true }, ["slash_command", "x", undefined, "project", "/x", undefined, context()]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `user-prompt-expansion-hooks ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 7), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    "user-prompt-expansion-hooks request control",
+    cases[2][1],
+    constants,
+    () => upstream(...cases[2][2]),
+    (p) => owned(...(cases[2][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
+  );
+  const request = trace.executor[0][0] as { toolUseID: string; timeoutMs: number; hookInput: Record<string, unknown> };
+  eq("user-prompt-expansion-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "expansion_type",
+    "command_name",
+    "command_args",
+    "command_source",
+    "prompt",
+  ]);
+  eq("user-prompt-expansion-hooks guard keys on the session when there is no agent", trace.hasHookForEvent[0][2], "session-1");
+  mustDiffer("the guard keyed on the session id even inside a subagent", trace.hasHookForEvent[0][2], "agent-1");
+  // No timeout PARAMETER: the constant is read inside the body, which makes the
+  // owned copy load-bearing at runtime rather than only as a differential check.
+  eq("user-prompt-expansion-hooks uses the shared timeout", request.timeoutMs, DEFAULT_HOOK_TIMEOUT_MS);
+  mustDiffer("this event's timeout drifting from the shared constant", request.timeoutMs, 1000);
+  mustDiffer("a match query added, letting a matcher narrow by command name", "matchQuery" in request, true);
+  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.base[0].length, 4);
+  const agent = await compare(
+    "user-prompt-expansion-hooks agent-keyed guard control",
+    cases[4][1],
+    constants,
+    () => upstream(...cases[4][2]),
+    (p) => owned(...(cases[4][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
+  );
+  eq("user-prompt-expansion-hooks guard keys on the agent when there is one", agent.trace.hasHookForEvent[0][2], "agent-1");
+  const refused = await compare(
+    "user-prompt-expansion-hooks refusal control",
+    cases[0][1],
+    constants,
+    () => upstream(...cases[0][2]),
+    (p) => owned(...(cases[0][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
+  );
+  mustDiffer("an unregistered session still reaching the executor", refused.trace.executor.length, 1);
+  mustDiffer("an unregistered session still minting a tool-use id", refused.trace.uuid, 1);
+}
+
+// ---- FileChanged (upstream `CUt`) — neither async nor a generator -----------
+{
+  const { upstream, forwarded, owned } = prepareAwaited("file-changed-hooks", "FileChanged", 4, "plain");
+  const constants = {};
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["a file created", { registered: true }, [SESSION, "/sandbox/watched.txt", "add", undefined]],
+    ["a file changed", { registered: true }, [SESSION, "/sandbox/watched.txt", "change", {}]],
+    ["a file unlinked", { registered: true }, [SESSION, "/sandbox/watched.txt", "unlink", {}]],
+    ["with every option", { registered: true }, [SESSION, "/sandbox/a.txt", "change", { timeoutMs: 1000, storageV5: { store: "v5" }, credentials: { kind: "k" } }]],
+    // The helper's fold is the caller's contract, and this dispatcher returns it
+    // untouched — a watchPaths union that stopped crossing would re-arm the
+    // watcher on the wrong set.
+    [
+      "the helper's fold returned untouched",
+      { registered: true, watcherResult: { results: [{ succeeded: true, output: "", command: "h.sh" }], watchPaths: ["/sandbox", "/other"], systemMessages: ["a message"] } },
+      [SESSION, "/sandbox/watched.txt", "change", {}],
+    ],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `file-changed-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 4), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compareValue(
+    "file-changed-hooks request control",
+    cases[3][1],
+    () => upstream(...cases[3][2]),
+    (p) => owned(...(cases[3][2] as unknown[]).slice(0, 4), ...forwarded(p, constants)),
+  );
+  const call = trace.watcher[0] as [unknown, Record<string, unknown>, unknown];
+  eq("file-changed-hooks field order", Object.keys(call[1]), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "file_path",
+    "event",
+  ]);
+  // The helper is called POSITIONALLY with three arguments, not with a request
+  // object like either executor — which is why this row's port is a third
+  // execution path rather than a differently-named `AE`.
+  eq("file-changed-hooks calls the watcher helper with three arguments", call.length, 3);
+  mustDiffer("the record wrapped in a request object, the way both executors take theirs", call[1], { hookInput: call[1] });
+  mustDiffer("the event kind stamped under a different key", "change_type" in call[1], true);
+  mustDiffer("the common prefix built with a permission mode this event does not have", trace.base[0].length, 4);
+  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.executorAwait.length, 1);
+  mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 503) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 58) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 686) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 107) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 
 console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);

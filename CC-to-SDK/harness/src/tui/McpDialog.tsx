@@ -18,6 +18,7 @@
 // for every other pre-migration dialog.
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
+import stringWidth from "string-width";
 import { DialogFrame } from "./dialogs/DialogFrame.js";
 import { useSelectKeys } from "./keys/selectKeys.js";
 import { POINTER } from "./select/Select.js";
@@ -53,9 +54,24 @@ function Row({ label, focused }: { label: React.ReactNode; focused: boolean }) {
   );
 }
 
-function ServerLabel({ server }: { server: McpServerRow }) {
+/** bl10 fix wave 1, finding 4: `mcpListVisibleRows` budgets exactly ONE row per root-list entry, but this
+ *  label used to render the name and the FULL status/failure text verbatim — a long server name or a long
+ *  `failed: <error>` string wraps under Ink, so one entry silently costs two-plus rows and the window
+ *  overflows the budget it was sized to, clipping the footer/counters off a narrow pane. Clipped to a single
+ *  line instead: the full failure detail already lives one level down, in `serverMenuFields`' Status field
+ *  (`server-menu` view) — the root row only needs to say ENOUGH to pick the right server. */
+function ServerLabel({ server, width }: { server: McpServerRow; width: number }) {
   const statusColor = STATUS_COLOR[server.status];
-  return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{statusText(server)}</Text></>;
+  const status = statusText(server);
+  const full = `${server.name}  ${status}`;
+  if (stringWidth(full) <= width) {
+    return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{status}</Text></>;
+  }
+  // The name alone already fills the row (an extreme narrow-pane/long-name case) — clip it and drop the
+  // status rather than split a string with nothing left to show of it.
+  if (stringWidth(server.name) >= width) return <Text>{truncateLabel(server.name, width)}</Text>;
+  const statusWidth = width - stringWidth(server.name) - 2;   // 2 = the "  " separator between the two runs
+  return <><Text>{server.name}</Text><Text dimColor color={statusColor ? role(statusColor) : undefined}>{"  "}{truncateLabel(status, statusWidth)}</Text></>;
 }
 
 export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ?? 24, columns = process.stdout.columns ?? 80 }: {
@@ -122,18 +138,25 @@ export function McpDialog({ fetchServers, onClose, rows = process.stdout.rows ??
     if (servers === undefined) return <Text dimColor>Loading…</Text>;
 
     if (view.type === "list") {
-      if (serverCount === 0) return <Text dimColor>{MCP_EMPTY}</Text>;
+      if (serverCount === 0) {
+        if (fetchError !== undefined) return <Text color={role("error")}>{mcpFetchErrorText(fetchError)}</Text>;
+        return <Text dimColor>{MCP_EMPTY}</Text>;
+      }
       const flatFocus = flatIndexOfServer(listRows, serverFocus);
       const visible = mcpListVisibleRows(rows);
       const win = mcpWindow(listRows.length, flatFocus, visible);
       const { above, below } = overflowRows(win, listRows.length);
+      // bl10 fix wave 1, finding 4: the chrome each root row sits behind — `DialogFrame`'s own `innerPaddingX`
+      // (1 column either side) plus `Row`'s pointer glyph and its `gap={1}` (1 + 1) — so the label itself
+      // never gets more than `columns` minus that fixed cost, exactly one row of it.
+      const rootRowWidth = Math.max(10, columns - 4);
       return (
         <Box flexDirection="column">
           {above > 0 ? <Box paddingLeft={2}><Text dimColor>{moreAbove(above)}</Text></Box> : null}
           {listRows.slice(win.start, win.end).map((r, i) => {
             const at = win.start + i;
             if (r.kind === "heading") return <Text key={`h-${at}`} bold dimColor>{r.label}</Text>;
-            return <Row key={r.server.name} focused={at === flatFocus} label={<ServerLabel server={r.server} />} />;
+            return <Row key={r.server.name} focused={at === flatFocus} label={<ServerLabel server={r.server} width={rootRowWidth} />} />;
           })}
           {below > 0 ? <Box paddingLeft={2}><Text dimColor>{moreBelow(below)}</Text></Box> : null}
         </Box>
