@@ -42,13 +42,34 @@ describe("normalizeMcpServers", () => {
     expect(rows[0]!.tools).toEqual([{ name: "notion-search" }]);
   });
 
-  it("carries raw names and descriptions through untouched (no title-casing, no truncation)", () => {
+  it("carries names and descriptions through as-is beyond whitespace flattening (no title-casing, no truncation)", () => {
     const rows = normalizeMcpServers([
       { name: "my_weird-Server.99", status: "connected",
         tools: [{ name: "mcp__weird__tool_NAME", description: "does\nmulti-line\tstuff with \"quotes\"" }] },
     ]);
     expect(rows[0]!.name).toBe("my_weird-Server.99");
-    expect(rows[0]!.tools[0]).toEqual({ name: "mcp__weird__tool_NAME", description: "does\nmulti-line\tstuff with \"quotes\"" });
+    expect(rows[0]!.tools[0]).toEqual({ name: "mcp__weird__tool_NAME", description: "does multi-line stuff with \"quotes\"" });
+  });
+
+  // bl10 fix wave 5: three prior waves flattened embedded control whitespace SITE-BY-SITE, in the render
+  // layer (`ServerLabel`/`ToolLabel`/`serverMenuFields`/tool-detail), via `flattenLabel`. That left every NEW
+  // render site (e.g. the server-menu/server-tools heading) free to reintroduce the same tall-frame hazard.
+  // Flattening every MCP-metadata string ONCE, at the normalization boundary, closes the class: no render
+  // site can ever see an embedded newline or other control whitespace again.
+  it("flattens embedded newlines/control whitespace in every metadata string field, at normalization", () => {
+    const rows = normalizeMcpServers([
+      {
+        name: "server\nname\twith\nbreaks", status: "failed", error: "spawn\nENOENT\tfailed",
+        config: { type: "std\nio", command: "node\nserver.js", url: "https://x\n.example/mcp" },
+        tools: [{ name: "tool\nname", description: "line one\nline two\tline three" }],
+      },
+    ]);
+    expect(rows[0]!.name).toBe("server name with breaks");
+    expect(rows[0]!.error).toBe("spawn ENOENT failed");
+    expect(rows[0]!.type).toBe("std io");
+    expect(rows[0]!.command).toBe("node server.js");
+    expect(rows[0]!.url).toBe("https://x .example/mcp");
+    expect(rows[0]!.tools[0]).toEqual({ name: "tool name", description: "line one line two line three" });
   });
 
   it("every status literal survives, and an unrecognized one falls back to failed rather than throwing", () => {

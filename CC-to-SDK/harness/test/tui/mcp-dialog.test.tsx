@@ -6,7 +6,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import React from "react";
 import { renderWithKeymap as render, tick } from "./keysTestUtil.js";
 import { McpDialog, MCP_EMPTY, mcpFetchErrorText } from "../../src/tui/McpDialog.js";
-import { type McpServerRow } from "../../src/tui/mcpDialogModel.js";
+import { normalizeMcpServers, type McpServerRow } from "../../src/tui/mcpDialogModel.js";
 
 // Every render in this file leaves an Ink instance mounted with LIVE `useSelectKeys`/keymap subscriptions
 // (help-dialog.test.tsx's own `.unmount()` calls guard the same thing). Left mounted, ~15 renders' worth of
@@ -342,19 +342,20 @@ describe("McpDialog — server-menu and tool-detail are bounded to the row budge
   });
 });
 
-// bl10 fix wave 3, RF2: `stringWidth` (both `ToolLabel`'s own measurement and `truncateLabel`'s clip) treats
-// `\n` as zero-width while Ink's `<Text>` paints it as a real line break, so a description carrying embedded
-// newlines measures as ONE option (the tools-view budget's unit) but PAINTS as several — a valid MCP
-// description is not obligated to be single-line. Flattening every embedded line break (and other control
-// whitespace) to a single space before measuring/truncating is what keeps the paint and the budget in sync.
+// bl10 fix wave 3, RF2 (moved to the model boundary in fix wave 5): `stringWidth` (both `ToolLabel`'s own
+// measurement and `truncateLabel`'s clip) treats `\n` as zero-width while Ink's `<Text>` paints it as a real
+// line break, so a description carrying embedded newlines measures as ONE option (the tools-view budget's
+// unit) but PAINTS as several — a valid MCP description is not obligated to be single-line. The flattening
+// now happens once, in `normalizeMcpServers`/`normalizeTool` — this fixture goes through that real entry
+// point (as `useChat.ts`'s `fetchMcpServers` always does), rather than hand-constructing an already-typed
+// `McpServerRow` that skips the one function that is now the SOLE guarantee of the invariant.
 describe("McpDialog — multiline tool descriptions flatten to one physical row (bl10 fw3 RF2)", () => {
   it("a tool description containing \\n renders as ONE physical row, within the tools-view budget", async () => {
     const manyLines = Array.from({ length: 12 }, (_, i) => `line-${i}`).join("\n");
-    const withNewlines: McpServerRow = {
-      name: "srv", status: "connected", scope: "project",
-      tools: [{ name: "multiline-tool", description: manyLines }],
-    };
-    const { stdin, lastFrame } = await mount([withNewlines], 14);
+    const withNewlines = normalizeMcpServers([
+      { name: "srv", status: "connected", scope: "project", tools: [{ name: "multiline-tool", description: manyLines }] },
+    ]);
+    const { stdin, lastFrame } = await mount(withNewlines, 14);
     stdin.write("\r"); await tick();          // -> server-menu
     stdin.write("\r"); await tick();          // -> server-tools
     const raw = frame(lastFrame);
@@ -421,6 +422,60 @@ describe("McpDialog — onClose", () => {
     instance.stdin.write("\x1b");
     await tick();
     expect(closed).toBe(true);
+  });
+});
+
+// bl10 fix wave 5: `currentServer.name` renders as a raw heading in BOTH the server-menu view (~:209) and
+// the server-tools view (~:236) — unlike every other label in this dialog (root list, tools list, tool
+// detail), these two headings were never flattened or width-truncated. A server name wide enough to wrap, or
+// one carrying an embedded newline, costs its heading more than the one row `mcpToolsVisibleRows()`/the
+// menu's own chrome accounting charge for it, pushing the composed frame past `rows`.
+describe("McpDialog — server-menu/server-tools headings flatten and truncate (bl10 fw5)", () => {
+  // A short, single-line name is the CONTROL: whatever total frame height it produces is what a heading
+  // occupying exactly its one budgeted row looks like. A wide/newline-carrying name must produce the SAME
+  // total height once truncated/flattened — comparing against this control (rather than an arbitrary
+  // hard-coded row count) is what pins "occupies exactly the one row the budgets reserve" without coupling
+  // the test to this dialog's specific chrome arithmetic.
+  //
+  // The raw payload goes through `normalizeMcpServers` (the real `useChat.ts` `fetchMcpServers` codepath),
+  // not a hand-built `McpServerRow` literal: the newline-flattening guarantee now lives SOLELY at that
+  // boundary (fix wave 5), so exercising it any other way would test a value production can never produce.
+  async function heightAt(raw: unknown, view: "server-menu" | "server-tools") {
+    const [server] = normalizeMcpServers([raw]);
+    const instance = render(<McpDialog fetchServers={async () => [server!]} onClose={() => {}} rows={14} columns={40} />);
+    await tick();
+    await waitFor(() => !frame(instance.lastFrame).includes("Loading"));
+    instance.stdin.write("\r"); await tick();                          // -> server-menu
+    if (view === "server-tools") { instance.stdin.write("\r"); await tick(); } // -> server-tools
+    const lines = frame(instance.lastFrame).split("\n").length;
+    instance.unmount();
+    return lines;
+  }
+
+  it("server-menu: an over-wide server name renders as one physical row, same total height as a short name", async () => {
+    const short = await heightAt({ name: "short", status: "connected", scope: "project", tools: [] }, "server-menu");
+    const wide = await heightAt({ name: `wide-server-${"n".repeat(2000)}`, status: "connected", scope: "project", tools: [] }, "server-menu");
+    expect(wide, "an unclipped wide server-menu heading wraps into extra rows the fields-block budget never charges for").toBe(short);
+  });
+
+  it("server-menu: a server name containing a newline renders as one physical row, same total height as its flattened form", async () => {
+    const flat = await heightAt({ name: "linear fake-injected-heading", status: "connected", scope: "project", tools: [] }, "server-menu");
+    const withNewline = await heightAt({ name: "linear\nfake-injected-heading", status: "connected", scope: "project", tools: [] }, "server-menu");
+    expect(withNewline, "an embedded newline in the server-menu heading must not paint as an extra row").toBe(flat);
+  });
+
+  it("server-tools: an over-wide server name renders as one physical row, same total height as a short name", async () => {
+    const tools = Array.from({ length: 20 }, (_, i) => ({ name: `tool-${i}` }));
+    const short = await heightAt({ name: "short", status: "connected", scope: "project", tools }, "server-tools");
+    const wide = await heightAt({ name: `wide-server-${"n".repeat(2000)}`, status: "connected", scope: "project", tools }, "server-tools");
+    expect(wide, "an unclipped wide server-tools heading wraps into extra rows the tools-view budget never charges for").toBe(short);
+  });
+
+  it("server-tools: a server name containing a newline renders as one physical row, same total height as its flattened form", async () => {
+    const tools = [{ name: "t1" }, { name: "t2" }];
+    const flat = await heightAt({ name: "linear fake-injected-heading", status: "connected", scope: "project", tools }, "server-tools");
+    const withNewline = await heightAt({ name: "linear\nfake-injected-heading", status: "connected", scope: "project", tools }, "server-tools");
+    expect(withNewline, "an embedded newline in the server-tools heading must not paint as an extra row").toBe(flat);
   });
 });
 
