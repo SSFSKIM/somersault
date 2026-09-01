@@ -84,6 +84,14 @@ const MIN_MODES = 4;
 const MESSAGE_BUILDER_ANCHOR = "blocked this action:";
 /** The mode-change guard (`guardPermissionModeChange`), by its own unique refusal. */
 const MODE_GUARD_ANCHOR = "Cannot set permission mode to bypassPermissions because the session was not launched";
+/**
+ * The Bash tool's own `acceptEdits` handler auto-allows by BASE COMMAND, from a
+ * list the bundle spells out. Recorded because the mode's documented prose
+ * ("Auto-accept file edit operations") reads as though it covers the file TOOLS
+ * and nothing else — and a W6 scenario that used `mkdir` for its "the Bash half
+ * must still be brokered" arm was silently auto-approved by this list.
+ */
+const ACCEPT_EDITS_SEED = ["mkdir", "rm", "mv"];
 
 interface Chunk {
   file: string;
@@ -212,6 +220,12 @@ export interface PermissionSurfaceFixture {
   };
   /** the mode-change seam's refusals, read off the guard's own body */
   modeGuards: { chunk: string; offset: number; guarded: { mode: string; refusals: string[] }[] };
+  /**
+   * The base commands the Bash tool auto-allows in `acceptEdits`. The mode's
+   * prose does not mention them, and a matrix cell that assumed it covered only
+   * the file tools measured the wrong thing.
+   */
+  acceptEditsBashCommands: { chunk: string; offset: number; commands: string[] };
 }
 
 export function extract(modulesDir = BUNDLE_MODULES, version = ENGINE_VERSION): PermissionSurfaceFixture {
@@ -362,6 +376,23 @@ export function extract(modulesDir = BUNDLE_MODULES, version = ENGINE_VERSION): 
   }
   if (guarded.length === 0) throw new Error("the mode-change guard refuses no mode — its shape moved");
 
+  // ---- 5. the acceptEdits shell-command allowlist ---------------------------
+  let acceptEdits: { chunk: string; offset: number; commands: string[] } | null = null;
+  for (const c of chunks) {
+    for (const a of stringArrays(c)) {
+      if (a.members.length < ACCEPT_EDITS_SEED.length || !ACCEPT_EDITS_SEED.every((m) => a.members.includes(m))) continue;
+      if (acceptEdits === null || a.members.length < acceptEdits.commands.length) {
+        acceptEdits = { chunk: c.file, offset: a.offset, commands: a.members };
+      }
+    }
+  }
+  if (acceptEdits === null) {
+    throw new Error(
+      `no acceptEdits shell allowlist found: no string array carries all of ${ACCEPT_EDITS_SEED.join(", ")}. ` +
+        `The Bash tool's accept-edits handler changed shape — re-derive before trusting the mode's matrix row.`,
+    );
+  }
+
   return {
     engineVersion: version,
     generatedBy: "research/tools/extract-permission-surface.ts",
@@ -390,6 +421,7 @@ export function extract(modulesDir = BUNDLE_MODULES, version = ENGINE_VERSION): 
       builder: { chunk: builderChunk.file, offset: builder.offset },
     },
     modeGuards: { chunk: guardChunk.file, offset: guard.offset, guarded },
+    acceptEditsBashCommands: acceptEdits,
   };
 }
 
@@ -419,6 +451,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`    constructed but not rendered: ${fx.decisionReasons.constructedNotRendered.join(", ") || "none"}`);
   console.log(`    rendered but not constructed: ${fx.decisionReasons.renderedNotConstructed.join(", ") || "none"}`);
   console.log(`  mode-change guard refuses: ${fx.modeGuards.guarded.map((g) => `${g.mode} (${g.refusals.length})`).join(", ")}`);
+  console.log(`  acceptEdits also auto-allows these shell commands: ${fx.acceptEditsBashCommands.commands.join(", ")}`);
 
   if (checkOnly) {
     if (!existsSync(out)) {

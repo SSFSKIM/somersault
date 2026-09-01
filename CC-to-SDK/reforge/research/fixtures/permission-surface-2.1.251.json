@@ -193,5 +193,18 @@
         ]
       }
     ]
+  },
+  "acceptEditsBashCommands": {
+    "chunk": "chunk-fy12d89p.js",
+    "offset": 976010,
+    "commands": [
+      "mkdir",
+      "touch",
+      "rm",
+      "rmdir",
+      "mv",
+      "cp",
+      "sed"
+    ]
   }
 }

@@ -69,6 +69,26 @@ const MKDIR_PROMPT =
   "If the tool is denied, do not retry; reply with exactly DENIED.";
 
 /**
+ * `chmod` for the acceptEdits cell, and the reason is a MEASURED correction to
+ * the mode's own prose.
+ *
+ * Upstream describes `acceptEdits` as "Auto-accept file edit operations", and
+ * the obvious reading is that it covers the file TOOLS. It covers seven shell
+ * commands as well — `mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp`, `sed` — which
+ * the Bash tool's own mode handler auto-allows by base command. The fixture
+ * carries that list (`acceptEditsBashCommands`), derived from the bundle like
+ * every other axis. The first take of this scenario used `mkdir` and its
+ * substance check correctly refused it: the Bash half was auto-approved too, so
+ * the turn graded no asymmetry at all.
+ *
+ * `chmod` mutates (so default mode does not auto-approve it) and is not on the
+ * accept-edits list, which is exactly the pair of properties this cell needs.
+ */
+const CHMOD_PROMPT =
+  "Use the Bash tool exactly once to run exactly `chmod 600 perm.txt`. Do not run anything else and do not use any other tool. " +
+  "If the tool is denied, do not retry; reply with exactly DENIED.";
+
+/**
  * `echo` IS the point in one cell: it is the command default mode approves
  * without asking, so an ASK RULE that forces a prompt for it is the only way to
  * show a rule overriding an auto-approval.
@@ -120,12 +140,18 @@ export const W6_SCENARIOS: Scenario[] = [
     // asymmetric, and one turn tests both halves: the Write must NOT reach the
     // broker and the Bash MUST. A scenario that only wrote a file would pass on
     // an engine that auto-accepted everything.
+    //
+    // The Bash half is `chmod`, not `mkdir`, and the first take is why: the mode
+    // auto-allows seven file-mutating SHELL commands as well as the file tools
+    // (`acceptEditsBashCommands` in the permission-surface fixture), so a `mkdir`
+    // was auto-approved and the turn graded no asymmetry. The substance check
+    // caught it, which is what a substance check is for.
     tag: "perm-accept-edits",
     title: "acceptEdits auto-accepts the Write and still brokers the Bash",
     run: (ctx) =>
       drive(
         `First use the Write tool exactly once to create ${TARGET} containing the single line REFORGE_W6. ` +
-          "Then use the Bash tool exactly once to run exactly `mkdir -p reforge-w6-dir`. Do not combine them and do not use any other tool. " +
+          "Then use the Bash tool exactly once to run exactly `chmod 600 perm.txt`. Do not combine them and do not use any other tool. " +
           "When both are done, reply with exactly BOTH_DONE.",
         { ...baseOptions(ctx), maxTurns: 6, permissionMode: "acceptEdits", canUseTool: broker(ctx) },
       ),
@@ -189,14 +215,22 @@ export const W6_SCENARIOS: Scenario[] = [
         settings: rules({ deny: ["Write"] }),
         canUseTool: broker(ctx),
       }),
+    // MEASURED, and the check says only what the recording supports: a deny RULE
+    // produces NO `permission_denied` system frame. The first take asserted one
+    // and failed. The SDK's own documentation for that message names the
+    // exclusion — denials that resolve before `canUseTool` runs are not covered
+    // by it — and a deny rule is rung 1 of the pre-check's ladder, which is as
+    // far before the broker as a decision can be. So what this cell grades is
+    // the ORDERING claim, which is the one that matters: the rule wins, and it
+    // wins without the host being asked.
     check: (msgs, events) => {
       if (!usedTool(msgs, "Write")) return "the Write was never attempted";
       if (consults(events).some((c) => c.toolName === "Write")) return "the broker was consulted despite a matching deny rule";
       const denial = denials(msgs).find((d) => d.tool_name === "Write");
-      if (!denial) return "no permission_denied frame for the denied Write";
-      if (denial.decision_reason_type !== "rule") {
-        return `the denial's decision_reason_type is ${JSON.stringify(denial.decision_reason_type)}, not "rule"`;
+      if (denial && denial.decision_reason_type !== "rule") {
+        return `a permission_denied frame appeared and its decision_reason_type is ${JSON.stringify(denial.decision_reason_type)}, not "rule"`;
       }
+      if (resultText(msgs).includes("REFORGE_W6")) return "the Write appears to have succeeded despite a matching deny rule";
       return null;
     },
   },
@@ -240,11 +274,22 @@ export const W6_SCENARIOS: Scenario[] = [
         settings: rules({ ask: ["Bash(echo:*)"] }),
         canUseTool: broker(ctx),
       }),
+    // MEASURED: the consult arrives WITHOUT `matchedAskRule`, and that is
+    // upstream's behaviour rather than a defect. The pre-check's ask-rule rung
+    // has two arms — it ANNOTATES a decision the tool was already asking about
+    // (`{...decision, matchedAskRule}`) and it CREATES one when the tool passed
+    // through (`{behavior:"ask", decisionReason:{type:"rule", rule}}`, with no
+    // annotation). `echo` passes through, so this cell takes the second arm. The
+    // first take asserted the field and failed; the annotating arm needs a tool
+    // that asks for its own reason AND a matching ask rule, and it is graded by
+    // `strangle/permissions-parity.test.ts` instead.
+    //
+    // What this cell grades is the override itself, which nothing else can: a
+    // command default mode approves WITHOUT the broker was brokered anyway.
     check: (msgs, events) => {
       if (!usedTool(msgs, "Bash")) return "the Bash call was never attempted";
       const consult = consults(events).find((c) => c.toolName === "Bash");
       if (!consult) return "the ask rule did not force a broker consult — this cell grades nothing without one";
-      if (consult.matchedAskRule === null) return "the consult carried no matchedAskRule, so the host cannot tell a rule forced it";
       return null;
     },
   },
