@@ -130,7 +130,13 @@ method anchors mean some break in the normal case (0.995⁵⁰⁰ ≈ 8% all-sur
 therefore a *transitional* state, not an accumulation target: the ladder's later tiers exist
 partly to keep total anchor count bounded — an S-module absorbs many method splices into one
 interface seam. The ledger tracks live anchor count; a wave that would push it past ~50 without a
-consolidation plan gets flagged at review.
+consolidation plan gets flagged at review. Non-prose STRUCTURAL anchors — property-name fragments
+and operator sequences, admitted when a target emits no prose of its own — are admissible but
+measurably weaker per pin than prose: C6's two (`?.isNonInteractive`, `].filter(Boolean)}`) are
+unique today only because the chunk split scoped them per file, and occur 17× and 2× in the
+single-file payloads of three of the four prior pins, so each would have needed a `coLiteral` scope
+or a different target there; the failure mode is loud availability churn at the next bump rather
+than a silent mis-splice, and re-anchoring them is the expected cost of using them, not a defect.
 
 ### 2.2 S-chunk — whole-chunk ownership, priced honestly
 

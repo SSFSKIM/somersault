@@ -251,3 +251,33 @@ re-ordered to drain before returning, which moves a drain inside terminal handli
 re-argued against every ordering cell Task 2 pinned. Neither buys a correctness change; revisit if a
 driving case appears — an arrival genuinely lost across a compaction, or a warn late enough to confuse a
 gate run.
+
+---
+
+## 2026-09-01 — reforge's two structural splice anchors carry a re-anchoring cost at every pin bump
+
+**Source:** the C6 boundary review (finding 1, the only one of five not fixed in the fix wave) ·
+`reforge/strangle/manifest.ts`, rows `identity-prompt` and `context-prompt-lines`.
+
+**What:** the splice doctrine locates a target by a true-substring-unique string literal, and prose
+literals are what made that bet survive ten upstream versions. Two C6 rows have no prose of their own
+to anchor on and use structural anchors instead: `?.isNonInteractive` (a property-name fragment) and
+`].filter(Boolean)}` (an operator sequence). Both are unique at the pinned 2.1.251 only because the
+ESM chunk split scoped uniqueness per chunk file. Measured against the earlier bundles: in the
+single-file payloads of 2.1.234, 2.1.236 and 2.1.241 the same two strings occur 17 times and 2 times
+respectively, so at three of the four prior pins neither would have resolved without a `coLiteral`
+scope or a different target.
+
+**Cost:** availability churn at pin bumps, not correctness. A structural anchor that stops being unique
+inside its chunk — or that a refactor moves — fails the build loudly (`strangle/anchor.ts` refuses a
+non-unique anchor, and the target-identity guard refuses a drifted one), so the failure mode is a
+blocked bump that someone re-anchors, never a silent mis-splice into the wrong node. The expected bill
+is one re-anchoring per structural row per bump that touches its neighbourhood.
+
+**Why deferred:** the alternative is not a better anchor, it is a different ownership tier. These two
+targets emit no prose at all, so there is nothing stronger to anchor on short of promoting them out of
+the method tier into an S-module seam — which is what §2.1's anchor budget already schedules, on the
+budget's own timetable rather than on this entry's. Re-anchoring is the priced cost of using a
+structural anchor, and §2.1 now says so. Revisit if the structural-anchor count grows beyond a handful,
+or if a bump ever produces a resolution that is wrong rather than absent — the second would falsify the
+loud-failure argument this entry rests on.
