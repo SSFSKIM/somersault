@@ -209,6 +209,51 @@ export const ATTESTED: AttestedModule[] = [
       "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another. The oracle also asserts the helper is called POSITIONALLY with three arguments rather than with a request object, " +
       "which is what makes this row's port a third execution path rather than a differently-named executor.",
   },
+
+  // ---- W6 / C9: the permission subsystem -----------------------------------
+  // Measured on the scenarios that MOVE each module's branches rather than on
+  // its whole covering list: the pre-check runs on every tool call in every
+  // mode, so a handful of shapes reaches far more of it than a long list of
+  // repetitions would.
+  //
+  // The exclusion families here are wider than any previous wave's, and the
+  // reason is structural rather than incidental: this subsystem's job is to
+  // decide, and a decision that is REACHED and passes leaves the same transcript
+  // as one that was never reached. Every excluded arm below names
+  // `strangle/permissions-parity.test.ts` and the block inside it that runs the
+  // arm — 2,496 comparisons with 47 controls, over the fixture's own six modes,
+  // three rule behaviours and eleven decisionReason kinds.
+  { module: "permission-precheck", row: "permission-precheck", scenarios: ["bash-tool", "file-tools", "permission-broker", "permission-bag"] },
+  { module: "rule-based-permissions", row: "rule-based-permissions", scenarios: ["perm-hook-rewrite"] },
+  { module: "allow-rule-decision", row: "allow-rule-decision", scenarios: ["perm-rule-allow"] },
+  { module: "permission-message", row: "permission-message", scenarios: ["perm-hook-rewrite"] },
+  {
+    module: "classifier-streak",
+    row: "classifier-streak",
+    scenarios: ["bash-tool", "permission-broker"],
+  },
+  { module: "mode-change-guard", row: "mode-change-guard", scenarios: ["runtime-setters", "perm-mode-switch"] },
+  { module: "mode-transition", row: "mode-transition", scenarios: ["runtime-setters", "perm-mode-switch"] },
+  { module: "set-permission-mode", row: "set-permission-mode", scenarios: ["runtime-setters", "perm-mode-switch"] },
+  { module: "permission-request-hook-decision", row: "permission-request-hook-decision", scenarios: ["permission-broker", "hooks-permission", "perm-hook-deny"] },
+  { module: "broker-response-map", row: "broker-response-map", scenarios: ["permission-bag", "perm-broker-updates"] },
+  { module: "broker-permission-updates", row: "broker-permission-updates", scenarios: ["permission-bag", "perm-broker-updates"] },
+  {
+    module: "control-response-success",
+    row: "control-response-success",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "one object literal, three levels deep — no branch-forming construct at all, so its AST inventory is legitimately empty rather than under-reported. " +
+      "What grades it is strangle/permissions-parity.test.ts, which builds the envelope from the pinned upstream body over six payload shapes and holds two controls on the NESTING: a request_id lifted to the top level and a payload spread into the response rather than nested under it. Both are wrong in a way that does not error — the SDK matches a response to its request by request_id and by nothing else, so a mis-nested envelope hangs.",
+  },
+  {
+    module: "control-response-error",
+    row: "control-response-error",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "the success envelope's twin, and straight-line for the same reason. " +
+      "What grades it is strangle/permissions-parity.test.ts, which runs it over the same six payload shapes AND over every refusal the mode-change guard can produce — read out of research/fixtures/permission-surface-<pin>.json, so a guard that gains a refusal upstream widens the case list — plus a control on reusing the success subtype.",
+  },
 ];
 
 export interface Exclusion {

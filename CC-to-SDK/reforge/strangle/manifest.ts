@@ -1214,7 +1214,7 @@ export const SPLICES: Splice[] = [
         derive: pick("permission-precheck", "findSafetyCheckReason", new RegExp(`\\?(${ID})\\(${ID}\\.decisionReason,${ID}\\):void 0`)),
       },
     ],
-    coverage: ["permission-broker", "permission-bag"],
+    coverage: ["bash-tool", "permission-bag"],
   },
 
   {
@@ -1346,7 +1346,7 @@ export const SPLICES: Splice[] = [
         ),
       },
     ],
-    coverage: [],
+    coverage: ["perm-hook-rewrite"],
   },
 
   {
@@ -1378,45 +1378,28 @@ export const SPLICES: Splice[] = [
         derive: pick("allow-rule-decision", "crashReason", new RegExp(`\\{type:"other",reason:(${ID})\\}`)),
       },
     ],
-    coverage: [],
+    coverage: ["perm-rule-allow"],
   },
 
-  {
-    // Was this ask FORCED by a user's own ask rule? Six call sites, zero free
-    // variables, self-recursive.
-    //
-    // ANCHOR: the fragment must carry the RETURN as well as the comparison —
-    // `rule.ruleBehavior==="ask"` alone has six carriers in four chunks, two of
-    // them one-parameter top-level functions in this one (this and the MCP-policy
-    // variant beside it), which the signature cannot separate. With `)return!0`
-    // it is unique bundle-wide.
-    name: "ask-rule-reason",
-    target: "free-function",
-    signature: { params: 1, ancestry: ["SourceFile"] },
-    anchor: 'rule.ruleBehavior==="ask")return!0',
-    fn: "isAskRuleDrivenReason",
-    // `captures: []` — the positive claim "verified zero free variables". The
-    // recursive call resolves to the function's own binding, which the scope
-    // analysis treats as bound rather than free.
-    captures: [],
-    coverage: [],
-  },
-
-  {
-    // The objection no permission mode may override. Seventeen call sites — the
-    // most-called function this wave owns — and zero free variables.
-    //
-    // ANCHOR: `type==="safetyCheck")return ` is unique bundle-wide. Structural,
-    // and it is the body's one distinguishing shape: every other safety-check
-    // test in the graph compares without returning the reason.
-    name: "safety-check-reason",
-    target: "free-function",
-    signature: { params: 2, ancestry: ["SourceFile"] },
-    anchor: 'type==="safetyCheck")return ',
-    fn: "findSafetyCheckReason",
-    captures: [],
-    coverage: [],
-  },
+  // TWO FUNCTIONS THIS WAVE OWNS AND DOES NOT SPLICE, recorded here because the
+  // absence is a measurement rather than an oversight. `Ree`
+  // (`isAskRuleDrivenReason`, 6 call sites) and `Fy` (`findSafetyCheckReason`,
+  // 17 call sites) are both takeable — each has a unique anchor and zero free
+  // variables — and each was spliced, built and solo-sabotaged. NEITHER turned a
+  // scenario red, and the reason is the same for both: after the pre-check and
+  // the rule checker take their own copies, upstream's remaining callers are the
+  // mode-aware decision body's auto/dontAsk arms (gate-dead under §3.3) and the
+  // broker's ask path, where the corpus's decisions carry no `decisionReason` at
+  // all — so a finder that never finds anything returns exactly what the healthy
+  // one does.
+  //
+  // That is C7's doctrine one step out: a single-caller pure helper cannot be a
+  // live splice, and neither can a many-caller one whose remaining callers are
+  // all dark. Both are owned as `pure-helper` captures in `shared/` — the same
+  // treatment the hook fan-out rule and the last-assistant-message pair get —
+  // where `strangle/permissions-parity.test.ts` grades them against their own
+  // upstream bytes BEFORE either body is built on them (C7's other rule), and
+  // where upstream's copies stay untouched and stay live for their own callers.
 
   {
     // The sentence a permission request is rendered as. Forty-five call sites,
@@ -1464,7 +1447,7 @@ export const SPLICES: Splice[] = [
         derive: pick("permission-message", "modeTitle", new RegExp(`Current permission mode \\(\\$\\{(${ID})\\(${ID}\\.mode\\)\\}\\)`)),
       },
     ],
-    coverage: [],
+    coverage: ["perm-hook-rewrite"],
   },
 
   {
@@ -1496,7 +1479,7 @@ export const SPLICES: Splice[] = [
         derive: pick("classifier-streak", "sdkDialogHostActive", new RegExp(`requestDialog!==void 0&&!(${ID})\\(\\)`)),
       },
     ],
-    coverage: [],
+    coverage: ["plain", "permission-broker"],
   },
 
   {
@@ -1555,7 +1538,7 @@ export const SPLICES: Splice[] = [
         ),
       },
     ],
-    coverage: [],
+    coverage: ["runtime-setters", "perm-mode-walk"],
   },
 
   {
@@ -1630,7 +1613,7 @@ export const SPLICES: Splice[] = [
         derive: pick("mode-transition", "restoreDangerousPermissions", new RegExp(`\\(!0\\),${ID}=(${ID})\\(${ID}\\);if\\(${ID}==="plan"`)),
       },
     ],
-    coverage: [],
+    coverage: ["perm-mode-walk"],
   },
 
   {
@@ -1666,7 +1649,7 @@ export const SPLICES: Splice[] = [
         derive: pick("set-permission-mode", "modeChanged", new RegExp(`setImmediate\\(\\(\\)=>\\{(${ID})\\.emit\\(\\)\\}\\)`)),
       },
     ],
-    coverage: [],
+    coverage: ["perm-mode-walk"],
   },
 
   {
@@ -1753,7 +1736,7 @@ export const SPLICES: Splice[] = [
         ),
       },
     ],
-    coverage: ["permission-broker", "permission-bag"],
+    coverage: ["hooks-permission", "perm-hook-deny"],
   },
 
   {
@@ -1800,7 +1783,7 @@ export const SPLICES: Splice[] = [
         derive: pick("broker-response-map", "log", new RegExp(`\\.interrupt\\)(${ID})\\(\``)),
       },
     ],
-    coverage: ["permission-broker", "permission-bag"],
+    coverage: ["permission-bag"],
   },
 
   {
@@ -1844,7 +1827,7 @@ export const SPLICES: Splice[] = [
         derive: pick("broker-permission-updates", "toolPermissionContext", new RegExp(`\\?${ID}\\(${ID},${ID},(${ID})\\(${ID}\\)\\):${ID}\\}`)),
       },
     ],
-    coverage: ["permission-broker", "permission-bag"],
+    coverage: ["perm-broker-updates"],
   },
 
   {
@@ -1864,7 +1847,7 @@ export const SPLICES: Splice[] = [
     siblings: 3,
     fn: "controlResponseSuccess",
     captures: [],
-    coverage: [],
+    coverage: ["plain"],
   },
 
   {
@@ -1881,7 +1864,7 @@ export const SPLICES: Splice[] = [
     siblings: 2,
     fn: "controlResponseError",
     captures: [],
-    coverage: [],
+    coverage: ["perm-mode-walk"],
   },
 
   // ---- system-prompt assembly (subsystem/environment-and-system-prompt) ----

@@ -41,8 +41,8 @@
 // `f?.()` is written `!= null &&`: an optional CALL cannot be branch-recorded
 // without detaching the method from its receiver, and the loose null test is its
 // exact semantics.
-import { isAskRuleDrivenReason } from "../ask-rule-reason/reference.js";
-import { findSafetyCheckReason } from "../safety-check-reason/reference.js";
+import { isAskRuleDrivenReason } from "../shared/ask-rule-reason.js";
+import { findSafetyCheckReason } from "../shared/safety-check-reason.js";
 
 /**
  * @param tool    the tool being decided

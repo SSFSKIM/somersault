@@ -87,6 +87,15 @@ for (const [label, argv] of [
   // this fixture and a pin that adds, drops or re-points an event reddens here
   // rather than silently narrowing what gets measured.
   ["hook-registry fixture matches the pin", ["research/tools/extract-hook-registry.ts", "--check"]],
+  // The permission wave's population under test, and the fourth pin-keyed
+  // fixture. The matrix W6 owns has three axes — six modes, three rule
+  // behaviours, eleven decisionReason kinds — and each is derived from the
+  // bundle rather than written down: the mode set comes from FOUR independent
+  // enumerations that must agree with each other and be confirmed against the
+  // names the graph compares against, and the decisionReason axis is the message
+  // builder's own case list. A pin that adds a mode, re-guards one or renames a
+  // rule behaviour reddens here rather than silently narrowing the matrix.
+  ["permission-surface fixture matches the pin", ["research/tools/extract-permission-surface.ts", "--check"]],
   // The other pin-keyed fixture, and the only §5 signal that can see a
   // subsystem move with every export inventory, anchor and footprint hash
   // byte-identical: the names the engine's barrel chunks re-export its own
@@ -190,6 +199,19 @@ for (const [label, script] of [
   // yielded sequence, the return value, the hook RECORD and the full port trace,
   // since the executor request is where one dispatcher differs from another.
   ["hook-dispatch parity vs the pinned bundle", "strangle/hooks-parity.test.ts"],
+  // The same oracle for W6's permission subsystem, where the corpus/domain gap is
+  // the widest in the campaign so far — and structural rather than incidental.
+  // This subsystem's job is to DECIDE, and a rung that was reached and passed
+  // leaves the same transcript as one that was never reached, so most of a
+  // twelve-rung ladder is unrecordable by construction. Two more families are
+  // out of reach for reasons no scenario can fix: `auto` mode is gate-guarded and
+  // §3.3 pins every gate disabled, and the mode transition has thirty ordered
+  // pairs a corpus would need thirty recordings for. It compares the PORT TRACE
+  // as well as the value, since two refusals returning the same thing can differ
+  // in nothing but which ports ran; and it locates its subject with the BUILD's
+  // own resolveAnchor/selectExcision/assertSignature, so an oracle and a build
+  // cannot grade different functions.
+  ["permission-subsystem parity vs the pinned bundle", "strangle/permissions-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);

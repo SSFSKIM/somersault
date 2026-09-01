@@ -63,8 +63,8 @@
 // four other callers respectively, so they stay live and are graded against
 // these in `strangle/permissions-parity.test.ts` before this body is built on
 // them (C7's rule: never bind an upstream body to the implementation it grades).
-import { isAskRuleDrivenReason } from "../ask-rule-reason/reference.js";
-import { findSafetyCheckReason } from "../safety-check-reason/reference.js";
+import { isAskRuleDrivenReason } from "../shared/ask-rule-reason.js";
+import { findSafetyCheckReason } from "../shared/safety-check-reason.js";
 
 /**
  * @param tool     the tool being decided

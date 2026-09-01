@@ -415,37 +415,64 @@ export const W6_SCENARIOS: Scenario[] = [
     // THE MODE-CHANGE SEAM, over the control channel rather than at spawn — the
     // two paths reach different code, and this is the one the guard lives on.
     //
-    // Four transitions in one session, chosen to walk the arms rather than the
-    // modes: default -> acceptEdits (an ordinary move), acceptEdits -> plan (the
-    // arm that rewrites the context and returns early), plan -> default (the arm
-    // that sets the exited-plan flag and clears the saved state), and finally a
-    // mode that does not parse (the guard's first refusal, which the SDK surfaces
-    // as a rejected promise carrying the error envelope's own sentence).
-    tag: "perm-mode-switch",
-    title: "set_permission_mode walks the guard's arms, and refuses a mode that does not parse",
+    // EVERY MODE CHANGE HERE IS FOLLOWED BY A TOOL CALL, and that is the whole
+    // design. The first draft walked four modes and then said READY, and solo
+    // sabotage measured all three of the seam's splices INERT on it: a session
+    // can be told to change mode, believe it did, apply none of the transition's
+    // side effects, and produce a byte-identical transcript — as long as nothing
+    // afterwards asks it to decide anything. C8's lesson one subsystem over
+    // ("check that your own options did not switch the subsystem off") has a
+    // sibling here: check that the turn after the change asks the subsystem a
+    // question.
+    //
+    // So the walk is chosen for the DECISIONS it changes, not for the modes it
+    // visits:
+    //
+    //   launch bypassPermissions   the flag is a launch fact, and the transition
+    //     (with the flag)          is the only thing that carries it forward
+    //   -> plan, then a Write      ALLOWED — the pre-check's rung 11 has a
+    //                              second disjunct nothing else in the corpus
+    //                              reaches: plan mode with bypass AVAILABLE
+    //                              allows. A transition that rebuilt the context
+    //                              instead of carrying it forward loses the
+    //                              launch fact and this becomes a refusal.
+    //   -> dontAsk, then a Write   DENIED, with a decision reason naming the
+    //                              mode. A setter that reported success without
+    //                              applying anything would still be in plan here
+    //                              and would allow it.
+    //   -> a mode that does not    the guard's first refusal, surfaced by the SDK
+    //      parse                   as a rejected promise carrying the error
+    //                              envelope's own sentence.
+    tag: "perm-mode-walk",
+    title: "set_permission_mode changes what the next tool call decides, twice, and then refuses a mode that does not parse",
     run: async (ctx) => {
       const sdk = await import("@anthropic-ai/claude-agent-sdk");
       const { pushable, userMessage } = await import("../src/harness.js");
       const input = pushable<ReturnType<typeof userMessage>>();
       const messages: unknown[] = [];
-      input.push(userMessage("Reply with exactly ONE."));
-      const q = sdk.query({ prompt: input, options: { ...baseOptions(ctx), allowedTools: [], permissionMode: "default" } });
-      const walk = ["acceptEdits", "plan", "default"] as const;
+      input.push(userMessage("Reply with exactly READY."));
+      const q = sdk.query({
+        prompt: input,
+        options: { ...baseOptions(ctx), maxTurns: 8, permissionMode: "bypassPermissions", dangerouslySkipPermissions: true },
+      });
+      const turns = [writePrompt(join(SANDBOX, "plan-mode.txt")), writePrompt(join(SANDBOX, "dont-ask.txt"))];
       let results = 0;
       for await (const m of q) {
         messages.push(m);
         if ((m as { type?: string }).type !== "result") continue;
         results++;
-        if (results <= walk.length) {
-          const mode = walk[results - 1];
-          await q.setPermissionMode(mode);
-          ctx.collect("setPermissionMode", { mode, accepted: true });
-          input.push(userMessage(`Reply with exactly ${["TWO", "THREE", "FOUR"][results - 1]}.`));
+        if (results === 1) {
+          await q.setPermissionMode("plan");
+          ctx.collect("setPermissionMode", { mode: "plan", accepted: true });
+          input.push(userMessage(turns[0]));
           continue;
         }
-        // The refusal. The guard cannot parse it, so the engine answers with the
-        // error envelope and the SDK rejects — the only place in the corpus
-        // where a control_response error is the thing being graded.
+        if (results === 2) {
+          await q.setPermissionMode("dontAsk");
+          ctx.collect("setPermissionMode", { mode: "dontAsk", accepted: true });
+          input.push(userMessage(turns[1]));
+          continue;
+        }
         let refused: string | null = null;
         try {
           await q.setPermissionMode("reforge-not-a-mode" as never);
@@ -458,12 +485,19 @@ export const W6_SCENARIOS: Scenario[] = [
       return messages;
     },
     check: (msgs, events) => {
-      const setters = events.filter((e) => (e as { event?: string }).event === "setPermissionMode").map((e) => (e as { payload: Record<string, unknown> }).payload);
-      if (setters.length !== 4) return `expected four mode changes, saw ${setters.length}`;
-      const bad = setters[3];
+      const setters = events
+        .filter((e) => (e as { event?: string }).event === "setPermissionMode")
+        .map((e) => (e as { payload: Record<string, unknown> }).payload);
+      if (setters.length !== 3) return `expected three mode changes, saw ${setters.length}`;
+      const bad = setters[2];
       if (bad.accepted !== false) return "the guard ACCEPTED a mode that does not parse — its first refusal did not fire";
       if (bad.refusedWithMessage !== true) return "the refusal carried no message, so the error envelope's payload is ungraded";
-      if (resultsOf(msgs).length !== 4) return `the session did not survive the mode walk (results: ${resultsOf(msgs).length})`;
+      if (!usedTool(msgs, "Write")) return "no Write was attempted, so no mode change changed a decision";
+      const denied = denials(msgs);
+      if (denied.length === 0) return "no permission_denied frame: the dontAsk turn did not refuse, so the setter's effect is ungraded";
+      if (denied.some((d) => d.decision_reason_type !== "mode")) {
+        return `a denial's decision_reason_type is ${JSON.stringify(denied.map((d) => d.decision_reason_type))}, and dontAsk's must be "mode"`;
+      }
       return null;
     },
   },

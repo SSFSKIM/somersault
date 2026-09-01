@@ -19,8 +19,9 @@ import { W2_SCENARIOS } from "../w2/scenarios.js";
 import { W3_SCENARIOS } from "../w3/scenarios.js";
 import { W4_SCENARIOS } from "../w4/scenarios.js";
 import { W5_SCENARIOS } from "../w5/scenarios.js";
+import { W6_SCENARIOS } from "../w6/scenarios.js";
 
-const CORPUS_SIZE = M1_SCENARIOS.length + M2C_SCENARIOS.length + M3_SCENARIOS.length + W1_SCENARIOS.length + W2_SCENARIOS.length + W3_SCENARIOS.length + W4_SCENARIOS.length + W5_SCENARIOS.length;
+const CORPUS_SIZE = M1_SCENARIOS.length + M2C_SCENARIOS.length + M3_SCENARIOS.length + W1_SCENARIOS.length + W2_SCENARIOS.length + W3_SCENARIOS.length + W4_SCENARIOS.length + W5_SCENARIOS.length + W6_SCENARIOS.length;
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";

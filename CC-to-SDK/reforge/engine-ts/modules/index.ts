@@ -73,8 +73,6 @@ import * as permissionDecision from "../../strangle/modules/permission-decision/
 import * as permissionPrecheck from "../../strangle/modules/permission-precheck/reference.js";
 import * as ruleBasedPermissions from "../../strangle/modules/rule-based-permissions/reference.js";
 import * as allowRuleDecision from "../../strangle/modules/allow-rule-decision/reference.js";
-import * as askRuleReason from "../../strangle/modules/ask-rule-reason/reference.js";
-import * as safetyCheckReason from "../../strangle/modules/safety-check-reason/reference.js";
 import * as permissionMessage from "../../strangle/modules/permission-message/reference.js";
 import * as classifierStreak from "../../strangle/modules/classifier-streak/reference.js";
 import * as modeChangeGuard from "../../strangle/modules/mode-change-guard/reference.js";
@@ -204,8 +202,6 @@ const OWNED: [string, string, unknown][] = [
   ["permission-precheck", "subsystem/permissions", permissionPrecheck.permissionPrecheck],
   ["rule-based-permissions", "subsystem/permissions", ruleBasedPermissions.checkRuleBasedPermissions],
   ["allow-rule-decision", "subsystem/permissions", allowRuleDecision.allowRuleDecision],
-  ["ask-rule-reason", "subsystem/permissions", askRuleReason.isAskRuleDrivenReason],
-  ["safety-check-reason", "subsystem/permissions", safetyCheckReason.findSafetyCheckReason],
   ["permission-message", "subsystem/permissions", permissionMessage.permissionMessage],
   ["classifier-streak", "subsystem/permissions", classifierStreak.classifierOnlyStreakActive],
   ["mode-change-guard", "subsystem/permissions", modeChangeGuard.guardPermissionModeChange],

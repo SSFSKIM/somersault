@@ -71,8 +71,6 @@ import { readFixture } from "../research/tools/extract-permission-surface.js";
 import "./modules/permission-precheck.js";
 import "./modules/rule-based-permissions.js";
 import "./modules/allow-rule-decision.js";
-import "./modules/ask-rule-reason.js";
-import "./modules/safety-check-reason.js";
 import "./modules/permission-message.js";
 import "./modules/classifier-streak.js";
 import "./modules/mode-change-guard.js";
@@ -84,8 +82,8 @@ import "./modules/broker-permission-updates.js";
 import "./modules/control-response-success.js";
 import "./modules/control-response-error.js";
 import { pluralize } from "./modules/shared/pluralize.js";
-import { isAskRuleDrivenReason } from "./modules/ask-rule-reason/reference.js";
-import { findSafetyCheckReason } from "./modules/safety-check-reason/reference.js";
+import { isAskRuleDrivenReason } from "./modules/shared/ask-rule-reason.js";
+import { findSafetyCheckReason } from "./modules/shared/safety-check-reason.js";
 
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => unknown> }).__reforge!;
 
@@ -137,8 +135,41 @@ for (const f of readdirSync(BUNDLE_MODULES)) {
   if (f.endsWith(".js")) BUNDLE.set(join(BUNDLE_MODULES, f), readFileSync(join(BUNDLE_MODULES, f), "utf8"));
 }
 
+/**
+ * The two owned pure helpers this wave does NOT splice (see the manifest's note
+ * where their rows would be): both are takeable, both were built and
+ * solo-sabotaged, and neither turned a scenario red, so they are `shared/`
+ * helpers rather than manifest rows.
+ *
+ * They still have to be graded against upstream's bytes — that is the whole
+ * bargain §2.4 strikes for a `pure-helper` — so they are extracted by the SAME
+ * three functions the build uses, from a synthetic row rather than a real one.
+ * Locating them any other way would reintroduce the second transcription this
+ * file exists to avoid.
+ */
+const SHARED_HELPERS: Splice[] = [
+  {
+    name: "ask-rule-reason",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: 'rule.ruleBehavior==="ask")return!0',
+    fn: "isAskRuleDrivenReason",
+    captures: [],
+    coverage: [],
+  },
+  {
+    name: "safety-check-reason",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: 'type==="safetyCheck")return ',
+    fn: "findSafetyCheckReason",
+    captures: [],
+    coverage: [],
+  },
+];
+
 const splice = (name: string): Splice => {
-  const sp = SPLICES.find((s) => s.name === name);
+  const sp = SPLICES.find((s) => s.name === name) ?? SHARED_HELPERS.find((s) => s.name === name);
   if (!sp) throw new Error(`no manifest row named ${name}`);
   return sp;
 };

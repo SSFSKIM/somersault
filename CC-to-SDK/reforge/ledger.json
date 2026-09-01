@@ -3281,23 +3281,163 @@
               "sha256": "41f938a24bc216afff626c7e56bfebf410e691070df78ad97bfd90814d047bb0"
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1052818,
+            "end": 1055231,
+            "sha256": "73d257e0e59f8771707c5eb0daa31ef483a52805544be15458814f97fd4e44a0"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1051387,
+            "end": 1052818,
+            "sha256": "b6d864854e084389f36fe9e5a9b9a62b7e96f253873931ec8210a23a2a7a58a1"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1050818,
+            "end": 1051321,
+            "sha256": "f0456d70b4f6b9897c1e0965a51a53cb2272a26764bc31bef52c0c61891baf84"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1031335,
+            "end": 1032707,
+            "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1029607,
+            "end": 1029669,
+            "sha256": "943b8a1c282308620de508d5a1955225829d14f02de4fd5687d4a2d6760a81b7"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1852975,
+            "end": 1853583,
+            "sha256": "cd18af0f957de1a27d71b759ef768f7dc00ca90c2b7498c43d6e9bf7352a9746"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1852539,
+            "end": 1852975,
+            "sha256": "3cb8c80b2d8a278c33d03644a54fea9d9154c78d5815c62672ca949143733b4e"
+          }
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1853583,
+            "end": 1853770,
+            "sha256": "51279901b52b1e6ae4ddde60611f06c58e90c251678cd3f3826c2cd329dd0e16"
+          }
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "target": {
+            "start": 34626,
+            "end": 35918,
+            "sha256": "bca76483c81c2c46c1b598e698ee4a9ccad7f914abbc16ef69432d8706e88e06"
+          }
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "target": {
+            "start": 3748,
+            "end": 4345,
+            "sha256": "aca9be6071dc8f7052679ef4a841868032dd81746a8e83d6e7bc19884c17943c"
+          }
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "target": {
+            "start": 3525,
+            "end": 3748,
+            "sha256": "a7f23698d7e5e095745b32ce41dc2557959f1ebbcff429122805c59842008786"
+          }
         }
       ],
       "evidence": [
         "strangle/manifest.ts:permission-decision",
+        "strangle/manifest.ts:permission-precheck",
+        "strangle/manifest.ts:rule-based-permissions",
+        "strangle/manifest.ts:allow-rule-decision",
+        "strangle/manifest.ts:permission-message",
+        "strangle/manifest.ts:classifier-streak",
+        "strangle/manifest.ts:mode-change-guard",
+        "strangle/manifest.ts:mode-transition",
+        "strangle/manifest.ts:set-permission-mode",
+        "strangle/manifest.ts:permission-request-hook-decision",
+        "strangle/manifest.ts:broker-response-map",
+        "strangle/manifest.ts:broker-permission-updates",
+        "strangle/permissions-parity.test.ts",
+        "research/fixtures/permission-surface-2.1.251.json",
         "scenario:permission-broker",
-        "scenario:permission-bag"
+        "scenario:permission-bag",
+        "scenario:runtime-setters",
+        "scenario:bash-tool",
+        "scenario:file-tools",
+        "scenario:hooks-permission",
+        "scenario:perm-accept-edits",
+        "scenario:perm-plan-mode",
+        "scenario:perm-dont-ask",
+        "scenario:perm-rule-deny",
+        "scenario:perm-rule-allow",
+        "scenario:perm-rule-ask",
+        "scenario:perm-bypass-deny-rule",
+        "scenario:perm-hook-rewrite",
+        "scenario:perm-hook-deny",
+        "scenario:perm-broker-updates",
+        "scenario:perm-mode-walk"
       ],
-      "note": "C5x's arrow-initializer spike owns the chain's deny-stamping link (upstream kye, hasPermissionsToUseToolWithSink): a deny from the decision body is stamped with where it was decided, everything else passes through. The 11.6 KB mode-aware decision body it delegates to (von) stays a port and stays W6's — the W5-W7 scout measured it S-module-shaped. No outward edge: the port's far side is inside this same row."
+      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: eleven splices here plus C5x's deny-stamping link, two owned pure helpers in shared/ (the ask-rule predicate and the safety-check finder — both takeable, both measured INERT under solo sabotage because their remaining upstream callers are gate-dead, so they are captures rather than rows), and two control_response envelopes recorded on subsystem/control-protocol. Graded by strangle/permissions-parity.test.ts (2,496 comparisons, 47 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter — a §2.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
     },
     {
       "id": "subsystem/control-protocol",
       "kind": "subsystem",
       "title": "Control-protocol switch (control_request/control_response subtypes)",
       "wave": "C10",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "target": {
+            "start": 35955,
+            "end": 36057,
+            "sha256": "66c451811090e7926f797c24b6148a3c87498ea14cf6bd859e8314549bf352c8"
+          }
+        },
+        {
+          "chunk": "chunk-g1qrzvef.js",
+          "target": {
+            "start": 36057,
+            "end": 36154,
+            "sha256": "06de82f288186c1c3ab5f0aa9ebe5612cc3def421c09a56a67df8ebeef6f9fd5"
+          }
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:control-response-success",
+        "strangle/manifest.ts:control-response-error",
+        "strangle/permissions-parity.test.ts",
+        "scenario:plain"
+      ],
+      "note": "W6 took the two response ENVELOPES ahead of W7, because the can_use_tool round trip is the only control request the permission chain itself issues and leaving the return leg unowned would have stopped that chain's ownership mid-round-trip. Sixteen call sites between them, zero free variables each, and every headless control_response passes through one or the other — `initialize` is the first request of every SDK-driven run, so sabotaging either reddens the whole corpus. What W7 inherits is the REQUEST leg: the 55-arm subtype dispatch inside runHeadless and the named handlers its live arms delegate to."
     },
     {
       "id": "subsystem/moat-tools",
