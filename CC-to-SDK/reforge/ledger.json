@@ -3288,7 +3288,400 @@
             "start": 1052818,
             "end": 1055231,
             "sha256": "73d257e0e59f8771707c5eb0daa31ef483a52805544be15458814f97fd4e44a0"
-          }
+          },
+          "captures": [
+            {
+              "name": "Ze",
+              "as": "AbortError",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2277,
+              "declEnd": 2279,
+              "sha256": "23e8cb6b17006b6fc5d07b21291408a42922d424162e9d931982e67c09db1af3",
+              "from": {
+                "chunk": "chunk-qr1avfxy.js",
+                "exportedAs": "Ze",
+                "declStart": 858,
+                "declEnd": 929,
+                "sha256": "0972d933991bcd6e4002ee3f76173e245dcb6071288586803429264230134de4"
+              }
+            },
+            {
+              "name": "he",
+              "as": "toolPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16303,
+              "declEnd": 16305,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "_s",
+              "as": "matchedToolDenyRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13002,
+              "declEnd": 13004,
+              "sha256": "6dad31a34f8d6380d47398020956858dc21b18d9eac45db9cceb29389eecacf8",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "_s",
+                "declStart": 6480,
+                "declEnd": 6628,
+                "sha256": "57ddd9f15290918a95e896ea5532a69cbca58d3f4e7e57f88c37cf1b37433345"
+              }
+            },
+            {
+              "name": "JF",
+              "as": "matchedInputRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13019,
+              "declEnd": 13021,
+              "sha256": "975419bdbd039f3d41a8912a4c1a414886a0153d5e410e422fa46a064a8a644d",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "JF",
+                "declStart": 7461,
+                "declEnd": 7900,
+                "sha256": "3cf2feaa37b1d5e1c2815fde7f486f7c088cdbeffbe6996e2f798fad289cdb89"
+              }
+            },
+            {
+              "name": "jg",
+              "as": "matchedToolAllowRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13012,
+              "declEnd": 13014,
+              "sha256": "f51aeff965a68e6abedade9e440808735677831677c7c4db564e5db54a083c93",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "jg",
+                "declStart": 7113,
+                "declEnd": 7261,
+                "sha256": "088e94647caf8818d10e4743830a783d9663e694db0460e17aa2e1bcd19aead0"
+              }
+            },
+            {
+              "name": "nEe",
+              "as": "denyRuleMessage",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13015,
+              "declEnd": 13018,
+              "sha256": "894e0fa918c25039f76326bc045391a70b68c3a46cd64adb17d2fc69761e1095",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "nEe",
+                "declStart": 7363,
+                "declEnd": 7461,
+                "sha256": "63e5d413a5c3e72ea2f500a3cc394ad9a08d980b2b4020298cd400489961e8a4"
+              }
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "y7e",
+              "as": "allowRuleDecision",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050818,
+              "declEnd": 1051321,
+              "sha256": "f0456d70b4f6b9897c1e0965a51a53cb2272a26764bc31bef52c0c61891baf84"
+            },
+            {
+              "name": "R_e",
+              "as": "classifyToolError",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050663,
+              "declEnd": 1050818,
+              "sha256": "b50b2487ff41f113289e8228b478e6cf6a4c2f6b2742c2c01d8f97a81926aa2e"
+            },
+            {
+              "name": "Qe",
+              "as": "bashToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3957,
+              "declEnd": 3959,
+              "sha256": "dcdfc1ff7a857b37612e582442af027acbdfe7ab254bce55dfb1c8f331256300",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Qe",
+                "declStart": 573039,
+                "declEnd": 573048,
+                "sha256": "830b917aaee59a026803c6d75b01623994b1f1e1e816641570f67114983fb8a1"
+              }
+            },
+            {
+              "name": "pt",
+              "as": "sandbox",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 15301,
+              "declEnd": 15303,
+              "sha256": "e75b11da693d7bb5273985dcf9f02729455da7e7c80e54a0615e00ec2ae76d8e",
+              "from": {
+                "chunk": "chunk-q4xe0m2r.js",
+                "exportedAs": "pt",
+                "declStart": 577398,
+                "declEnd": 580070,
+                "sha256": "314c7869f16ea30d73eee3d897aa7c8789f33476e2e92f57094a6398f864437a"
+              }
+            },
+            {
+              "name": "bv",
+              "as": "bashAutoAllowable",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1012469,
+              "declEnd": 1012876,
+              "sha256": "8fb7548ebd2e3698d52c922c77809fc6afd3ba162fd37c570e97b53fe1957199"
+            },
+            {
+              "name": "Q8e",
+              "as": "sandboxConfirmed",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3953,
+              "declEnd": 3956,
+              "sha256": "5ec4e099d422710b4b9b0a6eca4382a9063c2f04ec386553bd8e7f84a81af086",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Q8e",
+                "declStart": 572972,
+                "declEnd": 573035,
+                "sha256": "e82a12d98b7665b577a04846cb0bd1edb54a243f8e29ba95fc13adf1a61597be"
+              }
+            },
+            {
+              "name": "a",
+              "as": "env",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2039,
+              "declEnd": 2040,
+              "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+              "from": {
+                "chunk": "chunk-w3k8bej2.js",
+                "exportedAs": "a",
+                "declStart": 56946,
+                "declEnd": 56955,
+                "sha256": "cc901af12ddaaf76757137cb1e4696a41411ce88e07a93458d4ed5d24e6b77d3"
+              }
+            },
+            {
+              "name": "I",
+              "as": "featureGate",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4485,
+              "declEnd": 4486,
+              "sha256": "a83dd0ccbffe39d071cc317ddf6e97f5c6b1c87af91919271f9fa140b0508c6c",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "I",
+                "declStart": 648779,
+                "declEnd": 648816,
+                "sha256": "407d8b16c1d068fcce7981944fca2de37b7c3b4cb715a9c773acfac647914b85"
+              }
+            },
+            {
+              "name": "kH",
+              "as": "effectiveMode",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3950,
+              "declEnd": 3952,
+              "sha256": "1eb099f071c96101149811e234e6bb528e6e12d31c0568ec4d71ed647e71aa9d",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "kH",
+                "declStart": 572423,
+                "declEnd": 572797,
+                "sha256": "49c36437d5e9e3085dbef8479051d891de60c98b5a9da8316915d5a52cd73e04"
+              }
+            },
+            {
+              "name": "cQ",
+              "as": "isReadOnlyMcpInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1026786,
+              "declEnd": 1026993,
+              "sha256": "2e51060705af16bc595ee46d39a2e5614d2054bd65b4ca108d88ac0599eec37f"
+            },
+            {
+              "name": "my",
+              "as": "toolIdentity",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6116,
+              "declEnd": 6118,
+              "sha256": "038468518ad8122e13112743f890c7ba96ac5665b71de548eceb23e9ef237805",
+              "from": {
+                "chunk": "chunk-4k4029wq.js",
+                "exportedAs": "my",
+                "declStart": 51250,
+                "declEnd": 51333,
+                "sha256": "b284d22c961e33b55fddc962e7f9a15e55e5d6401e2b1915df81f18fba6a3bf7"
+              }
+            },
+            {
+              "name": "d7e",
+              "as": "organizationAskReason",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1030061,
+              "declEnd": 1030116,
+              "sha256": "04a522bf28724909c0c91bd131b8d35140fbb9df2686d75c00d84617124cd2cf"
+            },
+            {
+              "name": "hTt",
+              "as": "bypassImmuneSafetyCheck",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6773,
+              "declEnd": 6776,
+              "sha256": "963157f49becd3687e262f081c90f456575196a99f5562be9468f6a612dc4c47",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "hTt",
+                "declStart": 1332,
+                "declEnd": 1423,
+                "sha256": "210fd2fb348ad457251e184038cf9bc273c52d5cf619fc1d35e37a89f91ff49e"
+              }
+            },
+            {
+              "name": "h7e",
+              "as": "isPlanModeFloor",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050170,
+              "declEnd": 1050227,
+              "sha256": "ae884d31494f11c411c60dafe7446854a31c1b9348dd2fca8b67ea7892167b1a"
+            },
+            {
+              "name": "u7e",
+              "as": "resolvedInput",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1056350,
+              "declEnd": 1056420,
+              "sha256": "9d7de5296c0df0335e3affb8c57e98f07afe66c5bdb56a40022f810f7874cb38"
+            },
+            {
+              "name": "NLe",
+              "as": "wholeToolAllowRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12994,
+              "declEnd": 12997,
+              "sha256": "5f21682f7eded9f3072b0c2487717a73ded705c10c68efd5dae62a4ccde4bde0",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "NLe",
+                "declStart": 6255,
+                "declEnd": 6312,
+                "sha256": "b75b6612b8103704df0632c075f89bbaf537220f419b33659895a587c1050216"
+              }
+            },
+            {
+              "name": "hL",
+              "as": "isChromeTool",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1025062,
+              "declEnd": 1025114,
+              "sha256": "c2293946638c1f6ed52927f78cdf82ac31f532b1786360b8439a2ea4b08a24fe"
+            },
+            {
+              "name": "b_e",
+              "as": "chromeClassifierApplies",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1025114,
+              "declEnd": 1025167,
+              "sha256": "9236830933a8415dbee08bceda5222e4982bc68eb8365a692c9db471d8638bd3"
+            },
+            {
+              "name": "p7e",
+              "as": "ruleScopedAway",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1030811,
+              "declEnd": 1030963,
+              "sha256": "3d6e7639ff21d921ccc6f3df93974abcb868ae42c76867d07d17c356a856bf0c"
+            },
+            {
+              "name": "n",
+              "as": "log",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2619,
+              "declEnd": 2620,
+              "sha256": "1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "n",
+                "declStart": 44725,
+                "declEnd": 44770,
+                "sha256": "944bdb6f70ef86431b84c7c7c68bce2c2ab5647cdd59053efdfbd1d74106f260"
+              }
+            },
+            {
+              "name": "b",
+              "as": "stringify",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 2533,
+              "declEnd": 2534,
+              "sha256": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "b",
+                "declStart": 13038,
+                "declEnd": 13118,
+                "sha256": "bc3949a6bea4435cbdae7c6a77f03233bab1a80a81bdaaa1b604b468a5791bc5"
+              }
+            },
+            {
+              "name": "Ree",
+              "as": "isAskRuleDrivenReason",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1049863,
+              "declEnd": 1050066,
+              "sha256": "891f06740a0b23f606fe525ab05342ac4ae26085267b7bdb9199d7d43f874969",
+              "closure": []
+            },
+            {
+              "name": "Fy",
+              "as": "findSafetyCheckReason",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1056420,
+              "declEnd": 1056619,
+              "sha256": "7822ff5800d41ba6fd66501edb28ec23c58281b57f705af48124e4c266cfbf9b",
+              "closure": []
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3296,7 +3689,220 @@
             "start": 1051387,
             "end": 1052818,
             "sha256": "b6d864854e084389f36fe9e5a9b9a62b7e96f253873931ec8210a23a2a7a58a1"
-          }
+          },
+          "captures": [
+            {
+              "name": "he",
+              "as": "toolPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 16303,
+              "declEnd": 16305,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "_s",
+              "as": "matchedToolDenyRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13002,
+              "declEnd": 13004,
+              "sha256": "6dad31a34f8d6380d47398020956858dc21b18d9eac45db9cceb29389eecacf8",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "_s",
+                "declStart": 6480,
+                "declEnd": 6628,
+                "sha256": "57ddd9f15290918a95e896ea5532a69cbca58d3f4e7e57f88c37cf1b37433345"
+              }
+            },
+            {
+              "name": "JF",
+              "as": "matchedInputRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13019,
+              "declEnd": 13021,
+              "sha256": "975419bdbd039f3d41a8912a4c1a414886a0153d5e410e422fa46a064a8a644d",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "JF",
+                "declStart": 7461,
+                "declEnd": 7900,
+                "sha256": "3cf2feaa37b1d5e1c2815fde7f486f7c088cdbeffbe6996e2f798fad289cdb89"
+              }
+            },
+            {
+              "name": "jg",
+              "as": "matchedToolAllowRule",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13012,
+              "declEnd": 13014,
+              "sha256": "f51aeff965a68e6abedade9e440808735677831677c7c4db564e5db54a083c93",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "jg",
+                "declStart": 7113,
+                "declEnd": 7261,
+                "sha256": "088e94647caf8818d10e4743830a783d9663e694db0460e17aa2e1bcd19aead0"
+              }
+            },
+            {
+              "name": "nEe",
+              "as": "denyRuleMessage",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 13015,
+              "declEnd": 13018,
+              "sha256": "894e0fa918c25039f76326bc045391a70b68c3a46cd64adb17d2fc69761e1095",
+              "from": {
+                "chunk": "chunk-9mcb844f.js",
+                "exportedAs": "nEe",
+                "declStart": 7363,
+                "declEnd": 7461,
+                "sha256": "63e5d413a5c3e72ea2f500a3cc394ad9a08d980b2b4020298cd400489961e8a4"
+              }
+            },
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "y7e",
+              "as": "allowRuleDecision",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050818,
+              "declEnd": 1051321,
+              "sha256": "f0456d70b4f6b9897c1e0965a51a53cb2272a26764bc31bef52c0c61891baf84"
+            },
+            {
+              "name": "R_e",
+              "as": "classifyToolError",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050663,
+              "declEnd": 1050818,
+              "sha256": "b50b2487ff41f113289e8228b478e6cf6a4c2f6b2742c2c01d8f97a81926aa2e"
+            },
+            {
+              "name": "Hye",
+              "as": "crashReason",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1051356,
+              "declEnd": 1051386,
+              "sha256": "599cad3cf04432632b1714e07c04d666d3c5194c02f8e52ed49bd67cffee44b3"
+            },
+            {
+              "name": "Qe",
+              "as": "bashToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3957,
+              "declEnd": 3959,
+              "sha256": "dcdfc1ff7a857b37612e582442af027acbdfe7ab254bce55dfb1c8f331256300",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Qe",
+                "declStart": 573039,
+                "declEnd": 573048,
+                "sha256": "830b917aaee59a026803c6d75b01623994b1f1e1e816641570f67114983fb8a1"
+              }
+            },
+            {
+              "name": "pt",
+              "as": "sandbox",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 15301,
+              "declEnd": 15303,
+              "sha256": "e75b11da693d7bb5273985dcf9f02729455da7e7c80e54a0615e00ec2ae76d8e",
+              "from": {
+                "chunk": "chunk-q4xe0m2r.js",
+                "exportedAs": "pt",
+                "declStart": 577398,
+                "declEnd": 580070,
+                "sha256": "314c7869f16ea30d73eee3d897aa7c8789f33476e2e92f57094a6398f864437a"
+              }
+            },
+            {
+              "name": "bv",
+              "as": "bashAutoAllowable",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1012469,
+              "declEnd": 1012876,
+              "sha256": "8fb7548ebd2e3698d52c922c77809fc6afd3ba162fd37c570e97b53fe1957199"
+            },
+            {
+              "name": "Q8e",
+              "as": "sandboxConfirmed",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3953,
+              "declEnd": 3956,
+              "sha256": "5ec4e099d422710b4b9b0a6eca4382a9063c2f04ec386553bd8e7f84a81af086",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Q8e",
+                "declStart": 572972,
+                "declEnd": 573035,
+                "sha256": "e82a12d98b7665b577a04846cb0bd1edb54a243f8e29ba95fc13adf1a61597be"
+              }
+            },
+            {
+              "name": "e1t",
+              "as": "interactionSatisfied",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050227,
+              "declEnd": 1050271,
+              "sha256": "28f01285fb20402258163504876b2237a8ff525a97e821dbc5b96ef80194c739"
+            },
+            {
+              "name": "d7e",
+              "as": "organizationAskReason",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1030061,
+              "declEnd": 1030116,
+              "sha256": "04a522bf28724909c0c91bd131b8d35140fbb9df2686d75c00d84617124cd2cf"
+            },
+            {
+              "name": "Ree",
+              "as": "isAskRuleDrivenReason",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1049863,
+              "declEnd": 1050066,
+              "sha256": "891f06740a0b23f606fe525ab05342ac4ae26085267b7bdb9199d7d43f874969",
+              "closure": []
+            },
+            {
+              "name": "Fy",
+              "as": "findSafetyCheckReason",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 1056420,
+              "declEnd": 1056619,
+              "sha256": "7822ff5800d41ba6fd66501edb28ec23c58281b57f705af48124e4c266cfbf9b",
+              "closure": []
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3304,7 +3910,36 @@
             "start": 1050818,
             "end": 1051321,
             "sha256": "f0456d70b4f6b9897c1e0965a51a53cb2272a26764bc31bef52c0c61891baf84"
-          }
+          },
+          "captures": [
+            {
+              "name": "ql",
+              "as": "permissionMessage",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1031335,
+              "declEnd": 1032707,
+              "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
+            },
+            {
+              "name": "R_e",
+              "as": "classifyToolError",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1050663,
+              "declEnd": 1050818,
+              "sha256": "b50b2487ff41f113289e8228b478e6cf6a4c2f6b2742c2c01d8f97a81926aa2e"
+            },
+            {
+              "name": "Hye",
+              "as": "crashReason",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1051356,
+              "declEnd": 1051386,
+              "sha256": "599cad3cf04432632b1714e07c04d666d3c5194c02f8e52ed49bd67cffee44b3"
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3312,7 +3947,76 @@
             "start": 1031335,
             "end": 1032707,
             "sha256": "6af1f610482a67a5c6e24da1614479bc649044910eb9609bc27811081a562abb"
-          }
+          },
+          "captures": [
+            {
+              "name": "eo",
+              "as": "renderRuleValue",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 7252,
+              "declEnd": 7254,
+              "sha256": "5d61caeedf54c4df706492776961de8e326e6d23957ac6c0622e21afa0ada80c",
+              "from": {
+                "chunk": "chunk-fk13r7sg.js",
+                "exportedAs": "eo",
+                "declStart": 2379,
+                "declEnd": 2481,
+                "sha256": "1e4a91a386f6880ffc68d9e55318970b34cfaf3db2b45d22230584268c156738"
+              }
+            },
+            {
+              "name": "Cee",
+              "as": "renderRuleSource",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1030117,
+              "declEnd": 1030147,
+              "sha256": "04f222dfd52fbcdd647847404df29aef24b9d6f42f3c70d9f805ff585ff28201"
+            },
+            {
+              "name": "See",
+              "as": "splitRedirections",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 905938,
+              "declEnd": 908388,
+              "sha256": "a8f74e58a5ff0d3d24ff179ab867f2b4ea2d7cd9ee83ee58c0ed18bb9f49dcb6"
+            },
+            {
+              "name": "k",
+              "as": "pluralize",
+              "kind": "pure-helper",
+              "declKind": "import",
+              "declStart": 2739,
+              "declEnd": 2740,
+              "sha256": "8254c329a92850f6d539dd376f4816ee2764517da5e0235514af433164480d7a",
+              "from": {
+                "chunk": "chunk-04aem4bh.js",
+                "exportedAs": "k",
+                "declStart": 798,
+                "declEnd": 839,
+                "sha256": "00508eb8398da914196462cb3a9f4781378c4632932dcd6b58a69209717905b2"
+              },
+              "closure": []
+            },
+            {
+              "name": "K$",
+              "as": "modeTitle",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6868,
+              "declEnd": 6870,
+              "sha256": "49922aa7e6810ffecc0324df72706b100cd67e08466e668a5da679f89911e781",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "K$",
+                "declStart": 5230,
+                "declEnd": 5263,
+                "sha256": "9ab6db5b4ce2a1f381fa4bb91b583586d10b00573df94713f22a162fd4ada35b"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3320,7 +4024,34 @@
             "start": 1029607,
             "end": 1029669,
             "sha256": "943b8a1c282308620de508d5a1955225829d14f02de4fd5687d4a2d6760a81b7"
-          }
+          },
+          "captures": [
+            {
+              "name": "rgr",
+              "as": "streakGateEnabled",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1029471,
+              "declEnd": 1029607,
+              "sha256": "6941f8c55dab3cd50e6c75cb051daeab3d6c1ed3c131ca68abc787814005b2cb"
+            },
+            {
+              "name": "W5",
+              "as": "sdkDialogHostActive",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 941,
+              "declEnd": 943,
+              "sha256": "713aeb7f49249d8818377d6c183895d3cc5ff7f5e35eeec3392d00180e84584f",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "W5",
+                "declStart": 66255,
+                "declEnd": 66322,
+                "sha256": "05d9b64b98a8d0ce229f1178411001cf854a983742cfe28064d34e67c543f868"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3328,7 +4059,93 @@
             "start": 1852975,
             "end": 1853583,
             "sha256": "cd18af0f957de1a27d71b759ef768f7dc00ca90c2b7498c43d6e9bf7352a9746"
-          }
+          },
+          "captures": [
+            {
+              "name": "Of",
+              "as": "parsePermissionMode",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6766,
+              "declEnd": 6768,
+              "sha256": "72f9393f9c30cea2c3f2f04dbb9c26d641fe69cd200d2230e495209ad4205f0b",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "Of",
+                "declStart": 912,
+                "declEnd": 967,
+                "sha256": "8d5dc44295e6283291e42e8197279935536976946dd2224810f06d531538c0a0"
+              }
+            },
+            {
+              "name": "uoe",
+              "as": "unrecognizedModeError",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 6769,
+              "declEnd": 6772,
+              "sha256": "1dd89ac073453e9f2aab0265789db34ab219adb560ee926e6ac65c8951769fd3",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "uoe",
+                "declStart": 971,
+                "declEnd": 1036,
+                "sha256": "6f57808240262dc3d852a9de004c8161bda2e0608817168327911f2cdce3d5d3"
+              }
+            },
+            {
+              "name": "Vve",
+              "as": "restrictedBypassError",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 1848739,
+              "declEnd": 1848795,
+              "sha256": "80b3ae0d5b0af8f358bedc79ca5bbd21698e8e96205070b804d809e31337fde2"
+            },
+            {
+              "name": "oy",
+              "as": "bypassDisabled",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 20706,
+              "declEnd": 20708,
+              "sha256": "c45439e874c4bed7bcbd5a785cb79b55a6a71e35e988147245a729bee438c9fa",
+              "from": {
+                "chunk": "chunk-brd9ebb9.js",
+                "exportedAs": "oy",
+                "declStart": 809,
+                "declEnd": 845,
+                "sha256": "f83ac4fc2b8767a0e76267d461baefcbe602eff2f9bd6562f877693f258a331b"
+              }
+            },
+            {
+              "name": "hE",
+              "as": "autoModeGateEnabled",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1863370,
+              "declEnd": 1863451,
+              "sha256": "d6b8ce4c8e65039a931952371e834180ae39a837cae439d7c74cd6ee59621e1f"
+            },
+            {
+              "name": "A7",
+              "as": "autoModeUnavailableReason",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1863451,
+              "declEnd": 1863564,
+              "sha256": "d1071e57bcb70eb2ff936c1a538f5c8e09fbede1f03d75e634759a86bc97e86a"
+            },
+            {
+              "name": "n2",
+              "as": "autoModeUnavailableNotification",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1860572,
+              "declEnd": 1860887,
+              "sha256": "70268534b4c6b713203fc7a0a8c4318220feaac341ebdab03d09f74786d83a8c"
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3336,7 +4153,173 @@
             "start": 1852539,
             "end": 1852975,
             "sha256": "3cb8c80b2d8a278c33d03644a54fea9d9154c78d5815c62672ca949143733b4e"
-          }
+          },
+          "captures": [
+            {
+              "name": "FLe",
+              "as": "setProvisionalStartupMode",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12866,
+              "declEnd": 12869,
+              "sha256": "95ecbd386f06bcf66d6c696b90305d006e2ebd38d0e4be77d3848750c6202d15",
+              "from": {
+                "chunk": "chunk-nd2stzp2.js",
+                "exportedAs": "FLe",
+                "declStart": 2012,
+                "declEnd": 2062,
+                "sha256": "a13bcd0785aa3386c3ecf8a06f7a391554e3ecc491f533d8b811011f486afeb1"
+              }
+            },
+            {
+              "name": "P9",
+              "as": "recordModeChange",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12033,
+              "declEnd": 12035,
+              "sha256": "ad095c1430616e7a39bf22da9b015e2bda85af4f77adbfb50f0eb670c2da3a2d",
+              "from": {
+                "chunk": "chunk-2bw1pvjn.js",
+                "exportedAs": "P9",
+                "declStart": 6663,
+                "declEnd": 6798,
+                "sha256": "b944d2323fa6634d7dbbc9fd8142c2a922b05cded3af005e44761f5f1ab48fd2"
+              }
+            },
+            {
+              "name": "V5",
+              "as": "handlePlanModeTransition",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1239,
+              "declEnd": 1241,
+              "sha256": "79df3742da86cfd49d39e6cd1d7bff35bfdc7ad2898852552dc336f8b9663ae2",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "V5",
+                "declStart": 83218,
+                "declEnd": 83399,
+                "sha256": "175eeff44c54e44f7e14700293b227755c8d94d53ba2b7417b74bdf3d9b3ad08"
+              }
+            },
+            {
+              "name": "lxn",
+              "as": "handleAutoModeTransition",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1249,
+              "declEnd": 1252,
+              "sha256": "5f1e75b0c380c23a8aa8d7ca26911c64c6b32eed33b130d406ab593f1e7c9dcd",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "lxn",
+                "declStart": 83538,
+                "declEnd": 83773,
+                "sha256": "300710aa1608dbab02d61ee8fdece2f26cc55ff0ad88a8645e21057b6c0db410"
+              }
+            },
+            {
+              "name": "WO",
+              "as": "setHasExitedPlanMode",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1229,
+              "declEnd": 1231,
+              "sha256": "dffa6bca874e9206a6b320ea6a51555d0ab7076bb05c88574dffcc69095efa23",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "WO",
+                "declStart": 82568,
+                "declEnd": 82628,
+                "sha256": "b9d795da04a51e2b3ca8e537b70d810ee3aefcb89df21c512909bd4948c77728"
+              }
+            },
+            {
+              "name": "U4e",
+              "as": "prepareContextForPlanMode",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1864590,
+              "declEnd": 1864933,
+              "sha256": "728a3056386bc0c0ad468bed3cb5a3dda0c0efca768bafda0d8ec41853830ab8"
+            },
+            {
+              "name": "sw",
+              "as": "isAutoModeActive",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12832,
+              "declEnd": 12834,
+              "sha256": "7865b7e6b9d241d744d330eec3b3a0fe4f9d36af75d96291638504680f805bfd",
+              "from": {
+                "chunk": "chunk-nd2stzp2.js",
+                "exportedAs": "sw",
+                "declStart": 1500,
+                "declEnd": 1533,
+                "sha256": "4ccb90accfce8bdc539301d720c9152f116283179179eef6fc6d7c1a5f8533d3"
+              }
+            },
+            {
+              "name": "hE",
+              "as": "isAutoModeGateEnabled",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1863370,
+              "declEnd": 1863451,
+              "sha256": "d6b8ce4c8e65039a931952371e834180ae39a837cae439d7c74cd6ee59621e1f"
+            },
+            {
+              "name": "pC",
+              "as": "setAutoModeActive",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 12829,
+              "declEnd": 12831,
+              "sha256": "f442a685d33998b18009ec8bc7e13db191f6d34b37a94ce59a6ad694b69e9235",
+              "from": {
+                "chunk": "chunk-nd2stzp2.js",
+                "exportedAs": "pC",
+                "declStart": 1467,
+                "declEnd": 1500,
+                "sha256": "e247e45e7a99d063ce81a0443c8062544d2b737898a99f6f401435d2020af7d9"
+              }
+            },
+            {
+              "name": "qO",
+              "as": "setNeedsAutoModeExitAttachment",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1246,
+              "declEnd": 1248,
+              "sha256": "b75d87da575d61b942b953e65d69ecbc78c8904137ed8d316d9ba6c2e2f2b313",
+              "from": {
+                "chunk": "chunk-38213y7h.js",
+                "exportedAs": "qO",
+                "declStart": 83468,
+                "declEnd": 83538,
+                "sha256": "2e22f95a884c2af1c585f6f22d5b96bbbbadead66c02a49782ed72c61ce02290"
+              }
+            },
+            {
+              "name": "zL",
+              "as": "stripDangerousPermissionsForAutoMode",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1851802,
+              "declEnd": 1852291,
+              "sha256": "3972345d89802fda9f89d0e77e0fd70c18039aae5cef7ca4a0361dc4e3de5ed3"
+            },
+            {
+              "name": "E7",
+              "as": "restoreDangerousPermissions",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1852291,
+              "declEnd": 1852539,
+              "sha256": "f35506a861ecea0cc232f2e9e99584b183eac3f4d9e32bffc34084a264574016"
+            }
+          ]
         },
         {
           "chunk": "chunk-fy12d89p.js",
@@ -3344,7 +4327,36 @@
             "start": 1853583,
             "end": 1853770,
             "sha256": "51279901b52b1e6ae4ddde60611f06c58e90c251678cd3f3826c2cd329dd0e16"
-          }
+          },
+          "captures": [
+            {
+              "name": "GIe",
+              "as": "guardModeChange",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1852975,
+              "declEnd": 1853583,
+              "sha256": "cd18af0f957de1a27d71b759ef768f7dc00ca90c2b7498c43d6e9bf7352a9746"
+            },
+            {
+              "name": "V0",
+              "as": "transitionMode",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 1852539,
+              "declEnd": 1852975,
+              "sha256": "3cb8c80b2d8a278c33d03644a54fea9d9154c78d5815c62672ca949143733b4e"
+            },
+            {
+              "name": "T7",
+              "as": "modeChanged",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 1848394,
+              "declEnd": 1848404,
+              "sha256": "4bcbfcbb051dffc192303ac7c34bffadbbc3fa7a5138933a420323176b408939"
+            }
+          ]
         },
         {
           "chunk": "chunk-g1qrzvef.js",
@@ -3352,7 +4364,169 @@
             "start": 34626,
             "end": 35918,
             "sha256": "bca76483c81c2c46c1b598e698ee4a9ccad7f914abbc16ef69432d8706e88e06"
-          }
+          },
+          "captures": [
+            {
+              "name": "he",
+              "as": "toolPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1555,
+              "declEnd": 1557,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            },
+            {
+              "name": "Tee",
+              "as": "dispatchHooks",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1711,
+              "declEnd": 1714,
+              "sha256": "19c3fd6de646493a61a411846b1d649a75d7076784e0845fb30f32a2f8f27980",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "Tee",
+                "declStart": 1073436,
+                "declEnd": 1073757,
+                "sha256": "7b4aa6a4aa968ce13c63971dad5ad75d316c8156e09fc78e976ce96561e186df"
+              }
+            },
+            {
+              "name": "tIe",
+              "as": "guardHookUpdatedInput",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1728,
+              "declEnd": 1731,
+              "sha256": "9dea0b58cff4b7e5f7e6f4498ff1af2fe6c0135af8cefdb25a437e80c4fb5c52",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "tIe",
+                "declStart": 1034070,
+                "declEnd": 1034261,
+                "sha256": "d4e95d97317faf1b5ae0f3c9366441909c3760d1461660efbfbe999900d37178"
+              }
+            },
+            {
+              "name": "Gx",
+              "as": "checkRules",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1739,
+              "declEnd": 1741,
+              "sha256": "fca24c312a45028b287089f801b97bf0c9e98f43a5eac6f00fa14cd3d8865f0d",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "Gx",
+                "declStart": 1051387,
+                "declEnd": 1052818,
+                "sha256": "b6d864854e084389f36fe9e5a9b9a62b7e96f253873931ec8210a23a2a7a58a1"
+              }
+            },
+            {
+              "name": "YXe",
+              "as": "headlessDenyReason",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1439,
+              "declEnd": 1442,
+              "sha256": "cc14e26288310c90ac6de567294f7a838b4e99c0873fec53895f69478a7593bd",
+              "from": {
+                "chunk": "chunk-af80z9sa.js",
+                "exportedAs": "YXe",
+                "declStart": 2346,
+                "declEnd": 2380,
+                "sha256": "13721e25a8f6cc6b7e898c0256e330d17fe1477c90bfd431c01ca3bdaafab40a"
+              }
+            },
+            {
+              "name": "e1t",
+              "as": "interactionSatisfied",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1735,
+              "declEnd": 1738,
+              "sha256": "a8ced1c857c9ce8515c01ffb7cfe360ff4136de6bc1f9f14b156b4fa54375ca5",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "e1t",
+                "declStart": 1050227,
+                "declEnd": 1050271,
+                "sha256": "28f01285fb20402258163504876b2237a8ff525a97e821dbc5b96ef80194c739"
+              }
+            },
+            {
+              "name": "cD",
+              "as": "withoutRemoteScope",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1725,
+              "declEnd": 1727,
+              "sha256": "5c56f486817bdb3f73beb5dd416618e2ba1901ad53e85982f409fe16bb2f9a9f",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "cD",
+                "declStart": 1033201,
+                "declEnd": 1033441,
+                "sha256": "d566a94751184b32634f0953496da3087d8d0f7e74981f4ede37abcc27e2248b"
+              }
+            },
+            {
+              "name": "hH",
+              "as": "applySessionUpdates",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1602,
+              "declEnd": 1604,
+              "sha256": "35ff561fe50ac52b9f3d2e5a86b12d170dbc5e23226d967e48b99a2d56aed677",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "hH",
+                "declStart": 209190,
+                "declEnd": 209249,
+                "sha256": "3acd9fb5330705a87e3c6d78be359783184c9bec0f11019e1ba610ea110c9609"
+              }
+            },
+            {
+              "name": "$M",
+              "as": "persistUpdates",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1609,
+              "declEnd": 1611,
+              "sha256": "bec0a556884bccbd08c5c8099ff46b046c20a4bc2faef440e8c6c38e84db6926",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "$M",
+                "declStart": 211236,
+                "declEnd": 211288,
+                "sha256": "177c95aad5f84ac604c54fa294f0a6317bc2deb3be6146c8c4de59fe0324bbf0"
+              }
+            },
+            {
+              "name": "pde",
+              "as": "isPersistedDestination",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1605,
+              "declEnd": 1608,
+              "sha256": "758fadae004390fa50e7bc21155d18d87455ec1da11d220b451347ffa94c3fc4",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "pde",
+                "declStart": 209249,
+                "declEnd": 209335,
+                "sha256": "6b22fb52493b23c626119ced6aa5bebced387684763f047f1a9f7e50fda60014"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-g1qrzvef.js",
@@ -3360,7 +4534,98 @@
             "start": 3748,
             "end": 4345,
             "sha256": "aca9be6071dc8f7052679ef4a841868032dd81746a8e83d6e7bc19884c17943c"
-          }
+          },
+          "captures": [
+            {
+              "name": "U",
+              "as": "filterPermissionUpdates",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3525,
+              "declEnd": 3748,
+              "sha256": "a7f23698d7e5e095745b32ce41dc2557959f1ebbcff429122805c59842008786"
+            },
+            {
+              "name": "hH",
+              "as": "applySessionUpdates",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1602,
+              "declEnd": 1604,
+              "sha256": "35ff561fe50ac52b9f3d2e5a86b12d170dbc5e23226d967e48b99a2d56aed677",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "hH",
+                "declStart": 209190,
+                "declEnd": 209249,
+                "sha256": "3acd9fb5330705a87e3c6d78be359783184c9bec0f11019e1ba610ea110c9609"
+              }
+            },
+            {
+              "name": "$M",
+              "as": "persistUpdates",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1609,
+              "declEnd": 1611,
+              "sha256": "bec0a556884bccbd08c5c8099ff46b046c20a4bc2faef440e8c6c38e84db6926",
+              "from": {
+                "chunk": "chunk-9e2ns8ty.js",
+                "exportedAs": "$M",
+                "declStart": 211236,
+                "declEnd": 211288,
+                "sha256": "177c95aad5f84ac604c54fa294f0a6317bc2deb3be6146c8c4de59fe0324bbf0"
+              }
+            },
+            {
+              "name": "Y8",
+              "as": "lastKnownInput",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1719,
+              "declEnd": 1721,
+              "sha256": "e57b8072fa822139451ef537ee055d4a58e1b1dd2e490fbe1733d3ac5d143f3b",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "Y8",
+                "declStart": 1015199,
+                "declEnd": 1015363,
+                "sha256": "0642a80ead4f95f244738dc5d0498fb3f29cf26ad233800b6b510063b25261f8"
+              }
+            },
+            {
+              "name": "h",
+              "as": "logError",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1156,
+              "declEnd": 1157,
+              "sha256": "aaa9402664f1a41f40ebbc52c9993eb66aeb366602958fdfaa283b71e64db123",
+              "from": {
+                "chunk": "chunk-qpcjd2zp.js",
+                "exportedAs": "h",
+                "declStart": 10130,
+                "declEnd": 10606,
+                "sha256": "54b305c46481b959f8aee6bfaa0c756a18abec1e6afdc58989fb0d70281e5e95"
+              }
+            },
+            {
+              "name": "n",
+              "as": "log",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1013,
+              "declEnd": 1014,
+              "sha256": "1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9",
+              "from": {
+                "chunk": "chunk-ynzt0fm1.js",
+                "exportedAs": "n",
+                "declStart": 44725,
+                "declEnd": 44770,
+                "sha256": "944bdb6f70ef86431b84c7c7c68bce2c2ab5647cdd59053efdfbd1d74106f260"
+              }
+            }
+          ]
         },
         {
           "chunk": "chunk-g1qrzvef.js",
@@ -3368,7 +4633,73 @@
             "start": 3525,
             "end": 3748,
             "sha256": "a7f23698d7e5e095745b32ce41dc2557959f1ebbcff429122805c59842008786"
-          }
+          },
+          "captures": [
+            {
+              "name": "E$",
+              "as": "isExemptContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 701,
+              "declEnd": 703,
+              "sha256": "54a89517822b1c17c72474bf747539712133db61fcf3e62a47c0661750906ba1",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "E$",
+                "declStart": 607381,
+                "declEnd": 607447,
+                "sha256": "029dd60f311e25c05b5775d00dc73755111fbc5584d3a89ebcd7130f826c3568"
+              }
+            },
+            {
+              "name": "cD",
+              "as": "withoutRemoteScope",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1725,
+              "declEnd": 1727,
+              "sha256": "5c56f486817bdb3f73beb5dd416618e2ba1901ad53e85982f409fe16bb2f9a9f",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "cD",
+                "declStart": 1033201,
+                "declEnd": 1033441,
+                "sha256": "d566a94751184b32634f0953496da3087d8d0f7e74981f4ede37abcc27e2248b"
+              }
+            },
+            {
+              "name": "WW",
+              "as": "stripWholeToolGrants",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1722,
+              "declEnd": 1724,
+              "sha256": "13172f18b181afbba0fc520551918fee46304c1d2e6bc5a76d1bcc8c8af59f10",
+              "from": {
+                "chunk": "chunk-fy12d89p.js",
+                "exportedAs": "WW",
+                "declStart": 1033127,
+                "declEnd": 1033201,
+                "sha256": "5bd669664a4ea632c73c0bfce0fcca7ace1991ea51702913fc9ac4bf6ee950aa"
+              }
+            },
+            {
+              "name": "he",
+              "as": "toolPermissionContext",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 1555,
+              "declEnd": 1557,
+              "sha256": "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+              "from": {
+                "chunk": "chunk-3k4hb7pf.js",
+                "exportedAs": "he",
+                "declStart": 3260,
+                "declEnd": 4374,
+                "sha256": "c608774b22126ef1d4508cfeb08a14d62fd2920ee53cfeb24a954b115215855e"
+              }
+            }
+          ]
         }
       ],
       "evidence": [
@@ -3420,7 +4751,8 @@
             "start": 35955,
             "end": 36057,
             "sha256": "66c451811090e7926f797c24b6148a3c87498ea14cf6bd859e8314549bf352c8"
-          }
+          },
+          "captures": []
         },
         {
           "chunk": "chunk-g1qrzvef.js",
@@ -3428,7 +4760,8 @@
             "start": 36057,
             "end": 36154,
             "sha256": "06de82f288186c1c3ab5f0aa9ebe5612cc3def421c09a56a67df8ebeef6f9fd5"
-          }
+          },
+          "captures": []
         }
       ],
       "evidence": [

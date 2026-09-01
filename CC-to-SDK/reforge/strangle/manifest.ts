@@ -1284,9 +1284,17 @@ export const SPLICES: Splice[] = [
         derive: pick("rule-based-permissions", "classifyToolError", new RegExp(`catch\\(${ID}\\)\\{let ${ID}=(${ID})\\(${ID},${ID},${ID},${ID}\\)`)),
       },
       {
+        // Scoped to the CRASH arm's own guard. `{type:"other",reason:X}` appears
+        // twice in this body — here and at the MCP ask ceiling — and a regex that
+        // matched either would keep resolving after this binding was renamed,
+        // which `strangle/perturb.ts` caught as a SILENT derivation.
         as: "crashReason",
         kind: "primitive",
-        derive: pick("rule-based-permissions", "crashReason", new RegExp(`\\{type:"other",reason:(${ID})\\};return\\{behavior:"ask"`)),
+        derive: pick(
+          "rule-based-permissions",
+          "crashReason",
+          new RegExp(`crashIsObjection===!0\\)\\{let ${ID}=\\{type:"other",reason:(${ID})\\}`),
+        ),
       },
       {
         as: "bashToolName",
