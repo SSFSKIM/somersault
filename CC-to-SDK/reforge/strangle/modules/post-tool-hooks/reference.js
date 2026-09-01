@@ -30,9 +30,10 @@
 export const DEFAULT_HOOK_TIMEOUT_MS = 600000;
 
 /**
- * `yield*`s the executor, so the caller's `next`/`throw`/`return` reach it and
- * its return value becomes this generator's — the same three-part contract the
- * spliced delegation reproduces one level out.
+ * BARE-`yield*`s the executor, so the caller's `next`/`throw`/`return` reach it
+ * while its completion value is DISCARDED and this generator returns
+ * `undefined` — upstream's contract, and the one the spliced delegation
+ * reproduces one level out. See the comment on the delegation itself.
  */
 export async function* postToolHooks(
   toolName,

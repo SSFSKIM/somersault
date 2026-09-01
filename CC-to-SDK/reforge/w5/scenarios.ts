@@ -217,8 +217,19 @@ export const W5_SCENARIOS: Scenario[] = [
     // reaches the subagent one.
     tag: "hooks-subagent",
     title: "SubagentStart, SubagentStop and the parent Stop fire around an Agent dispatch",
-    run: (ctx) =>
-      drive(
+    run: (ctx) => {
+      // The agent id CORRELATION, held per run. A projection can only report the
+      // TYPE of `agent_id` — the value is run-scoped, so collecting it would diff
+      // between the two engines for reasons that have nothing to do with hook
+      // dispatch. What is not run-scoped is whether the two dispatchers named the
+      // SAME agent: one function starts the subagent and another stops it, and an
+      // id that did not survive the round trip is a real plumbing defect that
+      // `typeof === "string"` on each end cannot see. Comparing them inside one
+      // run and collecting the BOOLEAN keeps the surface diffable and grades the
+      // link. Declared here rather than at module scope so each engine's run gets
+      // its own.
+      let startAgentId: unknown;
+      return drive(
         "Use the Agent tool to dispatch exactly one subagent with subagent_type 'general-purpose', running in the foreground (not in the background). Its entire task is: reply with the single word REFORGE_SUBAGENT_HOOKED. When it returns, reply with exactly what it said.",
         {
           ...baseOptions(ctx),
@@ -226,15 +237,20 @@ export const W5_SCENARIOS: Scenario[] = [
           maxTurns: 4,
           permissionMode: "bypassPermissions",
           hooks: {
-            SubagentStart: watch(ctx, "SubagentStart", (i) => ({
-              event: i.hook_event_name,
-              agentType: i.agent_type,
-              hasAgentId: typeof i.agent_id === "string",
-            })),
+            SubagentStart: watch(ctx, "SubagentStart", (i) => {
+              startAgentId = i.agent_id;
+              return {
+                event: i.hook_event_name,
+                agentType: i.agent_type,
+                hasAgentId: typeof i.agent_id === "string",
+              };
+            }),
             SubagentStop: watch(ctx, "SubagentStop", (i) => ({
               event: i.hook_event_name,
               agentType: i.agent_type,
               hasAgentId: typeof i.agent_id === "string",
+              // The link between the two arms: same run, same agent.
+              agentIdMatchesStart: typeof i.agent_id === "string" && i.agent_id === startAgentId,
               // The field that only exists on this arm of the dispatcher.
               hasAgentTranscriptPath: typeof i.agent_transcript_path === "string",
               stopHookActive: i.stop_hook_active,
@@ -248,12 +264,19 @@ export const W5_SCENARIOS: Scenario[] = [
             })),
           },
         },
-      ),
+      );
+    },
     check: (msgs, events) => {
       const fired = (name: string) => events.filter((e) => (e as { event?: string }).event === name).length;
       if (!usedTool(msgs, "Agent")) return "Agent tool never used";
       for (const e of ["SubagentStart", "SubagentStop", "Stop"]) {
         if (fired(e) === 0) return `${e} hook never fired`;
+      }
+      const stop = events.find((e) => (e as { event?: string }).event === "SubagentStop") as
+        | { payload?: { agentIdMatchesStart?: boolean } }
+        | undefined;
+      if (stop?.payload?.agentIdMatchesStart !== true) {
+        return "SubagentStop carried a different agent_id than SubagentStart — the id did not survive the round trip";
       }
       return resultText(msgs).includes("REFORGE_SUBAGENT_HOOKED") ? null : "subagent result not folded into the final reply";
     },

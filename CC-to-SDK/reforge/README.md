@@ -2227,12 +2227,13 @@ scope it (it scopes to a chunk). The other carrier is `Y4e`, the REPL-side dispa
 parameters where this one has five — so `siblings: 2` plus the verified signature selects, and an
 upstream edit to either arity makes the build refuse rather than splice the wrong function.
 
-### Seven helpers became owned, and the call graph is why
+### Six pure helpers became owned, and the call graph is why
 
 C7's lesson — a pure helper reachable only through a function the wave owns belongs *inside* that
-module — has a converse this wave used seven times. The hook fan-out rule (`Hb`), its two
-agent-context predicates (`DR`, `ka`), the last-assistant-message pair (`Wy`, `zr`) and the
-plain-object test (`He`) all have callers all over the engine, so splicing six dispatchers leaves
+module — has a converse this wave used across **six distinct pure helpers, captured seven times**
+(`Hb` is captured by two dispatchers; the other five once each). The hook fan-out rule (`Hb`), its
+two agent-context predicates (`DR`, `ka`), the last-assistant-message pair (`Wy`, `zr`) and the
+plain-object test (`He`) all have callers all over the engine, so splicing the dispatchers leaves
 upstream's copies live and each stays a real `pure-helper` capture: footprinted, never forwarded,
 reimplemented in `strangle/modules/shared/`. That is genuine ownership of the *rules* — which agent
 ids a hook lookup runs under, which subagent kinds dispatch nothing, when a turn's last message
@@ -2251,7 +2252,7 @@ counts as text — rather than another port.
   dispatcher from another. Comparing the trace is therefore what actually grades the record's field
   set and the request's shape.
 
-The six owned pure helpers are extracted and compared against their **own upstream bytes** before
+The six distinct owned pure helpers are extracted and compared against their **own upstream bytes** before
 any dispatcher is bound to them — C7's boundary-review lesson, applied where it would otherwise have
 bitten: five of the seven bodies call at least one of them.
 

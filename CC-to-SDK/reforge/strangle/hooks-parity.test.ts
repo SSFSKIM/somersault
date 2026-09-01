@@ -36,9 +36,11 @@
 // upstream body calls a helper this wave also OWNS, the helper is extracted and
 // compared on its own first, and the body is then bound to UPSTREAM's copy.
 // Binding it to the owned copy routes a shared defect through both sides and
-// compares EQUAL — so `hookAgentIds`, the two agent-context predicates, the two
-// message-text helpers and the plain-object test are all graded against their
-// own upstream bytes before any dispatcher is built on them.
+// compares EQUAL — so all SIX DISTINCT owned pure helpers (`hookAgentIds`, the
+// two agent-context predicates, the two message-text helpers and the plain-object
+// test — seven capture usages across the manifest, because two dispatchers
+// capture `hookAgentIds`) are graded against their own upstream bytes before any
+// dispatcher is built on them.
 //
 // THE BINDINGS COME FROM THE MANIFEST, not from a second transcription. Each
 // dispatcher's free variables are re-derived with the manifest's own `derive`
