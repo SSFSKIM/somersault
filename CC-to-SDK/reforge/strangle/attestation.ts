@@ -53,4 +53,57 @@ export interface Exclusion {
  *    (a claude-3-haiku session) but would buy one boolean for a live recording,
  *    and the parity test already grades both sides of it byte for byte.
  */
-export const EXCLUSIONS: Exclusion[] = [];
+export const EXCLUSIONS: Exclusion[] = [
+  // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
+  // `Jk()` resolves in four steps and every one of them is pinned on a graded
+  // run: CLAUDE_CODE_THISTLE_GREBE (an env var X6 forbids a child adding),
+  // clientData (empty headlessly), the GrowthBook feature (§3.3 pins the gate
+  // state to disabled), and a per-model steer floor (unset for the corpus's
+  // models). It returns "default" by construction, and latches the first time it
+  // is asked, so no scenario can move it without moving the environment the
+  // WHOLE corpus is graded under.
+  {
+    branch: 'glob-description#globDescription@1:F',
+    reason:
+      "subagentSteer() is pinned to \"default\" by §3.3's disabled-gate environment and X6's env allowlist — its four sources are the forbidden CLAUDE_CODE_THISTLE_GREBE, empty clientData, a disabled GrowthBook flag and an unset model floor. Graded instead by description-parity.test.ts, which compares this arm against upstream byte for byte (glob steer=no_nudges).",
+  },
+  {
+    branch: 'grep-description#grepDescription@1:F',
+    reason:
+      "same pinned resolver as the Glob arm above; graded by description-parity.test.ts (grep steer=counter_steer).",
+  },
+
+  // ---- the PDF-capability arm (Read, both descriptions) --------------------
+  // `BVe()` is `!sessionModel().toLowerCase().includes("claude-3-haiku")`, so the
+  // false arm needs a claude-3-haiku session. Reachable in principle — one live
+  // recording would buy it — but it buys one boolean, and the parity test
+  // already grades both sides of it against upstream. Recorded as a deferral
+  // rather than as an impossibility, because that is what it is.
+  {
+    branch: "read-description#readDescription@1:F",
+    reason:
+      "pdfCapable() is false only for a claude-3-haiku session model, which no scenario uses; a scenario could reach it but would buy one boolean for a live recording. Graded by description-parity.test.ts (read lean=true pdf=false).",
+  },
+  {
+    branch: "read-description#readDescription@2:F",
+    reason:
+      "same session-model read on the full arm; graded by description-parity.test.ts (read lean=false pdf=false).",
+  },
+
+  // ---- the claude.ai artifact carve-out (WebFetch, both descriptions) ------
+  // The call site is `webFetchDescription(model, await artifactCarveOut(tools))`,
+  // and that predicate requires the Artifact tool to be IN the session's tool
+  // list plus two feature gates. The headless catalog (§1.3) has no Artifact
+  // tool and §3.3 pins the gates disabled, so it is false on every request the
+  // corpus can emit.
+  {
+    branch: "webfetch-description#webFetchDescription@1:T",
+    reason:
+      "the artifact carve-out requires the Artifact tool to be present in the session's tool list and its two feature gates enabled; neither holds headlessly under §3.3's pinned gate state. Graded by description-parity.test.ts (webfetch lean=true artifact=true).",
+  },
+  {
+    branch: "webfetch-description#webFetchDescription@2:T",
+    reason:
+      "same predicate on the full arm; graded by description-parity.test.ts (webfetch lean=false artifact=true).",
+  },
+];
