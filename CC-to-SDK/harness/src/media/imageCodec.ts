@@ -66,10 +66,13 @@ export function budgetMsForPixels(width: number, height: number): number {
   return Math.max(PROCESSING_BUDGET_FLOOR_MS, Math.round(PROCESSING_BUDGET_MS_PER_MEGAPIXEL * megapixels));
 }
 
-export interface Deadline { expired(): boolean }
+/** `budgetMs` is OPTIONAL so a hand-rolled test deadline (an `{ expired() }` literal with no real
+ *  clock behind it) still satisfies the interface; every failure-reason site below falls back to
+ *  `PROCESSING_BUDGET_MS` when it's absent, which is exactly what those literals want to see. */
+export interface Deadline { expired(): boolean; budgetMs?: number }
 export function deadlineFrom(now: () => number = Date.now, budgetMs: number = PROCESSING_BUDGET_MS): Deadline {
   const start = now();
-  return { expired: () => now() - start >= budgetMs };
+  return { expired: () => now() - start >= budgetMs, budgetMs };
 }
 /** For tests that must prove the STRUCTURAL bound alone carries a fixture: a belt that never trips. */
 export const NEVER_EXPIRES: Deadline = { expired: () => false };
@@ -145,7 +148,7 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
     return { ok: false, code: "source-too-large", reason: `image source exceeds the ${MAX_SOURCE_BYTES}-byte limit` };
   }
   if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
   }
   if (buf.length < 8 || !PNG_SIG.every((b, i) => buf[i] === b)) {
     return { ok: false, code: "malformed", reason: "not a PNG (bad signature)" };
@@ -210,7 +213,7 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
   //    palette/interlaced PNG's walk returned a passthrough success instead of the coded `budget-exceeded`
   //    every other exit path already honours. One checkpoint, shared by both arms below, closes that gap.
   if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
   }
   if (passthrough) {
     // Same structural bar the pixel path clears below: a "PNG" with no IDAT at all never carried image
@@ -246,7 +249,7 @@ export function decodePng(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
     prev = recon.value;
     // ── the COOPERATIVE belt, checked every 64 scanlines inside the defilter loop.
     if (y % 64 === 63 && deadline.expired()) {
-      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
     }
   }
   return { ok: true, value: { kind: "pixels", width, height, pixels } };
@@ -279,7 +282,7 @@ export function decodeBmp(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
     return { ok: false, code: "source-too-large", reason: `image source exceeds the ${MAX_SOURCE_BYTES}-byte limit` };
   }
   if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
   }
   if (buf.length < 54 || buf[0] !== 0x42 || buf[1] !== 0x4d) {
     return { ok: false, code: "malformed", reason: "not a BMP (bad signature)" };
@@ -337,7 +340,7 @@ export function decodeBmp(buf: Buffer, deadline: Deadline): CodecResult<DecodedI
     }
     // ── the COOPERATIVE belt, checked every 64 rows.
     if (outY % 64 === 63 && deadline.expired()) {
-      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
     }
   }
   return { ok: true, value: { kind: "pixels", width, height: absHeight, pixels } };
@@ -454,7 +457,7 @@ function filterCost(row: Buffer): number {
  *  proves adaptive selection is load-bearing (measured 193x smaller than filter-0, r3 §2). */
 function encodeCore(img: DecodedPixels, deadline: Deadline, fixedFilter: 0 | 1 | 2 | 3 | 4 | null): CodecResult<Buffer> {
   if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
   }
   const { width, height, pixels } = img;
   const bpp = 4;
@@ -484,12 +487,12 @@ function encodeCore(img: DecodedPixels, deadline: Deadline, fixedFilter: 0 | 1 |
     prev = cur;
     // ── the COOPERATIVE belt, same shape and cadence as the decoder's (see PROCESSING_BUDGET_MS doc).
     if (y % 64 === 63 && deadline.expired()) {
-      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+      return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
     }
   }
   const idat = deflateSync(filtered);
   if (deadline.expired()) {
-    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${PROCESSING_BUDGET_MS}ms budget` };
+    return { ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${deadline.budgetMs ?? PROCESSING_BUDGET_MS}ms budget` };
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);

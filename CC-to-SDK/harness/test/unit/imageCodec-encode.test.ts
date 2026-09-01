@@ -215,12 +215,26 @@ describe("budgetMsForPixels — the pixel-proportional belt (owner's call, BL13)
     expect(budgetMsForPixels(0, 0)).toBe(PROCESSING_BUDGET_FLOOR_MS);
   });
 
-  it("a scaled budget reaches the ladder — an image whose declared size earns extra time still succeeds within it", () => {
-    // Real (non-frozen) clock, so this proves the VALUE actually buys usable time, not just that
-    // the number is computed correctly in isolation.
+  it("reaches `reencodeImage` as the deadline's actual threshold — a frozen clock that never crosses it succeeds, and the reported reason on a deadline that HAS already expired echoes the scaled value, not the flat default", () => {
+    // A real (non-frozen) clock here would time actual CPU work against the exact 1999ms this
+    // fixture's scaled budget computes to — precisely the load-sensitive race the tracker's own
+    // 3200x1800 measurement documented (this file's `FROZEN` comment explains why every OTHER cell
+    // in this file avoids it). The scaled VALUE itself is pinned above; what's left to prove here is
+    // that `reencodeImage` actually uses the value it's given rather than silently falling back to
+    // `PROCESSING_BUDGET_MS` — checked at both ends without timing anything: a frozen clock (never
+    // expires, regardless of budget) succeeds, and an ALREADY-expired one reports the scaled number.
     const src = syntheticPng(3200, 1800);
-    const r = reencodeImage({ data: src, mediaType: "image/png" },
-      { maxDimension: 2000, byteBudget: 512_000, budgetMs: budgetMsForPixels(3200, 1800) });
-    expect(r.ok).toBe(true);
+    const scaled = budgetMsForPixels(3200, 1800);
+    const ok = reencodeImage({ data: src, mediaType: "image/png" },
+      { maxDimension: 2000, byteBudget: 512_000, budgetMs: scaled, now: () => 0 });
+    expect(ok.ok).toBe(true);
+
+    // `deadlineFrom` reads `now()` once to capture `start`, then again on every checkpoint — a
+    // CONSTANT `now` would report zero elapsed time forever (start === every later reading), so the
+    // clock has to move: 0 on the first read, past the budget on every read after.
+    let reads = 0;
+    const expired = reencodeImage({ data: src, mediaType: "image/png" },
+      { maxDimension: 2000, byteBudget: 512_000, budgetMs: scaled, now: () => (reads++ === 0 ? 0 : Number.MAX_SAFE_INTEGER) });
+    expect(expired).toMatchObject({ ok: false, code: "budget-exceeded", reason: `image processing exceeded the ${scaled}ms budget` });
   });
 });
