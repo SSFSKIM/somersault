@@ -72,6 +72,14 @@ the commit) or when a round's scope absorbs them.
   so the omitted diagnostic is unreadable in the TUI. Safe direction (clip beats tall-frame
   replay), same design tension as the Settings read-only entry above — resolve both with one
   scrollable-detail primitive if either becomes a real-usage complaint.
+- **McpDialog's view stack reads render-time state under batched stdin** (bl10 rereview6,
+  2026-09-02; `McpDialog.tsx` `useSelectKeys` wiring). Multiple keys coalesced into one chunk all
+  dispatch against the same render's `view`, so `Enter Enter` / `Esc Esc` would advance/pop one
+  level, not two. LATENT: empirically masked today — Ink mounts a React Legacy Root, so the raw
+  stdin handler's `setState` flushes synchronously between same-chunk events (proven with
+  instrumentation during the wave-2A focus fix, which hit the identical masking). Fix direction
+  when Ink/React root behavior changes or MCP key handling is next touched: ref-back `view`
+  exactly as the wave-2A fix ref-backed focus.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the

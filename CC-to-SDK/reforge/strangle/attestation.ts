@@ -337,6 +337,19 @@ const ORACLE_BROKERUPD =
 const ONECALLER_TEXT =
   "`Gx` has exactly one live headless caller — the re-check the engine runs on a PermissionRequest hook's REWRITTEN input — and every call the corpus makes reaches it with a whole-tool allow rule present, so the delegation at rung 3 returns before the rest of the body runs.";
 
+/**
+ * Why the interaction rungs stay unexecuted — and the exact scope of that
+ * claim. It is a fact about THIS corpus's configuration, not a structural
+ * impossibility, and it is stated that way deliberately: an earlier wording
+ * ("only interactive tools implement `requiresUserInteraction`") asserted a
+ * CLOSED population and is refuted by the bundle. The generic MCP tool adapter
+ * builds the method straight off a server-declared `_meta` key, so any MCP
+ * server may ship a tool that requires interaction. Named once rather than
+ * restated per exclusion.
+ */
+const INTERACTION_TEXT =
+  "The corpus configures no MCP servers at all, so the only tools in play are the built-ins — of which the three that implement `requiresUserInteraction` (AskUserQuestion and the plan-mode pair) are interactive surfaces a headless session neither offers nor has the model reach for. That is a claim about this corpus's CONFIGURATION, not a structural impossibility: the generic MCP tool adapter builds `requiresUserInteraction()` from the server-declared `_meta[\"anthropic/requiresUserInteraction\"]` key (cli.pretty.js 30282/30296 and 115317/115331; key table at 818237), so the population is open and a future MCP-carrying scenario would overturn this exclusion.";
+
 export const EXCLUSIONS: Exclusion[] = [
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded
@@ -1379,7 +1392,9 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "permission-precheck#permissionPrecheck@27:T",
     reason:
-      "a tool that REQUIRES USER INTERACTION. Only interactive tools implement the hook — AskUserQuestion and the plan-mode pair — and a headless session neither offers them a surface nor has the model reach for them. Named condition, and one the SDK's own headless shape argues against creating. " +
+      "a tool that REQUIRES USER INTERACTION. " +
+      INTERACTION_TEXT +
+      " Named condition, and one this corpus's configuration argues against creating rather than one the code forbids. " +
       ORACLE_PRECHECK,
   },
   {
@@ -2078,42 +2093,54 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@10:T",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the full test. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is the full test. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@10:F",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the test failing as a whole. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is the test failing as a whole. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@11:T",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is its two-term prefix. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is its two-term prefix. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@11:F",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is that prefix false. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is that prefix false. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@12:T",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is the `interactionSatisfied` term. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is the `interactionSatisfied` term. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },
   {
     branch: "permission-request-hook-decision#permissionRequestHookDecision@12:F",
     reason:
-      "the INTERACTION rung on the hook path. Only interactive tools implement `requiresUserInteraction`, and a headless session neither offers them nor has the model reach for them — the same structural condition as the pre-check's own interaction rung. This is that term false. " +
+      "the INTERACTION rung on the hook path. " +
+      INTERACTION_TEXT +
+      " The same corpus-scoped condition as the pre-check's own interaction rung. This is that term false. " +
       ORACLE_HOOKDEC +
       " The rung is graded there over a tool that requires interaction and one that does not, in both the satisfied and unsatisfied shapes.",
   },

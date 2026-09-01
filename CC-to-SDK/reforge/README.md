@@ -2578,11 +2578,13 @@ measured negative; it will not be a third time by treating these as one.
 
 ## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
 
-Ten splices plus four owned-but-unspliced functions, eleven new recordings, and a fifth parity oracle
-grading **2,508 comparisons with 49 controls**. The wave's headline is not a count, though — it is
-**two corrections the campaign spec needed** and a set of measurements that changed how liveness is
-proven. Five more functions were spliced and then removed: each was measured dark, and the wave kept the
-finding instead of the row.
+Thirteen splices plus two owned-but-unspliced functions, fourteen new recordings, and a fifth parity
+oracle grading **2,508 comparisons with 49 controls**. The wave's headline is not a count, though — it
+is **three corrections the campaign spec needed** and a set of measurements that changed how liveness
+is proven. Three more functions were spliced and then removed: each was measured dark, and the wave
+kept the finding instead of the row. (The counts include C9's boundary-fix round, recorded at the end
+of this section; the wave as first landed had ten splices, eleven recordings and five removals, two of
+which the fix round put back.)
 
 ### `bypassPermissions` does not short-circuit the rule engine
 
@@ -2614,13 +2616,15 @@ The premise was wrong about what the gate IS. Upstream's `hE()` is
 something this environment turns off. **"Gated" was read as "remote flag" when the code says
 "guarded by three local facts".**
 
-What this does not buy is the classifier. `chmod 777 /etc/hosts` under `auto` was ALLOWED with no
-consult and no hook, so the mode is live and its BLOCKING arm is still OPEN — a strictly better
-state than the spec predicted, and an honest one: the condition is named and no input has created it.
 This also unblocks C8's `PermissionDenied` row halfway. An ordinary broker denial was created with
 both hook paths armed and `PermissionDenied` stayed silent while `PermissionRequest` fired, which
 confirms C8's call-site reading with a run behind it; the remaining condition is a classifier denial,
 which now needs an input rather than a gate.
+
+The wave then read `chmod 600 /etc/hosts` under `auto` running with no broker consult as "the
+classifier was not reached", and **C9's fix round refuted that** — see below. The correction is the
+more useful half: *no consult* meant no `canUseTool` consult, and a classifier that runs and ALLOWS
+is invisible from the host's seat.
 
 Both corrections have the same shape as the bypass one: **a premise about the engine, inherited
 through a document, that the artifact does not support.** Two out of two, in a single wave, is the
@@ -2668,8 +2672,14 @@ fails in the quiet direction: the gate goes green on a dead row.**
 The same question has to be asked of the SCENARIO. The mode-walk originally changed mode four times
 and then said READY, and all three mode-seam splices measured inert on it — a session can be told to
 change mode, believe it did, apply none of the transition, and produce a byte-identical transcript,
-as long as nothing afterwards asks it to decide anything. The walk now makes a tool call after every
-change, and each change is chosen for the DECISION it flips rather than for the mode it visits.
+as long as nothing afterwards asks it to decide anything. Each change is chosen for the DECISION it
+flips rather than for the mode it visits.
+
+The wave then wrote that rule down and did not grade it. Its recorded plan turn contained **no tool
+call at all** — plan mode injects a reminder the model obeys against any framing — and the check
+asked `usedTool` over the whole transcript, which the *dontAsk* turn's Write satisfied. C9's fix
+round found it. **A per-turn design rule graded by a whole-transcript assertion is not graded**, and
+the check is segmented by `result` frame now.
 
 ### The GATE had the same defect the sweep did, and it was hiding a dead row
 
@@ -2697,18 +2707,37 @@ negative with the sign flipped — a vacuous POSITIVE, which is worse, because a
 investigated and a false positive gets committed. The sweep now runs its whole tag list against a
 known-good engine before it measures anything.
 
-### Five functions were spliced, measured dark, and un-spliced
+### Five functions were spliced, measured dark, and un-spliced — and two of the five were not dark
 
-This was the wave's largest single lesson, and it arrived in four different shapes.
+This was the wave's largest single lesson, and it arrived in four different shapes. **Two of the five
+verdicts were wrong, and C9's fix round re-spliced them; the section below states the corrected
+finding, because a darkness verdict a later round overturns is worth more read forwards than
+preserved.**
 
-**Two are dark because their remaining callers are.** `Ree`/`isAskRuleDrivenReason` (6 call sites)
-and `Fy`/`findSafetyCheckReason` (17, the most-called function this wave touches) are both anchorable
-and both have zero free variables. Both were spliced, built and solo-sabotaged; neither turned a
-scenario red. After the pre-check and the rule checker take their own copies, upstream's remaining
-callers are the mode-aware body's gate-dead auto/dontAsk arms and the broker's ask path, where the
-corpus's decisions carry no `decisionReason` at all — so a finder that never finds anything returns
-exactly what the healthy one does. C7's "a single-caller pure helper cannot be a live splice" is the
-special case of **a many-caller helper whose remaining callers are all dark cannot be either.**
+**Two were adjudicated dark because their remaining callers were said to be, and they are not.**
+`Ree`/`isAskRuleDrivenReason` (6 call sites) and `Fy`/`findSafetyCheckReason` (17, the most-called
+function this wave touches) are both anchorable and both have zero free variables. Both were spliced,
+built, solo-sabotaged, found green, and removed. Three separate things were wrong with that:
+
+- **the twins could not have been observed by anything.** `Fy`'s returned `undefined` and `Ree`'s
+  returned `false`, which is what the healthy functions return on *every input the corpus produces*,
+  because both answer by finding something no corpus decision carries. A twin that agrees with the
+  original across the whole domain under test measures the twin.
+- **the corpus had no `auto` cell.** Their surviving callers include the mode-aware decision body,
+  which runs only under `auto`, and nothing had ever entered that mode. Adding one scenario and
+  inverting the twins turns both rows red.
+- **the written justification was wrong in every particular a reader could check.** It called the
+  auto arms "gate-dead under §3.3" — this same wave measured `auto` accepted; it said the corpus's
+  decisions "carry no `decisionReason` at all" — every Bash denial carries `subcommandResults`,
+  which is exactly the shape both functions recurse into; and it missed that the two callers left
+  after the pre-check and the rule checker take their copies are on the LIVE headless Bash path (the
+  multi-`cd` aggregator, the subcommand merge's tie-break), wanting only a command shape no cell
+  wrote.
+
+C7's "a single-caller pure helper cannot be a live splice" still holds. What does not follow from it
+is that a many-caller one is dark because **one** twin, run against **one** corpus, moved nothing.
+**A darkness verdict is a measurement, and it inherits every limitation of the twin and the corpus it
+was taken against.**
 
 **One is dark because its output is absorbed.** `ql`/`permissionMessage` has **45 call sites** and
 RUNS on essentially every tool call — it is the opposite of a dark function — and it is still
@@ -2736,10 +2765,13 @@ constantly, be spliced faithfully, and still decide nothing a corpus can see.**
 That last one was carried as live for most of the wave, on a RED the gate inferred from a non-zero
 exit rather than from a graded verdict — see below.
 
-All four of the takeable-but-dark functions live in `strangle/modules/shared/`, graded against their
-own upstream bytes by the oracle before any body is built on them. `K0` was dropped outright, as C1
-dropped the interrupt clause, because a delegation is not a helper. **In every case the wave kept the written finding where the row would have been** —
-a row the gate cannot prove is worse than no row, because it goes green for free.
+The takeable-but-dark functions live in `strangle/modules/shared/`, graded against their own upstream
+bytes by the oracle before any body is built on them; `Ree` and `Fy` moved out of `shared/` into
+manifest rows of their own when the fix round re-spliced them, leaving one-line re-exports behind so
+the owned decision modules keep importing them from where they always did. `K0` was dropped outright,
+as C1 dropped the interrupt clause, because a delegation is not a helper. **In every case the wave
+kept the written finding where the row would have been** — a row the gate cannot prove is worse than
+no row, because it goes green for free.
 
 ### The branch instrumenter learned a guarded body that returns
 
@@ -2887,6 +2919,35 @@ ask rule's consult carries **no `matchedAskRule`** when the tool passed its own 
 the pre-check's annotating arm stamps it. **When a recording cannot see a field, say which instrument
 can, and grade the claim the recording can actually support.**
 
+### The C9 boundary round: what a review of the RECORD found that a review of the code did not
+
+The boundary review returned NOT CONVERGED on the record side while the code side held: every splice
+byte-faithful, every darkness claim verified, the gate's liveness change validated. Everything below
+is something the artifacts CLAIMED and the recordings did not support. That asymmetry is the finding
+worth keeping — **this wave's code was reviewable and its evidence was not**, because nothing checks
+that a document's citation names a run that exists.
+
+| what an artifact claimed | what the recording held |
+|---|---|
+| the mode walk "makes a tool call after every change", cited in the matrix for a rung-11 decision | its plan turn had no tool call at all; the check read `usedTool` over the whole run, so the *dontAsk* turn's Write carried it. Per-turn checks now, and the plan turn is a read outside the cwd — the only decision-bearing call plan mode's injected reminder lets the model make |
+| `perm-plan-mode`: "the decision must not be an allow, and the file must not exist" | the Write was brokered, allowed, and the file created. Plan mode's refusal in the pre-check is guarded on `e.mcpInfo`, so a built-in file tool never reaches it; plan mode DELEGATES. The second half of the claim was graded by nothing, which is how it survived being wrong |
+| the classifier "was not reached" under `auto` | it was. It makes its own `/v1/messages` call, and for that command it answered `<severity>25` — allowed. The `classifier` decisionReason and the `PermissionDenied` hook event both fell out of making that one call fail |
+| `Ree` and `Fy` are dark | neither is; see above. Both are spliced |
+| the committed attestation report | stale, for the second time. `attest --check` now diffs it against the report the run would write, so a stale commit fails the gate loudly instead of drifting |
+
+Three things generalise past this wave:
+
+- **A per-turn design rule needs a per-turn assertion.** Writing the rule in a comment and grading it
+  with a whole-transcript predicate is the same hollow pass the comment says the scenario exists to
+  prevent, one level up.
+- **A correction has to sweep the justification layer, not just the narrative one.** Both of the
+  wave's headline corrections were stated correctly in the wave record and left standing, unmarked,
+  in the scout that feeds the next wave, in module headers, in exclusion reasons and in the gate's
+  own comments — nineteen sites. A refuted premise that survives where the reasoning lives will be
+  reasoned from again.
+- **A committed artifact that nothing diffs will go stale, and regenerating it only resets the
+  clock.** The fix is the guard.
+
 ## Next
 
 W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they
@@ -2914,10 +2975,13 @@ inherit, newest first:
   into two module headers, a scenario tripwire, a ledger note and the parity scorecard. **An
   explanation that fits the evidence is not the same as the mechanism.**
 - **Watch for the modes that silently disable the thing you are measuring.** Three cost W5 real
-  measurements: `bypassPermissions` skips the permission system outright; a bare `allowedTools` entry
-  shadows `canUseTool`; and default mode auto-approves read-only shell commands without consulting it
-  at all. Each turned a live event into a clean-looking negative. Before believing a probe's silence,
-  check that the probe's own options did not switch the subsystem off.
+  measurements: `bypassPermissions` skips the ASK (not the permission system — W6 measured that the
+  rule engine still runs under it and a deny rule still bites); a bare `allowedTools` entry shadows
+  `canUseTool`; and default mode auto-approves read-only shell commands without consulting it at all.
+  Each turned a live event into a clean-looking negative. Before believing a probe's silence, check
+  that the probe's own options did not switch the subsystem off — **and check that the silence is on
+  the seam you think it is.** W6's `auto` cell read "the broker was not consulted" as "the classifier
+  did not run"; the classifier makes its own API call, and it had run and allowed.
 - **Extend the instrument, not the owned code, when the two disagree.** The branch inventory refused
   `try/finally` with no catch, and upstream's SessionStart dispatcher is exactly that. Rewriting the
   module to be measurable would have measured something other than upstream; teaching the instrumenter

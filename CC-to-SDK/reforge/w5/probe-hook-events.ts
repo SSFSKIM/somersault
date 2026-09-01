@@ -28,13 +28,20 @@
 // firing condition was actually created, so each event carries one, and the
 // verdict table below reports one of three things per event:
 //
-//   FIRED  — observed, in the named phase
+//   FIRED  — observed: in a phase here, or — when the row carries a `firedIn`
+//            — in the named run elsewhere in the campaign that created its
+//            condition. Provenance is printed either way, never elided.
 //   DEAD   — the condition WAS created in a phase here, and it did not fire
 //   OPEN   — the condition is named but not created, so nothing is claimed
 //
 // OPEN is the honest shape for an event whose condition needs machinery out of
 // proportion to the cell (an eliciting MCP server, a teammate session, a
 // `--worktree` launch). It is not a negative and must never be counted as one.
+//
+// And OPEN is a STATE, not a verdict: a row leaves it the moment someone
+// anywhere creates the condition it names. `PermissionDenied` did exactly that
+// (2026-09-02) — see its entry — which is why the table reads a row's evidence
+// from the whole campaign rather than only from this file's own phases.
 //
 // ---------------------------------------------------------------------------
 // THE SECOND QUESTION: the wave's one non-trivial fixture. `Options.hooks`
@@ -88,13 +95,15 @@ const WATCHED = REGISTRY.events.map((e) => e.event) as HookEvent[];
 
 /**
  * Per event: the condition that makes its dispatcher run, and the phase below
- * that creates it. `phase: null` means the condition is NAMED but NOT CREATED —
- * an OPEN row, never a negative.
+ * that creates it. `phase: null` means no phase HERE creates it. That is an
+ * OPEN row — never a negative — unless the row also carries `firedIn`, which
+ * names the run elsewhere in the campaign that did create the condition and
+ * observed the dispatch; such a row is FIRED, with that provenance printed.
  *
  * Every entry is read off the dispatcher's call sites in the pinned bundle (the
  * `callSites` section of the registry fixture points at them), not guessed.
  */
-const CONDITIONS: Record<string, { phase: string | null; condition: string }> = {
+const CONDITIONS: Record<string, { phase: string | null; firedIn?: string; condition: string }> = {
   PreToolUse: { phase: "batch", condition: "any tool call" },
   PostToolUse: { phase: "batch", condition: "a tool call that succeeds" },
   PostToolUseFailure: { phase: "tool-failure", condition: "a tool call that fails (`dQ`'s error arm)" },
@@ -115,7 +124,16 @@ const CONDITIONS: Record<string, { phase: string | null; condition: string }> = 
   PermissionRequest: { phase: "permission-delay", condition: "a tool call evaluated by the permission system (not bypassed)" },
   PermissionDenied: {
     phase: null,
-    condition: "a denial whose `decisionReason` is the AUTO-MODE CLASSIFIER — the sole call site is guarded on `decisionReason.classifier === \"auto-mode\"`, so an ordinary deny does not reach it (the permission-delay phase denies one and the row stays OPEN, not DEAD)",
+    firedIn: "w6/probe-permissions.ts phase `auto-classifier-unavailable`, recorded as corpus scenario `perm-auto-classifier-deny` (w6/scenarios.ts)",
+    condition:
+      "a denial whose `decisionReason` is the AUTO-MODE CLASSIFIER — the sole call site is guarded on " +
+      "`decisionReason.classifier === \"auto-mode\"`, so an ordinary deny does not reach it (the permission-delay " +
+      "phase here denies one and it does not fire: the right answer to the wrong condition). CREATED 2026-09-02, " +
+      "and not by a better prompt — under `auto`, with the classifier's OWN `/v1/messages` call answered 400 at " +
+      "record time, upstream denies fail-closed with `{type:\"classifier\", classifier:\"auto-mode\"}`, which is " +
+      "byte-for-byte the guard on the dispatcher's sole call site. The event FIRED on BOTH hook paths — the SDK " +
+      "callback and the settings-layer command hook — and the dispatcher is now spliced as the manifest row " +
+      "`permission-denied-hooks`.",
   },
   TaskCreated: { phase: "tasks", condition: "a TaskCreate tool call (dispatched inside the tool's own `call()`)" },
   TaskCompleted: { phase: "tasks", condition: "a TaskUpdate that moves a task's status to `completed`" },
@@ -572,14 +590,22 @@ async function main(): Promise<void> {
     const where = [...results]
       .filter(([, p]) => (p.callbacks.get(e) ?? 0) > 0 || (p.commands.get(e) ?? []).length > 0)
       .map(([label, p]) => `${label}(cb=${p.callbacks.get(e) ?? 0},cmd=${(p.commands.get(e) ?? []).length})`);
-    const verdict = where.length > 0 ? "FIRED" : spec.phase !== null ? "DEAD " : "OPEN ";
+    // Order matters: a row whose condition was created ELSEWHERE in the campaign
+    // and fired there is FIRED, not OPEN — `phase: null` only ever meant "no
+    // phase in THIS file creates it", which is a fact about this probe's cells
+    // and not about the event.
+    const verdict = where.length > 0 || spec.firedIn ? "FIRED" : spec.phase !== null ? "DEAD " : "OPEN ";
     tally[verdict.trim() as keyof typeof tally]++;
-    console.log(`  ${verdict}  ${e.padEnd(20)} ${where.join(" ") || (spec.phase !== null ? `condition created in phase '${spec.phase}'` : "condition NOT created")}`);
+    const provenance =
+      where.join(" ") ||
+      (spec.firedIn ? `elsewhere: ${spec.firedIn}` : spec.phase !== null ? `condition created in phase '${spec.phase}'` : "condition NOT created");
+    console.log(`  ${verdict}  ${e.padEnd(20)} ${provenance}`);
     console.log(`         condition: ${spec.condition}`);
   }
   console.log(`\n  FIRED ${tally.FIRED}   DEAD ${tally.DEAD}   OPEN ${tally.OPEN}   (of ${WATCHED.length})`);
   console.log(
-    "\n  DEAD means the condition WAS created here and the dispatcher did not run.\n" +
+    "\n  FIRED means observed — in a phase here, or in the run named after 'elsewhere:'.\n" +
+      "  DEAD means the condition WAS created here and the dispatcher did not run.\n" +
       "  OPEN means the condition is named but not created — no claim either way.\n" +
       "  Neither is 'the event does not exist': the registry says it does.",
   );
