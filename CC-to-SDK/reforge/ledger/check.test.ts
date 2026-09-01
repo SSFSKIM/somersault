@@ -168,7 +168,15 @@ rejects("missing footprint field is rejected", (l) => delete (rowOf(l, "tool/Bas
 rejects("empty footprint array is rejected", (l) => (rowOf(l, "tool/Bash").footprint = []), /non-empty array/);
 rejects("standalone-complete without a footprint is rejected", (l) => (rowOf(l, FRESH).state = "standalone-complete"), /requires a recorded upstream footprint/);
 rejects("assembled without a footprint is rejected", (l) => (rowOf(l, FRESH).state = "assembled"), /requires a recorded upstream footprint/);
-rejects("stale without an adjudication note is rejected", (l) => (rowOf(l, "subsystem/compaction").state = "stale"), /adjudication note/);
+// The mutation has to REMOVE the note, not merely set the state: C5x gave this
+// row a real note when it landed the compaction-prompt splice, and a control
+// that only sets `stale` on a row that already has one stops being a control —
+// the failure mode this suite's own retrospective is about.
+rejects("stale without an adjudication note is rejected", (l) => {
+  const r = rowOf(l, "subsystem/compaction");
+  r.state = "stale";
+  delete r.note;
+}, /adjudication note/);
 rejects("edges as a non-array is rejected", (l) => ((rowOf(l, "tool/Bash").edges as unknown) = "none"), /edges: missing/);
 
 // --- footprint shape ---
