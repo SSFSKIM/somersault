@@ -7,7 +7,7 @@
 //
 // Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/raw-protocol.ts [--engineB <name>]
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts } from "../src/differ.js";

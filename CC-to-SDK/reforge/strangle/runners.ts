@@ -28,6 +28,3 @@ export function runnerFor(tag: string, engineB: string): string[] {
   const suite = NON_CORPUS[tag];
   return suite ? [...suite, "--engineB", engineB] : ["m1/run.ts", "--scenario", tag, "--engineB", engineB];
 }
-
-/** True when the tag is graded by a suite of its own rather than by the corpus. */
-export const isNonCorpusTag = (tag: string): boolean => tag in NON_CORPUS;

@@ -744,7 +744,7 @@ for (const subtype of OWNED_SUBTYPES) {
   const appState = () => ({ mcp: { clients: [{ type: "pending" }, { type: "connected" }] } });
 
   /** The launch options this handler MUTATES — a fresh one per side, or the two would share. */
-  const makeOptions = () => ({ storageV5: { store: true }, agent: undefined as string | undefined, userSpecifiedModel: undefined as string | undefined, systemPrompt: undefined as unknown, sessionMirror: false });
+  const makeOptions = (): Record<string, unknown> => ({ storageV5: { store: true }, agent: undefined, userSpecifiedModel: undefined, systemPrompt: undefined, sessionMirror: false });
 
   const requests: [string, Record<string, unknown>][] = [
     ["bare", {}],
@@ -781,7 +781,17 @@ for (const subtype of OWNED_SUBTYPES) {
   }
 
   // the agent arm, whose two prepend branches are the subtle part
-  const agentCells: [string, Partial<typeof baseOpts> & { selected?: string; userModel?: string }][] = [
+  interface AgentCell {
+    hostOwnsHooks?: boolean;
+    agentDefinition?: Record<string, unknown>;
+    mainThreadAgent?: string;
+    exempt?: boolean;
+    allowed?: boolean;
+    restartedEpoch?: boolean;
+    selected?: string;
+    userModel?: string;
+  }
+  const agentCells: [string, AgentCell][] = [
     ["no agent selected", {}],
     ["agent selected, not resolved", { selected: "explorer" }],
     ["agent selected and already active", { selected: "explorer", mainThreadAgent: "explorer", agentDefinition: { agentType: "explorer", initialPrompt: "hello", getSystemPrompt: () => "agent prompt" } }],
