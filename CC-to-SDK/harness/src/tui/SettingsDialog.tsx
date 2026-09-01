@@ -544,10 +544,24 @@ export function SettingsDialog({ tab, onTabChange, openSeq, model, mode, thinkLe
   // dead hints AND, at the 4-hint cap, evicted `Tabs`' own working "switch tab" entirely. A read-only tab
   // names its true set directly instead: `confirm:no` (still live — Escape closes the dialog everywhere) plus
   // whatever `Tabs` itself contributes.
-  const hintActions = activeTab === "Config" ? undefined : ([{ action: "confirm:no", scope: "Settings" }] as const);
-  const hintScope = activeTab === "Config" ? (["Settings", "Tabs"] as const) : (["Tabs"] as const);
+  //
+  // bl10 fix wave 7, W7-1 (cited site): the Config tab has a THIRD state this used to conflate with plain
+  // browsing — `search !== null`. While the `/` query is open, `Select` is unmounted (the query's own static
+  // list replaces it, above) and `Tabs` is handed `disableNavigation` (registers no handler at all), so
+  // `Settings`' own select:*/settings:search bindings and `Tabs`' tab-switch are ALL unreachable, yet the old
+  // code still walked `hintScope={["Settings","Tabs"]}` unconditionally for the whole tab. `HelpDialog`'s own
+  // search arm is the precedent this mirrors exactly: an empty `hintActions` (not `hintScope`, which would
+  // just re-walk the same dead table) replaces the derived bar outright — `SEARCH_FOOTER` already states the
+  // true set for this state ("Type to filter · Enter/↓ to select · Esc to clear"), so the bar has nothing left
+  // to add and DialogFrame's `hints.length > 0` gate keeps it from rendering at all.
+  const searching = activeTab === "Config" && search !== null;
+  const hintProps = searching
+    ? { hintActions: [] as const }
+    : activeTab === "Config"
+      ? { hintScope: ["Settings", "Tabs"] as const }
+      : { hintScope: ["Tabs"] as const, hintActions: [{ action: "confirm:no", scope: "Settings" }] as const };
   return (
-    <DialogFrame title="Settings" color="permission" hintScope={hintScope} {...(hintActions ? { hintActions } : {})}>
+    <DialogFrame title="Settings" color="permission" {...hintProps}>
       {/* T-MENU task 2: SHELL mode (canon `Pg`/`Zi`) — the tab list is derived from the `<Tab>` children below
           instead of the deleted `TABS`/`TAB_SPECS` array, and `Tabs` is CONTROLLED via `selectedTab`+
           `onTabChange` because `activeTab` already lives in `useChat`'s hook state (it must survive the

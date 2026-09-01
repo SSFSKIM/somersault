@@ -691,12 +691,21 @@ export function PermissionsDialog({
   const focusedItem = activeTab === "Workspace" && focusValue !== undefined ? items[values.indexOf(focusValue)] : undefined;
   const workspaceSelectIsNoOp = focusedItem?.kind === "dir" && focusedItem.d.source !== "session";
   const hint = (action: string, scope: KeyContextName): { action: string; scope: KeyContextName } => ({ action, scope });
-  const hintActions = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined : [
-    hint("select:cancel", "Select"),
-    hint("select:previous", "Select"),
-    ...(workspaceSelectIsNoOp ? [] : [hint("select:accept", "Select")]),
-    hint("tabs:next", "Tabs"),
-  ];
+  // bl10 fix wave 7, W7-1 sweep: this set named cancel/navigate/select/switch-tab unconditionally for every
+  // one of Allow/Ask/Deny/Workspace, with no regard for `loading` (computed above) — the state right after
+  // mount, before `fetchSettings`/`fetchDirs` resolves, where the body renders `Loading…` and NO `Select` is
+  // mounted at all (`useSelectKeys`'s own `useKeyScope("Select")` never fires, so select:previous/accept
+  // resolve to no live handler). Same false-affordance class `workspaceSelectIsNoOp` already guards below,
+  // one state earlier: nothing to navigate or accept yet, only `confirm:no` (still live — Escape closes the
+  // dialog regardless of the fetch) and the always-mounted `Tabs` strip.
+  const hintActions = activeTab === "Recently denied" || activeTab === "Auto mode" ? undefined
+    : loading ? [hint("confirm:no", "Settings"), hint("tabs:next", "Tabs")]
+    : [
+        hint("select:cancel", "Select"),
+        hint("select:previous", "Select"),
+        ...(workspaceSelectIsNoOp ? [] : [hint("select:accept", "Select")]),
+        hint("tabs:next", "Tabs"),
+      ];
 
   /** T-MENU task 2: ONE shared body, computed once per render from the already tab-scoped variables above
    *  (`items`/`loading`/`INTRO[activeTab]`/`footerText`) — unlike Settings/Help, this dialog never had a

@@ -364,6 +364,25 @@ describe("SettingsDialog — the auto keyhint bar replaces the browsing footers 
     expect(plain(frame(r.lastFrame))).toContain("Type to filter · Enter/↓ to select · Esc to clear");
     r.unmount();
   });
+
+  // bl10 fix wave 7, W7-1 (cited site): while the Config tab's `/` query is open, `Select` is unmounted
+  // (the query's own static list replaces it — see the render) and `Tabs` is `disableNavigation`'d, yet the
+  // OLD code still derived `hintScope={["Settings","Tabs"]}` unconditionally for the whole Config tab — so the
+  // auto bar kept printing "navigate"/"cancel" (from `Settings`' own `select:previous`/`confirm:no`) beside
+  // the adjacent, TRUE `SEARCH_FOOTER` ("Type to filter · Enter/↓ to select · Esc to clear"), which contradicts
+  // it: Esc clears the query here, it does not close the dialog, and there is no live cursor to "navigate".
+  it("drops the stale auto-hint bar while the Config-tab query is open — Select unmounted, Tabs disabled", async () => {
+    const r = render(<SettingsDialog {...props()} rows={40} columns={100} />);
+    await waitFor(() => frame(r.lastFrame).includes("Theme"));
+    r.stdin.write("/");
+    await waitFor(() => plain(frame(r.lastFrame)).includes("Search settings…"));
+    const f = plain(frame(r.lastFrame));
+    expect(f, "no live Select is mounted while the query is open — nothing to navigate").not.toContain("navigate");
+    expect(f, "Esc clears the query here, it does not close the dialog").not.toContain("cancel");
+    // The true state is still spelled out — just by SEARCH_FOOTER, not the derived bar.
+    expect(f).toContain("Type to filter · Enter/↓ to select · Esc to clear");
+    r.unmount();
+  });
 });
 
 // bl10 fix wave 2, finding 2: `readOnlyTabBody` rendered `tabLines[t]!.map(...)` with no windowing at all — a

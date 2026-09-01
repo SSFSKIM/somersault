@@ -815,4 +815,19 @@ describe("PermissionsDialog — the auto keyhint bar replaces the browsing foote
     await waitFor(() => plain(lastFrame).includes("❯ Bash(ls)"), "the cursor to reach the rule row");
     expect(plain(lastFrame), "every row on Allow is activatable — no focus-derived carve-out here").toContain("select");
   });
+
+  // bl10 fix wave 7, W7-1 sweep: `hintActions` (built above the `body`) named the fixed cancel/navigate/
+  // select/switch-tab set unconditionally on Allow/Ask/Deny/Workspace, with no regard for `loading` — the
+  // state (settings/dirs still `undefined`, right after mount and before the fetch resolves) where the body
+  // renders `Loading…` and NO `Select` is mounted at all. The bar advertised "navigate"/"select" over a
+  // screen with no cursor to move and nothing to accept.
+  it("advertises only cancel + switch tab while the fetch is still pending — no live Select to navigate/select on", async () => {
+    const { lastFrame } = render(<PermissionsDialog {...props({ fetchSettings: () => new Promise(() => {}) })} />);
+    await waitFor(() => plain(lastFrame).includes("Loading…"), "the pending fetch's Loading state");
+    const f = plain(lastFrame);
+    expect(f, "no live Select is mounted yet").not.toContain("navigate");
+    expect(f, "no live Select is mounted yet").not.toContain("select");
+    expect(f, "confirm:no still closes the dialog while loading").toContain("cancel");
+    expect(f, "the Tabs strip is mounted regardless of the fetch").toContain("switch tab");
+  });
 });
