@@ -301,3 +301,149 @@ inventory is already characterized.
 boundary review converged with this as its only probe-shaped residue. Fold the phase into whichever
 wave next touches the probe — W7.5's executor work is the natural host, since `zxt` is on its ledger
 gap already.
+
+---
+
+## 2026-09-02 — the auto-mode classifier's BLOCK verdict has no scenario, so one producer of the `classifier` decisionReason stays unrecorded
+
+**Source:** the W6/C9 boundary-fix round, adjudicated at design time rather than found in review ·
+`reforge/w6/scenarios.ts` (`perm-auto-classifier-deny`), `reforge/w6/probe-permissions.ts`
+(phases `auto-classifier` and `auto-classifier-unavailable`), `reforge/src/faults.ts`.
+
+**What:** `auto` mode decides by asking a model. The `classifier` decisionReason has exactly two
+producers — the classifier's own BLOCK verdict, and the FAIL-CLOSED arm beneath it that denies when
+the classifier call is unavailable. The corpus records the second and not the first.
+`perm-auto-classifier-deny` reaches the fail-closed arm with a harmless `chmod` by answering the
+classifier's own `/v1/messages` request with a 400 at record time. The block verdict would need a
+genuinely dangerous input, judged dangerous, live.
+
+**Cost:** one of the eleven decisionReason kinds is recorded from one of its two producers. The kind
+itself is not dark — the fail-closed arm carries it, `PermissionDenied` fires on it, and the parity
+oracle grades the arm's rendering against upstream's bytes — so what is missing is the *semantic*
+path: nothing in the corpus shows the classifier reading a command, judging it, and refusing.
+
+**Why deferred:** three costs, and they compound rather than add.
+
+1. **The verdict is a model judgement, so recording it takes multiple takes.** The consult is a live
+   two-stage classifier call. Whether a given command comes back above the block threshold is not
+   something the harness decides; the first `chmod` probe came back `<severity>25` and was allowed.
+   Each take is a live recording.
+2. **The consult bodies embed transcript and git enrichment**, which is extra matching surface for
+   the replay proxy — more run-scoped prose in the request body is more for `canonical.ts` to
+   normalize, on a request shape nothing else in the corpus produces.
+3. **The classifier model derives from the main model**, so the cassette rots faster than an
+   ordinary one: a pin bump that moves the main model moves the classifier's model with it, and this
+   scenario needs re-recording when others do not.
+
+Against that, what it buys is one verdict — and it is the classifier's BLOCK, the remaining
+producer of a decisionReason the corpus already carries by another route. Revisit alongside §3.3's
+`safetyCheck` trigger, which is deferred on the same argument (both need an input this project has
+deliberately not designed) and which would amortize the "run something genuinely dangerous in the
+sandbox" design pass across two cells instead of one.
+
+---
+
+## 2026-09-02 — `Vvt`'s two DEFAULT PARAMETERS are ungraded, and the owned module does not have them
+
+**Source:** the W6/C9 fix round, found while re-reading the response mapper's oracle ·
+upstream `Vvt` in `~/claude-code-bundle/2.1.251/modules/chunk-g1qrzvef.js`
+(`function Vvt(t,e,o,r,u=e,l=!1)`), owned in
+`reforge/strangle/modules/broker-response-map/reference.js` (`brokerResponseMap`), manifest row
+`broker-response-map` in `reforge/strangle/manifest.ts`, oracle block "the response mapper" in
+`reforge/strangle/permissions-parity.test.ts`.
+
+**What:** upstream's fifth and sixth parameters carry defaults — `inputTool` defaults to the prompt
+tool (`u = e`) and `suppressAlwaysAllow` defaults to `false` (`l = !1`). The owned
+`brokerResponseMap` declares neither: its parameter list is positional with no initializers. Every
+case in the parity oracle passes all six positionally (`…, stubTool(trace), false`), so no comparison
+on either side ever runs with the arguments omitted, and the divergence is invisible to the gate.
+
+**Cost:** none in the spliced build, which is why this is debt and not a bug. The splice transform
+keeps upstream's own parameter text in the shim it leaves behind (`paramText` in
+`reforge/strangle/ast.ts`, `exciseFunction`), so the retained declaration applies the defaults and
+the owned module is only ever called with all six already resolved. The cost is in the standalone
+lane: `engine-ts` calls owned modules directly, and a four-argument call there would pass
+`inputTool: undefined` where upstream passes the prompt tool — which reaches `lastKnownInput` on an
+undefined `.name` rather than falling back. A real caller with fewer than six arguments turns an
+ungraded difference into a crash.
+
+**Why deferred:** it is one line in the owned module plus two oracle cases, and neither is urgent
+while the shim supplies the defaults. It is logged rather than fixed because the fix belongs with a
+decision this campaign has not made in general — whether owned modules reproduce upstream's arity
+defaulting or require their callers to resolve it — and making that call for one module in a fix
+wave would set the precedent by accident. Pay it in the wave that first drives `broker-response-map`
+from the standalone skeleton, and check the other owned modules' targets for initializers at the
+same time.
+
+---
+
+## 2026-09-02 — three PURE HELPERS are forwarded as ports instead of owned, against §2.4's taxonomy
+
+**Source:** the W6/C9 fix round · `reforge/strangle/manifest.ts`, rows `permission-precheck`
+(captures `denyRuleMessage` / `nEe`, `isPlanModeFloor` / `h7e`, `resolvedInput` / `u7e`) and
+`rule-based-permissions` (a second `denyRuleMessage` / `nEe` capture). Recorded in
+`reforge/ledger.json` under row `subsystem/permissions`.
+
+**What:** all three upstream bodies are one-line pure functions with no free variables:
+
+```
+function nEe(e,n){return`Permission to use ${e} with ${n.ruleValue.ruleContent} has been denied.`}
+function h7e(e){return e?.type==="mode"&&e.mode==="plan"}
+function u7e(e,t){return("updatedInput"in e?e.updatedInput:void 0)??t}
+```
+
+Each is classified `effectful-port` in the manifest and forwarded across the adapter. §2.4's
+taxonomy puts them in the `pure-helper` class instead: a pure helper is one the owned module *ships
+its own implementation of and uses in both wirings*, with the graph's function neither called nor
+compared. `effectful-port` is the class for captures that are effectful or stateful, where the
+dependency becomes a typed port and a ledger edge to whichever subsystem owns the far side. These
+have no far side to own.
+
+**Cost:** doctrinal, not behavioural. The functions are pure, so calling upstream's copy returns
+exactly what an owned copy would; the parity oracle grades the modules that use them, and the port
+trace records the calls. What it costs is the campaign's actual purpose — three helpers whose
+implementations we could own outright remain the extracted engine's, so `subsystem/permissions`
+carries three ports it should not need, and the ownership trend the ledger reports is three
+functions pessimistic.
+
+**Why deferred — and explicitly, do NOT churn the splices to fix it now.** Re-classifying a capture
+changes the adapter's wiring, the owned module's signature, its inverted twin and every oracle case
+written against the current parameter list, and it does so across two manifest rows for `nEe` alone.
+That is a real diff over four modules to move three one-line functions from "called correctly" to
+"owned correctly", with no behavioural change to show for it and a fresh chance to introduce a
+transcription error in bodies that are currently exact by construction. This entry exists so that
+the next wave with a reason to touch `permission-precheck` or `rule-based-permissions` reclassifies
+them **deliberately, as part of work it was already doing**, rather than either churning them in
+isolation or leaving them un-noticed forever. When that wave comes: reclassify to `pure-helper`,
+transcribe the three bodies into the owned modules, and drop the corresponding ports from the ledger
+row's capture list.
+
+---
+
+## 2026-09-02 — closure-ledger evidence was regenerated one commit after the commit that changed what it describes
+
+**Source:** the W6/C9 fix round's own commit sequence · `reforge/ledger.json`
+(row `subsystem/permissions` and the hook-dispatch row), `reforge/ledger/check.ts`.
+
+**What:** the splice work landed in `e382569b2` ("splice the PermissionDenied dispatcher, and two
+functions the wave adjudicated dark"), and the ledger footprints, captures and notes describing it
+were backfilled in the *following* commit, `061988b8e`. Between the two, the ledger's evidence
+described a tree that no longer existed: it named neither the new `permission-denied-hooks` footprint
+nor the `safety-check-reason` and `ask-rule-reason` rows the previous commit had created.
+
+**Cost:** bounded and already closed for this instance, since the catch-up commit landed minutes
+later on the same branch. The general cost is that the ledger is the campaign's ownership record and
+its `_doc` already states the rule it broke — "every wave child updates its rows in its landing
+commit". A reader who checks out the intermediate commit, or a reviewer who reads the ledger at a
+commit boundary, gets an evidence list that under-reports what the tree owns. Nothing automated
+catches this: `ledger/check.ts` validates the ledger against the manifest at whatever commit it runs
+in, so a lagging evidence list is only wrong in history, not in the working tree.
+
+**Why deferred:** there is nothing to fix — the lag is closed. What this entry records is the
+**remedy going forward, which is discipline rather than tooling: regenerate ledger evidence in the
+same commit as the change it describes.** A separate "ledger catch-up" commit is the anti-pattern,
+however tidy it looks in a log. Consider promoting this to a gate check if it recurs: the mechanical
+form would be a pre-commit or CI assertion that a commit touching `reforge/strangle/manifest.ts`
+also touches `reforge/ledger.json`. That is deliberately not built yet — one occurrence is not
+enough evidence that a rule needs enforcement machinery, and the check would fire on manifest edits
+that genuinely change no ownership.

@@ -1137,6 +1137,32 @@ export const EXCLUSIONS: Exclusion[] = [
       ORACLE_SHAPES,
   },
   {
+    branch: "safety-check-reason#findSafetyCheckReason@2:T",
+    reason: "the filter ACCEPTING a safety check it was handed, which needs @1:T above — a decision whose reason IS a safety check, and the corpus creates none. " + ORACLE_SHAPES,
+  },
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@2:F",
+    reason:
+      "the filter REJECTING one, which is the arm the pre-check's bypass rung depends on (it asks only for BYPASS-IMMUNE safety checks) and needs the same absent input. Downstream of @1:T. " +
+      ORACLE_SHAPES,
+  },
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@4:iterated",
+    reason: "the descent over an aggregate's parts, inside the recursion the corpus does not enter (@3:T). " + ORACLE_SHAPES,
+  },
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@5:T",
+    reason: "a part whose descent FOUND one, which returns early and stops the loop — the ordering claim of the recursion, and downstream of @4. " + ORACLE_SHAPES,
+  },
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@5:F",
+    reason: "a part whose descent found nothing, so the loop continues to the next. Downstream of @4. " + ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@5:iterated",
+    reason: "the same descent on the ask-rule predicate, inside the recursion the corpus does not enter (@3:T). " + ORACLE_SHAPES,
+  },
+  {
     branch: "ask-rule-reason#isAskRuleDrivenReason@3:T",
     reason:
       "the same aggregate shape, on the ask-rule predicate: a `subcommandResults` reason to descend into, which its reached call site never passes. Its F arm executes. " +
@@ -1193,9 +1219,14 @@ export const EXCLUSIONS: Exclusion[] = [
   // families account for most of it, and each is named on its own entries:
   // arms behind a pinned environment (sandboxing, remote execution, the
   // feature gates §3.3 fixes at their disabled defaults), arms behind a tool
-  // CAPABILITY no headless tool implements, arms behind an interactive surface
-  // a headless session does not have, and arms behind a condition this project
-  // has deliberately not created (a real safety-check trigger).
+  // capability NO TOOL THIS CORPUS CONFIGURES implements — which is a claim
+  // about the configuration and not a structural one, and the wording matters:
+  // `requiresUserInteraction` is settable by any MCP server through
+  // `_meta["anthropic/requiresUserInteraction"]`, so a scenario that mounted one
+  // would overturn these entries rather than contradict a law — arms behind an
+  // interactive surface a headless session does not have, and arms behind a
+  // condition this project has deliberately not created (a real safety-check
+  // trigger).
   //
   // Three entries below are MEASURED negatives rather than deferrals, and they
   // are the ones worth reading: the pre-check's whole-tool deny rung (a

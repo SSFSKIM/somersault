@@ -505,6 +505,17 @@ const upstreamPluralize = (() => {
   ];
   // The fixture's enumeration is the completeness check on the list above: every
   // kind upstream's own switch renders must appear in at least one case.
+  //
+  // THESE ARE THE ELEVEN NON-COMPARISONS INSIDE `checks` (one per rendered
+  // decisionReason kind, 11 in the 2.1.251 fixture). They increment the same
+  // counter as `eq`, but they compare nothing between upstream and owned — each
+  // asserts that the case list above COVERS a kind. They are counted here on
+  // purpose: the floor at the bottom of this file is a non-vacuity contract, and
+  // a run that stopped checking coverage of the reason enumeration is as
+  // incomplete as one that stopped comparing bodies. So read the floor as
+  // "2508 graded assertions, of which 2497 are upstream-vs-owned comparisons and
+  // 11 are enumeration-coverage assertions", and keep that split in mind before
+  // quoting the number as a comparison count anywhere else.
   const covered = new Set(cases.map(([, r]) => (r as { type?: string } | undefined)?.type).filter(Boolean));
   for (const kind of REASON_KINDS) {
     checks++;
@@ -1833,9 +1844,15 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
 //    transcription error survives, because every scenario that reaches it also
 //    reaches thirteen other rungs that would mask a wrong stamp.
 //
-//    Three claims, and each has a control below: the stamp lands ONLY on a deny;
-//    it OVERWRITES a location the body already set; and a non-deny is returned
-//    UNCHANGED rather than rebuilt, which a spread would silently break.
+//    Three claims, and there are four controls below: the stamp lands ONLY on a
+//    deny; it OVERWRITES a location the body already set (two controls — the
+//    value, and that the stamp is written AFTER the spread rather than before);
+//    and a non-deny comes back with its KEY ORDER intact.
+//
+//    That third one is graded in its ordering half only, and control 4 says so.
+//    "Returned unchanged rather than rebuilt" is not what a JSON comparison can
+//    see: a `{...C}` shallow copy preserves insertion order and renders
+//    identically, so the reference-identity half of the claim is ungraded here.
 // ============================================================================
 {
   const behaviours = [
@@ -1880,8 +1897,13 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
     safeJson(await call({ behavior: "deny", decideLocation: "already-set" })),
     safeJson({ decideLocation: "already-set", behavior: "deny" }),
   );
+  // Control 4 grades KEY ORDER, and only that. The mutant is a non-deny
+  // re-listed field by field in a different order; a rebuild that merely spreads
+  // (`{...C}`) keeps the original insertion order, renders to the same JSON and
+  // would compare EQUAL — so this control cannot see that one, and the label
+  // must not claim it does.
   mustDiffer(
-    "a non-deny REBUILT rather than returned, which changes key order on a passthrough",
+    "a non-deny re-listed field by field, in a key ORDER the returned object does not have",
     safeJson(await call({ behavior: "passthrough", message: "m", decisionReason: { type: "other" } })),
     safeJson({ decisionReason: { type: "other" }, message: "m", behavior: "passthrough" }),
   );
@@ -1895,6 +1917,12 @@ const RULE = (behavior: string, source = "projectSettings", ruleContent?: string
 // stopped being able to FAIL would pass by comparing an implementation against
 // itself. Both numbers are measured, not aspirational — raise them when the
 // cross-product grows.
+//
+// WHAT IS INSIDE 2508: 2497 upstream-vs-owned comparisons (`eq`, two per `both`
+// — the value and the port trace) plus 11 enumeration-coverage assertions, one
+// per rendered decisionReason kind, which increment the same counter without
+// comparing two implementations (see section 2). The line printed below says
+// "comparison(s)" for both; that word is loose by exactly those eleven.
 if (checks < 2508) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
 if (controls < 49) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 

@@ -714,7 +714,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C6 | W3 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — the preset RECORDED rather than excluded (corpus 25 → 29); six prompt-assembly splices incl. three the scout filed anchorless; `strangle/prompt-parity.test.ts` grades 38 gate-dark branches; X7 registration folded into the gate; gate 48/48. **Boundary review closed 2026-09-01**: the corpus git seed and the memory scenario's working directory are no longer decided by the recorder's machine (that scenario re-recorded), the reachability checker's liveness proof and the seed control are gate phases, and the prompt-parity oracle carries committed mutation controls; gate 50/50. Finding 1 (structural-anchor churn) priced in §2.1 and logged as debt |
 | C7 | W4 | scout: `reforge/research/2026-09-01-w3-w4-anchor-scout.md` | **landed** — two scenarios past the boundary (corpus 29 → 31), four compaction splices plus C5x's prompt, `strangle/compaction-parity.test.ts` grading 94 comparisons incl. the trigger's port trace, microcompaction excluded with evidence, `zRe`/`Tte` deferred to C16/W13; gate 56/56; two harness gaps fixed at the source (the continuation's transcript path as the sixth run-scoped id shape; the differ's run-id map extended to the boundary's uuid fields, with `src/differ.test.ts` as its first regression test) |
 | C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected TWICE** — fourteen scenarios (corpus 31 → 45) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`, a `canUseTool` answered past the notify timer, and an authored API failure (`Scenario.deriveFault`); nineteen dispatcher splices, which with C5x's spike make **twenty functions over twenty-one of the TWENTY-THREE events the engine is measured to fire headlessly** out of upstream's 33-event dispatcher registry (the model-switch pair is a §2.3 deferral on the ledger row; the other ten registry events are OPEN with named conditions, not dead). The wave first claimed seven functions over all eight on a probe whose negatives were vacuous, then eleven over twelve on a probe that still chose its own watched list — see the two C8-fix Revision Notes. `strangle/hooks-parity.test.ts` grades 686 comparisons with 107 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 186/312 with 126 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction" — one of which the new recordings then RETIRED by reaching it; all three hook execution helpers (`Qxt`, `AE`, `zxt`) named as the row's remaining gap; gate **77/77** |
-| C9 | W6 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md`; matrix: `reforge/research/2026-09-01-w6-permission-matrix.md` | **landed** — ten splices over the decision chain, the mode axis and the headless broker's return leg, plus **five functions spliced, measured dark and un-spliced** for four different reasons (dark remaining callers; an output absorbed before any observable, at 45 call sites; a seam the headless handler bypasses; and an answer pinned by a disabled gate); eleven new recordings (corpus 45 → 56); gate **121/121**, attestation **340/641 with 301 exclusions and zero unadjudicated**; `strangle/permissions-parity.test.ts` grades **2,508 comparisons with 49 controls** over axes derived from the bundle (`research/fixtures/permission-surface-2.1.251.json`: six modes agreed by four independent enumerations, three rule behaviours, eleven decisionReason kinds) and finds every module byte-faithful. **A measured correction to this spec: `bypassPermissions` does NOT short-circuit the rule engine** — the bypass arm is rung 11 of 13 in upstream's pre-check, so a deny rule still bites under bypass and the corpus's bypass scenarios exercise most of the pre-check rather than none of it. Five sabotage twins and one whole scenario were rewritten after being MEASURED INERT (a twin that cannot be observed proves nothing, and it fails in the quiet direction); the branch instrumenter gained a guarded body that returns (nine controls); the oracle now locates its subject by the build's own anchor rule. **A second: `auto` is NOT gate-dead** — accepted through both the spawn and the control-channel paths, because upstream's auto gate is three local conditions rather than a remote flag (its classifier's blocking arm stays OPEN). **Two scenarios were caught by the BRANCH ATTESTATION rather than by any check** — both used a whole-tool deny rule, which upstream applies by removing the tool from the session, so both passed while executing none of the chain; re-recorded command-scoped, they fired `subcommandResults` (a kind the matrix had OPEN) and confirmed the bypass correction live. **And the GATE itself had the vacuity defect**: it read any non-zero exit as a RED, so a crashed or killed runner proved liveness, and one dead row was passing on exactly that — a RED now needs the runner's own verdict line or a timeout, and anything else FAILS as inconclusive. Three §2.3 gaps named on the ledger row: `von`, `createCanUseTool`, and `Dd` (no string literal at all) |
+| C9 | W6 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md`; matrix: `reforge/research/2026-09-01-w6-permission-matrix.md` | **landed, then corrected once** (2026-09-02 boundary round: **NOT CONVERGED on the record side**, the code side sound — five things the artifacts claimed that the recordings did not support; see the C9-fix Revision Note) — thirteen splices over the decision chain, the mode axis and the headless broker's return leg, plus **three functions spliced, measured dark and un-spliced** (an output absorbed before any observable, at 45 call sites; a seam the headless handler bypasses; and an answer pinned by a disabled gate) — **two more were adjudicated dark and were not**, and the fix round spliced them: their twins returned what the healthy functions return on every corpus input, and their surviving callers live in the mode-aware body, under a mode the corpus had never entered. Thirteen new recordings (corpus 45 → 58), the last three from the fix round: `perm-working-dir` closes the `workingDir` decisionReason, `perm-auto-classifier-deny` closes the `classifier` one AND fires `PermissionDenied` (OPEN across two waves) by choosing a 400 for the auto-mode classifier's OWN API call at record time, and the re-recorded `perm-mode-walk` finally makes a decision in every turn. Gate **GATEPHASES**, attestation **ATTNUM**; `strangle/permissions-parity.test.ts` grades **2,508 comparisons with 49 controls** over axes derived from the bundle (`research/fixtures/permission-surface-2.1.251.json`: six modes agreed by four independent enumerations, three rule behaviours, eleven decisionReason kinds) and finds every module byte-faithful. **A measured correction to this spec: `bypassPermissions` does NOT short-circuit the rule engine** — the bypass arm is rung 11 of 13 in upstream's pre-check, so a deny rule still bites under bypass and the corpus's bypass scenarios exercise most of the pre-check rather than none of it. Five sabotage twins and one whole scenario were rewritten after being MEASURED INERT (a twin that cannot be observed proves nothing, and it fails in the quiet direction); the branch instrumenter gained a guarded body that returns (nine controls); the oracle now locates its subject by the build's own anchor rule. **A second: `auto` is NOT gate-dead** — accepted through both the spawn and the control-channel paths, because upstream's auto gate is three local conditions rather than a remote flag. **A third, from the fix round: `auto` DOES consult the classifier** — the wave read "the tool ran with no broker consult" as "the classifier was not reached", and the classifier makes its OWN `/v1/messages` call, which for the probed command answered `<severity>25` and allowed. Only its BLOCK verdict stays OPEN. **Two scenarios were caught by the BRANCH ATTESTATION rather than by any check** — both used a whole-tool deny rule, which upstream applies by removing the tool from the session, so both passed while executing none of the chain; re-recorded command-scoped, they fired `subcommandResults` (a kind the matrix had OPEN) and confirmed the bypass correction live. **And the GATE itself had the vacuity defect**: it read any non-zero exit as a RED, so a crashed or killed runner proved liveness, and one dead row was passing on exactly that — a RED now needs the runner's own verdict line or a timeout, and anything else FAILS as inconclusive. Three §2.3 gaps named on the ledger row: `von`, `createCanUseTool`, and `Dd` (no string literal at all). **And the fix round's structural deliverable: `attest --check` now diffs the COMMITTED report against the one the run would write**, so a stale attestation artifact fails the gate loudly instead of drifting — it had gone stale twice |
 | C10 | W7 | scout: `…w5-w7-anchor-scout.md` | not-dispatched — scouted; **unblocked**. Inherits from C9: the control-response ENVELOPES are already owned (`gK`/`$U`), and the scout's claim that they carry every headless `control_response` is **wrong** — `initialize` and `reinitialize` are built inline by the headless runtime, so sabotaging the success constructor leaves `plain` green and reddens `runtime-setters`. Re-verify the rest of §3.2's table the same way |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
@@ -1248,6 +1248,94 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-02 (C9-fix / W6 boundary round — **NOT CONVERGED on the record side**;
+  the code side held): a boundary review over the wave's ten splices found every
+  splice byte-faithful, every darkness claim verified against the bundle and the
+  gate's liveness change sound — and the RECORD it all rests on wrong in five
+  places. That asymmetry is the note's subject. **This wave's code was reviewable
+  and its evidence was not**, because nothing in the harness checks that a
+  document's citation names a run that exists.
+  - **THE LOAD-BEARING ONE: a per-turn design rule graded by a whole-transcript
+    assertion is not graded.** `perm-mode-walk` exists to prove a mode change
+    changes what the next tool call decides, and its own comment says the walk
+    would be hollow without a tool call after every change. Its plan turn had NO
+    tool call — plan mode injects a system reminder the model obeys against any
+    framing — and the check asked `usedTool` over the whole run, which the
+    *dontAsk* turn's Write satisfied. Three artifacts then cited that turn for a
+    rung-11 decision the recording did not contain. Checks are segmented by
+    `result` frame now, and the plan turn is a READ outside the allowed
+    directories: read-only, so the reminder permits it, and ask-worthy, so the
+    bypass rung answering above it is a real asymmetry (`perm-working-dir` is the
+    control). Four takes; the intermediate one that aimed at the plan file gets
+    the call but not a replayable cassette, because the engine names that file
+    with a per-session random word.
+  - **STEP 0 OF THE REVIEWER'S CHALLENGE, and the wave's third correction:
+    `auto` DOES consult the classifier.** The wave read "the tool ran with no
+    broker consult" as "the classifier was not reached". It measures the wrong
+    seam: the classifier makes its OWN `/v1/messages` call, and when it allows,
+    no host is ever asked. Watched on the wire, a `chmod` under `auto` produces
+    one toolless, non-streaming request stopping at `</severity>` that answered
+    `<severity>25`. The probe counts classifier calls now, so the conflation
+    cannot recur. **An instrument that can only see one seam will read silence on
+    that seam as absence.**
+  - **STEP 1: the classifier's fail-closed arm closes two OPEN cells at once.**
+    Upstream denies with `{type:"classifier", classifier:"auto-mode"}` when the
+    classifier call is UNAVAILABLE — byte-for-byte the guard on the
+    `PermissionDenied` dispatcher's sole call site, which C8 and C9's first round
+    both left OPEN. Choosing a 400 for that one request with a harmless command
+    creates it: the `classifier` decisionReason is now recorded, `PermissionDenied`
+    FIRES on both hook paths, and `VNt` is spliced as `permission-denied-hooks`.
+    The injection has to happen during the LIVE take, and the contract is general:
+    `Scenario.deriveFault` can only express a fault the engine does not recover
+    FROM, because a post-hoc cassette rewrite leaves the rest of the file
+    answering a conversation that no longer happens. `Scenario.recordInject` is
+    for faults that change what happens next.
+  - **A DARKNESS VERDICT IS A MEASUREMENT, and it inherits the limits of the twin
+    and the corpus it was taken against.** This note's own C9 entry (below) says
+    `Ree` and `Fy` are owned-but-unspliced because their remaining callers are
+    dark. Both are now spliced. Their twins returned `undefined` and `false` —
+    what the healthy functions return on every input the corpus produces, so the
+    twins could not have been observed by anything; and their surviving callers
+    live in the mode-aware body, which runs only under `auto`, a mode the corpus
+    had never entered. Inverted twins plus one `auto` scenario redden both. The
+    withdrawn justification was also wrong in three checkable particulars (it
+    called the auto arms gate-dead, which this same wave refuted; it said corpus
+    decisions carry no `decisionReason`, when every Bash denial carries
+    `subcommandResults`; and it missed that the two Bash-path callers are live and
+    want only a command shape no cell wrote).
+  - **A COMMITTED ARTIFACT NOTHING DIFFS WILL GO STALE, and regenerating it only
+    resets the clock.** `reforge/attestation/coverage.md` was stale for the second
+    time. `attest --check` now compares the committed report against the report
+    the run would write and fails the gate loudly on any drift; the report body
+    was audited for run-varying fields first, and has none. The guard earned its
+    keep inside the same round, catching an exclusion that the re-recorded mode
+    walk had made stale.
+  - **A CORRECTION MUST SWEEP THE JUSTIFICATION LAYER, NOT ONLY THE NARRATIVE
+    ONE.** Both of the wave's headline corrections were stated correctly in the
+    wave record and left standing, unmarked, in the scout that is W7's designated
+    input, in the parity scorecard, in module headers, in exclusion reasons and in
+    the gate's own comments — nineteen sites. The scout keeps its history and
+    gains a dated supersession banner plus inline markers, because a scout records
+    what was believed at scouting time and editing that away destroys the record of
+    a premise being refuted. **A refuted premise that survives where the reasoning
+    lives will be reasoned from again.**
+  - Also closed: `perm-plan-mode`'s self-contradiction (it asserted the Write must
+    not be allowed while the recording had it brokered, allowed and the file
+    created — plan mode DELEGATES, because the pre-check's plan refusal is guarded
+    on `e.mcpInfo` and a built-in file tool never reaches it); the `workingDir`
+    decisionReason (one scenario, `perm-working-dir`); and `asyncAgent`, which
+    drops from OPEN to **MEASURED-DEAD** — the condition was created and the arm
+    did not run, because every construction of that kind sits behind
+    `shouldAvoidPermissionPrompts` and the SDK seam is itself a prompt surface.
+    That last one is a fact about the ownability ceiling rather than about this
+    corpus. Two harness defects fell out of the takes, both the same shape: state a
+    run leaves behind that nothing resets (the plan directory now resets with the
+    sandbox; a `repeat` cassette entry no longer reports itself as never served).
+    **Deferred, logged rather than fixed:** the semantic dangerous-command
+    classifier scenario, whose cost is a live two-stage consult over multiple
+    takes, consult bodies carrying transcript and git enrichment as extra matching
+    surface, and a classifier model that derives from the main model and so rots
+    faster on a pin bump.
 - 2026-09-01 (C9 / W6 — permission decisions): the wave owns the decision chain
   from the pre-check down, the mode axis end to end, and the headless broker's
   return leg — ten splices plus four owned-but-unspliced functions, graded by a fifth
@@ -1256,7 +1344,7 @@ Pending — written at finish.
   rather than chosen: `research/fixtures/permission-surface-2.1.251.json` holds
   six modes agreed by FOUR independent enumerations, three rule behaviours, six
   rule destinations and the eleven decisionReason kinds upstream's own message
-  builder renders. Corpus 45 → 56, gate **121/121**, and C5x's inherited `kye` carve-out CLOSED, attestation 340/641 with 301 exclusions and zero unadjudicated. Twelve items change what
+  builder renders. Corpus 45 → 56, gate **121/121** (a LOG-LINE count — see the C9-fix note; the gate's own summary block is the number to quote), and C5x's inherited `kye` carve-out CLOSED, attestation 340/641 with 301 exclusions and zero unadjudicated. Twelve items change what
   the rest of the campaign inherits.
   - **THE SPEC WAS ALSO WRONG ABOUT `auto`, AND FOR A DIFFERENT REASON THAN
     BEING WRONG.** §764's delegated unknowns carried `auto` as probably
@@ -1378,14 +1466,21 @@ Pending — written at finish.
     positive gets committed. The sweep now runs its whole tag list against a
     known-good engine before it measures anything.
   - **TWO TAKEABLE FUNCTIONS ARE OWNED WITHOUT BEING SPLICED, and the reason
-    generalises C7's rule.** `Ree`/`isAskRuleDrivenReason` (6 call sites) and
+    generalises C7's rule.** *(SUPERSEDED 2026-09-02 by the C9-fix note above:
+    both are spliced. The twins that produced this verdict returned what the
+    healthy functions return on every corpus input, and the corpus had no `auto`
+    cell, where their surviving callers live. The paragraph stands as written
+    because the shape of the mistake is the finding.)* `Ree`/`isAskRuleDrivenReason` (6 call sites) and
     `Fy`/`findSafetyCheckReason` (17) are
     both anchorable and both have zero free variables; both were spliced, built
     and solo-sabotaged, and neither turned a scenario red. After the pre-check and
     the rule checker take their own copies, upstream's remaining callers are the
     mode-aware body's gate-dead auto/dontAsk arms and the broker's ask path, where
     the corpus's decisions carry no `decisionReason` at all — so a finder that
-    never finds anything returns exactly what the healthy one does. C7's "a
+    never finds anything returns exactly what the healthy one does. *(Every clause
+    in that sentence is false; see the supersession above. `auto` is not gate-dead,
+    the mode-aware body returns on dontAsk before either call, and every Bash
+    denial in the corpus carries `subcommandResults`.)* C7's "a
     single-caller pure helper cannot be a live splice" is the special case of **a
     helper whose remaining callers are all dark cannot be either.** They live in
     `strangle/modules/shared/` as `pure-helper` captures alongside `ql`, graded

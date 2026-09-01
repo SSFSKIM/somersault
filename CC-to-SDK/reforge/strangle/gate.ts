@@ -302,10 +302,12 @@ for (const t of TARGETS) {
     //
     // So a RED now needs POSITIVE evidence — either the runner's own verdict
     // line for this tag, or a timeout, which is itself a divergence because the
-    // faithful build replays the same cassette in seconds (the corpus phase
-    // above establishes that on every run). Anything else is INCONCLUSIVE and
-    // fails the phase rather than passing it, because "we could not measure it"
-    // is not "we measured it and it diverged".
+    // faithful build replays the same cassette in seconds (the EQUIVALENCE phase
+    // below establishes that on every run — it is the only phase that replays the
+    // corpus on a faithful build, and it runs after this loop so that the
+    // instrumented and sabotaged builds cannot be the ones it grades).
+    // Anything else is INCONCLUSIVE and fails the phase rather than passing it,
+    // because "we could not measure it" is not "we measured it and it diverged".
     const r = run("npx", ["tsx", "m1/run.ts", "--scenario", tag, "--engineB", "engine-strangled"], SABOTAGE_TIMEOUT_MS);
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
     // `spawnSync`'s own timeout report, not the exit code: the child here is
@@ -314,18 +316,26 @@ for (const t of TARGETS) {
     // distinguishes "we stopped it" from "it stopped".
     const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const graded = out.includes(`FAIL  ${tag}`) || out.includes(`PASS  ${tag}`);
+    // ORDER MATTERS, and it resolves toward STRICTNESS. A GRADED VERDICT WINS
+    // OVER A TIMEOUT. The two can both be true — the runner can print its verdict
+    // for this tag and then hang on teardown — and reading the timeout first
+    // would turn "the sabotaged engine still PASSED this scenario", which is the
+    // exact dead-code finding this loop exists to catch, into a RED that passes
+    // the phase. The timeout is only ever a PROXY for divergence; the verdict
+    // line is the measurement itself, so the measurement is read first and the
+    // proxy is consulted only when there is none.
+    if (graded) {
+      const red = out.includes(`FAIL  ${tag}`);
+      console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — the target is dead code on this scenario"}`);
+      allRed &&= red;
+      continue;
+    }
     if (timedOut) {
-      console.log(`  ${tag}: RED (as required) — the sabotaged engine did not finish inside ${SABOTAGE_TIMEOUT_MS / 60_000}m, which the faithful one replays in seconds`);
+      console.log(`  ${tag}: RED (as required) — the sabotaged engine graded nothing and did not finish inside ${SABOTAGE_TIMEOUT_MS / 60_000}m, which the faithful one replays in seconds`);
       continue;
     }
-    if (!graded) {
-      console.log(`  ${tag}: INCONCLUSIVE — the runner produced no verdict (exit ${r.status}); a run that graded nothing is not evidence of liveness`);
-      allRed = false;
-      continue;
-    }
-    const red = out.includes(`FAIL  ${tag}`);
-    console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — the target is dead code on this scenario"}`);
-    allRed &&= red;
+    console.log(`  ${tag}: INCONCLUSIVE — the runner produced no verdict (exit ${r.status}); a run that graded nothing is not evidence of liveness`);
+    allRed = false;
   }
   results.push({ label: `liveness ${t.label}`, pass: allRed });
 }

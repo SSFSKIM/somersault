@@ -20,12 +20,19 @@
 // are graded by `strangle/permissions-parity.test.ts` instead:
 //
 //   the REFUSALS. The rule checker answers `null` when nothing objects, and the
-//     pre-check's twelve-rung ladder produces the same transcript whether a rung
-//     was evaluated and passed or never reached. A scenario cannot separate them.
-//   the ARMS `auto` MODE OWNS. The mode is gate-guarded and this project pins
-//     every gate to its compiled-in disabled default (§3.3), so the classifier
-//     path cannot run here at all. `w6/probe-permissions.ts` measures the
-//     refusal through BOTH paths the SDK exposes rather than assuming it.
+//     pre-check's thirteen-rung ladder produces the same transcript whether a
+//     rung was evaluated and passed or never reached. A scenario cannot separate
+//     them.
+//   SOME OF the arms `auto` mode owns — and this entry has been corrected twice,
+//     which is worth more than the entry. It first said the mode was gate-guarded
+//     and therefore unreachable: `w6/probe-permissions.ts` measured it ACCEPTED
+//     through both paths, because upstream's auto gate is three local conditions
+//     and not a pinned feature flag. It then said the classifier could not run
+//     here: the classifier makes its OWN API call, and the probe now counts those
+//     — it ran, and it allowed. What a recording still cannot reach is the
+//     classifier's BLOCK verdict (which needs an input this project has not
+//     designed) and the transition arms nothing in the corpus moves into or out of
+//     `auto` to render. The fail-closed arm below IS recorded.
 //
 // TWO OPERATIONAL TRAPS, inherited from C8's second boundary round and obeyed
 // throughout this file:

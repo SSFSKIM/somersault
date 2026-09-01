@@ -186,7 +186,14 @@ served" on every run.
 `w6/probe-permissions.ts` measures the questions this wave was told to settle — the ones that cannot
 be answered from the bytes. All of them are now MEASURED. Phases: `spawn-<mode>` ×6,
 `channel-<mode>` ×6, `rule-deny`, `rule-allow`, `rule-ask`, `bypass-vs-deny-rule`, `broker-deny`,
-`shadowing`, `auto-classifier`.
+`shadowing`, `auto-classifier`, and three added by C9's fix round —
+`auto-classifier-unavailable` (the fail-closed arm, and what it dispatches), `working-dir` (which
+decision a read outside the allowed directories creates) and `async-agent` (whether the
+`shouldAvoidPermissionPrompts` family is reachable on this seam at all).
+
+Every phase now also reports **how many times the auto-mode classifier called the API**, read off the
+phase's own cassette. That number is the fix round's instrument: `canUseTool` consults and classifier
+consults are different seams, and the wave's first `auto` reading conflated them.
 
 ### 4.1 `auto`, through BOTH paths — the spec's second correction
 
@@ -298,16 +305,34 @@ Three findings came only from the branch side:
    the whole subsystem is named for are not among them, because the engine has faster paths above
    them for the two rule shapes a corpus can express.
 
-Final figures: **340 of 641 branch outcomes executed, 301 excluded, zero unadjudicated**, and the
-gate passes 121 of 121 phases over a 56-scenario corpus.
+Final figures, after C9's boundary-fix round: **355 of 669 branch outcomes executed, 314 excluded,
+zero unadjudicated**, over a 58-scenario corpus. The wave as first landed read 340/641 with 301
+exclusions; the three splices and two scenarios the fix round added account for the difference, and
+one exclusion was DELETED rather than added — `permission-precheck@37:T`, the plan-with-bypass
+disjunct, whose own text said it was "the one the mode-walk was designed around rather than into".
+The re-recorded walk executes it.
+
+The gate's phase count is quoted from the gate's own SUMMARY block and not from its log lines: an
+earlier figure of 121 counted printed lines, of which the per-scenario verdicts inside a liveness
+phase are several per phase. Quote the summary.
 
 The exclusion families, all named on the entries themselves: arms behind the pinned environment
 (sandboxing, remote execution, the feature gates §3.3 fixes at their disabled defaults), arms behind
-a tool CAPABILITY no headless tool implements (`requiresUserInteraction`,
+a tool capability **no tool this corpus configures** implements (`requiresUserInteraction`,
 `suppressesAllPermissionUpdates`, `suppressesAlwaysAllowRule`, `ignoresWholeToolAllowRule`), arms
 behind an interactive surface a headless session does not have, and arms behind a condition this
 project has deliberately not created — a real safety-check trigger, which means running something
 genuinely dangerous in the sandbox and should be designed rather than improvised.
+
+That second family's wording is a C9-fix correction, and the distinction it draws is the one the
+verdict vocabulary exists to protect. The entries used to say "no headless tool implements", which is
+a claim that the population is structurally CLOSED — three built-in tools and no more. It is not:
+upstream's generic MCP adapter builds `requiresUserInteraction()` from a server-declared
+`_meta["anthropic/requiresUserInteraction"]` key, so any MCP server can ship a tool with it. What is
+true is narrower and is a fact about this corpus's configuration: it mounts no MCP servers, so the
+only tools in play are the built-ins. **A scenario that mounted one would overturn those exclusions
+rather than contradict a law**, and an exclusion that claims impossibility when it means "not here"
+will not be revisited when the configuration changes.
 
 A fourth finding came from the attestation refusing to pass rather than from the code at all. The
 worklist that drove the adjudication was produced by splitting the report's markdown table on `|`,

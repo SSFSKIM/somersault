@@ -2578,7 +2578,7 @@ measured negative; it will not be a third time by treating these as one.
 
 ## W6 — permission decisions: the chain, the mode axis, and the broker's return leg (2026-09-01)
 
-Thirteen splices plus two owned-but-unspliced functions, fourteen new recordings, and a fifth parity
+Thirteen splices plus two owned-but-unspliced functions, thirteen new recordings, and a fifth parity
 oracle grading **2,508 comparisons with 49 controls**. The wave's headline is not a count, though — it
 is **three corrections the campaign spec needed** and a set of measurements that changed how liveness
 is proven. Three more functions were spliced and then removed: each was measured dark, and the wave
@@ -2883,9 +2883,11 @@ improvise), `subcommandResults`, `sandboxOverride`, `workingDir`, `asyncAgent` �
 which §4.1 below turned from unreachable into merely uncreated. Each is a row in
 `research/2026-09-01-w6-permission-matrix.md` with its condition written out, not a blank.
 
-### The corpus: eleven recordings, five of which measured the wrong thing first
+### The corpus: thirteen recordings, five of which measured the wrong thing first
 
-The mode matrix, the three rule behaviours and the two hook paths cost eleven scenarios. Three
+The mode matrix, the three rule behaviours and the two hook paths cost eleven scenarios, and C9's
+fix round added two more (`perm-working-dir`, `perm-auto-classifier-deny`) for a W6 total of thirteen
+and a corpus of 58. Three of the original eleven
 passed on their first take while grading something other than their claim, and all three failures
 were the same shape — **the engine has a shortcut ABOVE the rung the scenario aims at**:
 
