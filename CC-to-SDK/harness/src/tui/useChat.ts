@@ -2973,14 +2973,18 @@ export function useChat(
   function closeSettings() {
     if (disposed.current) return;
     const baseline = settingsBaselineRef.current;
+    // bl10 fix wave 8, W8-3: the dismissal notice names the dialog the user actually opened, not always
+    // "Config" — /status/usage/cost/stats route to this SAME dialog (title "Settings"), and only Config
+    // has any rows to diff at all. Read BEFORE `setSettings({open:false})` clears it below.
+    const dismissedName = settings.tab === "Config" ? "Config" : "Settings";
     settingsBaselineRef.current = null;
     setSettings({ open: false });
-    if (!baseline) { notice("Config dialog dismissed"); return; }
+    if (!baseline) { notice(`${dismissedName} dialog dismissed`); return; }
     const before = buildRows(baseline), after = buildRows(currentSettingsCtx());
     const changes = new Map<string, string>();
     before.forEach((row, i) => { if (row.value !== after[i]?.value) changes.set(row.label, after[i].value); });
     const lines = summarizeChanges(changes);
-    if (lines.length) append(lines); else notice("Config dialog dismissed");
+    if (lines.length) append(lines); else notice(`${dismissedName} dialog dismissed`);
   }
   // The Thinking-mode row's boolean toggle: "off" (budget 0, disabled) or anything else canonicalized to
   // "default" (budget null — the SDK's own default thinking behavior, i.e. exactly the state before any

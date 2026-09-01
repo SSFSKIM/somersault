@@ -73,7 +73,11 @@ describe("T-MENU task 3 — /status opens the Settings dialog on Status (D13 equ
     await waitFor(() => flat(lastFrame).includes("context 10% used"));
     tokens = 55;
     stdin.write("\x1b");                                // close the dialog — a real user's route to re-issue the command
-    await waitFor(() => !flat(lastFrame).includes("Settings"));
+    // bl10 fix wave 8, W8-3: the Esc-close notice for a status-family route is now "Settings dialog
+    // dismissed" (not "Config"), so a bare `!includes("Settings")` check would never pass — the notice
+    // itself reintroduces the word. The tab strip is the thing that actually disappears when the dialog
+    // closes; check for that instead.
+    await waitFor(() => !flat(lastFrame).includes("Status Config Usage Stats"));
     await runSlash(stdin, lastFrame, "/status");
     await waitFor(() => flat(lastFrame).includes("context 55% used"));
     expect(flat(lastFrame)).not.toContain("context 10% used");
@@ -95,7 +99,11 @@ describe("T-MENU task 3 — /status opens the Settings dialog on Status (D13 equ
     await runSlash(stdin, lastFrame, "/status");
     await waitFor(() => flat(lastFrame).includes("context 10% used"));
     stdin.write("\x1b");
-    await waitFor(() => !flat(lastFrame).includes("Settings"));
+    // bl10 fix wave 8, W8-3: the Esc-close notice for a status-family route is now "Settings dialog
+    // dismissed" (not "Config"), so a bare `!includes("Settings")` check would never pass — the notice
+    // itself reintroduces the word. The tab strip is the thing that actually disappears when the dialog
+    // closes; check for that instead.
+    await waitFor(() => !flat(lastFrame).includes("Status Config Usage Stats"));
     // Context changes AFTER the stale reading, with no further /status call anywhere below.
     tokens = 55;
     await runSlash(stdin, lastFrame, "/config");

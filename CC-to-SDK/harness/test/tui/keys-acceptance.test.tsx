@@ -473,7 +473,11 @@ describe("F2 — `command:<name>` bindings run the slash command", () => {
     // it's up (ChatApp's `inputOwnerRef` — "overlay") — so the draft is invisible here, not gone. Close the
     // dialog first and confirm it survived underneath; that is what proves the editor never saw the key.
     h.stdin.write("\x1b");
-    await waitFor(() => !frame(h.lastFrame).includes("Settings"));
+    // bl10 fix wave 8, W8-3: the Esc-close notice for a status-family route is now "Settings dialog
+    // dismissed" (not "Config"), so a bare `!includes("Settings")` check would never pass — the notice
+    // itself reintroduces the word. The tab strip is the thing that actually disappears when the dialog
+    // closes; check for that instead.
+    await waitFor(() => !frame(h.lastFrame).includes("Status Config Usage Stats"));
     // stripAnsi, because the cursor now sits ON the `k`: Ink's inverse-video escape splits the raw frame's
     // "keep me" in two, and a raw `toContain` would report the buffer as gone when it is intact.
     expect(stripAnsi(frame(h.lastFrame))).toContain("keep me");      // the editor never saw the key

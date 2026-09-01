@@ -1672,6 +1672,22 @@ describe("<ChatApp>", () => {
     await waitFor(() => frame(lastFrame).includes("Config dialog dismissed"));
   });
 
+  // bl10 fix wave 8, W8-3: `/status`/`/usage`/`/cost`/`/stats` open the SAME dialog `/config` does (title
+  // "Settings"), but closing one of those routes untouched used to print "Config dialog dismissed" anyway --
+  // a route the user never typed, on a dialog whose own title never said "Config". The fix names the dialog
+  // the user actually opened; `/config`'s own literal above is untouched.
+  it("Status: Esc with no changes prints 'Settings dialog dismissed' -- not 'Config'", async () => {
+    const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
+    await waitFor(() => frame(lastFrame).includes("❯\u00a0"));
+    stdin.write("/status"); await waitFor(() => frame(lastFrame).includes("/status"));
+    stdin.write("\r");
+    await waitFor(() => frame(lastFrame).includes("Settings"));
+    stdin.write("\x1b");
+    await waitFor(() => frame(lastFrame).includes("dialog dismissed"));
+    expect(frame(lastFrame)).toContain("Settings dialog dismissed");
+    expect(frame(lastFrame)).not.toContain("Config dialog dismissed");
+  });
+
   it("Config: / enters search and filters the row list to the query (case-insensitive label match)", async () => {
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fakeRemote()} client={{ kind: "loopback" }} cwd={process.cwd()} />);
     await waitFor(() => frame(lastFrame).includes("❯\u00a0"));

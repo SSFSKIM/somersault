@@ -225,7 +225,11 @@ describe("/tui — the live flip", () => {
     // (ChatApp's `inputOwnerRef`, "overlay") until Esc closes it, exactly like `/config`'s. The composer
     // cannot see `/tui fullscreen` while it is still up, so close it first, as a real user would.
     stdin.write("\x1b");
-    await waitFor(() => !text(lastFrame).includes("Settings"));
+    // bl10 fix wave 8, W8-3: the Esc-close notice for a status-family route is now "Settings dialog
+    // dismissed" (not "Config"), so a bare `!includes("Settings")` check would never pass — the notice
+    // itself reintroduces the word. The tab strip is the thing that actually disappears when the dialog
+    // closes; check for that instead.
+    await waitFor(() => !text(lastFrame).includes("Status Config Usage Stats"));
     await runSlash(stdin, lastFrame, "/tui fullscreen");
     await runSlash(stdin, lastFrame, "/status");
     await waitFor(() => text(lastFrame).includes("renderer fullscreen"));
