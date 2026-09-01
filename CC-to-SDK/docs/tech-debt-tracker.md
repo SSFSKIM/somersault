@@ -466,3 +466,33 @@ three findings, none contradicting a claim:
 3. **`firedIn` provenance in the W5 probe's verdict table is prose**, not machine-checked against
    the scenario it names. The named artifacts exist and are gate-covered today; a checker would
    only matter if a `firedIn` row's scenario were ever renamed or dropped.
+
+## 2026-09-02 — three debt-grade residues from W7 (the control protocol, C10)
+
+The wave landed with a green gate (99/99) and three findings that are real, small and deliberately
+not fixed inside it.
+
+1. **The control-protocol fixture's `respondsSuccess` / `respondsError` columns under-report.** They
+   are recovered by shape — an arm is credited when it CALLS the loop-scope responder that wraps the
+   owned success or error envelope — and an arm that answers through the shared error WRAPPER (which
+   calls the error responder for it) reads as answering nothing. Three arms are in that position and
+   the probe proved at least one of them wrong the same day: `add_directory` is recorded with no
+   responder and FIRES with a refusal. The columns are descriptive metadata, not the enumeration the
+   wave grades on — the subtype list and the SDK's sendable set are what the gate re-derives — so the
+   under-report costs a reader's expectation and nothing else. Fix by resolving the wrapper as a
+   third responder shape when someone needs those columns to be load-bearing.
+
+2. **`m2/raw-protocol.ts` carries a bisection hatch on an environment variable.**
+   `REFORGE_RAW_CASES` filters the driver's committed case list to a subset, and it exists because a
+   control frame that stops the session is the failure mode this driver actually hits — finding which
+   one requires running them singly, which is how `get_context_usage`'s twenty-one `count_tokens`
+   calls were found. It is harness-side only: `sdkEnv` builds the child's environment from X6's
+   allowlist, so the variable cannot reach an engine. Still, it is a knob whose default is the only
+   graded configuration, and nothing asserts that it is unset on a gate run. Cheap to harden (refuse
+   the flag unless a `--bisect` argument is also present) if a second such hatch ever appears.
+
+3. **Re-recording the raw cassette is now materially more expensive than it was**, and nothing says
+   so where the pin-bump ritual is written. `get_context_usage` makes twenty-one further model-side
+   calls, so the cassette went from 1 exchange to 23, and every pin bump re-records it. That is the
+   honest price of grading a subtype the SDK lane cannot see, and it is worth paying; what is missing
+   is a line in `src/pin.ts`'s bump recipe warning that this one suite's re-record is no longer free.
