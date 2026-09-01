@@ -181,6 +181,14 @@ export const ATTESTED: AttestedModule[] = [
       "one log call, one record, one delegation — straight-line, so the inventory is legitimately empty. " +
       "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another.",
   },
+  { module: "permission-denied-hooks", row: "permission-denied-hooks", scenarios: ["perm-auto-classifier-deny"] },
+  // C9's fix round. Two shape tests over a decisionReason, spliced after the
+  // corpus's first `auto` cell showed them live. Their domain is far wider than
+  // the corpus's — both answer by finding something no corpus decision carries —
+  // so most of their inventory is excluded against the parity oracle, which runs
+  // them over the full cross-product of eleven decisionReason kinds.
+  { module: "safety-check-reason", row: "safety-check-reason", scenarios: ["perm-auto-classifier-deny"] },
+  { module: "ask-rule-reason", row: "ask-rule-reason", scenarios: ["perm-auto-classifier-deny"] },
   { module: "instructions-loaded-hooks", row: "instructions-loaded-hooks", scenarios: ["hooks-memory"] },
   { module: "stop-failure-hooks", row: "stop-failure-hooks", scenarios: ["hooks-stop-failure"] },
   {
@@ -300,6 +308,10 @@ const ORACLE_SF =
   "strangle/hooks-parity.test.ts grades it: the StopFailure block runs ten cases including both refusals, compares the executor request and the port trace, and holds seven controls on them.";
 const ORACLE_IL =
   "strangle/hooks-parity.test.ts grades it: the InstructionsLoaded block runs seven cases including an absent options bag, compares the record's field order and the executor request, and holds four controls on them.";
+const ORACLE_SHAPES =
+  "strangle/permissions-parity.test.ts grades it: both shape tests are run against their own pinned upstream bodies over the full decisionReason cross-product, including nested subcommandResults, several parts, and the recursion's two-term conjunction driven independently.";
+const ORACLE_PD =
+  "strangle/hooks-parity.test.ts grades it: the PermissionDenied block runs eight cases including the guard's refusal and reasons the call site never passes, compares the record's field order, the executor request and the full port trace, and holds nine controls on them.";
 const ORACLE_UPE =
   "strangle/hooks-parity.test.ts grades it: the UserPromptExpansion block runs six cases across both guard keys and the refusal, compares the executor request and the port trace, and holds seven controls on them.";
 
@@ -1093,6 +1105,58 @@ export const EXCLUSIONS: Exclusion[] = [
       ORACLE_SF + " One control asserts a missing kind is not left undefined.",
   },
 
+  // ---- the two decisionReason shape tests: the shapes the corpus never
+  // ---- hands them ----------------------------------------------------------
+  // Both were adjudicated DARK by the wave and spliced by its fix round, once the
+  // corpus's first `auto` cell reached the mode-aware body that calls them. What
+  // the corpus reaches is the CALL, not the whole domain: it never passes either
+  // of them a `safetyCheck` reason, and never a `subcommandResults` one either.
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@1:T",
+    reason:
+      "the finder actually FINDING one, i.e. a decision whose reason IS a safety check. The matrix carries `safetyCheck` as OPEN by deliberate design — creating it means running something genuinely dangerous in the sandbox, which this project has chosen to design rather than improvise — so no corpus decision carries the shape this arm exists to recognise. " +
+      ORACLE_SHAPES,
+  },
+  {
+    branch: "safety-check-reason#findSafetyCheckReason@3:T",
+    reason:
+      "the RECURSION, i.e. the finder handed an aggregate `subcommandResults` reason to descend into. The two upstream call sites that would pass one are on the live headless Bash path but need command shapes no cell writes (two `cd`s in one command; the same normalized subcommand twice at equal decision rank), and the call site the corpus does reach — the mode-aware body's — passes the pre-check's decision for a single non-compound command. The F arm executes, so the function is demonstrably called. " +
+      ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@3:T",
+    reason:
+      "the same aggregate shape, on the ask-rule predicate: a `subcommandResults` reason to descend into, which its reached call site never passes. Its F arm executes. " +
+      ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@6:T",
+    reason: "inside the recursion the corpus does not enter (@3:T above): a part that is BOTH asking and itself ask-rule-driven. " + ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@6:F",
+    reason: "the other outcome of the same unentered loop body — a part that fails either half of the conjunction. " + ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@7:T",
+    reason:
+      "the conjunction's FIRST term inside that loop, recorded separately because the two terms are what upstream requires together: a part that merely carries an ask-rule reason without asking does not make the aggregate ask-rule-driven. " +
+      ORACLE_SHAPES,
+  },
+  {
+    branch: "ask-rule-reason#isAskRuleDrivenReason@7:F",
+    reason: "the short-circuit of that first term, which keeps the recursive call from running on a part that is not asking. " + ORACLE_SHAPES,
+  },
+
+  // ---- PermissionDenied: the guard's refusal -------------------------------
+  {
+    branch: "permission-denied-hooks#permissionDeniedHooks@0:T",
+    reason:
+      "the registration guard REFUSING, i.e. a denial in a session with no PermissionDenied hook — which is the common case on every session in the world and is reachable by no scenario at all, since a run with no hook registered produces no consult, no record and no observable. " +
+      "It is doubly unreachable here: the dispatcher's sole call site fires only on a denial whose decisionReason is the auto-mode classifier's, so a scenario would have to create that condition AND then decline to watch it, which is a recording of nothing. " +
+      ORACLE_PD + " One case drives the guard's refusal directly and one control asserts the guard cannot be dropped.",
+  },
+
   // ---- UserPromptExpansion: the agent key, and the refusal -----------------
   {
     branch: "user-prompt-expansion-hooks#userPromptExpansionHooks@0:F",
@@ -1336,13 +1400,6 @@ export const EXCLUSIONS: Exclusion[] = [
       "an MCP server's ASK CEILING (`effectiveMaxPermission === \"ask\"`). The corpus's MCP server is configured without one; setting it means a second MCP fixture whose only difference is the ceiling. Named condition. " +
       ORACLE_PRECHECK +
       " The ceiling's reason object is one of the eleven decisionReason kinds the oracle walks.",
-  },
-  {
-    branch: "permission-precheck#permissionPrecheck@37:T",
-    reason:
-      "PLAN mode with bypass AVAILABLE — the second disjunct of the bypass test, which turns rung 11 into an ALLOW rather than a refusal. It needs a session launched with bypass available that is then put into plan mode; the corpus's plan-mode cells launch in plan mode without the bypass affordance. Named condition, and the one the mode-walk was designed around rather than into. " +
-      ORACLE_PRECHECK +
-      " Both disjuncts are graded there over the fixture's six modes.",
   },
   {
     branch: "permission-precheck#permissionPrecheck@45:T",

@@ -485,6 +485,26 @@ async function main(): Promise<void> {
         : null,
   });
 
+  // ---- E5. the asyncAgent decisionReason — a headless session with NO prompt
+  // surface at all.
+  //
+  // The kind is constructed on the arms where the mode-aware body wants to ASK
+  // and there is nobody to ask: every one of them is guarded on
+  // `shouldAvoidPermissionPrompts`, which no other phase here creates because
+  // every other phase arms a broker. Drop the broker, keep `auto`, and add an ask
+  // RULE so the body has something to want to ask about.
+  specs.push({
+    label: "async-agent",
+    condition: "auto mode + an ASK rule + NO canUseTool — the body wants to ask and there is no prompt surface",
+    extra: { maxTurns: 4, permissionMode: "auto" as PermissionMode, settings: rules("ask", ["Bash(chmod:*)"]) } as Partial<Options>,
+    next: (r) =>
+      r === 0
+        ? "Use the Bash tool exactly once to run exactly `chmod 600 perm-probe.txt`. Do not run anything else and do not use any other tool. " +
+          "If the tool is denied, do not retry; reply with exactly DENIED."
+        : null,
+    focus: ["PermissionRequest", "PermissionDenied"],
+  });
+
   // ---- F. the shadowing trap, measured rather than inherited ---------------
   specs.push({
     label: "shadowing",

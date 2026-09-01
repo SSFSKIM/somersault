@@ -1389,25 +1389,81 @@ export const SPLICES: Splice[] = [
     coverage: ["perm-hook-rewrite"],
   },
 
-  // TWO FUNCTIONS THIS WAVE OWNS AND DOES NOT SPLICE, recorded here because the
-  // absence is a measurement rather than an oversight. `Ree`
-  // (`isAskRuleDrivenReason`, 6 call sites) and `Fy` (`findSafetyCheckReason`,
-  // 17 call sites) are both takeable — each has a unique anchor and zero free
-  // variables — and each was spliced, built and solo-sabotaged. NEITHER turned a
-  // scenario red, and the reason is the same for both: after the pre-check and
-  // the rule checker take their own copies, upstream's remaining callers are the
-  // mode-aware decision body's auto/dontAsk arms (gate-dead under §3.3) and the
-  // broker's ask path, where the corpus's decisions carry no `decisionReason` at
-  // all — so a finder that never finds anything returns exactly what the healthy
-  // one does.
+
+  // TWO FUNCTIONS THIS WAVE MEASURED DARK, WRONGLY, AND C9'S FIX ROUND SPLICED.
   //
-  // That is C7's doctrine one step out: a single-caller pure helper cannot be a
-  // live splice, and neither can a many-caller one whose remaining callers are
-  // all dark. Both are owned as `pure-helper` captures in `shared/` — the same
-  // treatment the hook fan-out rule and the last-assistant-message pair get —
-  // where `strangle/permissions-parity.test.ts` grades them against their own
-  // upstream bytes BEFORE either body is built on them (C7's other rule), and
-  // where upstream's copies stay untouched and stay live for their own callers.
+  // `Fy` (`findSafetyCheckReason`, 17 call sites) and `Ree`
+  // (`isAskRuleDrivenReason`, 6 call sites) were spliced, built, solo-sabotaged
+  // and then UN-spliced as unobservable. Two things were wrong with that.
+  //
+  //   THE TWINS COULD NOT HAVE BEEN OBSERVED BY ANYTHING. `Fy`'s returned
+  //     `undefined` and `Ree`'s returned `false` — which is exactly what the
+  //     healthy functions return on every input the corpus produces, because
+  //     both answer by finding something (a `safetyCheck` reason; an ask a
+  //     user's own rule forced) that no corpus decision carries. A twin that
+  //     agrees with the original on the whole domain under test measures the
+  //     twin, not the code. The twins are INVERTED now: this one always finds a
+  //     safety check, that one always claims the ask was rule-forced.
+  //   THE CORPUS HAD NO `auto` CELL. Upstream's remaining callers include the
+  //     mode-aware decision body, which runs only under `auto`, and nothing in
+  //     the corpus had ever entered that mode. `perm-auto-classifier-deny` does,
+  //     and under the inverted twins the scenario diverges on the transcript and
+  //     the request surfaces both.
+  //
+  // The general shape is worth more than either row: A DARKNESS VERDICT IS A
+  // MEASUREMENT, and it inherits every limitation of the twin and the corpus it
+  // was taken against. Adding one scenario turned two of them over.
+  {
+    // ANCHOR: the return that distinguishes this finder from every other
+    // safety-check test in the graph — the others compare without returning the
+    // reason they found.
+    name: "safety-check-reason",
+    target: "free-function",
+    signature: { params: 2, ancestry: ["SourceFile"] },
+    anchor: 'type==="safetyCheck")return ',
+    fn: "findSafetyCheckReason",
+    // `captures: []` — the positive claim "verified zero free variables". The
+    // filter parameter's default is a literal arrow and the recursive call
+    // resolves to the function's own binding.
+    captures: [],
+    coverage: ["perm-auto-classifier-deny"],
+  },
+
+  {
+    // ANCHOR: `rule.ruleBehavior==="ask"` alone has six carriers in four chunks,
+    // two of them one-parameter top-level functions in this one, which the
+    // signature cannot separate. With `)return!0` it is unique bundle-wide.
+    name: "ask-rule-reason",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: 'rule.ruleBehavior==="ask")return!0',
+    fn: "isAskRuleDrivenReason",
+    captures: [],
+    coverage: ["perm-auto-classifier-deny"],
+  },
+
+  // WHERE THOSE TWO CAME FROM, AND WHAT THE WITHDRAWN JUSTIFICATION GOT WRONG.
+  // The rows above replace a written adjudication that both functions were dark,
+  // and the adjudication was wrong in every particular a reader could check.
+  //
+  //   "the remaining callers are the mode-aware body's auto/dontAsk arms
+  //     (gate-dead under §3.3)". They are not gate-dead: the same wave measured
+  //     `auto` ACCEPTED through both paths, because upstream's auto gate is three
+  //     local conditions and not a remote flag. The dontAsk half is wrong for a
+  //     different reason — the mode-aware body returns on `dontAsk` BEFORE it
+  //     reaches either call, so those callers are the `auto` arm alone.
+  //   "the corpus's decisions carry no `decisionReason` at all". They do. Every
+  //     Bash denial in the corpus carries `subcommandResults`, which is exactly
+  //     the shape both functions recurse into.
+  //   the two callers that stayed after the pre-check and the rule checker took
+  //     their copies are on the LIVE headless Bash path — the multi-`cd`
+  //     aggregator and the subcommand merge's tie-break. What kept them quiet was
+  //     never a gate: each needs a command SHAPE no cell wrote (two `cd`s in one
+  //     command; the same normalized subcommand twice at equal decision rank).
+  //
+  // C7's doctrine still holds — a single-caller pure helper cannot be a live
+  // splice. What does not follow from it is that a many-caller one is dark
+  // because one twin, run against one corpus, failed to move anything.
 
   // A THIRD FUNCTION OWNED WITHOUT BEING SPLICED, and the reason is different
   // from the other two. `ql`/`createPermissionRequestMessage` has FORTY-FIVE call
@@ -3439,6 +3495,87 @@ export const SPLICES: Splice[] = [
       },
     ],
     coverage: ["hooks-permission"],
+  },
+
+  {
+    // `Tee`'s counterpart on the other side of the decision: PermissionRequest
+    // asks, this one REPORTS — and it reports almost nothing, because its single
+    // call site is guarded so narrowly that C8 and C9's first round both left the
+    // event OPEN.
+    //
+    // THE GUARD IS THE POINT. Upstream dispatches this event only when the
+    // denial's `decisionReason` is `{type:"classifier", classifier:"auto-mode"}`,
+    // so no rule denial, no mode denial and no host denial reaches it — C8's
+    // probe created an ordinary broker deny with both hook paths armed and
+    // measured the event DEAD while `result.permission_denials` filled in. The
+    // condition that does create it is the auto-mode classifier's FAIL-CLOSED
+    // arm, and `perm-auto-classifier-deny` reaches it by choosing a 400 for the
+    // classifier's own API call at record time.
+    //
+    // It is also the only dispatcher whose results the caller reads for a RETRY
+    // flag: a PermissionDenied hook that answers `retry` makes the engine append
+    // a companion message inviting another attempt. A dispatcher that yielded
+    // nothing would lose that silently, which is what its twin does.
+    //
+    // Two things are its own within the family. Its record carries `reason` —
+    // the denial's sentence — which no other event has; and it is the only
+    // tool-scoped dispatcher that carries BOTH the real `tool_use_id` in the
+    // record and the same id as the executor's `toolUseID`, where its
+    // PermissionRequest sibling puts the id only in the request and spends the
+    // record field on `permission_suggestions` instead.
+    name: "permission-denied-hooks",
+    target: "free-function",
+    signature: { params: 8, ancestry: ["SourceFile"], generator: true },
+    anchor: 'hook_event_name:"PermissionDenied"',
+    fn: "permissionDeniedHooks",
+    captures: [
+      {
+        as: "hasHookForEvent",
+        kind: "effectful-port",
+        derive: pick("permission-denied-hooks", "hasHookForEvent", new RegExp(`if\\(!(${ID})\\("PermissionDenied",`)),
+      },
+      {
+        // `Hb` — the fan-out rule, already owned by the PostToolBatch
+        // dispatcher (§2.4 `pure-helper`): footprinted, never forwarded.
+        as: "hookAgentIds",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick(
+          "permission-denied-hooks",
+          "hookAgentIds",
+          new RegExp(`${ID}\\.sessionHooksRegistry,(${ID})\\(${ID},"PermissionDenied"`),
+        ),
+      },
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-denied-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID}\\.session,${ID}\\(\\),${ID},${ID}\\),hook_event_name:"PermissionDenied"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "permission-denied-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID}\\.session,(${ID})\\(\\),${ID},${ID}\\),hook_event_name:"PermissionDenied"`),
+        ),
+      },
+      {
+        as: "executeHooks",
+        kind: "effectful-port",
+        derive: pick("permission-denied-hooks", "executeHooks", new RegExp(`yield\\*(${ID})\\(\\{session:`)),
+      },
+      {
+        as: "defaultHookTimeoutMs",
+        kind: "primitive",
+        derive: pick("permission-denied-hooks", "defaultHookTimeoutMs", new RegExp(`,${ID},${ID}=(${ID})\\)\\{if\\(`)),
+      },
+    ],
+    coverage: ["perm-auto-classifier-deny"],
   },
 
   {

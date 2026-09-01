@@ -117,6 +117,9 @@ import "./modules/stop-failure-hooks.js";
 import "./modules/task-created-hooks.js";
 import "./modules/task-completed-hooks.js";
 import "./modules/permission-request-hooks.js";
+// C9's fix round: the PermissionRequest dispatcher's counterpart, reachable once
+// the auto-mode classifier's fail-closed arm could be created.
+import "./modules/permission-denied-hooks.js";
 import "./modules/user-prompt-expansion-hooks.js";
 import "./modules/file-changed-hooks.js";
 
@@ -1904,6 +1907,76 @@ for (const [row, event] of [
   mustDiffer("the tool-use id used as the match query instead of the tool name", request.matchQuery, "toolu_2");
   mustDiffer("a tool_use_id field added to the record", "tool_use_id" in request.hookInput, true);
   mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+}
+
+// ---- PermissionDenied (upstream `VNt`) --------------------------------------
+// The corpus reaches this dispatcher on ONE condition — the auto-mode
+// classifier's fail-closed deny — so everything about it that is not that
+// condition is graded here: the registration guard's refusal (unrecordable by
+// construction, since a run with no hook registered produces no observable), the
+// reasons other than the classifier's that the FUNCTION accepts even though its
+// call site never passes them, and the fan-out agent ids the guard reads under.
+{
+  const { upstream, forwarded, owned } = prepare("permission-denied-hooks", "PermissionDenied", 8);
+  const constants = { defaultHookTimeoutMs: DEFAULT_HOOK_TIMEOUT_MS };
+  const cases: [string, StubSpec, unknown[]][] = [
+    // The guard's refusal, and the reason this block exists at all: no scenario
+    // can record a dispatcher that returns before building anything.
+    ["no hook registered", { registered: false }, ["Bash", "toolu_1", { command: "chmod 600 x" }, "Classifier unavailable", context(), "auto", undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["the classifier's fail-closed deny", { registered: true }, ["Bash", "toolu_1", { command: "chmod 600 x" }, "Classifier unavailable", context(), "auto", undefined, DEFAULT_HOOK_TIMEOUT_MS]],
+    ["a reason the call site never passes", { registered: true }, ["Write", "toolu_2", { file_path: "/a" }, "Permission denied", context(), "default", undefined, 1000]],
+    ["an empty reason", { registered: true }, ["Read", "toolu_3", { file_path: "/a" }, "", context(), "dontAsk", undefined, 1000]],
+    ["no permission mode", { registered: true }, ["Bash", "toolu_4", {}, "why", context(), undefined, undefined, 1000]],
+    ["an explicit signal", { registered: true }, ["Bash", "toolu_5", {}, "why", context(), "auto", new AbortController().signal, 1000]],
+    ["a subagent context", { registered: true }, ["Bash", "toolu_6", {}, "why", context({ agentId: "agent-1", agentContext: { agentType: "subagent", isBuiltIn: true, subagentName: "web-fetch", parentAgentId: "p" } }), "auto", undefined, 1000]],
+    // The results are a CHANNEL here: the caller reads `retry` off them and, if
+    // any hook asks, invites another attempt. A dispatcher that reordered or
+    // dropped them changes what the turn does next.
+    ["hooks that ask for a retry", { registered: true, results: [{ retry: false }, { retry: true }] }, ["Bash", "toolu_7", { command: "x" }, "Classifier unavailable", context(), "auto", undefined, 1000]],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compare(
+      `permission-denied-hooks ${label}`,
+      spec,
+      constants,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 8), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compare(
+    "permission-denied-hooks request control",
+    cases[1][1],
+    constants,
+    () => upstream(...cases[1][2]),
+    (p) => owned(...(cases[1][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
+  );
+  const request = trace.executor[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
+  eq("permission-denied-hooks field order", Object.keys(request.hookInput), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "tool_name",
+    "tool_input",
+    "tool_use_id",
+    "reason",
+  ]);
+  eq("permission-denied-hooks stamps its own event", request.hookInput.hook_event_name, "PermissionDenied");
+  eq("permission-denied-hooks asks its guard once", trace.hasHookForEvent.length, 1);
+  // What separates it from the sibling it is otherwise a copy of, and what a
+  // twin could quietly break.
+  mustDiffer("the registration guard dropped, dispatching on every session in the world", trace.hasHookForEvent.length, 0);
+  mustDiffer("a minted uuid used where the real tool-use id is in hand", request.toolUseID, "44444444-4444-4444-8444-444444444444");
+  mustDiffer("the match query dropped, so a tool-scoped matcher stops narrowing", "matchQuery" in request, false);
+  mustDiffer("the tool-use id used as the match query instead of the tool name", request.matchQuery, "toolu_1");
+  mustDiffer("the denial's own sentence dropped from the record", "reason" in request.hookInput, false);
+  mustDiffer("the tool_use_id field dropped from the record, as its PermissionRequest sibling does", "tool_use_id" in request.hookInput, false);
+  mustDiffer("permission_suggestions carried instead, as its sibling does", "permission_suggestions" in request.hookInput, true);
+  mustDiffer("the sibling's event name stamped instead of this one's", request.hookInput.hook_event_name, "PermissionRequest");
+  mustDiffer("an entry log added, which this dispatcher does not write", trace.log.length, 1);
 }
 
 // ---- UserPromptExpansion (upstream `Ldt`) -----------------------------------

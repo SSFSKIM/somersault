@@ -111,11 +111,12 @@ is auto-approved in default mode without consulting anything, so it measures not
 | `default` | R | **FIRED** | `file-tools`. Read is auto-approved without a broker consult, which is itself the cell's finding: the pre-check's ladder still runs, and only the ask is skipped |
 | `acceptEdits` | W | **FIRED** | `perm-accept-edits` — the Write does not reach the broker |
 | `acceptEdits` | B | **FIRED**, after a correction | `perm-accept-edits`, same turn — the Bash does reach it, and the asymmetry is the mode's whole claim. The first take used `mkdir`, which acceptEdits auto-allows: upstream carries a hard-coded list of directory-shaped commands the mode treats as edits (`mkdir, touch, rm, rmdir, mv, cp, sed` — now in the fixture), so the take measured the mode's OTHER arm and looked like a broken scenario. The recorded scenario uses `chmod` |
-| `plan` | W | **FIRED** | `perm-plan-mode` (at spawn) and `perm-mode-walk` (over the control channel, where the launch fact makes rung 11's second disjunct ALLOW rather than refuse) |
+| `plan` | W | **FIRED**, and it corrects the mode's own prose | `perm-plan-mode`, at spawn. Upstream says "Planning mode, no actual tool execution" and this cell was written to that reading; the recording has the Write brokered, allowed and `perm.txt` created. The pre-check's plan-mode refusal is guarded on `e.mcpInfo`, so a built-in file tool never reaches it — `Write.checkPermissions` returns a plain `passthrough`, the ladder converts it to an ASK carrying no reason, and the host decides. What enforces "no tool execution" headlessly is the plan-mode SYSTEM REMINDER the engine injects, which is a model instruction and not a decision |
+| `plan` | R | **FIRED** | `perm-mode-walk`'s second turn, over the control channel, where the launch bypass fact makes the pre-check's rung-11 disjunct (`plan && isBypassPermissionsModeAvailable`) ALLOW with `decisionReason:{type:"mode",mode:"plan"}` and no host is asked. `perm-working-dir` is its control: the identical call in default mode reaches the broker carrying "Path is outside allowed working directories". **The turn is a READ and not a Write for a measured reason** — see §3.4 |
 | `dontAsk` | W | **FIRED** | `perm-dont-ask` — a terminal deny with `decision_reason_type: "mode"`, and no broker consult |
 | `bypassPermissions` | W | **FIRED** | twenty-two inherited scenarios plus `perm-bypass-deny-rule`, all recorded. NOT a negative control, contrary to the spec: the pre-check's ladder runs to rung 11 under bypass |
 | `bypassPermissions` | B | **FIRED** | `bash-tool`, `hooks`, `interrupt`, `subagent` — the eight scenarios the pre-check's solo sabotage reddens |
-| `auto` | any | **FIRED as a mode, OPEN as a decision** | §4.1: the mode is ACCEPTED through both paths, contradicting the campaign spec. What remains OPEN is the classifier arm underneath it — an `auto` run that should be denied. Probed with `chmod` on a system path and the tool ran without any consult |
+| `auto` | B | **FIRED as a mode AND as a decision** | §4.1: the mode is ACCEPTED through both paths, contradicting the campaign spec. And the classifier is not a black box from the harness's side — it makes its OWN API call, which the probe now counts: a `chmod` under `auto` produced a toolless, non-streaming `/v1/messages` request stopping at `</severity>` that answered `<severity>25`, below the block threshold, so the call was allowed. `perm-auto-classifier-deny` then records the arm underneath: with that request answered 400, upstream denies fail-closed with `decisionReason:{type:"classifier",classifier:"auto-mode"}`. What is still OPEN is only the classifier's own BLOCK verdict, which needs a genuinely dangerous input (§3.3's `safetyCheck`, deferred by the same argument) |
 
 ### 3.2 rule behavior × mode
 
@@ -145,12 +146,40 @@ RECORDING reaches.
 | `hook` | **FIRED** | `perm-hook-deny`, `perm-hook-rewrite` |
 | `permissionPromptTool` | **FIRED** | every brokered ask — the response mapper stamps it; `permission-broker` and `permission-bag` are recorded |
 | `other` | **FIRED** | the `requiresUserInteraction` and organisation-ceiling arms are oracle-only; the crash arm reaches a recording only through `perm-hook-rewrite`'s re-check |
-| `classifier` | **OPEN**, and now with evidence | auto mode is reachable (§4.1), so the blocker is no longer the mode. The probe ran `chmod 777 /etc/hosts` under `auto` and it was ALLOWED with no consult and no PermissionRequest hook, so the classifier's blocking arm was not created. Named, not created |
+| `classifier` | **FIRED** | `perm-auto-classifier-deny`. The kind has two producers — the classifier's BLOCK verdict and the FAIL-CLOSED arm beneath it — and the second is reachable with a harmless command by choosing a 400 for the classifier's own API call at record time (`src/faults.ts`, `Scenario.recordInject`). The block verdict stays OPEN for the same reason `safetyCheck` does: it needs an input this project has deliberately not designed |
 | `safetyCheck` | **OPEN** | needs a command the safety layer objects to. Named, not created: creating it means running something genuinely dangerous in the sandbox, which is a scenario this project should design deliberately rather than improvise |
 | `subcommandResults` | **FIRED**, unexpectedly | `perm-rule-deny` and `perm-bypass-deny-rule`. The cell was written for "a compound Bash command whose parts decide differently" and was reached by a SINGLE command instead: the Bash tool decomposes unconditionally, so every Bash denial is an aggregate of one |
 | `sandboxOverride` | **OPEN** | needs sandboxing enabled, which §3.3's pinned environment does not do |
-| `workingDir` | **OPEN** | a tool call outside the allowed directories |
-| `asyncAgent` | **OPEN** | a headless context with no permission prompt surface at all (bare `-p`, no `canUseTool`) |
+| `workingDir` | **FIRED** | `perm-working-dir` — a `Read` of `/etc/hosts` with `settingSources: []`, so the sandbox cwd is the whole allowed set. The consult carries the ladder's own sentence ("Path is outside allowed working directories") and the two permission suggestions for widening the boundary, which no other cell populates. It cost one scenario, and the cell had been OPEN because nobody had written it |
+| `asyncAgent` | **MEASURED-DEAD** | the condition was CREATED and the arm did not run. Every construction of this kind sits behind `shouldAvoidPermissionPrompts` — four `pW` call sites in the mode-aware body, plus the headless PermissionRequest path's `YXe` fallback. Probe phase `async-agent` created what should be the cheapest of them (`auto` mode, an ask RULE so the body has something to delegate, and NO `canUseTool` at all) and the denial came back `decision_reason_type: "rule"`, the pre-check's own. The SDK seam is itself a prompt surface, so that flag is never true on it — which makes the whole family unreachable through the SDK rather than merely unwritten, and is a fact about the ownability ceiling rather than about this corpus |
+
+### 3.4 Why the mode walk's plan turn is a Read
+
+The walk exists to prove that a mode CHANGE changes what the next tool call decides, so its design
+rule is that every change is followed by one. The first recording did not obey it: the plan turn
+contained no tool call at all, and the check — `usedTool` over the whole transcript — passed on the
+strength of the *dontAsk* turn's Write. Three artifacts then cited that turn for a decision the
+recording did not contain. **A per-turn design rule graded by a whole-transcript assertion is not
+graded**, and the check is segmented by `result` frame now.
+
+Getting a tool call into the turn took four takes, and the obstacle is the engine's, not the model's.
+Changing to plan makes the engine inject a system reminder that forbids edits and declares itself to
+supersede every other instruction, and the model obeys it against any framing — the second take
+answered, in as many words, that it would not emit the call "regardless of how the request is
+framed". Aiming at the one file that reminder sanctions, the plan file, produces the call but not a
+usable cell: the engine names that file with a per-session random word, so a replay looks it up
+under a different name than the recorded response wrote and two requests miss their body hash.
+
+What the reminder does permit is read-only work, and a read outside the allowed directories is
+ask-worthy — so it is a decision rather than a formality, and the same call in default mode is
+`perm-working-dir`'s subject. The cell it buys is the one it was always for: with the launch bypass
+fact carried across the transition the read is allowed above the host, and without it the identical
+call is delegated to the host.
+
+Two harness defects fell out of the takes, both of the same shape — state a run leaves behind that
+nothing resets. The plan directory now resets with the sandbox (a plan-mode recording left the next
+run a different system prompt), and a `repeat` cassette entry no longer reports itself as "never
+served" on every run.
 
 ## 4. The probe's verdicts
 
@@ -183,15 +212,36 @@ they reach different code:
 No asymmetry, which is the cleaner of the two possible findings: the gate does not diverge between
 the paths because in this environment it does not refuse on either.
 
-What this does **not** buy is the classifier. Phase `auto-classifier` ran `chmod 777 /etc/hosts`
-under `auto` — a command chosen to be the kind a classifier should block — and it was ALLOWED, with
-no broker consult and no `PermissionRequest` hook. So the mode is live and its BLOCKING arm is still
-**OPEN**: the condition is named (a tool call the classifier objects to) and this project has not
-yet found an input that creates it. That is the honest state, and it is strictly better than the
-state the spec predicted, where the mode itself would have been unreachable.
+#### The classifier, and the reading that had to be corrected
 
-The arms `auto` owns inside the pre-check and the transition — the classifier fallbacks, the
-dangerous-rule strip and its restore — are graded by `strangle/permissions-parity.test.ts`, where
+Phase `auto-classifier` ran `chmod 600 /etc/hosts` under `auto` and the command executed with no
+broker consult and no `PermissionRequest` hook. The wave's first reading of that was "the classifier
+was not reached". **It is refuted, and the refutation is the more useful half of this section.**
+
+*No broker consult* means no `canUseTool` consult, and the classifier is not visible from the host's
+seat at all: when it ALLOWS, the engine returns an allow and no host is ever asked — which looks
+exactly like a fast path that skipped it. The two are only distinguishable on the wire. The probe
+now counts them there, and for that same `chmod` the count is **one**: a toolless, non-streaming
+`/v1/messages` request, stopping at `</severity>`, answering `<severity>25` — below the block
+threshold, so "Allowed by fast classifier". The classifier ran. The lesson generalises past this
+cell: **an instrument that can only see one seam will read silence on that seam as absence.**
+
+That leaves the classifier's *blocking* verdict, which no prompt reliably creates. But the
+`classifier` decisionReason has a second producer, and it is cheap: upstream denies fail-closed
+(`{type:"classifier", classifier:"auto-mode"}`, "denying with retry guidance") when the classifier
+call is UNAVAILABLE. Choosing a 400 for that one request at record time creates it with a harmless
+command — `perm-auto-classifier-deny`. The status is chosen against upstream's own retry predicate
+rather than for realism: 429 and 5xx are retried on an outer loop, a 400 is not.
+
+The injection has to happen during the LIVE take rather than by rewriting a healthy cassette
+afterwards, and the reason is a contract worth stating once: `deriveFault` can only express a fault
+the engine does not recover FROM. This one changes what happens next — an allowed tool call becomes
+a denied one — so every later request carries a tool_result the healthy take never produced, and a
+post-hoc rewrite would leave them to be served positionally. `Scenario.recordInject` keeps the
+cassette self-consistent.
+
+The remaining `auto` arms inside the pre-check and the transition — the other classifier fallbacks,
+the dangerous-rule strip and its restore — are graded by `strangle/permissions-parity.test.ts`, where
 the gate is a port and both sides of it are reachable. That is the difference between "not covered"
 and "covered by the only instrument that can".
 
@@ -207,10 +257,11 @@ Write) with both hook paths armed:
 | condition | verdict |
 |---|---|
 | an ordinary `canUseTool` deny, default mode, both hook paths armed | **MEASURED-DEAD.** `PermissionRequest` fired; `PermissionDenied` did **not**. The denial reached the transcript by another route — `result.permission_denials` was populated — so the run demonstrably created a denial and the event still stayed silent |
-| a denial whose reason is the auto-mode classifier | **OPEN.** §4.1 removes the mode as the blocker and replaces it with a harder one: no input found so far makes the classifier deny. Until one exists the condition is named, not created |
+| a denial whose reason is the auto-mode classifier | **FIRED.** `perm-auto-classifier-deny`: with the classifier's own request answered 400, the fail-closed deny carries exactly the reason the dispatch site is guarded on, and the event fires on BOTH hook paths (callback and command). The row was OPEN twice — C8 named the condition, C9's first round improved the evidence for not having created it — and what finally created it was not a better prompt but a fault placed where the classifier lives |
 
-This upgrades C8's row rather than flipping it. C8's call-site reading was right, and the row now
-has a run behind it instead of only a reading.
+C8's call-site reading was right in every particular; what was missing was a way to make the
+classifier fail on demand. The dispatcher (`VNt`) is now spliced as `permission-denied-hooks`, and
+`w5/probe-hook-events.ts`'s verdict table reads FIRED.
 
 ### 4.3 The two operational traps, re-measured rather than inherited
 

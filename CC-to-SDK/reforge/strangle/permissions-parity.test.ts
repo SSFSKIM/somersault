@@ -11,16 +11,21 @@
 // WHY THIS SUBSYSTEM NEEDS IT, stated as what a corpus cannot see.
 //
 //   THE REFUSALS. The rule checker answers `null` when nothing objects, and the
-//     pre-check's twelve-rung ladder produces the same transcript whether a rung
-//     was evaluated and passed or was never reached. "The deny rule did not
+//     pre-check's thirteen-rung ladder produces the same transcript whether a
+//     rung was evaluated and passed or was never reached. "The deny rule did not
 //     match" and "the deny rule was never consulted" are the same recording.
 //     This is C8's "unrecordable by construction" family, and it covers most of
 //     this subsystem rather than a corner of it.
-//   THE MODES THE ENVIRONMENT FORBIDS. `auto` is gate-guarded and §3.3 pins
-//     every gate to its compiled-in disabled default, so every arm behind the
-//     gate — the transition's strip and restore, the guard's two auto refusals —
-//     is unreachable by any recording this project can make. It is reachable
-//     here, because the gate is a port.
+//   THE ARMS BEHIND THE AUTO GATE. Not because the environment forbids them:
+//     this wave's first reading called `auto` gate-dead and measured otherwise —
+//     the gate is three LOCAL conditions rather than a pinned feature flag, the
+//     mode is accepted at spawn and over the control channel, and the
+//     classifier's fail-closed deny is a recording. What no recording renders is
+//     the gate's OTHER answer and the arms hanging off it: the transition's strip
+//     and restore (nothing in the corpus moves into or out of `auto`) and the
+//     guard's two auto refusals. They are reachable here for a reason that
+//     outlives the correction — the gate is a PORT in the owned module, so both
+//     of its answers are graded whatever the environment happens to return.
 //   THE MODE MATRIX ITSELF. The transition has thirty ordered mode pairs and a
 //     scenario walks four of them. The pairs are cheap here and expensive there.
 //   THE DECISION VALUE, arm by arm. Permission decisions are OBEYED results (the
@@ -687,8 +692,9 @@ const upstreamPluralize = (() => {
 // ============================================================================
 // 6. THE MODE TRANSITION — every ordered pair of modes, which is thirty cases a
 //    scenario would need thirty recordings for. The gate is a port here, so the
-//    auto arms are reachable; under §3.3's pinned defaults they are not
-//    reachable by any recording this project can make.
+//    auto arms are reachable on both of its answers; no recording reaches them,
+//    not because a pinned gate forbids the mode — it does not — but because
+//    nothing in the corpus transitions into or out of `auto`.
 // ============================================================================
 {
   for (const from of MODES) {

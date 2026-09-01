@@ -1,5 +1,44 @@
 # W5–W7 anchor scout — hooks, permissions, control protocol (pin 2.1.251)
 
+> **SUPERSEDED IN PART — 2026-09-02, by W6/C9 running the subsystem this report only read.**
+> Two of the permission assertions below were true-as-believed at scouting time and are false as
+> claims. They are left in the body because a scout is a record of what was believed when the wave was
+> budgeted, and editing that record away destroys the evidence that a premise was refuted. Read them
+> with these corrections — W7 is the next reader of this file, and both corrections change what it
+> should assume.
+>
+> 1. **§2.4 and §4's item 4 — "`bypassPermissions` short-circuits the whole rule engine."** It does
+>    not. Upstream's pre-check reaches its bypass arm at **rung 11 of 13**, below the tool deny rule,
+>    the input deny rule, the allow rule and its delegation, the tool's own `checkPermissions`, the ask
+>    rule, the interaction check, the MCP ask ceiling and the safety floor. Only the ASK is
+>    short-circuited; a deny rule still bites under bypass. So the twenty-two bypass scenarios grade
+>    most of the chain rather than none of it, and bypass belongs in the mode matrix rather than as the
+>    negative control §2.4 proposes. Confirmed three ways: solo sabotage of the pre-check reddens eight
+>    inherited bypass scenarios, the parity oracle carries "bypass short-circuits the deny rules" as a
+>    mutant that must DIFFER, and the `perm-bypass-deny-rule` recording carries the denial frame.
+> 2. **§2.4 and §4's item 4 — "`auto` is gate-guarded, and probably gate-dead under the pinned
+>    environment."** It is not. Upstream's auto gate is three LOCAL conditions
+>    (`!circuitBreaker && !settingsDisabled && modelSupportsAuto`), not a remote feature flag, so
+>    §3.3's policy of pinning every gate to its compiled-in disabled default never touches it: `auto`
+>    was ACCEPTED both at spawn and over the control channel. "Gate-dead" is therefore the wrong word
+>    for any of `auto`'s arms. Where they genuinely go unreached the word is **corpus-dark** — no
+>    scenario creates the condition — which is a different claim with a different remedy (write the
+>    scenario) than an environment that forbids the mode.
+> 3. **And the correction of §2.4 needed a correction of its own**, recorded here because it is the
+>    same failure one layer down. W6's first pass reported that a `chmod` under `auto` "was allowed
+>    with no consult" and read that as the classifier not being reached. "No consult" meant no
+>    `canUseTool` consult, and the classifier is not visible from the host's seat at all. Watched on
+>    the wire, `auto` DOES call it — a second, toolless, non-streaming `/v1/messages` request stopping
+>    at `</severity>`, which answered `<severity>25`, below the block threshold, so the call was
+>    allowed and no host was ever asked. The classifier's `decisionReason` is no longer OPEN either:
+>    choosing a 400 for that request at record time reaches upstream's fail-closed arm ("Auto mode
+>    classifier unavailable, denying with retry guidance (fail closed)"), which denies with
+>    `{type:"classifier", classifier:"auto-mode"}` — and the `PermissionDenied` hook event fires on it,
+>    on both hook paths.
+>
+> Evidence: `reforge/research/2026-09-01-w6-permission-matrix.md`; the `perm-bypass-deny-rule` and
+> `perm-auto-classifier-deny` recordings; `reforge/w6/probe-permissions.ts`.
+
 Scope: C8 (W5 hook dispatch), C9 (W6 permission decisions + rule chunks), C10 (W7 control protocol).
 Method: substring counts across all 2074 `modules/*.js`; TypeScript-parser spans over
 `chunk-fy12d89p.js` / `chunk-dvbbv89q.js`; windowed reads of `cli.pretty.js`. READ-ONLY — no build,
@@ -164,7 +203,8 @@ mode fallthrough `hrn`, with siblings), `Invalid permission rule` 1, `tengu_tool
 Corpus permission-mode distribution: **24 uses of `bypassPermissions`, 2 of `default`
 (`permission-broker`, `permission-bag`), and zero of `acceptEdits` / `plan` / `dontAsk` / `auto`.**
 `bypassPermissions` short-circuits the whole rule engine (`T8e`: *"Bypass mode is handled in main
-permission flow"*), so **22 of 24 scenarios grade none of §2.1's chain**. The two `default`
+permission flow"*), so **22 of 24 scenarios grade none of §2.1's chain**. [SUPERSEDED — banner item
+1: the bypass arm is rung 11 of 13, so those 22 grade most of the chain.] The two `default`
 scenarios reach `Dd`→`kye`→`von`→`Aon`→`Gx`→ broker, but only along the *ask → SDK decides* path;
 they never exercise an allow-rule, a deny-rule, an ask-rule, or a mode-specific handler.
 
@@ -174,11 +214,13 @@ corpus.** Recordability, measured against `GIe`'s guards:
 - `default`, `acceptEdits`, `plan`, `dontAsk` — recordable headlessly today (SDK `PermissionMode`
   declares all four; `acceptEdits`/`dontAsk` are already characterized in `coverage.md`).
 - `bypassPermissions` — recordable (corpus default), but grades nothing; keep it as the negative
-  control that proves the short-circuit, not as a matrix cell.
+  control that proves the short-circuit, not as a matrix cell. [SUPERSEDED — banner item 1: it grades
+  rungs 1–10, and it is a matrix cell.]
 - `auto` — **gate-guarded**: `GIe` refuses unless `hE()` returns true, and reforge pins gates to
   their compiled-in disabled defaults (§3.3). **Delegated unknown: `auto` is probably unreachable
   under the pinned environment.** Probe it before budgeting the cell; if dead, record it as an
-  evidence-backed matrix exclusion rather than leaving a hole.
+  evidence-backed matrix exclusion rather than leaving a hole. [SUPERSEDED — banner item 2: the gate
+  is local, §3.3 does not touch it, and `auto` records through both paths.]
 
 Cost estimate: **~10–12 new live recordings** (4 live modes × Write/Bash/Read representatives, plus
 allow-rule / deny-rule / ask-rule settings fixtures). This is the largest corpus growth of the three
@@ -279,7 +321,8 @@ so a later scout does not re-discover it.
    wrong (§0); `hw8qz4q5` is W10's.
 4. **§3.2's permission-mode matrix is the expensive one** (~10–12 recordings) because
    `bypassPermissions` — 22 of 24 corpus scenarios — short-circuits the entire decision chain.
-   `auto` may be gate-dead; probe before budgeting.
+   `auto` may be gate-dead; probe before budgeting. [SUPERSEDED — banner items 1 and 2: bypass
+   short-circuits only the ask, and `auto` is not gate-dead. The matrix is still the expensive one.]
 5. **The 832-name minified→semantic map should become a tracked, pin-bump-regenerated artifact.**
    It is derived in seconds, it corrects the census, and a name that moves is a §5 staleness signal
    no current inventory sees.

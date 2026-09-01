@@ -17,8 +17,10 @@
 //   4. what ran is compared against the inventory, and every branch that did not
 //      run must carry a reviewed exclusion in strangle/attestation.ts.
 //
-// `--check` fails on an un-adjudicated branch and leaves the report alone;
-// without it the report is rewritten. The gate runs `--check`.
+// `--check` fails on an un-adjudicated branch and leaves the report alone — but
+// it also fails when the report ON DISK is not what this run would write (§5),
+// because a committed artifact nobody diffs goes stale silently. Without
+// `--check` the report is rewritten. The gate runs `--check`.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -155,15 +157,54 @@ lines.push(
   "",
 );
 
-if (!checkOnly) {
+const body = lines.join("\n");
+
+// ---- 5. the report is an artifact, and artifacts go stale --------------------
+// A committed file that nothing ever diffs drifts away from the run that made it
+// the moment the manifest moves — and this one has done so twice, still naming a
+// module the manifest had dropped and still quoting counts no run produces, while
+// the gate stayed green because `--check` only ever asked whether the CURRENT run
+// adjudicates cleanly. That is the adjudicator's own false-green failure one level
+// up: a green attestation over a report nobody can trust. So `--check` also grades
+// the committed bytes against the bytes this run would write, and a missing report
+// fails the same way. The body is a pure function of the pin, the manifest, the
+// AST inventory and the recorded outcomes — no clock, no absolute path, no
+// iteration order that a rebuild can permute — so a difference is always real
+// drift, and the fix is always to re-run the generator and commit what it writes.
+const drift: string[] = [];
+if (checkOnly) {
+  const fix = "re-run `npx tsx strangle/attest.ts` (no --check) and commit the result";
+  if (!existsSync(REPORT)) {
+    drift.push(`FAIL — no committed report at attestation/coverage.md; ${fix}`);
+  } else {
+    const committed = readFileSync(REPORT, "utf8");
+    if (committed !== body) {
+      const was = committed.split("\n");
+      const now = body.split("\n");
+      const n = Math.max(was.length, now.length);
+      let i = 0;
+      while (i < n && was[i] === now[i]) i++;
+      const show = (s: string | undefined) => (s === undefined ? "<end of file>" : JSON.stringify(s.length > 200 ? `${s.slice(0, 200)}…` : s));
+      drift.push(
+        `FAIL — the committed attestation/coverage.md is STALE (${was.length} lines on disk, ${now.length} generated); first difference at line ${i + 1}: committed ${show(was[i])} vs generated ${show(now[i])}`,
+        `FAIL — this run measures ${nExecuted}/${inventory.length} executed, ${verdict.excludedCount} excluded, ${unadjudicated.length} un-adjudicated; ${fix}`,
+      );
+    }
+  }
+} else {
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(REPORT, lines.join("\n"));
+  writeFileSync(REPORT, body);
   console.log(`report → ${REPORT}`);
 }
 
 console.log(`\n=== coverage attestation: ${nExecuted}/${inventory.length} executed, ${rows.length - nExecuted - unadjudicated.length} excluded ===`);
 for (const r of unadjudicated) console.log(`  FAIL  ${r.branch} — ${r.site.kind} '${r.site.text}' never took the ${r.outcome} arm and carries no reviewed exclusion`);
 for (const s of stale) console.log(`  FAIL  stale exclusion ${s.branch} — ${s.why}`);
-const ok = verdict.ok;
-console.log(ok ? "\nPASS — every branch of every attested module is executed or carries a reviewed exclusion" : "\nFAIL");
+for (const d of drift) console.log(d);
+const ok = verdict.ok && drift.length === 0;
+console.log(
+  ok
+    ? `\nPASS — every branch of every attested module is executed or carries a reviewed exclusion${checkOnly ? ", and the committed report is this run's own output" : ""}`
+    : "\nFAIL",
+);
 process.exit(ok ? 0 : 1);

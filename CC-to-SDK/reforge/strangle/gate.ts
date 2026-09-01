@@ -215,10 +215,15 @@ for (const [label, script] of [
   // the widest in the campaign so far — and structural rather than incidental.
   // This subsystem's job is to DECIDE, and a rung that was reached and passed
   // leaves the same transcript as one that was never reached, so most of a
-  // twelve-rung ladder is unrecordable by construction. Two more families are
-  // out of reach for reasons no scenario can fix: `auto` mode is gate-guarded and
-  // §3.3 pins every gate disabled, and the mode transition has thirty ordered
-  // pairs a corpus would need thirty recordings for. It compares the PORT TRACE
+  // thirteen-rung ladder is unrecordable by construction. Two more families are
+  // out of reach, and the first one's reason had to be corrected: `auto` is NOT
+  // gate-dead — its gate is three LOCAL conditions, the mode records at spawn and
+  // over the control channel, and the classifier's fail-closed deny is now a
+  // recording (`perm-auto-classifier-deny`). What is out of reach is narrower and
+  // CORPUS-DARK: no scenario creates the classifier's BLOCK verdict, and none
+  // transitions into or out of `auto`, so the transition's strip and restore go
+  // unrendered. The second family is the mode transition's thirty ordered pairs,
+  // which a corpus would need thirty recordings for. It compares the PORT TRACE
   // as well as the value, since two refusals returning the same thing can differ
   // in nothing but which ports ran; and it locates its subject with the BUILD's
   // own resolveAnchor/selectExcision/assertSignature, so an oracle and a build

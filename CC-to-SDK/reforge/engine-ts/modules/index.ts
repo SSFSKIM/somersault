@@ -63,6 +63,7 @@ import * as stopFailureHooks from "../../strangle/modules/stop-failure-hooks/ref
 import * as taskCreatedHooks from "../../strangle/modules/task-created-hooks/reference.js";
 import * as taskCompletedHooks from "../../strangle/modules/task-completed-hooks/reference.js";
 import * as permissionRequestHooks from "../../strangle/modules/permission-request-hooks/reference.js";
+import * as permissionDeniedHooks from "../../strangle/modules/permission-denied-hooks/reference.js";
 import * as userPromptExpansionHooks from "../../strangle/modules/user-prompt-expansion-hooks/reference.js";
 import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
@@ -71,6 +72,11 @@ import * as permissionDecision from "../../strangle/modules/permission-decision/
 // mode-aware decision body above the pre-check and the broker's own
 // `createCanUseTool` are §2.3 deferrals recorded on the ledger row).
 import * as permissionPrecheck from "../../strangle/modules/permission-precheck/reference.js";
+// C9's fix round: two shape tests over a decisionReason that the wave had
+// adjudicated dark and the corpus's first `auto` cell showed to be live. They
+// live in `shared/` because the owned decision modules use them directly as well.
+import * as safetyCheckReason from "../../strangle/modules/safety-check-reason/reference.js";
+import * as askRuleReason from "../../strangle/modules/ask-rule-reason/reference.js";
 import * as ruleBasedPermissions from "../../strangle/modules/rule-based-permissions/reference.js";
 import * as allowRuleDecision from "../../strangle/modules/allow-rule-decision/reference.js";
 import * as modeChangeGuard from "../../strangle/modules/mode-change-guard/reference.js";
@@ -188,6 +194,7 @@ const OWNED: [string, string, unknown][] = [
   ["task-created-hooks", "subsystem/hook-dispatch", taskCreatedHooks.taskCreatedHooks],
   ["task-completed-hooks", "subsystem/hook-dispatch", taskCompletedHooks.taskCompletedHooks],
   ["permission-request-hooks", "subsystem/hook-dispatch", permissionRequestHooks.permissionRequestHooks],
+  ["permission-denied-hooks", "subsystem/hook-dispatch", permissionDeniedHooks.permissionDeniedHooks],
   ["user-prompt-expansion-hooks", "subsystem/hook-dispatch", userPromptExpansionHooks.userPromptExpansionHooks],
   ["file-changed-hooks", "subsystem/hook-dispatch", fileChangedHooks.fileChangedHooks],
   // W6 / C9. Two of these belong to the CONTROL PROTOCOL rather than to
@@ -197,6 +204,8 @@ const OWNED: [string, string, unknown][] = [
   // itself issues, and leaving the return leg unowned would have stopped the
   // chain's ownership mid-round-trip. W7 inherits the request leg.
   ["permission-precheck", "subsystem/permissions", permissionPrecheck.permissionPrecheck],
+  ["safety-check-reason", "subsystem/permissions", safetyCheckReason.findSafetyCheckReason],
+  ["ask-rule-reason", "subsystem/permissions", askRuleReason.isAskRuleDrivenReason],
   ["rule-based-permissions", "subsystem/permissions", ruleBasedPermissions.checkRuleBasedPermissions],
   ["allow-rule-decision", "subsystem/permissions", allowRuleDecision.allowRuleDecision],
   ["mode-change-guard", "subsystem/permissions", modeChangeGuard.guardPermissionModeChange],
