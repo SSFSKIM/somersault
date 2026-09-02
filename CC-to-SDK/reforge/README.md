@@ -914,11 +914,23 @@ FLIP tengu_cobalt_ridge via CLAUDE_CODE_USE_POWERSHELL_TOOL="1" (default false) 
        msg[1].body.tools[10].name: "Read" != "PowerShell"
 ```
 
-**An override changes the headless tool catalog itself** — `Read` leaves the
-presented tool array and `PowerShell` takes its place. That lands directly on
-§1.3's moat surface, and it settles the precedence question empirically: the env
-override is consulted *before* the compiled-in default, so the defaults fixture
-describes reality only because the environment is locked.
+**An override changes the headless tool catalog itself** — it ADDS `PowerShell`
+to the presented tool array. That lands directly on §1.3's moat surface, and it
+settles the precedence question empirically: the env override is consulted
+*before* the compiled-in default, so the defaults fixture describes reality only
+because the environment is locked.
+
+*Corrected 2026-09-03 (W8a, from the W8 scout's §7.3).* This paragraph read
+"`Read` leaves the presented tool array and `PowerShell` takes its place", and so
+did the spec's C3 Revision Note. Both were reading the diff line above as a
+substitution when it is a POSITIONAL report: measured from the two cassettes, the
+baseline catalog is 22 tools and the flipped one is **23** — `PowerShell` is
+inserted at the alphabetically sorted index 10 and `Read` shifts to 11 and stays.
+The flip-liveness verdict is unaffected and the corrected claim is the stronger
+one. The general form is worth keeping: **a diff over an ordered collection
+should say whether the LENGTH changed before anyone reads a per-index difference
+as a swap.** `tool/PowerShell` is a ledger row from this correction (wave C13,
+whose chunk it shares).
 
 The other twelve produced no observable difference on a headless replay,
 including `CLAUDE_CODE_LUMINOUS_WHISTLE` — the one the spec names. That is not a
@@ -1162,7 +1174,11 @@ agent-team predicates reach a gate and an env var. Those are ledger edges, not l
   applies exactly once — in the adapter — before the bound name is forwarded, and the owned module
   sees precisely what the excised body saw. Defaults forward now; a default inside a *nested*
   pattern is still refused, because the nested pattern is.
-- **Bash has no graph-unique literal.** Its only distinctive string,
+- **Bash's FORMATTER has no graph-unique literal.** *(Scoped 2026-09-03 by W8a, on the W10 scout's
+  measurement: as written this said "Bash", and the W10 scout counted **at least sixteen** anchors
+  that occur exactly once in the executor, the safety chain and the prompt builder. The claim is
+  true of the `mapToolResultToToolResultBlockParam` method it was made about, and false of the
+  tool.)* The formatter's only distinctive string,
   `"<error>Command was aborted before completion</error>"`, occurs **twice in every bundle from
   2.1.220 to 2.1.251** — the engine chunk and the Windows/PowerShell sibling. Extending the anchor
   in either direction reaches a minified local name, the bet this project has watched lose twice in
@@ -3849,3 +3865,204 @@ rule per §3.4 (canonicalization 90 → 94 checks), and **the equivalence phase 
 verdict and the reason lines that explain it**. The second is the same defect class C9 fixed one
 block up, where any non-zero exit was read as RED without the runner's own verdict — a phase that can
 fail has to say what failed, or its failure is a rumour.
+
+## W8a — the moat-tool description belt: what the corpus already grades, and what it cannot (2026-09-03)
+
+The first of the four moat children (C11a). Its charter was the cheapest thing in the campaign and
+the reason is measured rather than argued: **the ledger assigns C11 twenty tool rows, all twenty put
+their description and JSON schema onto the differential surface on every turn, and sixteen of them
+do nothing else.** No scenario has ever executed one of those sixteen — zero `tool_use` blocks
+across the whole recorded corpus — so the belt is ~30 KB of owned prose bought with no new
+recordings, on a surface where every arm the environment allows is already live.
+
+### The population, derived from two artifacts that share no machinery
+
+This campaign has been wrong about a population four times (hook events, control-protocol arms,
+prompt sections, the hook-helper belt) and fixed it the same way each time. C11a's whole claim is
+"these are the sixteen builders", so the derivation came before the splices:
+`research/fixtures/moat-tools-2.1.251.json`, the **eighth pin-keyed fixture** and a gate phase.
+
+* **The corpus side** reads every recorded request body's `tools` array — 423 bodies over 82
+  cassettes, 12 distinct catalog shapes, the 22-tool baseline in 59 of them and the plan-mode
+  catalog in 14.
+* **The bundle side** finds each description's producing DECLARATIONS by *searching the graph for
+  the rendered text itself*, in 48-character windows. Nothing is looked up by name: a window that
+  occurs once in 1,802 modules names its carrier, and a description whose windows land in two
+  carriers HAS two carriers.
+* **The anchor** for each carrier is its shortest unique untainted window, by
+  `research/tools/anchor-enum.ts` — W7.6a's rule, lifted out of the hook-helper extractor rather
+  than copied, because "measure a mechanism by its own definition" only stays true if the definition
+  has one implementation. All 29 carriers are anchorable; the helper-belt fixture reproduces
+  byte-identically through the shared module.
+
+Two things it corrected before a line was spliced. **Five descriptions are composed of more than one
+declaration** (Workflow's spans two chunks), so each row claims its primary carrier and the fixture
+records the rest — Workflow is owned as "102 of 110 locatable windows", not as "the description".
+And **four of the formatters the cut named as this wave's work are already owned** by C4/W1.
+
+### The denominator every document was quoting
+
+Deriving the corpus side surfaced that **"267 cassettes" is the count of FILES in `cassettes/`**, and
+186 of those are `-observed-A|A2|B` dumps a replay writes beside the cassette it replayed. They are
+byte-identical traffic on a green run and their number depends on how many times someone ran the
+gate. The recorded corpus is **82 cassettes carrying 423 request bodies**. Every prose claim in the
+owned code, the ledger and the manifest is corrected; the W8 scout keeps its own text, because a
+research document records what was measured then.
+
+The first version of the filter made the mistake it existed to catch: it dropped every name
+*containing* `-observed-` and silently took seventeen real recordings with it —
+`m3-flip-observed-*`, including the one cassette in which `PowerShell` is presented at all, and
+`m2-xresume-observed-*`. It is pattern-exact now. **A population defined by a substring is a
+population whose boundary nobody has looked at.**
+
+### Sixteen splices, and the shapes they actually have
+
+Eight free functions, seven variable declarators, one sibling method (TaskOutput writes its prompt
+inline in the tool object). Three of the declarators are plain literals, so the build compares their
+VALUE against the pinned chunk's own bytes every build — 574, 378 and 2,834 characters verified,
+which is the one check that can see a description whose wording moves while its minified name stays
+put. The other four interpolate a tool name, which makes them template EXPRESSIONS, and each carries
+a written `valueUngraded` naming the oracle that grades it instead.
+
+**Two anchor lessons, both recorded on the rows that carry them.**
+
+* **CHECK THE ESCAPE LAYER BEFORE COUNTING AN ANCHOR — and quoting is an escape layer.**
+  ScheduleWakeup's obvious anchor sentence is unique graph-wide *and points at the wrong file*: its
+  own chunk single-quotes the string, so the source there carries `user\'s` while another chunk
+  carries the same sentence unescaped. The scout wrote that rule for `—`; it bites the same way
+  on an apostrophe inside a single-quoted literal, and the failure is silent in both directions.
+* **AN ANCHOR CAN BE AMBIGUOUS INSIDE ITS OWN TARGET.** CronDelete's and CronList's opening clauses
+  occur twice apiece — once per arm of their own ternary — so both are anchored on a later fragment.
+
+The capture derivations obey the anchor doctrine one level down: each is a window that overlaps
+**exactly one renameable identifier, its own capture**, so no derivation bets on a second minifier
+letter. The generator that produced them enforces that mechanically against the AST rather than by
+eye.
+
+### The oracle, and the arms it reaches that no recording can
+
+`strangle/moat-parity.test.ts` — 114 comparisons, 10 controls — locates each body with the BUILD's
+own `resolveAnchor`/`selectExcision`/`assertSignature`, evaluates it with upstream's own constants
+and stubbed ports, and requires byte identity with the owned module driven through its adapter. The
+corpus/domain gap has a shape none of the six oracles before it had: these tools are **present in
+every catalog and executed by nothing**, so each description renders exactly one arm and can never
+render a second.
+
+| unreachable arm | why | 
+|---|---|
+| CronCreate's Monitor paragraph | `tengu_amber_sentinel`, compiled-in default false, no env override |
+| SendMessage's cross-session sections | `tengu_harbor_kite`, compiled-in default **TRUE** — so it is the DISABLED arm that is unrecordable |
+| the cron durability branch, ×3 | `tengu_kairos_cron_durable`, default true |
+| SendMessage's teammate table rows | the agent-team ports, false headlessly |
+| two of ScheduleWakeup's three prompt-cache arms | the two TTL reads agree for the corpus's model |
+
+A gate hides exactly as much whichever way it defaults; only which half changes. All eleven arms are
+reviewed exclusions in `strangle/attestation.ts` and every one is graded here against upstream's own
+bytes.
+
+Two rules the file adds to the family. **A `primitive` is resolved from the bundle, not written
+down** — through the import graph when the constant lives in another chunk, and through the
+initializer's own arithmetic when it is not a literal, because CronCreate's retention window is
+`AM.recurringMaxAgeMs / 86400000` and writing `7` in the oracle would grade the owned constant
+against a second transcription of the same number. And **await before comparing**: TaskOutput's
+prompt is `async`, two promises both stringify to `{}`, and the file's first run passed a case it had
+not run. `eq` refuses a promise by name now.
+
+### A gate-fixture blind spot, found by needing to cite it
+
+The cron durability exclusion is the one in this wave that **cannot cite the gate-defaults fixture**,
+and that is a finding. `Lz()` is `DH("tengu_kairos_cron_durable", !0, t)`, and `DH` is a
+three-argument wrapper around the resolver — `function DH(e,t,r){return I(e,t)}` — which
+`research/tools/extract-gate-defaults.ts` does not recognise as a resolver alias. All seven `DH(…)`
+gate reads land in that tool's 2,549 `unresolved` sites, and **five of their gates are absent from
+the committed fixture**, including this one and `tengu_kairos_cron`, the cron subsystem's own kill
+switch. That is a *third* structurally different blind spot in the same extractor, alongside the
+coerced return (`return Me(e)`) the W8 scout found and the env arm that precedes the gate the W11
+scout found. All three are C11b's.
+
+### The schema getters, measured and deferred
+
+The cut names "description/prompt builders **and schema getters**". The schemas are measured — the
+same sixteen tools put **16,011 bytes** of `input_schema` JSON on the same request bodies, recorded
+per tool in the fixture with a sha — and they are not spliced, for a reason that is about the
+mechanism rather than the budget. A description is a STRING and the belt's whole argument is that a
+string's value is its behaviour, which is why the `variable-declarator` shape compares it against
+upstream's bytes at build time. A schema is a memoized zod CONSTRUCTION: owning it means owning a
+call graph into the vendored zod, and the build-time value comparison that makes the description
+rows cheap has no equivalent. The bytes are in the fixture so the deferral has a size rather than
+being a silence, and the natural owner is C11b, whose `tool-catalog` fixture already has to describe
+the catalog's three contributors.
+
+### The three formatters this wave did NOT splice, and why that is the right call
+
+The cut names `ReportFindings`, `ScheduleWakeup` and `TaskOutput`'s result formatters as C11a's work.
+They are not spliceable *usefully* here, and the reason is the wave's own headline finding turned
+around: a result formatter runs when its tool is CALLED, and these three belong to the sixteen tools
+with zero execution coverage. Measured: **zero `tool_use` blocks for any of the sixteen across the
+82 recorded cassettes.**
+
+So each row would be dark, and its honest `darkOver` population is *the whole corpus* — there is no
+discriminating property to narrow it with, the way "hook-registering scenarios" narrowed W7.6a's
+`ip`. Three dark rows × 59 replays is roughly twelve minutes added to every gate run, permanently,
+for rows that prove nothing until C11b records the three cheap scenarios its own budget already
+contains (one `stop: true` wakeup, one findings report, one background-task read). **Deferred to
+C11b with the measurement, not skipped**: the same oracle grades them a week later with liveness
+attached. The cut's item is answered rather than dropped.
+
+### The re-record, and the arm it bought
+
+`task-family` walked TaskList (empty), two TaskCreates, TaskList, TaskGet, TaskUpdate. It now also
+calls TaskGet for an id nothing created, which renders the **"Task not found"** arm of C4/W1's
+`task-get-result` for the first time in the corpus. The substance check is widened with it and
+deliberately as ORDINAL RELATIONS rather than an exact call sequence: it runs against both engines,
+and pinning the whole list would fail any equivalent engine that batches two independent calls into
+one turn. Corpus unchanged at 59.
+
+### The riders
+
+* **`engine-ts/skeleton.test.ts` spawned the wrapper with NO `env`** — inheriting the operator's
+  shell inside a gate phase, an X6 violation in the engine the inversion makes primary. It goes
+  through `engineEnv({mode: "replay", …})` now, like every other engine this repository starts.
+* **`tool/PowerShell` is a ledger row** (wave C13, whose chunk it shares). X2 wants one row per
+  headless catalog tool and PowerShell is presented headlessly under an in-allowlist override.
+* **`Read` does not leave the tool array.** The flip cassette's baseline is 22 tools and the flipped
+  one is 23; `PowerShell` is inserted at the sorted index 10 and `Read` shifts to 11 and stays. Three
+  documents carried the positional diff as a substitution. **A diff over an ordered collection should
+  say whether the LENGTH changed before anyone reads a per-index difference as a swap.**
+* **"Bash has no graph-unique literal" is true of the FORMATTER only** — the W10 scout counted at
+  least sixteen 1-of-1 anchors on the executor, the safety chain and the prompt builder. Scoped in
+  place.
+* **`background_tasks` is FIRED on the arm and UNREACHED on the effect.** W7's probe sent it against
+  an empty registry, so "answered success" proves dispatch and not the listing. The effect needs two
+  things at once that no scenario creates: one running background task and a control frame asking for
+  the list while it is still running. C13e's.
+* **`tool/WebFetch` moves to C5** and **`tool/WebSearch` and `tool/Monitor` are the first two rows to
+  leave through §1.2's exit door**, each with a reason and evidence. They leave in opposite
+  directions, and the difference is the point: WebSearch has a client-side residue other rows already
+  own and no execution to own, Monitor has no client-side surface at all. Monitor's exclusion is the
+  measured answer to a standing product claim — "the moat includes persistent notifications".
+* **`subsystem/tool-result-validators` moves C4 → C13**, per the W10 scout: its largest members are
+  the Bash tool's and they share the safety chain with the executor.
+
+### Seam notes for C11b, measured rather than recalled
+
+* **The tool-catalog fixture has a neighbour now.** `moat-tools-<pin>.json` answers "which
+  declarations produce the descriptions"; C11b's `tool-catalog-<pin>.json` answers "what `Y0()` can
+  present, with a guard apiece". Keep them separate and let the second one cite the first for the
+  twenty W8 rows. The cut calls it "the seventh pin-keyed fixture"; it is the **ninth**.
+* **The catalog is 12 shapes, not 7.** The fixture lists them with body and file counts. Two
+  different 23-tool shapes exist (one adds the MCP echo tool, one adds PowerShell), which a shape
+  count keyed on size alone would merge.
+* **The three cheap recordings are worth exactly three splices.** `ReportFindings` (1 pure-helper),
+  `ScheduleWakeup` (3 tool-name primitives) and `TaskOutput` (3 ports, all effectful — `mSt` reads
+  `process.env.TASK_MAX_OUTPUT_LENGTH`, `rF` walks a gated sanitizer registry, so the scout's
+  `pure-helper` label does not survive contact). Their manifest rows can be written against this
+  wave's, and `strangle/moat-parity.test.ts` extends to them without new machinery.
+* **`AskUserQuestion`'s prompt method has two gated tails** this wave deliberately did not swallow
+  (`tengu_cinder_plover`, `tengu_cinder_wren`), which is why the row owns the 842-byte constant the
+  requests actually carry rather than the method.
+* **`EnterPlanMode` forwards two prose PORTS** (`X$n`, `Y$n`) rather than folding them in. Both are
+  description text with their own gate reads; each is a splice C11b can take on this wave's template.
+* **The four task-family DESCRIPTIONS are unowned and cheap.** They render in 6 recorded cassettes,
+  their carriers are in the fixture, and they are the same four shapes this wave already spliced.
+  They are outside C11a's sixteen only because the sixteen are defined as "zero execution coverage".

@@ -384,6 +384,96 @@ export const ATTESTED: AttestedModule[] = [
   { module: "model-switch", row: "model-switch", scenarios: ["raw-protocol"] },
   { module: "initialize-payload", row: "initialize-payload", scenarios: ["raw-protocol"] },
   { module: "initialize-handler", row: "initialize-handler", scenarios: ["raw-protocol", "sysprompt-append"] },
+
+  // ---- W8a / C11a: the moat-tool description belt --------------------------
+  // Sixteen modules, and the scenario sets are the smallest that can move each
+  // one: `plain` for the thirteen tools in every recorded catalog and
+  // `perm-plan-mode` for the three that are only in the plan-mode one. Eleven of
+  // the sixteen are branchless by construction — a description is prose, and the
+  // arms that do exist all hang off a gate the environment pins.
+
+  { module: "cron-create-description", row: "cron-create-description", scenarios: ["plain"] },
+  { module: "cron-delete-description", row: "cron-delete-description", scenarios: ["plain"] },
+  { module: "cron-list-description", row: "cron-list-description", scenarios: ["plain"] },
+  {
+    module: "enter-worktree-description",
+    row: "enter-worktree-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "upstream's body is ONE template literal with no free variable and no conditional, so its AST inventory is legitimately empty rather than under-reported. What grades it is strangle/moat-parity.test.ts (byte identity against the pinned declaration) plus the requests surface of every recorded cassette, which carries all 3,220 rendered bytes.",
+  },
+  {
+    module: "exit-worktree-description",
+    row: "exit-worktree-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "as its sibling: one template literal, zero free variables, no arm. Graded by strangle/moat-parity.test.ts against upstream's own bytes and by the requests surface of every recorded cassette.",
+  },
+  {
+    module: "report-findings-description",
+    row: "report-findings-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "a plain string constant. It has no branch AND its value is compared against the pinned chunk's own bytes on every build (the `variable-declarator` shape's whole reason), which is a stronger check than a branch inventory would be.",
+  },
+  {
+    module: "task-stop-description",
+    row: "task-stop-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "a no-substitution template literal, value-compared against the pinned chunk's bytes on every build.",
+  },
+  {
+    module: "remote-trigger-description",
+    row: "remote-trigger-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "a no-substitution template literal, value-compared against the pinned chunk's bytes on every build \u2014 and the only owned surface RemoteTrigger will ever have, since its `call` is an excluded server boundary.",
+  },
+  {
+    module: "list-agents-description",
+    row: "list-agents-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "one template literal with a single interpolated tool name and no arm. The name is a \u00a72.4 `primitive` the adapter equality-asserts on every delegation, and strangle/moat-parity.test.ts compares the rendered bytes against upstream's own declarator.",
+  },
+  { module: "send-message-description", row: "send-message-description", scenarios: ["plain"] },
+  { module: "schedule-wakeup-description", row: "schedule-wakeup-description", scenarios: ["plain"] },
+  {
+    module: "task-output-description",
+    row: "task-output-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "the tool object's `prompt` method, whose body is one template literal with no free variable and no arm. Graded by strangle/moat-parity.test.ts and by the requests surface of every recorded cassette.",
+  },
+  {
+    module: "workflow-description",
+    row: "workflow-description",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "one template literal with a single interpolated tool name and no arm. Note what it is NOT: Workflow's rendered description is assembled from FOUR declarations across two chunks, and this row owns the 3,082-byte one carrying 102 of the 110 locatable windows \u2014 recorded in research/fixtures/moat-tools-2.1.251.json rather than implied by a green attestation.",
+  },
+  {
+    module: "enter-plan-mode-description",
+    row: "enter-plan-mode-description",
+    scenarios: ["perm-plan-mode"],
+    noBranchesReason:
+      "no arm of its own: the two conditionals in the rendered text belong to the two prose PORTS it takes (`whatHappensSection`, `agentToolNote`), which are upstream's functions and not this module's. strangle/moat-parity.test.ts drives both ports over distinguishable stubs, so their contribution is graded even though neither is owned.",
+  },
+  {
+    module: "exit-plan-mode-description",
+    row: "exit-plan-mode-description",
+    scenarios: ["perm-plan-mode"],
+    noBranchesReason:
+      "one template literal with a single interpolated tool name and no arm.",
+  },
+  {
+    module: "ask-user-question-description",
+    row: "ask-user-question-description",
+    scenarios: ["perm-plan-mode"],
+    noBranchesReason:
+      "one template literal with two interpolated tool names and no arm.",
+  },
 ];
 
 export interface Exclusion {
@@ -523,6 +613,48 @@ const W76A_INVOCATION_ARMS =
 
 const W76A_STDERR_TAIL =
   "THE WHOLE FUNCTION IS ADJUDICATED DARK on the manifest row, with the population, the inverted twin and the firing condition written out there: both call sites are guarded on a hook-output VALIDATION ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not 2, and none of the corpus's eleven command hooks produces one (seven write nothing to stdout, two echo plain text, two are node -e projections that write to a file). The inverted twin was built and replayed before the verdict was written and both covering candidates stayed GREEN, which is the call site never being reached rather than a weak twin. Graded instead by strangle/hooks-parity.test.ts's hook-stderr-tail block, which runs the WHOLE domain rather than a sample — three error texts x five exit codes including `undefined` x six stderr shapes, ninety cases — with seven controls, one per decision the body makes.";
+
+/**
+ * The cron durability gate, shared by three descriptions.
+ *
+ * AND THE ONE EXCLUSION IN THIS FILE THAT CANNOT CITE THE GATE FIXTURE, which is
+ * a finding rather than a shortcut. `Lz()` in the cron chunk is
+ * `DH("tengu_kairos_cron_durable", !0, t)`, and `DH` is a THREE-ARGUMENT WRAPPER
+ * around the resolver — `function DH(e,t,r){return I(e,t)}` in chunk-bsdtxcdc —
+ * which `research/tools/extract-gate-defaults.ts` does not recognise as a
+ * resolver alias. So all seven `DH(…)` gate reads land in that tool's 2,549
+ * `unresolved` sites and FIVE of their gates are absent from the committed
+ * fixture, including this one and `tengu_kairos_cron`, the cron subsystem's own
+ * kill switch. That is a third structurally different blind spot in the same
+ * extractor, alongside the coerced return (`return Me(e)`) and the env arm that
+ * precedes the gate — all three handed to C11b, which owns the fixture riders.
+ * The default is read from upstream's own call site here instead.
+ */
+const CRON_DURABILITY =
+  "DURABLE SCHEDULING IS ON, so the session-only prose never renders. The three cron descriptions branch on `Lz()`, which is " +
+  "`DH(\"tengu_kairos_cron_durable\", !0, …)` — compiled-in default TRUE, and §3.3 pins every gate to its compiled-in default. The gate is not reachable " +
+  "through the X6 env allowlist either. Both arms are graded by strangle/moat-parity.test.ts, which drives the durability argument over both values and " +
+  "requires byte identity with upstream's own declaration. See the note above for why this reason cites upstream's call site rather than the gate fixture.";
+
+/**
+ * The cross-session kill switch — a gate that defaults TRUE, so the arm the
+ * corpus cannot reach is the DISABLED one.
+ */
+const CROSS_SESSION_ENABLED =
+  "THE CROSS-SESSION LAYER IS ON, so SendMessage's shortened description never renders. `Yo()` reads CLAUDE_CODE_HARBOR_KITE (absent under X6) and then " +
+  "`tengu_harbor_kite`, whose compiled-in default the committed research/fixtures/gate-defaults-2.1.251.json records as TRUE — so §3.3's pinned-disabled " +
+  "policy leaves this surface ON and it is the disabled arm, three paragraphs and a table row shorter, that no recording can carry. " +
+  "Graded by strangle/moat-parity.test.ts with the switch stubbed both ways.";
+
+/**
+ * ScheduleWakeup's three-valued prompt-cache argument. The corpus's two reads
+ * always agree, so exactly one of three arms renders.
+ */
+const WAKEUP_CACHE_TTL =
+  "THE TWO PROMPT-CACHE READS AGREE, so one of three arms renders. The tool's `prompt()` computes `rM(\"repl_main_thread\") === rM(\"sdk\")` — each `rM` " +
+  "answering whether that caller's requests use the 1-hour TTL — and passes the shared value, or `undefined` when they differ. For the corpus's model both " +
+  "are the 1-hour TTL, so the builder always receives `true`: the 5-minute section and the 'the two callers disagree' section are unrenderable without a " +
+  "second model. Graded by strangle/moat-parity.test.ts over all three values.";
 
 export const EXCLUSIONS: Exclusion[] = [
   {
@@ -3666,5 +3798,71 @@ export const EXCLUSIONS: Exclusion[] = [
     reason:
       W7_INITIALIZE_HANDLER +
       " THIS ARM: if 'status', F arm.",
+  },
+
+  // ---- W8a / C11a: the description belt's gate-pinned arms -----------------
+  //
+  // Eleven arms, and every one of them is decided by a gate §3.3 pins to its
+  // compiled-in default. That is the same family as W2's subagent-steer arm one
+  // wave over, with one difference worth stating: TWO of these gates default
+  // TRUE, so it is the "disabled" prose that is unreachable rather than the
+  // "enabled" prose. A gate hides exactly as much whichever way it defaults.
+  //
+  // All eleven are graded by `strangle/moat-parity.test.ts`, which evaluates
+  // upstream's own declaration with the gate as a stubbed PORT and requires byte
+  // identity over both answers — so an arm no request renders is better
+  // evidenced here than a rendered one, not worse.
+  {
+    branch: "cron-create-description#cronCreateDescription@0:F",
+    reason: CRON_DURABILITY,
+  },
+  {
+    branch: "cron-create-description#cronCreateDescription@1:F",
+    reason: CRON_DURABILITY,
+  },
+  {
+    branch: "cron-delete-description#cronDeleteDescription@0:F",
+    reason: CRON_DURABILITY,
+  },
+  {
+    branch: "cron-list-description#cronListDescription@0:F",
+    reason: CRON_DURABILITY,
+  },
+  {
+    branch: "cron-create-description#cronCreateDescription@2:T",
+    reason:
+      "THE MONITOR PARAGRAPH, and the only place in the whole catalog where one tool's description points at a tool the engine never presents. " +
+      "The arm is `RI()`, which is `I(\"tengu_amber_sentinel\", false)`: the committed research/fixtures/gate-defaults-2.1.251.json records that gate's " +
+      "compiled-in default as false, §3.3 pins every gate to its compiled-in default, and the gate is NOT among that fixture's per-gate env overrides, so " +
+      "flip-liveness has no lever for it either. `Monitor` is also absent from all 82 recorded cassettes and carries its own §1.2 exclusion row in " +
+      "ledger/rows.ts. Graded by strangle/moat-parity.test.ts, which renders this paragraph with the port stubbed true.",
+  },
+  {
+    branch: "send-message-description#sendMessageDescription@0:F",
+    reason: CROSS_SESSION_ENABLED,
+  },
+  {
+    branch: "send-message-description#sendMessageDescription@1:F",
+    reason: CROSS_SESSION_ENABLED,
+  },
+  {
+    branch: "send-message-description#sendMessageDescription@2:T",
+    reason:
+      "THE AGENT-TEAM CONTEXT, which is the same port pair C4/W1 already excludes on `task-update-result`'s completion nudge, reached from a different tool. " +
+      "SendMessage's `prompt()` passes `io()`, which requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS (not in the X6 allowlist, so no graded run can set it) AND " +
+      "the `tengu_amber_flint` gate; the environment pins the first false, so the teammate table rows never render. " +
+      "Graded by strangle/moat-parity.test.ts across the full crossSession × team cross-product.",
+  },
+  {
+    branch: "schedule-wakeup-description#scheduleWakeupDescription@0:F",
+    reason: WAKEUP_CACHE_TTL,
+  },
+  {
+    branch: "schedule-wakeup-description#scheduleWakeupDescription@1:T",
+    reason: WAKEUP_CACHE_TTL,
+  },
+  {
+    branch: "schedule-wakeup-description#scheduleWakeupDescription@1:F",
+    reason: WAKEUP_CACHE_TTL,
   },
 ];

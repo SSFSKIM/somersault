@@ -45,7 +45,7 @@ layer down from C8's, so the probe now holds the session open until the answer l
 |---|---|---|---|---|
 | `add_directory` |  |  | **FIRED** | refused: undefined is not an object (evaluating 't.includes') |
 | `apply_flag_settings` |  | yes | **OPEN** | not created here: pushes the feature-gate state, which §3.3 pins for the WHOLE corpus and X6 forbids a child changing — creating this condition would change the environment every other measurement is taken under |
-| `background_tasks` |  | yes | **FIRED** | answered success |
+| `background_tasks` |  | yes | **FIRED** (arm) / **UNREACHED** (effect) | answered success — against an EMPTY registry. Corrected 2026-09-03 (W8a): the handler is dispatched and answers, and the LISTING it exists to produce has never been rendered with a row in it. The effect needs two things at once, which no scenario creates: one running background task (a `Bash` with `run_in_background`, or a backgrounded `Agent`) AND a control frame asking for the list while it is still running. C13e's row. |
 | `cancel_async_message` |  | yes | **FIRED** | answered success |
 | `channel_enable` |  | yes | **OPEN** | not created here: opens the same remote channel |
 | `claude_authenticate` |  | yes | **OPEN** | not created here: starts an OAuth flow against the first-party console, outside the proxied base URL — sending it would measure the operator's network, not this engine |

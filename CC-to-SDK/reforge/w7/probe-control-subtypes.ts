@@ -95,7 +95,15 @@ const CASES: Record<string, SubtypeCase> = {
   get_usage: { send: {}, condition: "any host reading usage" },
   list_models: { send: {}, condition: "any host listing models" },
   mcp_status: { send: {}, condition: "any host reading MCP status" },
-  background_tasks: { send: {}, condition: "any host listing background tasks" },
+  // FIRED ON THE ARM, UNREACHED ON THE EFFECT — and the two are worth separating
+  // because "answered success" reads as full coverage and is not (W8a, 2026-09-03).
+  // The probe sends this against an EMPTY task registry, so what it proves is
+  // that the handler is dispatched and answers; the listing it exists to
+  // produce has never been rendered with a row in it. The condition for that is
+  // TWO things at once, which no scenario creates: one running background task
+  // (a `Bash` call with `run_in_background`, or a backgrounded `Agent`) AND a
+  // control frame asking for the list while it is still running. C13e owns it.
+  background_tasks: { send: {}, condition: "a host listing background tasks; the ARM needs only the frame, the EFFECT needs one running background task alongside it" },
   get_plan: { send: {}, condition: "any host reading the current plan" },
   get_workspace_diff: { send: {}, condition: "any host reading the workspace diff" },
   file_suggestions: { send: { query: "READ" }, condition: "any host asking for file completions" },
