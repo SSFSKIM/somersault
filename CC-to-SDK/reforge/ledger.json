@@ -1328,6 +1328,345 @@
               "sha256": "a89d36b1a09ab9bff177d63f13aa30b9d2d8bd7e871a8c4585056073e5912f2c"
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 565045,
+            "end": 568670,
+            "sha256": "8e73a19ed8f8095d7e946e34d83640ddcb4145c3f0fed0c190bea71f4992638d"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 560978,
+            "end": 565045,
+            "sha256": "13727eb58147407c09ddfde40a54c2dc49afd3a3f034ce1cedd076e4aa2e1c7e"
+          },
+          "captures": [
+            {
+              "name": "I",
+              "as": "featureGate",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 4485,
+              "declEnd": 4486,
+              "sha256": "a83dd0ccbffe39d071cc317ddf6e97f5c6b1c87af91919271f9fa140b0508c6c",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "I",
+                "declStart": 648779,
+                "declEnd": 648816,
+                "sha256": "407d8b16c1d068fcce7981944fca2de37b7c3b4cb715a9c773acfac647914b85"
+              }
+            },
+            {
+              "name": "km",
+              "as": "bulletLines",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 24321,
+              "declEnd": 24411,
+              "sha256": "bd049cce8650e5b2e4f12b9c382042fd2cc81cfb0247748d305ee2db5769c696",
+              "closure": []
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 559862,
+            "end": 560978,
+            "sha256": "5f4442819492404155c0c537a903ea5ceaddc9481226d73e912199b8a2b79037"
+          },
+          "captures": [
+            {
+              "name": "SKe",
+              "as": "systemReminderNote",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 559485,
+              "declEnd": 559862,
+              "sha256": "14f1d9e45992878586c1c266cc9af36d10613e6ef21cf6c913ad9811f056e0e6"
+            },
+            {
+              "name": "_8t",
+              "as": "hooksNote",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 553561,
+              "declEnd": 553946,
+              "sha256": "a62bc2224601c5165961148afb50d1cb02572977feb1aa40397e7c8ba8d272d5",
+              "closure": []
+            },
+            {
+              "name": "km",
+              "as": "bulletLines",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 24321,
+              "declEnd": 24411,
+              "sha256": "bd049cce8650e5b2e4f12b9c382042fd2cc81cfb0247748d305ee2db5769c696",
+              "closure": []
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 572712,
+            "end": 573338,
+            "sha256": "17a3b526fc10f481128d67d72a9905fff5dd4f260806da1cc976fac9ae181fd1"
+          },
+          "captures": [
+            {
+              "name": "km",
+              "as": "bulletLines",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 24321,
+              "declEnd": 24411,
+              "sha256": "bd049cce8650e5b2e4f12b9c382042fd2cc81cfb0247748d305ee2db5769c696",
+              "closure": []
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 568670,
+            "end": 569986,
+            "sha256": "9d10038ae0ec48e02261a9998f542f1f87308840724f3606a3f631ad5a100063"
+          },
+          "captures": [
+            {
+              "name": "NE",
+              "as": "taskCreateTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 2916,
+              "declEnd": 2918,
+              "sha256": "d539cd97ca1a108f9f5e3f611d7606d84c0aa35ea1973304e479b99025124e16",
+              "from": {
+                "chunk": "chunk-2z83fvw5.js",
+                "exportedAs": "NE",
+                "declStart": 8970,
+                "declEnd": 8985,
+                "sha256": "9166d4553087a3045ac9e5953358a93f9412ba2815ae9a4c83683567e91ed672"
+              }
+            },
+            {
+              "name": "ME",
+              "as": "todoWriteTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 2913,
+              "declEnd": 2915,
+              "sha256": "7021db8687be1dfdbf5705ff61ae83a79d2c04b3d668a819ae13993be51be1e2",
+              "from": {
+                "chunk": "chunk-2z83fvw5.js",
+                "exportedAs": "ME",
+                "declStart": 7403,
+                "declEnd": 7417,
+                "sha256": "9b40e13ec1dac640c0482a48cfc5dd2da252417e1e466fa5122a0ec531db08f2"
+              }
+            },
+            {
+              "name": "Qe",
+              "as": "bashTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3957,
+              "declEnd": 3959,
+              "sha256": "dcdfc1ff7a857b37612e582442af027acbdfe7ab254bce55dfb1c8f331256300",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Qe",
+                "declStart": 573039,
+                "declEnd": 573048,
+                "sha256": "830b917aaee59a026803c6d75b01623994b1f1e1e816641570f67114983fb8a1"
+              }
+            },
+            {
+              "name": "Bt",
+              "as": "powershellTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 4003,
+              "declEnd": 4005,
+              "sha256": "e85eed0dd79282a8ec9adc322f954065ebbd3a5a0892ba96fa505959837b7f34",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Bt",
+                "declStart": 575145,
+                "declEnd": 575160,
+                "sha256": "e09df484669c28cd22a901e0cd2789c94c27deeb925b7763b4972a9160ff8448"
+              }
+            },
+            {
+              "name": "_t",
+              "as": "readTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3986,
+              "declEnd": 3988,
+              "sha256": "f44b6f48ee1c4c4ccbdba60aab4e4aa2292231ecbe1302da92643dd1699f43dd",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "_t",
+                "declStart": 573699,
+                "declEnd": 573708,
+                "sha256": "47bd62f12a7e8997448300392a5f5306a581d2603dc802c2b724491e5d07a2c8"
+              }
+            },
+            {
+              "name": "Kt",
+              "as": "editTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3960,
+              "declEnd": 3962,
+              "sha256": "76aa7dc8f834d42dd313d1698116559896838b2c542eeef5c2369207fdfdaa96",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "Kt",
+                "declStart": 573053,
+                "declEnd": 573062,
+                "sha256": "7269846ce0b1ec7496961c497f3fc3be5134347d8a4edcdb341c54f1c6bfefce"
+              }
+            },
+            {
+              "name": "ar",
+              "as": "writeTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3989,
+              "declEnd": 3991,
+              "sha256": "ab5b62081b1d305e78d0daadb2cd23470b3faeb65af7370627798b7219ea2061",
+              "from": {
+                "chunk": "chunk-bsdtxcdc.js",
+                "exportedAs": "ar",
+                "declStart": 573713,
+                "declEnd": 573723,
+                "sha256": "56ad86faec04218e32d44ad843bfdfcb76eff28ff57f47cfd7a5d451b99a3665"
+              }
+            },
+            {
+              "name": "ti",
+              "as": "globTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 9307,
+              "declEnd": 9309,
+              "sha256": "cfccfcdeb2a5022c816b8c3e50353698c6994a2a7bea4b8ea6aef2fe56880f22",
+              "from": {
+                "chunk": "chunk-y30v0ja7.js",
+                "exportedAs": "ti",
+                "declStart": 760,
+                "declEnd": 769,
+                "sha256": "25baf7f666e69d335698b6338e32e35b03e9d8f58a734b85651b8a967359241c"
+              }
+            },
+            {
+              "name": "Xo",
+              "as": "grepTool",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 9743,
+              "declEnd": 9745,
+              "sha256": "be284e0dba7c3dbe7a37a0f3a39548d94aeb9bad49554e1462a86e0ed266e551",
+              "from": {
+                "chunk": "chunk-hdmehzg7.js",
+                "exportedAs": "Xo",
+                "declStart": 1120,
+                "declEnd": 1129,
+                "sha256": "109596f46d039fafd48677e1099da1775e8b72a2b17e07e2905d684a64d5a642"
+              }
+            },
+            {
+              "name": "ty",
+              "as": "isRepl",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 9768,
+              "declEnd": 9770,
+              "sha256": "4f9db7f8e5068a3ed09c4bdf2ddd980a290126b497155aba1b4a385622d13144",
+              "from": {
+                "chunk": "chunk-hdmehzg7.js",
+                "exportedAs": "ty",
+                "declStart": 2944,
+                "declEnd": 3149,
+                "sha256": "38ab9e370385f88dda5c9635d64f1afcd40e6cfa55fbf300972e605fffa9661a"
+              }
+            },
+            {
+              "name": "Ny",
+              "as": "searchToolsEnabled",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 68198,
+              "declEnd": 68302,
+              "sha256": "6a257f920f5dfe40d7825cf8f87c4c399b7a9a3d674080d6aa3759ff74a51988"
+            },
+            {
+              "name": "km",
+              "as": "bulletLines",
+              "kind": "pure-helper",
+              "declKind": "function",
+              "declStart": 24321,
+              "declEnd": 24411,
+              "sha256": "bd049cce8650e5b2e4f12b9c382042fd2cc81cfb0247748d305ee2db5769c696",
+              "closure": []
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 558799,
+            "end": 559235,
+            "sha256": "d580cc11a8c09367d400803ccc61a7a505d0fa0acc10fca7a969709cd40a985b"
+          },
+          "captures": [
+            {
+              "name": "rKe",
+              "as": "agentIdentity",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 558386,
+              "declEnd": 558489,
+              "sha256": "fdb8a9a6efee55596f5f8b6a4a1169a481f1313dcc8961bf01542d039246b2ff"
+            },
+            {
+              "name": "jfe",
+              "as": "securityPolicy",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 545518,
+              "declEnd": 545983,
+              "sha256": "3da30ef5d3067cf47bbdf8b2a3f71ea77fd60ab6908e97acdfda3fc6077078cd"
+            },
+            {
+              "name": "iKe",
+              "as": "outputStyleIdentity",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 558490,
+              "declEnd": 558799,
+              "sha256": "7c302de88b2e79e4e48dd6765f0addf445d8ef16bbac658a8a2d0ae8705d9de8"
+            },
+            {
+              "name": "eKe",
+              "as": "introFrameEnabled",
+              "kind": "effectful-port",
+              "declKind": "variable",
+              "declStart": 558228,
+              "declEnd": 558385,
+              "sha256": "f3d1bee20064f750e8c2b2dafc4fd1761287e75230a10f02fbc48092b99c6320"
+            }
+          ]
         }
       ],
       "evidence": [
@@ -1338,14 +1677,21 @@
         "strangle/manifest.ts:context-reminder",
         "strangle/manifest.ts:context-prompt-lines",
         "strangle/manifest.ts:subagent-prompt",
+        "strangle/manifest.ts:identity-security-section",
+        "strangle/manifest.ts:using-tools-section",
+        "strangle/manifest.ts:tone-and-style-section",
+        "strangle/manifest.ts:system-section",
+        "strangle/manifest.ts:doing-tasks-section",
+        "strangle/manifest.ts:executing-actions-section",
         "scenario:sysprompt-preset",
         "scenario:sysprompt-append",
         "scenario:sysprompt-boundary",
         "scenario:claude-md-memory",
         "scenario:subagent",
-        "attestation/coverage.md"
+        "attestation/coverage.md",
+        "research/fixtures/prompt-sections-2.1.251.json"
       ],
-      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first."
+      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first. W7.5 TAKES SIX OF THE SECTION BUILDERS THIS ROW NAMED AS ITS GAP, and corrects the count it named them with: the inventory is not '~20 prose sections' but 27 dynamic section records plus a six-element static head and a two-element tail, derived from the pin as research/fixtures/prompt-sections-2.1.251.json and re-derived by the gate (research/tools/extract-prompt-sections.ts, found by shape from the section-record constructor and confirmed twice - by the boundary sentinel the block partition looks for, and by the defaultSystemPrompt property every caller binds the result to). The six rows are the STATIC HEAD: the identity/security opener, # System, # Doing tasks, # Executing actions with care, # Using your tools and # Tone and style - about 11.2 KB of the preset's prose, every one of them rendered by sysprompt-preset and every solo sabotage measured RED against it. All six anchors are PROSE occurring once over the 1,802-file set, the strongest class the doctrine has and a deliberate contrast with C6's two structural anchors; two near-misses are recorded on the rows (the # Using your tools heading occurs twice inside its own function's two arms, which selectExcision ties because it counts candidates rather than spans, and the short form of the parallel-tools sentence also occurs twice). The bullet formatter is a pure-helper with fifteen call sites, owned in a shared file with upstream's copy left live; the hooks paragraph has one caller and folds in - and the fold-in still has to be DECLARED, because the capture inventory refuses an undeclared free variable, so it rides as an owned pure-helper that is derived but neither forwarded nor called. THE REMAINING GAP IS NAMED RATHER THAN IMPLIED: the 27 dynamic records are still upstream's, and the fixture says why each is or is not takeable - four are inline expressions or cross-chunk requires with nothing to excise, several are single string constants that are primitive captures rather than functions, the memory section is a port-heavy S-module, and the rest are gated behind experiments, background jobs or remote surfaces the corpus does not enter. So is the per-tool serializer Eie. The row stays spliced."
     },
     {
       "id": "subsystem/compaction",
