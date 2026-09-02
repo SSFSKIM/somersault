@@ -3043,8 +3043,10 @@ Named debts the roadmap owes an assignment:
   C4 subdivided it (open since W1).
 - **The preset's ~20 prose section builders** behind `OS()` — RENDERED by the corpus since W3, so the
   follow-on cut is unblocked; it was not W3's, W4's or W5's.
-- **Segment compaction** (upstream `hRt`) — three of W4's adjudicated branch outcomes are reachable
-  only through it.
+- **Segment compaction** (named `hRt` here; W7.5 measured the producer to be `E4n` — `hRt` is only
+  that path's prompt builder) — three of W4's adjudicated branch outcomes are reachable only through
+  it, and W7.5 measured that nothing headless reaches it at all: see
+  `research/2026-09-02-w75-segment-compaction-reachability.md`. Routed to C16/W13.
 - **The hook EXECUTORS** — the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`), its
   awaiting sibling `AE`, and the watcher-hooks helper `zxt` that the second round surfaced. New with
   W5, S-module-shaped, and the largest thing standing between `subsystem/hook-dispatch` and

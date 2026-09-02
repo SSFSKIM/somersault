@@ -646,9 +646,15 @@ export const EXCLUSIONS: Exclusion[] = [
   //      the compaction drivers before the SDK maps it, so the optional fields
   //      they always set have no absence arm on any recording.
   //   2. THE SEGMENT-COMPACTION PATH. Three arms are reachable only through
-  //      upstream's from/up_to variant (`hRt`), which no corpus scenario drives
-  //      and which no wave owns yet. Recorded as a DEFERRAL, not an
-  //      impossibility — see the ledger note for whose debt it is.
+  //      upstream's from/up_to variant, and W7.5 MEASURED what that means:
+  //      the producer is `E4n` (not `hRt`, which is only that path's prompt
+  //      builder), it is called from exactly one place, and that place is a
+  //      method on the interactive session controller behind a mounted Ink
+  //      dialog and a double-Escape keypress. No SDK option, control subtype,
+  //      slash command, hook or tool reaches it. So these are not a coverage
+  //      debt waiting for a scenario — they are seam-unreachable, and the
+  //      variant routes to C16/W13 with the other compaction drivers.
+  //      Evidence: research/2026-09-02-w75-segment-compaction-reachability.md.
   //   3. SEAM-FIXED FACTS. The headless query source is always "sdk",
   //      auto-compaction is on, the surface is open and the window is
   //      model-default, so every refusal in the trigger predicate is
@@ -701,16 +707,16 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "compact-boundary-wire#compactBoundaryWire@3:T",
     reason:
-      "`user_context` present. MEASURED at the call sites: of upstream's three, the two the corpus drives call the constructor with THREE arguments, so `userContext` is undefined even for `/compact <instructions>` — only the from/up_to SEGMENT variant passes it (five arguments). No scenario drives a segment compaction and no wave owns that path yet; recorded as a deferral rather than an impossibility. Graded by compaction-parity.test.ts ('everything').",
+      "`user_context` present. MEASURED at the call sites: of upstream's three, the two the corpus drives call the constructor with THREE arguments, so `userContext` is undefined even for `/compact <instructions>` — only the from/up_to SEGMENT variant passes it (five arguments, the fourth being the free text a human typed into the rewind dialog's context box). W7.5 then measured the variant's REACHABILITY and it is not a scenario question: the producer `E4n` has one caller, a method on the interactive session controller that throws unless a terminal host is bound, behind an Ink dialog opened by a double-Escape keypress. No SDK option, control subtype, slash command, hook or tool reaches it. Graded by compaction-parity.test.ts ('everything').",
   },
   {
     branch: "compact-boundary-wire#compactBoundaryWire@4:T",
-    reason: "`messages_summarized` present; the same five-argument segment call site, the same deferral, the same oracle.",
+    reason: "`messages_summarized` present; the same five-argument segment call site (the fifth argument is the size of the summarized slice), the same seam-unreachability, the same oracle.",
   },
   {
     branch: "compact-continuation#compactContinuation@6:F",
     reason:
-      "follow-up questions NOT suppressed. Two of the three upstream call sites pass `true` and the third passes a variable that is true on the paths the corpus drives; the only literal `false` is the segment variant's. Same deferral. Graded by compaction-parity.test.ts, which drives all nine option sets and specifically controls the early return ('the suppress arm falling through instead of returning').",
+      "follow-up questions NOT suppressed. Two of the three upstream call sites pass `true` and the third passes a variable that is literal `true` at both of ITS call sites; the only literal `false` is the segment variant's, which is seam-unreachable for the reason above. Graded by compaction-parity.test.ts, which drives all nine option sets and specifically controls the early return ('the suppress arm falling through instead of returning').",
   },
 
   // ---- family 3: seam-fixed facts ------------------------------------------

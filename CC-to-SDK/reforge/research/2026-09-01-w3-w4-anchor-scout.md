@@ -1,5 +1,14 @@
 # W3+W4 (C6/C7) anchor scout — system-prompt assembly · compaction
 
+> **Supersession banner (2026-09-02, W7.5/C10.5).** Two rows below have been re-measured. (1) Row
+> **a3 `hRt`** is described here, correctly, as a ~520-byte *prompt* wrapper for the segment path —
+> but the campaign's later flow-back notes read it as "the from/up_to variant that passes five
+> arguments to the `compact_boundary` constructor", which is a different function: `E4n`, 4,710
+> bytes, the only five-argument caller of `H1`. Nothing headless reaches `E4n`; see
+> `2026-09-02-w75-segment-compaction-reachability.md`. (2) §0's `OS` inventory is now extracted from
+> the pin as a fixture rather than described — see `research/fixtures/prompt-sections-<pin>.json`
+> and the W7.5 wave record.
+
 **Scope:** campaign spec `docs/superpowers/specs/2026-08-31-reforge-full-campaign-design.md`, children
 **C6 / W3** (system-prompt assembly — the env block itself already shipped as W0a's `env-block` spike) and
 **C7 / W4** (compaction). Read-only against `~/claude-code-bundle/2.1.251/`; no build, gate or recording was
