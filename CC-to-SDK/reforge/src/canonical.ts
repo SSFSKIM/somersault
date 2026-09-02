@@ -268,12 +268,50 @@ function scrubEngineAuthoredFields(o: unknown): unknown {
   return out;
 }
 
+/**
+ * The engine's own MIDNIGHT-ROLLOVER notice, removed rather than scrubbed.
+ *
+ * Two surfaces in the pinned bundle build the same sentence — a context section
+ * and a `date_change` attachment that becomes a conversation MESSAGE — and both
+ * read "The date has changed. Today's date is now ${d}. No need to announce the
+ * new date — the user's own clock shows it."
+ *
+ * WHY REMOVAL AND NOT A DATE SCRUB. The date scrub below equalizes two bodies
+ * that both carry the notice. The failure this rule exists for is the other one:
+ * the corpus runs engine A and engine B SEQUENTIALLY, so a run that starts at
+ * 23:59 has A cross midnight mid-session and emit the notice while B, started
+ * after the rollover, sees no change and emits nothing. The sentence is then
+ * PRESENT IN ONE BODY AND ABSENT FROM THE OTHER, which no substitution can
+ * equalize. Measured: W7.6a's first full gate run failed exactly one row of 110
+ * — the corpus, inside the equivalence phase — and the same phase on the same
+ * faithful build was green twice afterwards, both times wholly on one side of
+ * midnight.
+ *
+ * WHAT IS GIVEN UP, stated rather than glossed. After this the harness cannot
+ * see "one engine noticed midnight and the other did not". That is not a
+ * property of the graph under test — it is the wall clock landing between two
+ * process spawns — and it belongs with the run-scoped ids the differ already
+ * maps out. Everything else in the notice is a fixed upstream sentence with no
+ * variable but the date, so nothing about an owned reimplementation becomes
+ * invisible: the date the notice CARRIES is still compared everywhere else it
+ * appears, by the rule below.
+ *
+ * The em dash is `\u2014` in the bundle's source and a real character in the
+ * emitted string; the pattern stops before it so it matches either.
+ */
+const DATE_ROLLOVER_NOTICE = /The date has changed\. Today's date is now \d{4}-\d{2}-\d{2}\. No need to announce the new date[^"]*?clock shows it\./g;
+
 export function scrubRequestBody(body: string): string {
   // The engine stamps the current date into its system prompt, so an unscrubbed
   // cassette ROTS AT MIDNIGHT: the live body stops hash-matching the recording.
   // Measured — a cassette recorded 2026-08-24 stopped matching on 2026-08-25 and
   // every replay silently degraded to positional matching.
-  const dated = body.replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
+  //
+  // The rollover notice goes FIRST and goes away entirely, for the reason above
+  // it: a date substitution cannot equalize a sentence one side does not have.
+  const dated = body
+    .replace(DATE_ROLLOVER_NOTICE, "")
+    .replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
   try {
     const o = JSON.parse(dated);
     if ((o as { metadata?: unknown })?.metadata) (o as { metadata?: unknown }).metadata = "<scrubbed>";

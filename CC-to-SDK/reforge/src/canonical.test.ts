@@ -328,6 +328,26 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 // ---------------------------------------------------------------------------
 {
   check("the date stamp is scrubbed", sameKey("Today's date is 2026-08-31", "Today's date is 2026-09-01"));
+  // The MIDNIGHT ROLLOVER notice, both halves. The engine emits it when the date
+  // changes DURING a session, and the corpus spawns its two engines in sequence,
+  // so a run that straddles midnight has one body carrying the sentence and the
+  // other not — which is why this one is REMOVED rather than substituted. Both
+  // phrasings the bundle builds end the same way.
+  const ROLLOVER = "The date has changed. Today's date is now 2026-09-03. No need to announce the new date \u2014 the user's own clock shows it.";
+  check("the rollover notice is removed, so a body that has it matches one that does not",
+    sameKey(`Reply with exactly OK. ${ROLLOVER}`, "Reply with exactly OK. "));
+  check("…on either date, since the removal does not depend on the day",
+    sameKey(ROLLOVER, ROLLOVER.replace("2026-09-03", "2026-12-31")));
+  // The must-survive neighbour: the ORDINARY date stamp is scrubbed to a token,
+  // not deleted, so a body that carries it still differs from one that does not.
+  // Without this the rule could widen into a blanket date eraser and nobody
+  // would notice.
+  check("the ordinary date stamp is still SCRUBBED rather than removed",
+    !sameKey("Today's date is 2026-09-03", "") && differed("Today's date is 2026-09-03").includes("<date>"));
+  // …and prose that merely mentions a date change is untouched, because the
+  // pattern anchors on the whole engine-authored sentence.
+  check("a user prompt about a changed date is not eaten",
+    !sameKey("The date has changed and I need a new plan", "I need a new plan"));
   check("metadata is scrubbed", canonicalizeForHash(JSON.stringify({ metadata: { user_id: "u1" } })) === canonicalizeForHash(JSON.stringify({ metadata: { user_id: "u2" } })));
   check("a non-JSON body does not throw", typeof canonicalizeForHash("not json at all") === "string");
   check("canonicalization is idempotent", canonicalizeForHash(hashed("agentId: a8b1bb212b0c2aeb2")) === hashed("agentId: a8b1bb212b0c2aeb2"));
