@@ -391,7 +391,10 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
   // measurement corrects the design pass here, and the correction matters for
   // Stage 2: the streaming dispatchers do NOT call the streaming executor —
   // they call the SHUTDOWN WRAPPER, which is what the manifest's own
-  // `executeHooks` capture has been deriving on twenty-one splices since W5.
+  // `executeHooks` capture has been deriving on FOURTEEN splices since W5 (six
+  // more derive the awaiting executor as `executeHooksAwait`). The wrapper is
+  // shared by 18 of the 33 registry dispatchers and has 19 call sites in the
+  // chunk; the manifest count is smaller because not every event is spliced.
   // The awaiting executor they do call directly. So "which function do the
   // dispatchers delegate to" and "which function is the executor" are two
   // questions with different answers, and a belt rooted at the first is the

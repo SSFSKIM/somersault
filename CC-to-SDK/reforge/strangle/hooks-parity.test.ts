@@ -94,8 +94,10 @@
 // `comparePerHook` carries the multi-hook mode the executor's unbounded merge
 // will need. The rewrite's own red direction is measured rather than asserted:
 // swapping ONE adjacent pair of differently-ported events in each owned log
-// reddens 204 of the 226 log comparisons and moves the retired per-port
-// projection in NONE of them.
+// reddens 204 of the 225 dispatcher log comparisons and moves the retired
+// per-port projection in NONE of them. Both numbers are DERIVED and printed on
+// every run, with the 204 as a floor: W7.6a wrote "204 of the 226" into three
+// documents, and the denominator was already wrong by one.
 //
 // HOW IT BINDS, and the lesson it inherits (C7's boundary review). Where an
 // upstream body calls a helper this wave also OWNS, the helper is extracted and
@@ -2891,7 +2893,9 @@ const resetModuleState = (): void => {
 // ---- (c) grading the path that never settles -------------------------------
 // The shutdown wrapper is 261 bytes and it is where the whole behaviour lives.
 // `Qxt` and `AE` do not consult the flag themselves on the streaming path — the
-// wrapper the twenty-one dispatcher splices already capture as `executeHooks`
+// wrapper FOURTEEN dispatcher splices already capture as `executeHooks` (six
+// more capture the awaiting executor as `executeHooksAwait`; the record said
+// twenty-one, which is neither)
 // does — which is a correction to the design pass worth stating: the arm that
 // hangs is not inside the executor.
 {
@@ -3677,8 +3681,8 @@ function contractCase(label: string, input: Record<string, unknown>): { up: Outc
 
 
 // ---- the hook output's stderr tail (upstream `Xpt`) -------------------------
-// The belt's one genuinely pure, multi-caller, anchorable member, and the only
-// splice C10.6 takes out of the 43 pure functions the executors reach. Graded
+// A pure, multi-caller, anchorable member of the belt — one of 31 such, not
+// "the one", which is what the wave wrote off a string-literal scan. Graded
 // the contract-test way over the full cross-product of its three inputs, which
 // is small enough to be exhaustive rather than sampled: a helper whose domain
 // is this narrow has no excuse for a partition.

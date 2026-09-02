@@ -3671,6 +3671,32 @@ the belt** to prove it rather than argue it:
 | `hook-invocation-text` | `_9` | 291 | 6 | `;case"callback":return"callback";case"function":return"function"}` | LIVE — `hooks-precompact` |
 | `hook-output-sync` | `ip` | 52 | 4 | `){return!(("async"in ` | measured DARK over twelve scenarios |
 
+**And the rest of the pure population, tabled for C10.7 with a verdict each.** Three questions per
+helper, and they are independent: is it anchorable, how many consumers does it have, and is it worth
+a row? The 40 pure declarations split as follows — the multi-consumer ones in full, because those are
+the §2.4 captures, and the rest by class.
+
+| upstream | kind | bytes | in-belt callers | anchorable | verdict |
+|---|---|---|---|---|---|
+| `_9` | function | 291 | 6 | yes | **taken — `hook-invocation-text`** |
+| `Li` | constant | 9 | 5 | no (0 runs ≥ 8 B) | a timeout literal; rides with its consumer |
+| `ip` | function | 52 | 4 | yes | **taken — `hook-output-sync`** (dark) |
+| `mS` | function | 47 | 4 | yes | **taken — `hook-output-async`** |
+| `G6` | set | 312 | 2 | yes | multi-consumer VALUE — a `variable-declarator` row with a build-time value comparison |
+| `LR` | function | 262 | 2 | yes | **§2.4 capture, takeable now** — the plugin `user_config` substitution |
+| `Xpt` | function | 96 | 2 | yes | **taken — `hook-stderr-tail`** (dark) |
+| `dee` | function | 92 | 2 | yes | **§2.4 capture, takeable now** — the hook subprocess's env projection |
+| `aMt` | function | 86 | 2 | yes | **§2.4 capture, takeable now** — the count-by-hook-type projection |
+| `iMt` | function | 70 | 2 | yes | **§2.4 capture, takeable now** — the internal-callback predicate |
+| `$ie` | constant | 17 | 2 | yes | multi-consumer value — the hook-agent id prefix |
+
+The remaining 29 are single-consumer: **22 anchorable functions and values that fold into their one
+caller's future module** (the C7 rule — owning them separately would split a private detail across
+two modules), **two classes**, which are not helpers, and **five tiny numeric constants plus two
+regexes with no untainted run of eight characters at all**, which ride with whatever consumes them.
+So the honest reading of Stage 1's remainder is **four more §2.4 captures and two shared values**,
+not "a belt", and not "nothing takeable".
+
 Not one of those three anchors contains prose. `hook-output-sync` is the round's sharpest single
 result: it was spliced **expecting** liveness and the corpus refused it, while its complement is live
 on the same scenarios — the corpus asks "is this an acknowledgement?" on every callback answer and

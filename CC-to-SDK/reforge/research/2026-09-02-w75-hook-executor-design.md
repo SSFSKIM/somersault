@@ -383,7 +383,11 @@ stays on Stage 0; only the example changes.
 
 **(c) The shutdown arm never settles — and [C10.6] it is NOT INSIDE EITHER EXECUTOR.** `Qxt` and
 `AE` never consult the shutdown flag on the streaming path; the 261-byte wrapper `jy` does, and it is
-the function the twenty-one dispatcher splices have been capturing as `executeHooks` since W5. Under
+the function **fourteen** dispatcher splices have been capturing as `executeHooks` since W5 — six
+more capture the awaiting executor as `executeHooksAwait`, so twenty rows forward an executor, not
+twenty-one. Upstream's own counts are a different measurement again: 18 of the 33 registry
+dispatchers call the wrapper and 12 call the awaiting executor, and the wrapper has 19 call sites in
+the chunk. Under
 shutdown an allowlisted event hangs with zero yields and every OTHER event returns silently with zero
 yields — indistinguishable by what they yield, which is the argument for the grading mode in one
 line. The wrapper also DROPS the executor's completion value on both arms (`yield* Xxt(e); return`,
@@ -473,6 +477,16 @@ no scenario needed.
 > the fix round to prove the corrected anchorability claim — `mS` and `_9`, both multi-caller pure
 > functions with live covering scenarios, plus `ip`, spliced and measured dark. C10.7 inherits a
 > belt that is takeable and a WORTH argument to make per helper, not an anchorability ceiling.
+>
+> **What is left, tabled.** Of the 40 pure declarations, eleven have more than one in-belt consumer.
+> Four of those are taken. Four are §2.4 captures still on the table — `LR` (262 B, the plugin
+> `user_config` substitution), `dee` (92 B, the hook subprocess's env projection), `aMt` (86 B, the
+> count-by-hook-type projection) and `iMt` (70 B, the internal-callback predicate) — and two are
+> shared VALUES rather than helpers (`G6`, a 312 B Set, and `$ie`, the 17 B hook-agent id prefix),
+> which take the `variable-declarator` shape with a build-time value comparison. The other 29 are
+> single-consumer and fold into their one caller's future module by the C7 rule, except two classes
+> and seven tiny constants and regexes with no untainted run of eight characters. The full table with
+> per-helper verdicts is in `reforge/README.md`'s W7.6a record; the fixture is the authority.
 
 **Stage 2 — `HookSourcePort` + the matcher.** Sources behind the port, the matching body owned pure
 except for the one `EnvironmentPort.defaultShell()` read the dedupe key needs. This is what makes
