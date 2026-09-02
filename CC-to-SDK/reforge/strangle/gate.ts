@@ -294,6 +294,18 @@ for (const [label, script] of [
   // fields appear only on a VS Code entrypoint, which the harness is not. Both
   // are graded here because their gates are PORTS in the owned modules.
   ["control-protocol parity vs the pinned bundle", "strangle/control-parity.test.ts"],
+  // The same oracle for W8a's moat-tool belt, where the corpus/domain gap has
+  // yet another shape: these tools are PRESENT in every recorded catalog and
+  // EXECUTED by nothing, so the corpus renders exactly one arm of each
+  // description and can never render a second. The three axes it cannot reach
+  // are all gates pinned to their compiled-in defaults — the Monitor paragraph
+  // inside CronCreate's prose (default false), SendMessage's cross-session
+  // sections (default TRUE, so it is the DISABLED arm that is unrecordable) and
+  // the cron durability branch (default true) — plus ScheduleWakeup's
+  // three-valued prompt-cache argument. It also takes over the load-bearing
+  // grade for C4/W1's four task formatters, whose arms were until now checked
+  // against hand-written strings rather than against upstream's own bytes.
+  ["moat-tool parity vs the pinned bundle", "strangle/moat-parity.test.ts"],
 ] as [string, string][]) {
   const r = run("npx", ["tsx", script]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
