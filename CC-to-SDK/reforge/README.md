@@ -3882,38 +3882,58 @@ prompt sections, the hook-helper belt) and fixed it the same way each time. C11a
 "these are the sixteen builders", so the derivation came before the splices:
 `research/fixtures/moat-tools-2.1.251.json`, the **eighth pin-keyed fixture** and a gate phase.
 
-* **The corpus side** reads every recorded request body's `tools` array — 423 bodies over 82
+* **The corpus side** reads every recorded request body's `tools` array — 197 bodies over 82
   cassettes, 12 distinct catalog shapes, the 22-tool baseline in 59 of them and the plan-mode
   catalog in 14.
 * **The bundle side** finds each description's producing DECLARATIONS by *searching the graph for
-  the rendered text itself*, in 48-character windows. Nothing is looked up by name: a window that
-  occurs once in 1,802 modules names its carrier, and a description whose windows land in two
-  carriers HAS two carriers.
+  the rendered text itself*, in 48-character windows, written **as every quoting style would write
+  them**. Nothing is looked up by name: a window that occurs once in 1,802 modules names its
+  carrier, and a description whose windows land in two carriers HAS two carriers.
 * **The anchor** for each carrier is its shortest unique untainted window, by
   `research/tools/anchor-enum.ts` — W7.6a's rule, lifted out of the hook-helper extractor rather
   than copied, because "measure a mechanism by its own definition" only stays true if the definition
-  has one implementation. All 29 carriers are anchorable; the helper-belt fixture reproduces
+  has one implementation. All 25 carriers are anchorable; the helper-belt fixture reproduces
   byte-identically through the shared module.
 
-Two things it corrected before a line was spliced. **Five descriptions are composed of more than one
+Two things it corrected before a line was spliced. **Three descriptions are composed of more than one
 declaration** (Workflow's spans two chunks), so each row claims its primary carrier and the fixture
-records the rest — Workflow is owned as "102 of 110 locatable windows", not as "the description".
+records the rest — Workflow is owned as "120 of 128 locatable windows", not as "the description".
 And **four of the formatters the cut named as this wave's work are already owned** by C4/W1.
+
+*Corrected on review (2026-09-03).* The derivation first said **five** descriptions and **29**
+carriers, and both extra numbers were the extractor's own artifacts rather than the graph's. The
+search looked for one spelling of each window, so ScheduleWakeup's builder — which single-quotes and
+therefore writes `user\'s` — was missed and the tool's zod `.describe(…)` copy was matched instead,
+making the memoized **schema getter** a "carrier" of the description. And the walk took the
+INNERMOST declaration containing a window, so a builder's local `const` counted as a carrier of its
+own, which nothing can splice: excising the enclosing function takes it along. CronCreate's "three"
+and SendMessage's "two" were that, and the second artifact had put SendMessage's PRIMARY carrier on
+a local while the manifest splices the enclosing free function.
 
 ### The denominator every document was quoting
 
 Deriving the corpus side surfaced that **"267 cassettes" is the count of FILES in `cassettes/`**, and
 186 of those are `-observed-A|A2|B` dumps a replay writes beside the cassette it replayed. They are
 byte-identical traffic on a green run and their number depends on how many times someone ran the
-gate. The recorded corpus is **82 cassettes carrying 423 request bodies**. Every prose claim in the
+gate. The recorded corpus is **82 cassettes carrying 197 request bodies**. Every prose claim in the
 owned code, the ledger and the manifest is corrected; the W8 scout keeps its own text, because a
 research document records what was measured then.
 
 The first version of the filter made the mistake it existed to catch: it dropped every name
-*containing* `-observed-` and silently took seventeen real recordings with it —
-`m3-flip-observed-*`, including the one cassette in which `PowerShell` is presented at all, and
-`m2-xresume-observed-*`. It is pattern-exact now. **A population defined by a substring is a
+*containing* `-observed-` and silently took seventeen **observation dumps that carry real request
+bodies** with it — `m3-flip-observed-*` (fifteen, including the one cassette in which `PowerShell`
+is presented at all) and `m2-xresume-observed-*` (two). They are not record-mode cassettes: a replay
+proxy writes them from what the engine actually sent while replaying one, which is why they count as
+presentation evidence. It is pattern-exact now. **A population defined by a substring is a
 population whose boundary nobody has looked at.**
+
+*Corrected on review (2026-09-03).* The denominator was **423** and it was neither stale nor a
+re-record's doing: `startReplayProxy` APPENDS to an observation dump, and `m2/cross-resume.ts` was
+the one caller of nine that did not delete the file first. Its two dumps had accumulated 118 runs —
+9.5 MB each, **236 of the 431 bodies** the corpus side then counted — so the recorded-body count grew
+by four every time anyone ran the gate. The pattern-exact filter had fixed which FILES count and
+left a file whose BODY count is a function of gate runs; truncation now belongs to the proxy rather
+than to each caller. The honest recorded corpus is **197 bodies**.
 
 ### Sixteen splices, and the shapes they actually have
 

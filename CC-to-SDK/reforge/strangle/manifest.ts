@@ -4967,12 +4967,15 @@ export const SPLICES: Splice[] = [
   //
   // THE POPULATION IS DERIVED, not listed. `research/fixtures/moat-tools-<pin>.json`
   // reads the recorded request bodies for what the engine actually presented
-  // (423 bodies over 82 recorded cassettes, 12 distinct catalogs, baseline 22 tools) and then finds each
+  // (197 bodies over 82 recorded cassettes, 12 distinct catalogs, baseline 22 tools) and then finds each
   // description's producing DECLARATIONS by searching the graph for the rendered
-  // text itself. Five descriptions turn out to have more than one carrier; each
-  // row below claims the primary one and the fixture records the remainder, so
-  // "we own Workflow's description" is stated as 102 of 110 locatable windows
-  // rather than as a whole.
+  // text itself, in every form the source's QUOTING could give it. Three
+  // descriptions turn out to have more than one carrier; each row below claims
+  // the primary one and the fixture records the remainder, so "we own Workflow's
+  // description" is stated as 120 of 128 locatable windows rather than as a
+  // whole. (Five, until the search learned that a single-quoted chunk writes
+  // `user\'s` and the walk learned that a builder's local `const` is not a
+  // carrier — nothing can splice a local. The two artifacts of that are gone.)
   //
   // THE ANCHORS ARE PROSE AND EACH OCCURS ONCE over the 1,802-file module set.
   // Two of them are NOT the tool's opening sentence, deliberately: CronDelete's
