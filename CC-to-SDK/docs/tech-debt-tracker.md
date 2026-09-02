@@ -250,6 +250,37 @@ loud-failure argument this entry rests on.
 
 ---
 
+## 2026-09-02 — the hook-helper belt fixture cannot classify a CROSS-CHUNK injection, so `pure-with-injection` reads zero
+
+**Source:** C10.6 / W7.6a · `reforge/research/tools/extract-hook-helpers.ts`,
+`reforge/research/fixtures/hook-helper-belt-2.1.251.json`.
+
+**What:** the fixture classifies each reached function by its free variables — `pure` when they all
+resolve to other pure functions, `pure-with-injection` when the remainder are recognised reads (a
+clock, a uuid mint, a platform read), `effectful` otherwise. The recogniser tests the CALLEE'S OWN
+BODY, which it can only read for a declaration in the layer's chunk. Every injection candidate the
+design pass named lives somewhere else — the default-shell read behind the dedupe key is in
+`chunk-2z83fvw5`, the attachment minter's clock and uuid are imports — so each is recorded on the
+281-name cross-chunk frontier and the function that reaches it is classified `effectful`. The
+`pureWithInjection` count is therefore **0 by construction rather than by measurement**, and the
+fixture says so only by that number being zero.
+
+**Cost:** bounded and currently zero. Stage 1 owned nothing that hinged on the distinction: the one
+pure helper it took has no free variables at all, and the interpreter it took is effectful on five
+counts, not one. The distinction becomes load-bearing at **Stage 2**, where the design's whole claim
+is that the matcher is "pure except for one `EnvironmentPort.defaultShell()` read" — that is exactly
+a `pure-with-injection` verdict, and the fixture cannot currently issue it.
+
+**Why deferred:** the fix is real work rather than a line — resolve each external name through the
+chunk's import statements to its defining chunk, load that chunk, find the declaration, and test it —
+and it wants a cache so the belt run does not re-parse the bundle per name. Doing it inside a wave
+that owned nothing depending on it would be machinery built ahead of its consumer, which is the shape
+this campaign refuses in the other direction.
+
+**Revisit:** with C10.7 / W7.6b, which owns the matcher. The honest reading until then is that the
+fixture's `effectful` verdict means "not provably pure from inside this chunk", and any function
+whose only non-pure free variables are cross-chunk deserves a second look before it is written off.
+
 ## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded — **PAID 2026-09-02 (C10.6/W7.6a, Stage 0)**
 
 **Source:** the C8 boundary review (finding 5, logged rather than fixed) ·
