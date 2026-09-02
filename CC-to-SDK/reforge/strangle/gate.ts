@@ -127,8 +127,9 @@ for (const [label, argv] of [
   // the pin's determinism rather than in a recipe someone remembers to run.
   // The system-prompt SECTION inventory, W7.5's fixture and the third population
   // in this campaign that had been carried as a hand-written number ("`OS()`'s
-  // ~20 prose sections", quoted since W3; the pin says 27 dynamic records, a
-  // six-element static head and a two-element tail). Derived by shape from the
+  // ~20 prose sections", quoted since W3; the pin says 27 dynamic records and a
+  // six-element static head, in a five-element return array of which exactly one
+  // element follows the dynamic set). Derived by shape from the
   // section-record constructor and confirmed from two other places — the
   // boundary sentinel the already-owned partitioner looks for, and the
   // `defaultSystemPrompt` property every caller binds the result to.

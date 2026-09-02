@@ -2185,8 +2185,9 @@ export const SPLICES: Splice[] = [
   // W3 owns the prompt PIPELINE — which sentence opens it, how the flat list is
   // partitioned into cache-scoped blocks, how those become the API's `system`
   // array. What it did not own is the list itself: the ~20-section figure quoted
-  // since W3 is 27 dynamic section records plus a six-element static head and a
-  // two-element tail, now derived from the pin as
+  // since W3 is 27 dynamic section records plus a six-element static head (in a
+  // five-element return array of which exactly one element follows the dynamic
+  // set), now derived from the pin as
   // `research/fixtures/prompt-sections-<pin>.json` and re-derived by the gate.
   //
   // These six rows take the static head — the sections that are not gated behind

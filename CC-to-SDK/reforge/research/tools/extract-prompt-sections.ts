@@ -9,8 +9,10 @@
 // and both fixtures are gate phases now. The prompt sections have been quoted as
 // "`OS()`'s ~20 prose sections" since W3, in the campaign spec, in this
 // repository's README and in the W3/W4 scout. The real count at this pin is 27
-// dynamic section records plus a six-element static head and a two-element tail,
-// and the interesting facts about them — which are gated, which are single
+// dynamic section records plus a six-element static head, assembled by a
+// five-element return array in which exactly ONE element follows the dynamic
+// set (C10.5's review corrected "a two-element tail"). The interesting facts
+// about them — which are gated, which are single
 // string constants, which reach into another chunk — are exactly the facts a
 // wave has to know before it can say what it owns and what it does not.
 //
