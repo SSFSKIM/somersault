@@ -2180,6 +2180,273 @@ export const SPLICES: Splice[] = [
     coverage: ["slash-compact", "compact-continue", "auto-compact-threshold"],
   },
 
+
+  // ---- the OS() prompt SECTIONS (subsystem/environment-and-system-prompt, C10.5 / W7.5)
+  // W3 owns the prompt PIPELINE — which sentence opens it, how the flat list is
+  // partitioned into cache-scoped blocks, how those become the API's `system`
+  // array. What it did not own is the list itself: the ~20-section figure quoted
+  // since W3 is 27 dynamic section records plus a six-element static head and a
+  // two-element tail, now derived from the pin as
+  // `research/fixtures/prompt-sections-<pin>.json` and re-derived by the gate.
+  //
+  // These six rows take the static head — the sections that are not gated behind
+  // an experiment, a background job or a remote surface, and that the corpus
+  // actually renders. `sysprompt-preset`'s recorded request carries every one of
+  // them, which is what makes each row's solo sabotage a byte difference on the
+  // requests surface rather than an argument.
+  //
+  // THE ANCHORS ARE PROSE AND EACH OCCURS ONCE over the 1,802-file module set
+  // `prepare.ts:textModules()` builds — the strongest anchor class the doctrine
+  // has, and a deliberate contrast with C6's two structural anchors. Two
+  // near-misses are recorded on their rows rather than in someone's memory.
+
+  {
+    // ZERO CAPTURES, 3,625 upstream bytes: one template literal, no free
+    // variable, no branch. `captures: []` is a positive claim the build
+    // re-derives every time and `strangle/perturb.ts` requires to be complete.
+    name: "executing-actions-section",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "# Executing actions with care",
+    fn: "executingActionsSection",
+    captures: [],
+    coverage: ["sysprompt-preset"],
+  },
+
+  {
+    // The largest prose section (4,067 B). Its one free variable is the feature
+    // gate whose true arm adds the verified-vs-assumed bullet; that arm is dark
+    // under §3.3's pinned gate state and is graded by prompt-parity.test.ts.
+    name: "doing-tasks-section",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "# Doing tasks",
+    fn: "doingTasksSection",
+    captures: [
+      {
+        as: "featureGate",
+        kind: "effectful-port",
+        derive: pick("doing-tasks-section", "featureGate", new RegExp(`\\.\\.\\.(${ID})\\("tengu_verified_vs_assumed"`)),
+      },
+      {
+        // Upstream `km`, the bullet formatter. FIFTEEN call sites bundle-wide,
+        // so it is a `pure-helper` rather than a fold-in: the owned module ships
+        // its own copy (modules/shared/prompt-bullets.js), upstream's stays live
+        // for its other callers, and the graph's function is neither called nor
+        // compared by identity.
+        as: "bulletLines",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("doing-tasks-section", "bulletLines", new RegExp(`"# Doing tasks",\\.\\.\\.(${ID})\\(`)),
+      },
+    ],
+    coverage: ["sysprompt-preset"],
+  },
+
+  {
+    // The harness-describing section. One forwarded port and one FOLD-IN: the
+    // hooks paragraph (upstream `_8t`) is pure with exactly one caller, so C7's
+    // rule puts it inside the owned module instead of giving it a row that would
+    // be dead the moment this one lands. The system-reminder note is the
+    // opposite case — two callers and a latch read — so it stays a port.
+    name: "system-section",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "# System",
+    fn: "systemSection",
+    captures: [
+      {
+        as: "systemReminderNote",
+        kind: "effectful-port",
+        derive: pick("system-section", "systemReminderNote", new RegExp(`adjust your approach\\.",(${ID})\\(`)),
+      },
+      {
+        // The FOLD-IN, and it is still declared: C7's rule moves a single-caller
+        // pure helper INSIDE the owned module rather than giving it a row, but
+        // the build keeps deriving its upstream binding so §5 keeps footprinting
+        // the declaration. Owned, so it is not forwarded and not called.
+        as: "hooksNote",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("system-section", "hooksNote", new RegExp(`before continuing\\.",(${ID})\\(\\)`)),
+      },
+      {
+        // Upstream `km`, the bullet formatter. FIFTEEN call sites bundle-wide,
+        // so it is a `pure-helper` rather than a fold-in: the owned module ships
+        // its own copy (modules/shared/prompt-bullets.js), upstream's stays live
+        // for its other callers, and the graph's function is neither called nor
+        // compared by identity.
+        as: "bulletLines",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("system-section", "bulletLines", new RegExp(`"# System",\\.\\.\\.(${ID})\\(`)),
+      },
+    ],
+    coverage: ["sysprompt-preset"],
+  },
+
+  {
+    // The smallest section, and the only owned body carrying a filter that
+    // cannot currently remove anything — reproduced rather than optimised away,
+    // and adjudicated in the branch inventory.
+    name: "tone-and-style-section",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "# Tone and style",
+    fn: "toneAndStyleSection",
+    captures: [
+      {
+        // Upstream `km`, the bullet formatter. FIFTEEN call sites bundle-wide,
+        // so it is a `pure-helper` rather than a fold-in: the owned module ships
+        // its own copy (modules/shared/prompt-bullets.js), upstream's stays live
+        // for its other callers, and the graph's function is neither called nor
+        // compared by identity.
+        as: "bulletLines",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("tone-and-style-section", "bulletLines", new RegExp(`"# Tone and style",\\.\\.\\.(${ID})\\(`)),
+      },
+    ],
+    coverage: ["sysprompt-preset"],
+  },
+
+  {
+    // NINE `primitive` captures — the highest yield in the manifest. They are
+    // tool NAMES, and a renamed tool moves no anchor, no target hash and no
+    // capture hash, so the adapter's nine per-delegation comparisons are the
+    // only thing in the campaign that would see one.
+    //
+    // ANCHOR, and this is the row where the doctrine's two failure modes both
+    // show up at once: `# Using your tools` occurs TWICE, once in each arm of
+    // this same body, which `selectExcision` reads as a tie and refuses (it
+    // counts candidates, not spans — C6's recorded mechanism note). And the
+    // SHORT form of the parallel-tools sentence also occurs twice. So the anchor
+    // is the long form, one occurrence graph-wide.
+    name: "using-tools-section",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor:
+      "You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them",
+    fn: "usingToolsSection",
+    captures: [
+      {
+        as: "taskCreateTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "taskCreateTool", new RegExp(`let ${ID}=\\[(${ID}),${ID}\\]\\.find`)),
+      },
+      {
+        as: "todoWriteTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "todoWriteTool", new RegExp(`let ${ID}=\\[${ID},(${ID})\\]\\.find`)),
+      },
+      {
+        as: "bashTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "bashTool", new RegExp(`\\.has\\((${ID})\\),${ID}=${ID}\\?`)),
+      },
+      {
+        as: "powershellTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "powershellTool", new RegExp(`\\?${ID}:(${ID}),${ID}=\\[`)),
+      },
+      {
+        as: "readTool",
+        kind: "primitive",
+        derive: pick(
+          "using-tools-section",
+          "readTool",
+          new RegExp(`=${ID}\\(\\),${ID}=${ID}\\.has\\(${ID}\\),${ID}=${ID}\\?${ID}:${ID},${ID}=\\[(${ID}),`),
+        ),
+      },
+      {
+        as: "editTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "editTool", new RegExp(`,${ID}=\\[${ID},(${ID}),${ID},\\.\\.\\.`)),
+      },
+      {
+        as: "writeTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "writeTool", new RegExp(`,${ID}=\\[${ID},${ID},(${ID}),\\.\\.\\.`)),
+      },
+      {
+        as: "globTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "globTool", new RegExp(`\\[\\]:\\[(${ID}),${ID}\\]\\]\\.join`)),
+      },
+      {
+        as: "grepTool",
+        kind: "primitive",
+        derive: pick("using-tools-section", "grepTool", new RegExp(`\\[\\]:\\[${ID},(${ID})\\]\\]\\.join`)),
+      },
+      {
+        // The REPL predicate that selects the short arm. FALSE on every headless
+        // run, so the corpus renders the full arm and the short one — including
+        // its empty-string answer, the only "" in the pipeline — is graded by
+        // prompt-parity.test.ts.
+        as: "isRepl",
+        kind: "effectful-port",
+        derive: pick(
+          "using-tools-section",
+          "isRepl",
+          new RegExp(`\\.find\\(\\(${ID}\\)=>${ID}\\.has\\(${ID}\\)\\);if\\((${ID})\\(\\)\\)`),
+        ),
+      },
+      {
+        as: "searchToolsEnabled",
+        kind: "effectful-port",
+        derive: pick("using-tools-section", "searchToolsEnabled", new RegExp(`let ${ID}=(${ID})\\(\\),${ID}=${ID}\\.has`)),
+      },
+      {
+        // Upstream `km`, the bullet formatter. FIFTEEN call sites bundle-wide,
+        // so it is a `pure-helper` rather than a fold-in: the owned module ships
+        // its own copy (modules/shared/prompt-bullets.js), upstream's stays live
+        // for its other callers, and the graph's function is neither called nor
+        // compared by identity.
+        as: "bulletLines",
+        kind: "pure-helper",
+        owned: true,
+        derive: pick("using-tools-section", "bulletLines", new RegExp(`"# Using your tools",\\.\\.\\.(${ID})\\(`)),
+      },
+    ],
+    coverage: ["sysprompt-preset"],
+  },
+
+  {
+    // The opener of the section list, and NOT the function `identity-prompt`
+    // already owns: that one (upstream `r6`) picks the sentence the whole prompt
+    // starts with off the SDK/interactive/append axis; this one keys off the
+    // output style and an intro-frame latch. Two similar decisions, two
+    // functions, and owning both is what makes the prompt's opening bytes owned.
+    name: "identity-security-section",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "IMPORTANT: You must NEVER generate or guess URLs",
+    fn: "identitySecuritySection",
+    captures: [
+      {
+        as: "agentIdentity",
+        kind: "primitive",
+        derive: pick("identity-security-section", "agentIdentity", new RegExp(`\\(\\)\\?(${ID}):"You are an interactive agent`)),
+      },
+      {
+        as: "securityPolicy",
+        kind: "primitive",
+        derive: pick("identity-security-section", "securityPolicy", new RegExp(`assist the user\\.\\n\\n\\$\\{(${ID})\\}`)),
+      },
+      {
+        as: "outputStyleIdentity",
+        kind: "effectful-port",
+        derive: pick("identity-security-section", "outputStyleIdentity", new RegExp(`!==null\\?(${ID})\\(\\)`)),
+      },
+      {
+        as: "introFrameEnabled",
+        kind: "effectful-port",
+        derive: pick("identity-security-section", "introFrameEnabled", new RegExp(`\\(\\):(${ID})\\(\\)\\?`)),
+      },
+    ],
+    coverage: ["sysprompt-preset"],
+  },
+
   // ---- compaction (subsystem/compaction, C7 / W4) --------------------------
   // The four units downstream of the summarization prompt C5x already owns:
   // what the model's answer becomes, what the session wakes up with, what the

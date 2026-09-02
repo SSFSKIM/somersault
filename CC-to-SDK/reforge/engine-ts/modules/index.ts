@@ -99,6 +99,14 @@ import * as identityPrompt from "../../strangle/modules/identity-prompt/referenc
 import * as contextReminder from "../../strangle/modules/context-reminder/reference.js";
 import * as contextPromptLines from "../../strangle/modules/context-prompt-lines/reference.js";
 import * as subagentPrompt from "../../strangle/modules/subagent-prompt/reference.js";
+// W7.5 / C10.5 — the OS() prompt SECTIONS. W3 owns the pipeline that partitions
+// and wires the prompt; these are six of the sections that go into it.
+import * as executingActionsSection from "../../strangle/modules/executing-actions-section/reference.js";
+import * as doingTasksSection from "../../strangle/modules/doing-tasks-section/reference.js";
+import * as systemSection from "../../strangle/modules/system-section/reference.js";
+import * as toneAndStyleSection from "../../strangle/modules/tone-and-style-section/reference.js";
+import * as usingToolsSection from "../../strangle/modules/using-tools-section/reference.js";
+import * as identitySecuritySection from "../../strangle/modules/identity-security-section/reference.js";
 import * as compactBoundary from "../../strangle/modules/compact-boundary/reference.js";
 import * as compactBoundaryWire from "../../strangle/modules/compact-boundary-wire/reference.js";
 import * as compactContinuation from "../../strangle/modules/compact-continuation/reference.js";
@@ -155,6 +163,13 @@ const OWNED: [string, string, unknown][] = [
   ["context-reminder", "subsystem/environment-and-system-prompt", contextReminder.contextReminderMessages],
   ["context-prompt-lines", "subsystem/environment-and-system-prompt", contextPromptLines.contextPromptLines],
   ["subagent-prompt", "subsystem/environment-and-system-prompt", subagentPrompt.subagentPrompt],
+  // W7.5 / C10.5 — the section builders behind the preset's prose.
+  ["executing-actions-section", "subsystem/environment-and-system-prompt", executingActionsSection.executingActionsSection],
+  ["doing-tasks-section", "subsystem/environment-and-system-prompt", doingTasksSection.doingTasksSection],
+  ["system-section", "subsystem/environment-and-system-prompt", systemSection.systemSection],
+  ["tone-and-style-section", "subsystem/environment-and-system-prompt", toneAndStyleSection.toneAndStyleSection],
+  ["using-tools-section", "subsystem/environment-and-system-prompt", usingToolsSection.usingToolsSection],
+  ["identity-security-section", "subsystem/environment-and-system-prompt", identitySecuritySection.identitySecuritySection],
   // W4's compaction units (C7). Four modules, and with C5x's summarization
   // prompt the row now holds the whole client-side compaction surface EXCEPT the
   // drivers: what the model is asked, what its answer becomes, what the session

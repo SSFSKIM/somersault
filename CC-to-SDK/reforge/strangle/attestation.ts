@@ -69,6 +69,46 @@ export const ATTESTED: AttestedModule[] = [
   },
   { module: "subagent-prompt", row: "subagent-prompt", scenarios: ["subagent"] },
 
+  // ---- W7.5: the OS() prompt sections --------------------------------------
+  // Everything below is graded by `strangle/prompt-parity.test.ts`, which now
+  // also extracts these six upstream bodies, binds them to UPSTREAM's own bullet
+  // formatter and stubs their ports over the full cross-product.
+  //
+  // The gap here is narrower than the pipeline's and differently shaped: all six
+  // sections are RENDERED by `sysprompt-preset`, so their happy paths are
+  // covered differentially and only their ALTERNATIVES are dark — a gate pinned
+  // false, a REPL predicate false on every headless run, a latch nothing sets,
+  // an output style the harness does not select, and tool catalogs the corpus
+  // does not have.
+  {
+    module: "executing-actions-section",
+    row: "executing-actions-section",
+    scenarios: ["sysprompt-preset"],
+    noBranchesReason:
+      "one template literal with no free variable and no branch — the inventory is legitimately empty, and that emptiness IS the row's claim. What grades it is the differential surface directly (3,583 characters of it go verbatim into the `system` array of every preset request, so a single changed byte reddens sysprompt-preset) plus prompt-parity.test.ts, which compares it against the pinned upstream body with two controls.",
+  },
+  {
+    module: "doing-tasks-section",
+    row: "doing-tasks-section",
+    scenarios: ["sysprompt-preset"],
+  },
+  {
+    module: "system-section",
+    row: "system-section",
+    scenarios: ["sysprompt-preset"],
+    noBranchesReason:
+      "six fixed bullets and one port call, in order — straight-line, so the inventory is legitimately empty. The branching this section LOOKS like it has belongs to the port: the system-reminder note picks between two sentences off a latch, and it is upstream's function, not this module's. Both of its answers are graded by prompt-parity.test.ts, along with a control that the port is asked for the standard kind rather than the lean one and a control that the folded-in hooks paragraph is present.",
+  },
+  {
+    module: "tone-and-style-section",
+    row: "tone-and-style-section",
+    scenarios: ["sysprompt-preset"],
+    noBranchesReason:
+      "four fixed bullets behind a filter that cannot currently remove anything — the arrow's body is `item !== null` over four string literals, so the instrumenter records no branch-forming construct and the inventory is legitimately empty. The filter is reproduced rather than optimised away because upstream keeps it for entries that have been nullable before; if one comes back, this row gains a branch and this reason stops being true, which is what the stale-reason rule exists to catch. Graded by prompt-parity.test.ts against the pinned upstream body, with a control that a dropped bullet is seen.",
+  },
+  { module: "using-tools-section", row: "using-tools-section", scenarios: ["sysprompt-preset"] },
+  { module: "identity-security-section", row: "identity-security-section", scenarios: ["sysprompt-preset"] },
+
   // ---- C5x's deferred obligation, closed by the owning wave -----------------
   // C5x shipped three modules and attested none of them, on the reasoning that
   // an exclusion needs an oracle and building one is the owning wave's work.
@@ -639,6 +679,74 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "subagent-prompt#subagentPrompt@1:T",
     reason:
       "the null token-attachment arm. It is null only when an attachment kill-switch env var is set or the attachment mode is \"off\"; X6 forbids the first and the corpus's mode is not the second (measured: the `subagent` prompt ends with a `<total_tokens>` line). Graded by prompt-parity.test.ts ('tokens null' and 'both null').",
+  },
+
+  // ==========================================================================
+  // W7.5 — the OS() prompt SECTIONS. Every arm below is graded by
+  // `strangle/prompt-parity.test.ts`, which extracts the six upstream bodies,
+  // binds them to UPSTREAM's own bullet formatter and drives the full
+  // cross-product with stubbed ports.
+  //
+  // The shape of this family's gap is worth stating because it is the INVERSE of
+  // the pipeline's above it. There, the corpus reached one path of three. Here
+  // the corpus reaches every section — all six are rendered into
+  // `sysprompt-preset`'s request and every row's solo sabotage reddens it — and
+  // what stays dark is one alternative per decision: a gate pinned false, a REPL
+  // predicate false on every headless run, an output style the harness does not
+  // select, and the tool catalogs the corpus does not have. A rendered section
+  // with a dark alternative is better evidenced than an unrendered one, and the
+  // exclusions say which of the two each arm is.
+  // ==========================================================================
+  {
+    branch: "doing-tasks-section#doingTasksSection@0:T",
+    reason:
+      "the verified-vs-assumed bullet. Behind `tengu_verified_vs_assumed`, which §3.3 pins false for the whole corpus, so no recording can add it and X6 forbids a child changing the gate state every other measurement is taken under. Graded by prompt-parity.test.ts, which drives BOTH gate values and controls the gated bullet's position (appending it at the end instead of before the feedback intro must be seen) as well as the gate being read as its own default.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@0:T",
+    reason:
+      "the REPL arm. `isRepl()` is false on every headless run by construction of the seam being graded — the corpus has no terminal — so this whole arm, its two inner branches and its empty-string answer are unreachable by any recording rather than merely unrecorded. Graded by prompt-parity.test.ts over 2 REPL values x 2 search values x 7 tool catalogs, with a control that the arm answering `null` instead of `\"\"` is seen (a null would be dropped by the section filter; the empty string is joined, and they are different bytes).",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@1:T",
+    reason: "the REPL arm's task-tool bullet; unreachable for the reason above, and graded by the same cross-product.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@1:F",
+    reason: "the REPL arm with no task tool. Same unreachability — the arm is never entered, so neither of its sides is.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@2:T",
+    reason:
+      "the empty-string answer, and the only `\"\"` any section builder in the pipeline returns. It needs the REPL arm AND a catalog with no task tool. Graded by prompt-parity.test.ts with its own control.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@2:F",
+    reason: "the REPL arm's non-empty answer; same unreachability, same cross-product.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@3:F",
+    reason:
+      "the PowerShell fallback. The section names PowerShell as the shell to avoid only when Bash is NOT in the catalog, and every corpus scenario has Bash — the one knob that removes it (`CLAUDE_CODE_USE_POWERSHELL_TOOL`, gate `tengu_cobalt_ridge`) rewrites §1.3's tool catalog for the whole run, which is an engine-behaviour change rather than a scenario. Graded by prompt-parity.test.ts, which drives the catalog without Bash and controls PowerShell being named while Bash is present.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@4:F",
+    reason:
+      "Glob and Grep NAMED in the preferred-tools list. They are named only when the search-tool path is unavailable or Bash is absent, and on the corpus both hold the other way, so the rendered list is always the three file tools. Graded by prompt-parity.test.ts across all four combinations, with a control that the search tools appearing when they should not is seen.",
+  },
+  {
+    branch: "using-tools-section#usingToolsSection@5:F",
+    reason: "the search-tool predicate's false arm — the left half of the conjunction above, dark for the same reason and graded by the same cross-product.",
+  },
+  {
+    branch: "identity-security-section#identitySecuritySection@0:T",
+    reason:
+      "the output-style identity. It needs a session with an output style selected, and the harness selects none (`baseOptions()` sets no style, and every recorded preset renders the plain sentence). Graded by prompt-parity.test.ts over style x intro-frame, with a control that taking the style arm when there is no style is seen.",
+  },
+  {
+    branch: "identity-security-section#identitySecuritySection@1:T",
+    reason:
+      "the agent-framing identity. Behind an intro-frame latch read from an env override and a feature gate, both pinned off by §3.3. Graded by prompt-parity.test.ts, and its constant is additionally compared against the graph's on every delegation by the adapter's `primitive` assertion — the only thing that would see it REWORDED rather than re-gated.",
   },
 
   // ==========================================================================

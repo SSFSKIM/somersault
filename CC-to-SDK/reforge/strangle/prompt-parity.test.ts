@@ -43,6 +43,24 @@ import { contextReminderMessages } from "./modules/context-reminder/reference.js
 import { contextPromptLines } from "./modules/context-prompt-lines/reference.js";
 import { subagentPrompt } from "./modules/subagent-prompt/reference.js";
 import { SUMMARIZATION_PROMPT } from "./modules/compaction-prompt/reference.js";
+// W7.5 — the six OS() section builders.
+import { executingActionsSection } from "./modules/executing-actions-section/reference.js";
+import { doingTasksSection } from "./modules/doing-tasks-section/reference.js";
+import { systemSection } from "./modules/system-section/reference.js";
+import { toneAndStyleSection } from "./modules/tone-and-style-section/reference.js";
+import {
+  BASH_TOOL,
+  EDIT_TOOL,
+  GLOB_TOOL,
+  GREP_TOOL,
+  POWERSHELL_TOOL,
+  READ_TOOL,
+  TASK_CREATE_TOOL,
+  TODO_WRITE_TOOL,
+  WRITE_TOOL,
+  usingToolsSection,
+} from "./modules/using-tools-section/reference.js";
+import { AGENT_IDENTITY, SECURITY_POLICY, identitySecuritySection } from "./modules/identity-security-section/reference.js";
 
 let checks = 0;
 let controls = 0;
@@ -63,6 +81,32 @@ function extract(label: string, re: RegExp, source: string = ENGINE): string {
 
 /** The declared name of an extracted `function NAME(...)`. */
 const nameOf = (fn: string): string => fn.match(/function\s+([\w$]+)/)![1];
+
+/**
+ * The same extraction, by BALANCED BRACES rather than by a tail pattern.
+ *
+ * The section builders end in `.join(`\n`)` — a template literal containing a
+ * real newline — and a regex tail that has to spell that is brittle for no
+ * benefit. This walks from the declaration to its matching close brace, which is
+ * exact where a tail pattern is a guess, and still fails loudly: a name that
+ * moved throws, and the caller asserts a fragment it must contain.
+ */
+function extractFn(name: string, mustContain: string, source: string = ENGINE): string {
+  const at = source.indexOf(`function ${name}(`);
+  if (at < 0) throw new Error(`${name}: no declaration in the pinned chunk — the binding moved`);
+  let depth = 0;
+  let i = source.indexOf("{", source.indexOf(")", at));
+  for (let k = i; k < source.length; k++) {
+    if (source[k] === "{") depth++;
+    else if (source[k] === "}" && --depth === 0) {
+      const body = source.slice(at, k + 1);
+      if (!body.includes(mustContain)) throw new Error(`${name}: extracted body does not contain ${JSON.stringify(mustContain)}`);
+      return body;
+    }
+  }
+  throw new Error(`${name}: unbalanced braces from ${at}`);
+}
+
 
 /**
  * Build an upstream function from its extracted source with its free variables
@@ -410,18 +454,158 @@ const IDENTITIES = eval(`(()=>{ ${IDENTITY_DECL}; return [Efe, Wze, Qze] })()`) 
   eq("compaction prompt", upstream, SUMMARIZATION_PROMPT);
 }
 
+
+// ============================================================================
+// W7.5 — the OS() prompt SECTIONS.
+//
+// A different corpus/domain gap from the pipeline above it. These six builders
+// are all RENDERED — `sysprompt-preset`'s recorded request carries every one of
+// them, and each row's solo sabotage reddens it — so unlike the partition, their
+// happy path is differentially covered. What no recording can reach is their
+// ALTERNATIVES: a feature gate pinned false, a REPL predicate that is false on
+// every headless run, a latch nothing sets, an output style the harness does not
+// select, and the tool catalogs the corpus does not have. Each of those is one
+// side of a branch whose other side is the only one a recording will ever show.
+//
+// Upstream is bound to UPSTREAM's own helpers here (W4's boundary lesson): the
+// bullet formatter is extracted from the bundle as source and declared in each
+// prelude, never imported from the owned module, so a wrong owned formatter
+// cannot flow through both sides and compare equal.
+{
+  const KM_DECL = extractFn("km", "flatMap");
+  const HOOKS_DECL = extractFn("_8t", "Users may configure");
+
+  // ---- x8t: the zero-capture section ---------------------------------------
+  {
+    const fn = extractFn("x8t", "# Executing actions with care");
+    const upstream = build<() => string>(fn, "");
+    eq("executing-actions section", upstream(), executingActionsSection());
+    // NOT a trailing-whitespace strip: this section has none, so such a control
+    // would compare EQUAL and prove nothing. Dropping the closing sentence is a
+    // wrong implementation this module could plausibly ship.
+    mustDiffer("the closing sentence dropped", upstream(), executingActionsSection().replace(" In short: only take risky actions carefully, and when in doubt, ask before acting.", ""));
+    mustDiffer("upstream's escaped backticks dropped", upstream(), executingActionsSection().replaceAll("`", ""));
+  }
+
+  // ---- P8t: both arms of the verified-vs-assumed gate ----------------------
+  {
+    const fn = extractFn("P8t", "# Doing tasks");
+    for (const gate of [false, true]) {
+      const upstream = build<() => string>(fn, `${KM_DECL} const I=(...a)=>globalThis.__gate(...a);`);
+      ports.__gate = () => gate;
+      eq(`doing-tasks section, gate=${gate}`, upstream(), doingTasksSection(() => gate));
+    }
+    ports.__gate = () => true;
+    const upstream = build<() => string>(fn, `${KM_DECL} const I=(...a)=>globalThis.__gate(...a);`);
+    // The gate-true arm is the one no recording reaches, so its bullet is the
+    // one a transcription error would hide. Both controls target it.
+    mustDiffer("the gated bullet appended at the end instead of before the feedback intro", upstream(), doingTasksSection(() => false) + "\n - x");
+    mustDiffer("the gate read as its own default", upstream(), doingTasksSection(() => false));
+    // And the NESTED pair: flattening it changes the indent and nothing else.
+    mustDiffer("the feedback pair flattened to the top-level indent", upstream(), upstream().replaceAll("  - ", " - "));
+  }
+
+  // ---- R8t: both arms of the system-reminder note --------------------------
+  {
+    const fn = extractFn("R8t", "# System");
+    const upstream = build<(s: unknown) => string>(fn, `${KM_DECL} ${HOOKS_DECL} const SKe=(...a)=>globalThis.__note(...a);`);
+    for (const [label, note] of [
+      ["standard", "Tool results and user messages may include <system-reminder> or other tags."],
+      ["latched", "The system may send updates, reminders, or modifications to rules via mid-conversation system turns."],
+    ] as [string, string][]) {
+      ports.__note = () => note;
+      eq(`system section, note=${label}`, upstream("SESSION"), systemSection("SESSION", () => note));
+    }
+    ports.__note = (s: unknown, kind: unknown) => `${String(s)}|${String(kind)}`;
+    eq("system section forwards the session and the kind", upstream("SESSION"), systemSection("SESSION", (s, k) => `${String(s)}|${String(k)}`));
+    mustDiffer("the note asked for the lean kind instead of the standard one", upstream("SESSION"), systemSection("SESSION", (s) => `${String(s)}|lean`));
+    mustDiffer("the folded-in hooks paragraph dropped", upstream("SESSION"), systemSection("SESSION", (s, k) => `${String(s)}|${String(k)}`).split("\n").filter((l) => !l.includes("hooks")).join("\n"));
+  }
+
+  // ---- D8t -----------------------------------------------------------------
+  {
+    const fn = extractFn("D8t", "# Tone and style");
+    const upstream = build<() => string>(fn, KM_DECL);
+    eq("tone-and-style section", upstream(), toneAndStyleSection());
+    mustDiffer("a bullet dropped by an over-eager filter", upstream(), toneAndStyleSection().split("\n").slice(0, -1).join("\n"));
+  }
+
+  // ---- M8t: the whole cross-product, including the REPL arm ----------------
+  {
+    const fn = extractFn("M8t", "# Using your tools");
+    const TOOLS = `const NE=${JSON.stringify(TASK_CREATE_TOOL)},ME=${JSON.stringify(TODO_WRITE_TOOL)},Qe=${JSON.stringify(BASH_TOOL)},Bt=${JSON.stringify(POWERSHELL_TOOL)},_t=${JSON.stringify(READ_TOOL)},Kt=${JSON.stringify(EDIT_TOOL)},ar=${JSON.stringify(WRITE_TOOL)},ti=${JSON.stringify(GLOB_TOOL)},Xo=${JSON.stringify(GREP_TOOL)};`;
+    const upstream = build<(t: Set<string>) => string>(
+      fn,
+      `${TOOLS}${KM_DECL} const ty=(...a)=>globalThis.__repl(...a), Ny=(...a)=>globalThis.__search(...a);`,
+    );
+    const catalogs: [string, string[]][] = [
+      ["todo+bash", [TODO_WRITE_TOOL, BASH_TOOL]],
+      ["task+bash", [TASK_CREATE_TOOL, BASH_TOOL]],
+      ["both task tools", [TASK_CREATE_TOOL, TODO_WRITE_TOOL, BASH_TOOL]],
+      ["bash only", [BASH_TOOL]],
+      ["todo, no shell", [TODO_WRITE_TOOL]],
+      ["empty", []],
+      ["everything", [TASK_CREATE_TOOL, TODO_WRITE_TOOL, BASH_TOOL, READ_TOOL, EDIT_TOOL, WRITE_TOOL, GLOB_TOOL, GREP_TOOL]],
+    ];
+    for (const repl of [false, true])
+      for (const search of [false, true])
+        for (const [label, names] of catalogs) {
+          ports.__repl = () => repl;
+          ports.__search = () => search;
+          const set = new Set(names);
+          eq(`using-tools section, repl=${repl} search=${search} ${label}`, upstream(set), usingToolsSection(set, () => repl, () => search));
+        }
+    // The REPL arm's empty-string answer is the only "" in the pipeline, and no
+    // recording can produce it — a null would be dropped by the section filter
+    // instead of joined, which is a different thing.
+    ports.__repl = () => true;
+    ports.__search = () => true;
+    mustDiffer("the REPL arm answering null instead of the empty string", upstream(new Set()), null);
+    mustDiffer("the REPL arm rendering the heading with no bullets", upstream(new Set()), "# Using your tools");
+    ports.__repl = () => false;
+    mustDiffer("the search tools named when Bash is present and search is on", upstream(new Set([BASH_TOOL])), usingToolsSection(new Set([BASH_TOOL]), () => false, () => false));
+    mustDiffer("PowerShell named while Bash is in the catalog", upstream(new Set([BASH_TOOL])), usingToolsSection(new Set([]), () => false, () => true));
+  }
+
+  // ---- C8t: all three identity arms ----------------------------------------
+  {
+    const fn = extractFn("C8t", "IMPORTANT: You must NEVER generate or guess URLs");
+    const upstream = build<(s: unknown) => string>(
+      fn,
+      `const rKe=${JSON.stringify(AGENT_IDENTITY)}, jfe=${JSON.stringify(SECURITY_POLICY)};` +
+        ` const iKe=(...a)=>globalThis.__style(...a), eKe=(...a)=>globalThis.__frame(...a);`,
+    );
+    const STYLE_SENTENCE = 'You are an interactive agent that helps users according to your "Output Style", which describes how you should respond to user queries.';
+    for (const [label, style] of [["a style", "STYLE"], ["no style", null]] as [string, unknown][])
+      for (const frame of [false, true]) {
+        ports.__style = () => STYLE_SENTENCE;
+        ports.__frame = () => frame;
+        eq(`identity-security section, ${label}, frame=${frame}`, upstream(style), identitySecuritySection(style, () => STYLE_SENTENCE, () => frame));
+      }
+    ports.__frame = () => false;
+    mustDiffer("the style arm taken when there is no style", upstream(null), identitySecuritySection("STYLE", () => STYLE_SENTENCE, () => false));
+    mustDiffer("the security paragraph dropped", upstream(null), identitySecuritySection(null, () => STYLE_SENTENCE, () => false).replace(SECURITY_POLICY, ""));
+    ports.__frame = () => true;
+    mustDiffer("the intro-frame arm ignored", upstream(null), identitySecuritySection(null, () => STYLE_SENTENCE, () => false));
+  }
+}
+
 console.log(`\n=== prompt-assembly parity: ${checks} check(s) across the full branch cross-product, ${controls} non-vacuity control(s) ===`);
 for (const f of failures) console.log(`  FAIL  ${f}`);
 // 2 gate values x 11 inputs x 3 option sets x 2 (output + telemetry) = 132
 // partition comparisons, + 7 wire + 15 identity + 5 reminder + 6 lines
-// + 12 subagent + 1 compaction = 178. A run that compared fewer has lost a
-// branch, which is the failure this floor exists to catch.
-if (checks < 178) {
+// + 12 subagent + 1 compaction = 178 for the W3 pipeline. W7.5's six section
+// builders add 39: 1 x8t + 2 P8t + 3 R8t + 1 D8t + 28 M8t (2 repl x 2 search x
+// 7 catalogs) + 4 C8t. A run that compared fewer has lost a branch, which is the
+// failure this floor exists to catch.
+if (checks < 217) {
   console.log(`\nFAIL — only ${checks} comparison(s); the cross-product is incomplete`);
   process.exitCode = 1;
-} else if (controls < 8) {
+} else if (controls < 23) {
   // The floor's own floor: a run that dropped the mutants would be a run whose
-  // greenness is unwitnessed. 4 partition + 2 telemetry + 2 identity.
+  // greenness is unwitnessed. 4 partition + 2 telemetry + 2 identity, and 15
+  // more for the sections — every one of them aimed at an arm no recording
+  // reaches, since the rendered arms are already covered differentially.
   console.log(`\nFAIL — only ${controls} non-vacuity control(s); the comparison is unwitnessed`);
   process.exitCode = 1;
 } else {
