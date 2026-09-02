@@ -60,6 +60,37 @@ const threw = (fn: () => unknown): string | null => {
 
 console.log("=== engine-ts skeleton (W0 acceptance) ===");
 
+// X6, WITH A CONTROL OF ITS OWN.
+//
+// Routing this suite's spawns through `engineEnv` asserted nothing: drop the
+// `env` option again and every check below still passes, because nothing here
+// depends on what the child's environment contains. A fix whose absence is
+// invisible is a fix the next refactor removes.
+//
+// The wrapper reads exactly one variable — `BUN="${BUN:-…}"` — so poisoning that
+// one in the PARENT is a canary the spawn path actually consumes rather than a
+// variable nobody reads: through the allowlisted environment the child never
+// sees it and `--version` still reports the pin, while a child that inherits the
+// parent execs a bun that does not exist and dies at 127. Both directions are
+// asserted, because the passing half alone would also pass if the poison were
+// inert.
+const parentBun = process.env.BUN;
+process.env.BUN = join(import.meta.dirname, "..", "toolchain", "bun-that-does-not-exist");
+const throughEngineEnv = run(["--version"]);
+const inheriting = spawnSync(WRAPPER, ["--version"], { encoding: "utf8", timeout: TIMEOUT_MS });
+if (parentBun === undefined) delete process.env.BUN;
+else process.env.BUN = parentBun;
+check(
+  "X6: a poisoned BUN in the parent env does not reach the child — the wrapper is spawned through engineEnv",
+  throughEngineEnv.code === 0 && throughEngineEnv.out.includes(ENGINE_VERSION),
+  `exit=${throughEngineEnv.code} out=${throughEngineEnv.out.trim()} err=${throughEngineEnv.err.trim()}`,
+);
+check(
+  "…and the canary is live: the same spawn INHERITING the parent env dies on it",
+  inheriting.status === 127,
+  `exit=${inheriting.status} — the poison did nothing, so the check above proves nothing`,
+);
+
 const version = run(["--version"]);
 check("--version exits 0", version.code === 0, `exit=${version.code} signal=${version.signal} ${version.err}`);
 check("--version reports the pin (prepare.ts's boot check greps for it)", version.out.includes(ENGINE_VERSION), version.out.trim());
