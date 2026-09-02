@@ -283,7 +283,19 @@ timeouts and propagates cancellation, and for that one interleaving IS the behav
 buy ordering coverage for ten functions that mostly have one order to be in. Revisit when the executor is
 spliced, or when any hook module grows a second effectful call whose position is load-bearing.
 
-## 2026-09-01 — the CwdChanged hook event is one `cd` away from a verdict, and `AUt` from recordability
+**THE TRIGGER HAS FIRED, and the entry was right about why (2026-09-02, W7.5's executor design pass —
+`reforge/research/2026-09-02-w75-hook-executor-design.md`).** The executor does spawn processes, race
+timeouts and propagate cancellation, so for it the interleaving IS the behaviour. The design pass adds
+a second reason this entry did not anticipate: **cleanup pairing**. The command arm releases its
+derived signal on six different paths plus its catch, and "every derived signal was cleaned exactly
+once" is a property only an ordered log can state. So this is no longer deferred work to schedule
+alongside the executor — it is a **precondition** of the first executor module, and the design stages
+it as Stage 0. Two further oracle capabilities land with it: reproducing stdout CHUNK boundaries (the
+async-detection path fires on the first chunk containing a brace, so byte-equal stdout delivered in a
+different number of writes is a different behaviour), and grading a path that never settles (the
+shutdown arm awaits a promise that by construction never resolves).
+
+## 2026-09-01 — the CwdChanged hook event is one `cd` away from a verdict, and `AUt` from recordability — **PAID 2026-09-02 (W7.5)**
 
 W5's registry-derived probe left `CwdChanged` OPEN, correctly — no phase created its condition — but
 the row's original justification ("nothing on the SDK's Options moves the engine's cwd mid-session")
@@ -301,6 +313,14 @@ inventory is already characterized.
 boundary review converged with this as its only probe-shaped residue. Fold the phase into whichever
 wave next touches the probe — W7.5's executor work is the natural host, since `zxt` is on its ledger
 gap already.
+
+**PAID (2026-09-02, W7.5).** The `cwd-change` probe phase runs one persisting `cd` under the armed
+matcher and the event **FIRED** on both hook paths, with the record carrying `old_cwd` and `new_cwd`
+after the common prefix. `hooks-cwd-change` recorded it into the corpus (58 to 59) and `AUt` is
+spliced as `cwd-changed-hooks`, graded by the hooks parity oracle's new field-order block. One
+mechanism claim was corrected on the way past: the notifier that reaches the dispatcher consults the
+settings layer and plugin hooks only, never the global store `Options.hooks` callbacks land in, so a
+callback alone arms nothing — both the probe and the scenario register through `Options.settings`.
 
 ---
 
@@ -501,3 +521,42 @@ not fixed inside it.
    because `get_context_usage`'s section walk prints them. A re-record or replay on another machine
    shifts those graded bytes — fold a path scrub or a same-machine note into the same bump-recipe
    line when it is written.
+
+---
+
+## 2026-09-02 — `rewind_files` has a cheap scenario and a poor splice, so W7.5 recorded the measurement instead of taking it
+
+**Source:** the W7.5 rider measurement (charter: take `rewind_files` "only if its scenario is genuinely
+cheap") · upstream `Tf` in `chunk-dvbbv89q.js`, 485 B · `reforge/w7/probe-control-subtypes.ts` ·
+C10's W7 note ("takeable and anchorable today and wants only a scenario of its own — the probe already
+fires the arm and nothing grades its answer").
+
+**What:** the charter's condition was met and the splice was still declined, on two structural facts the
+condition does not cover.
+
+*The scenario really is cheap.* Turning on file checkpointing is one env knob; the engine snapshots per
+incoming user message on its own, so a three-turn write/edit/rewind conversation creates the state
+without an explicit checkpoint call; the answer comes back as the return value of a first-class `Query`
+method rather than as a transcript frame, so it lands entirely on the side-channel the scenario controls
+and needs no canonicalizer work; and a single recording would reach all four of the function's exits.
+Nothing about it resembles the expensive OPEN rows in the W7 subtype table.
+
+*But the splice is thin and the anchor is coupled to the wrong thing.* Four of `Tf`'s five free
+variables are effectful ports into the file-history subsystem, and what the body owns is two refusal
+sentences, the order of two guards, a dry-run branch and two result field sets — the worst
+owned-decision-to-capture ratio of anything in the family, and unlike the watcher dispatchers it owns no
+byte-order contract (its fields are consumed as a typed SDK result, not as a stdin stream). And every one
+of its three good literals occurs in TWO chunks, because the interactive host object carries a
+line-for-line twin with the same three sentences; no untainted extension separates them, and `siblings`
+cannot, since it widens uniqueness only within one chunk. A `coLiteral` does resolve it — but the only
+chunk-unique co-occurring literals belong to OTHER ARMS of the same control ladder, so the row's locator
+would name neither the rewind handler nor its subsystem, which is weaker than the doctrine asks for.
+
+**Cost:** one control-protocol arm keeps firing in the probe with nothing grading its answer, and one of
+the four exits (the disabled refusal) is the only one any run has exercised. The gap is coverage, not
+correctness: nothing depends on the arm today.
+
+**Why deferred:** taking it would buy very little ownership for a real anchor liability, and the same
+effort spent on `zxt` — the watcher-hooks helper both owned watcher dispatchers forward into, already
+named on the ledger gap — buys ownership depth in a subsystem the campaign is actively closing. Revisit
+if a later wave wants control-arm handler BREADTH rather than depth, or if a pin bump separates the twin.
