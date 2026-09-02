@@ -250,7 +250,7 @@ loud-failure argument this entry rests on.
 
 ---
 
-## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded
+## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded — **ASSIGNED 2026-09-02 to C10.6/W7.6a, Stage 0**
 
 **Source:** the C8 boundary review (finding 5, logged rather than fixed) ·
 `reforge/strangle/hooks-parity.test.ts` (`Trace`, `compare`, `compareValue`).
@@ -296,6 +296,11 @@ a `}` — and the latch is one-shot, so a write that ends after a NESTED brace p
 document and the complete one that follows is never re-examined. Byte-equal stdout delivered in a
 different number of writes is a different behaviour), and grading a path that never settles (the
 shutdown arm awaits a promise that by construction never resolves).
+
+**Assigned 2026-09-02.** The C10.5 boundary review cut the executor implementation as its own wave
+family (campaign spec, Deferred section, "The executor cut"), and this rewrite is **C10.6/W7.6a's
+Stage 0** — scheduled *before* the first executor module rather than alongside it. The entry leaves
+this file when that stage lands.
 
 ## 2026-09-01 — the CwdChanged hook event is one `cd` away from a verdict, and `AUt` from recordability — **PAID 2026-09-02 (W7.5)**
 
