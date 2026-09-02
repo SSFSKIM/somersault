@@ -1096,7 +1096,8 @@ site patches after site-patching provably didn't terminate, and one adjudication
 evidence: four reviews insisted the read-only clip was wrong, and the fourth proved D13 content loss
 (`/cost`'s fields sorted after the usage rows), so wave 8 shipped the scroll the rule had been
 deferring. One finding was out of scope and closed by the concurrent bl12 lane (PR #5, the
-settings-path display). Mid-round the repository migrated (codex_somersault archived → somersault
+settings-path display; merged to main 2026-09-03, merge commit 3fed43233, full test/tui green on the
+merged tree). Mid-round the repository migrated (codex_somersault archived → somersault
 monorepo) and concurrent lanes rewrote main twice more; all content transplanted verified-intact.
 Final battery: unit 4420, tui 5101 (0 failed), resize-matrix 10/0, hover-cells 2/2 (h1 flipped to a
 positive pin of the T-CLICKGATE gate), t-click pty cell. Ledger
