@@ -4163,8 +4163,8 @@ before it landed. **Every number a fixture states is a claim; a claim nothing co
 looks like evidence.**
 
 The drift itself was not a re-record's doing, and chasing it found the real defect.
-`startReplayProxy` **appends** to its observation dump; eight of its nine callers delete the file
-first; `m2/cross-resume.ts` did not, and had accumulated **59 runs** of its own traffic — 9.5 MB per
+`startReplayProxy` **appends** to its observation dump; of its eleven call sites, eight pass a dump
+path and seven of those delete the file first; `m2/cross-resume.ts` did not, and had accumulated **59 runs** of its own traffic — 9.5 MB per
 dump, 118 request bodies apiece and 236 of the 431 bodies the corpus side counted, growing by four every time anyone ran the gate.
 W8a's own denominator correction was therefore still wrong one layer down: the pattern-exact filter
 fixed which FILES count and left a file whose BODY count is a function of gate runs. Truncation now
