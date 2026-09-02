@@ -67,6 +67,8 @@ const MEMORY_DIR = join(realpathSync("/tmp"), "reforge-w5-memory");
 const SLASH_DIR = join(realpathSync("/tmp"), "reforge-w5-slash");
 /** The file the watcher scenario changes; the FileChanged matcher is the sandbox that holds it. */
 const WATCHED_FILE = "watched.txt";
+/** The subdirectory the cwd scenario moves INTO — inside the sandbox, so the armed matcher covers both ends. */
+const CWD_MOVED_DIR = "moved";
 
 /** Where the command hook writes its projection — inside the sandbox, so the state surface sees it. */
 const HOOK_STDIN_FILE = join(SANDBOX, "hook-stdin.txt");
@@ -1093,6 +1095,96 @@ export const W5_SCENARIOS: Scenario[] = [
       if (!acc.payload.files?.includes(WATCHED_FILE)) return `the watcher named ${JSON.stringify(acc.payload.files)}, not ${WATCHED_FILE}`;
       if (acc.payload.everyFireNamedAKind !== true) return "the record carried no event kind";
       return resultText(msgs).includes("REFORGE_WATCHED_OK") ? null : "the turn did not complete";
+    },
+  },
+
+  {
+    // W7.5's rider, in the W5 family because it IS the W5 family: CwdChanged is
+    // FileChanged's sibling, both reach the same watcher-hooks helper, and the
+    // dispatcher this records is `CUt`'s near-twin.
+    //
+    // W5 left the event OPEN — an absence of evidence, not a negative — because
+    // no phase moved the tracked working directory. The mechanism was never in
+    // doubt: the Bash tool's post-command tracking reads the shell's final PWD
+    // and calls `onCwdChanged` when a `cd` PERSISTS past its command. What was
+    // missing was a run that made one persist. `w5/probe-hook-events.ts`'s
+    // `cwd-change` phase created it and measured the event FIRED, with the
+    // record carrying `old_cwd` and `new_cwd` after the common prefix.
+    //
+    // TWO EXCHANGES, and the second is not decoration. A `cd` that lives and
+    // dies inside one command's subshell moves nothing the tracker can see; the
+    // move is only observable because a LATER command runs somewhere else. The
+    // second turn's `pwd` is what makes that visible in the transcript when a
+    // failure needs explaining.
+    //
+    // The matcher registration is the same shape as `hooks-file-watch`'s and for
+    // the same reason: `Options.hooks` carries no matcher, and the matcher is
+    // what arms the watcher these two events share.
+    //
+    // WHAT IS COLLECTED. The record's cwd fields are ABSOLUTE paths into the
+    // sandbox. Both engines run against the same sandbox so they would compare
+    // equal, but a diffed surface carrying a machine-absolute path is the class
+    // of leak C6 and W7 each paid for once, so the observation is reduced to
+    // what the dispatcher actually decides: that it ran, that the record named
+    // both ends of the move, that the two ends DIFFER, and the basename of the
+    // destination. A sabotaged dispatcher never builds the record, so it
+    // collects `fired: false` and the scenario reddens.
+    tag: "hooks-cwd-change",
+    title: "CwdChanged fires when a Bash `cd` persists past its command",
+    run: async (ctx) => {
+      mkdirSync(join(SANDBOX, CWD_MOVED_DIR), { recursive: true });
+      let fired = 0;
+      let namedBothEnds = false;
+      let moved = false;
+      let destination = "";
+      const msgs = await converse(
+        {
+          ...baseOptions(ctx),
+          allowedTools: ["Bash"],
+          maxTurns: 8,
+          permissionMode: "bypassPermissions",
+          hooks: {
+            CwdChanged: [
+              {
+                hooks: [
+                  async (input: unknown) => {
+                    const i = input as { old_cwd?: string; new_cwd?: string };
+                    fired++;
+                    if (typeof i.old_cwd === "string" && typeof i.new_cwd === "string") {
+                      namedBothEnds = true;
+                      if (i.old_cwd !== i.new_cwd) moved = true;
+                      destination = i.new_cwd.split("/").pop() ?? "";
+                    }
+                    return { continue: true } as const;
+                  },
+                ],
+              },
+            ],
+          },
+          settings: { hooks: { CwdChanged: [{ matcher: SANDBOX, hooks: [{ type: "command", command: "true" }] }] } },
+        },
+        (results) =>
+          results === 0
+            ? `Use the Bash tool to run exactly \`cd ${CWD_MOVED_DIR}\` and nothing else.`
+            : results === 1
+              ? "Use the Bash tool to run exactly `pwd`, then reply with exactly REFORGE_CWD_OK."
+              : null,
+      );
+      ctx.collect("CwdChanged:accumulated", { fired: fired > 0, namedBothEnds, moved, destination });
+      return msgs;
+    },
+    check: (msgs, events) => {
+      const acc = events.find((e) => (e as { event?: string }).event === "CwdChanged:accumulated") as
+        | { payload?: { fired?: boolean; namedBothEnds?: boolean; moved?: boolean; destination?: string } }
+        | undefined;
+      if (acc?.payload?.fired !== true) return "CwdChanged never fired — the `cd` did not persist past its command";
+      if (acc.payload.namedBothEnds !== true) return "the record did not carry both old_cwd and new_cwd";
+      if (acc.payload.moved !== true) return "the record named the same directory at both ends — nothing moved";
+      if (acc.payload.destination !== CWD_MOVED_DIR) {
+        return `the move landed in ${JSON.stringify(acc.payload.destination)}, not ${CWD_MOVED_DIR}`;
+      }
+      if (!usedTool(msgs, "Bash")) return "the turn never used Bash, so nothing could have moved the cwd";
+      return resultText(msgs, 1).includes("REFORGE_CWD_OK") ? null : "the conversation did not complete";
     },
   },
 ];
