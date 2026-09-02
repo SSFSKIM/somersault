@@ -1277,9 +1277,9 @@ Pending — written at finish.
 - 2026-09-02 (C10.6 / W7.6a — Stages 0–1, the executor's oracle built before the executor): the
   first executor child. Its charter was to spend most of a wave on instruments for modules that do
   not exist yet, and the reason that was the right cut is now measured rather than argued. Gate
-  **GATEPHASES**; hook oracle **721 → 1,499 comparisons, 121 → **195** controls**, plus a third
+  **GATEPHASES**; hook oracle **721 → 1,499 comparisons and 121 → 195 controls**, plus a third
   counted class (**1,005 property statements over 11 paired cases**); corpus unchanged at **59**;
-  manifest **74 → 75 splices**. Six items change what the rest of the family inherits.
+  manifest **74 → 75 splices**. Eight items change what the rest of the family inherits.
   - **THE INTERLEAVED EVENT LOG LANDED, AND ITS RED DIRECTION IS MEASURED.** `Trace` is gone;
     `EventLog` records one ordered stream and the comparison is that stream. Swapping ONE adjacent
     pair of differently-ported events in each owned log reddens **204 of the 226** log comparisons
