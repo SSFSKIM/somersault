@@ -10,7 +10,7 @@
 //    engine A sent at record time vs what engine B sent at replay time —
 //    request-level drift is a behavioral signal, not an error.
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import { canonicalizeForHash } from "./canonical.js";
@@ -285,6 +285,15 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     .filter(Boolean)
     .map((l) => JSON.parse(l));
   assertNoKeyCollisions(entries, cassettePath);
+  // AN OBSERVATION DUMP IS WHAT *THIS* RUN OBSERVED. The writer below appends,
+  // so a dump left over from a previous run blends two runs into one file. Every
+  // caller but one deleted it first; the one that forgot (m2/cross-resume) had
+  // accumulated 118 runs of traffic, and because the moat-tool fixture derives
+  // its corpus from this directory, the "recorded request bodies" denominator
+  // grew by four every time anyone ran the gate. Truncation belongs to the proxy
+  // rather than to each caller: a per-run invariant that nine call sites have to
+  // remember is a per-run invariant one of them will not.
+  if (observedPath) rmSync(observedPath, { force: true });
   const consumed = new Set<number>();
   const served = new Set<number>();
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
