@@ -62,9 +62,9 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Bash executor (exec/timeout/background) + command-safety AST | four tiers (W10 scout 2026-09-02): S-chunk for the parser, S-method for the safety chain/prompt/tool object (an OBJECT LITERAL, 26 members, zero private fields — not a class), owned data for 17 KB of flag tables, S-module for the process core (four small classes, 11.2 KB, where the private fields actually live) | `fgwne0fb` (62,907 B — the hand-written bash parser, 7 exports, 1 import, zero I/O; never named before), `9e2ns8ty` @108,945–162,000 (53 KB classifier region; the rest of that chunk is W6's), `fy12d89p` @100–105k (correct) + four regions totalling 238 KB; `13d9rycm` as a shared edge. `w7bq1qyb` REMOVED — it is the `claude plugin eval` harness (287 KB leave the row; ~354 KB remain) |
 | MCP adapter (thin layer over the vendored MCP SDK) | "thin" survives; "high seam quality" does not — every prose anchor in the MCP surface ties 2× because the layer is a RUNTIME GENERATION FORK (W11 scout 2026-09-02) | `1bxday80` (v1, LIVE at this pin, 187,877 B) and `4mp04j81` (v2, DEAD, 193,087 B) are the same module one generation apart, selected by `bT()` (`cr9f4adc`) reading `MCP_SDK_GENERATION` BEFORE the gate `tengu_brindle_causeway`; eight module pairs fork this way; plus the accessor `6rdsq6fw`, the elicitation impl `5ww6p4vy`, the MCP-skills fetcher, ten MCP control arms (13,051 B) |
 | Slash commands + skills loading | high (all in one chunk, anchors clean) — W11 scout 2026-09-02 | `fy12d89p` @3,310–3,495 KB (commands + plugin/skill loading, 133-element registry, 181,873 B declared) and @2,019–2,058 KB (skills belt, 37,960 B) — the "@10–12.5k" locator pointed at prompt-expansion/LSP code; plus `304awr1a` (35,905 B, the expansion path, never named). `g461tywa` is a 302 KB / 198-export grab-bag, not a commands chunk and not S-chunk-able |
-| Agent/Task subagent dispatch | medium (nested loop reentry) | `fy12d89p` @55–58k, `bf5vvscj` |
+| Agent/Task subagent dispatch | HIGH (W12 scout 2026-09-02): the Agent tool is an OBJECT LITERAL (27,595 B, 17 members, zero private fields), its `call` one 22,962 B method, its prompt 16,727 B; only three tiny counter classes (1,681 B) carry private fields. "Nested loop reentry" was the wrong seam: the child loop IS the parent's — `Bb` builds the child's context and delegates to `Kx`, the same generator the headless loop imports, so W12 owns everything that constructs `Kx`'s arguments and cleans up after it, and W13 owns `Kx` | `fy12d89p` @55–58k (CORRECT — about a quarter of the row; five further belts at ≈33.9k observers, ≈47.8k agent-worktree, ≈53.5k child-stream builder, ≈77k inheritance contract, ≈105k task records), ~188 KB. `bf5vvscj` REMOVED — it is the plugin-hooks runtime the ledger already assigns to C8 (112,652 B leave; ~700 B stay as the `agent.spawn` edge) |
 | Query loop / turn driver (retry, 529, model fallback, compaction driver, transport + streaming assembler, frames, process lifecycle) | HIGH seam (W13 scout 2026-09-02): one exported entry `Kx` over a 58 KB async generator `DAt`, a four-symbol module boundary (`Kx`, `sX`, `E4n`/`wFt`, `mdt`/`gdt`), ZERO private fields in any class, and an injected deps object `aAt()` = `{callModel, autocompact, uuid, now}` that already declares three of the wave's ports; the cross-turn STATE is NOT in the generator — it is 105 accessors in `chunk-38213y7h.js` (895 importers; ports only, never the chunk) | `fy12d89p` @74.5k (`DAt`, correct) + @85.3–88.2k (transport/assembler `HIt` 67 KB) + @34.1k (retry `kQ`) + @49.1k/@77.3–77.8k (compaction drivers) + @3.1k (shutdown coordinator); `dvbbv89q` (`GH`/`ky`/`hu`/`ku`/`Uy`, 205 KB gross); 42 of `g461tywa`'s exports (frames, 40.6 KB); `29shcjw2` (the 780 B shutdown latch). ~549 KB — the largest row measured |
-| Sandboxing (platform launchers behind an interface) | module-level (CEL/protobuf tangle) | `q4xe0m2r` |
+| Sandboxing (platform launchers behind an interface) | "CEL/protobuf tangle" describes the FILE, not the seam (W12 scout 2026-09-02): the chunk is 83.5 % vendored (picomatch, `@bufbuild/cel` + protobuf, `@anthropic-ai/sandbox-runtime` — 478,991 B, all §1.2, engine-ts imports the packages) with a single clean split at offset 485,420; the Claude-Code-own layer is 94,760 B / 230 declarations, its façade `pt` a 2,672 B object literal with no private field on the path; the seatbelt profile builder `PR` is a PURE `inputs → text` function (the wave's cheapest oracle needs no host); on macOS the effectful residue is under 3 KB and `checkDependencies()` never probes `sandbox-exec` (assumed from platform identity — a missing binary surfaces at first spawn) | `q4xe0m2r` @485,420–581,554 (the owned sixth) + `6v95pkgg` (44 self-named sandbox exports — a barrel the symbol map lacks) |
 
 **The closure ledger.** The decomposition (step after this spec) materializes this table as a
 machine-checkable ledger: every in-scope subsystem row and every headless tool maps to an
@@ -471,7 +471,7 @@ ones).
 | W9 | Session/transcript storage (`SessionPort` + 6 sibling ports, 2 stubs) | **S-module debut** (fable), cut into four children 2026-09-02 | storage/resume depth + dirty-state matrix (14 cells, D1–D14); a synthetic TRANSCRIPT corpus (constructed files — the cheaper of the two synthetic corpora, and the one this subsystem needs) + the config half of the state-surface diff come online |
 | W10 | Bash executor + command-safety AST | S-chunk (parser) + S-method (safety chain) + owned data + S-module (process core); the class-method shape is NOT needed; cut into six children 2026-09-02 | bash depth + the backgrounding moat (which has NO scenario today: zero of the corpus's Bash calls set `run_in_background`) |
 | W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk (the live MCP generation behind `McpClientPort`; two small S-chunks in skills); ONE family, three children 2026-09-02 | mcp/skills scenario families + the stdio-vs-SDK transport probe |
-| W12 | Agent/subagent dispatch + sandbox interface (`ToolRuntimePort` boundary) | S-module (fable) | subagent depth; sandbox matrix; mutation battery |
+| W12 | Agent/subagent dispatch + sandbox interface — TWO disjoint cores (no shared state, effectful call or caller); the `ToolRuntimePort` name covered three disjoint boundaries and is retired in favour of `AgentRuntimePort` + siblings, `SandboxPolicyPort`/`SandboxExecPort`, and a separately-routed `ToolInvokerPort` | S-module (fable), cut into C15b (sandbox, first) + C15a (subagent) 2026-09-02 | subagent depth (a scripted child — `Options.agents` is unused corpus-wide, no recorded child has ever called a tool); the sandbox's golden-file profile oracle + one host-capability control; survivor supervision with DECLARED survivors |
 | W13 | Query loop / turn driver (`QueryLoopPort` = upstream's own `zve({run})` parameter; `ModelTransportPort` = `aAt().callModel`); **inversion milestone**; **hermetic isolation substrate** (§3.6) | S-module (fable), cut into seven children 2026-09-02 — three things, not one: the loop, the inversion (a decision + a declared out-of-process delegation route), the substrate (shares no file or port with either) | controlled retry/interleaving + long-horizon traces; the synthetic RESPONSE corpus (spec-mandated since W9, still absent) is C16a's; per-event stream control in the replay proxy |
 | W14 | engine-ts closure: **OS-enforced hermetic** ownership gate (§3.6) with all four delegation-route negative controls; static reachability; full acceptance surface with engine-ts as engineB under strict replay | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
 
@@ -665,8 +665,20 @@ follow as C4/C5.
   generation stays GREEN under sabotage, which the tightened rule already fails loudly); C14c owes
   the control that proves both. Status: C14a unblocked; C14b/C14c behind their triggers.
 
-#### C15: W12 — subagent dispatch + sandbox (`ToolRuntimePort`) — controlled (fable)
-- Per §6 row; mutation battery per §3.1. **Required.** Status: not-dispatched.
+#### C15: W12 — subagent dispatch + sandbox — CUT 2026-09-02 into C15b (sandbox, first) and C15a (subagent) (see Deferred, "The W12 cut")
+- Scouted (`reforge/research/2026-09-02-w12-subagent-sandbox-scout.md`, sixteen corrections). The
+  two cores share no state, no effectful call and no caller; their oracle needs are disjoint; their
+  blockers are opposite in kind — **the sandbox is one settings key away today** (`Options.settings
+  .sandbox` is a TYPED member of the installed SDK's options, plus a direct `Options.sandbox`; both
+  bypass the environment and survive `settingSources: []`), retiring fourteen standing attestation
+  exclusions and unblocking the `SandboxPort` stub C13d waits on; the subagent core's most valuable
+  arms need machinery that does not exist. The fork subagent is MODE-DEAD — a fifth class beside
+  gate-/env-/entrypoint-/settings-dead: `adr()` returns "disabled" when `Le()` (`!isInteractive()`)
+  is true, which it is on every headless run; the lever `CLAUDE_CODE_FORK_SUBAGENT=true` is outside
+  X6, and flipping it also REMOVES `run_in_background` from the Agent tool's presented schema
+  (reddening `background-task`) — a catalog-shape flip, not a behaviour flip. Neither half inherits
+  W10's blocker. **Required.** Status: C15b1, C15a1, C15a2, C15a3 unblocked (disjoint files;
+  serialize on the shared surface); C15b2, C15a4, C15a5 behind their triggers.
 
 #### C16: W13 — query loop + inversion + hermetic substrate — CUT 2026-09-02 into C16a–C16g (see Deferred, "The W13 cut")
 - Scouted (`reforge/research/2026-09-02-w13-query-loop-scout.md`). **Upstream already ships the
@@ -963,12 +975,11 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     root (descendant set at scenario end, deliberately-detached children declared) — W9's named
     carry-over lands here. Each with a negative control (a perturbed schedule changes the graded
     output; a leaked child FAILS the state diff; a perturbed timer moves the background hint).
-    Plus the six recordings that need no machinery. Rider: the seven sandbox attestation
-    exclusions whose reason reads "§3.3 pins the gate state and X6 forbids the env overrides" —
-    the premise is wrong: `isSandboxingEnabled()` resolves to `settings.sandbox.enabled ?? false`,
-    a SETTINGS KEY with no `tengu_*` gate and no env var in the chain; the conclusion (unreached)
-    stands, and the remedy is one settings object in one scenario on a macOS host with
-    `sandbox-exec`, which C15/W12 inherits.
+    Plus the six recordings that need no machinery. (The sandbox-exclusion rider first filed here
+    MOVED to C15b1 — the W12 scout measured the remedy as an `Options` field, not an env fight:
+    `Settings.sandbox` is a typed SDK member and `Options.sandbox` a second direct route; fourteen
+    exclusions across `permission-precheck` and `rule-based-permissions` argue unreachability from
+    the ENVIRONMENT, none from the OPTIONS, and the options are the reachable path.)
   • **C13d / W10d — the executor S-module** (fable-tier; ADVISORY, cut when C13c lands):
     `ShellProcessPort` + `ShellOutputSinkPort` (SHARED with the hook runner per the C10.8
     parent-impact above), `ShellProviderPort`, `CwdTrackingPort`, `ShellTimingPort`,
@@ -1115,10 +1126,66 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     imports by construction, and §3.6's four negative controls are exactly the four routes it must
     not be), and the ledger flip. Acceptance: engine-ts drives the corpus as `engineB` under strict
     replay for the scenarios whose subsystems are owned, delegating the rest, inside C16f's boundary.
-  • **Not W13's**: `mdt`/`gdt` (C10.7); `kUn` and the Agent tool (C15); the 52 ladder arms; the
+  • **Not W13's**: `mdt`/`gdt` (C10.7); the Agent tool (C15a); `kUn` — routed by measurement, not
+    by port name (see the W12 cut's closing decision); the 52 ladder arms; the
     task-frame emitters (C11c); `kOe` the security-monitor prompt (W6's classifier surface); `cs` in
     `dvbbv89q` (the remote-control/bridge transport, §1.2); the vendored HTTP client and SSE
     decoder; `chunk-38213y7h.js` as a chunk.
+- **The W12 cut (2026-09-02, from `reforge/research/2026-09-02-w12-subagent-sandbox-scout.md` —
+  adopted with grades):** two waves, seven children, sandbox first.
+  • **C15b1 / W12b1 — the profile oracle and the settings-key scenario** (controlled, opus-tier;
+    cut NOW): (1) a profile-TEXT oracle on the `description-parity` pattern — extract the seatbelt
+    builder `PR` (7,666 B + ~1,400 B of rule emitters) from the pin, evaluate it with a stubbed
+    `SandboxPathPort` over the declared cross-product of its ~14 inputs (read/write configs ×
+    network restriction × unix sockets × local binding × mach lookup × pty × Apple Events × weaker
+    network isolation), require byte identity with the owned module — no sandbox, no host, no engine
+    run; (2) the host-capability requirement primitive; (3) the `agent-sandboxed-bash` recording:
+    `settings: { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }`, a Bash read inside
+    the allow-set, a Bash write outside it, one `dangerouslyDisableSandbox` call. Acceptance: the
+    oracle fails on a perturbed input; the scenario is skipped-with-reason without `sandbox-exec`
+    and green here; the fourteen sandbox exclusions retire or are re-justified on their real guard.
+    Edges → C13d (the `SandboxPort` stub becomes two real ports), → C9 (the exclusions' rows),
+    → C16f (the capability primitive).
+  • **C15b2 / W12b2 — the sandbox module** (fable-tier; ADVISORY, cut when C15b1 lands): the
+    owned 94,760 B behind `SandboxPolicyPort`/`SandboxExecPort`. The behavioural-partition matrix
+    IS the profile cross-product + `bv`'s seven-branch truth table + `F2`'s five outcomes. Mutation
+    battery: a dropped deny rule, an allow where a deny belongs, a lost (recoverable)
+    `sandboxDisabledThisSession` latch, `checkDependencies` collapsed to a boolean, the two wrap
+    members fused. Binding: on macOS `checkDependencies()` does NOTHING (platform-identity only —
+    `/usr/bin/sandbox-exec` occurs once in 1,802 files, in the argv assembly at exec time) — an
+    owned module reproduces that, and an oracle tests it with no sandbox.
+  • **C15a1 / W12a1 — the subagent pure belt** (autonomous, opus-tier; cut NOW) and **C15a2 /
+    W12a2 — the Agent tool's prompt** (autonomous, opus-tier; cut NOW, parallel): ~62 KB of the
+    ~188 KB row, unblocked, no port, no machinery, no recording — the shape W10's parser-and-safety
+    finding had. Every splice solo-sabotaged RED on `subagent`/`background-task`/`hooks-subagent`
+    (the corpus's three Agent scenarios — `parallel-tools` is a Bash batch, not a fourth); a contract
+    test over child-catalog resolution × four axes whose expectation is the corpus's own three
+    catalogs (22 parent / 19 foreground child / 13 background child — the depth cap additionally
+    removes `Agent` from a child's catalog at depth ≥ 3).
+  • **C15a3 / W12a3 — subagent oracle machinery** (controlled, opus-tier; cut NOW; serializes per
+    X5): the scripted child, survivor supervision with declared survivors, the lane-and-id decision,
+    the two probes, six recordings. The recorded Agent input surface is four keys wide
+    (`description`, `prompt`, `subagent_type` always `general-purpose`, `run_in_background`);
+    `isolation`, `model`, `name`, `cwd` have zero recordings; no recorded child has ever called a
+    tool, so the depth axis and the child's own dispatch path are entirely unexercised.
+  • **C15a4 / W12a4 — the dispatch S-module** (fable-tier; ADVISORY, cut when C15a3 lands): ~55 KB
+    of effectful residue behind seven ports and three stubs; mutation battery per the tracking row;
+    `ChildQueryPort` IS `Kx` and W12 must not own it. Edges → C16d, C11c (`TaskRegistryPort`,
+    `NotificationPort`, the `agentNameRegistry` addressing seam), C12 (subagent transcripts,
+    `fork-context-ref`), C8 (SubagentStart/Stop call sites, `ka`'s three suppressions), C14 (`$Ft`,
+    the skill preload), C13 (`qit`'s orphaned-shell kill), C9 (the child's permission-context clamp).
+  • **C15a5 / W12a5 — worktree isolation, observers, teammates** (fable-tier; ADVISORY, cut last):
+    three separate AXES, none blocking anything — the shape W10 gave PowerShell.
+  • **Closing decision — `kUn`, routed by measurement, not by port name.** `kUn` (26,716 B, the
+    per-tool invoker the streaming tool executor `ORe.executeTool` calls) is a fourth disjoint core
+    that both the W12 and W13 scouts declined to place, each pointing at the other by way of the
+    `ToolRuntimePort` name. Routing rule: it belongs to whichever wave owns its CALLERS — measure them
+    at C16d's cut (one grep). If `ORe` is the only caller, `kUn` is C16d's behind `ToolInvokerPort`
+    (it consumes C9's `canUseTool` and the C8/C10.x hook dispatchers and holds no subagent or
+    sandbox state); if the Agent dispatch or the sandbox calls it directly, that caller's wave takes
+    it. No wave inherits it by port name.
+  • **Not W12's**: `bf5vvscj` (C8's plugin-hooks runtime), `Kx`/`DAt` (W13), the vendored 83.5 % of
+    `q4xe0m2r`, the task store and notification queue (C11c), the cross-session layer (C11d).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -1150,14 +1217,20 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C12d | W9d | as C12a | not-dispatched — the transcript GC, remove-by-uuid, torn-tail sealing, relocation, atomicity contract asserted directly; **blocked by C12c** |
 | C13a | W10a | scout: `reforge/research/2026-09-02-w10-bash-executor-scout.md` (cut 2026-09-02, Deferred section's "The W10 cut") | not-dispatched — the shell parser WHOLE-CHUNK (`fgwne0fb`, 62,907 B, zero I/O), contract tests over partitioned command strings, no port/scenario/engine run; riders: `tool/PowerShell` ledger row → C13, `subsystem/tool-result-validators` wave C4 → C13. **Unblocked** |
 | C13b | W10b | as C13a | not-dispatched — the command-safety chain (five engine regions, 124,832 B) + the classifier region (53,180 B) + 17 KB of flag tables owned outright; adds `bash-compound-safety` (closes W6's two live-but-dark `Fy` callers). **Unblocked** (parse types from C13a) |
-| C13c | W10c | as C13a | not-dispatched — executor oracle machinery: a scripted child process (byte schedule / exit / signal), injectable timers for the six shell deadlines, child-process SUPERVISION as `src/state.ts`'s third root; the six machinery-free recordings; rider: the seven sandbox attestation exclusions reworded onto the real guard (`settings.sandbox.enabled`, not a gate). **Unblocked**, serializes per X5 |
+| C13c | W10c | as C13a | not-dispatched — executor oracle machinery: a scripted child process (byte schedule / exit / signal), injectable timers for the six shell deadlines, child-process SUPERVISION as `src/state.ts`'s third root; the six machinery-free recordings; (the sandbox-exclusion rider moved to C15b1 — see the W12 cut). **Unblocked**, serializes per X5 |
 | C13d | W10d | as C13a (advisory) | not-cut — the executor S-module behind `ShellProcessPort`/`ShellOutputSinkPort` (SHARED with the hook runner) + `ShellProviderPort`/`CwdTrackingPort`/`ShellTimingPort`/`ShellTelemetryPort` (Bash-only) + `SandboxPort`/`RemoteConstraintsPort` stubs; `DiskTaskOutput` lives here; cut when C13c lands |
 | C13e | W10e | as C13a (advisory) | not-cut — the backgrounding + notification MOAT: `Gcr`'s four arms (one DEAD headlessly with its producer named — the interactive controller's `turn-abort`), the `background_tasks` control subtype (W7 fired the ARM against an empty registry; the EFFECT is unreached), stall detector, pressure reaper; records `bash-background-explicit` and `bash-background-control`; cut when C13d's ports exist |
 | C13f | W10f | as C13a (advisory) | not-cut — `tool/PowerShell` (executor comes free from C13d; `hw8qz4q5` shares `LG`/`jx`/`Kee`/`Kdt` and the notification path) + `subsystem/tool-result-validators`; cut last |
 | C14a | W11a | scout: `reforge/research/2026-09-02-w11-mcp-slash-skills-scout.md` (cut 2026-09-02, Deferred section's "The W11 cut") | not-dispatched — the command-and-skill filter belt: the eighth pin-keyed fixture `slash-commands-2.1.251.json` derived from the 133-element registry with each row's `k0t` verdict (28 pass headlessly; the corpus reaches 2), the filter core as one owned module (7 fold-ins), the skill-usage module with the `skillUsage` normalization C12a needs; 1 recording. **Unblocked** |
 | C14b | W11b | as C14a | not-dispatched — `w11/probe-mcp-transport.ts` (stdio vs SDK, with the SDK-NEGATIVE phase: elicitation is live for stdio servers and explicitly skipped for in-process ones), a committed fixture MCP server, the `pf` probe via the raw driver, 11–14 recordings; resolves the hook registry's two `Elicitation*` OPEN rows; the `Skill` tool + `qdt` ride here; **blocked by C14a** (shared surface) |
 | C14c | W11c | as C14a (advisory) | not-cut — the live MCP generation behind `McpClientPort` (`hydrateToolsFromListing` as the projection, the call path, the 3.4 KB elicitation impl whole, a generation-guard tripwire) + the negative control proving a row aimed at the dead generation FAILS the build; cut when C14b lands |
-| C15 | W12 | — | not-dispatched (controlled, fable) |
+| C15b1 | W12b1 | scout: `reforge/research/2026-09-02-w12-subagent-sandbox-scout.md` (cut 2026-09-02, Deferred section's "The W12 cut") | not-dispatched — the sandbox profile ORACLE (extract `PR`, evaluate over its ~14-input cross-product with a stubbed path port, byte identity — no host, no engine run), the host-capability requirement primitive (a scenario declares "needs `/usr/bin/sandbox-exec`" and is skipped-with-reason elsewhere; W13's substrate inherits it), and the `agent-sandboxed-bash` recording via `settings.sandbox`; retires or re-justifies the fourteen sandbox exclusions (the rider moved here from C13c). **Unblocked** |
+| C15b2 | W12b2 | as C15b1 (advisory) | not-cut — the 94,760 B Claude-Code sandbox layer behind `SandboxPolicyPort`/`SandboxExecPort` (`PR` + rule emitters, `bv`'s seven-branch decision, `F2`'s five outcomes, the guard chain, `eht` the 34 KB settings→srt translator); Linux/Windows as throwing stubs whose reason is the constant-folded `Ct()` dispatch; cut when C15b1 lands |
+| C15a1 | W12a1 | as C15b1 | not-dispatched — the subagent PURE BELT (~45 KB, 36 unique prose anchors, zero recordings): child-catalog resolution (already graded three ways by the corpus at 22/19/13 tools), the agent-type ladder + six refusals, model resolution, six schemas, the result mapper, spawn counters, worktree naming/validation. **Unblocked** |
+| C15a2 | W12a2 | as C15b1 | not-dispatched — the Agent tool's PROMPT (`wlt`, 16,727 B, six conditional sections under six guard reads — W3's section play; the `## When to fork` section's absence asserted with `Le()` cited). **Unblocked**, parallel with C15a1 |
+| C15a3 | W12a3 | as C15b1 | not-dispatched — subagent oracle machinery: a SCRIPTED CHILD (`Options.agents` with pinned tools/maxTurns/model/permissionMode + authored child-lane responses — the synthetic response corpus's second concurrent lane), SURVIVOR supervision (a third state root over `<CONFIG_DIR>`, the task-output directory at `/private/tmp/claude-501/<slug>/<uuid>/tasks/` — outside BOTH roots today, reset by nothing — and `.claude/worktrees/`; descendant set diffed with deliberate survivors DECLARED, because a background agent legitimately outlives its turn), the lane-and-id decision for depth ≥ 2 (agent ids and task ids share the `a`+16-hex lexeme and the differ keys on property name — enumerate id SHAPES before the first nesting scenario), `w12/probe-subagent-depth.ts` (depth cap 3 via `tengu_hazel_trellis`; concurrency 20) and `w12/probe-agent-teams.ts`. **Unblocked**, serializes per X5 |
+| C15a4 | W12a4 | as C15b1 (advisory) | not-cut — the dispatch S-module (~55 KB: `Ane.call`, `Bb`, `n9`, `kan` the inheritance contract, `$Ft`, the task-record writers, the worktree disposition closure) behind `AgentRuntimePort`, `ChildQueryPort` (= `Kx` — W12 must NOT own it), `TaskRegistryPort`, `NotificationPort`, `WorktreePort`, `AgentClockPort`, `AgentTelemetryPort` + `TeammatePort`/`RemoteAgentPort`/`ObserverPort` stubs; mutation battery incl. the leaked concurrency slot, the shared `readFileState`, the double `task_notification`; cut when C15a3 lands |
+| C15a5 | W12a5 | as C15b1 (advisory) | not-cut — worktree isolation (17 KB), observers (14 KB + `jna7qpeb`), teammates (`eyzf721y`, 29 KB, OPEN behind the `--agent-teams` ARGV flag the raw driver controls — the gate `tengu_amber_flint` defaults TRUE); three axes, cut last |
 | C16a | W13a | scout: `reforge/research/2026-09-02-w13-query-loop-scout.md` (cut 2026-09-02, Deferred section's "The W13 cut") | not-dispatched — the loop oracle machinery: per-event stream control in the replay proxy (drop-after-N / delay / destroy / inject-malformed at `proxy.ts`'s entry loop, strict-fallback rules untouched), the SYNTHETIC RESPONSE CORPUS generalising `src/faults.ts` (spec-mandated since W9, absent), signal delivery + the no-further-yields verdict shape, raw-wire multi-turn, opt-in unscrubbed cache-breakpoint comparison — each with a negative control. **Unblocked** (no dependency on any wave); serializes on the shared harness surface |
 | C16b | W13b | as C16a | not-dispatched — the process lifecycle: own `chunk-29shcjw2.js` outright (780 B, 10 importers, 3 exports — the campaign's smallest whole-chunk ownership) + `TWn`'s shutdown pair as `LifecyclePort` (`isShuttingDown`, `hang`, `claimShutdown`, `releaseShutdownClaim`); the hook-executor children drop their `isShuttingDown` stub and consume it. **Unblocked**, dispatch after C10.6's review (shared manifest) |
 | C16c | W13c | as C16a (advisory) | not-cut — transport + streaming assembler (`HIt` 67 KB, `XN`/`sX`, `kQ` retry + seven classifiers, both `EIt` `stream:false` arms — the corpus records only the 404 arm; C3's mid-stream arm has NO recording) behind `ModelTransportPort` + `RetryPolicyPort`; absorbs C1's `text_delta` splice; blocked by C16a |
@@ -1454,7 +1527,30 @@ Pending — written at finish.
     that ANSWERS with a `hookSpecificOutput` and a callback returning `{continue:true}` reaches none
     of them — and it is adjudicated in six families rather than one.
 
-- 2026-09-02 (W13 scout — the query loop re-measured, and the C16 cut; the last scout): **the
+- 2026-09-02 (W12 scout — subagent dispatch and the sandbox re-measured, and the C15 cut; the
+  tenth and last scout): **the spec's single `ToolRuntimePort` was naming three disjoint
+  boundaries.** Subagent dispatch and the sandbox share no state, no effectful call and no caller,
+  so C15 becomes two waves, sandbox FIRST — it is one typed `Options.settings.sandbox` key away
+  from retiring fourteen attestation exclusions (whose reasons argued unreachability from the
+  environment while the options were the reachable path all along) and from unblocking the stub
+  C13d waits on. Sixteen corrections; the ones that change the plan: the chunk the census carried
+  on the subagent row is the plugin-hooks runtime the ledger already lists under C8 (112 KB leave;
+  two documents disagreed about one chunk and nobody had run the `grep -c` that settles it); the
+  child query loop IS the parent's (`Bb` delegates to `Kx`), which fixes the W12/W13 boundary as
+  a clean split and retires "nested loop reentry"; the fork subagent is MODE-DEAD — a fifth class
+  beside gate-, env-, entrypoint- and settings-dead, invisible to the gate fixture by construction,
+  and the one env flip that opens it also removes `run_in_background` from the tool's schema; the
+  sandbox chunk is 83.5 % vendored with a single clean split and its profile builder is a PURE
+  function, so the primary oracle is a golden file, not a host; on macOS the dependency check never
+  probes `sandbox-exec`. Neither half inherits W10's blocker (three counter classes totalling
+  1,681 B on the subagent side; none on the sandbox path). A subagent's output file lands outside
+  both the sandbox and the config dir and is reset by nothing — the W9 leak class one directory
+  out. `kUn`, which both this scout and W13's routed away from themselves by port name, is routed
+  by a caller measurement at C16d's cut. Four self-naming barrels exist for this wave and none is
+  in the symbol map (the harvest rider on C11b grows). **Lesson: when a feature looks gated, check
+  whether the guard is the launch mode** — and ask whether the OS-coupled thing is actually the
+  coupled part. **Roadmap state: every wave scouted; 37 cut children from C10.6 through C16g.**
+- 2026-09-02 (W13 scout — the query loop re-measured, and the C16 cut): **the
   inversion seam already exists upstream as a named parameter.** All three surfaces that run a
   turn pass the loop in — `zve({run: Kx, …})` in the REPL builder, the interactive controller and
   the headless `bu` — and the loop's default deps factory `aAt()` is 94 bytes naming
