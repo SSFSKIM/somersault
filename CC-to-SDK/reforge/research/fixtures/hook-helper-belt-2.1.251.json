@@ -124,7 +124,7 @@
       "callersInBelt": [
         "Qxt"
       ],
-      "callSitesInChunk": 0,
+      "callSitesInChunk": 1,
       "free": [
         "fge",
         "mge",
@@ -176,7 +176,7 @@
       "callersInBelt": [
         "Rzn"
       ],
-      "callSitesInChunk": 0,
+      "callSitesInChunk": 3,
       "free": [
         "MTt",
         "Q6",
@@ -4672,6 +4672,95 @@
       ],
       "verdict": "effectful",
       "anchor": null
+    }
+  ],
+  "moduleState": [
+    {
+      "name": "BKt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 97116,
+      "kind": "host-scoped-lazy",
+      "declaration": "var BKt=new J(()=>new jUe);function D2(){return BKt.of(G().host)}class jx{taskId;path;stdoutToFile;#e=\"\";#t=\"\";#n=null;#",
+      "keyedBy": "G().host",
+      "mutators": [
+        ".add(",
+        ".set(",
+        ".delete(",
+        ".clear("
+      ],
+      "resetBy": null
+    },
+    {
+      "name": "nzn",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 148126,
+      "kind": "keyed-lazy",
+      "declaration": "var nzn=new Ln(()=>({current:new ype(()=>K())}));function Mi(){return nzn.of(G()).current}class ZBe{installed=!1;claim()",
+      "keyedBy": "G()",
+      "mutators": [
+        ".add(",
+        ".set(",
+        ".delete(",
+        ".clear("
+      ],
+      "resetBy": null
+    },
+    {
+      "name": "nWe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 379954,
+      "kind": "host-scoped-lazy",
+      "declaration": "var nWe=new J(()=>new tWe);class rWe{flushers=null;exitFlushRegistered=!1}var eO=new rWe;var p5t=60000;function oWe(e){e",
+      "keyedBy": "G().host",
+      "mutators": [
+        ".add(",
+        ".set(",
+        ".delete(",
+        ".clear("
+      ],
+      "resetBy": null
+    },
+    {
+      "name": "_Jt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673377,
+      "kind": "host-scoped-lazy",
+      "declaration": "var _Jt=new J(()=>new aVe);function r3(){return _Jt.of(G().host)}function Ezn(e){if(e===null){r3().reset();return}r3().r",
+      "keyedBy": "G().host",
+      "mutators": [
+        ".add(",
+        ".set(",
+        ".delete(",
+        ".clear("
+      ],
+      "resetBy": null
+    },
+    {
+      "name": "Vhr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074600,
+      "kind": "host-scoped-lazy",
+      "declaration": "var Vhr=new J(()=>new Set);function Bie(e,t){if(!e||!ip(e)||!e.terminalSequence)return;let r=bge(e.terminalSequence);if(",
+      "keyedBy": "G().host",
+      "mutators": [
+        ".add(",
+        ".set(",
+        ".delete(",
+        ".clear("
+      ],
+      "resetBy": null
+    },
+    {
+      "name": "xo",
+      "chunk": "chunk-29shcjw2.js",
+      "offset": 615,
+      "kind": "process-global",
+      "declaration": "class t{committed=!1}var e=new t;function xo(){return e.committed}function S8e(){e.committed=!0}var n=new Promise(()=>{});function pm(){return n}",
+      "keyedBy": null,
+      "mutators": [
+        "S8e()"
+      ],
+      "resetBy": null
     }
   ]
 }

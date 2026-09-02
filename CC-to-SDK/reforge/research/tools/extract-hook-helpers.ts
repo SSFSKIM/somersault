@@ -134,6 +134,30 @@ export interface BeltEntry {
   anchor: { literal: string; files: number } | null;
 }
 
+/**
+ * A module-level mutable cell the layer reads or writes, and the SCOPE its
+ * lifetime is keyed by. Design \u00a77 item 7 calls all of this "process-global,
+ * never reset"; the derivation disagrees, and the disagreement is what a
+ * replay harness actually has to act on — a host-keyed cell is reset by using
+ * a fresh host, a session-scratch cell by using a fresh session, and only a
+ * genuinely process-global one needs an explicit reset with no other way in.
+ */
+export interface StateCell {
+  name: string;
+  chunk: string;
+  offset: number;
+  /** `host-scoped-lazy`, `module-collection`, or `process-global` */
+  kind: string;
+  /** the declaration source, truncated */
+  declaration: string;
+  /** how the cell is keyed, when it is keyed at all */
+  keyedBy: string | null;
+  /** the mutating call shapes seen on this binding in the layer's chunk */
+  mutators: string[];
+  /** whether anything in the bundle resets it */
+  resetBy: string | null;
+}
+
 export interface BeltFixture {
   engineVersion: string;
   generatedBy: string;
@@ -159,6 +183,8 @@ export interface BeltFixture {
     reachedWithNoLiteral: number;
   };
   belt: BeltEntry[];
+  /** what a replay has to reset between cases, and how each cell is scoped */
+  moduleState: StateCell[];
 }
 
 /**
@@ -180,6 +206,14 @@ const INJECTION_SHAPES: { kind: string; test: (body: string) => boolean }[] = [
   { kind: "platform", test: (b) => /process\.platform/.test(b) && b.length < 200 },
   { kind: "defaultShell", test: (b) => /\?"bash":"powershell"|\?"powershell":"bash"/.test(b) },
 ];
+
+/**
+ * A minified binding may be `$hr` or `_$`, and `$` is a REGEXP ANCHOR. An
+ * unescaped name therefore matches nothing and the tool reports "no references"
+ * — the quiet direction again, and it silently dropped a host-scoped cell from
+ * the reset list before this was noticed.
+ */
+const rx = (name: string): string => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const isFunctionNode = (n: ts.Node): boolean =>
   ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n);
@@ -453,6 +487,62 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
     });
   }
 
+  // ---- 4. module-level mutable state, and its ACTUAL scope ----------------
+  // The design pass lists this as "the failure-notice singleton, the shutdown
+  // flag, six host-scoped lazy singletons and a plugin-usage map … none of it
+  // per-session, so a replay that does not reset it leaks between scenarios."
+  // Two thirds of that survives measurement and one third does not, and the
+  // part that does not is the part a harness would have written code for.
+  const moduleState: StateCell[] = [];
+  // Scoped to the cells the BELT actually reaches. The chunk carries scores of
+  // keyed-lazy cells belonging to neighbouring modules; a reset list that
+  // included them would be a list of somebody else's obligations.
+  const referenced = new Set<string>();
+  for (const b of belt) for (const f of b.free) referenced.add(f);
+  const cellRe = /var ([\w$]+)=new ([\w$]+)\(\(\)=>/g;
+  for (const m of text.matchAll(cellRe)) {
+    const name = m[1];
+    if (!referenced.has(name)) continue;
+    const at = topLevel.get(name);
+    if (at === undefined) continue;
+    // A lazy cell is one whose binding is READ through a keyed accessor. The
+    // key expression is the scope, and it is read off the call rather than
+    // assumed: `.of(G().host)` is host-scoped, `.of(e.session.host)` likewise,
+    // and a cell with no `.of(` at all is not one of these.
+    const uses = [...text.matchAll(new RegExp(`${rx(name)}\\.of\\(([^)]*\\)?[^)]*)\\)`, "g"))].map((u) => u[1]);
+    if (uses.length === 0) continue;
+    const keyedBy = [...new Set(uses)].sort().join(" | ");
+    moduleState.push({
+      name,
+      chunk: layerChunk,
+      offset: m.index,
+      kind: /host/i.test(keyedBy) ? "host-scoped-lazy" : "keyed-lazy",
+      declaration: text.slice(m.index, m.index + 120),
+      keyedBy,
+      mutators: [...new Set([".add(", ".set(", ".delete(", ".clear("].filter((op) => text.includes(`${name}.of(`) && text.includes(op)))],
+      resetBy: null,
+    });
+  }
+  // The chunk this layer imports its shutdown predicate from is a module whose
+  // WHOLE content is one mutable flag, one never-settling promise and three
+  // functions. It is the one genuinely process-global cell here, it has a
+  // setter and NO clearer, and it is why the non-settling grading mode exists.
+  for (const { file, text: other } of bundle()) {
+    if (!/class [\w$]+\{committed=!1\}/.test(other)) continue;
+    const setter = other.match(/function ([\w$]+)\(\)\{[\w$]+\.committed=!0\}/);
+    const reader = other.match(/function ([\w$]+)\(\)\{return [\w$]+\.committed\}/);
+    moduleState.push({
+      name: reader?.[1] ?? "<committed-flag>",
+      chunk: file,
+      offset: other.indexOf("class"),
+      kind: "process-global",
+      declaration: other.slice(other.indexOf("class"), other.indexOf("export{")).trim(),
+      keyedBy: null,
+      mutators: setter ? [`${setter[1]}()`] : [],
+      resetBy: null,
+    });
+  }
+
   const sum = (v: Verdict) => belt.filter((b) => b.verdict === v).reduce((n, b) => n + b.bytes, 0);
   return {
     engineVersion: version,
@@ -477,6 +567,7 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
       reachedWithNoLiteral: belt.filter((b) => b.anchor === null).length,
     },
     belt,
+    moduleState,
   };
 }
 
@@ -501,9 +592,9 @@ const bundle = (): { file: string; text: string }[] => {
  * this campaign, in opposite directions, on the same symbol.
  */
 function countCallSites(chunkText: string, name: string): number {
-  const re = new RegExp(`(^|[^\\w$.])${name}\\s*\\(`, "g");
+  const re = new RegExp(`(^|[^\\w$.])${rx(name)}\\s*\\(`, "g");
   const all = [...chunkText.matchAll(re)].length;
-  const declared = new RegExp(`(^|[^\\w$.])function\\*?\\s*${name}\\s*\\(`, "g");
+  const declared = new RegExp(`(^|[^\\w$.])function\\*?\\s*${rx(name)}\\s*\\(`, "g");
   return all - [...chunkText.matchAll(declared)].length;
 }
 
@@ -540,6 +631,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     `  reached ${fx.counts.reached} in-chunk functions (+${fx.counts.boundary} cross-chunk boundaries): ` +
       `${fx.counts.pure} pure (${fx.counts.pureBytes} B), ${fx.counts.pureWithInjection} pure-with-injection ` +
       `(${fx.counts.pureWithInjectionBytes} B), ${fx.counts.effectful} effectful`,
+  );
+  console.log(
+    `  module state: ${fx.moduleState.length} cell(s) — ` +
+      `${fx.moduleState.filter((c) => c.kind === "process-global").length} process-global with no clearer, ` +
+      `${fx.moduleState.filter((c) => c.kind.endsWith("lazy")).length} keyed-lazy`,
   );
   console.log(
     `  anchorability: ${fx.counts.reachedWithUniqueAnchor} of ${fx.counts.reached} carry a literal occurring in exactly ONE bundle file ` +
