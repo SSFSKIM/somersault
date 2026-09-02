@@ -14,10 +14,13 @@
 //                          the host with the guard's own sentence.
 //   the mode is ALREADY the requested one
 //                       -> `ok`, with the context returned UNCHANGED. The
-//                          transition is never called, so none of its eight side
-//                          effects run. A caller that skipped this test would
-//                          fire plan-mode exit flags and auto-mode restores on a
-//                          no-op change.
+//                          transition is never called. (The side effects are
+//                          DOUBLY guarded: the transition itself opens with the
+//                          same-mode test and returns the context untouched, so
+//                          skipping this short circuit would change only object
+//                          identity and the spread — the C10 boundary round
+//                          corrected an earlier counterfactual here that claimed
+//                          the flags would fire.)
 //   otherwise           -> transition, then STAMP the mode on top of whatever
 //                          the transition returned. The stamp is not redundant:
 //                          the transition's plan-mode arm returns a rewritten

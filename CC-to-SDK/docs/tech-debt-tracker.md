@@ -496,3 +496,8 @@ not fixed inside it.
    calls, so the cassette went from 1 exchange to 23, and every pin bump re-records it. That is the
    honest price of grading a subtype the SDK lane cannot see, and it is worth paying; what is missing
    is a line in `src/pin.ts`'s bump recipe warning that this one suite's re-record is no longer free.
+   Related (C10 boundary round): `m2-raw.jsonl` is the only cassette embedding MACHINE-ABSOLUTE
+   paths (the sandbox path and the harness config-dir memory path, 4 hits; `m1-plain` has zero),
+   because `get_context_usage`'s section walk prints them. A re-record or replay on another machine
+   shifts those graded bytes — fold a path scrub or a same-machine note into the same bump-recipe
+   line when it is written.

@@ -1255,6 +1255,33 @@ Pending — written at finish.
     plus the satellite chunks' other exports, and three of the four chunks still carry 15/17/4
     exports of unrelated behaviour. Four typed-port edges recorded: system-prompt policy (C6),
     subagent steer (C15), the session-model read (C16) and the WebFetch cache TTL.
+- 2026-09-02 (C10 boundary round — **CONVERGED**, W7's review loop closed in one
+  round): a fresh-context review over the eight W7 commits found zero
+  load-bearing defects. All five splice bodies extracted through the build's own
+  machinery and compared line-by-line (sizes and port counts exact; km's
+  `default: break` a documented oracle-proven equivalent); the
+  dispatch-location correction verified in the bundle (the 52-arm ladder lives
+  in `ky`, re-exported as `_runHeadlessStreamingForTesting`, whose only caller
+  is `runHeadless` — the production loop despite the name); the fixture
+  re-derived (52 arms / 54 subtypes / 37 sendable, hand-recounted); the probe
+  re-run row-for-row (38 FIRED / 0 DEAD / 16 OPEN, controls passing); the
+  re-recorded raw cassette confirmed clean of operator state with the sandbox
+  seed traced to C6's; the five retired W6 exclusions attributed cleanly to the
+  driver's mode change; red-direction demonstrated live on um's short circuit
+  (24 violations) and Ey's port order (8 violations, visible only to the port
+  trace); the gate reproduced at exactly 99 summary phases; and the attestation
+  +182 delta decomposed exactly into the five modules' rows. Seven findings,
+  all documentation-grade, closed in this round's commit: a false counterfactual
+  in the mode-setter reference (upstream's transition is itself same-mode
+  guarded, so the short circuit's side effects are DOUBLY guarded), an
+  off-by-one in the manifest's port prose, a driver grades-string claiming the
+  short circuit a real transition actually exercises, the "async generator"
+  phrasing corrected to the async-iterable-queue reality, and the raw cassette's
+  machine-absolute paths folded into the pin-bump debt entry. **One round to
+  convergence** — the first wave in the campaign to survive review without a fix
+  wave; the C8/C9 doctrine (artifact-derived enumeration, created conditions,
+  population-scoped verdicts) was written into this wave's brief from the start,
+  which is the intended compounding.
 - 2026-09-02 (C10 / W7 — the control protocol): the wave owns the REQUEST leg of
   the four control subtypes that have a named handler, graded by a sixth parity
   oracle (`strangle/control-parity.test.ts`, 1,536 comparisons with 21 controls)

@@ -4053,7 +4053,7 @@ export const SPLICES: Splice[] = [
     // an anchor in dark code is fine, an EXCISION with no covering scenario is
     // not, and this one's covering scenarios reach the other half.
     //
-    // THIRTY PORTS AND NO OWNED HELPER, which is unusual and is the row's honest
+    // THIRTY-ONE PORTS AND NO OWNED HELPER, which is unusual and is the row's honest
     // price. This handler's job is effects: it mutates the launch options,
     // registers hook callbacks, rewrites app state and enqueues frames. There is
     // nothing pure in its closure to own.

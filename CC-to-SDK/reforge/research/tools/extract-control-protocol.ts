@@ -41,7 +41,9 @@
 //
 // A NOTE ON THE ENCLOSING FUNCTION, because the scout got it wrong and the wrong
 // version is the intuitive one. The chain does not live in `runHeadless`. It
-// lives in the async generator `runHeadless` drives (`for await (… of ky(…))`),
+// lives in the async-iterable `runHeadless` drives (`for await (… of ky(…))` —
+// `ky` returns an async-iterable queue fed by an internal async IIFE, not a
+// generator declaration),
 // which the bundle re-exports as `_runHeadlessStreamingForTesting`. That name
 // says "test entry point" and it is not one: it is the production streaming
 // loop, exported so tests can drive it. The fixture records both bindings so the
@@ -380,9 +382,9 @@ export interface ControlProtocolFixture {
      * Every function the ladder is nested in, innermost first, each with the
      * names its chunk re-exports it under. Recorded in full because the obvious
      * answer is wrong: the dispatcher is not in `runHeadless`, it is in the
-     * anonymous frame handler inside the async generator `runHeadless` iterates
-     * — and that generator is re-exported under a name ending in `ForTesting`
-     * while being the production streaming loop.
+     * anonymous frame handler inside the async-iterable queue `runHeadless`
+     * iterates — and that function is re-exported under a name ending in
+     * `ForTesting` while being the production streaming loop.
      */
     enclosing: { binding: string | null; kind: string; bytes: number; exportedAs: string[] }[];
     offset: number;

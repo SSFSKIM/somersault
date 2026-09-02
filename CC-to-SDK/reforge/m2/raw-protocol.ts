@@ -122,7 +122,10 @@ const ALL_CONTROL_CASES: ControlCase[] = [
     name: "set_permission_mode-valid",
     request: { subtype: "set_permission_mode", mode: "default" },
     expect: "success",
-    grades: "the mode setter: guard, unchanged-mode short circuit, transition",
+    // The session starts in bypassPermissions, so mode->default is a REAL
+    // transition — the unchanged-mode short circuit is graded by the oracle,
+    // not by this case (C10 boundary round correction).
+    grades: "the mode setter: guard, real transition, parsed-mode stamp",
   },
   {
     name: "set_model-invalid",
