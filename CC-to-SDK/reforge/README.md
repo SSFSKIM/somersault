@@ -3687,3 +3687,35 @@ One hazard the same look turned up, and it is the reason this wave's call-site c
 the defining chunk: **`qvt` in `chunk-g461tywa.js` is a completely unrelated three-element string
 array** (`["systemPrompt","appendSystemPrompt","appendSubagentSystemPrompt"]`). A bundle-wide count of
 a minified local name is a collision count, not a call-site count.
+
+### One harness defect, found by the gate and fixed at the source
+
+The wave's first full gate run came back **FAIL on exactly one row of 110** — the corpus, inside the
+equivalence phase — and **the log named no scenario**, because that phase filtered its output to the
+last five verdict lines, which on a green run are the five suite totals and on a red one are the
+least useful five lines in the file. Re-running the same phase twice on the same faithful build the
+gate itself produced was green both times: corpus 59/59 standalone, then the whole acceptance surface
+with exit 0.
+
+The difference between the failing run and the green ones is that the failing one **straddled
+midnight**. Two surfaces in the pinned bundle build the same sentence — a context section and a
+`date_change` attachment that becomes a conversation MESSAGE — reading *"The date has changed. Today's
+date is now `${d}`. No need to announce the new date — the user's own clock shows it."* The
+harness's date scrub is `/Today's date is \d{4}-\d{2}-\d{2}/` and **does not match it**, because
+`now` intervenes. This is the month-rot family the harness has been bitten by twice already, one
+calendar unit down again.
+
+**And a substitution would not have fixed it**, which is the part worth carrying. Scrubbing the date
+equalizes two bodies that both carry the notice. The corpus spawns engine A and engine B
+*sequentially*, so a run starting at 23:59 has A cross midnight mid-session and emit the notice while
+B, started after the rollover, sees no change and emits nothing — the sentence is **present in one
+body and absent from the other**, which no substitution can equalize. So the notice is removed
+outright, with what that costs written down: the harness can no longer see "one engine noticed
+midnight and the other did not", which is the wall clock landing between two process spawns rather
+than a property of the graph, and belongs with the run-scoped ids the differ already maps out.
+
+Two fixes, both at the source rather than in this wave's own files: four regression tests on the new
+rule per §3.4 (canonicalization 90 → 94 checks), and **the equivalence phase now names every failing
+verdict and the reason lines that explain it**. The second is the same defect class C9 fixed one
+block up, where any non-zero exit was read as RED without the runner's own verdict — a phase that can
+fail has to say what failed, or its failure is a rumour.

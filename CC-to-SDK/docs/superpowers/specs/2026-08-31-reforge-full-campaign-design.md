@@ -1441,7 +1441,7 @@ Pending — written at finish.
   not exist yet, and the reason that was the right cut is now measured rather than argued. Gate
   **GATEPHASES**; hook oracle **721 → 1,499 comparisons and 121 → 195 controls**, plus a third
   counted class (**1,005 property statements over 11 paired cases**); corpus unchanged at **59**;
-  manifest **74 → 75 splices**. Eight items change what the rest of the family inherits.
+  manifest **74 → 75 splices**. Nine items change what the rest of the family inherits.
   - **THE INTERLEAVED EVENT LOG LANDED, AND ITS RED DIRECTION IS MEASURED.** `Trace` is gone;
     `EventLog` records one ordered stream and the comparison is that stream. Swapping ONE adjacent
     pair of differently-ported events in each owned log reddens **204 of the 226** log comparisons
@@ -1515,6 +1515,20 @@ Pending — written at finish.
     inverted twin, and the surface that grades it instead — enforced in both directions and driven on
     synthetic rows in `strangle/mechanism.test.ts`, because a guard only ever fed valid input proves
     nothing about what it excludes.
+  - **AND THE GATE FOUND A HARNESS DEFECT NOBODY HAD SEEN, because the run straddled midnight.**
+    The first full gate came back FAIL on exactly ONE row of 110 — the corpus, inside equivalence —
+    and named no scenario; the same phase on the same faithful build was green twice afterwards,
+    both times wholly on one side of midnight. Upstream builds a rollover notice ("The date has
+    changed. Today's date is now `${d}`. …") on two surfaces, one of them a conversation MESSAGE, and
+    the harness's date scrub does not match it because `now` intervenes. **A substitution would not
+    have fixed it either**: the corpus spawns its two engines SEQUENTIALLY, so a run starting at
+    23:59 has one cross midnight mid-session and emit the notice while the other, started after the
+    rollover, emits nothing — present in one body, absent from the other. The notice is now removed
+    outright, with the cost written down, and four regression tests hold the rule's both halves.
+    **The second fix is the one that generalises:** the equivalence phase filtered its output to the
+    last five verdict lines, so a red corpus was undiagnosable from the gate log — the same defect
+    class C9 fixed one block up, where any non-zero exit was read as RED without the runner's own
+    verdict. **A phase that can fail has to say what failed, or its failure is a rumour.**
   - **`Fq` IS NOT PURE, AND ITS THROWS ARE THREE.** The cut scoped it as "pure given an injected
     clock", which is wrong in both halves: its five free variables are a terminal-sequence sanitiser,
     a debug logger, a traced `JSON.stringify`, a telemetry probe and a message minter — all ordinary
