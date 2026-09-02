@@ -69,6 +69,11 @@ import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/ref
 import * as cwdChangedHooks from "../../strangle/modules/cwd-changed-hooks/reference.js";
 import * as hookJsonContract from "../../strangle/modules/hook-json-contract/reference.js";
 import * as hookStderrTail from "../../strangle/modules/hook-stderr-tail/reference.js";
+// C10.6's fix round — three more of the pure belt, taken to prove the corrected
+// anchorability measurement rather than to add bytes.
+import * as hookOutputSync from "../../strangle/modules/hook-output-sync/reference.js";
+import * as hookOutputAsync from "../../strangle/modules/hook-output-async/reference.js";
+import * as hookInvocationText from "../../strangle/modules/hook-invocation-text/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 // W6 / C9 — the permission subsystem's decision chain, mode axis and headless
 // broker seam. Fifteen modules; the subsystem does NOT close on them (the
@@ -228,6 +233,15 @@ const OWNED: [string, string, unknown][] = [
   // …and the one pure helper BOTH executors share, which is what "two consumers
   // of shared pure helpers" (design §2) means at its smallest scale.
   ["hook-stderr-tail", "subsystem/hook-dispatch", hookStderrTail.hookStderrTail],
+  // …and the fix round's three. The sync/async pair is upstream's own
+  // discriminator between a hook RESULT and an async ACKNOWLEDGEMENT, declared
+  // as two functions rather than one and its negation because they guard
+  // different things; the invocation text is what the streaming executor
+  // actually runs for a command hook, and what three other consumers use to name
+  // a hook in an attachment.
+  ["hook-output-sync", "subsystem/hook-dispatch", hookOutputSync.hookOutputIsSync],
+  ["hook-output-async", "subsystem/hook-dispatch", hookOutputAsync.hookOutputIsAsync],
+  ["hook-invocation-text", "subsystem/hook-dispatch", hookInvocationText.hookInvocationText],
   // W6 / C9. Two of these belong to the CONTROL PROTOCOL rather than to
   // permissions — the success and error response envelopes — and are registered
   // under that subsystem: the permission wave took them because the
