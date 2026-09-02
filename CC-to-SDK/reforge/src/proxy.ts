@@ -86,6 +86,17 @@ export interface ProxyHandle {
 export const strictReplay = (engineB: string): boolean => engineB !== "engine-extracted";
 
 /**
+ * The stable marker in the positional-serve diagnostic below.
+ *
+ * Exported because `m2/relay.ts` builds the gate's REASON filter from it rather
+ * than from a copy of the prose. This line is the commonest cause of a red
+ * equivalence phase and it used to reach no log: it is not a verdict (one space
+ * after `FAIL`, not two) and the gate's reason filter looked for words it does
+ * not contain, so the phase failed while naming nothing.
+ */
+export const POSITIONAL_SERVE_MARKER = "served POSITIONALLY";
+
+/**
  * Report a fallback count and return whether the run may still pass.
  * Callers must fold the result into their verdict — printing alone is not a gate.
  */
@@ -93,7 +104,7 @@ export function fallbackVerdict(engineB: string, side: string, count: number): b
   if (count === 0) return true;
   const strict = strictReplay(engineB);
   console.log(
-    `    ${strict ? "FAIL" : "WARN"} ${side}: ${count} request(s) served POSITIONALLY (body hash missed` +
+    `    ${strict ? "FAIL" : "WARN"} ${side}: ${count} request(s) ${POSITIONAL_SERVE_MARKER} (body hash missed` +
       (strict ? ` — FATAL for engineB=${engineB}: a drifted request may have been served another request's response)` : " — cassette may be stale)"),
   );
   return !strict;

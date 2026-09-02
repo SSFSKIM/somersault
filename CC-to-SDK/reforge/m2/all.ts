@@ -7,6 +7,7 @@
 // Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/all.ts [--engineB <name>]
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
+import { relayOutput } from "./relay.js";
 // Derived, not written down: the label used to carry a hardcoded scenario count,
 // which was already stale the first time the corpus grew (22 -> 24 at C4). A
 // number in a gate transcript that nobody recomputes is a number nobody can
@@ -39,14 +40,33 @@ const results: { name: string; pass: boolean; detail: string }[] = [];
 for (const [name, argv] of SUITES) {
   process.stdout.write(`\n━━━ ${name} ━━━\n`);
   const r = spawnSync("npx", ["tsx", ...argv], { cwd: REFORGE_ROOT, encoding: "utf8" });
-  const out = (r.stdout ?? "").split("\n");
-  const tail = out.filter((l) => /PASS|FAIL|ALL|identical|difference|LEAK/.test(l)).slice(-6);
-  for (const l of tail) console.log(`  ${l.trim()}`);
-  results.push({ name, pass: r.status === 0, detail: tail.at(-1)?.trim() ?? "" });
+  // EVERY VERDICT, NOT A TAIL. This used to relay the last six matching lines,
+  // which is the end of a 59-scenario verdict block: a corpus scenario that
+  // failed anywhere but in the last five was dropped here, and the gate — whose
+  // only view of a suite is what this loop prints — could not name it either.
+  // The window was invisible on a green run and defeating on a red one, which
+  // is the direction that matters.
+  const { verdicts, fails, reasons, summary } = relayOutput(r.stdout ?? "");
+  for (const l of verdicts) console.log(`  ${l.trim()}`);
+  // Two of the five suites state their result as prose rather than as a verdict
+  // block, so a verdict-only relay would print nothing for them on a green run.
+  for (const l of summary) console.log(`  ${l.trim()}`);
+  // …and the lines that EXPLAIN a failure, which include the replay proxy's
+  // positional-serve diagnostic — the commonest cause of a red run, and one
+  // that is not itself a verdict.
+  if (r.status !== 0) for (const l of reasons) console.log(`  ${l.trim()}`);
+  results.push({
+    name,
+    pass: r.status === 0,
+    detail: fails.length > 0 ? `${fails.length} failing: ${fails.map((f) => f.trim().replace(/^FAIL\s+/, "")).join(", ")}` : (summary.at(-1)?.trim() ?? ""),
+  });
 }
 
 console.log(`\n=== M2b full acceptance (B = ${engineB}) ===`);
-for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.name}`);
+// A failing suite carries WHAT failed onto its own summary line, so the five
+// lines a caller reads last are self-contained rather than a pointer into the
+// transcript above them.
+for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.name}${r.pass ? "" : ` — ${r.detail || "no verdict printed"}`}`);
 const ok = results.every((r) => r.pass);
 console.log(ok ? "\nALL SUITES PASS" : "\nFAILURES");
 process.exitCode = ok ? 0 : 1;
