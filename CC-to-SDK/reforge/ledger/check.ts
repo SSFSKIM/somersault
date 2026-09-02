@@ -73,13 +73,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { BUNDLE_MODULES, BUNFS, ENGINE_VERSION } from "../src/pin.js";
 // Contract X7's registration site, imported for its side effects so
 // `ownedSubsystems()` reports what `engines/engine-ts --owned` would.
 import "../engine-ts/modules/index.js";
 import { ownedSubsystems } from "../engine-ts/registry.js";
-import { CANONICAL_ROWS, EXCLUDED_ROWS, LEDGER_STATES, ROW_KINDS, WAVES } from "./rows.js";
+import { CANONICAL_ROWS, EXCLUDED_ROWS, LEDGER_STATES, ROW_KINDS, WAVES, type ExcludedRow } from "./rows.js";
 
 const REFORGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const LEDGER_PATH = join(REFORGE_ROOT, "ledger.json");
@@ -189,6 +189,10 @@ export interface CheckOptions {
   footprintsPath?: string | null;
   /** subsystem row ids engine-ts registers a module for; defaults to the live registry */
   ownedSubsystems?: readonly string[];
+  /** §1.2's exit door; defaults to the committed EXCLUDED_ROWS. A seam for controls. */
+  excludedRows?: readonly ExcludedRow[];
+  /** the pinned gate fixture a `gateDead` exclusion is held against; `null` skips it */
+  gateFixturePath?: string | null;
 }
 
 export interface CheckResult {
@@ -341,7 +345,8 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
 
   const owned = new Set(opts.ownedSubsystems ?? ownedSubsystems());
   const canonical = new Map(CANONICAL_ROWS.map((r) => [r.id, r]));
-  const excluded = new Map(EXCLUDED_ROWS.map((r) => [r.id, r]));
+  const excludedRows = opts.excludedRows ?? EXCLUDED_ROWS;
+  const excluded = new Map(excludedRows.map((r) => [r.id, r]));
   const seen = new Set<string>();
   const ids = new Set<string>();
   for (const raw of rows) if (isRecord(raw) && typeof raw.id === "string") ids.add(raw.id);
@@ -527,6 +532,45 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
   });
 
   for (const r of CANONICAL_ROWS) if (!seen.has(r.id)) errors.push(`missing row: ${r.id} (${r.kind}, ${r.wave})`);
+
+  // §1.2's PIN-CONDITIONAL exclusions, held against the pin.
+  //
+  // Every other exclusion in §1.2's table is structural: no pin bump makes the
+  // TUI traverse the headless seam. A GATE-DEAD row is the one kind whose reason
+  // has an expiry date — it is out because a compiled-in default hides it, and
+  // upstream can flip that default in any release. Left as prose, "re-enters the
+  // canonical rows on a pin bump" is a promise nobody is scheduled to keep; read
+  // off the pinned gate fixture, it is a red ledger on the bump that breaks it.
+  const gateFixturePath = opts.gateFixturePath === undefined ? join(REFORGE_ROOT, "research", "fixtures", `gate-defaults-${ENGINE_VERSION}.json`) : opts.gateFixturePath;
+  for (const ex of excludedRows) {
+    if (ex.gateDead === undefined || gateFixturePath === null) continue;
+    const path = gateFixturePath;
+    let fx: { gates?: Record<string, { default?: unknown }>; perGateEnvOverrides?: { gate?: unknown }[] };
+    try {
+      fx = JSON.parse(readFileSync(path, "utf8")) as typeof fx;
+    } catch (e) {
+      errors.push(`${ex.id}: excluded as gate-dead on ${ex.gateDead.gate}, but the pinned gate fixture is unreadable (${(e as Error).message})`);
+      continue;
+    }
+    const gate = fx.gates?.[ex.gateDead.gate];
+    if (gate === undefined) {
+      errors.push(
+        `${ex.id}: excluded as gate-dead on '${ex.gateDead.gate}', which the pinned ${basename(path)} does not record — the exclusion cites a gate the fixture cannot confirm`,
+      );
+      continue;
+    }
+    if (gate.default !== ex.gateDead.default) {
+      errors.push(
+        `${ex.id}: excluded as gate-dead on '${ex.gateDead.gate}' defaulting ${ex.gateDead.default}, but the pin now compiles in ${JSON.stringify(gate.default)} — ` +
+          `re-adjudicate the row (§1.2): back into CANONICAL_ROWS if it is reachable now, or here again with fresh evidence`,
+      );
+    }
+    if ((fx.perGateEnvOverrides ?? []).some((o) => o.gate === ex.gateDead!.gate)) {
+      errors.push(
+        `${ex.id}: excluded as gate-dead WITH NO LEVER, but the pin now gives '${ex.gateDead.gate}' an env override — flip-liveness can reach it, so the row has a lever and the exclusion does not hold`,
+      );
+    }
+  }
 
   // Drift the other way: a splice that landed without a ledger row recording it.
   for (const s of splices ?? []) {

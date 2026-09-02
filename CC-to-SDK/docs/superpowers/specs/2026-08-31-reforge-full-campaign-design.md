@@ -85,10 +85,15 @@ progress metric (§5).
 | Server boundary: WebSearch execution, `count_tokens`, OAuth endpoints, OTLP ingest, update manifests | — | server-side; the engine only formats/calls them. Client-side *formatting/policy* over these stays in scope (e.g. WebSearch result formatting, retry policy over 529s) |
 | Updater, install/auth UX, enterprise host integrations, IDE-proprietary integrations | — | outside the headless client contract this campaign targets |
 | Glob/Grep beyond the existing splices | — | deprecated surface upstream; no further investment |
+| **Gate-dead with no lever at this pin** (added 2026-09-03, C11a's boundary review; `tool/Monitor` behind `tengu_amber_sentinel`) | — | the row's WHOLE surface is unreachable at the pinned engine: the gate's compiled-in default hides it and no env override in the gate fixture reaches it. **PIN-CONDITIONAL — it re-enters the canonical rows on a pin bump that flips the default**, and the condition is declared per row (`ExcludedRow.gateDead`) and held against `research/fixtures/gate-defaults-<pin>.json` by `ledger/check.ts`, so the bump reddens the ledger instead of relying on someone remembering |
 
 **Feature gates are neither spliced nor excluded** — see §3.3 (the resolver is GrowthBook and
 reforge pins the disabled state explicitly, snapshots the call-site defaults, and locks the
-gate-relevant environment).
+gate-relevant environment). That rule is about gated CODE INSIDE an owned row, and it does not
+answer the different question the row above asks: a row whose ENTIRE surface a gate makes
+unreachable has nothing to splice and cannot be closed, so leaving it in the ledger would record
+permanently unclosable work as outstanding. Hence the one exclusion kind that expires: every other
+row in this table is out structurally and forever, this one is out only while the pin says so.
 
 ### 1.3 The headless tool catalog is the moat's reachability proof
 

@@ -147,6 +147,24 @@ export interface ExcludedRow {
   reason: string;
   /** What settled it — a probe, a scenario, a research doc. §1.3 demands evidence. */
   evidence: string;
+  /**
+   * §1.2's one PIN-CONDITIONAL exclusion kind: gate-dead with no lever AT THIS
+   * PIN. Every other exclusion in the table is structural and permanent (the TUI
+   * never traverses the seam; a vendored library is imported at assembly; the
+   * search runs server-side) — this one expires the moment upstream flips a
+   * compiled-in default, and a row that quietly stays out after that is a row
+   * the campaign lost rather than excluded.
+   *
+   * So the condition is declared rather than described, and `ledger/check.ts`
+   * holds it against the pinned `gate-defaults-<pin>.json`: the gate must still
+   * carry this default and must still have no env override. A pin bump that
+   * changes either reddens the ledger, and the row is re-adjudicated — back into
+   * CANONICAL_ROWS if it is now reachable, or here again with fresh evidence.
+   *
+   * `default` is the compiled-in value that makes the row unreachable, which is
+   * not always `false`: a kill switch defaulting TRUE hides the disabled arm.
+   */
+  gateDead?: { gate: string; default: boolean };
 }
 
 /**
@@ -162,7 +180,9 @@ export const EXCLUDED_ROWS: ExcludedRow[] = [
   // Both were C11 rows by the default assignment rule above, and W8's scout
   // measured that neither is moat work. They leave in opposite directions and
   // the difference is the point: one has a client-side surface other rows
-  // already own, the other has no client-side surface at all.
+  // already own, the other has no client-side surface at all. They also leave
+  // under different KINDS — WebSearch's exclusion is structural and permanent,
+  // Monitor's is PIN-CONDITIONAL and checked against the pin (see `gateDead`).
   {
     id: "tool/WebSearch",
     kind: "tool",
@@ -178,8 +198,18 @@ export const EXCLUDED_ROWS: ExcludedRow[] = [
   {
     id: "tool/Monitor",
     kind: "tool",
+    // The kind this row needed §1.2 to have. `Feature gates are neither spliced
+    // nor excluded` (§1.2) is about gated CODE INSIDE an owned row — reforge
+    // pins the resolver rather than carving branches out of a splice. A row
+    // whose ENTIRE surface is unreachable at the pin is a different question,
+    // and answering it with §3.3 would have left the row in the ledger as
+    // permanently unclosable work. It leaves through this door instead, with
+    // the pin condition attached and checked by `ledger/check.ts`.
+    gateDead: { gate: "tengu_amber_sentinel", default: false },
     reason:
-      "GATE-DEAD AT THIS PIN, WITH NO LEVER — and it is here because 'the moat includes persistent notifications' is a standing product claim that deserved a " +
+      "GATE-DEAD AT THIS PIN, WITH NO LEVER, and it RE-ENTERS the canonical rows on a pin bump that flips the default — §1.2's one pin-conditional exclusion " +
+      "kind, declared in `gateDead` above so `ledger/check.ts` can hold it against the pinned gate fixture rather than trusting this sentence. It is here because " +
+      "'the moat includes persistent notifications' is a standing product claim that deserved a " +
       "measured answer rather than an absence. `MonitorTool.isEnabled(){return RI()&&as()}` and `RI(){return I(\"tengu_amber_sentinel\",!1)}`; the compiled-in " +
       "default in research/fixtures/gate-defaults-2.1.251.json is false, §3.3 pins every gate to its compiled-in default, and `tengu_amber_sentinel` is not among " +
       "that fixture's per-gate env overrides — so flip-liveness cannot reach it either. It is absent from all 82 recorded cassettes, and the GUARDS are what rule " +

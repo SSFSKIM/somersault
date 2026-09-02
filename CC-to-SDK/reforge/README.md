@@ -4071,6 +4071,13 @@ one turn. Corpus unchanged at 59.
   directions, and the difference is the point: WebSearch has a client-side residue other rows already
   own and no execution to own, Monitor has no client-side surface at all. Monitor's exclusion is the
   measured answer to a standing product claim — "the moat includes persistent notifications".
+  *Reviewed 2026-09-03:* they also leave under different KINDS, and §1.2 did not have the second one.
+  WebSearch's exclusion is structural and permanent; Monitor's is **gate-dead with no lever at this
+  pin**, which expires the moment upstream flips `tengu_amber_sentinel`. §1.2 gains that kind
+  explicitly, and the row declares its condition (`ExcludedRow.gateDead`) rather than describing it,
+  so `ledger/check.ts` holds it against `gate-defaults-<pin>.json` every run: a pin bump that flips
+  the default, or that gives the gate an env override, reddens the ledger and forces the
+  re-adjudication instead of leaving a promise in prose. Three controls, one per way it can go red.
 * **`subsystem/tool-result-validators` moves C4 → C13**, per the W10 scout: its largest members are
   the Bash tool's and they share the safety chain with the executor.
 

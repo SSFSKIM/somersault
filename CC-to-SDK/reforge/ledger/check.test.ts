@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkLedger, FOOTPRINTS_PATH, LEDGER_PATH, type CheckOptions, type Footprint, type FootprintCapture, type Ledger, type LedgerRow } from "./check.js";
-import { CANONICAL_ROWS } from "./rows.js";
+import { CANONICAL_ROWS, type ExcludedRow } from "./rows.js";
 // The live X7 registry, imported for its side effects — the same view
 // ledger/check.ts takes when no `ownedSubsystems` override is given.
 import "../engine-ts/modules/index.js";
@@ -384,6 +384,57 @@ warnsAbout("an emission built for another pin is skipped, not trusted", /built f
   return p;
 })() });
 check("the checker reads the real build/footprints.json by default", FOOTPRINTS_PATH.endsWith("/build/footprints.json"));
+
+// --- §1.2's PIN-CONDITIONAL exclusion, held against the pin -----------------
+//
+// `tool/Monitor` is out of the ledger because a compiled-in default hides it,
+// which is the one exclusion kind with an expiry date: upstream can flip the
+// default in any release, and a row that stays out after that has been lost
+// rather than excluded. So the condition is declared on the row and read off
+// the pinned gate fixture — and, like every other rule here, it is exercised
+// from both sides.
+// Derived from the committed fixture rather than written down, so the control
+// cannot quietly stop testing what it names when a pin bump moves the overrides.
+const GATE_FIXTURE = JSON.parse(readFileSync(join(dirname(LEDGER_PATH), "research", "fixtures", `gate-defaults-${ENGINE_VERSION}.json`), "utf8")) as {
+  gates: Record<string, { default: unknown }>;
+  perGateEnvOverrides: { gate: string }[];
+};
+const OVERRIDDEN = GATE_FIXTURE.perGateEnvOverrides.find((o) => GATE_FIXTURE.gates[o.gate] !== undefined);
+if (!OVERRIDDEN) throw new Error("fixture drift: no gate in the pinned fixture has an env override — the lever control cannot be built");
+const OVERRIDDEN_GATE = OVERRIDDEN.gate;
+const OVERRIDDEN_DEFAULT = GATE_FIXTURE.gates[OVERRIDDEN_GATE].default as boolean;
+
+const excludedWith = (gateDead: ExcludedRow["gateDead"]): ExcludedRow[] => [
+  { id: "tool/Monitor", kind: "tool", reason: "control", evidence: "control", gateDead },
+];
+check(
+  "the committed gate-dead exclusion holds against the pinned gate fixture",
+  checkLedger(real, BASE).errors.every((e) => !/gate-dead/.test(e)),
+  checkLedger(real, BASE).errors.join(" | "),
+);
+rejects(
+  "a gate-dead exclusion whose gate now compiles in the other default is rejected",
+  () => {},
+  /re-adjudicate the row/,
+  { ...BASE, excludedRows: excludedWith({ gate: "tengu_amber_sentinel", default: true }) },
+);
+rejects(
+  "a gate-dead exclusion naming a gate the fixture does not record is rejected",
+  () => {},
+  /does not record/,
+  { ...BASE, excludedRows: excludedWith({ gate: "tengu_gate_that_is_not_in_the_bundle", default: false }) },
+);
+rejects(
+  "a gate-dead exclusion whose gate has an env override is rejected — it has a lever",
+  () => {},
+  /now gives .* an env override/,
+  { ...BASE, excludedRows: excludedWith({ gate: OVERRIDDEN_GATE, default: OVERRIDDEN_DEFAULT }) },
+);
+accepts("`gateFixturePath: null` skips the pin check rather than failing it", () => {}, {
+  ...BASE,
+  excludedRows: excludedWith({ gate: "tengu_gate_that_is_not_in_the_bundle", default: false }),
+  gateFixturePath: null,
+});
 
 // --- vacuity controls: emptiness must never pass ---
 check("empty row set is rejected", checkLedger({ engineVersion: real.engineVersion, rows: [] }).errors.length > 0);
