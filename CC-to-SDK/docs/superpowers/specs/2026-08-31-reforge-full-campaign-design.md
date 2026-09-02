@@ -1006,7 +1006,7 @@ Pending — written at finish.
     being unfalsifiable rather than by being true. The same sweep corrected "all nineteen `Query`
     methods" to the 27 the installed SDK declares.
   - **THE DESIGN DOC'S KNOWN-WRONG SENTENCES, corrected in place rather than annotated**, because it
-    is the brief for three waves that have not been cut yet: `Fq`'s call-site count (five, the fifth
+    is the brief for three waves that had not been dispatched: `Fq`'s call-site count (five, the fifth
     a spread inside `d6n`, whose own single caller keeps "only through `Qxt`" true transitively);
     `Wie`'s count (four, one of them a NON-executor host fingerprint, `DUt`, which gives
     `HookSourcePort` a consumer outside the executors); the dedupe key `AM`, which is not pure and
@@ -1020,7 +1020,12 @@ Pending — written at finish.
     `context_management` and the `env_info` family — each already covered by an existing scenario.
     The per-record table now lives in the README rather than in the fixture, because takeability is
     a two-input judgment (shape from the pin, rendering from the cassette) and the fixture is
-    pin-keyed with a gate phase that fails on any diff.
+    pin-keyed with a gate phase that fails on any diff. Logged in the same round: the `M8t` and
+    `C8t` oracle preludes bind upstream bodies to OWNED constants rather than upstream bytes, which
+    is C7's one tolerated exception — every identifier involved is a `primitive` capture, and the
+    adapter's per-delegation `assertGraphValue` compares it against the graph on every request, so
+    the coverage exists one layer down. A taxonomy choice, not a false green, and now written down
+    as one.
   - **THE EXECUTOR CUT IS MADE** (Deferred section, "The executor cut"): three children — C10.6,
     C10.7, C10.8 — rather than a fold into W8, on the ground that Stage 0 is oracle machinery only
     this subsystem needs.
