@@ -3685,6 +3685,60 @@ export const SPLICES: Splice[] = [
     coverage: ["hooks-file-watch"],
   },
 
+  {
+    // W7.5. FileChanged's twin and the family's other watcher event, unspliceable
+    // until this wave because nothing had ever created its firing condition: W5
+    // left CwdChanged OPEN, correctly, since no phase moved the tracked working
+    // directory. The Bash tool appends a `pwd` write to every command and reads
+    // it back, so one persisting `cd` is the whole condition — measured FIRED,
+    // then recorded as `hooks-cwd-change`.
+    //
+    // Structurally `AUt` is `CUt` with one string and two record keys changed
+    // (114 B against 115 B), so this row is the family template applied
+    // unchanged: same arity, same declaration shape, same three ports, same
+    // "return the helper's promise rather than awaiting it" contract.
+    //
+    // ANCHOR: the event literal is exactly what separates the twins, and
+    // `hook_event_name:"CwdChanged"` occurs once graph-wide — the same 1/1
+    // shape as the FileChanged row above. Do NOT shorten it: bare `CwdChanged`
+    // spans six chunks, and `old_cwd:`/`new_cwd:` each occur again in the
+    // hook-input schema chunk.
+    name: "cwd-changed-hooks",
+    target: "free-function",
+    signature: { params: 4, ancestry: ["SourceFile"] },
+    anchor: 'hook_event_name:"CwdChanged"',
+    fn: "cwdChangedHooks",
+    captures: [
+      {
+        as: "createBaseHookInput",
+        kind: "effectful-port",
+        derive: pick(
+          "cwd-changed-hooks",
+          "createBaseHookInput",
+          new RegExp(`\\{\\.\\.\\.(${ID})\\(${ID},${ID}\\(\\)\\),hook_event_name:"CwdChanged"`),
+        ),
+      },
+      {
+        as: "cwd",
+        kind: "effectful-port",
+        derive: pick(
+          "cwd-changed-hooks",
+          "cwd",
+          new RegExp(`\\{\\.\\.\\.${ID}\\(${ID},(${ID})\\(\\)\\),hook_event_name:"CwdChanged"`),
+        ),
+      },
+      {
+        // `zxt` — the shared watcher-hook helper, the same port the FileChanged
+        // row forwards. Unowned; the ledger edge to the file-watcher subsystem
+        // is now carried by two rows rather than one.
+        as: "executeWatcherHooks",
+        kind: "effectful-port",
+        derive: pick("cwd-changed-hooks", "executeWatcherHooks", new RegExp(`return (${ID})\\(${ID},${ID},${ID}\\)\\}`)),
+      },
+    ],
+    coverage: ["hooks-cwd-change"],
+  },
+
   // ---- the control protocol (subsystem/control-protocol) -------------------
   // W7. The seam is NOT the dispatch ladder. `research/fixtures/
   // control-protocol-<pin>.json` derives it from the bundle: fifty-two `else if`

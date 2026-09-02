@@ -217,6 +217,14 @@ export const ATTESTED: AttestedModule[] = [
       "What grades it is strangle/hooks-parity.test.ts, which runs the pinned upstream body against the owned one with stubbed ports and compares the yielded sequence, the return value, the hook RECORD and the full port trace — including the executor request, which is where one dispatcher differs from another. The oracle also asserts the helper is called POSITIONALLY with three arguments rather than with a request object, " +
       "which is what makes this row's port a third execution path rather than a differently-named executor.",
   },
+  {
+    module: "cwd-changed-hooks",
+    row: "cwd-changed-hooks",
+    scenarios: ["hooks-cwd-change"],
+    noBranchesReason:
+      "the FileChanged twin's shape exactly — one record and one call into the same watcher-hooks helper, straight-line, so the inventory is legitimately empty. " +
+      "Graded by the same oracle over the same four surfaces, with the record's own field ORDER (…, hook_event_name, old_cwd, new_cwd) asserted: `old_cwd` and `new_cwd` are the only two fields that distinguish this dispatcher's byte stream from its twin's, so a comparison that did not see them would pass on a record built for the wrong event.",
+  },
 
   // ---- W6 / C9: the permission subsystem -----------------------------------
   // Measured on the scenarios that MOVE each module's branches rather than on

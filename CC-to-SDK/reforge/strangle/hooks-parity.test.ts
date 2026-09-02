@@ -122,6 +122,8 @@ import "./modules/permission-request-hooks.js";
 import "./modules/permission-denied-hooks.js";
 import "./modules/user-prompt-expansion-hooks.js";
 import "./modules/file-changed-hooks.js";
+// W7.5: FileChanged's twin, spliceable once its firing condition was created.
+import "./modules/cwd-changed-hooks.js";
 
 /** The adapters' registration surface — exactly what the strangled graph calls. */
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => AsyncGenerator<unknown, unknown>> }).__reforge!;
@@ -2106,11 +2108,69 @@ for (const [row, event] of [
   mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
 }
 
+// ---- CwdChanged (upstream `AUt`) — FileChanged's twin ----------------------
+// The two differ in four things: the binding, the event literal and the two
+// record fields. That is exactly why the record's field ORDER is graded here
+// and not just its contents — `old_cwd`/`new_cwd` are the only bytes that
+// distinguish this dispatcher's stdin stream from its twin's, so a comparison
+// blind to them would pass on a record built for the wrong event.
+{
+  const { upstream, forwarded, owned } = prepareAwaited("cwd-changed-hooks", "CwdChanged", 4, "plain");
+  const constants = {};
+  const cases: [string, StubSpec, unknown[]][] = [
+    ["a move into a subdirectory", { registered: true }, [SESSION, "/sandbox", "/sandbox/moved", undefined]],
+    ["a move back out", { registered: true }, [SESSION, "/sandbox/moved", "/sandbox", {}]],
+    // Upstream does not compare the two ends — the notifier upstream of it does
+    // — so a same-directory call still builds a record. Graded because a
+    // reimplementation that "helpfully" short-circuits on equality would be a
+    // different function.
+    ["both ends the same", { registered: true }, [SESSION, "/sandbox", "/sandbox", {}]],
+    ["with every option", { registered: true }, [SESSION, "/a", "/b", { timeoutMs: 1000, storageV5: { store: "v5" }, credentials: { kind: "k" } }]],
+    [
+      "the helper's fold returned untouched",
+      { registered: true, watcherResult: { results: [{ succeeded: true, output: "", command: "h.sh" }], watchPaths: ["/sandbox", "/other"], systemMessages: ["a message"] } },
+      [SESSION, "/sandbox", "/sandbox/moved", {}],
+    ],
+  ];
+  for (const [label, spec, args] of cases) {
+    await compareValue(
+      `cwd-changed-hooks ${label}`,
+      spec,
+      () => upstream(...args),
+      (p) => owned(...(args as unknown[]).slice(0, 4), ...forwarded(p, constants)),
+    );
+  }
+  const { trace } = await compareValue(
+    "cwd-changed-hooks request control",
+    cases[3][1],
+    () => upstream(...cases[3][2]),
+    (p) => owned(...(cases[3][2] as unknown[]).slice(0, 4), ...forwarded(p, constants)),
+  );
+  const call = trace.watcher[0] as [unknown, Record<string, unknown>, unknown];
+  eq("cwd-changed-hooks field order", Object.keys(call[1]), [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "prompt_id",
+    "permission_mode",
+    "effort",
+    "hook_event_name",
+    "old_cwd",
+    "new_cwd",
+  ]);
+  eq("cwd-changed-hooks calls the watcher helper with three arguments", call.length, 3);
+  mustDiffer("the two ends stamped in the wrong order", [call[1].old_cwd, call[1].new_cwd], ["/b", "/a"]);
+  mustDiffer("the destination stamped under the twin's key", "file_path" in call[1], true);
+  mustDiffer("the event literal left as the twin's", call[1].hook_event_name, "FileChanged");
+  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.executorAwait.length, 1);
+  mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 686) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 107) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 721) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 121) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 
 console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);

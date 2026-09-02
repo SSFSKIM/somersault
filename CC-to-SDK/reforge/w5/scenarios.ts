@@ -1111,11 +1111,12 @@ export const W5_SCENARIOS: Scenario[] = [
     // `cwd-change` phase created it and measured the event FIRED, with the
     // record carrying `old_cwd` and `new_cwd` after the common prefix.
     //
-    // TWO EXCHANGES, and the second is not decoration. A `cd` that lives and
-    // dies inside one command's subshell moves nothing the tracker can see; the
-    // move is only observable because a LATER command runs somewhere else. The
-    // second turn's `pwd` is what makes that visible in the transcript when a
-    // failure needs explaining.
+    // TWO EXCHANGES, and the second is EVIDENCE rather than mechanism. The
+    // tracker appends its `pwd` write to every command the Bash tool runs and
+    // reads it back after that command, so the `cd` alone already reports the
+    // move; the second turn's `pwd` is what makes it visible in the transcript
+    // when a failure needs explaining. Stated precisely because "the second
+    // exchange is required" would be a mechanism claim the bundle does not make.
     //
     // The matcher registration is the same shape as `hooks-file-watch`'s and for
     // the same reason: `Options.hooks` carries no matcher, and the matcher is

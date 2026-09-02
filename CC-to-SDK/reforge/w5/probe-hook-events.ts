@@ -547,10 +547,11 @@ async function main(): Promise<void> {
       // condition. The matcher is the sandbox and the subdirectory is inside it,
       // so the watcher covers the destination as well as the origin.
       //
-      // Two exchanges, not one: the `cd` has to persist INTO a later command for
-      // the tracker to report a move, and a single command's own subshell is not
-      // that. The second command's `pwd` is what makes the persistence visible in
-      // the transcript when the verdict needs explaining.
+      // Two exchanges, and the second is EVIDENCE rather than mechanism. The
+      // tracker appends its `pwd` write to every command it runs and reads it
+      // back afterwards, so the `cd` alone already reports the move; the second
+      // command's `pwd` is what makes that visible in the transcript when a
+      // verdict needs explaining.
       label: "cwd-change",
       condition: "a Bash `cd` that persists past its command, under an armed CwdChanged matcher",
       extra: { allowedTools: ["Bash"], maxTurns: 8 },
