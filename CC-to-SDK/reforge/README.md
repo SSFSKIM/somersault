@@ -4044,6 +4044,16 @@ one turn. Corpus unchanged at 59.
 * **`subsystem/tool-result-validators` moves C4 → C13**, per the W10 scout: its largest members are
   the Bash tool's and they share the safety chain with the executor.
 
+### The counts
+
+Gate **133 of 133 summary phases, zero FAIL**, quoted from the gate's own summary block — W7.6a's
+115 plus eighteen: sixteen liveness rows, the belt fixture's `--check`, and the parity oracle. Every
+one of the sixteen sabotages reddened its covering scenario; none came back GREEN-on-a-dead-target
+or INCONCLUSIVE. Manifest **78 → 94 splices**. Attestation **465/1010 with 545 exclusions → 474/1030
+with 556**, zero un-adjudicated. Oracle **114 comparisons / 10 controls**. Corpus unchanged at **59**,
+with `task-family` re-recorded and green on both engines; the equivalence phase is green across all
+five suites.
+
 ### Seam notes for C11b, measured rather than recalled
 
 * **The tool-catalog fixture has a neighbour now.** `moat-tools-<pin>.json` answers "which
