@@ -1,0 +1,834 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-prompt-sections.ts",
+  "builder": {
+    "chunk": "chunk-fy12d89p.js",
+    "binding": "OS",
+    "start": 577793,
+    "end": 579713,
+    "bytes": 1920,
+    "sha256": "f15498416722923e2eb4ca31140a0e7c0197bb53a5888b4a18de72a63936b9af",
+    "params": 4
+  },
+  "recordConstructor": {
+    "chunk": "chunk-fy12d89p.js",
+    "binding": "yc",
+    "properties": [
+      "name",
+      "compute",
+      "cacheBreak"
+    ]
+  },
+  "confirmation": {
+    "boundarySentinelFoundIn": "chunk-7g4v1yq9.js",
+    "boundaryBinding": "wO",
+    "callerPropertySites": [
+      {
+        "chunk": "chunk-2tcn2mv8.js",
+        "count": 1
+      },
+      {
+        "chunk": "chunk-873qaqbz.js",
+        "count": 1
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "count": 2
+      },
+      {
+        "chunk": "chunk-habzwgt7.js",
+        "count": 1
+      }
+    ]
+  },
+  "counts": {
+    "sections": 27,
+    "returnElements": 5,
+    "namedProducers": 37,
+    "localProducers": 1,
+    "unresolvedProducers": 0
+  },
+  "sections": [
+    {
+      "order": 0,
+      "name": "`communication${C}${W?\":send_user_msg\":\"\"}`",
+      "nameKind": "template",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "d8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "d8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 546915,
+          "end": 551128,
+          "bytes": 4213,
+          "sha256": "c2dcde62a6836070c9b4b40eec854b7414d53439d37e4cca9c0bec4a5ce6d2f4",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 1,
+      "name": "\"pronouns\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "constant",
+        "names": [
+          "y8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "y8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 553187,
+          "end": 553560,
+          "bytes": 373,
+          "sha256": "b6edfa105021058ebfc20f37cf56e704551e9f2d96c0ac537ed5e9f5d593466c",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "name": "`action_caution${C}`",
+      "nameKind": "template",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "p8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "p8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 551128,
+          "end": 551822,
+          "bytes": 694,
+          "sha256": "bcb1a7e3726c4f902a8193f9965a8fc9f610c170e1e76053f5c887473ba07429",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "name": "\"task_continuity\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "m8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "m8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 551822,
+          "end": 552332,
+          "bytes": 510,
+          "sha256": "3eea698e994b6983236c781540a16c83f9eab57c509b66c460ab6d8a7f6157c0",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "name": "f8t",
+      "nameKind": "identifier",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "g8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "g8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 552357,
+          "end": 553057,
+          "bytes": 700,
+          "sha256": "af8109ab4bace29389c3e51c5a6e83dc28ad96f7dd15998940e9bf54f44c31f7",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "name": "\"tool_param_json\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "h8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "h8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 553058,
+          "end": 553186,
+          "bytes": 128,
+          "sha256": "38fbc75caa3cac420d03c85b64bcf7b0b8b664c22a5ab302844a07998cc19bb8",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 6,
+      "name": "`session_guidance${C}${B?\":sdk\":\"\"}:${iy()}`",
+      "nameKind": "template",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "O8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "O8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 571265,
+          "end": 572712,
+          "bytes": 1447,
+          "sha256": "ffce72d9f3dc2e65438ab43ad19847d8ee5c5029af79aad21f01813b68b66a85",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 7,
+      "name": "`memory${C}`",
+      "nameKind": "template",
+      "conditional": true,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "pKe"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "pKe",
+          "chunk": "chunk-9e2ns8ty.js",
+          "start": 93231,
+          "end": 97390,
+          "bytes": 4159,
+          "sha256": "461068ce50285e4c81dbfa45b372c4e6ca4d08124ba624efbf3e884b6311c83a",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 8,
+      "name": "\"env_info_static\"",
+      "nameKind": "literal",
+      "conditional": true,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "ZGe"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "ZGe",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 581328,
+          "end": 581383,
+          "bytes": 55,
+          "sha256": "4f7b68e541cb287b35e08d18edaf0a3992aaa6307555fb860cd44839a37bdac3",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 9,
+      "name": "\"env_info_simple\"",
+      "nameKind": "literal",
+      "conditional": true,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "ZGe"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "ZGe",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 581328,
+          "end": 581383,
+          "bytes": 55,
+          "sha256": "4f7b68e541cb287b35e08d18edaf0a3992aaa6307555fb860cd44839a37bdac3",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 10,
+      "name": "\"env_info_simple\"",
+      "nameKind": "literal",
+      "conditional": true,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "H8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "H8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 580762,
+          "end": 580889,
+          "bytes": 127,
+          "sha256": "f9be5e156264b755dc0b926c2e071982c7d1fc8ae43ba775bdc675926aa80b22",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 11,
+      "name": "\"language\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "v8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "v8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 558085,
+          "end": 558133,
+          "bytes": 48,
+          "sha256": "6a48614a49f8e146b77e9f6a1822152d24096a9229aac467e8b56aa2699702df",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 12,
+      "name": "kce",
+      "nameKind": "identifier",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "E8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "E8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 558156,
+          "end": 558224,
+          "bytes": 68,
+          "sha256": "4b2d26ec3473c6c1178348cc9a0e41877ad61b7b6f6a023d386194e5fdc4abf5",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 13,
+      "name": "\"bg-session\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "z8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "z8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 583354,
+          "end": 585970,
+          "bytes": 2616,
+          "sha256": "4c1d72eb14824c87ccc1e7ddf72d766a61126c65e2ae574e6c106c4c401dda49",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 14,
+      "name": "\"scratchpad\"",
+      "nameKind": "literal",
+      "conditional": true,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "O6"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "O6",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 585970,
+          "end": 586765,
+          "bytes": 795,
+          "sha256": "de2e80741d1f402398dd804b47f4dcecb3dfc9646e8e5085eb2dc07ba16e58d0",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 15,
+      "name": "\"context_management\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "constant",
+        "names": [
+          "G8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "G8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 586769,
+          "end": 587060,
+          "bytes": 291,
+          "sha256": "28304f50bcd14fbee8bb75431ef6875b7c1ca719c736eab1076b32d74bbc5ece",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 16,
+      "name": "\"brief\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "q8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "q8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 587061,
+          "end": 587124,
+          "bytes": 63,
+          "sha256": "36557fd9b8f16a4d3df4e7f8185ad86827dc9878366806792ebce3b45466cf2d",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 17,
+      "name": "`focus_mode${C}`",
+      "nameKind": "template",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "Y8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "Y8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 588016,
+          "end": 588143,
+          "bytes": 127,
+          "sha256": "dffae45453b923f4c6808a961c2d27147a4ca1652272a07ff1368b6e0bd7d18d",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 18,
+      "name": "\"act_dont_rederive\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "N8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "N8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 574203,
+          "end": 574486,
+          "bytes": 283,
+          "sha256": "8165f067be73e08906da7b790421adeacc6d46e8d635156e73ca4b5f8f84a6c5",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 19,
+      "name": "\"delivering_work_max\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "$8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "$8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 574487,
+          "end": 576535,
+          "bytes": 2048,
+          "sha256": "14147791237343579fabe04f428dd622a3468088754cdf91241e530f2dbbde7d",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 20,
+      "name": "\"overcorrection\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "U8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "U8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 576536,
+          "end": 577792,
+          "bytes": 1256,
+          "sha256": "0ef9e0e3e48892cc44ed23a3ec04dea58ae8bd90fb8eed699d762b5ec994826b",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 21,
+      "name": "\"subagent_steer_delegation\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "Rnr"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "Rnr",
+          "chunk": "chunk-bsdtxcdc.js",
+          "start": 167192,
+          "end": 168636,
+          "bytes": 1444,
+          "sha256": "da78526c5e3e2778bec6342c9297a62a22f6b149fc30e97323830e0ff6a3b5be",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 22,
+      "name": "\"heron_brook\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "S8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "S8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 554092,
+          "end": 554502,
+          "bytes": 410,
+          "sha256": "6d94b983c43478d8fab3217e8cd76fe55fa26c62acf35edd9bf5404b6208787f",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 23,
+      "name": "\"brook_heron\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "w8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "w8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 556438,
+          "end": 556603,
+          "bytes": 165,
+          "sha256": "a2fc1661d4b9abfdf7ee1d2ad2890e6b3a4e4a74470331c5afa9f804291ebbd3",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 24,
+      "name": "\"willow_tern\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "k8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "k8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 556329,
+          "end": 556438,
+          "bytes": 109,
+          "sha256": "eb27c09e1b83e5768a6a017b45cd8986ec4f356cbca79b9a178a5bb01668e6da",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 25,
+      "name": "\"autonomy_append\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "call",
+        "names": [
+          "T8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "T8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 556603,
+          "end": 558085,
+          "bytes": 1482,
+          "sha256": "445ec38b69d350c507e89d24cd156c044c373356d7344e479579335fa23299bb",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 26,
+      "name": "\"endconv_deferred_hint\"",
+      "nameKind": "literal",
+      "conditional": false,
+      "produces": {
+        "kind": "inline",
+        "names": []
+      },
+      "resolved": []
+    }
+  ],
+  "returnElements": [
+    {
+      "order": 0,
+      "kind": "spread",
+      "source": "...d?[L8t(M,t)]:[C8t(M),R8t(t),M===null||M.keepCodingInstructions===!0?P8t():null,x8t(),M8t(U),D8t()]",
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "L8t",
+          "C8t",
+          "R8t",
+          "P8t",
+          "x8t",
+          "M8t",
+          "D8t"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "L8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 573338,
+          "end": 574026,
+          "bytes": 688,
+          "sha256": "0ab177265aa01affca206bde3a5122bc3bd6a8896f61d68a7830ec3c83d81b5c",
+          "declKind": "function"
+        },
+        {
+          "symbol": "C8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 558799,
+          "end": 559235,
+          "bytes": 436,
+          "sha256": "d580cc11a8c09367d400803ccc61a7a505d0fa0acc10fca7a969709cd40a985b",
+          "declKind": "function"
+        },
+        {
+          "symbol": "R8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 559862,
+          "end": 560978,
+          "bytes": 1116,
+          "sha256": "5f4442819492404155c0c537a903ea5ceaddc9481226d73e912199b8a2b79037",
+          "declKind": "function"
+        },
+        {
+          "symbol": "P8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 560978,
+          "end": 565045,
+          "bytes": 4067,
+          "sha256": "13727eb58147407c09ddfde40a54c2dc49afd3a3f034ce1cedd076e4aa2e1c7e",
+          "declKind": "function"
+        },
+        {
+          "symbol": "x8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 565045,
+          "end": 568670,
+          "bytes": 3625,
+          "sha256": "8e73a19ed8f8095d7e946e34d83640ddcb4145c3f0fed0c190bea71f4992638d",
+          "declKind": "function"
+        },
+        {
+          "symbol": "M8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 568670,
+          "end": 569986,
+          "bytes": 1316,
+          "sha256": "9d10038ae0ec48e02261a9998f542f1f87308840724f3606a3f631ad5a100063",
+          "declKind": "function"
+        },
+        {
+          "symbol": "D8t",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 572712,
+          "end": 573338,
+          "bytes": 626,
+          "sha256": "17a3b526fc10f481128d67d72a9905fff5dd4f260806da1cc976fac9ae181fd1",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 1,
+      "kind": "spread",
+      "source": "...o?.excludeDynamicSections?[mQn(u)]:[]",
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "mQn"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "mQn",
+          "chunk": "chunk-9e2ns8ty.js",
+          "start": 97502,
+          "end": 97589,
+          "bytes": 87,
+          "sha256": "666e7d43e6cab7ecc9986f62837a7f50f0f2efdee358087f610a67ac70e4dbe5",
+          "declKind": "function"
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "spread",
+      "source": "...Kde()?[wO]:[]",
+      "produces": {
+        "kind": "gated",
+        "names": [
+          "wO"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "wO",
+          "chunk": "chunk-7g4v1yq9.js",
+          "start": 1767,
+          "end": 1806,
+          "bytes": 39,
+          "sha256": "1cd77810f9afe6241e3e4304ed414ddcc2fbe743e9032021c840bd850231fe6e",
+          "declKind": "variable"
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "kind": "spread",
+      "source": "...me",
+      "produces": {
+        "kind": "constant",
+        "names": [
+          "me"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "me",
+          "chunk": null,
+          "start": null,
+          "end": null,
+          "bytes": null,
+          "sha256": null,
+          "declKind": "local"
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "kind": "call",
+      "source": "kKe(t)",
+      "produces": {
+        "kind": "call",
+        "names": [
+          "kKe"
+        ]
+      },
+      "resolved": [
+        {
+          "symbol": "kKe",
+          "chunk": "chunk-fy12d89p.js",
+          "start": 579713,
+          "end": 579897,
+          "bytes": 184,
+          "sha256": "a89d36b1a09ab9bff177d63f13aa30b9d2d8bd7e871a8c4585056073e5912f2c",
+          "declKind": "function"
+        }
+      ]
+    }
+  ]
+}

@@ -125,6 +125,14 @@ for (const [label, argv] of [
   // byte-identical: the names the engine's barrel chunks re-export its own
   // symbols under. Build-free and a few seconds, so it sits with the rest of
   // the pin's determinism rather than in a recipe someone remembers to run.
+  // The system-prompt SECTION inventory, W7.5's fixture and the third population
+  // in this campaign that had been carried as a hand-written number ("`OS()`'s
+  // ~20 prose sections", quoted since W3; the pin says 27 dynamic records, a
+  // six-element static head and a two-element tail). Derived by shape from the
+  // section-record constructor and confirmed from two other places — the
+  // boundary sentinel the already-owned partitioner looks for, and the
+  // `defaultSystemPrompt` property every caller binds the result to.
+  ["prompt-section fixture matches the pin", ["research/tools/extract-prompt-sections.ts", "--check"]],
   ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so
