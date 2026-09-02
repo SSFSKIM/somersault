@@ -9,7 +9,7 @@ are **Waves**
 **Grounding:** `reforge/research/2026-08-31-engine-census.md` (subsystem census of the 2.1.251
 bundle, incl. its 2026-08-31 correction) · `reforge/research/2026-08-31-gate-blob-resolution.md`
 (how gates actually resolve offline) · `reforge/README.md` (harness + gate doctrine) · cassette
-measurement of the headless tool catalog (31 native tools, §1.3) · measured runtime skew (§3.5)
+measurement of the headless tool catalog (22 tools by default, 32 in union, §1.3 — the original read 31; W8 scout 2026-09-02) · measured runtime skew (§3.5)
 · `docs/lectures/claude-code-harness/research/` (2026-09-01, a parallel session's 13 reports +
 17-chapter lecture mined from the same 2.1.251 bundle — secondary reference for wave briefs:
 bash/sandbox→W10, orchestration→W12, permissions/hooks→W5–W6, MCP→W11, persistence→W9, service
@@ -302,8 +302,8 @@ Two surfaces join the doctrine on a staged schedule:
 Empirical grounding (`reforge/research/2026-08-31-gate-blob-resolution.md`): the flag provider in
 2.1.251 is **GrowthBook** (the `statsig` literal is a vestigial cache path); both the bootstrap
 fetch (`/api/claude_cli/bootstrap`) and the disk-cache read are **already disabled** under
-reforge's environment, so every gate resolves to its compiled-in call-site default (431 sites, 379
-distinct gates) with `source:"disabled"`. The original "snapshot the blob into `reforge/config`"
+reforge's environment, so every gate resolves to its compiled-in call-site default (505 call sites, 439
+distinct gates — re-measured from the committed fixture by the W8 scout 2026-09-02; the original read 431/379) with `source:"disabled"`. The original "snapshot the blob into `reforge/config`"
 plan would have pinned a cache that is never read; replaced by:
 
 - **Pin the disabled state explicitly**: set `DISABLE_GROWTHBOOK=1` in the harness env (the
@@ -707,8 +707,10 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   bloc-closing **completions wave (W7.5)**, cut when C10 lands; the hook executors ride with it
   or get S-module treatment inside it per their own design pass. **C10 landed 2026-09-02, so the
   trigger has fired.** W7 leaves it three seam notes rather than a to-do list: the `interrupt` arm's
-  five helpers are the auto-react and task-notification subsystems (four in `chunk-fy12d89p`) with a
-  named firing condition W8's task family creates more cheaply than W7.5 could; `rewind_files` (`Tf`,
+  five helpers are the auto-react and task-notification subsystems (four in `chunk-fy12d89p`) — and
+  the W8 scout (2026-09-02) measured their firing condition as an artifact auto-react subscription
+  whose only two writers sit on the gate-dead Monitor WebSocket path, so they are an EXCLUSION with
+  named guards, not W8's coverage debt (superseding the routing this sentence first recorded); `rewind_files` (`Tf`,
   485 B) is takeable and anchorable today and wants only a scenario of its own — the probe already
   fires the arm and nothing grades its answer; and `mcp_message` (`QKn`, 58 B) is one line into the
   MCP transport and belongs with W11. None of the three is control-protocol work in anything but
@@ -765,6 +767,49 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     `Li = 600000` preserved as the default hook timeout (ten minutes, not sixty seconds — an owned
     copy that "corrects" it changes real behaviour). `subsystem/hook-dispatch` reaches
     `standalone-complete` only at the end of C10.8, though each child moves the row's evidence.
+- **The W8 cut (2026-09-02, from `reforge/research/2026-09-02-w8-moat-tools-scout.md` — adopted
+  with grades):** the moat surface is ~260 KB (89.5 KB of tool objects + ~170.5 KB of shared cores),
+  the headless catalog is 22 tools by default, 20 of them W8's, 16 of those never executed by any
+  scenario though all 20 render description and schema onto every graded request. Four children,
+  ordered free-coverage → probe → stateful core → the subsystem the probe decides:
+  • **C11a / W8a — the description-and-formatter belt** (autonomous, opus-tier; cut NOW, dispatch
+    after C10.6 lands and is reviewed — both edit the manifest/gate/ledger/attestation): the 16
+    tool description/prompt builders and schema getters already live on every request body, plus
+    the zero-and-low-capture formatters (`TaskCreate`/`TaskGet`/`TaskList` at 0 captures,
+    `ReportFindings`, `ScheduleWakeup`, `TaskUpdate`, `TaskOutput`). Zero new recordings (one
+    `task-family` re-record to widen its ordering assertions); every sabotage RED on a named
+    existing scenario; the zero-capture formatters get contract tests over partitioned inputs.
+    Rides along: the ledger corrections the scout measured (`tool/PowerShell` row → C13/W10;
+    `tool/WebFetch`/`tool/WebSearch` reassigned off C11; `subsystem/moat-tools` edges to
+    session-storage, hook-dispatch, subagent-dispatch, bash-executor, permissions; a `Monitor`
+    exclusion line with its gate as the guard).
+  • **C11b / W8b — reachability probes and the recordings they justify** (controlled, opus-tier;
+    cut NOW, blocked-by C11a): `w8/probe-tool-reachability.ts` (one session per catalog tool,
+    FIRED/DEAD/OPEN with a cited guard — the W7 subtype probe's shape on the tool axis),
+    `w8/probe-cross-session.ts` (the scout's §6.4 design: two live engines sharing a config
+    directory; the ONE live check that decides C11d), the 9–11 recordings the probes rank, and the
+    seventh pin-keyed fixture `tool-catalog-2.1.251.json` derived from `Y0()`'s 67 elements with
+    per-tool guard expressions and measured corpus presence. Rides along: the gate-fixture
+    extractor's `recordEnvOverride` widened to accept a coerced return (`Me(e)`), which is why the
+    override inventory misses the cross-session kill switch `CLAUDE_CODE_HARBOR_KITE`.
+  • **C11c / W8c — the task and notification core** (fable-tier; ADVISORY, cut when C11b lands):
+    `TaskStorePort`, `TaskOutputPort` (with `DiskTaskOutput`'s twelve private fields behind the
+    port, not marshalled), `NotificationQueuePort` over the `ssn` closure factory (10.9 KB — harder
+    than a private-field class: no receiver exists to marshal through), and the three frame
+    emitters; §3.1's S-module bar. Edges → C12/W9 (both storage leaks), C15/W12, C13/W10, C8/W5.
+  • **C11d / W8d — cross-session messaging** (fable-tier; ADVISORY, cut ONLY if C11b's probe
+    fires): ~100 KB across eight chunks the campaign never counted; live headlessly because the
+    kill switch `Yo()` reads `tengu_harbor_kite` whose compiled-in default is TRUE (the committed
+    fixture confirms `{"default":true}`), so §3.3's pinned-disabled policy leaves it on. Inbound
+    policy gate first (9.7 KB, no classes, a settings axis `Options.settings` can drive), then
+    `SendMessage`'s validation/permission/render functions as S-method rows, `ListAgents` as the
+    campaign's first single-export S-chunk row. If the probe says a second addressable session
+    cannot be created under the harness, this child collapses to the refusal arms.
+  • **Not W8's** (binding): `Monitor` (gate `tengu_amber_sentinel` default false, no env override
+    — the measured answer to "the moat includes persistent notifications", recorded as an
+    exclusion), the interrupt helpers (artifact surface), `RemoteTrigger.call` (server boundary),
+    `PowerShell` (W10's chunk), `WebFetch`/`WebSearch` (C5's / the server's), `Skill` (C14),
+    `Agent` (C15), the `background_tasks_changed` emitter (`chunk-g461tywa.js`, unowned).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -786,7 +831,10 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C10.6 | W7.6a | cut 2026-09-02 (Deferred section's "The executor cut"); brief: `reforge/research/2026-09-02-w75-hook-executor-design.md` (as corrected in C10.5's boundary round) | not-dispatched — **unblocked**. Stages 0–1: the hooks oracle rewritten as ONE interleaved event log with cleanup pairing (retires the tech-debt entry), stdout write-boundary reproduction, non-settling-path grading; then the ~13.9 KB pure belt led by `Fq` (5,993 B, throws on unknown decision — reproduce, do not fix). Plus the harness's module-level-state reset obligation. Track hint: controlled, opus-tier |
 | C10.7 | W7.6b | as C10.6 | not-dispatched — **blocked by C10.6**. Stages 2–3: `HookSourcePort` (consumers `Rzn`, `Qxt`, `DUt`) + the matcher owned pure with its one `EnvironmentPort.defaultShell()` read; then `AE` and `zxt`. Track hint: fable-tier |
 | C10.8 | W7.6c | as C10.6 | not-dispatched — **blocked by C10.7**. Stages 4–5: `ProcessPort` + the command-spec builder out of `Nq` (serving the three non-hook callers through the same port); then `Qxt` with the merge, the aggregation projection and the permission-precedence reducer. `subsystem/hook-dispatch` reaches `standalone-complete` here and not before. Track hint: fable-tier |
-| C11 | W8 | — | not-dispatched (decomposing at dispatch; inherits the interrupt-helper OPEN from C10) |
+| C11a | W8a | scout: `reforge/research/2026-09-02-w8-moat-tools-scout.md` (cut 2026-09-02, Deferred section's "The W8 cut") | not-dispatched — the description-and-formatter belt; **blocked by C10.6's review** (shared manifest/gate/ledger/attestation surface), zero recordings |
+| C11b | W8b | as C11a | not-dispatched — reachability + cross-session probes, 9–11 recordings, the `tool-catalog` fixture; **blocked by C11a** |
+| C11c | W8c | as C11a (advisory) | not-cut — task/notification core behind ports; cut when C11b lands |
+| C11d | W8d | as C11a (advisory) | not-cut — cross-session messaging; cut ONLY if C11b's probe fires |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
 | C15 | W12 | — | not-dispatched (controlled, fable) |
@@ -939,7 +987,9 @@ initiative, not this campaign.
 
 - **The engine is concentrated**: one 4.0 MB chunk with zero JSX imports is the whole agent; the
   load-bearing target is ~5–6 MB, not 39.5 MB (census headline).
-- **The moat traverses the seam**: 31 native tools presented headlessly at 2.1.251 — measured from
+- **The moat traverses the seam**: 22 native tools presented headlessly by default at 2.1.251, 32 in union across the corpus and
+  28 at most in any one session (the W8 scout's re-measurement over 267 request bodies, 2026-09-02;
+  this line originally read 31 — a union mistaken for a catalog) — measured from
   cassette request bodies, so the completeness bar is differentially gradable.
 - **The flag provider is GrowthBook, not Statsig**, and reforge's env already forces compiled-in
   defaults — the planned blob pinning targeted a cache that is never read (scout, empirical). A
@@ -987,6 +1037,29 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- 2026-09-02 (W8 scout — the moat surface re-measured, and the C11 cut): the campaign's
+  first scout to find a subsystem the census had NO row for. Enumerating the catalog two
+  ways that share no machinery (the builder `Y0()`'s 67 elements; 267 recorded request
+  bodies read as an artifact), the headless catalog is **22 tools by default, 32 in
+  union, 28 at most in one session** — the "31 native tools" this document quoted was a
+  union mistaken for a catalog, and four of them (the Task family) were present only
+  because two cassettes' model ids fail a version regex. Three corrections change the
+  roadmap: **cross-session messaging is LIVE headlessly** (kill switch `tengu_harbor_kite`
+  defaults true, so the disabled-defaults policy leaves it on; a Unix socket opens at
+  headless startup; ~100 KB across eight chunks, never counted); **`Monitor` is gate-dead
+  at this pin** (`tengu_amber_sentinel` false, no env override) — which also settles the
+  interrupt helpers as an exclusion with named guards rather than W8's debt; and **the
+  PowerShell flip ADDS a tool, it does not swap `Read` out** (positional diff misread as
+  substitution in C3's note). Also measured: §3.3's gate count is 505 sites / 439 gates
+  (not 431/379); the override inventory misses `CLAUDE_CODE_HARBOR_KITE` because the
+  extractor only accepts a bare identifier return; `TodoWrite` is disabled by default at
+  this pin and the census's "already spliced" formatter belongs to `TaskCreate`; the
+  private-field blocker recurs once (`DiskTaskOutput`, 1.8 KB) while a closure factory
+  (`ssn`, 10.9 KB) under the notification surface is strictly harder. Inline corrections
+  landed at §1.3 (twice), §3.3, the C3 note and the C10 flow-back; the cut is in the
+  Deferred section with C11a/C11b cut now and C11c/C11d advisory behind their triggers.
+  **Lesson: a census row that says "various" is a row nobody measured** — the moat's
+  shared cores were 170 KB of "various".
 - 2026-09-02 (C10.5 boundary review — **NOT CONVERGED on the record side**, converged on the code):
   the review reproduced the wave's code claims and rejected several of its written ones. **The code
   side is fully reproduced**: gate 107 of 107 summary phases with zero FAIL, prompt oracle 59 of 59,
@@ -1208,8 +1281,10 @@ Pending — written at finish.
     §3.3 cites `CLAUDE_CODE_LUMINOUS_WHISTLE`; measured, that override is
     unreachable on a headless proxied run — its reader short-circuits on a
     first-party-base-URL predicate. The flip was observed instead through
-    `CLAUDE_CODE_USE_POWERSHELL_TOOL` (gate `tengu_cobalt_ridge`), which swaps
-    `Read` out of the headless tool catalog for `PowerShell` — i.e. a per-gate
+    `CLAUDE_CODE_USE_POWERSHELL_TOOL` (gate `tengu_cobalt_ridge`), which ADDS
+    `PowerShell` to the headless tool catalog as a 23rd tool at sorted index 10 (`Read` shifts one
+    place and stays; the original note read that positional diff as a substitution — corrected by
+    the W8 scout 2026-09-02) — i.e. a per-gate
     env override can rewrite §1.3's moat surface. The override inventory is now
     generated from the bundle (13 entries at this pin) rather than cited by hand,
     so the sweep follows the pin.
