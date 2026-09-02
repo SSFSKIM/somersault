@@ -102,7 +102,8 @@ export const W1_SCENARIOS: Scenario[] = [
           "3. TaskCreate with subject REFORGE_TASK_TWO and activeForm 'Doing REFORGE_TASK_TWO'.\n" +
           "4. TaskList again.\n" +
           "5. TaskGet for the first task (task id 1).\n" +
-          "6. TaskUpdate the first task (task id 1) to status completed.\n" +
+          "6. TaskGet for task id 987, which does not exist. Expect it to report that; do not create it.\n" +
+          "7. TaskUpdate the first task (task id 1) to status completed.\n" +
           "Then reply with exactly TASKS_OK and nothing else.",
         {
           ...baseOptions(ctx),
@@ -121,10 +122,33 @@ export const W1_SCENARIOS: Scenario[] = [
       for (const s of ["REFORGE_TASK_ONE", "REFORGE_TASK_TWO"]) {
         if (!subjects.includes(s)) return `TaskCreate input never carried ${s}`;
       }
-      // The empty-list arm is only covered if TaskList really ran before the
-      // first TaskCreate; otherwise "No tasks found" is never rendered.
+      // ORDER IS THE COVERAGE HERE, and it is asserted as ORDINAL RELATIONS
+      // rather than as an exact sequence: a scenario that pins the whole call
+      // list would fail on any equivalent engine that batches two independent
+      // calls into one turn, and these checks run against BOTH sides.
+      //
+      // Widened by W8a, which needed the arms C4/W1's task formatters have that
+      // the original prompt never reached. Each line below names the formatter
+      // arm it is buying:
       const order = toolUses(msgs).map((u) => u.name);
-      if (order.indexOf("TaskList") > order.indexOf("TaskCreate")) return "TaskList did not run before the first TaskCreate";
+      const lists = order.flatMap((n, i) => (n === "TaskList" ? [i] : []));
+      const createAt = order.flatMap((n, i) => (n === "TaskCreate" ? [i] : []));
+      // "No tasks found" — only rendered if the FIRST TaskList preceded the
+      // first TaskCreate.
+      if (lists.length === 0 || createAt.length === 0 || lists[0] > createAt[0]) return "TaskList did not run before the first TaskCreate";
+      // The non-empty list, with more than one entry: a SECOND TaskList after
+      // both creates is what renders the formatter's join over several tasks.
+      if (lists.length < 2) return "TaskList ran once; the non-empty list arm needs a second call";
+      if (lists[lists.length - 1] < createAt[createAt.length - 1]) return "the second TaskList did not run after both TaskCreate calls";
+      // TaskGet's "Task not found" arm, which the original prompt never reached:
+      // one TaskGet for a real id and one for an id nothing created.
+      const gets = toolUses(msgs, "TaskGet");
+      if (gets.length < 2) return `expected TaskGet for a real id AND for a missing one, saw ${gets.length} call(s)`;
+      // The schema calls it `taskId` — read off the recorded input_schema in
+      // research/fixtures/moat-tools-2.1.251.json rather than guessed.
+      const ids = gets.map((g) => String((g.input ?? {}).taskId ?? ""));
+      if (!ids.some((id) => id === "1")) return `no TaskGet for the created task, saw ids ${ids.join(", ")}`;
+      if (!ids.some((id) => id !== "" && id !== "1" && id !== "2")) return `no TaskGet for an id nothing created, saw ids ${ids.join(", ")}`;
       return resultText(msgs).includes("TASKS_OK") ? null : "final reply missing TASKS_OK";
     },
   },

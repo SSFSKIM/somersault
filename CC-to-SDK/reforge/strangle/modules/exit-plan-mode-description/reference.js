@@ -6,7 +6,7 @@
 // reflowed or re-punctuated, and the \u2014 escapes are upstream's own (the
 // bundle contains zero literal em-dash bytes).
 //
-// Rendered only in the plan-mode catalog — 51 of the 267 cassettes — so its
+// Rendered only in the plan-mode catalog — 51 of the 82 recorded cassettes — so its
 // covering scenario is `perm-plan-mode` rather than `plain`.
 //
 // Its initializer interpolates one tool name, which makes it a TEMPLATE

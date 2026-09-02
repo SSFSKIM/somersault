@@ -4967,7 +4967,7 @@ export const SPLICES: Splice[] = [
   //
   // THE POPULATION IS DERIVED, not listed. `research/fixtures/moat-tools-<pin>.json`
   // reads the recorded request bodies for what the engine actually presented
-  // (901 bodies, 12 distinct catalogs, baseline 22 tools) and then finds each
+  // (423 bodies over 82 recorded cassettes, 12 distinct catalogs, baseline 22 tools) and then finds each
   // description's producing DECLARATIONS by searching the graph for the rendered
   // text itself. Five descriptions turn out to have more than one carrier; each
   // row below claims the primary one and the fixture records the remainder, so
@@ -4983,8 +4983,8 @@ export const SPLICES: Splice[] = [
   // capture, so no derivation bets on a second minifier letter.
   //
   // COVERAGE IS TWO TAGS, and the split is measured: thirteen of the sixteen are
-  // in all 267 recorded catalogs, so `plain` covers them; AskUserQuestion,
-  // EnterPlanMode and ExitPlanMode are in the 51-cassette plan-mode catalog
+  // in all 82 recorded cassettes, so `plain` covers them; AskUserQuestion,
+  // EnterPlanMode and ExitPlanMode are in the 14-cassette plan-mode catalog
   // only, so `perm-plan-mode` covers those three.
 
   {

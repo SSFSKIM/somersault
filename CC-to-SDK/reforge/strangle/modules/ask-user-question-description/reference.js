@@ -6,7 +6,7 @@
 // reflowed or re-punctuated, and the \u2014 escapes are upstream's own (the
 // bundle contains zero literal em-dash bytes).
 //
-// Plan-mode catalog only (51 of 267 cassettes), so `perm-plan-mode` covers it.
+// Plan-mode catalog only (51 of 82 recorded cassettes), so `perm-plan-mode` covers it.
 //
 // This is the constant the tool's `prompt({model})` opens with; the method then
 // appends two gate-driven strings that no corpus run produces. Owning the

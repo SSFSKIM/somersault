@@ -182,7 +182,7 @@ export const EXCLUDED_ROWS: ExcludedRow[] = [
       "GATE-DEAD AT THIS PIN, WITH NO LEVER — and it is here because 'the moat includes persistent notifications' is a standing product claim that deserved a " +
       "measured answer rather than an absence. `MonitorTool.isEnabled(){return RI()&&as()}` and `RI(){return I(\"tengu_amber_sentinel\",!1)}`; the compiled-in " +
       "default in research/fixtures/gate-defaults-2.1.251.json is false, §3.3 pins every gate to its compiled-in default, and `tengu_amber_sentinel` is not among " +
-      "that fixture's per-gate env overrides — so flip-liveness cannot reach it either. It is absent from all 267 recorded catalogs, and the GUARDS are what rule " +
+      "that fixture's per-gate env overrides — so flip-liveness cannot reach it either. It is absent from all 82 recorded cassettes, and the GUARDS are what rule " +
       "it out; the absence alone would only have been a coincidence.",
     evidence:
       "reforge/research/2026-09-02-w8-moat-tools-scout.md §2.4 and §5.3; research/fixtures/gate-defaults-2.1.251.json (default false, absent from perGateEnvOverrides); " +

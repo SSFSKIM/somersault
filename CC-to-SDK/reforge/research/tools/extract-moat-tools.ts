@@ -198,7 +198,20 @@ interface CorpusFacts {
 }
 
 function readCorpus(): CorpusFacts {
-  const files = readdirSync(CASSETTE_DIR).filter((f) => f.endsWith(".jsonl")).sort();
+  // RECORDED cassettes only, and the exclusion is PATTERN-EXACT rather than a
+  // substring. A replay writes `<base>-observed-A|A2|B.jsonl` beside the
+  // cassette it replayed, so the directory carries about three of those per
+  // recording and a count over the whole directory would depend on how many
+  // times someone ran the gate rather than on what the corpus contains.
+  //
+  // The first version of this filter dropped every name CONTAINING `-observed-`
+  // and silently took seventeen real recordings with it: `m3-flip-observed-*`
+  // (the flip-liveness measurements, including the ONE cassette in which
+  // `PowerShell` is presented at all) and `m2-xresume-observed-*` share the
+  // substring for an unrelated reason. A population defined by a substring is a
+  // population whose boundary nobody has looked at.
+  const REPLAY_BYPRODUCT = /-observed-(A|A2|B)\.jsonl$/;
+  const files = readdirSync(CASSETTE_DIR).filter((f) => f.endsWith(".jsonl") && !REPLAY_BYPRODUCT.test(f)).sort();
   const shapes = new Map<string, { bodies: number; files: Set<string>; tools: string[] }>();
   const byTool = new Map<string, Map<string, Set<string>>>();
   const schemas = new Map<string, string>();
@@ -566,7 +579,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
   }
   // The bundle half is exact.
-  const bundleSide = (f: MoatFixture) => JSON.stringify({ tools: f.tools.map((t) => ({ ...t, cassetteFilesAtLeast: 0 })), formatters: f.formatters });
+  // The exact half. `cassetteFilesAtLeast` is a floor and is compared above;
+  // `variants` is dropped for the same reason — a later wave recording a lean
+  // model would add a second description text for a tool without anything
+  // having drifted, and a fixture that reddens on corpus GROWTH taxes every
+  // wave after it. The DOMINANT variant's bytes and sha stay exact.
+  const bundleSide = (f: MoatFixture) =>
+    JSON.stringify({ tools: f.tools.map((t) => ({ ...t, cassetteFilesAtLeast: 0, variants: 0 })), formatters: f.formatters });
   if (bundleSide(fx) !== bundleSide(committed)) problems.push("the bundle-derived half (carriers, anchors, captures, formatters) differs from the committed fixture");
   if (problems.length > 0) {
     for (const p of problems) console.log(`  FAIL  ${p}`);

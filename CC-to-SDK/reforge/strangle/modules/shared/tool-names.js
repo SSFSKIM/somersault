@@ -40,8 +40,8 @@ export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
 export const LIST_AGENTS_TOOL_NAME = "ListAgents";
 // The one tool in this file the engine never presents: `Monitor`'s own
 // `isEnabled()` reads `tengu_amber_sentinel`, whose compiled-in default is false
-// and which has no per-gate env override, so it is absent from all 267 recorded
-// catalogs. Its NAME is here because CronCreate's description points at it — the
+// and which has no per-gate env override, so it is absent from all 82 recorded
+// cassettes. Its NAME is here because CronCreate's description points at it — the
 // only place in the whole catalog where a live tool's prose names a gate-dead
 // one, and the arm that does is dark in the corpus for the same reason.
 export const MONITOR_TOOL_NAME = "Monitor";

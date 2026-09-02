@@ -8,7 +8,7 @@
 //
 // ListAgents is the cross-session surface's other half: its `isEnabled()` is the
 // SAME kill switch as SendMessage's transport (`Yo()`, whose gate default is
-// true), which is why both are present in all 267 recorded catalogs while
+// true), which is why both are present in all 82 recorded cassettes while
 // neither has ever been executed. This text is what the corpus grades today;
 // the listing itself is C11b's probe and C11d's row.
 import { SEND_MESSAGE_TOOL_NAME } from "../shared/tool-names.js";
