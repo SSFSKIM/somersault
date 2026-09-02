@@ -328,26 +328,69 @@ const sameKey = (a: string, b: string) => hashed(a) === hashed(b);
 // ---------------------------------------------------------------------------
 {
   check("the date stamp is scrubbed", sameKey("Today's date is 2026-08-31", "Today's date is 2026-09-01"));
-  // The MIDNIGHT ROLLOVER notice, both halves. The engine emits it when the date
-  // changes DURING a session, and the corpus spawns its two engines in sequence,
-  // so a run that straddles midnight has one body carrying the sentence and the
-  // other not — which is why this one is REMOVED rather than substituted. Both
-  // phrasings the bundle builds end the same way.
-  const ROLLOVER = "The date has changed. Today's date is now 2026-09-03. No need to announce the new date \u2014 the user's own clock shows it.";
-  check("the rollover notice is removed, so a body that has it matches one that does not",
-    sameKey(`Reply with exactly OK. ${ROLLOVER}`, "Reply with exactly OK. "));
+  // The MIDNIGHT ROLLOVER notice, tested in THE SHAPE THE ENGINE EMITS.
+  //
+  // The first version of this rule removed the bare SENTENCE and these tests
+  // fed it the bare sentence, so both agreed with each other and neither
+  // touched the defect: upstream renders the notice through `hs`/`hl`, so it
+  // arrives as its OWN `messages[]` element wrapped in `<system-reminder>`, and
+  // erasing the sentence left an empty message behind that one side still had.
+  // Every positive below is therefore a MESSAGE-COUNT comparison — a body with
+  // the notice against the same body without it — which is exactly the
+  // asymmetry a run straddling midnight produces.
+  const ROLLOVER_SENTENCE = "The date has changed. Today's date is now 2026-09-03. No need to announce the new date — the user's own clock shows it.";
+  const wrapped = (s: string) => `<system-reminder>\n${s}\n</system-reminder>`;
+  const msgs = (...m: unknown[]) => JSON.stringify({ model: "claude-sonnet-5", messages: m });
+  const userText = (text: string) => ({ role: "user", content: [{ type: "text", text }] });
+  const PROMPT = userText("Reply with exactly OK");
+  const sameBody = (a: string, b: string) => canonicalizeForHash(a) === canonicalizeForHash(b);
+
+  // 1. the emitted shape: an extra user message whose whole content is the
+  //    wrapped notice, as a content STRING.
+  check("the rollover MESSAGE is dropped (content string), so a body that has it matches one that does not",
+    sameBody(msgs(PROMPT, { role: "user", content: wrapped(ROLLOVER_SENTENCE) }), msgs(PROMPT)));
+  // 2. …and as a lone `text` BLOCK, which is what `hs` produces for an
+  //    array-content message.
+  check("the rollover MESSAGE is dropped (lone text block)",
+    sameBody(msgs(PROMPT, userText(wrapped(ROLLOVER_SENTENCE))), msgs(PROMPT)));
+  // 3. …and as ONE block among others, where the BLOCK goes and the message stays.
+  check("the rollover BLOCK is dropped without taking its message with it",
+    sameBody(
+      msgs(PROMPT, { role: "user", content: [{ type: "text", text: wrapped(ROLLOVER_SENTENCE) }, { type: "text", text: "and here is the file" }] }),
+      msgs(PROMPT, userText("and here is the file")),
+    ));
   check("…on either date, since the removal does not depend on the day",
-    sameKey(ROLLOVER, ROLLOVER.replace("2026-09-03", "2026-12-31")));
-  // The must-survive neighbour: the ORDINARY date stamp is scrubbed to a token,
-  // not deleted, so a body that carries it still differs from one that does not.
-  // Without this the rule could widen into a blanket date eraser and nobody
-  // would notice.
+    sameBody(
+      msgs(PROMPT, userText(wrapped(ROLLOVER_SENTENCE))),
+      msgs(PROMPT, userText(wrapped(ROLLOVER_SENTENCE.replace("2026-09-03", "2026-12-31")))),
+    ));
+
+  // MUST-SURVIVE NEIGHBOURS. The removal is scoped to a `messages[]` element
+  // whose content is EXACTLY the wrapped envelope, so everything adjacent to
+  // that still discriminates.
+  //
+  // The ordinary date stamp is scrubbed to a token, not deleted, so a body that
+  // carries it still differs from one that does not. Without this the rule could
+  // widen into a blanket date eraser and nobody would notice.
   check("the ordinary date stamp is still SCRUBBED rather than removed",
     !sameKey("Today's date is 2026-09-03", "") && differed("Today's date is 2026-09-03").includes("<date>"));
-  // …and prose that merely mentions a date change is untouched, because the
-  // pattern anchors on the whole engine-authored sentence.
+  // A user prompt that merely mentions a date change is untouched.
   check("a user prompt about a changed date is not eaten",
     !sameKey("The date has changed and I need a new plan", "I need a new plan"));
+  // The sentence INSIDE other prose — a user quoting the engine at itself — is
+  // not the emitted shape and must still discriminate. The old sentence-level
+  // rule ate this one.
+  check("the sentence embedded in a user prompt still discriminates",
+    !sameKey(`Reply with exactly OK. ${ROLLOVER_SENTENCE}`, "Reply with exactly OK. "));
+  // A system-reminder message that is NOT the rollover must survive: the
+  // envelope alone is not the trigger.
+  check("another system-reminder message is not dropped with it",
+    !sameBody(msgs(PROMPT, userText(wrapped("This is a different reminder entirely."))), msgs(PROMPT)));
+  // …and the notice with anything appended to it is a different string, so the
+  // anchored pattern leaves it alone.
+  check("a wrapped notice with trailing prose is not the emitted shape and survives",
+    !sameBody(msgs(PROMPT, userText(`${wrapped(ROLLOVER_SENTENCE)} plus a tail`)), msgs(PROMPT)));
+
   check("metadata is scrubbed", canonicalizeForHash(JSON.stringify({ metadata: { user_id: "u1" } })) === canonicalizeForHash(JSON.stringify({ metadata: { user_id: "u2" } })));
   check("a non-JSON body does not throw", typeof canonicalizeForHash("not json at all") === "string");
   check("canonicalization is idempotent", canonicalizeForHash(hashed("agentId: a8b1bb212b0c2aeb2")) === hashed("agentId: a8b1bb212b0c2aeb2"));

@@ -269,23 +269,45 @@ function scrubEngineAuthoredFields(o: unknown): unknown {
 }
 
 /**
- * The engine's own MIDNIGHT-ROLLOVER notice, removed rather than scrubbed.
+ * The engine's own MIDNIGHT-ROLLOVER notice, removed as a WHOLE MESSAGE rather
+ * than scrubbed as a sentence.
  *
- * Two surfaces in the pinned bundle build the same sentence — a context section
- * and a `date_change` attachment that becomes a conversation MESSAGE — and both
- * read "The date has changed. Today's date is now ${d}. No need to announce the
- * new date — the user's own clock shows it."
+ * WHAT THE ENGINE ACTUALLY EMITS, read off the pinned bundle rather than
+ * inferred from the sentence. Two producers build the notice, and BOTH hand it
+ * to the same renderer: the `date` attachment (`_0e` @33257, reached from the
+ * attachment builder @2584129) and the `date_change` attachment @3936332. Each
+ * calls `hs([xe({content: <sentence>, isMeta: true})])`, and `hs` @3915515 wraps
+ * every string content in `hl` @3913327 — `<system-reminder>\n${e}\n</system-reminder>`.
+ * So the notice never reaches a request body as a bare sentence inside some
+ * other prose: it arrives as its OWN conversation message whose entire content
+ * is the wrapped notice, either as a content string or as a lone `text` block.
+ *
+ * WHY THAT DISTINCTION IS THE WHOLE FIX. The first attempt removed the bare
+ * SENTENCE with a string replace, which leaves the message itself — an extra
+ * element in `messages[]` carrying `<system-reminder>\n\n</system-reminder>`.
+ * One side then has a message the other does not, the arrays are different
+ * lengths, and the bodies still canonicalize differently: the defect the rule
+ * was written for survived the rule. It was validated only by two same-side runs
+ * (a gate that happened not to straddle midnight), which is why it read as
+ * fixed. Removing the MESSAGE is what makes the two bodies equal.
  *
  * WHY REMOVAL AND NOT A DATE SCRUB. The date scrub below equalizes two bodies
  * that both carry the notice. The failure this rule exists for is the other one:
  * the corpus runs engine A and engine B SEQUENTIALLY, so a run that starts at
  * 23:59 has A cross midnight mid-session and emit the notice while B, started
- * after the rollover, sees no change and emits nothing. The sentence is then
+ * after the rollover, sees no change and emits nothing. The message is then
  * PRESENT IN ONE BODY AND ABSENT FROM THE OTHER, which no substitution can
  * equalize. Measured: W7.6a's first full gate run failed exactly one row of 110
  * — the corpus, inside the equivalence phase — and the same phase on the same
  * faithful build was green twice afterwards, both times wholly on one side of
  * midnight.
+ *
+ * FIELD-SCOPED, per §3.4, and the scope is `messages[]`. The removal only ever
+ * fires on an element of the conversation array whose content is EXACTLY the
+ * wrapped envelope — nothing before it, nothing after it, the whole string. A
+ * user prompt that quotes the sentence, mentions a date change, or embeds the
+ * notice inside other prose is a different string and survives untouched; the
+ * regression tests below hold that neighbour.
  *
  * WHAT IS GIVEN UP, stated rather than glossed. After this the harness cannot
  * see "one engine noticed midnight and the other did not". That is not a
@@ -296,26 +318,75 @@ function scrubEngineAuthoredFields(o: unknown): unknown {
  * invisible: the date the notice CARRIES is still compared everywhere else it
  * appears, by the rule below.
  *
- * The em dash is `\u2014` in the bundle's source and a real character in the
- * emitted string; the pattern stops before it so it matches either.
+ * The em dash is `—` in the bundle's source and a real character in the
+ * emitted string; the pattern spans it with a bounded run of non-newline
+ * characters so it matches either.
  */
-const DATE_ROLLOVER_NOTICE = /The date has changed\. Today's date is now \d{4}-\d{2}-\d{2}\. No need to announce the new date[^"]*?clock shows it\./g;
+const DATE_ROLLOVER_MESSAGE =
+  /^<system-reminder>\nThe date has changed\. Today's date is now \d{4}-\d{2}-\d{2}\. No need to announce the new date[^\n]*?clock shows it\.\n<\/system-reminder>$/;
+
+const isRolloverText = (v: unknown): boolean => typeof v === "string" && DATE_ROLLOVER_MESSAGE.test(v);
+
+/**
+ * Drop the rollover MESSAGE from a Messages request body.
+ *
+ * Three emitted shapes, all covered: the notice as a message's whole content
+ * string, as a message's lone `text` block, and as one `text` block among
+ * others (which the renderer does not currently produce, but which costs
+ * nothing to cover and is the shape a future attachment merge would take —
+ * there the BLOCK goes and the message stays).
+ */
+function dropDateRolloverMessage(o: unknown): unknown {
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return o;
+  const body = o as Record<string, unknown>;
+  if (!Array.isArray(body.messages)) return o;
+  const kept: unknown[] = [];
+  let moved = false;
+  for (const m of body.messages) {
+    if (m === null || typeof m !== "object" || Array.isArray(m)) {
+      kept.push(m);
+      continue;
+    }
+    const msg = m as Record<string, unknown>;
+    if (isRolloverText(msg.content)) {
+      moved = true;
+      continue;
+    }
+    if (!Array.isArray(msg.content)) {
+      kept.push(m);
+      continue;
+    }
+    const blocks = msg.content.filter(
+      (b) => !(b !== null && typeof b === "object" && (b as { type?: unknown }).type === "text" && isRolloverText((b as { text?: unknown }).text)),
+    );
+    if (blocks.length === msg.content.length) {
+      kept.push(m);
+      continue;
+    }
+    // A message left with NO blocks is dropped outright; one left with some is
+    // kept minus the notice. Tracking `moved` rather than comparing lengths is
+    // the difference between the two: a block-only edit changes no length, and
+    // the first version of this function returned the body unchanged for it.
+    moved = true;
+    if (blocks.length > 0) kept.push({ ...msg, content: blocks });
+  }
+  return moved ? { ...body, messages: kept } : o;
+}
 
 export function scrubRequestBody(body: string): string {
   // The engine stamps the current date into its system prompt, so an unscrubbed
   // cassette ROTS AT MIDNIGHT: the live body stops hash-matching the recording.
   // Measured — a cassette recorded 2026-08-24 stopped matching on 2026-08-25 and
   // every replay silently degraded to positional matching.
-  //
-  // The rollover notice goes FIRST and goes away entirely, for the reason above
-  // it: a date substitution cannot equalize a sentence one side does not have.
-  const dated = body
-    .replace(DATE_ROLLOVER_NOTICE, "")
-    .replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
+  const dated = body.replace(/Today's date is \d{4}-\d{2}-\d{2}/g, "Today's date is <date>");
   try {
     const o = JSON.parse(dated);
     if ((o as { metadata?: unknown })?.metadata) (o as { metadata?: unknown }).metadata = "<scrubbed>";
-    return JSON.stringify(mapStrings(scrubEngineAuthoredFields(o), (s) => applyAll(RUN_VALUE_SCRUBS, s)));
+    // The rollover MESSAGE goes before anything walks the strings, for the
+    // reason above `DATE_ROLLOVER_MESSAGE`: a substitution cannot equalize a
+    // message one side does not have, and erasing only its sentence leaves the
+    // message behind.
+    return JSON.stringify(mapStrings(scrubEngineAuthoredFields(dropDateRolloverMessage(o)), (s) => applyAll(RUN_VALUE_SCRUBS, s)));
   } catch {
     // A body that is not JSON has no fields to scope to (bodyless probes, and
     // any future non-Messages payload). Fall back to body-wide: under-matching
