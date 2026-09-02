@@ -63,7 +63,7 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | MCP adapter (thin layer over the vendored MCP SDK) | "thin" survives; "high seam quality" does not — every prose anchor in the MCP surface ties 2× because the layer is a RUNTIME GENERATION FORK (W11 scout 2026-09-02) | `1bxday80` (v1, LIVE at this pin, 187,877 B) and `4mp04j81` (v2, DEAD, 193,087 B) are the same module one generation apart, selected by `bT()` (`cr9f4adc`) reading `MCP_SDK_GENERATION` BEFORE the gate `tengu_brindle_causeway`; eight module pairs fork this way; plus the accessor `6rdsq6fw`, the elicitation impl `5ww6p4vy`, the MCP-skills fetcher, ten MCP control arms (13,051 B) |
 | Slash commands + skills loading | high (all in one chunk, anchors clean) — W11 scout 2026-09-02 | `fy12d89p` @3,310–3,495 KB (commands + plugin/skill loading, 133-element registry, 181,873 B declared) and @2,019–2,058 KB (skills belt, 37,960 B) — the "@10–12.5k" locator pointed at prompt-expansion/LSP code; plus `304awr1a` (35,905 B, the expansion path, never named). `g461tywa` is a 302 KB / 198-export grab-bag, not a commands chunk and not S-chunk-able |
 | Agent/Task subagent dispatch | medium (nested loop reentry) | `fy12d89p` @55–58k, `bf5vvscj` |
-| Query loop / turn driver (retry, 529, model fallback, compaction driver) | module-level (long async generator) | `fy12d89p` @75–80k |
+| Query loop / turn driver (retry, 529, model fallback, compaction driver, transport + streaming assembler, frames, process lifecycle) | HIGH seam (W13 scout 2026-09-02): one exported entry `Kx` over a 58 KB async generator `DAt`, a four-symbol module boundary (`Kx`, `sX`, `E4n`/`wFt`, `mdt`/`gdt`), ZERO private fields in any class, and an injected deps object `aAt()` = `{callModel, autocompact, uuid, now}` that already declares three of the wave's ports; the cross-turn STATE is NOT in the generator — it is 105 accessors in `chunk-38213y7h.js` (895 importers; ports only, never the chunk) | `fy12d89p` @74.5k (`DAt`, correct) + @85.3–88.2k (transport/assembler `HIt` 67 KB) + @34.1k (retry `kQ`) + @49.1k/@77.3–77.8k (compaction drivers) + @3.1k (shutdown coordinator); `dvbbv89q` (`GH`/`ky`/`hu`/`ku`/`Uy`, 205 KB gross); 42 of `g461tywa`'s exports (frames, 40.6 KB); `29shcjw2` (the 780 B shutdown latch). ~549 KB — the largest row measured |
 | Sandboxing (platform launchers behind an interface) | module-level (CEL/protobuf tangle) | `q4xe0m2r` |
 
 **The closure ledger.** The decomposition (step after this spec) materializes this table as a
@@ -472,7 +472,7 @@ ones).
 | W10 | Bash executor + command-safety AST | S-chunk (parser) + S-method (safety chain) + owned data + S-module (process core); the class-method shape is NOT needed; cut into six children 2026-09-02 | bash depth + the backgrounding moat (which has NO scenario today: zero of the corpus's Bash calls set `run_in_background`) |
 | W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk (the live MCP generation behind `McpClientPort`; two small S-chunks in skills); ONE family, three children 2026-09-02 | mcp/skills scenario families + the stdio-vs-SDK transport probe |
 | W12 | Agent/subagent dispatch + sandbox interface (`ToolRuntimePort` boundary) | S-module (fable) | subagent depth; sandbox matrix; mutation battery |
-| W13 | Query loop / turn driver (`ModelTransportPort`); **inversion milestone** — engine-ts becomes primary with extracted compatibility islands; **hermetic isolation substrate built** (§3.6) | S-module (fable) | controlled retry/interleaving + long-horizon traces; synthetic corpus required |
+| W13 | Query loop / turn driver (`QueryLoopPort` = upstream's own `zve({run})` parameter; `ModelTransportPort` = `aAt().callModel`); **inversion milestone**; **hermetic isolation substrate** (§3.6) | S-module (fable), cut into seven children 2026-09-02 — three things, not one: the loop, the inversion (a decision + a declared out-of-process delegation route), the substrate (shares no file or port with either) | controlled retry/interleaving + long-horizon traces; the synthetic RESPONSE corpus (spec-mandated since W9, still absent) is C16a's; per-event stream control in the replay proxy |
 | W14 | engine-ts closure: **OS-enforced hermetic** ownership gate (§3.6) with all four delegation-route negative controls; static reachability; full acceptance surface with engine-ts as engineB under strict replay | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
 
 ## Roadmap — the cut (2026-08-31)
@@ -668,10 +668,22 @@ follow as C4/C5.
 #### C15: W12 — subagent dispatch + sandbox (`ToolRuntimePort`) — controlled (fable)
 - Per §6 row; mutation battery per §3.1. **Required.** Status: not-dispatched.
 
-#### C16: W13 — query loop + inversion + hermetic substrate — controlled (fable)
-- `ModelTransportPort`; the inversion milestone (§2.4) and the §3.6 isolation substrate build
-  here. Blocked-by: substantially all of C4–C15 (the inversion needs the owned set to carry the
-  shell). **Required.** Status: not-dispatched (deliberately late).
+#### C16: W13 — query loop + inversion + hermetic substrate — CUT 2026-09-02 into C16a–C16g (see Deferred, "The W13 cut")
+- Scouted (`reforge/research/2026-09-02-w13-query-loop-scout.md`). **Upstream already ships the
+  inversion seam as a named parameter**: all three surfaces that run a turn construct the session
+  by passing the loop IN — `zve({run: Kx, …})` — so `QueryLoopPort` is that argument, not a port to
+  invent; and the loop's default deps factory `aAt()` names `callModel`/`autocompact`/`uuid`/`now`,
+  so `ModelTransportPort` and `CompactionDriverPort` are upstream's shapes too. The row is ~549 KB
+  with zero private fields and a four-symbol export surface. The headless turn entry is a gate
+  fork (`tengu_print_engine_loop`, default false): the corpus drives the legacy `ask()` side
+  (`ku` → `hu` → `Kx`); the `createHeadlessSession` side is gate-dead. Nine deferrals measured and
+  placed (see the cut); the model-switch pair is NOT W13's. Three things, not one — the loop is
+  ownable when its oracle capabilities exist; the inversion is a decision plus a delegation route
+  that must survive §3.6's four negative controls (the only shape that does: an OUT-OF-PROCESS
+  supervised delegate over one declared channel, so `check-reachability.ts` keeps its static ban);
+  the substrate gates nothing until an engine-ts-primary artifact exists. Blocked-by: C16a/C16b
+  nothing (cut now; serialize on the shared surface); C16c–g per the table. **Required.**
+  Status: C16a/C16b not-dispatched, unblocked; C16c–g advisory behind their triggers.
 #### C17: W14 — engine-ts closure — controlled
 - The hermetic ownership gate with its four delegation-route negative controls; the campaign's
   recomposition verification follows its landing. Blocked-by: all. **Required.** Status:
@@ -756,7 +768,14 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   CwdChanged one-`cd` probe phase (fires → `AUt` on the family template, sharing `zxt`), and
   `rewind_files` only if its scenario is genuinely cheap. Explicitly NOT C10.5's: the interrupt
   helpers (W8), `mcp_message` (W11), the model-switch pair and W6's four recorded gaps (their
-  own design passes). Track hint: controlled worker; the executor design pass gates the
+  own design passes). **Model-switch pair, re-placed by the W13 scout (2026-09-02):** "stateful"
+  was a reason to find the holder, not to defer — `mdt`/`gdt` run through `jy` (hook-executor
+  calls), their holder `qvt` (`{pending, landedOn, inFlight}`, three PUBLIC fields) is a
+  session-scoped `Ln` store two stores away, and the arm is ALREADY driven by the corpus:
+  `km`/`set_model` (C10-owned) calls `CS` (`chunk-9gqmx4zx.js`) which calls `mdt` with the
+  re-validation loop, so `runtime-setters` and the raw driver's `set_model` case are its coverage.
+  → **C10.7 inherits the pair** on the hook-family template with the store behind a port; the
+  `hooks-model-switch` recording the ledger gap named is one `set_model` frame away. Track hint: controlled worker; the executor design pass gates the
   implementation half.
 - **The executor cut (2026-09-02, C10.5 review converged on code, doc round closed):** the
   hook-executor implementation becomes its **own wave family**, not a fold into W8. Folding it in
@@ -1036,6 +1055,70 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     `claudeai-proxy` and the OAuth redirect leg (server boundary); `sse-ide`/`ws-ide`; the v2
     generation (exclusion with its env lever named); `g461tywa` (take exports, never the chunk);
     the hook dispatchers themselves (W5 owns them; W11 owns their call sites).
+- **The W13 cut (2026-09-02, from `reforge/research/2026-09-02-w13-query-loop-scout.md` —
+  adopted with grades):** seven children; three THINGS, order forced. What must land before the
+  loop can be owned, because the loop calls it: the hook executors (C10.6–8; reciprocally they
+  need W13's shutdown latch, so C16b lands first as a standalone), `ToolRuntimePort` (C15), the
+  storage oracle machinery (C12a), the descendant-process snapshot (C13c), the synthetic response
+  corpus (C16a). Where the nine deferrals landed: `zRe`/`Tte` W13's, and cheaper than feared —
+  `zRe` has no call site because it is INJECTED through `aAt()`; `E4n` W13's by routing and
+  permanently REPL-only with a third guard (one importer, one call site, behind `_requireHost()`);
+  the resume LOOP half is `Uy` (8,974 B); `ky`'s 52-arm ladder is not separable and its arms stay
+  W7/W10/W11's; the driver measured across five regions; the task-frame emitters stay C11c's and
+  only the interleaving contract is W13's; the process lifecycle is 780 bytes plus a coordinator;
+  the `stream:false` retry has TWO arms and the corpus records the wrong one (404, by accident of
+  a non-existent model name; C3's mid-stream arm is unrecorded); the model-switch pair is NOT W13's
+  (re-placed to C10.7 above).
+  • **C16a / W13a — the loop oracle machinery** (controlled, opus-tier; cut NOW): the five
+    capabilities no oracle has — (i) per-event stream control in the replay proxy; (ii) the
+    synthetic response corpus, protocol-valid SSE over the case matrix with deterministic seeds and
+    an explicit oracle expectation per case (§3.1's non-vacuity: an empty or token case set FAILS);
+    (iii) signal delivery to the engine child + the "no further yields within N ms" verdict; (iv)
+    raw-wire multi-turn in `m2/raw-protocol.ts`; (v) opt-in unscrubbed request comparison for
+    cache-breakpoint placement and ttl. Eight of the twenty edge-matrix cells depend on (i)+(ii).
+  • **C16b / W13b — the process lifecycle** (autonomous, opus-tier; cut NOW; after C10.6's review
+    on the shared manifest): `chunk-29shcjw2.js` whole (`class t{committed=!1}`, `xo()`, the
+    never-settling `pm()`), `TWn`'s shutdown pair, the SIGINT/SIGTERM handlers in `ky`, the
+    `sealTranscriptAppendsForShutdown` edge to W9 — as `LifecyclePort`; a SIGTERM-mid-turn scenario
+    with a named stable verdict on both engines. Unblocks the executor children's stub.
+  • **C16c / W13c — transport + assembler** (fable-tier; ADVISORY, blocked-by C16a): the 18-arm SSE
+    assembler and transport `HIt`, `XN`/`sX`/`yxe`, the retry driver `kQ` and seven classifiers,
+    `EIt` (both arms graded), `S2`/`Eie`/`P8n` — behind `ModelTransportPort` (= `aAt().callModel`)
+    and `RetryPolicyPort`; the vendored HTTP client and SSE decoder stay §1.2. Mutation battery:
+    dropped events, reordered deltas, duplicated emissions, a swallowed `message_stop`.
+  • **C16d / W13d — the turn driver and the compaction drivers** (fable-tier; ADVISORY, blocked-by
+    C16c, C10.6–8, C15, C12a): `Kx`/`DAt` (59,808 B), `rAt`/`aAt`, `ORe`, the loop-owned half of
+    `XCt`, `zRe`/`Tte`/`wFt`/`E4n`, the 490 B of context accounting, `PostToolBatch` — behind
+    `QueryLoopPort` (`run({messages, systemPrompt, promptRenderEpoch, userContext, systemContext,
+    canUseTool, toolUseContext, fallbackModel, querySource, maxTurns, taskBudget, stopHookActive})
+    -> AsyncGenerator<frame, {reason}>`, the shape of `Kx`'s ONE live call site in `hu.submitMessage`),
+    `CompactionDriverPort`, `ToolExecutorPort` (a FACTORY — the refusal-decline path rebuilds it),
+    `LoopStatePort`/`CostLedgerPort`. The port trace compares which ports ran, with what, how often.
+  • **C16e / W13e — the headless half and the frame layer** (fable-tier; ADVISORY, blocked-by
+    C16d): `GH`, `ky`'s drain loop and writer, `hu` (24 members, 0 private), `ku`, `Uy`, and the 42
+    shared `g461tywa` exports (`system:init`, `result`, `zve` itself). The `Wn` gate fork recorded
+    OPEN with `tengu_print_engine_loop` cited — or FIRED if C16a's flip-liveness adds
+    `CLAUDE_CODE_PRINT_ENGINE_LOOP` to the allowlist with a negative control (the override IS in the
+    committed fixture's 13 entries; it is the allowlist that excludes it).
+  • **C16f / W13f — the hermetic substrate** (controlled, fable-tier; ADVISORY, parallel with
+    C16c/d, blocked-by C13c): the sandbox-exec profile with the derived deny/allow list resolved
+    through realpaths, exec AND file-open auditing over the descendant tree, a host-capability
+    declaration scenarios can require, the `resetSandbox()`/config-dir policy, the four negative
+    controls (each route FAILS from inside the boundary; a Bash workload child still passes; the
+    audit distinguishes by policy, not env). It shares no file with any other child and gates
+    nothing until C16g.
+  • **C16g / W13g — the inversion** (controlled, fable-tier; ADVISORY, blocked-by C16b–f): the
+    decision and the flip — engine-ts's stream-json shell (a real line reader/writer for the seven
+    frame kinds), X7 extended from `{name, subsystem}` to a dispatchable registry, the declared
+    delegation route (binding-candidate: OUT-OF-PROCESS supervised delegate over one declared
+    channel — `check-reachability.ts` forbids the build tree, the bundle tree and computed dynamic
+    imports by construction, and §3.6's four negative controls are exactly the four routes it must
+    not be), and the ledger flip. Acceptance: engine-ts drives the corpus as `engineB` under strict
+    replay for the scenarios whose subsystems are owned, delegating the rest, inside C16f's boundary.
+  • **Not W13's**: `mdt`/`gdt` (C10.7); `kUn` and the Agent tool (C15); the 52 ladder arms; the
+    task-frame emitters (C11c); `kOe` the security-monitor prompt (W6's classifier surface); `cs` in
+    `dvbbv89q` (the remote-control/bridge transport, §1.2); the vendored HTTP client and SSE
+    decoder; `chunk-38213y7h.js` as a chunk.
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -1057,7 +1140,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C10.6 | W7.6a | cut 2026-09-02 (Deferred section's "The executor cut"); brief: `reforge/research/2026-09-02-w75-hook-executor-design.md` (as corrected in C10.5's boundary round); wave record `reforge/README.md` "W7.6a" | **landed** 2026-09-02 — Stages 0–1. **Stage 0 is the wave**, and the cut's reason for making it its own child is now measured. **(0a) The trace is ONE ORDERED EVENT LOG** and the tech-debt entry is retired: swapping one adjacent pair of differently-ported events reddens **204 of the 226** log comparisons and moves the retired per-port projection in **zero** of them; the entry's two smaller edges close with it and NEITHER moved an existing comparison, which says both blindnesses were latent. The half the entry could not have known is **cleanup pairing**, stated as a PROPERTY because two sides that both leak COMPARE EQUAL — six controls, including the executor's own shape. `comparePerHook` ships design §5(a)'s multi-hook mode expressible and controlled on synthetic logs. **(0b) stdout WRITE boundaries**: the same bytes adopt an async hook in one write and never adopt it when split after a NESTED brace; splitting mid-KEY is indistinguishable from one write, which is the mechanism the design first got wrong, now a test. **(0c) a path that never settles** is a graded outcome — and **the arm that hangs is not in either executor**: the 261-byte shutdown wrapper the twenty-one dispatcher splices have captured as `executeHooks` since W5 owns it, an allowlisted event hangs with zero yields while every other event returns SILENTLY with zero yields (indistinguishable by what they yield), and the wrapper DROPS the executor's completion value on both arms. **(0d) the module-state leak is ONE cell**, not the family design §7.7 lists — the shutdown module's `committed` flag, with a setter and no clearer; the rest are keyed-lazy and the spawn-failure set is session-scoped. Reset proven by a once-per-process arm giving the same verdict twice, with a control showing the reset is not a no-op. **Stage 1: the belt is not takeable, and the constraint is ANCHORABILITY rather than purity.** The seventh pin-keyed fixture (`research/tools/extract-hook-helpers.ts`) measures **151 in-chunk functions, 43 pure (5,961 B)** against the design's "~13.9 KB across ~34" — but **84 of the 151 carry no string literal at all** and only **4 of the 43 pure ones** are uniquely anchorable, three of which have a single caller. So two splices, not a belt: **`Fq`** (5,993 B, NOT pure — five effectful-port captures, three throws all reproduced, two of eighteen event arms corpus-reachable) and **`Xpt`** (96 B, pure, both executors' — spliced and MEASURED DARK after the inverted twin was replayed, which is why a splice row may now carry a `darkReason` on the same terms a chunk export always could). Gate **GATEPHASES**; hook oracle **721 → 1,499 comparisons / 121 → 195 controls / 1,005 property statements**; attestation **460/996 with 536 exclusions and zero unadjudicated**; manifest **74 → 75 splices**; corpus unchanged at 59. Neither named recording was taken: both existed to make Stage 0's proofs possible and both proofs turned out available at the oracle level against upstream's own bytes, which is stronger evidence than a scenario — the cost of each is named for C10.8 |
 | C10.7 | W7.6b | as C10.6 | not-dispatched — **blocked by C10.6**. Stages 2–3: `HookSourcePort` (consumers `Rzn`, `Qxt`, `DUt`) + the matcher owned pure with its one `EnvironmentPort.defaultShell()` read; then `AE` and `zxt`. Track hint: fable-tier |
 | C10.8 | W7.6c | as C10.6 | not-dispatched — **blocked by C10.7**. Stages 4–5: `ProcessPort` + the command-spec builder out of `Nq` (serving the three non-hook callers through the same port); then `Qxt` with the merge, the aggregation projection and the permission-precedence reducer. `subsystem/hook-dispatch` reaches `standalone-complete` here and not before. Track hint: fable-tier |
-| C11a | W8a | scout: `reforge/research/2026-09-02-w8-moat-tools-scout.md` (cut 2026-09-02, Deferred section's "The W8 cut") | not-dispatched — the description-and-formatter belt; **blocked by C10.6's review** (shared manifest/gate/ledger/attestation surface), zero recordings |
+| C11a | W8a | scout: `reforge/research/2026-09-02-w8-moat-tools-scout.md` (cut 2026-09-02, Deferred section's "The W8 cut") | not-dispatched — the description-and-formatter belt; **blocked by C10.6's review** (shared manifest/gate/ledger/attestation surface), zero recordings; rider (W13 scout): `engine-ts/skeleton.test.ts` spawns the engine-ts wrapper with NO `env` — it inherits the operator's environment inside a gate phase, an X6 violation in the wrapper the inversion makes primary; route it through `engineEnv({mode:"replay", …})` |
 | C11b | W8b | as C11a | not-dispatched — reachability + cross-session probes, 9–11 recordings, the `tool-catalog` fixture; **blocked by C11a** |
 | C11c | W8c | as C11a (advisory) | not-cut — task/notification core behind ports; cut when C11b lands |
 | C11d | W8d | as C11a (advisory) | not-cut — cross-session messaging; cut ONLY if C11b's probe fires |
@@ -1075,7 +1158,13 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C14b | W11b | as C14a | not-dispatched — `w11/probe-mcp-transport.ts` (stdio vs SDK, with the SDK-NEGATIVE phase: elicitation is live for stdio servers and explicitly skipped for in-process ones), a committed fixture MCP server, the `pf` probe via the raw driver, 11–14 recordings; resolves the hook registry's two `Elicitation*` OPEN rows; the `Skill` tool + `qdt` ride here; **blocked by C14a** (shared surface) |
 | C14c | W11c | as C14a (advisory) | not-cut — the live MCP generation behind `McpClientPort` (`hydrateToolsFromListing` as the projection, the call path, the 3.4 KB elicitation impl whole, a generation-guard tripwire) + the negative control proving a row aimed at the dead generation FAILS the build; cut when C14b lands |
 | C15 | W12 | — | not-dispatched (controlled, fable) |
-| C16 | W13 | — | not-dispatched — deliberately late |
+| C16a | W13a | scout: `reforge/research/2026-09-02-w13-query-loop-scout.md` (cut 2026-09-02, Deferred section's "The W13 cut") | not-dispatched — the loop oracle machinery: per-event stream control in the replay proxy (drop-after-N / delay / destroy / inject-malformed at `proxy.ts`'s entry loop, strict-fallback rules untouched), the SYNTHETIC RESPONSE CORPUS generalising `src/faults.ts` (spec-mandated since W9, absent), signal delivery + the no-further-yields verdict shape, raw-wire multi-turn, opt-in unscrubbed cache-breakpoint comparison — each with a negative control. **Unblocked** (no dependency on any wave); serializes on the shared harness surface |
+| C16b | W13b | as C16a | not-dispatched — the process lifecycle: own `chunk-29shcjw2.js` outright (780 B, 10 importers, 3 exports — the campaign's smallest whole-chunk ownership) + `TWn`'s shutdown pair as `LifecyclePort` (`isShuttingDown`, `hang`, `claimShutdown`, `releaseShutdownClaim`); the hook-executor children drop their `isShuttingDown` stub and consume it. **Unblocked**, dispatch after C10.6's review (shared manifest) |
+| C16c | W13c | as C16a (advisory) | not-cut — transport + streaming assembler (`HIt` 67 KB, `XN`/`sX`, `kQ` retry + seven classifiers, both `EIt` `stream:false` arms — the corpus records only the 404 arm; C3's mid-stream arm has NO recording) behind `ModelTransportPort` + `RetryPolicyPort`; absorbs C1's `text_delta` splice; blocked by C16a |
+| C16d | W13d | as C16a (advisory) | not-cut — the turn driver `DAt` + `ORe` + the compaction drivers `zRe`/`Tte`/`wFt`/`E4n` + context accounting + PostToolBatch, behind `QueryLoopPort` (= `zve`'s `run`), `CompactionDriverPort`, `ToolExecutorPort`, `LoopStatePort`/`CostLedgerPort` over the 105 accessors; blocked by C16c, C10.6–8, C15, C12a |
+| C16e | W13e | as C16a (advisory) | not-cut — the headless half (`GH`, `ky`'s drain loop and writer, `hu`, `ku`, `Uy` resume) + the 42 frame exports (`system:init`'s 103 graded fields, `result`'s 48); NOT the 52 ladder arms; blocked by C16d |
+| C16f | W13f | as C16a (advisory) | not-cut — the hermetic substrate (§3.6): sandbox-exec profile with the derived deny/allow list, exec AND file-open audit over the descendant tree (shares C13c's descendant snapshot), host-capability declaration, the `resetSandbox()`/config-dir policy W9 left open, the four negative controls; parallel with C16c/d, blocked by C13c |
+| C16g | W13g | as C16a (advisory) | not-cut — the inversion: engine-ts's stream-json shell, X7 extended to a dispatchable registry, the declared OUT-OF-PROCESS delegation route, the ledger flip; engine-ts drives the corpus as `engineB` under strict replay inside C16f's boundary; blocked by C16b–f |
 | C17 | W14 | — | not-dispatched — deliberately late |
 
 ## Acceptance (behavior-phrased)
@@ -1365,6 +1454,34 @@ Pending — written at finish.
     that ANSWERS with a `hookSpecificOutput` and a callback returning `{continue:true}` reaches none
     of them — and it is adjudicated in six families rather than one.
 
+- 2026-09-02 (W13 scout — the query loop re-measured, and the C16 cut; the last scout): **the
+  inversion seam already exists upstream as a named parameter.** All three surfaces that run a
+  turn pass the loop in — `zve({run: Kx, …})` in the REPL builder, the interactive controller and
+  the headless `bu` — and the loop's default deps factory `aAt()` is 94 bytes naming
+  `callModel`/`autocompact`/`uuid`/`now`: three of the wave's ports declared as property names.
+  The campaign spent three review rounds designing `ModelTransportPort`; upstream ships its shape.
+  The row is ~549 KB across three chunks (1.55× W10's), a four-symbol module boundary, ZERO private
+  fields in any class; the cross-turn state is 105 accessors in a 94 KB chunk with 895 importers
+  (ports only, never the chunk). The headless turn entry is a gate fork whose live side is the
+  legacy `ask()` path — the engine logs which in words. Nine deferrals measured and placed; the
+  model-switch pair is re-placed to C10.7 because "stateful" was a reason to find the holder
+  (three public fields, two `Ln` stores away, the arm already recorded via `set_model`), not to
+  defer. The `stream:false` retry has two arms and the corpus records the accidental one. Cut:
+  seven children, three things — the loop (ownable when five oracle capabilities exist: per-event
+  stream control, the synthetic response corpus, signal delivery, raw-wire multi-turn,
+  cache-breakpoint comparison), the inversion (a decision — out-of-process delegate — plus a
+  route), the substrate (shares nothing; gates nothing until an engine-ts-primary artifact
+  exists). Two scout claims NOT adopted: its correction #5 says the gate-defaults fixture cannot
+  see `CLAUDE_CODE_PRINT_ENGINE_LOOP` — it can and does (one of the 13 committed overrides, the
+  same shape the extractor accepts; it is the env ALLOWLIST that excludes it), so the extractor
+  blind spot remains the two shapes W8/W11 measured, not three; and `coverage.md`'s ~88 % for
+  turn execution describes what the SDK exposes, not what reforge grades (five named sub-features
+  have zero corpus coverage) — recorded for C16's landing note rather than edited now. Also
+  found: `engine-ts/skeleton.test.ts` inherits the operator's environment inside a gate phase (an
+  X6 violation; rider on C11a). **Lesson, from the scout's own method notes: read the deps object
+  before designing the port** — grep the target for a literal whose values are its own effects.
+  **Every wave is now scouted.** Ten scouts, ten census corrections; the roadmap has 30 cut
+  children from C10.6 through C16g, with the code lane serialized on one shared surface.
 - 2026-09-02 (W10 scout — the Bash executor re-measured, and the C13 cut): **the campaign's
   oldest open blocker is answered by measurement, and it guards a third of what it was thought
   to guard.** The Bash tool is an object literal (26 members, zero private fields); the private
