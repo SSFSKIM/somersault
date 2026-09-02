@@ -4007,6 +4007,99 @@ export const SPLICES: Splice[] = [
     coverage: ["hooks-cwd-change"],
   },
 
+  {
+    // W7.6a. NOT a dispatcher — the layer BENEATH them. `Fq` is the only thing
+    // in the engine that reads a hook's parsed JSON output, and every one of the
+    // executor's four answer paths (internal callback, HTTP, MCP, command) plus
+    // the general callback path `d6n` funnels its document through it. So the
+    // nineteen dispatchers above decide which hooks run; this decides what a
+    // hook's answer MEANS.
+    //
+    // IT THROWS, on three conditions, and the row owns the throws as behaviour:
+    // an unknown legacy `decision`, an unknown PreToolUse `permissionDecision`
+    // in the pre-pass, and a `hookSpecificOutput.hookEventName` that disagrees
+    // with the caller's `expectedHookEvent`. The internal-callback fast path in
+    // `Qxt` has no try/catch around its call, so that third throw reaches the
+    // dispatcher; the other three call sites catch. Reproduced, not repaired.
+    //
+    // ANCHOR: four candidate literals were measured across the 1,802-file graph.
+    // Three occur in exactly one file AND exactly once — `Unknown hook decision
+    // type: `, `Unknown hook permissionDecision type: ` and `Hook returned
+    // incorrect event name: expected `. The fourth, the terminalSequence
+    // rejection prose, is in one file but TWICE, so it is not usable without a
+    // `siblings` claim. The legacy decision message is taken: it is the oldest
+    // and least-churned half of the contract, and it names the function's job.
+    //
+    // ALL FIVE CAPTURES ARE `effectful-port`, which matches the belt fixture's
+    // own verdict (`freeThatArePure: []`). None is a plain helper this module
+    // could ship: the attachment builder mints a uuid and reads a clock, the
+    // dead probe reads per-host state and emits telemetry, the JSON serialiser
+    // opens a trace span, the terminal-sequence filter heads an unowned parser
+    // chain, and the log is the engine log. Five ledger edges, all to the hook
+    // EXECUTOR wave and the layers under it.
+    name: "hook-json-contract",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "Unknown hook decision type: ",
+    fn: "hookJsonContract",
+    captures: [
+      {
+        // `bge` — the OSC/BEL allowlist filter. `null` means rejected.
+        as: "sanitizeTerminalSequence",
+        kind: "effectful-port",
+        derive: pick(
+          "hook-json-contract",
+          "sanitizeTerminalSequence",
+          new RegExp(`\\.terminalSequence\\)\\{let ${ID}=(${ID})\\(${ID}\\.terminalSequence\\)`),
+        ),
+      },
+      {
+        // `n` — the engine debug log, and the ONLY thing a rejected terminal
+        // sequence produces. A hook cannot tell that it was refused.
+        as: "logDebug",
+        kind: "effectful-port",
+        derive: pick(
+          "hook-json-contract",
+          "logDebug",
+          new RegExp(`else (${ID})\\(\`Hook \\$\\{${ID}\\} \\(\\$\\{${ID}\\}\\) returned a terminalSequence`),
+        ),
+      },
+      {
+        // `b` — the traced `JSON.stringify` the event-name throw embeds the
+        // WHOLE document with.
+        as: "stringify",
+        kind: "effectful-port",
+        derive: pick("hook-json-contract", "stringify", new RegExp(`Full stdout: \\$\\{(${ID})\\(${ID},null,2\\)\\}`)),
+      },
+      {
+        // `R5n` — the dead probe for the legacy MCP rewrite field, fired only
+        // when `updatedMCPToolOutput` is truthy and carrying whether the modern
+        // `updatedToolOutput` was set alongside it.
+        as: "probeMcpRewrite",
+        kind: "effectful-port",
+        derive: pick(
+          "hook-json-contract",
+          "probeMcpRewrite",
+          new RegExp(`\\.updatedMCPToolOutput\\)(${ID})\\(${ID}\\.hookSpecificOutput\\.updatedToolOutput!==void 0\\)`),
+        ),
+      },
+      {
+        // `Mn` — the attachment builder both return arms go through. Its second
+        // parameter defaults to a clock and a uuid generator, which is why it is
+        // a port and not a helper this module could own.
+        as: "hookMessage",
+        kind: "effectful-port",
+        derive: pick("hook-json-contract", "hookMessage", new RegExp(`\\?(${ID})\\(\\{type:"hook_blocking_error"`)),
+      },
+    ],
+    // The two scenarios whose hooks answer with a `hookSpecificOutput` AND whose
+    // answer changes what the engine then does: the UserPromptSubmit arm's
+    // injected context, which has to reach the model, and the PermissionRequest
+    // arm's deny, which has to reach the tool result. Both are red under the
+    // twin, which flattens the nested contract away.
+    coverage: ["hooks-prompt-submit", "perm-hook-deny"],
+  },
+
   // ---- the control protocol (subsystem/control-protocol) -------------------
   // W7. The seam is NOT the dispatch ladder. `research/fixtures/
   // control-protocol-<pin>.json` derives it from the bundle: fifty-two `else if`

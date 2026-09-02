@@ -70,6 +70,18 @@
 // once-per-process arm giving the same verdict twice and a control showing the
 // reset is not a no-op.
 //
+// AND WHAT SECTION 5 IS (W7.6a): the layer BENEATH the dispatchers. Upstream
+// `Fq` is the sole reader of a hook's parsed JSON output — every answer path the
+// executor has funnels its document through it — so the dispatchers decide which
+// hooks run and it decides what their answers MEAN. It carries two interleaved
+// contracts (a flat legacy one, a nested per-event one with eighteen arms) that
+// write the same fields in a fixed order, which makes most of its behaviour an
+// ORDERING between two writes rather than a branch, and it THROWS on three
+// conditions — one of them onto a call site with no try/catch. The corpus
+// reaches two arms, neither MCP-rewrite path, no throw and no document that uses
+// both contracts at once; the cross-product here reaches all of it, and drives
+// every event with one RICH payload so each arm is graded on what it IGNORES.
+//
 // WHAT THE PORT TRACE IS, since C10.6 / W7.6a: ONE ORDERED EVENT LOG, not a
 // struct of per-port call lists. The retired shape could not see order ACROSS
 // ports — a dispatcher that built its record before taking the activity hold
@@ -150,6 +162,8 @@ import "./modules/user-prompt-expansion-hooks.js";
 import "./modules/file-changed-hooks.js";
 // W7.5: FileChanged's twin, spliceable once its firing condition was created.
 import "./modules/cwd-changed-hooks.js";
+// W7.6a: the layer beneath them all — the sole reader of a hook's JSON output.
+import "./modules/hook-json-contract.js";
 
 /** The adapters' registration surface — exactly what the strangled graph calls. */
 const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) => AsyncGenerator<unknown, unknown>> }).__reforge!;
@@ -2955,16 +2969,678 @@ const resetModuleState = (): void => {
   mustDiffer("a guard that hangs whenever the flag is clear", upstreamAwaitingGuard("PreToolUse"), true);
 }
 
+// ============================================================================
+// 5. THE HOOK JSON CONTRACT — the layer BENEATH the dispatchers (W7.6a).
+//
+// Upstream `Fq` is the only thing in the engine that reads a hook's parsed JSON
+// output. The dispatchers above decide WHICH hooks run; this decides what a
+// hook's answer MEANS, and all five of the executor's answer paths funnel their
+// document through it.
+//
+// WHY IT NEEDS AN ORACLE MORE THAN THE DISPATCHERS DID. A dispatcher has one
+// shape and a handful of guards. This has TWO INTERLEAVED CONTRACTS — a flat
+// legacy one and a nested per-event one with eighteen arms — that write the same
+// four fields in a fixed order, so almost every interesting behaviour is an
+// ORDERING between two writes rather than a branch. The corpus reaches two of
+// the eighteen arms. It reaches none of the three throws, neither MCP-rewrite
+// path, the terminal-sequence allowlist on either side, and no case at all where
+// a document uses both contracts at once.
+//
+// THE CROSS-PRODUCT IS THE POINT, and it is built so each arm's SELECTIVITY is
+// graded rather than only its output: every event is driven once with a RICH
+// payload carrying every field any arm reads, so an arm that copied a
+// neighbour's field is a difference rather than a coincidence.
+//
+// THE THROWS ARE GRADED, NOT SWALLOWED. Three conditions raise, and one of them
+// reaches the dispatcher because the internal-callback fast path has no
+// try/catch. `runContract` records the throw as an outcome and compares it, the
+// same way `drain` does one layer up.
+// ============================================================================
+
+/** The delegation the build synthesises: the re-assembled parameter, then the five ports. */
+type ContractFn = (input: Record<string, unknown>, ...ports: unknown[]) => unknown;
+
+/**
+ * The five ports, per case.
+ *
+ * All `effectful-port` (§2.4) and none owned here, so both sides get the SAME
+ * stub — the C7 rule about binding a body to the implementation it is grading
+ * does not bite, because this module implements none of them. What each stub
+ * does is chosen so the port is OBSERVABLE rather than inert: the allowlist
+ * filter rejects on a marker prefix so both of its arms are reachable, and the
+ * attachment builder ECHOES its argument (upstream's mints a uuid and reads a
+ * clock, which would make every comparison nondeterministic) so the returned
+ * `message` grades the whole spec rather than its existence.
+ */
+function contractPorts(log: EventLog) {
+  return {
+    sanitizeTerminalSequence: (seq: unknown) => {
+      log.record("sanitize", [seq]);
+      return typeof seq === "string" && seq.startsWith("REJECT") ? null : `sanitized(${String(seq)})`;
+    },
+    logDebug: (...args: unknown[]) => {
+      log.record("logDebug", args);
+    },
+    stringify: (value: unknown, replacer: unknown, indent: unknown) => {
+      log.record("stringify", [value, replacer, indent]);
+      return JSON.stringify(value, replacer as null, indent as number);
+    },
+    probeMcpRewrite: (...args: unknown[]) => {
+      log.record("probeMcpRewrite", args);
+    },
+    hookMessage: (spec: unknown) => {
+      log.record("hookMessage", [spec]);
+      return { attachment: spec, type: "attachment", uuid: "<stub-uuid>", timestamp: "<stub-clock>" };
+    },
+  };
+}
+type ContractPorts = ReturnType<typeof contractPorts>;
+
+/** The live-binding forwarders, installed once — see `CURRENT` above for why. */
+let CONTRACT: ContractPorts | null = null;
+const liveContract = (): ContractPorts => {
+  if (CONTRACT === null) throw new Error("hooks-parity: a contract port was called with no case bound");
+  return CONTRACT;
+};
+ports.__p_sanitizeTerminalSequence = (s: unknown) => liveContract().sanitizeTerminalSequence(s);
+ports.__p_logDebug = (...a: unknown[]) => liveContract().logDebug(...a);
+ports.__p_stringify = (v: unknown, r: unknown, i: unknown) => liveContract().stringify(v, r, i);
+ports.__p_probeMcpRewrite = (...a: unknown[]) => liveContract().probeMcpRewrite(...a);
+ports.__p_hookMessage = (s: unknown) => liveContract().hookMessage(s);
+
+/**
+ * Upstream's body, located by the MANIFEST ROW'S OWN ANCHOR and its enclosing
+ * `function` declaration — the same two facts the build resolves it by, so the
+ * oracle cannot end up grading a different node than the splice replaces. The
+ * anchor's uniqueness inside the chunk is restated here rather than assumed.
+ *
+ * Brace matching skips `'` and `"` strings and counts through template
+ * literals, which is the same rule `dispatcherSource` uses and is safe for the
+ * same reason: every `${…}` in this body contributes a balanced pair.
+ */
+function contractSource(row: { anchor: string; signature: { params: number } }): string {
+  const at = ENGINE.indexOf(row.anchor);
+  if (at < 0) throw new Error(`hook-json-contract: anchor not found in the chunk`);
+  if (ENGINE.indexOf(row.anchor, at + 1) >= 0) throw new Error(`hook-json-contract: anchor is not unique in the chunk`);
+  const start = ENGINE.lastIndexOf("function ", at);
+  if (start < 0) throw new Error(`hook-json-contract: no enclosing function declaration above the anchor`);
+  const open = ENGINE.indexOf("{", ENGINE.indexOf(")", start));
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  let end = open;
+  for (; end < ENGINE.length; end++) {
+    const c = ENGINE[end];
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') quote = c;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) break;
+  }
+  const source = ENGINE.slice(start, end + 1);
+  if (!source.includes(row.anchor)) throw new Error("hook-json-contract: the matched span does not contain the anchor");
+  const openParen = source.indexOf("(");
+  let paren = 0;
+  let closeParen = openParen;
+  for (; closeParen < source.length; closeParen++) {
+    if (source[closeParen] === "(") paren++;
+    else if (source[closeParen] === ")" && --paren === 0) break;
+  }
+  const declared = splitParams(source.slice(openParen + 1, closeParen));
+  if (declared.length !== row.signature.params) {
+    throw new Error(`hook-json-contract: expected ${row.signature.params} parameter(s), found ${declared.length}`);
+  }
+  return source;
+}
+
+const contractRow = SPLICES.find((s) => s.name === "hook-json-contract");
+if (!contractRow) throw new Error("hook-json-contract: no manifest row");
+const CONTRACT_SOURCE = contractSource(contractRow);
+const contractCaptures = deriveCaptures(contractRow, CONTRACT_SOURCE);
+const upstreamContract = build<ContractFn>(
+  CONTRACT_SOURCE,
+  contractCaptures.map((c) => `const ${c.identifier}=globalThis.__p_${c.as};`).join(""),
+);
+const ownedContract = reforge.hookJsonContract as unknown as ContractFn;
+/** The forwarded argument list, in manifest order — what the build's delegation passes. */
+const contractPortArgs = (p: ContractPorts): unknown[] =>
+  contractCaptures.filter((c) => !c.owned).map((c) => p[c.as as keyof ContractPorts]);
+
+interface Outcome {
+  returned?: unknown;
+  threw?: string;
+}
+
+/** One side of one case: what it returned, or how it THREW. */
+function runContract(fn: ContractFn, input: Record<string, unknown>, p: ContractPorts): Outcome {
+  CONTRACT = p;
+  try {
+    return { returned: fn(input, ...contractPortArgs(p)) };
+  } catch (e) {
+    return { threw: `${(e as Error).name}: ${(e as Error).message}` };
+  } finally {
+    CONTRACT = null;
+  }
+}
+
+/**
+ * The executor's own call shape: TEN keys, always present, some undefined. The
+ * build re-assembles upstream's destructured parameter into exactly this object,
+ * so a case that omitted a key would be grading a call the graph never makes.
+ */
+function contractInput(json: unknown, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    json,
+    command: "run-hook.sh --json",
+    hookName: "my-hook",
+    toolUseID: "toolu_01",
+    hookEvent: "PostToolUse",
+    expectedHookEvent: undefined,
+    stdout: "the hook's stdout",
+    stderr: "the hook's stderr",
+    exitCode: 0,
+    durationMs: 42,
+    ...over,
+  };
+}
+
+/**
+ * "Every settled result carries exactly one attachment, and it is the BLOCKING
+ * one precisely when a blocking error was built."
+ *
+ * A legal-shape statement rather than a comparison: two sides that both attach
+ * the wrong kind agree with each other. Stated on BOTH sides of every settled
+ * case, which is the convention the pairing property set one section up.
+ */
+function attachmentShape(outcome: Outcome): string[] {
+  if (outcome.threw !== undefined) return [];
+  const r = outcome.returned as { blockingError?: unknown; message?: { attachment?: { type?: string } } } | undefined;
+  if (r === undefined || r === null) return ["a settled call returned nothing"];
+  if (r.message === undefined) return ["no message attachment"];
+  const wanted = r.blockingError ? "hook_blocking_error" : "hook_success";
+  const got = r.message.attachment?.type;
+  return got === wanted ? [] : [`attachment is ${String(got)}, expected ${wanted}`];
+}
+
+/** Drive one case through both sides and grade the outcome, the ports and the shape. */
+function contractCase(label: string, input: Record<string, unknown>): { up: Outcome; own: Outcome } {
+  const upLog = new EventLog();
+  const ownLog = new EventLog();
+  const up = runContract(upstreamContract, input, contractPorts(upLog));
+  const own = runContract(ownedContract, input, contractPorts(ownLog));
+  eq(`contract ${label}`, up, own);
+  eq(`contract ${label} — ports`, upLog.snapshot(), ownLog.snapshot());
+  if (up.threw === undefined) {
+    property(`contract ${label}: upstream's attachment matches its blocking state`, attachmentShape(up));
+    property(`contract ${label}: the owned attachment matches its blocking state`, attachmentShape(own));
+  }
+  return { up, own };
+}
+
+{
+  console.log("  section 5: the hook JSON contract");
+
+  // ---- the LEGACY, flat contract -------------------------------------------
+  // `decision` × `reason`: the switch, its two known values, the falsy values
+  // that skip it entirely, and the two that THROW — including a correctly
+  // spelled one in the wrong case, since the comparison is exact.
+  for (const decision of [undefined, "approve", "block", "", null, 0, "reject", "Approve", "deny"]) {
+    for (const reason of [undefined, "the hook's reason", ""]) {
+      contractCase(`decision=${show(decision)} reason=${show(reason)}`, contractInput({ decision, reason }));
+    }
+  }
+  // `continue`: identity against `false`, not truthiness — so `0` and `"no"` do
+  // NOT stop the turn, and `stopReason` rides along only when truthy.
+  for (const cont of [undefined, true, false, 0, "no", null]) {
+    for (const stopReason of [undefined, "out of budget", ""]) {
+      contractCase(`continue=${show(cont)} stopReason=${show(stopReason)}`, contractInput({ continue: cont, stopReason }));
+    }
+  }
+  // `systemMessage` × `terminalSequence`: the allowlist's accept arm, its reject
+  // arm (which logs and sets NOTHING), and the falsy values that skip the port.
+  for (const systemMessage of [undefined, "a system message", ""]) {
+    for (const terminalSequence of [undefined, "OSC-TITLE", "REJECT-ME", "", null]) {
+      contractCase(
+        `systemMessage=${show(systemMessage)} terminalSequence=${show(terminalSequence)}`,
+        contractInput({ systemMessage, terminalSequence }),
+      );
+    }
+  }
+
+  // ---- the MODERN, per-event contract --------------------------------------
+  // Eighteen handled event names, one that no arm names, and the absent case.
+  const EVENT_NAMES = [
+    "PreToolUse",
+    "UserPromptSubmit",
+    "UserPromptExpansion",
+    "SessionStart",
+    "Setup",
+    "PreModelSwitch",
+    "PostModelSwitch",
+    "SubagentStart",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "Stop",
+    "SubagentStop",
+    "PermissionDenied",
+    "PermissionRequest",
+    "Elicitation",
+    "ElicitationResult",
+    "MessageDisplay",
+    "NotAnEvent",
+    undefined,
+  ];
+  /**
+   * ONE payload carrying every field ANY arm reads. Driven at every event name,
+   * so each arm is graded on what it IGNORES as well as on what it copies — an
+   * arm that picked up its neighbour's field is a difference here rather than a
+   * coincidence nothing looks at.
+   */
+  const RICH = {
+    additionalContext: "context from the hook",
+    sessionTitle: "a title",
+    suppressOriginalPrompt: true,
+    initialUserMessage: "the first message",
+    watchPaths: ["/sandbox/watched"],
+    reloadSkills: true,
+    classifierContext: "classifier says",
+    updatedToolOutput: "rewritten output",
+    updatedMCPToolOutput: { content: [{ type: "text", text: "mcp" }] },
+    retry: true,
+    decision: { behavior: "allow", updatedInput: { file_path: "/rewritten" } },
+    action: "decline",
+    content: { field: "value" },
+    displayContent: "shown to the user",
+    permissionDecision: "deny",
+    permissionDecisionReason: "the arm's own reason",
+    updatedInput: { file_path: "/from-the-arm" },
+  };
+  for (const hookEventName of EVENT_NAMES) {
+    for (const [payloadLabel, payload] of [
+      ["rich", RICH],
+      ["bare", {}],
+    ] as [string, Record<string, unknown>][]) {
+      // `expectedHookEvent` is the guard's only input: matching, unset (the
+      // guard is skipped entirely), and pinned to a DIFFERENT event, which
+      // throws for every name but that one.
+      for (const expectedHookEvent of [hookEventName, undefined, "PostToolUse"]) {
+        contractCase(
+          `event=${show(hookEventName)} ${payloadLabel} expected=${show(expectedHookEvent)}`,
+          contractInput({ hookSpecificOutput: { hookEventName, ...payload }, reason: "top-level reason" }, { expectedHookEvent }),
+        );
+      }
+    }
+  }
+  // …and the document with NO `hookSpecificOutput` at all, which skips the guard
+  // and the switch even when the caller pinned an event.
+  for (const expectedHookEvent of [undefined, "PostToolUse"]) {
+    contractCase(`no hookSpecificOutput expected=${show(expectedHookEvent)}`, contractInput({ reason: "r" }, { expectedHookEvent }));
+  }
+
+  // ---- the branchy arms, one axis at a time --------------------------------
+  // PreToolUse: the pre-pass switch (which THROWS on an unknown value) and the
+  // arm's own (which does not), the reason overwrite, and `updatedInput`.
+  for (const permissionDecision of [undefined, "allow", "deny", "ask", "defer", "", "elevate"]) {
+    for (const permissionDecisionReason of [undefined, "the arm's reason"]) {
+      for (const updatedInput of [undefined, { file_path: "/x" }, {}]) {
+        contractCase(
+          `PreToolUse decision=${show(permissionDecision)} armReason=${show(permissionDecisionReason)} updatedInput=${show(updatedInput)}`,
+          contractInput({
+            reason: "the top-level reason",
+            hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision, permissionDecisionReason, updatedInput },
+          }),
+        );
+      }
+    }
+  }
+  // …and the same, with NO top-level reason, because the arm's overwrite is only
+  // visible against a value it can erase.
+  for (const permissionDecision of [undefined, "allow", "deny"]) {
+    contractCase(
+      `PreToolUse decision=${show(permissionDecision)} with no top-level reason`,
+      contractInput({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision } }),
+    );
+  }
+  // PreModelSwitch: three arms rather than four (a model switch cannot be
+  // DEFERRED), no default clause at all, and a GUARDED reason assignment.
+  for (const permissionDecision of [undefined, "allow", "deny", "ask", "defer", "elevate"]) {
+    for (const permissionDecisionReason of [undefined, "the arm's reason"]) {
+      contractCase(
+        `PreModelSwitch decision=${show(permissionDecision)} armReason=${show(permissionDecisionReason)}`,
+        contractInput({
+          reason: "the top-level reason",
+          hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision, permissionDecisionReason },
+        }),
+      );
+    }
+  }
+  // SessionStart: the one field in the function gated on PRESENCE as well as on
+  // truthiness, so a key holding `undefined` differs from an absent key.
+  for (const [label, specific] of [
+    ["absent", { hookEventName: "SessionStart" }],
+    ["present undefined", { hookEventName: "SessionStart", watchPaths: undefined }],
+    ["present null", { hookEventName: "SessionStart", watchPaths: null }],
+    ["present empty array", { hookEventName: "SessionStart", watchPaths: [] }],
+    ["present populated", { hookEventName: "SessionStart", watchPaths: ["/a", "/b"] }],
+  ] as [string, Record<string, unknown>][]) {
+    for (const reloadSkills of [undefined, true, false]) {
+      contractCase(`SessionStart watchPaths ${label} reloadSkills=${show(reloadSkills)}`, contractInput({ hookSpecificOutput: { ...specific, reloadSkills } }));
+    }
+  }
+  // PostToolUse: the modern field, the legacy one, and the probe that fires only
+  // on the legacy one's TRUTHY arm — a present-but-falsy value suppresses the
+  // rewrite and says so instead.
+  for (const updatedToolOutput of [undefined, null, "", "rewritten"]) {
+    for (const updatedMCPToolOutput of [undefined, null, false, "", { content: [] }]) {
+      contractCase(
+        `PostToolUse updatedToolOutput=${show(updatedToolOutput)} updatedMCPToolOutput=${show(updatedMCPToolOutput)}`,
+        contractInput({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput, updatedMCPToolOutput } }),
+      );
+    }
+  }
+  // PermissionRequest: anything that is not an explicit allow is a deny, and
+  // only an allow may carry a rewritten input.
+  for (const decision of [
+    undefined,
+    null,
+    { behavior: "allow" },
+    { behavior: "allow", updatedInput: { file_path: "/rewritten" } },
+    { behavior: "allow", updatedInput: {} },
+    { behavior: "deny", message: "denied by the hook" },
+    { behavior: "deny", updatedInput: { file_path: "/ignored" } },
+    { behavior: "ask" },
+    {},
+  ]) {
+    contractCase(`PermissionRequest decision=${show(decision)}`, contractInput({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } }));
+  }
+  // Elicitation and its result twin: same shape, different response key and a
+  // different default blocking message.
+  for (const event of ["Elicitation", "ElicitationResult"]) {
+    for (const action of [undefined, "", "accept", "decline"]) {
+      for (const reason of [undefined, "the hook's reason"]) {
+        contractCase(
+          `${event} action=${show(action)} reason=${show(reason)}`,
+          contractInput({ reason, hookSpecificOutput: { hookEventName: event, action, content: { answer: 7 } } }),
+        );
+      }
+    }
+  }
+  // The two single-field arms whose field is not `additionalContext`.
+  for (const retry of [undefined, true, false]) {
+    contractCase(`PermissionDenied retry=${show(retry)}`, contractInput({ hookSpecificOutput: { hookEventName: "PermissionDenied", retry } }));
+  }
+  for (const displayContent of [undefined, "shown", ""]) {
+    contractCase(`MessageDisplay displayContent=${show(displayContent)}`, contractInput({ hookSpecificOutput: { hookEventName: "MessageDisplay", displayContent } }));
+  }
+
+  // ---- the two contracts on ONE document -----------------------------------
+  // The interleaving is the behaviour no scenario can produce: the legacy switch
+  // writes `permissionBehavior`, the pre-pass overwrites it, and the arm
+  // overwrites it again — in that order.
+  for (const decision of ["approve", "block"]) {
+    for (const specific of [
+      { hookEventName: "PreToolUse", permissionDecision: "allow" },
+      { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "the arm's reason" },
+      { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
+      { hookEventName: "UserPromptSubmit", additionalContext: "ctx" },
+    ]) {
+      for (const reason of [undefined, "the top-level reason"]) {
+        contractCase(
+          `both contracts: decision=${decision} + ${String(specific.hookEventName)} reason=${show(reason)}`,
+          contractInput({ decision, reason, hookSpecificOutput: specific }),
+        );
+      }
+    }
+  }
+  // The attachment's stdio half, which only the SUCCESS arm carries — and the
+  // callback paths supply none of it.
+  for (const [label, over] of [
+    ["a command hook", {}],
+    ["a callback hook", { command: "callback", stdout: undefined, stderr: undefined, exitCode: undefined, durationMs: undefined }],
+    ["no tool use", { toolUseID: undefined }],
+    ["a failed hook", { exitCode: 2, stderr: "boom" }],
+  ] as [string, Record<string, unknown>][]) {
+    for (const json of [{}, { decision: "block", reason: "blocked" }]) {
+      contractCase(`attachment: ${label} ${show(json)}`, contractInput(json, over));
+    }
+  }
+
+  // ---- the controls: one per behaviour family ------------------------------
+  // Each is a wrong implementation this layer could plausibly ship, applied to
+  // the OWNED side in memory. Without them the block above proves nothing about
+  // its own ability to fail.
+  const outcomeOf = (json: unknown, over: Record<string, unknown> = {}): Outcome =>
+    runContract(upstreamContract, contractInput(json, over), contractPorts(new EventLog()));
+  const returnedOf = (json: unknown, over: Record<string, unknown> = {}): Record<string, unknown> =>
+    outcomeOf(json, over).returned as Record<string, unknown>;
+  /** `returned`, with one field rewritten — the shape a wrong arm would produce. */
+  const mutate = (json: unknown, over: Record<string, unknown>, patch: Record<string, unknown>): unknown => ({
+    ...returnedOf(json, over),
+    ...patch,
+  });
+  const without = (json: unknown, drop: string[]): unknown => {
+    const copy = { ...returnedOf(json) };
+    for (const k of drop) delete copy[k];
+    return copy;
+  };
+
+  mustDiffer(
+    "`continue` read for truthiness rather than identity against false",
+    outcomeOf({ continue: 0 }).returned,
+    mutate({ continue: 0 }, {}, { preventContinuation: true }),
+  );
+  mustDiffer(
+    "`stopReason` carried through even when the hook did not stop the turn",
+    outcomeOf({ continue: true, stopReason: "ignored" }).returned,
+    mutate({ continue: true, stopReason: "ignored" }, {}, { stopReason: "ignored" }),
+  );
+  mustDiffer(
+    "the legacy `approve` mapped to a permission behaviour of its own name",
+    outcomeOf({ decision: "approve" }).returned,
+    mutate({ decision: "approve" }, {}, { permissionBehavior: "approve" }),
+  );
+  mustDiffer(
+    "an unknown legacy decision tolerated instead of throwing",
+    outcomeOf({ decision: "reject" }),
+    { returned: mutate({}, {}, {}) },
+  );
+  mustDiffer(
+    "the legacy block arm defaulting its message to the empty string",
+    outcomeOf({ decision: "block" }).returned,
+    mutate({ decision: "block" }, {}, { blockingError: { blockingError: "", command: "run-hook.sh --json" } }),
+  );
+  mustDiffer(
+    "`systemMessage` copied even when the hook sent an empty one",
+    outcomeOf({ systemMessage: "" }).returned,
+    mutate({ systemMessage: "" }, {}, { systemMessage: "" }),
+  );
+  mustDiffer(
+    "a REJECTED terminal sequence written through rather than logged",
+    outcomeOf({ terminalSequence: "REJECT-ME" }).returned,
+    mutate({ terminalSequence: "REJECT-ME" }, {}, { terminalSequence: "REJECT-ME" }),
+  );
+  mustDiffer(
+    "the allowlist's answer discarded and the raw sequence kept",
+    outcomeOf({ terminalSequence: "OSC-TITLE" }).returned,
+    mutate({ terminalSequence: "OSC-TITLE" }, {}, { terminalSequence: "OSC-TITLE" }),
+  );
+  mustDiffer(
+    "an unknown PreToolUse permissionDecision falling through instead of throwing",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "elevate" } }),
+    { returned: { message: { attachment: { type: "hook_success" } } } },
+  );
+  mustDiffer(
+    "the top-level reason attached without a behaviour to explain",
+    outcomeOf({ reason: "why" }).returned,
+    mutate({ reason: "why" }, {}, { hookPermissionDecisionReason: "why" }),
+  );
+  mustDiffer(
+    "the event-name guard skipped, so a mismatched answer is accepted",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "Stop", additionalContext: "c" } }, { expectedHookEvent: "PostToolUse" }),
+    { returned: { additionalContext: "c" } },
+  );
+  mustDiffer(
+    "the PreToolUse arm's reason overwrite made conditional, so the top-level one survives",
+    outcomeOf({ reason: "top", hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }).returned,
+    mutate({ reason: "top", hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }, {}, {
+      hookPermissionDecisionReason: "top",
+    }),
+  );
+  mustDiffer(
+    "the PreToolUse deny arm preferring the top-level reason over the arm's own",
+    outcomeOf({
+      reason: "top",
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "arm" },
+    }).returned,
+    mutate(
+      { reason: "top", hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "arm" } },
+      {},
+      { blockingError: { blockingError: "top", command: "run-hook.sh --json" } },
+    ),
+  );
+  mustDiffer(
+    "UserPromptSubmit's fields guarded on truthiness, so an absent title vanishes",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "c" } }).returned,
+    without({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "c" } }, ["sessionTitle", "suppressOriginalPrompt"]),
+  );
+  mustDiffer(
+    "UserPromptExpansion given UserPromptSubmit's third field",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "UserPromptExpansion", additionalContext: "c", sessionTitle: "t" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "UserPromptExpansion", additionalContext: "c", sessionTitle: "t" } }, {}, { sessionTitle: "t" }),
+  );
+  mustDiffer(
+    "SessionStart's watchPaths gate reduced to truthiness, so an absent key writes one",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "SessionStart" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "SessionStart" } }, {}, { watchPaths: undefined }),
+  );
+  mustDiffer(
+    "PreModelSwitch given PreToolUse's fourth arm, so a model switch can be deferred",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision: "defer" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision: "defer" } }, {}, { permissionBehavior: "defer" }),
+  );
+  mustDiffer(
+    "PreModelSwitch's guarded reason written unconditionally, PreToolUse-style",
+    outcomeOf({ reason: "top", hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision: "allow" } }).returned,
+    mutate({ reason: "top", hookSpecificOutput: { hookEventName: "PreModelSwitch", permissionDecision: "allow" } }, {}, {
+      hookPermissionDecisionReason: undefined,
+    }),
+  );
+  mustDiffer(
+    "the legacy MCP rewrite honoured when it is present but falsy",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: null } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: null } }, {}, { updatedMCPToolOutput: null }),
+  );
+  mustDiffer(
+    "the MCP suppression flag dropped, so a refused rewrite is silent",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: "" } }).returned,
+    without({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: "" } }, ["legacyMcpRewriteSuppressed"]),
+  );
+  mustDiffer(
+    "PermissionRequest reading `permissionRequestResult` where the contract says `decision`",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny" } } }).returned,
+    without({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny" } } }, [
+      "permissionRequestResult",
+      "permissionBehavior",
+    ]),
+  );
+  mustDiffer(
+    "a denying PermissionRequest allowed to rewrite the input as well",
+    outcomeOf({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", updatedInput: { file_path: "/x" } } },
+    }).returned,
+    mutate(
+      { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", updatedInput: { file_path: "/x" } } } },
+      {},
+      { updatedInput: { file_path: "/x" } },
+    ),
+  );
+  mustDiffer(
+    "an Elicitation decline blocked with the ElicitationResult message",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "Elicitation", action: "decline" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "Elicitation", action: "decline" } }, {}, {
+      blockingError: { blockingError: "Elicitation result blocked by hook", command: "run-hook.sh --json" },
+    }),
+  );
+  mustDiffer(
+    "an Elicitation ACCEPT blocked as though it had declined",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "Elicitation", action: "accept" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "Elicitation", action: "accept" } }, {}, {
+      blockingError: { blockingError: "Elicitation denied by hook", command: "run-hook.sh --json" },
+    }),
+  );
+  mustDiffer(
+    "PermissionDenied's retry guarded, so a hook that refuses to retry says nothing",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "PermissionDenied" } }).returned,
+    without({ hookSpecificOutput: { hookEventName: "PermissionDenied" } }, ["retry"]),
+  );
+  mustDiffer(
+    "an unnamed event falling into the additionalContext arm the twelve others share",
+    outcomeOf({ hookSpecificOutput: { hookEventName: "NotAnEvent", additionalContext: "c" } }).returned,
+    mutate({ hookSpecificOutput: { hookEventName: "NotAnEvent", additionalContext: "c" } }, {}, { additionalContext: "c" }),
+  );
+  mustDiffer(
+    "the blocking attachment built as a success one, so a blocked hook reads as having run",
+    outcomeOf({ decision: "block", reason: "no" }).returned,
+    mutate({ decision: "block", reason: "no" }, {}, {
+      message: {
+        attachment: { type: "hook_success", hookName: "my-hook", toolUseID: "toolu_01", hookEvent: "PostToolUse", content: "" },
+        type: "attachment",
+        uuid: "<stub-uuid>",
+        timestamp: "<stub-clock>",
+      },
+    }),
+  );
+  mustDiffer(
+    "the success attachment built without the executor's own measurements",
+    outcomeOf({}).returned,
+    mutate({}, {}, {
+      message: {
+        attachment: { type: "hook_success", hookName: "my-hook", toolUseID: "toolu_01", hookEvent: "PostToolUse", content: "" },
+        type: "attachment",
+        uuid: "<stub-uuid>",
+        timestamp: "<stub-clock>",
+      },
+    }),
+  );
+  // The PORT trace's own control: a wrong implementation can agree on the result
+  // and disagree on what it did to get there.
+  {
+    const log = new EventLog();
+    runContract(upstreamContract, contractInput({ hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: { a: 1 } } }), contractPorts(log));
+    mustDiffer("the MCP dead probe never fired", log.order(), ["hookMessage"]);
+    mustDiffer("the MCP dead probe told the wrong thing about the modern field", log.calls("probeMcpRewrite"), [[true]]);
+  }
+  {
+    const log = new EventLog();
+    runContract(upstreamContract, contractInput({ terminalSequence: "REJECT-ME" }), contractPorts(log));
+    mustDiffer("the rejected sequence logged nothing", log.count("logDebug"), 0);
+    orderControl("the contract's port order", log);
+  }
+  // The property's own non-vacuity control: a result whose attachment does not
+  // match its blocking state MUST be reported.
+  propertyControl("an attachment that contradicts its blocking state must be reported", attachmentShape({
+    returned: { blockingError: { blockingError: "x" }, message: { attachment: { type: "hook_success" } } },
+  }));
+  propertyControl("a settled call that returned nothing must be reported", attachmentShape({ returned: undefined }));
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 750) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 154) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
-// The pairing property is stated on every case, so its floor is the comparison
-// count's shape: two statements (upstream and owned) per graded case, plus the
-// two synthetic ones. And `pairedCases` is the floor that matters more — a
-// property nothing ever satisfies non-vacuously is a property nobody tested.
-if (properties < 453) failures.push(`only ${properties} property statement(s) ran`);
+if (checks < 1408) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 188) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+// Two properties are stated per graded case — upstream's and the owned side's —
+// so the floor tracks the comparison count's shape: the dispatchers' pairing
+// property plus the two synthetic ones, and section 5's attachment-shape
+// statement on every case that settled. And `pairedCases` is the floor that
+// matters more — a property nothing ever satisfies non-vacuously is a property
+// nobody tested.
+if (properties < 1005) failures.push(`only ${properties} property statement(s) ran`);
 if (pairedCases < 11) failures.push(`only ${pairedCases} case(s) carried a lifecycle edge — the pairing property is vacuous on the rest`);
 
 console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s), ${properties} property statement(s) over ${pairedCases} paired case(s) ===`);

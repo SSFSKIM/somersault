@@ -67,6 +67,7 @@ import * as permissionDeniedHooks from "../../strangle/modules/permission-denied
 import * as userPromptExpansionHooks from "../../strangle/modules/user-prompt-expansion-hooks/reference.js";
 import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/reference.js";
 import * as cwdChangedHooks from "../../strangle/modules/cwd-changed-hooks/reference.js";
+import * as hookJsonContract from "../../strangle/modules/hook-json-contract/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 // W6 / C9 — the permission subsystem's decision chain, mode axis and headless
 // broker seam. Fifteen modules; the subsystem does NOT close on them (the
@@ -220,6 +221,9 @@ const OWNED: [string, string, unknown][] = [
   ["file-changed-hooks", "subsystem/hook-dispatch", fileChangedHooks.fileChangedHooks],
   // W7.5 — FileChanged's twin, unspliceable until its firing condition was created.
   ["cwd-changed-hooks", "subsystem/hook-dispatch", cwdChangedHooks.cwdChangedHooks],
+  // W7.6a — the layer BENEATH the dispatchers: the one interpreter of a hook's
+  // parsed JSON output, shared by all five of the executor's answer paths.
+  ["hook-json-contract", "subsystem/hook-dispatch", hookJsonContract.hookJsonContract],
   // W6 / C9. Two of these belong to the CONTROL PROTOCOL rather than to
   // permissions — the success and error response envelopes — and are registered
   // under that subsystem: the permission wave took them because the
