@@ -3992,13 +3992,23 @@ not run. `eq` refuses a promise by name now.
 
 The cron durability exclusion is the one in this wave that **cannot cite the gate-defaults fixture**,
 and that is a finding. `Lz()` is `DH("tengu_kairos_cron_durable", !0, t)`, and `DH` is a
-three-argument wrapper around the resolver — `function DH(e,t,r){return I(e,t)}` — which
-`research/tools/extract-gate-defaults.ts` does not recognise as a resolver alias. All seven `DH(…)`
-gate reads land in that tool's 2,549 `unresolved` sites, and **five of their gates are absent from
-the committed fixture**, including this one and `tengu_kairos_cron`, the cron subsystem's own kill
-switch. That is a *third* structurally different blind spot in the same extractor, alongside the
-coerced return (`return Me(e)`) the W8 scout found and the env arm that precedes the gate the W11
-scout found. All three are C11b's.
+three-argument wrapper around the resolver — `function DH(e,t,r){return I(e,t)}`, once, in
+chunk-bsdtxcdc — which `research/tools/extract-gate-defaults.ts` does not recognise as a resolver
+alias. **Five of the seven gates read through it are absent from the committed fixture**
+(`tengu_bridge_poll_interval_config`, `tengu_harbor_kite_limits`, `tengu_kairos_cron_config`,
+`tengu_kairos_cron_durable` and `tengu_kairos_cron`, the cron subsystem's own kill switch); the
+other two are in it through unwrapped call sites elsewhere. That is a *third* structurally different
+blind spot in the same extractor, alongside the coerced return (`return Me(e)`) the W8 scout found
+and the env arm that precedes the gate the W11 scout found. All three are C11b's.
+
+*Corrected on review (2026-09-03), and the correction makes the finding worse rather than smaller.*
+This section first said the seven reads "land in the 2,549 `unresolved` sites". They do not: the
+extractor enters only calls with **exactly two arguments**, so a three-argument read is never
+visited, and not one of those 2,549 entries has `DH` as its callee. **An unresolved site is a gap
+the fixture declares; this one it cannot see** — which is why the exclusion has to argue its default
+from upstream's own call site. It also widens C11b's repair: teaching the extractor the alias is not
+enough while the arity filter still skips every call the alias appears in. `tengu_kairos_cron`
+itself defaults TRUE (`!0`), so the cron rows' own coverage is unaffected either way.
 
 ### The schema getters, measured and deferred
 

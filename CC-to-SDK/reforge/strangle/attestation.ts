@@ -620,15 +620,30 @@ const W76A_STDERR_TAIL =
  * AND THE ONE EXCLUSION IN THIS FILE THAT CANNOT CITE THE GATE FIXTURE, which is
  * a finding rather than a shortcut. `Lz()` in the cron chunk is
  * `DH("tengu_kairos_cron_durable", !0, t)`, and `DH` is a THREE-ARGUMENT WRAPPER
- * around the resolver — `function DH(e,t,r){return I(e,t)}` in chunk-bsdtxcdc —
- * which `research/tools/extract-gate-defaults.ts` does not recognise as a
- * resolver alias. So all seven `DH(…)` gate reads land in that tool's 2,549
- * `unresolved` sites and FIVE of their gates are absent from the committed
- * fixture, including this one and `tengu_kairos_cron`, the cron subsystem's own
- * kill switch. That is a third structurally different blind spot in the same
- * extractor, alongside the coerced return (`return Me(e)`) and the env arm that
- * precedes the gate — all three handed to C11b, which owns the fixture riders.
- * The default is read from upstream's own call site here instead.
+ * around the resolver — `function DH(e,t,r){return I(e,t)}`, once, in
+ * chunk-bsdtxcdc — which `research/tools/extract-gate-defaults.ts` does not
+ * recognise as a resolver alias. FIVE of the seven gates read through it are
+ * absent from the committed fixture (`tengu_bridge_poll_interval_config`,
+ * `tengu_harbor_kite_limits`, `tengu_kairos_cron_config`, this one, and
+ * `tengu_kairos_cron` — the cron subsystem's own kill switch); the other two
+ * (`tengu_kairos_brief`, `tengu_kairos_push_notifications`) are in it through
+ * unwrapped call sites elsewhere.
+ *
+ * INVISIBLE, NOT UNRESOLVED — corrected on review, and the distinction is the
+ * whole repair. This note first said the seven reads "land in the tool's 2,549
+ * `unresolved` sites", and they do not: the extractor's walk only enters a call
+ * whose `arguments.length === 2`, so a three-argument read is never visited and
+ * never reported. Not one of those 2,549 entries has `DH` as its callee. An
+ * unresolved site is a gap the fixture DECLARES; this one it cannot see, which
+ * is the more dangerous of the two and the reason the coverage claim has to be
+ * argued from upstream's own call site here. It also widens the repair C11b
+ * inherits: teaching the extractor the alias is not enough on its own, because
+ * the ARITY FILTER would still skip every call the alias appears in.
+ *
+ * A third structurally different blind spot in the same extractor, alongside the
+ * coerced return (`return Me(e)`) and the env arm that precedes the gate — all
+ * three handed to C11b, which owns the fixture riders. The default is read from
+ * upstream's own call site here instead.
  */
 const CRON_DURABILITY =
   "DURABLE SCHEDULING IS ON, so the session-only prose never renders. The three cron descriptions branch on `Lz()`, which is " +
