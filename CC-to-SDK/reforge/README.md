@@ -3054,7 +3054,9 @@ at all) and TWO cross-chunk producers (`memory` → `pKe` in `chunk-9e2ns8ty.js`
 
 **It is wrong as a reason.** "The rest are gated behind experiments, background jobs or remote
 surfaces the corpus does not enter" is false for records the corpus RENDERS. Probing each producer's
-prose literals against the `m1-sysprompt-preset` cassette, **nine of the 27 records render today**:
+own prose literals against the `m1-sysprompt-preset` cassette — and, for the four producers that hold
+no prose of their own, their rendered heading — **nine of the 27 records render today, over seven
+producers** (the three `env_info` records share two):
 
 | record | producer | bytes | shape | status |
 |---|---|---|---|---|

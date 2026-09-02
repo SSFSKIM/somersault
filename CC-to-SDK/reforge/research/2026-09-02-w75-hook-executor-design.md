@@ -420,15 +420,31 @@ is the only thing standing between the two watcher dispatchers and a closed edge
 
 **What closes the ledger row.** `subsystem/hook-dispatch` reaches `standalone-complete` at the end of
 Stage 5, not before — but Stages 1–3 are individually shippable, individually gradeable, and each
-moves the row's evidence. The recommendation is that they are scoped as their own wave with
-fable-tier implementers per §4, and that this document is its brief.
+moves the row's evidence. The recommendation was that they be scoped as their own wave rather than
+folded into a wave that owns something else.
+
+**That cut was made on 2026-09-02**, in the campaign spec's Deferred section under "The executor
+cut": three children, each reviewed before the next is cut, with this document as the brief for all
+three.
+
+| child | stages | track |
+|---|---|---|
+| **C10.6 / W7.6a** | 0–1 — the oracle machinery, then the pure belt led by `Fq` | controlled, opus-tier |
+| **C10.7 / W7.6b** | 2–3 — `HookSourcePort` + the matcher, then `AE` and `zxt` | fable-tier |
+| **C10.8 / W7.6c** | 4–5 — `ProcessPort` + the command-spec builder, then `Qxt` | fable-tier |
+
+The reason for three children rather than one wave is Stage 0: it is oracle machinery **only this
+subsystem needs**, so a wave that owned something else would carry it as overhead and be tempted to
+skip it — which is precisely how a module ends up shipped ahead of its oracle. C10.6 also carries the
+module-level-state reset obligation of §7 item 7, because it is a harness change and every later
+stage's replay depends on it.
 
 ---
 
 ## 7. Risks an implementer will hit
 
-1. **The default timeout is ten minutes, not sixty seconds.** One declaration, 34 references, never
-   reassigned. An owned copy that "corrects" it changes real behaviour and would trip the
+1. **The default timeout is ten minutes, not sixty seconds.** `Li = 600000`
+   (`chunk-fy12d89p.js` @1070693) — one declaration, 34 references, never reassigned. An owned copy that "corrects" it changes real behaviour and would trip the
    equality assertion the existing adapters already carry. The SessionEnd timeout really is 1.5
    seconds.
 2. **The subprocess runner is not hooks-only.** Three non-hook callers share it. Owning it either
