@@ -44,8 +44,9 @@
 // `M.additionalContext = e.hookSpecificOutput.additionalContext` runs whether or
 // not the field exists, so a hook that says nothing about context is
 // distinguishable from a hook that was never asked — the key is there, holding
-// `undefined`. Twelve of the eighteen arms do exactly this and nothing else, and
-// the difference only survives if the assignment stays unconditional. Wrapping
+// `undefined`. SEVEN of the eighteen case labels do exactly this and nothing
+// else — across SIX bodies, because two of them fall through to one — and the
+// difference only survives if the assignment stays unconditional. Wrapping
 // any of them in a truthiness guard would be invisible to `JSON.stringify` and
 // visible to every `in` test downstream.
 //

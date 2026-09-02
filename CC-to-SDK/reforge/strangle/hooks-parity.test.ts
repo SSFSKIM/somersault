@@ -162,6 +162,9 @@ import "./modules/user-prompt-expansion-hooks.js";
 import "./modules/file-changed-hooks.js";
 // W7.5: FileChanged's twin, spliceable once its firing condition was created.
 import "./modules/cwd-changed-hooks.js";
+// W7.6a: the layer BENEATH the dispatchers — the JSON-contract interpreter and
+// the one pure helper both executors share.
+import "./modules/hook-stderr-tail.js";
 // W7.6a: the layer beneath them all — the sole reader of a hook's JSON output.
 import "./modules/hook-json-contract.js";
 
@@ -3579,7 +3582,7 @@ function contractCase(label: string, input: Record<string, unknown>): { up: Outc
     without({ hookSpecificOutput: { hookEventName: "PermissionDenied" } }, ["retry"]),
   );
   mustDiffer(
-    "an unnamed event falling into the additionalContext arm the twelve others share",
+    "an unnamed event falling into the bare additionalContext arm that seven labels share",
     outcomeOf({ hookSpecificOutput: { hookEventName: "NotAnEvent", additionalContext: "c" } }).returned,
     mutate({ hookSpecificOutput: { hookEventName: "NotAnEvent", additionalContext: "c" } }, {}, { additionalContext: "c" }),
   );
@@ -3629,11 +3632,58 @@ function contractCase(label: string, input: Record<string, unknown>): { up: Outc
   propertyControl("a settled call that returned nothing must be reported", attachmentShape({ returned: undefined }));
 }
 
+
+// ---- the hook output's stderr tail (upstream `Xpt`) -------------------------
+// The belt's one genuinely pure, multi-caller, anchorable member, and the only
+// splice C10.6 takes out of the 43 pure functions the executors reach. Graded
+// the contract-test way over the full cross-product of its three inputs, which
+// is small enough to be exhaustive rather than sampled: a helper whose domain
+// is this narrow has no excuse for a partition.
+{
+  const upstreamStderrTail = build<(stdout: string, exitCode: number | undefined, stderr: string) => string>(
+    extract(ENGINE, "Xpt", /function Xpt\([\w$]+,[\w$]+,[\w$]+\)\{let [\w$]+=[\w$]+\.trim\(\);return [\w$]+!==0&&[\w$]+\?`[\s\S]*?`:[\w$]+\}/),
+  );
+  const owned = reforge.hookStderrTail as unknown as (stdout: string, exitCode: number | undefined, stderr: string) => string;
+
+  // The three axes, each partitioned by what the body actually distinguishes:
+  // the validation error is opaque and only has to survive, the exit code
+  // separates zero from everything else INCLUDING absent, and the stderr
+  // separates empty from whitespace-only from real — because the trim happens
+  // before the test.
+  const ERRORS = ["", "Hook JSON output validation failed \u2014 not an object", "trailing\n"];
+  const CODES: (number | undefined)[] = [0, 1, 127, -1, undefined];
+  const STDERRS = ["", "   ", "\n\t ", "boom", "boom\n", " padded "];
+  let cases = 0;
+  for (const stdout of ERRORS) {
+    for (const code of CODES) {
+      for (const stderr of STDERRS) {
+        cases++;
+        eq(
+          `hook-stderr-tail(${JSON.stringify(stdout)}, ${String(code)}, ${JSON.stringify(stderr)})`,
+          upstreamStderrTail(stdout, code, stderr),
+          owned(stdout, code, stderr),
+        );
+      }
+    }
+  }
+  eq("the cross-product is the whole domain, not a sample", cases, ERRORS.length * CODES.length * STDERRS.length);
+
+  // One control per decision the body makes, because each is a "simplification"
+  // a wave could plausibly make and each is wrong in a different direction.
+  mustDiffer("the exit code tested for truthiness instead of against zero, which drops the `undefined` arm", upstreamStderrTail("out", undefined, "boom"), "out");
+  mustDiffer("the stderr appended untrimmed, which every `echo` hook would show", upstreamStderrTail("out", 1, "boom\n"), "out\n\nHook exited 1 with stderr:\nboom\n");
+  mustDiffer("the trim applied to the GATE but not to the appended text", upstreamStderrTail("out", 1, " padded "), "out\n\nHook exited 1 with stderr:\n padded ");
+  mustDiffer("whitespace-only stderr treated as output", upstreamStderrTail("out", 1, "   "), "out\n\nHook exited 1 with stderr:\n");
+  mustDiffer("the two conditions joined by OR, so a successful noisy hook appends", upstreamStderrTail("out", 0, "boom"), "out\n\nHook exited 0 with stderr:\nboom");
+  mustDiffer("the blank line written as ONE newline rather than two", upstreamStderrTail("out", 1, "boom"), "out\nHook exited 1 with stderr:\nboom");
+  mustDiffer("the guard dropped entirely, which is this splice's own twin", upstreamStderrTail("", 0, ""), "\n\nHook exited 0 with stderr:\n");
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 1408) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 188) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 1499) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 195) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 // Two properties are stated per graded case — upstream's and the owned side's —
 // so the floor tracks the comparison count's shape: the dispatchers' pairing
 // property plus the two synthetic ones, and section 5's attachment-shape

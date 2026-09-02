@@ -127,6 +127,28 @@ export interface Splice {
   captures: Capture[];
   /** corpus scenarios that exercise this node (the gate's targeted red-check) */
   coverage: string[];
+  /**
+   * Required when `coverage` is empty: WHY no corpus scenario can observe this
+   * splice, and what grades it instead. Reviewed, not a skip.
+   *
+   * The affordance already existed one row-type over — a chunk REPLACEMENT's
+   * per-export acceptance has carried `darkReason` since W2 (§2.2), because a
+   * retained export the corpus cannot reach still has to be adjudicated rather
+   * than left silent. A splice could not say the same thing, so the only
+   * available answer for a function measured dark was to UN-SPLICE it, which is
+   * what C9 did three times. That is the right answer when the function has no
+   * observable effect at all. It is the wrong one when the function has a real
+   * effect the corpus simply never CREATES — the "OPEN with a named condition"
+   * family rather than the dead one — because un-splicing then trades owned
+   * bytes for nothing.
+   *
+   * The bar is the same as the chunk-export one and it is deliberately high: the
+   * reason must name the POPULATION it was measured over, the INVERTED twin that
+   * was tried before the verdict, and the surface that grades the function
+   * instead. `assertManifest` below refuses an empty coverage without one, and
+   * refuses a reason alongside a non-empty coverage — a row may not hold both.
+   */
+  darkReason?: string;
 }
 
 // ============================================================================
@@ -4100,6 +4122,77 @@ export const SPLICES: Splice[] = [
     coverage: ["hooks-prompt-submit", "perm-hook-deny"],
   },
 
+  {
+    // The stderr tail on a hook-output VALIDATION ERROR (upstream `Xpt`, 96 B) —
+    // the belt's one genuinely pure, multi-caller, anchorable member, and the
+    // only other thing Stage 1 could take.
+    //
+    // `research/fixtures/hook-helper-belt-<pin>.json` is why that sentence is a
+    // measurement rather than a preference. Of the 151 in-chunk functions the
+    // two executors reach, 43 are pure — and 84 of the 151 carry NO STRING
+    // LITERAL AT ALL, with only four of the 43 pure ones carrying a literal that
+    // occurs in exactly one bundle file. Three of those four have a single
+    // caller and fold into that caller's future module. This is the fourth.
+    //
+    // `captures: []` IS THE POSITIVE CLAIM. Upstream's body has zero free
+    // variables and the build derives that from the AST and refuses any
+    // mismatch in either direction, so the empty list is "verified zero" rather
+    // than an omission — the only row in this manifest that can say so about a
+    // function both executors call.
+    //
+    // THE ANCHOR IS THE PROSE AFTER THE BLANK LINE, not before it. The blank
+    // line is two literal newlines INSIDE the template rather than a join, so an
+    // anchor taken from the head would have to carry them; `Hook exited ` occurs
+    // once in one file and once in that file.
+    name: "hook-stderr-tail",
+    target: "free-function",
+    signature: { params: 3, ancestry: ["SourceFile"] },
+    anchor: "Hook exited ",
+    fn: "hookStderrTail",
+    captures: [],
+    // MEASURED DARK, and the verdict is the row's own evidence rather than a
+    // shrug. Both call sites are guarded on `xPe(stdout)` having produced a
+    // VALIDATION ERROR — not on the hook having failed — so the condition is a
+    // command hook whose stdout PARSES AS JSON and then fails the hook-output
+    // schema, with a non-zero exit that is also not 2.
+    //
+    // POPULATION: all 59 corpus scenarios, whose command hooks are the ten in
+    // `w5/scenarios.ts`. Six write nothing to stdout, three `echo` plain text —
+    // which the parser returns as `plainText`, not as a validation error — and
+    // one writes its projection to a file. None emits a JSON document that then
+    // fails the schema, so the guard is never satisfied and the function is
+    // never called.
+    //
+    // THE INVERTED TWIN WAS TRIED FIRST, which is what makes this a measurement.
+    // It appends unconditionally rather than only when the hook failed loudly,
+    // so it changes the result on EVERY call rather than on the rare input; the
+    // obvious twin (`!exitCode`, or the stderr left untrimmed) differs only on
+    // the rare one and would have failed in the quiet direction, which is the
+    // shape C9's five inert twins established. Built and replayed against
+    // `hooks-command` and `hooks-precompact`: both stayed GREEN. That is the
+    // call site never being reached, not a weak twin.
+    //
+    // WHAT GRADES IT INSTEAD: `strangle/hooks-parity.test.ts`, the
+    // `hook-stderr-tail` block — the full 90-case cross-product of its three
+    // inputs against upstream's own bytes (three error texts x five exit codes
+    // including `undefined` x six stderr shapes, which is the whole domain
+    // rather than a sample), with seven `mustDiffer` controls, one per decision
+    // the body makes.
+    //
+    // THE CONDITION IS NAMED AND CHEAP, and belongs to the wave that owns the
+    // executor: one command hook printing `{"decision":"maybe"}` and exiting 1.
+    // It is not taken here because it changes what the engine sends to the model
+    // and therefore needs a re-recording, and because the arm it would light is
+    // C10.8's rather than this wave's.
+    coverage: [],
+    darkReason:
+      "Both call sites are guarded on a hook-output VALIDATION ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not 2. " +
+      "Measured over all 59 scenarios: of the corpus's ten command hooks, six write nothing to stdout, three echo plain text (which the parser returns as plainText, not as a validation error) and one writes to a file, so the guard is never satisfied. " +
+      "The INVERTED twin was built and replayed first — it appends unconditionally, so it changes the result on every call rather than on the rare input — and hooks-command and hooks-precompact both stayed GREEN, which is the call site never being reached rather than a weak twin. " +
+      "Graded instead by strangle/hooks-parity.test.ts's hook-stderr-tail block: the whole 90-case domain (three error texts x five exit codes including undefined x six stderr shapes) against upstream's own bytes, with seven controls. " +
+      "The firing condition is named and cheap — one command hook printing {\"decision\":\"maybe\"} and exiting 1 — but it changes what the engine sends to the model and so needs a re-recording, and the arm it lights is C10.8's.",
+  },
+
   // ---- the control protocol (subsystem/control-protocol) -------------------
   // W7. The seam is NOT the dispatch ladder. `research/fixtures/
   // control-protocol-<pin>.json` derives it from the bundle: fifty-two `else if`
@@ -4785,4 +4878,35 @@ function sections(as: string, body: string): [string, string] {
   const applied = [...body.matchAll(new RegExp(`=(${ID})\\(${local}\\)`, "g"))].map((m) => m[1]);
   if (applied.length < 2) throw new Error(`env-block: could not derive '${as}' — expected two sections over ${local}, got ${applied.length}`);
   return [applied[0], applied[1]];
+}
+
+/**
+ * The manifest's own integrity check, run at import so no consumer can read a
+ * row that has not passed it.
+ *
+ * One rule today, and it is the splice counterpart of the guard `chunk.ts` has
+ * carried for chunk exports since W2: a splice with no covering scenario must
+ * carry a reviewed `darkReason`, and a splice that HAS covering scenarios must
+ * not carry one. Both directions matter. Without the first, a row with an empty
+ * coverage list reaches the gate's liveness loop and is reported as
+ * unprovable — which is correct but late, and says nothing about whether anyone
+ * looked. Without the second, a reason could sit beside a live coverage list and
+ * quietly become the row's story after the scenarios that covered it were
+ * renamed away.
+ */
+export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverage" | "darkReason">[]): string[] {
+  const bad: string[] = [];
+  for (const sp of rows) {
+    if (sp.coverage.length === 0 && sp.darkReason === undefined) {
+      bad.push(`${sp.name}: declares no covering scenario and no darkReason — an ungated splice must be adjudicated, not left silent`);
+    }
+    if (sp.coverage.length > 0 && sp.darkReason !== undefined) {
+      bad.push(`${sp.name}: declares BOTH covering scenarios and a darkReason — a row is either graded by the corpus or adjudicated, not both`);
+    }
+  }
+  return bad;
+}
+{
+  const bad = manifestViolations(SPLICES);
+  if (bad.length > 0) throw new Error(`manifest: ${bad.join("; ")}`);
 }

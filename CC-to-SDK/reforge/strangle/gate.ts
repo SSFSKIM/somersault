@@ -303,7 +303,13 @@ interface LivenessTarget {
   darkReason?: string;
 }
 const TARGETS: LivenessTarget[] = [
-  ...SPLICES.map((sp) => ({ id: sp.name, label: sp.name, coverage: sp.coverage })),
+  // A SPLICE may now be adjudicated dark as well, on the same terms a chunk
+  // export always could (§2.2). The alternative, when a function is measured
+  // dark, was to un-splice it — right when it has no observable effect at all,
+  // wrong when it has a real effect the corpus simply never CREATES, because it
+  // then trades owned bytes for nothing. `assertManifest` refuses a row that
+  // claims both and a row that claims neither.
+  ...SPLICES.map((sp) => ({ id: sp.name, label: sp.name, coverage: sp.coverage, darkReason: sp.darkReason })),
   ...CHUNK_REPLACEMENTS.flatMap((cr) =>
     cr.exports.map((e) => ({
       id: `${cr.name}:${e.as}`,

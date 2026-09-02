@@ -112,7 +112,14 @@ export interface BeltEntry {
   callersInBelt: string[];
   /**
    * Identifier-boundary references in the DEFINING chunk, excluding a preceding
-   * `.` and excluding the declaration itself.
+   * `.` — but NOT a preceding `...` — and excluding the declaration itself.
+   *
+   * Both halves of that were got wrong once each in this campaign, in opposite
+   * directions, on this very symbol. A regex that allows a leading dot counts
+   * `x.Fq(` as a call; one that simply forbids a leading non-identifier misses
+   * the SPREAD form `...Fq(`, which is how the fifth call site hides. The
+   * alternation admits the spread explicitly rather than relying on either
+   * default.
    *
    * Scoped to the chunk deliberately. A minified local name is reused across
    * chunks for unrelated symbols — the JSON-contract interpreter's two-letter
@@ -592,7 +599,7 @@ const bundle = (): { file: string; text: string }[] => {
  * this campaign, in opposite directions, on the same symbol.
  */
 function countCallSites(chunkText: string, name: string): number {
-  const re = new RegExp(`(^|[^\\w$.])${rx(name)}\\s*\\(`, "g");
+  const re = new RegExp(`(^|[^\\w$.]|\\.\\.\\.)${rx(name)}\\s*\\(`, "g");
   const all = [...chunkText.matchAll(re)].length;
   const declared = new RegExp(`(^|[^\\w$.])function\\*?\\s*${rx(name)}\\s*\\(`, "g");
   return all - [...chunkText.matchAll(declared)].length;

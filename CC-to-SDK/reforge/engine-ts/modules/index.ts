@@ -68,6 +68,7 @@ import * as userPromptExpansionHooks from "../../strangle/modules/user-prompt-ex
 import * as fileChangedHooks from "../../strangle/modules/file-changed-hooks/reference.js";
 import * as cwdChangedHooks from "../../strangle/modules/cwd-changed-hooks/reference.js";
 import * as hookJsonContract from "../../strangle/modules/hook-json-contract/reference.js";
+import * as hookStderrTail from "../../strangle/modules/hook-stderr-tail/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
 // W6 / C9 — the permission subsystem's decision chain, mode axis and headless
 // broker seam. Fifteen modules; the subsystem does NOT close on them (the
@@ -224,6 +225,9 @@ const OWNED: [string, string, unknown][] = [
   // W7.6a — the layer BENEATH the dispatchers: the one interpreter of a hook's
   // parsed JSON output, shared by all five of the executor's answer paths.
   ["hook-json-contract", "subsystem/hook-dispatch", hookJsonContract.hookJsonContract],
+  // …and the one pure helper BOTH executors share, which is what "two consumers
+  // of shared pure helpers" (design §2) means at its smallest scale.
+  ["hook-stderr-tail", "subsystem/hook-dispatch", hookStderrTail.hookStderrTail],
   // W6 / C9. Two of these belong to the CONTROL PROTOCOL rather than to
   // permissions — the success and error response envelopes — and are registered
   // under that subsystem: the permission wave took them because the

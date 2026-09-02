@@ -55,6 +55,7 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
+import { manifestViolations } from "./manifest.js";
 import { assertSignature, chunkAst, excise, formatSignature, gradeDeclaratorValue, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
@@ -759,6 +760,23 @@ function footprintOf(owner: string, helper: string) {
       "value NOT literal — UNGRADED, adjudicated: graded by the W4 differential; see the row's note");
   check("…and neither path ever read the owned value — an ungraded row makes no comparison to fake",
     readOwnedCalls === 0, `readOwned called ${readOwnedCalls}×`);
+}
+
+// ---- the manifest's own adjudication guard, both directions ---------------
+// W7.6a extended `darkReason` from chunk exports (§2.2) to splice rows, so a
+// function measured dark can be OWNED with a written adjudication instead of
+// un-spliced. A guard that only ever sees valid rows proves nothing about what
+// it excludes, which is this file's whole reason for existing, so both refusals
+// are driven here on synthetic rows — and the real manifest is asserted clean by
+// the same function at import time.
+{
+  const row = (name: string, coverage: string[], darkReason?: string) => ({ name, coverage, darkReason });
+  check("a splice with no coverage and no darkReason is refused",
+    manifestViolations([row("ungated", [])]).length === 1);
+  check("a splice claiming BOTH coverage and a darkReason is refused",
+    manifestViolations([row("both", ["s"], "because")]).length === 1);
+  check("…and a row that is graded, or one that is adjudicated, passes",
+    manifestViolations([row("graded", ["s"]), row("dark", [], "because")]).length === 0);
 }
 
 console.log(`=== splice mechanism: ${pass} check(s) ===`);

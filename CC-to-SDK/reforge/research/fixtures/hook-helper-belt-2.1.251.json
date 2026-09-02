@@ -397,7 +397,7 @@
       "callersInBelt": [
         "lct"
       ],
-      "callSitesInChunk": 0,
+      "callSitesInChunk": 3,
       "free": [
         "a"
       ],
@@ -1070,7 +1070,7 @@
       "hops": 0,
       "params": 4,
       "callersInBelt": [],
-      "callSitesInChunk": 1,
+      "callSitesInChunk": 33,
       "free": [
         "$J",
         "F_",
@@ -1216,7 +1216,7 @@
         "Qxt",
         "d6n"
       ],
-      "callSitesInChunk": 4,
+      "callSitesInChunk": 5,
       "free": [
         "Mn",
         "R5n",
@@ -1609,7 +1609,7 @@
       "callersInBelt": [
         "Wie"
       ],
-      "callSitesInChunk": 4,
+      "callSitesInChunk": 5,
       "free": [
         "Dr",
         "Jpn",
@@ -1787,7 +1787,7 @@
       "callersInBelt": [
         "Nq"
       ],
-      "callSitesInChunk": 0,
+      "callSitesInChunk": 3,
       "free": [
         "G6",
         "qi"
@@ -2830,7 +2830,7 @@
       "callersInBelt": [
         "Nq"
       ],
-      "callSitesInChunk": 0,
+      "callSitesInChunk": 3,
       "free": [
         "Ute",
         "Xxn",
@@ -3151,7 +3151,7 @@
       "callersInBelt": [
         "Qxt"
       ],
-      "callSitesInChunk": 2,
+      "callSitesInChunk": 10,
       "free": [
         "y5t",
         "yme"
