@@ -102,6 +102,14 @@ the commit) or when a round's scope absorbs them.
   trailing scroll offset that renders a blank window (the line itself stays reachable at its own
   offset — overshoot, not loss). Clamp `maxOffset` to the last claimable index when the window
   code is next touched; details in `fixwave9-report.md`.
+- **`inline-dialog.test.tsx` is cwd-sensitive: it fails when the checkout lives under `~/.claude/`**
+  (found landing PR #5, 2026-09-03). The decision-dialog cell parks an Edit of `f.ts` relative to
+  `process.cwd()` and pins row 2's constructed `setMode acceptEdits` grant — but when cwd is inside
+  `~/.claude` (e.g. a scratch worktree under `$CLAUDE_JOB_DIR/tmp`), FilePermission's row-2 logic
+  correctly derives an `addRules` grant for `~/.claude/**` instead, and the pin fails. Product behavior
+  is right; the fixture assumes a neutral cwd. Fix when the file is next touched: point the fixture at
+  an absolute `file_path` inside a tmp dir outside `~/.claude`, or inject cwd. Until then, run suites
+  from checkouts outside `~/.claude`.
 - **Content-bearing mid-turn attach keeps its stale prefix** (bl9 design limitation, D17/D19-bl9,
   2026-08-31). The attach reconcile aborts (silently, per mount) when any non-re-derivable state
   exists — drained turn content, a frame landing during the pending read. Trigger requires the
