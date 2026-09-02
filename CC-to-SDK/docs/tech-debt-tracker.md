@@ -348,8 +348,9 @@ rather than load-bearing.
 **And the reason it was a precondition rather than a companion**, which the entry could not have
 known: `unpaired()` states "every derived signal was cleaned exactly once" as a PROPERTY of one run.
 Two sides that both leak compare equal, so no comparison — however ordered — can state it. The
-property runs on every graded case (452 statements over 11 cases that carry a lifecycle edge) and has
-six non-vacuity controls, including the executor's own shape: five hooks released and a sixth leaked.
+property runs on every graded case — 452 statements in total, of which 11 cases carry a lifecycle
+edge at all — and has five non-vacuity controls, including the executor's own shape: five hooks
+released and a sixth leaked.
 The multi-hook mode of design §5(a) — per-hook subsequences plus a global multiset, for `Qxt`'s
 unbounded merge — ships expressible and controlled on synthetic logs, and grades nothing until a
 multi-hook scenario exists.

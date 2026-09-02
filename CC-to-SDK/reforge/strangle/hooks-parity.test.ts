@@ -165,6 +165,9 @@ import "./modules/cwd-changed-hooks.js";
 // W7.6a: the layer BENEATH the dispatchers — the JSON-contract interpreter and
 // the one pure helper both executors share.
 import "./modules/hook-stderr-tail.js";
+import "./modules/hook-output-sync.js";
+import "./modules/hook-output-async.js";
+import "./modules/hook-invocation-text.js";
 // W7.6a: the layer beneath them all — the sole reader of a hook's JSON output.
 import "./modules/hook-json-contract.js";
 
@@ -173,6 +176,32 @@ const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) =>
 
 let checks = 0;
 let controls = 0;
+/**
+ * ORDERED-LOG comparisons specifically — the subset the C10.6 rewrite's red
+ * direction is quoted against.
+ *
+ * Derived rather than written down. The wave's record and this file's own header
+ * carried "204 of the 226", counted by hand once and already stale by one the
+ * next time the file grew. A number in a gate transcript that nobody recomputes
+ * is a number nobody can trust, which is the lesson `m2/all.ts` states about
+ * scenario counts; it applies to this one too.
+ */
+let logChecks = 0;
+let contractLogChecks = 0;
+/**
+ * THE REWRITE'S RED DIRECTION, TALLIED IN BULK — the claim "swapping one
+ * adjacent pair of differently-ported events reddens N of the M log
+ * comparisons, and moves the retired per-port projection in ZERO of them".
+ *
+ * W7.6a measured it once, by hand, and wrote "204 of the 226" into three
+ * documents. Both numbers were then carried rather than recomputed, and the
+ * denominator was already wrong by one. It costs nothing to state the same
+ * claim as a running tally, so it is one: every graded case permutes its OWNED
+ * log and counts, alongside the comparison it was going to make anyway.
+ */
+let swapReddened = 0;
+let swapUnexpressible = 0;
+let swapMovedPerPort = 0;
 let properties = 0;
 /** cases whose log carried a lifecycle edge at all — the pairing property's own floor */
 let pairedCases = 0;
@@ -1144,7 +1173,20 @@ function gradeLogs(label: string, upstream: EventLog, owned: EventLog): void {
   // The log is the half a callback corpus cannot see: which ports ran, with
   // what, in what order, and how often. The EXECUTOR REQUEST rides in it, so
   // this comparison is what actually grades the hook record's field set.
+  logChecks++;
   eq(`${label} [ports]`, upstream.snapshot(), owned.snapshot());
+  // …and the bulk tally of what the rewrite bought, on this same case. The swap
+  // is applied to a COPY, so it cannot affect the comparison above it.
+  {
+    const at = owned.events.findIndex((e, i) => i > 0 && e.port !== owned.events[i - 1].port);
+    if (at < 1) swapUnexpressible++;
+    else {
+      const permuted = logOf(...owned.events);
+      [permuted.events[at - 1], permuted.events[at]] = [permuted.events[at], permuted.events[at - 1]];
+      if (show(permuted.snapshot()) !== show(upstream.snapshot())) swapReddened++;
+      if (show(permuted.perPort()) !== show(upstream.perPort())) swapMovedPerPort++;
+    }
+  }
   property(`${label} [cleanup pairing, upstream]`, upstream.unpaired());
   property(`${label} [cleanup pairing, owned]`, owned.unpaired());
   if (upstream.lifecycle().length > 0) pairedCases++;
@@ -3176,6 +3218,7 @@ function contractCase(label: string, input: Record<string, unknown>): { up: Outc
   const up = runContract(upstreamContract, input, contractPorts(upLog));
   const own = runContract(ownedContract, input, contractPorts(ownLog));
   eq(`contract ${label}`, up, own);
+  contractLogChecks++;
   eq(`contract ${label} — ports`, upLog.snapshot(), ownLog.snapshot());
   if (up.threw === undefined) {
     property(`contract ${label}: upstream's attachment matches its blocking state`, attachmentShape(up));
@@ -3679,11 +3722,119 @@ function contractCase(label: string, input: Record<string, unknown>): { up: Outc
   mustDiffer("the guard dropped entirely, which is this splice's own twin", upstreamStderrTail("", 0, ""), "\n\nHook exited 0 with stderr:\n");
 }
 
+// ---- the sync/async discriminator pair (upstream `ip` and `mS`) ------------
+// The two splices C10.6's FIX ROUND takes, and what they exist to prove is a
+// CORRECTED MEASUREMENT rather than a new capability. The wave reported the
+// helper belt as "not takeable by anchor" — 84 of 151 carrying no string
+// literal, four of 43 pure ones uniquely anchorable — on a scan that collected
+// string literals of twelve characters or more. That is not what an anchor is:
+// `strangle/anchor.ts` asks for a true-substring-unique span carrying no
+// minified identifier. Re-derived by that rule, 125 of the 151 declarations are
+// anchorable and 31 of the 40 pure ones are. These two are anchored on
+// `){return!(("async"in ` and `){return"async"in ` — structural fragments with
+// no prose in them at all.
+//
+// Their domain is a UNION with two members and one discriminating field, so the
+// cross-product below is the whole of it rather than a sample, and it includes
+// the two shapes the corpus cannot make: `async:false`, and a non-boolean
+// `async`. Those are exactly where the plausible rewrites diverge.
+{
+  const upstreamIsSync = build<(json: unknown) => boolean>(
+    extract(ENGINE, "ip", /function ip\([\w$]+\)\{return!\(\("async"in [\w$]+\)&&[\w$]+\.async===!0\)\}/),
+  );
+  const upstreamIsAsync = build<(json: unknown) => boolean>(
+    extract(ENGINE, "mS", /function mS\([\w$]+\)\{return"async"in [\w$]+&&[\w$]+\.async===!0\}/),
+  );
+  const ownedIsSync = reforge.hookOutputIsSync as unknown as (json: unknown) => boolean;
+  const ownedIsAsync = reforge.hookOutputIsAsync as unknown as (json: unknown) => boolean;
+
+  // Every shape the union admits, plus the neighbours a wrong test would
+  // confuse with them.
+  const DOCUMENTS: [string, unknown][] = [
+    ["empty result", {}],
+    ["a result with fields", { continue: true, systemMessage: "ok" }],
+    ["the corpus's own answer", { continue: true, hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "x" } }],
+    ["a legacy block", { decision: "block", reason: "no" }],
+    ["the acknowledgement", { async: true }],
+    ["the acknowledgement with a timeout", { async: true, asyncTimeout: 30 }],
+    ["async explicitly false", { async: false }],
+    ["async as a string", { async: "true" }],
+    ["async as a number", { async: 1 }],
+    ["async as null", { async: null }],
+    ["async as undefined but PRESENT", { async: undefined }],
+    ["a result that merely mentions async", { systemMessage: "async" }],
+  ];
+  for (const [label, doc] of DOCUMENTS) {
+    eq(`hook-output-sync(${label})`, upstreamIsSync(doc), ownedIsSync(doc));
+    eq(`hook-output-async(${label})`, upstreamIsAsync(doc), ownedIsAsync(doc));
+    // The pair's own invariant, stated on every case: upstream declares two
+    // functions, and on this domain they are exact complements. A copy that got
+    // one right and the other wrong passes both comparisons above only if it
+    // also breaks this.
+    eq(`the pair is complementary on ${label}`, upstreamIsSync(doc), !upstreamIsAsync(doc));
+  }
+  eq("the document set is the whole union plus its neighbours", DOCUMENTS.length, 12);
+
+  // One control per decision, and each is the rewrite that would pass on the
+  // corpus. `async:false` and a non-boolean `async` are the ONLY inputs that
+  // separate them, which is why the corpus cannot grade this pair at all — the
+  // sync half is adjudicated dark on exactly that argument.
+  mustDiffer("presence tested instead of the value, so `async:false` reads as an acknowledgement", upstreamIsSync({ async: false }), false);
+  mustDiffer("…and the same rewrite on the async half", upstreamIsAsync({ async: false }), true);
+  mustDiffer("the value tested for truthiness, so a non-boolean `async` reads as an acknowledgement", upstreamIsSync({ async: "true" }), false);
+  mustDiffer("…and the same rewrite on the async half", upstreamIsAsync({ async: 1 }), true);
+  mustDiffer("a present-but-undefined `async` treated as absent by a `!== undefined` test", upstreamIsAsync({ async: undefined }), true);
+  mustDiffer("the sync half implemented as the negation of a PRESENCE test", upstreamIsSync({ async: false }), false);
+  mustDiffer("the twin this splice actually ships — the answer inverted on every document", upstreamIsSync({}), false);
+  mustDiffer("…and the async half's twin", upstreamIsAsync({}), true);
+}
+
+// ---- the hook's invocation text (upstream `_9`) -----------------------------
+// The largest multi-caller pure function in the belt and the fix round's second
+// LIVE take. Seven arms over a closed union, so the cross-product is again the
+// whole domain: every hook type, and for the command arm both sides of the
+// optional `args`.
+{
+  const upstreamText = build<(hook: unknown) => string | undefined>(
+    extract(ENGINE, "_9", /function _9\([\w$]+\)\{switch\([\w$]+\.type\)\{case"command":[\s\S]*?case"function":return"function"\}\}/),
+  );
+  const owned = reforge.hookInvocationText as unknown as (hook: unknown) => string | undefined;
+
+  const HOOKS: [string, unknown][] = [
+    ["command, no args", { type: "command", command: "echo REFORGE" }],
+    ["command, empty args", { type: "command", command: "echo", args: [] }],
+    ["command, one arg", { type: "command", command: "echo", args: ["REFORGE"] }],
+    ["command, several args", { type: "command", command: "node", args: ["-e", "process.exit(0)"] }],
+    ["command with a plugin-root placeholder", { type: "command", command: "${CLAUDE_PLUGIN_ROOT}/run.sh" }],
+    ["prompt", { type: "prompt", prompt: "summarise the diff" }],
+    ["agent", { type: "agent", prompt: "summarise the diff", agentType: "reviewer" }],
+    ["http", { type: "http", url: "https://example.invalid/hook" }],
+    ["mcp_tool", { type: "mcp_tool", server: "srv", tool: "tl" }],
+    ["callback", { type: "callback", callback: () => undefined }],
+    ["function", { type: "function", name: "fn" }],
+    ["a type outside the union", { type: "telepathy" }],
+  ];
+  for (const [label, hook] of HOOKS) eq(`hook-invocation-text(${label})`, upstreamText(hook), owned(hook));
+  eq("the hook set covers all seven arms plus the absent one", new Set(HOOKS.map(([, h]) => (h as { type: string }).type)).size, 8);
+
+  // The `args` fork is INVISIBLE in the result when the list is empty — the join
+  // of one element is the element — so the control has to use a non-empty list.
+  // That is also why the corpus cannot see this arm's fork at all: none of the
+  // eleven command hooks in w5/scenarios.ts declares args.
+  mustDiffer("the args join dropped, which is the simplification the optional field invites", upstreamText({ type: "command", command: "echo", args: ["A", "B"] }), "echo");
+  mustDiffer("the args joined by comma rather than a single space", upstreamText({ type: "command", command: "echo", args: ["A", "B"] }), "echo,A,B");
+  mustDiffer("the command dropped and only the args joined", upstreamText({ type: "command", command: "echo", args: ["A"] }), "A");
+  mustDiffer("the agent arm reading its own agentType rather than the shared prompt field", upstreamText({ type: "agent", prompt: "p", agentType: "reviewer" }), "reviewer");
+  mustDiffer("the mcp_tool arm joined the other way round", upstreamText({ type: "mcp_tool", server: "srv", tool: "tl" }), "tl/srv");
+  mustDiffer("the literal arms returning the hook's own kind — this splice's twin, generalised", upstreamText({ type: "command", command: "echo" }), "command");
+  mustDiffer("a default arm added, so an unknown type stops being undefined", upstreamText({ type: "telepathy" }), "telepathy");
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 1499) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 195) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 1549) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 210) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 // Two properties are stated per graded case — upstream's and the owned side's —
 // so the floor tracks the comparison count's shape: the dispatchers' pairing
 // property plus the two synthetic ones, and section 5's attachment-shape
@@ -3692,8 +3843,16 @@ if (controls < 195) failures.push(`only ${controls} non-vacuity control(s) ran �
 // nobody tested.
 if (properties < 1005) failures.push(`only ${properties} property statement(s) ran`);
 if (pairedCases < 11) failures.push(`only ${pairedCases} case(s) carried a lifecycle edge — the pairing property is vacuous on the rest`);
+// The bulk red direction is a FLOOR, not a report: a rewrite that stopped seeing
+// order would drive this to zero while every comparison above still passed.
+if (swapReddened < 204) failures.push(`a one-pair swap reddened only ${swapReddened} log comparison(s) — the ordered log has stopped seeing order`);
+if (swapMovedPerPort !== 0) failures.push(`the swap moved the retired per-port projection in ${swapMovedPerPort} case(s), so it does not isolate ordering`);
 
-console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s), ${properties} property statement(s) over ${pairedCases} paired case(s) ===`);
+console.log(`=== hook-dispatch parity: ${checks} comparison(s) (${logChecks} dispatcher + ${contractLogChecks} contract ordered-log), ${controls} control(s), ${properties} property statement(s) over ${pairedCases} paired case(s) ===`);
+console.log(
+  `  ordered-log red direction: a one-pair swap reddens ${swapReddened} of the ${logChecks} dispatcher log comparisons ` +
+    `(${swapUnexpressible} cannot express the swap) and moves the retired per-port projection in ${swapMovedPerPort}`,
+);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0

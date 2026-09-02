@@ -279,6 +279,32 @@ export const ATTESTED: AttestedModule[] = [
     scenarios: [],
   },
   {
+    module: "hook-output-sync",
+    row: "hook-output-sync",
+    // NO SCENARIO, and the manifest row carries the measurement: the inverted
+    // twin was built and replayed over TWELVE scenarios — every one that
+    // registers a hook of any kind — and all stayed GREEN, while the sibling
+    // row's identically-shaped twin reddens two of them. Every branch is
+    // excluded to the oracle, which runs the whole union.
+    scenarios: [],
+  },
+  {
+    module: "hook-output-async",
+    row: "hook-output-async",
+    // The sibling that IS live: the twin discards a callback's answer as an
+    // acknowledgement before anything interprets it, so both scenarios whose
+    // hooks answer with a document go red.
+    scenarios: ["hooks-prompt-submit", "perm-hook-deny"],
+  },
+  {
+    module: "hook-invocation-text",
+    row: "hook-invocation-text",
+    // One covering scenario out of five tried, which is the measurement rather
+    // than the intent: the other four register command hooks whose output goes
+    // to a FILE or to stderr, neither of which reaches a graded surface.
+    scenarios: ["hooks-precompact"],
+  },
+  {
     module: "cwd-changed-hooks",
     row: "cwd-changed-hooks",
     scenarios: ["hooks-cwd-change"],
@@ -489,6 +515,12 @@ const W76A_EVENT_ARMS =
   "SIXTEEN OF THE EIGHTEEN EVENT ARMS ARE UNREACHED, and the two that are reached are the two the corpus has hooks for: the UserPromptSubmit arm's injected context and the PermissionRequest arm's deny. The rest need a hook registered on that event which also ANSWERS with a `hookSpecificOutput` — the dispatchers W5 owns fire the events, but a callback that returns `{continue:true}` reaches none of these assignments. Sixteen live recordings would buy sixteen field copies. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives every arm over its own field set, including the present-but-undefined state most of them produce (the assignment is unconditional, so a hook that says nothing about context is distinguishable from one that was never asked) and the arms that differ only in whether they overwrite the top-level reason.";
 const W76A_BLOCKING_MESSAGE =
   "THE BLOCKING-MESSAGE ARM needs a result that ended with a `blockingError`, which on this corpus happens only through the PermissionRequest deny — and that path leaves through the arm above rather than through this conditional's true side on the scenarios measured. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives both message shapes and asserts the minted attachment's own field set, with the clock and uuid the minter reads stubbed so the comparison is of the fields rather than of the moment.";
+const W76A_SYNC_ASYNC_KEY =
+  "no hook in the corpus emits an `async` key at all, so the presence test's TRUE arm is unreachable by construction: an async acknowledgement is a hook telling the engine to background it, and every one of the corpus's eleven command hooks and its callback hooks answers synchronously. The arm is not a refusal — it is the OTHER member of the document union. Graded by strangle/hooks-parity.test.ts's sync/async block over the whole union: twelve document shapes including `async:true`, `async:true` with a timeout, `async:false`, a string, a number, null and a present-but-undefined value, each compared on BOTH predicates plus the complementarity invariant, with eight controls covering the presence-instead-of-value rewrite and the truthiness rewrite on both halves.";
+
+const W76A_INVOCATION_ARMS =
+  "the corpus registers hooks of exactly TWO of the seven types this switch partitions — command and callback — because the SDK seam offers only those two: `Options.settings.hooks` declares command hooks and `Options.hooks` declares callbacks. `prompt`, `agent`, `http`, `mcp_tool` and `function` need a plugin manifest, an MCP server or an internal registration that no headless run has, and the `default` arm is a type outside upstream's own union. The `args` fork is narrower still: none of the eleven command hooks in w5/scenarios.ts declares args, and with an empty list the join of one element IS the element, so the fork is invisible in the result even when it is taken. Graded by strangle/hooks-parity.test.ts's invocation-text block over all seven arms plus the absent one, with both sides of the args fork and seven controls — the join dropped, the join by comma, the command dropped, the agent arm reading its own type, the mcp_tool halves swapped, the literal arms generalised to every arm (this splice's own twin) and a default arm added.";
+
 const W76A_STDERR_TAIL =
   "THE WHOLE FUNCTION IS ADJUDICATED DARK on the manifest row, with the population, the inverted twin and the firing condition written out there: both call sites are guarded on a hook-output VALIDATION ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not 2, and none of the corpus's ten command hooks produces one. The inverted twin was built and replayed before the verdict was written and both covering candidates stayed GREEN, which is the call site never being reached rather than a weak twin. Graded instead by strangle/hooks-parity.test.ts's hook-stderr-tail block, which runs the WHOLE domain rather than a sample — three error texts x five exit codes including `undefined` x six stderr shapes, ninety cases — with seven controls, one per decision the body makes.";
 
@@ -897,6 +929,17 @@ export const EXCLUSIONS: Exclusion[] = [
     branch: "hook-stderr-tail#hookStderrTail@1:F",
     reason: W76A_STDERR_TAIL,
   },
+
+  // ---- C10.6 fix round: the sync/async pair and the invocation text --------
+  { branch: "hook-output-sync#hookOutputIsSync@0:T", reason: W76A_SYNC_ASYNC_KEY },
+  { branch: "hook-output-async#hookOutputIsAsync@0:T", reason: W76A_SYNC_ASYNC_KEY },
+  { branch: "hook-invocation-text#hookInvocationText@1:T", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@2:taken", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@3:taken", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@4:taken", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@5:taken", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@7:taken", reason: W76A_INVOCATION_ARMS },
+  { branch: "hook-invocation-text#hookInvocationText@8:taken", reason: W76A_INVOCATION_ARMS },
 
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded

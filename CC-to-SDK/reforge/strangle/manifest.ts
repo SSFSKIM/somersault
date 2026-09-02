@@ -4081,13 +4081,23 @@ export const SPLICES: Splice[] = [
     // `siblings` claim. The legacy decision message is taken: it is the oldest
     // and least-churned half of the contract, and it names the function's job.
     //
-    // ALL FIVE CAPTURES ARE `effectful-port`, which matches the belt fixture's
-    // own verdict (`freeThatArePure: []`). None is a plain helper this module
-    // could ship: the attachment builder mints a uuid and reads a clock, the
-    // dead probe reads per-host state and emits telemetry, the JSON serialiser
-    // opens a trace span, the terminal-sequence filter heads an unowned parser
-    // chain, and the log is the engine log. Five ledger edges, all to the hook
-    // EXECUTOR wave and the layers under it.
+    // ALL FIVE CAPTURES ARE `effectful-port`, and four of them are effectful in
+    // the ordinary sense: the attachment builder mints a uuid and reads a clock,
+    // the dead probe reads per-host state and emits telemetry, the JSON
+    // serialiser opens a trace span, and the log is the engine log.
+    //
+    // THE FIFTH IS NOT, AND THE TAXONOMY NAMES IT WRONGLY ON PURPOSE. The
+    // terminal-sequence filter `bge` is PURE — it is a parser (`yJt`) and a set
+    // of constants, with no clock, no host read and no side effect. It is
+    // classified `effectful-port` because the class this manifest has for it is
+    // the wrong axis: `pure-helper` means "this module ships an owned COPY", and
+    // an owned copy would have to carry the whole parser chain beneath it, which
+    // no wave owns and which is not this row's to take. So the honest reading is
+    // an UNOWNED PURE CHAIN, FORWARDED — the value is pure, the ownership is
+    // somebody else's, and the row forwards the binding rather than duplicating
+    // a subgraph it cannot grade. Re-cutting it as `pure-helper` would be worse
+    // than the mislabel: it would claim an owned copy this module does not have.
+    // Five ledger edges, all to the hook EXECUTOR wave and the layers under it.
     name: "hook-json-contract",
     target: "free-function",
     signature: { params: 1, ancestry: ["SourceFile"] },
@@ -4149,6 +4159,133 @@ export const SPLICES: Splice[] = [
     // arm's deny, which has to reach the tool result. Both are red under the
     // twin, which flattens the nested contract away.
     coverage: ["hooks-prompt-submit", "perm-hook-deny"],
+  },
+
+  {
+    // "Is this hook-output document SYNCHRONOUS?" (upstream `ip`, 52 B) — and
+    // the first of the two splices C10.6's FIX ROUND takes to prove a corrected
+    // claim rather than to add bytes.
+    //
+    // THE CLAIM IT CORRECTS. The wave reported the belt as "not takeable by
+    // anchor": 84 of 151 with no string literal, only four of 43 pure ones
+    // uniquely anchorable. That measured string literals of twelve characters or
+    // more — which is not what an anchor is. `strangle/anchor.ts` asks for a
+    // true-substring-unique span carrying no minified identifier, and half this
+    // manifest is anchored on structural fragments rather than prose. Re-derived
+    // by that rule, 125 of 151 declarations are anchorable and 31 of the 40 pure
+    // ones are; the anchor below is `){return!(("async"in `, which contains no
+    // literal at all and occurs ONCE in the 1,802-module graph.
+    //
+    // WHY THIS ONE AND NOT A LARGER ONE. The corrected doctrine is that purity
+    // decides whether a helper is WORTH owning and anchorability decides whether
+    // it CAN be taken, and worth is a separate argument: a single-caller pure
+    // helper folds into its caller's future module (the C7 rule), so only a
+    // MULTI-CALLER pure helper is a §2.4 capture in its own right. This is the
+    // cheapest anchorable multi-caller pure function in the belt — four
+    // consumers, nineteen call sites, 52 bytes — which makes it the cheapest
+    // possible demonstration that the population is takeable.
+    //
+    // `captures: []` IS THE POSITIVE CLAIM: upstream's body has zero free
+    // variables, derived from the AST and refused in either direction.
+    name: "hook-output-sync",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: '){return!(("async"in ',
+    fn: "hookOutputIsSync",
+    captures: [],
+    // MEASURED DARK, and the measurement is the point of the row rather than a
+    // disappointment. It was spliced expecting liveness — nineteen call sites,
+    // four consumers — and the inverted twin was built and replayed against
+    // TWELVE scenarios, every one that registers a hook of any kind, before the
+    // verdict was written. All twelve stayed GREEN.
+    //
+    // DARK IS NOT UNREACHED, and this row is the campaign's clearest example of
+    // the difference. The branch attestation records this predicate's FALSE arm
+    // on the corpus, so it IS called. What no scenario reaches is a CONSUMER of
+    // the answer: every use of it is dominated by a second condition the
+    // corpus's hook documents never satisfy — the legacy `decision:"block"`
+    // field (both answering hooks use `hookSpecificOutput` instead), a
+    // `terminalSequence`, a delegated-observation subagent, or the parser fast
+    // path, which only a command hook whose STDOUT parses as JSON reaches and
+    // none of the eleven in `w5/scenarios.ts` writes JSON to stdout.
+    //
+    // So the sibling row `hook-output-async` is live on the same scenarios and
+    // this one is not, which is the sharpest available statement of what the
+    // corpus reaches: it asks "is this an acknowledgement?" on every callback
+    // answer and acts on the reply, and it asks "is this a result?" without ever
+    // acting on that one.
+    coverage: [],
+    darkOver: [
+      "hooks-prompt-submit",
+      "perm-hook-deny",
+      "hooks-permission",
+      "hooks-batch",
+      "hooks-subagent",
+      "hooks-precompact",
+      "hooks-command",
+      "hooks-session-start",
+      "hooks-session-end",
+      "hooks-tool-failure",
+      "hooks-slash",
+      "hooks-memory",
+    ],
+    darkReason:
+      "The predicate is CALLED — the branch attestation records its false arm on the corpus — but no CONSUMER of the answer reaches an observable: every use of it is dominated by a second condition the corpus never satisfies. The callback sites read the LEGACY decision:\"block\" field while both answering corpus hooks use hookSpecificOutput; the terminal-sequence sink returns early without a terminalSequence; the delegated-observation filter needs a subagent observation; and the parser's fast path needs a command hook whose STDOUT parses as JSON, which none of the eleven in w5/scenarios.ts writes. " +
+      "The INVERTED twin was built and replayed over twelve scenarios before the verdict was written — every scenario that registers a hook of any kind — and all stayed GREEN; the SIBLING row hook-output-async, whose twin is the same inversion of the complementary predicate, reddens two of them, so this is the call sites never being reached rather than a weak twin. " +
+      "Graded instead by strangle/hooks-parity.test.ts's hook-output-sync block, which runs the WHOLE domain against upstream's own bytes — every document shape the union admits, including the two the corpus cannot make (`async:false` and a non-boolean `async`) — with controls for each of the two decisions the body makes.",
+  },
+
+  {
+    // "Is this hook-output document an ASYNC ACKNOWLEDGEMENT?" (upstream `mS`,
+    // 47 B) — the second of the fix round's two takes, and the complement of the
+    // row above. Anchor `){return"async"in `, one occurrence in the graph.
+    //
+    // NOT the negation of its sibling, even though the bodies say so: upstream
+    // declares both, and they guard different things. The sync predicate admits
+    // a result document; this one recognises the acknowledgement and takes the
+    // BACKGROUNDING path — the subprocess runner adopts the hook as a background
+    // job, the awaiting executor returns a bare success, the standalone callback
+    // runner returns empty output. Ten call sites over four consumers.
+    name: "hook-output-async",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: '){return"async"in ',
+    fn: "hookOutputIsAsync",
+    captures: [],
+    coverage: ["hooks-prompt-submit", "perm-hook-deny"],
+  },
+
+  {
+    // The text that says WHAT a hook will run (upstream `_9`, 291 B) — the
+    // largest MULTI-CALLER pure function in the belt, six consumers inside the
+    // layer and nine call sites, and the second live take of the fix round.
+    //
+    // Its anchor is `;case"callback":return"callback";case"function":return"function"}`:
+    // one occurrence in the 1,802-module graph, no minified identifier in it,
+    // and no prose either. The first candidate tried — `.type){case"command":return `
+    // — occurs in TWO chunks, which is the check the anchor rule exists for and
+    // the reason a candidate is counted before it is trusted.
+    //
+    // WHY IT IS WORTH OWNING and not just takeable: the streaming executor uses
+    // the result as the COMMAND IT EXECUTES (after a `${CLAUDE_PLUGIN_ROOT}`
+    // substitution), while three other consumers use the same string to identify
+    // a hook in an attachment or as the `statusMessage` fallback. That is a
+    // multi-caller pure helper in the §2.4 sense — one projection, several
+    // fates — rather than a private detail of one caller.
+    name: "hook-invocation-text",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: ';case"callback":return"callback";case"function":return"function"}',
+    fn: "hookInvocationText",
+    captures: [],
+    // MEASURED, and narrower than the shape suggests. The twin returns the
+    // hook's KIND for every arm, so every command hook runs the wrong command —
+    // yet only `hooks-precompact` reddens. `hooks-command`, `hooks-session-start`,
+    // `hooks-session-end` and `hooks-tool-failure` all stay GREEN: their hooks
+    // project into a FILE or write only to stderr, and neither reaches a graded
+    // surface. `hooks-precompact` is the one whose command hook echoes an
+    // instruction that has to arrive in the compaction request.
+    coverage: ["hooks-precompact"],
   },
 
   {
