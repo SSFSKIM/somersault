@@ -1,0 +1,1458 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-moat-tools.ts",
+  "counts": {
+    "graphModules": 1802,
+    "cassetteFiles": 267,
+    "bodiesWithTools": 901,
+    "catalogShapes": 12,
+    "baselineCatalog": 22,
+    "w8Tools": 20,
+    "describedOnly": 16,
+    "carriers": 29,
+    "carriersAnchorable": 29,
+    "descriptionBytes": 36787,
+    "anchorScans": 58
+  },
+  "catalogs": [
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 8,
+      "files": 4
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 59,
+      "files": 19
+    },
+    {
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskOutput",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 114,
+      "files": 51
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskOutput",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 12,
+      "files": 4
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskOutput",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write",
+        "mcp__reforge__echo_token"
+      ],
+      "bodies": 8,
+      "files": 4
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "PowerShell",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskOutput",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 2,
+      "files": 1
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskOutput",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 674,
+      "files": 184
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ],
+      "bodies": 8,
+      "files": 8
+    },
+    {
+      "tools": [
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "EnterWorktree",
+        "ExitWorktree",
+        "NotebookEdit",
+        "RemoteTrigger",
+        "SendMessage",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "bodies": 3,
+      "files": 3
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "NotebookEdit",
+        "Read",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ],
+      "bodies": 4,
+      "files": 4
+    },
+    {
+      "tools": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "ListAgents",
+        "Read",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "Skill",
+        "Workflow",
+        "Write"
+      ],
+      "bodies": 3,
+      "files": 3
+    },
+    {
+      "tools": [
+        "Skill"
+      ],
+      "bodies": 6,
+      "files": 3
+    }
+  ],
+  "outsideW8": [
+    {
+      "name": "Agent",
+      "renderedBytes": 6926,
+      "variants": 3
+    },
+    {
+      "name": "Bash",
+      "renderedBytes": 9822,
+      "variants": 5
+    },
+    {
+      "name": "Edit",
+      "renderedBytes": 1094,
+      "variants": 2
+    },
+    {
+      "name": "Glob",
+      "renderedBytes": 140,
+      "variants": 2
+    },
+    {
+      "name": "Grep",
+      "renderedBytes": 477,
+      "variants": 2
+    },
+    {
+      "name": "mcp__reforge__echo_token",
+      "renderedBytes": 65,
+      "variants": 1
+    },
+    {
+      "name": "NotebookEdit",
+      "renderedBytes": 619,
+      "variants": 1
+    },
+    {
+      "name": "PowerShell",
+      "renderedBytes": 7655,
+      "variants": 1
+    },
+    {
+      "name": "Read",
+      "renderedBytes": 1830,
+      "variants": 2
+    },
+    {
+      "name": "Skill",
+      "renderedBytes": 1417,
+      "variants": 1
+    },
+    {
+      "name": "WebFetch",
+      "renderedBytes": 1503,
+      "variants": 2
+    },
+    {
+      "name": "WebSearch",
+      "renderedBytes": 1322,
+      "variants": 4
+    },
+    {
+      "name": "Write",
+      "renderedBytes": 618,
+      "variants": 2
+    }
+  ],
+  "tools": [
+    {
+      "name": "AskUserQuestion",
+      "renderedBytes": 842,
+      "renderedSha256": "0545e1c2b9986916808b78ad0b684e86e16f72dbb3a9556a1648fc17514c3c2d",
+      "schemaBytes": 3023,
+      "schemaSha256": "2e4845645a6b7dba870dbf1d603b452f8838418467ce03d264d7fc9eee516701",
+      "cassetteFilesAtLeast": 51,
+      "variants": 1,
+      "located": 30,
+      "windows": 34,
+      "carriers": [
+        {
+          "chunk": "chunk-nqngh5mm.js",
+          "name": "mmn",
+          "kind": "VariableDeclaration",
+          "bytes": 838,
+          "offset": 2323,
+          "shape": "variable-declarator",
+          "free": [
+            "UE",
+            "Wh"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "uinely t",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 30
+        }
+      ]
+    },
+    {
+      "name": "CronCreate",
+      "renderedBytes": 2924,
+      "renderedSha256": "0ad661417250fc337888f6492b0b20d977f4fde8b5e8310c37efa6dc477cadab",
+      "schemaBytes": 958,
+      "schemaSha256": "2a274d99ce84bc250a9994d7952ff64a457cace96334495a33e0c4246f37ba01",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 102,
+      "windows": 120,
+      "carriers": [
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "name": "Rmn",
+          "kind": "FunctionDeclaration",
+          "bytes": 3461,
+          "offset": 1825,
+          "shape": "free-function",
+          "free": [
+            "FS",
+            "NX",
+            "RI",
+            "lm",
+            "ma"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "?`## Dur",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 78
+        },
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "name": "o",
+          "kind": "VariableDeclaration",
+          "bytes": 611,
+          "offset": 1845,
+          "shape": "variable-declarator",
+          "free": [
+            "e"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "?`## Dur",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 15
+        },
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "name": "s",
+          "kind": "VariableDeclaration",
+          "bytes": 273,
+          "offset": 2457,
+          "shape": "variable-declarator",
+          "free": [
+            "e"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "le jobs ",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 9
+        }
+      ]
+    },
+    {
+      "name": "CronDelete",
+      "renderedBytes": 167,
+      "renderedSha256": "65963fdf9a1680b4f8f53574cf99aac50142641eb16d5297bc917d5f8b186017",
+      "schemaBytes": 206,
+      "schemaSha256": "5ff2afe7fa3bfa9c5a63bcec8e0afdb3d6349f76d1ba5fba62a7b800de567467",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 2,
+      "windows": 5,
+      "carriers": [
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "name": "Hmn",
+          "kind": "FunctionDeclaration",
+          "bytes": 288,
+          "offset": 5330,
+          "shape": "free-function",
+          "free": [
+            "lm"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "?`Cancel",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 2
+        }
+      ]
+    },
+    {
+      "name": "CronList",
+      "renderedBytes": 106,
+      "renderedSha256": "5b979dcacd41be3e0e5a9133dbcc5f3a3d32fd6e7db6d8ecde5b024d7c4e2a8b",
+      "schemaBytes": 119,
+      "schemaSha256": "25c7d85c859a6f78f6f4e83edf2d3073645b7c71d2832348387882a6833b1834",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 1,
+      "windows": 3,
+      "carriers": [
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "name": "Imn",
+          "kind": "FunctionDeclaration",
+          "bytes": 187,
+          "offset": 5653,
+          "shape": "free-function",
+          "free": [
+            "lm"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": ", both d",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 1
+        }
+      ]
+    },
+    {
+      "name": "EnterPlanMode",
+      "renderedBytes": 4011,
+      "renderedSha256": "369ad265a13372d83c558f9593504a33314341c4784834e7b57931fdbad536b3",
+      "schemaBytes": 119,
+      "schemaSha256": "25c7d85c859a6f78f6f4e83edf2d3073645b7c71d2832348387882a6833b1834",
+      "cassetteFilesAtLeast": 51,
+      "variants": 1,
+      "located": 151,
+      "windows": 166,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Q$n",
+          "kind": "FunctionDeclaration",
+          "bytes": 3642,
+          "offset": 2389399,
+          "shape": "free-function",
+          "free": [
+            "Ji",
+            "X$n",
+            "Y$n"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "ask. Get",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 144
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "X$n",
+          "kind": "FunctionDeclaration",
+          "bytes": 434,
+          "offset": 2388965,
+          "shape": "free-function",
+          "free": [
+            "Ji",
+            "Ny",
+            "Wh",
+            "Xo",
+            "_t",
+            "as",
+            "ti"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "urn`## W",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 7
+        }
+      ]
+    },
+    {
+      "name": "EnterWorktree",
+      "renderedBytes": 3220,
+      "renderedSha256": "6e2930159e8f19d454c0933d08b022a4c0523f660c0257b421293ca00a9ded8e",
+      "schemaBytes": 687,
+      "schemaSha256": "b1eec893032bf0ca96a82a3effa80b53cab40592663f255b9a36ac353d3a7de9",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 97,
+      "windows": 133,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Ckt",
+          "kind": "FunctionDeclaration",
+          "bytes": 3312,
+          "offset": 2394617,
+          "shape": "free-function",
+          "free": [],
+          "literalValued": null,
+          "anchor": {
+            "literal": "l ONLY w",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 97
+        }
+      ]
+    },
+    {
+      "name": "ExitPlanMode",
+      "renderedBytes": 1849,
+      "renderedSha256": "9a76355a2730e9d3e96eef6683a5e7003c94f615b815e391454a1d38a660b2f0",
+      "schemaBytes": 505,
+      "schemaSha256": "6b894e7b0bf0e972f890ddb6f91d737d11bc889ad2143f07bad21a6cf085d50c",
+      "cassetteFilesAtLeast": 51,
+      "variants": 1,
+      "located": 67,
+      "windows": 76,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "jat",
+          "kind": "VariableDeclaration",
+          "bytes": 1825,
+          "offset": 1867521,
+          "shape": "variable-declarator",
+          "free": [
+            "Ji"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "ished wr",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 67
+        }
+      ]
+    },
+    {
+      "name": "ExitWorktree",
+      "renderedBytes": 1923,
+      "renderedSha256": "63e763304c955ebf3f58ec48bffa71fcf54b87ad4ef8319cf3bf284fe7e19411",
+      "schemaBytes": 481,
+      "schemaSha256": "2cc3f9ef86ce57093a6f4c273c818e95b730f9b5f81c623618d3d9193ebd2c3c",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 55,
+      "windows": 79,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "xkt",
+          "kind": "FunctionDeclaration",
+          "bytes": 1986,
+          "offset": 2404892,
+          "shape": "free-function",
+          "free": [],
+          "literalValued": null,
+          "anchor": {
+            "literal": "turn`Exi",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 55
+        }
+      ]
+    },
+    {
+      "name": "ListAgents",
+      "renderedBytes": 777,
+      "renderedSha256": "398d4802fc2327352ff22bdb927adf533cb667a3a553b152c5efd19b661f7c20",
+      "schemaBytes": 316,
+      "schemaSha256": "9213e8ea54c9d2d62202b14372a16cc2acdfb4eae965a391c6e07348c4ba26de",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 23,
+      "windows": 31,
+      "carriers": [
+        {
+          "chunk": "chunk-b2bvtpa2.js",
+          "name": "s",
+          "kind": "VariableDeclaration",
+          "bytes": 793,
+          "offset": 724,
+          "shape": "variable-declarator",
+          "free": [
+            "Xr"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "=`Lists ",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 23
+        }
+      ]
+    },
+    {
+      "name": "RemoteTrigger",
+      "renderedBytes": 2834,
+      "renderedSha256": "22d9a192201d4dc575a26fdd9d13707169edda95ad2e3ec86a3d5fd1d81c3f53",
+      "schemaBytes": 795,
+      "schemaSha256": "b46734857b3ded940b412ad4d1e3fae07ecd79d8d5d26d7e41528304b17dc1b8",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 112,
+      "windows": 117,
+      "carriers": [
+        {
+          "chunk": "chunk-9bs8dvhj.js",
+          "name": "C8n",
+          "kind": "VariableDeclaration",
+          "bytes": 2875,
+          "offset": 9626,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "=`Call t",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 112
+        }
+      ]
+    },
+    {
+      "name": "ReportFindings",
+      "renderedBytes": 574,
+      "renderedSha256": "59ea4187fcd52b2f67e233b092d1c7b841a6b4156468636434886fb5f9641296",
+      "schemaBytes": 1545,
+      "schemaSha256": "ed9475255273e9072e9577508f2131c906c3e193a36eb004d118876d60a91c00",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 22,
+      "windows": 22,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "y_e",
+          "kind": "VariableDeclaration",
+          "bytes": 580,
+          "offset": 1021113,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "Report c",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 22
+        }
+      ]
+    },
+    {
+      "name": "ScheduleWakeup",
+      "renderedBytes": 3148,
+      "renderedSha256": "c0021258a5ea1281ba41e9d9a5b88a6928bc84c5138b0785c300651178b00137",
+      "schemaBytes": 1392,
+      "schemaSha256": "94a34dab6c5d1b8b096fe5d5a2240de8ba411463cd9649b8b4200cb63021f2bb",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 101,
+      "windows": 130,
+      "carriers": [
+        {
+          "chunk": "chunk-7f6rqxc5.js",
+          "name": "KXn",
+          "kind": "FunctionDeclaration",
+          "bytes": 4912,
+          "offset": 1942,
+          "shape": "free-function",
+          "free": [
+            "t"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "}\n\n${'Se",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 68
+        },
+        {
+          "chunk": "chunk-7f6rqxc5.js",
+          "name": "t",
+          "kind": "VariableDeclaration",
+          "bytes": 1242,
+          "offset": 699,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "=`Schedu",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 32
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "EFn",
+          "kind": "VariableDeclaration",
+          "bytes": 1219,
+          "offset": 2244185,
+          "shape": "variable-declarator",
+          "free": [
+            "NL",
+            "hne",
+            "i",
+            "m",
+            "ot",
+            "q",
+            "tTe",
+            "v"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "({delayS",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 1
+        }
+      ]
+    },
+    {
+      "name": "SendMessage",
+      "renderedBytes": 3386,
+      "renderedSha256": "f2ad28a6de17ba4bca50a4ce577c4604f8ccf3a2d93c30894bbf7de332d9df28",
+      "schemaBytes": 1291,
+      "schemaSha256": "efe24484d55e0285e40340e6bcf59436564ca0c97569927c0d06f1cfc04bc6bc",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 88,
+      "windows": 140,
+      "carriers": [
+        {
+          "chunk": "chunk-0ak8xf05.js",
+          "name": "o",
+          "kind": "VariableDeclaration",
+          "bytes": 2486,
+          "offset": 18661,
+          "shape": "variable-declarator",
+          "free": [
+            "Yo",
+            "Ys"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "()?`\n\n##",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 69
+        },
+        {
+          "chunk": "chunk-0ak8xf05.js",
+          "name": "We",
+          "kind": "FunctionDeclaration",
+          "bytes": 4341,
+          "offset": 18432,
+          "shape": "free-function",
+          "free": [
+            "Yo",
+            "Ys"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "()?`\n| \\",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 19
+        }
+      ]
+    },
+    {
+      "name": "TaskCreate",
+      "renderedBytes": 2146,
+      "renderedSha256": "995575dbea8fdf0b41cbdab23e6735e9442cc95e36b730d20d836e904b61695b",
+      "schemaBytes": 573,
+      "schemaSha256": "05ec1bd6f1f74730a9af44aae7957cdd10e243d946f3e0c19b0ea18f598abc14",
+      "cassetteFilesAtLeast": 23,
+      "variants": 1,
+      "located": 50,
+      "windows": 88,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Lkt",
+          "kind": "FunctionDeclaration",
+          "bytes": 2465,
+          "offset": 2413474,
+          "shape": "free-function",
+          "free": [
+            "io"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "\" and po",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 50
+        }
+      ]
+    },
+    {
+      "name": "TaskGet",
+      "renderedBytes": 732,
+      "renderedSha256": "55bdb174a3bcc65305f3a4ab6dcd525eec51257930cc1bf1cf60061808a88d3a",
+      "schemaBytes": 214,
+      "schemaSha256": "84b7d6eb5142efa0acb983998c8279f9d5088cc668cb8eb456e0a24f46d8e419",
+      "cassetteFilesAtLeast": 23,
+      "variants": 1,
+      "located": 29,
+      "windows": 29,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "$kt",
+          "kind": "VariableDeclaration",
+          "bytes": 738,
+          "offset": 2417559,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "its ID f",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 29
+        }
+      ]
+    },
+    {
+      "name": "TaskList",
+      "renderedBytes": 998,
+      "renderedSha256": "e179dcc4c7554a22438e499de2dde3431501029a5378709e51fc3555a3fbd26d",
+      "schemaBytes": 119,
+      "schemaSha256": "25c7d85c859a6f78f6f4e83edf2d3073645b7c71d2832348387882a6833b1834",
+      "cassetteFilesAtLeast": 23,
+      "variants": 1,
+      "located": 31,
+      "windows": 40,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "zkt",
+          "kind": "FunctionDeclaration",
+          "bytes": 1701,
+          "offset": 2425918,
+          "shape": "free-function",
+          "free": [
+            "io"
+          ],
+          "literalValued": null,
+          "anchor": {
+            "literal": "()?`- Be",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 31
+        }
+      ]
+    },
+    {
+      "name": "TaskOutput",
+      "renderedBytes": 1049,
+      "renderedSha256": "e8ce9d8a6c7585e90927cd38184719acc0a5283b89b33ef0a23c70cbae97cee4",
+      "schemaBytes": 432,
+      "schemaSha256": "ac3b00a7b7ce78b1333c78dc0d7da705f6dca4f78aaf42b8f9c4e588a9f03fe4",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 42,
+      "windows": 42,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "prompt",
+          "kind": "MethodDeclaration",
+          "bytes": 1088,
+          "offset": 2252716,
+          "shape": "sibling-method",
+          "free": [],
+          "literalValued": null,
+          "anchor": {
+            "literal": "eturn`DE",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 42
+        }
+      ]
+    },
+    {
+      "name": "TaskStop",
+      "renderedBytes": 378,
+      "renderedSha256": "c712879f99584bff65b940168e5b2c68ca603bc6400f99c21cb162898c6b987b",
+      "schemaBytes": 366,
+      "schemaSha256": "b0cdf9fd458972bac3fae27dad19aa6a0bca13e5ff251e7b58e48fce11fd7d16",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 14,
+      "windows": 14,
+      "carriers": [
+        {
+          "chunk": "chunk-n855n58h.js",
+          "name": "VXn",
+          "kind": "VariableDeclaration",
+          "bytes": 384,
+          "offset": 633,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "=`\n- Sto",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 14
+        }
+      ]
+    },
+    {
+      "name": "TaskUpdate",
+      "renderedBytes": 2243,
+      "renderedSha256": "f7d5cbed53a841835f4fd6ea477c1977872f9994d65da77d0a93287e10fc7ff1",
+      "schemaBytes": 1095,
+      "schemaSha256": "41f3183bd7eac231405d45505e803f8ba44d527cdca7e1c8af6c3b15c18b1e78",
+      "cassetteFilesAtLeast": 23,
+      "variants": 1,
+      "located": 64,
+      "windows": 92,
+      "carriers": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "name": "Hkt",
+          "kind": "VariableDeclaration",
+          "bytes": 2301,
+          "offset": 2419610,
+          "shape": "variable-declarator",
+          "free": [],
+          "literalValued": true,
+          "anchor": {
+            "literal": "ol to up",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 64
+        }
+      ]
+    },
+    {
+      "name": "Workflow",
+      "renderedBytes": 3480,
+      "renderedSha256": "e1dee0b240332a860c6f19053a7c8b37b2e0daf5634fa815ffe71ee3b7d7c78c",
+      "schemaBytes": 1775,
+      "schemaSha256": "d070e01fe6735311ea5c0669121b189acc8b70290dd2ea2a4e99b4be208f7bf9",
+      "cassetteFilesAtLeast": 267,
+      "variants": 1,
+      "located": 110,
+      "windows": 144,
+      "carriers": [
+        {
+          "chunk": "chunk-s9vr7jq9.js",
+          "name": "e",
+          "kind": "VariableDeclaration",
+          "bytes": 3082,
+          "offset": 838,
+          "shape": "variable-declarator",
+          "free": [
+            "yt"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "cute a w",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 102
+        },
+        {
+          "chunk": "chunk-s9vr7jq9.js",
+          "name": "o",
+          "kind": "VariableDeclaration",
+          "bytes": 188,
+          "offset": 21035,
+          "shape": "variable-declarator",
+          "free": [
+            "IE"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "rence: s",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 4
+        },
+        {
+          "chunk": "chunk-3kxn5jvk.js",
+          "name": "_t",
+          "kind": "FunctionDeclaration",
+          "bytes": 131,
+          "offset": 124444,
+          "shape": "free-function",
+          "free": [],
+          "literalValued": null,
+          "anchor": {
+            "literal": "w it unl",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 2
+        },
+        {
+          "chunk": "chunk-3kxn5jvk.js",
+          "name": "O",
+          "kind": "VariableDeclaration",
+          "bytes": 82,
+          "offset": 124716,
+          "shape": "variable-declarator",
+          "free": [
+            "x"
+          ],
+          "literalValued": false,
+          "anchor": {
+            "literal": "?' The u",
+            "files": 1,
+            "occurrences": 1
+          },
+          "windows": 2
+        }
+      ]
+    }
+  ],
+  "formatters": [
+    {
+      "tool": "AskUserQuestion",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 1223,
+      "offset": 2326512,
+      "free": [
+        "GFt",
+        "Ibt",
+        "Pbt",
+        "Wdt"
+      ],
+      "anchor": {
+        "literal": "Param({q",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "CronCreate",
+      "chunk": "chunk-etg79xvw.js",
+      "bytes": 447,
+      "offset": 6963,
+      "free": [
+        "NX"
+      ],
+      "anchor": {
+        "literal": "durable?",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "CronDelete",
+      "chunk": "chunk-4ankbvm1.js",
+      "bytes": 115,
+      "offset": 5454,
+      "free": [],
+      "anchor": {
+        "literal": "ent:`Can",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "CronList",
+      "chunk": "chunk-8sqz7v1v.js",
+      "bytes": 294,
+      "offset": 5388,
+      "free": [
+        "ir"
+      ],
+      "anchor": {
+        "literal": "hedule}$",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "EnterPlanMode",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 564,
+      "offset": 2394006,
+      "free": [
+        "Ji",
+        "Wh"
+      ],
+      "anchor": {
+        "literal": "}\n\nIn pl",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "EnterWorktree",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 102,
+      "offset": 2403748,
+      "free": [],
+      "anchor": null,
+      "ownedBy": null
+    },
+    {
+      "tool": "ExitPlanMode",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 1242,
+      "offset": 1873936,
+      "free": [
+        "Bdt"
+      ],
+      "anchor": {
+        "literal": "aram({is",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "ExitWorktree",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 102,
+      "offset": 2413324,
+      "free": [],
+      "anchor": null,
+      "ownedBy": null
+    },
+    {
+      "tool": "ListAgents",
+      "chunk": "chunk-44q73bmc.js",
+      "bytes": 100,
+      "offset": 5812,
+      "free": [],
+      "anchor": null,
+      "ownedBy": null
+    },
+    {
+      "tool": "RemoteTrigger",
+      "chunk": "chunk-hgzkg676.js",
+      "bytes": 180,
+      "offset": 17719,
+      "free": [],
+      "anchor": {
+        "literal": "mmary?`H",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "ReportFindings",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 163,
+      "offset": 2265833,
+      "free": [
+        "k"
+      ],
+      "anchor": {
+        "literal": "aram({co",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "ScheduleWakeup",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 1250,
+      "offset": 2247677,
+      "free": [
+        "FS",
+        "ma",
+        "ny"
+      ],
+      "anchor": {
+        "literal": "Param({s",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "SendMessage",
+      "chunk": "chunk-0ak8xf05.js",
+      "bytes": 776,
+      "offset": 47956,
+      "free": [
+        "Hee",
+        "b",
+        "c1t",
+        "dUn",
+        "ken",
+        "pUn"
+      ],
+      "anchor": {
+        "literal": "r(\"SendM",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "TaskCreate",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 155,
+      "offset": 2417355,
+      "free": [],
+      "anchor": {
+        "literal": "tent:`Ta",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": "task-create-result"
+    },
+    {
+      "tool": "TaskGet",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 450,
+      "offset": 2419116,
+      "free": [],
+      "anchor": {
+        "literal": "t:\"Task ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": "task-get-result"
+    },
+    {
+      "tool": "TaskList",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 390,
+      "offset": 2428392,
+      "free": [],
+      "anchor": {
+        "literal": "nt:\"No t",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": "task-list-result"
+    },
+    {
+      "tool": "TaskOutput",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 1069,
+      "offset": 2254823,
+      "free": [
+        "mSt",
+        "rF",
+        "yye"
+      ],
+      "anchor": {
+        "literal": "push(`<r",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    },
+    {
+      "tool": "TaskStop",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 95,
+      "offset": 2166667,
+      "free": [
+        "b"
+      ],
+      "anchor": null,
+      "ownedBy": null
+    },
+    {
+      "tool": "TaskUpdate",
+      "chunk": "chunk-fy12d89p.js",
+      "bytes": 428,
+      "offset": 2425445,
+      "free": [
+        "io",
+        "rb"
+      ],
+      "anchor": {
+        "literal": "||`Task ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": "task-update-result"
+    },
+    {
+      "tool": "Workflow",
+      "chunk": "chunk-pvkxaysh.js",
+      "bytes": 1574,
+      "offset": 47494,
+      "free": [
+        "A"
+      ],
+      "anchor": {
+        "literal": "cript ha",
+        "files": 1,
+        "occurrences": 1
+      },
+      "ownedBy": null
+    }
+  ]
+}

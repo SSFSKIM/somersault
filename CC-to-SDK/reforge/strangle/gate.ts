@@ -156,6 +156,17 @@ for (const [label, argv] of [
   // consumers, never one core" restated as a check that fails if a pin ever
   // unifies them.
   ["hook-helper belt fixture matches the pin", ["research/tools/extract-hook-helpers.ts", "--check"]],
+  // W8a's population, and the FIFTH the campaign had been carrying as a
+  // hand-written number. C11a's whole claim is "these are the sixteen
+  // description builders", and the four before it (hook events, control-protocol
+  // arms, prompt sections, the helper belt) were each wrong until they were
+  // derived. This one is derived from TWO artifacts that share no machinery: the
+  // recorded request bodies say what the engine presented, and the graph says
+  // which declarations produce that text — located by searching the graph for
+  // the rendered description rather than by looking a builder up by name. The
+  // corpus half is a floor on counts and exact on bytes, so a later wave's
+  // recordings grow it without reddening it while a drifted description does.
+  ["moat-tool belt fixture matches the pin and the corpus", ["research/tools/extract-moat-tools.ts", "--check"]],
   ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so
