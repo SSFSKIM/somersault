@@ -58,7 +58,7 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Permission decisions + rule matching/parsing | high (decision fns return plain objects) — **corrected 2026-09-01: `hw8qz4q5` is the PowerShell tool (W10), not permissions; `8c6qx8qp` is a 500-consumer constants chunk; the chain lives in the engine chunk, pure S-method** | `fy12d89p` @30–37k |
 | Control-protocol switch (`control_request`/`control_response` subtypes) | high (one `switch` with literal cases) | `fy12d89p` @38.7k + `mfkbzdqf`, `kje2nmp8` |
 | Moat tools: `SendMessage`/`ListAgents`, `Workflow`, `ScheduleWakeup`, TaskCreate family, `Skill`, plan/worktree tools | per-tool (scenario-led) | `fy12d89p` various |
-| Session/transcript storage; resume/fork | module-level (Result-monad fs layer) | `d78hxkfm`, `trstwd25`, `fy12d89p` @4–10k |
+| Session/transcript storage; resume/fork | a 31 KB writer class (136 members, ALL public) + a host-scoped store object + a 6.7 KB pure fold to a 39-field session projection (the W9 scout 2026-09-02; the original read "module-level (Result-monad fs layer)" — that layer is the gate-dead v5 backend) | `fy12d89p` @4–10k (chunk-relative pretty lines ≈3,545–9,900 — CORRECT, do not "fix"; 172,430 B contiguous) + `1x1tv6fk` (path derivation, 2.8 KB). `trstwd25` REMOVED (it is the remote-container dir-sync git worker, §1.2 periphery); `d78hxkfm` REMOVED to an exclusion (generic storage-v5 backend behind `tengu_hover_rest`, default false, no env override) |
 | Bash executor (exec/timeout/background) + command-safety AST | high (ES class) / medium | `fy12d89p` @2.9k, @100–105k; `w7bq1qyb` |
 | MCP adapter (thin layer over the vendored MCP SDK) | high | `4mp04j81`, `1bxday80` |
 | Slash commands + skills loading | high | `fy12d89p` @10–12.5k + `g461tywa` |
@@ -293,7 +293,10 @@ Two surfaces join the doctrine on a staged schedule:
   harness (`src/faults.ts`).
 - **State-surface diff** (fourth diff surface; cheap subset from W1, full from W9): after each
   replayed scenario, diff the sandbox filesystem tree + content hashes, the session/config store,
-  leaked child processes/sockets, and exit codes/signals between engines. Transcripts and requests
+  leaked child processes/sockets, and exit codes/signals between engines. (Delivery status, W9
+  scout 2026-09-02: `src/state.ts` covers the sandbox tree + a derived exit outcome ONLY; the
+  config-store half is C12a/W9a's content, with the scout's §4.2 include-list and three new oracle
+  capabilities; process supervision remains W9's named carry-over, not assumed delivered.) Transcripts and requests
   agreeing does not preclude a stray process or a divergent session file — cross-resume's store
   diff already proved this surface catches what the others miss.
 
@@ -465,7 +468,7 @@ ones).
 | W6 | Permission decisions + rule matching/parsing chunks (`hw8qz4q5`, `8c6qx8qp` with inventories) | S-method + S-chunk | permission-mode matrix |
 | W7 | Control-protocol switch | S-method (switch-case shape) | raw-protocol depth |
 | W8 | Moat tools: task family, SendMessage/ListAgents, Workflow, ScheduleWakeup, plan/worktree | scenario-led (probe reachability per tool first) | moat scenarios; ledger rows per catalog tool |
-| W9 | Session/transcript storage (`SessionPort`) | **S-module debut** (fable) | storage/resume depth + dirty-state matrix; synthetic corpus + full state-surface diff come online |
+| W9 | Session/transcript storage (`SessionPort` + 6 sibling ports, 2 stubs) | **S-module debut** (fable), cut into four children 2026-09-02 | storage/resume depth + dirty-state matrix (14 cells, D1–D14); a synthetic TRANSCRIPT corpus (constructed files — the cheaper of the two synthetic corpora, and the one this subsystem needs) + the config half of the state-surface diff come online |
 | W10 | Bash executor + command-safety AST | S-method (class-method shape) → S-module | bash depth |
 | W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk | mcp/skills scenario families |
 | W12 | Agent/subagent dispatch + sandbox interface (`ToolRuntimePort` boundary) | S-module (fable) | subagent depth; sandbox matrix; mutation battery |
@@ -625,10 +628,17 @@ follow as C4/C5.
   for one owned unit). Blocked-by C2 (ledger rows), C3. **Required** (rows may resolve to
   evidence-backed exclusions). Status: not-dispatched.
 
-#### C12: W9 — session storage (`SessionPort`) — controlled (fable)
-- First S-module; its design pass owns the behavioral-partition matrix, dirty-state matrix, and
-  brings the synthetic response corpus + full state-surface diff online (§3.1–3.2). Blocked-by
-  C1/C2/C3. **Required.** Status: not-dispatched.
+#### C12: W9 — session storage — CUT 2026-09-02 into C12a–C12d (see Deferred, "The W9 cut")
+- Scouted (`reforge/research/2026-09-02-w9-session-storage-scout.md`): the layer is 172 KB
+  contiguous in `fy12d89p` with a fully PUBLIC writer class (no private fields — the opposite of
+  W10's Bash executor), upstream's own semantic barrel (`chunk-e6cn1914.js`, 235 names, a dozen
+  `*ForTesting` injection points) names the whole API, and the corpus writes 8 of 37 record types.
+  Not one S-module wave: the reader is gradeable from CONSTRUCTED FILES with zero engine runs while
+  the writer is gradeable only against a live drain schedule, so fusing them would put the cheapest,
+  highest-yield unit behind the hardest. Machinery child first (three oracle capabilities only this
+  subsystem needs: flush-schedule control, dirty-precondition seeding, filesystem fault injection),
+  then reader → writer → GC/damaged-file paths. Blocked-by C1/C2/C3 (met). **Required.**
+  Status: C12a unblocked, not-dispatched; C12b–d blocked in sequence.
 
 #### C13–C14: W10–W11 (bash executor + safety AST · MCP adapter + slash/skills) — autonomous at dispatch
 - Per §6 rows; C13 needs C1's class-method shape. **C13's charter widened (2026-09-01, C4
@@ -810,6 +820,60 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     exclusion), the interrupt helpers (artifact surface), `RemoteTrigger.call` (server boundary),
     `PowerShell` (W10's chunk), `WebFetch`/`WebSearch` (C5's / the server's), `Skill` (C14),
     `Agent` (C15), the `background_tasks_changed` emitter (`chunk-g461tywa.js`, unowned).
+- **The W9 cut (2026-09-02, from `reforge/research/2026-09-02-w9-session-storage-scout.md` —
+  adopted with grades):** four children, machinery first, for the same reason as the executor cut.
+  • **C12a / W9a — storage oracle machinery** (controlled, opus-tier; cut NOW): (1) `src/state.ts`
+    gains a second root over `reforge/config/` with the scout's §4.2 include-list and a per-record
+    semantic transcript projection (today it sees the sandbox only; `m2/cross-resume`'s
+    `{type, role, sorted keys}` shape diff cannot see a wrong `parentUuid`, a divergent `leafUuid`
+    or a torn tail); (2) the differ's run-id MAP extended to `parentUuid`, `logicalParentUuid`,
+    `leafUuid`, `promptId`, `agentId` and the project-key slug, each with a `src/differ.test.ts`
+    regression per §3.4; (3) a declared per-scenario config-directory PRECONDITION primitive (every
+    interesting storage case is a statement about the filesystem before the run, and the harness
+    cannot declare one); (4) a filesystem fault surface generalising `src/faults.ts` (torn tail,
+    `parentUuid` cycle, `ENOSPC` — none reachable by prompting a model); (5) the flush-schedule
+    decision — the transcript is written on a 100 ms timer, so two identical engines can leave
+    byte-different files: either `CLAUDE_CODE_EAGER_FLUSH` enters X6 with a negative control or the
+    snapshot waits on an observed quiesce — DECIDE and write it down. Acceptance: a seeded torn
+    tail, a seeded cycle and a seeded `ENOSPC` each produce a named stable verdict on both engines;
+    each new run-id rule fails a mutation of itself; the config snapshot is byte-stable across two
+    replays. Riders: the ledger's `subsystem/session-storage` row gains its symmetric edges (→ C11c
+    for the shared `queue-operation` record and the task store's session-keyed directory, → C11d for
+    `<config>/sessions/`, → C7 for `compactMetadata`, → C15/W12 subagent transcripts, → C16/W13 the
+    segment form) and its 235-name public surface as artifact list; `d78hxkfm` recorded as an
+    exclusion with `tengu_hover_rest` as the guard; `resetSandbox()`'s config-dir policy decided
+    (today `tasks/`, `session-env/`, `projects/` accumulate forever — 1,087 / 3,939 / 412 entries).
+  • **C12b / W9b — the reader** (fable-tier; blocked-by C12a): the pure heart — the 6.7 KB fold,
+    the chain helpers, the record classifier, the projection assembly, the tail scanners,
+    `ENTRY_APPEND_POLICY` as data — behind `SessionIdentityPort` and `TelemetryPort` only, the
+    direct-fs arm behind `TranscriptFsPort`. §3.1's S-module bar reached WITHOUT a new recording: a
+    synthetic transcript corpus over the 37 record types, the boundary forms, leaf resolution
+    (explicit, implicit, `clearedToEmpty` — zero corpus coverage today, multi-leaf, cycle), the torn
+    tail and the three classifier outcomes, each case with an explicit oracle expectation; the
+    mutation battery; a port trace (the fs arms differ by which reads ran, not by their answer).
+    Binding: `summary` is a READ-ONLY legacy record at this pin (zero writers bundle-wide) — own the
+    reader arm, never invent a writer.
+  • **C12c / W9c — the writer and its lifecycle** (fable-tier; blocked-by C12b): the write queue,
+    `appendEntry`'s three-policy dispatch, the message-chain envelope, `materializeSessionFile`
+    (absorbing the C1 splice), metadata re-append, pointer reset / metadata restore / resumed-file
+    adoption / fork adoption, the shutdown seal and exit re-stamp — behind ports 1–6. Mutation
+    battery must kill: dropped `pendingEntries` replay, queue item resolved before its bytes landed,
+    lost store fence, metadata block before entries, materialized without emitting.
+  • **C12d / W9d — the GC and damaged-file paths** (fable-tier; blocked-by C12c): the transcript
+    compactor, remove-by-uuid, the seal family, relocation; the atomicity contract asserted
+    directly (temp file at 0600, inode check refuses a changed source, rename the only mutation,
+    the non-atomic splice DECLARED non-atomic). Last because every arm needs C12a's fault surface.
+  • **Port surface, binding-candidates** (the scout's §3, held to at implementation): seven ports
+    (`TranscriptFsPort`, `SessionIdentityPort`, `SessionStorePort`, `SchedulingPort`,
+    `TelemetryPort`, `MirrorPort`, `SessionQueryPort`) + two throwing stubs (`StorageV5Port`,
+    `PeripheryPort`). `renameOver` and `truncateAndSplice` stay DISTINCT members (the one atomic and
+    the one non-atomic path); `persistenceSuppressionCause()` returns the four-valued cause, not a
+    boolean; the store port is re-read per invocation, never cached across an await; `setTimer` is
+    injectable; the v5 stub THROWS (a silent `undefined` looks like the correct false arm).
+  • **Not W9's**: the two 500-importer infrastructure chunks; `d78hxkfm` (gate-dead); `trstwd25`
+    (dir-sync periphery); bridge/CCR/artifact records (21 KB, stubbed); the resume LOOP half in
+    `dvbbv89q` (C16/W13); `ssn` itself (C11c — but the `queue-operation` record contract is shared,
+    and its contract test should be written once).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -835,7 +899,10 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C11b | W8b | as C11a | not-dispatched — reachability + cross-session probes, 9–11 recordings, the `tool-catalog` fixture; **blocked by C11a** |
 | C11c | W8c | as C11a (advisory) | not-cut — task/notification core behind ports; cut when C11b lands |
 | C11d | W8d | as C11a (advisory) | not-cut — cross-session messaging; cut ONLY if C11b's probe fires |
-| C12 | W9 | — | not-dispatched (controlled, fable) |
+| C12a | W9a | scout: `reforge/research/2026-09-02-w9-session-storage-scout.md` (cut 2026-09-02, Deferred section's "The W9 cut") | not-dispatched — storage oracle machinery (state surface's config root + semantic transcript projection; run-id map extended to `parentUuid`/`logicalParentUuid`/`leafUuid`/`promptId`/`agentId`/project slug; config-dir precondition primitive; fs fault surface; the flush-schedule DECISION); **unblocked**, serialize after C10.6/C11a on the shared differ/state/ledger surface |
+| C12b | W9b | as C12a | not-dispatched — the reader (fable; ~18 KB pure: records → session projection, chain helpers, `ENTRY_APPEND_POLICY` as data) graded from a synthetic transcript corpus over all 37 record types with zero recordings; **blocked by C12a** |
+| C12c | W9c | as C12a | not-dispatched — the writer + lifecycle behind `SessionPort` (absorbs the C1 `session-materialize` splice); **blocked by C12b** |
+| C12d | W9d | as C12a | not-dispatched — the transcript GC, remove-by-uuid, torn-tail sealing, relocation, atomicity contract asserted directly; **blocked by C12c** |
 | C13–C14 | W10–W11 | — | not-dispatched |
 | C15 | W12 | — | not-dispatched (controlled, fable) |
 | C16 | W13 | — | not-dispatched — deliberately late |
@@ -1037,6 +1104,27 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- 2026-09-02 (W9 scout — session storage re-measured, and the C12 cut): the first scout to
+  EXONERATE a census locator (`fy12d89p @4–10k` is right — chunk-relative pretty lines, and it
+  should not be "corrected") while removing both of the row's satellites: `trstwd25` (177,692 B)
+  is the remote-container dir-sync git worker with zero transcript vocabulary, and `d78hxkfm`
+  (233,050 B) is the generic storage-v5 backend behind `tengu_hover_rest`, compiled-in default
+  false and absent from the 13 per-gate env overrides — 411 KB leave the row, whose denominator
+  is ~175 KB. Measured shape: 172,430 B across 477 declarations in ONE contiguous span, a 31 KB
+  writer class with 136 PUBLIC members (no private fields anywhere in the layer — W10's blocker
+  does not recur), upstream's own semantic barrel (`chunk-e6cn1914.js`, 235 readable names incl.
+  a dozen `*ForTesting` exports) which proved the region's boundaries. Three findings change the
+  plan: the state-surface diff sees NOTHING under the config dir today (§3.2's promise is C12a's
+  content, not delivered); the corpus writes 8 of 37 record types and one reader arm
+  (`clearedToEmpty`) has zero coverage; `summary` records have zero writers bundle-wide — a
+  read-only legacy format. Three oracle capabilities do not exist (flush-schedule control,
+  dirty-precondition seeding, fs fault injection). Cut: four children, machinery first, reader
+  before writer because the reader is gradeable from constructed files with no engine run.
+  Also recorded: the harness's config dir has accumulated 412 session files, 1,087 task dirs and
+  3,939 empty session-env dirs since the first recording — `resetSandbox()` wipes only the
+  sandbox and `plans/`; C12a decides the policy. **Lesson: for a storage core, most unreached
+  behaviour is cheaper to reach by constructing a file than by running a session** — the
+  synthetic corpus §3.2 names is two corpora, and the transcript one is the cheap one.
 - 2026-09-02 (W8 scout — the moat surface re-measured, and the C11 cut): the campaign's
   first scout to find a subsystem the census had NO row for. Enumerating the catalog two
   ways that share no machinery (the builder `Y0()`'s 67 elements; 267 recorded request
@@ -1248,7 +1336,8 @@ Pending — written at finish.
     are unreachable from outside the class body, so a whole-body excision cannot
     be delegated unless the adapter left in the class marshals every private
     field the body touches. The class-method spike moved to the transcript
-    store's `materializeSessionFile` (public receiver, covered by `resume`).
+    store's `materializeSessionFile` (public receiver, covered by `resume` — one scenario, one solo
+    sabotage, and NOT in the attestation's ATTESTED set; the W9 scout's qualification, 2026-09-02).
     **W10 must budget a declared private-field accessor adapter, or take the
     executor at S-module granularity instead.**
   Also recorded: the AST rewrite is byte-identical to the old name-search +
