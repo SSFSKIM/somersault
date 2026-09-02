@@ -2,12 +2,27 @@
 
 **Pin 2.1.251 · written 2026-09-02 (W7.5/C10.5) · this document GATES implementation**
 
+> **Revised 2026-09-03 after C10.6's BOUNDARY REVIEW.** One of the five corrections below was itself
+> a wrong measurement, and it is the one this brief hands forward: **"the belt is not takeable by
+> anchor" is false.** It was derived from a scan for string literals of twelve characters or more,
+> which is not what `strangle/anchor.ts` calls an anchor. Re-derived by the doctrine's own rule —
+> every maximal run of a declaration's text carrying no renameable identifier, counted across the
+> graph's 1,802 text modules — **125 of the 151 declarations are anchorable and 31 of the 40 pure
+> ones are**. The population count was wrong in a second way too: the 151 are DECLARATIONS, not
+> functions (126 functions, 12 constants, 4 Sets, 4 classes, 3 instances, 2 regexes), and the pure
+> set is 40 rather than 43. The doctrine that survives is the useful half of the wave's finding —
+> **purity decides worth, anchorability decides takeability, and they are independent** — with the
+> correction that anchorability has to be measured by the anchor rule and not by a proxy for it. The
+> extractor now does exactly that, and C10.6's fix round proved it by splicing three more of the
+> belt: `mS` and `_9` live, `ip` measured dark.
+>
 > **Revised again 2026-09-02 after C10.6 IMPLEMENTED Stages 0–1.** This document is still the brief
 > for C10.7 and C10.8, so the sentences implementation contact showed to be wrong are corrected in
 > place rather than annotated — the same policy the previous round used, and for the same reason: a
 > brief that carries known-wrong sentences hands them to the next wave. Five corrections, each
 > flagged inline as **[C10.6]** and each recorded as a `[parent-impact]` item in the campaign spec's
-> Revision Notes: the helper belt's size and — more importantly — its *anchorability*; `Fq`'s
+> Revision Notes: the helper belt's size and its *anchorability* (both since re-measured — see the
+> note above this one); `Fq`'s
 > purity; where the shutdown arm actually lives; the module-level-state inventory; and the executors'
 > measured callee overlap. `reforge/research/fixtures/hook-helper-belt-2.1.251.json` is now the
 > authority for the layer's call graph, and it is re-derived by a gate phase every run.
@@ -50,11 +65,28 @@ with `Rzn`/`Xxt`/`jy`), its awaiting sibling `AE`, and the watcher-hooks helper 
 | `jy` | 261 | 19 | the shutdown wrapper |
 | `zxt` | 298 | 2 | the watcher-hooks helper |
 
-Plus a helper belt **[C10.6: MEASURED — 151 in-chunk functions reached from the layer's four
-shared entry points, of which 43 are pure and total 5,961 B, not "roughly 13.9 KB across ~34". And
-the number that actually bounds Stage 1 is neither: 84 of the 151 carry NO STRING LITERAL AT ALL and
-only FOUR of the 43 pure ones carry a literal occurring in exactly one bundle file, three of those
-with a single caller. The belt is not takeable by anchor. See the fixture.]** of already-pure
+Plus a helper belt **[C10.6: MEASURED — 151 top-level DECLARATIONS reached from the layer's four
+shared entry points, not "roughly 13.9 KB across ~34". Two corrections, and the second was itself
+corrected by C10.6's boundary review.**
+
+**(a) They are not all functions.** The reached set is 126 functions, 12 constants, 4 Sets, 4
+classes, 3 module-level instances and 2 regexes; **40 are pure (5,453 B)**, of which 24 are
+functions. The wave's "43 pure (5,961 B)" folded in a helper whose body is
+`await import("…/chunk-6v95pkgg.js")` followed by a SandboxManager call — no free NAMES, arbitrary
+effects — and a module-level `new` instance, which is state rather than a value, along with the
+function that mutates it.
+
+**(b) The belt IS takeable by anchor, and the wave's claim to the contrary measured the wrong
+thing.** "84 of the 151 carry no string literal, four of the 43 pure ones are uniquely anchorable"
+came from a scan that collected string literals of twelve characters or more. An anchor is not a
+literal: `strangle/anchor.ts` asks for a true-substring-unique span carrying no minified identifier,
+and much of this manifest is anchored on structural fragments. Re-derived by that rule — every
+maximal untainted run of each declaration, counted across the graph's 1,802 text modules —
+**125 of the 151 are anchorable and 31 of the 40 pure ones are**, 23 of those being functions. The
+nine pure declarations with no anchor are eight tiny numeric constants and regexes plus one 57-byte
+function. **The constraint on Stage 1 is WORTH, not takeability**: a single-caller pure helper folds
+into its caller's future module (the C7 rule), so only a multi-caller one is a §2.4 capture in its
+own right. See the fixture.]** of already-pure
 functions (`Czn`, `xPe`, `Ypt`, `AM`, `$Me`, `PUt`, `Xpt`, `D5n`, `iMt`, `Lq`, `Yxt`, …), the model-facing evaluators `Cxt` (5,156 B)
 and `Oxt` (4,074 B), the served-call pair `U5n`/`H5n` (4,585 B), and the session registry class
 `k2e` (1,867 B).
@@ -425,6 +457,22 @@ interpreter (5,993 B), which is the single highest-yield unit in the layer: it i
 output into behaviour, its five call sites are all `Qxt`'s (four directly, one through `d6n`), and it
 is a pure function of its input given an injected clock. Graded entirely by the contract-test shape,
 no scenario needed.
+
+> **[C10.6, as corrected by its boundary review]** Two sentences here are wrong and the correction
+> changes what C10.7 inherits. `Fq` is **not** pure and not "pure given an injected clock": its five
+> free variables are a terminal-sequence sanitiser, a debug logger, a traced `JSON.stringify`, a
+> telemetry probe and a message minter — five ordinary `effectful-port` captures. And the belt is
+> **40 pure declarations, 5,453 B**, of which 24 are functions — not "~13.9 KB across ~34".
+>
+> What Stage 1 could take is decided by two independent questions, and the wave conflated them.
+> **Purity decides WORTH; anchorability decides TAKEABILITY.** Both are now measured by their own
+> rule rather than by a proxy: 125 of the 151 declarations carry a unique untainted anchor, 31 of the
+> 40 pure ones do, and the remaining constraint is worth — a single-caller pure helper folds into its
+> caller's future module (C7), so only a multi-caller one is a §2.4 capture. C10.6 shipped four
+> Stage-1 splices: `Fq` (the interpreter), `Xpt` (the stderr tail, adjudicated dark), and — added by
+> the fix round to prove the corrected anchorability claim — `mS` and `_9`, both multi-caller pure
+> functions with live covering scenarios, plus `ip`, spliced and measured dark. C10.7 inherits a
+> belt that is takeable and a WORTH argument to make per helper, not an anchorability ceiling.
 
 **Stage 2 — `HookSourcePort` + the matcher.** Sources behind the port, the matching body owned pure
 except for the one `EnvironmentPort.defaultShell()` read the dedupe key needs. This is what makes

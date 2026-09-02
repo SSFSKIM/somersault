@@ -3400,8 +3400,11 @@ races timeouts and propagates cancellation, and for that one interleaving IS the
 `Trace` and `emptyTrace` are gone. `EventLog` records one ordered stream of
 `{port, args, pair?, hook?}` and the comparison is that stream. **The rewrite's red direction is
 measured rather than asserted**: swapping ONE adjacent pair of differently-ported events in each
-owned log reddens **204 of the 226** log comparisons — and moves the retired per-port projection in
-**zero** of them. `perPort()` stays on the class precisely so `orderControl` can assert the old
+owned log reddens **204 of the 225** dispatcher log comparisons — and moves the retired per-port
+projection in **zero** of them. (The wave wrote 226; both the numerator and the denominator are now
+DERIVED and printed by the oracle on every run, with the 204 as a floor, because a number nobody
+recomputes is a number nobody can trust. 21 of the 225 cases cannot express the swap at all, and
+204 + 21 = 225.) `perPort()` stays on the class precisely so `orderControl` can assert the old
 shape's blindness on three real dispatchers rather than claim it.
 
 The entry's two smaller edges close with it. The serializer rewrites a present-but-`undefined` value
@@ -3457,7 +3460,11 @@ shutdown, because the predicate short-circuits.
 
 **A correction to the design pass rides with it: the arm that hangs is not inside either executor.**
 `Qxt` and `AE` never consult the flag on the streaming path — the 261-byte wrapper does, and it is
-the function the twenty-one dispatcher splices have been capturing as `executeHooks` since W5. The
+the function fourteen dispatcher splices have been capturing as `executeHooks` since W5 — six more
+capture the awaiting executor as `executeHooksAwait`, so twenty rows forward an executor, not
+twenty-one. (Upstream's own counts are different again and are not these: 18 of the 33 registry
+dispatchers call the wrapper and 12 call the awaiting executor, and the wrapper has 19 call sites in
+the chunk. The manifest number is smaller because not every registry event is spliced.) The
 awaiting executor's own guard is a different rule with the same flag: SessionEnd is exempt, with no
 allowlist at all, so shutdown can still run it.
 
@@ -3495,16 +3502,30 @@ population this campaign had been carrying as a hand-written number, after the h
 by judgment twice, wrong twice), the control-protocol arms and the prompt sections. The design pass
 read the belt as "roughly 13.9 KB across ~34 already-pure functions" and named ten of them.
 
-Measured: **151 in-chunk functions** reached from the dispatchers' four shared entry points, plus a
-281-name cross-chunk frontier. **43 are pure (5,961 B)**; none is pure-with-injection, because every
-injection candidate the design named lives in another chunk and is recorded on the frontier rather
-than classified.
+Measured: **151 top-level declarations** reached from the dispatchers' four shared entry points, plus
+a 281-name cross-chunk frontier. **40 are pure (5,453 B)**; none is pure-with-injection, because
+every injection candidate the design named lives in another chunk and is recorded on the frontier
+rather than classified.
 
-**The finding that shapes the stage is anchorability, not purity.** 84 of the 151 carry **no string
-literal at all**, and only **4 of the 43** pure ones carry a literal occurring in exactly one bundle
-file. The campaign's splice mechanism needs a true-substring-unique anchor, so "own the pure belt" is
-not a takeable plan — it is measurably not anchorable. Of those four, three have a single caller and
-fold into that caller's future module; one does not.
+**The finding that shapes the stage is that purity and anchorability are independent questions.**
+Purity decides whether a helper is worth owning; anchorability decides whether the splice mechanism
+can take it; and a single-caller pure helper folds into its caller's future module rather than
+becoming a row of its own. That doctrine is the wave's real contribution and it stands.
+
+> **The numbers under it did not, and the boundary review corrected them (2026-09-03).** The wave
+> reported "84 of the 151 carry no string literal at all, and only 4 of the 43 pure ones carry a
+> literal occurring in exactly one bundle file — the belt is not takeable by anchor." That measured
+> string literals of twelve characters or more. An anchor is not a literal: `strangle/anchor.ts`
+> asks for a true-substring-unique span carrying no minified identifier, and much of this manifest
+> is anchored on structural fragments (`].filter(Boolean)}`, property-name pairs, `?.` chains).
+> Re-derived by that rule — every maximal untainted run of a declaration, counted across the graph's
+> **1,802** text modules — **125 of the 151 are anchorable and 31 of the 40 pure ones are**. Two
+> further corrections came out of the same re-derivation: the 151 are **declarations**, not
+> functions (126 functions, 12 constants, 4 Sets, 4 classes, 3 module-level instances, 2 regexes),
+> and the pure set is **40, not 43** — one member's whole body is a dynamic `import()` plus a
+> SandboxManager call (no free names, arbitrary effects), and another is a module-level `new`
+> instance, which is state rather than a value. The fix round then proved the corrected claim by
+> taking three more of the belt; see "What the fix round added" below.
 
 Three derivations rather than judgments, each of which corrected something:
 
@@ -3579,9 +3600,10 @@ consumers, never one core" at its smallest possible scale.
 
 `Xpt` is spliced and **measured dark**. Both call sites are guarded on a hook-output VALIDATION
 ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not
-2. Of the corpus's ten command hooks, six write nothing to stdout, three `echo` plain text (which the
-parser returns as `plainText`, not as a validation error) and one writes its projection to a file.
-The guard is never satisfied over all 59 scenarios.
+2. Of the corpus's **eleven** command hooks, seven write nothing to stdout, two `echo` plain text
+(which the parser returns as `plainText`, not as a validation error) and two are `node -e`
+projections that write to a file. The guard is never satisfied over all 59 scenarios. (The wave
+wrote "ten … six … three … one"; the count and the split were both wrong, the verdict was not.)
 
 **The inverted twin was built and replayed before the verdict was written**, which is what makes that
 a measurement rather than a shrug. It appends unconditionally, so it changes the result on every call
@@ -3611,13 +3633,83 @@ event names arrive from a hook's own JSON and an unrecognised one is a real inpu
 Three corrections to the design pass that change what C10.7 and C10.8 will do, restated together:
 the streaming dispatchers call the shutdown WRAPPER rather than the streaming executor; the arm that
 hangs lives in that wrapper's 261 bytes and not in either executor; and the wrapper drops the
-executor's completion value on both arms. Plus the two the fixture makes: the belt is not takeable by
-anchor, and the module-state leak is one cell rather than a family.
+executor's completion value on both arms. Plus the two the fixture makes — as corrected by the
+boundary review: the belt IS takeable by anchor (125 of 151 declarations, 31 of the 40 pure ones),
+and the module-state leak is one cell rather than a family. What C10.7 inherits is a WORTH argument
+to make per helper, not an anchorability ceiling.
 
-**Counts.** Gate **110 of 110 summary phases, zero FAIL**; hook oracle **721 → 1,499 comparisons, 121 → 195 controls**, plus
-**1,005 property statements over 11 paired cases**; attestation **460/996 executed with 536
-exclusions and zero unadjudicated**; manifest **74 → 75 splices** (76 rows with the S-chunk
-replacement); mechanism **119 → 122 checks**; corpus unchanged at **59**.
+**Counts as the wave landed.** Gate **110 of 110 summary phases, zero FAIL**; hook oracle
+**721 → 1,499 comparisons, 121 → 195 controls**, plus **1,005 property statements over 11 paired
+cases**; attestation **460/996 executed with 536 exclusions and zero unadjudicated**; manifest
+**74 → 75 splices** (76 rows with the S-chunk replacement); mechanism **119 → 122 checks**; corpus
+unchanged at **59**. The boundary round's counts are below.
+
+### What the fix round added (boundary review, 2026-09-03)
+
+The review returned **NOT CONVERGED**: every code claim reproduced — `Fq` byte-faithful, the oracle
+at 1,499/195 and 1,005, the twins red, the gate at 110 — and two harness mechanisms and several
+recorded numbers were wrong. Five load-bearing findings, and what each one turned out to be:
+
+**1. The midnight fix did not fix the midnight defect.** The engine does not put the rollover notice
+into a body as a bare sentence. Both producers hand it to `hs()`, which wraps every string content
+in `hl()` — `<system-reminder>\n…\n</system-reminder>` — so it arrives as its **own `messages[]`
+element**. Removing the sentence left an empty message behind, one side still had it, and the two
+bodies still canonicalized differently. The canonical form now drops the whole rollover MESSAGE
+(content string, lone text block, or one block among others), scoped to `messages[]` and anchored on
+the exact wrapped envelope. **The first fix was validated only by two same-side gate runs** — two
+runs that happened not to straddle midnight — which is precisely why it read as fixed. The tests now
+exercise the emitted shape as message-count comparisons and hold four must-survive neighbours,
+including the sentence embedded in a user prompt, which the sentence-level rule ate.
+
+**2. "The belt is not takeable by anchor" was a wrong measured claim** — see the note in Stage 1
+above. The extractor now implements the anchor rule mechanically, and the round **took three more of
+the belt** to prove it rather than argue it:
+
+| row | upstream | bytes | consumers | anchor | verdict |
+|---|---|---|---|---|---|
+| `hook-output-async` | `mS` | 47 | 4 | `){return"async"in ` | LIVE — `hooks-prompt-submit`, `perm-hook-deny` |
+| `hook-invocation-text` | `_9` | 291 | 6 | `;case"callback":return"callback";case"function":return"function"}` | LIVE — `hooks-precompact` |
+| `hook-output-sync` | `ip` | 52 | 4 | `){return!(("async"in ` | measured DARK over twelve scenarios |
+
+Not one of those three anchors contains prose. `hook-output-sync` is the round's sharpest single
+result: it was spliced **expecting** liveness and the corpus refused it, while its complement is live
+on the same scenarios — the corpus asks "is this an acknowledgement?" on every callback answer and
+acts on the reply, and asks "is this a result?" without ever acting on that one. It also shows that
+**dark is not unreached**: the branch attestation records the predicate running.
+
+**3. The two new ledger captures were in the wrong basis.** They were copied raw out of
+`build/footprints.json`, whose spans are measured against the materialized graph; `bge`'s recorded
+`[691175, 691297)` is `}}async function VE(` upstream, while the declaration is at
+`[673055, 673177)`. `ledger/check.ts` passed because rule 3 accepted either basis. Rebased through
+the tool that exists for it (the correction was larger than the two rows — the whole footprint was in
+the emitter's basis and two imported captures had lost their far-side records); rule 3 now accepts
+**one** basis and names a materialized-only match with the fix in the message; and
+`backfill-captures.ts --check` is a **gate phase**, because it failed at HEAD on a faithful build and
+nothing ran it.
+
+**4. "Names every failing verdict" was defeated in two places at once.** `m2/all.ts` relayed the last
+six matching lines per suite — the tail of a 59-scenario verdict block — and the proxy's
+positional-serve line, the commonest cause of a red equivalence phase, was neither a verdict (one
+space after `FAIL`, not two) nor matched by the gate's reason filter. Both now live in `m2/relay.ts`,
+shared by the two layers that relay. Driven live: a deliberately broken *first*-of-59 scenario is
+named on both hops.
+
+**5. `darkReason` had no runtime teeth.** Darkness was measured once, in prose, and the gate pushed a
+pass and skipped the build entirely — so the day a scenario created the firing condition, the row
+would keep reporting "dark, adjudicated" while running live and ungraded. A dark row now declares
+**`darkOver`**: the scenario tags its darkness was measured over. The liveness loop builds its
+sabotage like any other row and requires every one of those tags GREEN; a RED fails the gate as
+**NO LONGER DARK**. The same loop serves chunk exports, so §2.2's darkness gets the same teeth.
+
+The minors, each measured rather than reworded: the ordered-log comparison count is **225**, not 226,
+and both it and the 204 are now derived and printed every run with a floor; the pairing property has
+**five** controls, not six; the corpus has **eleven** command hooks, not ten, split seven silent /
+two echoing / two writing files; **twenty** dispatcher splices forward an executor (14 `executeHooks`
++ 6 `executeHooksAwait`), not twenty-one, and upstream's registry counts — 18 and 12 — are a
+different measurement from the manifest's; the graph is **1,802** text modules and the extractor had
+been searching 1,800; and `bge`'s `effectful-port` label is kept with its description corrected to
+"unowned pure chain, forwarded", because re-cutting it as `pure-helper` would claim an owned copy
+this module does not have.
 
 ### Seam notes for C10.7 (Stages 2–3), measured rather than recalled
 

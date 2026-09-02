@@ -4290,15 +4290,22 @@ export const SPLICES: Splice[] = [
 
   {
     // The stderr tail on a hook-output VALIDATION ERROR (upstream `Xpt`, 96 B) —
-    // the belt's one genuinely pure, multi-caller, anchorable member, and the
-    // only other thing Stage 1 could take.
+    // a pure, multi-caller, anchorable member of the belt, and the second thing
+    // Stage 1 took.
     //
-    // `research/fixtures/hook-helper-belt-<pin>.json` is why that sentence is a
-    // measurement rather than a preference. Of the 151 in-chunk functions the
-    // two executors reach, 43 are pure — and 84 of the 151 carry NO STRING
-    // LITERAL AT ALL, with only four of the 43 pure ones carrying a literal that
-    // occurs in exactly one bundle file. Three of those four have a single
-    // caller and fold into that caller's future module. This is the fourth.
+    // THE SENTENCE ABOVE USED TO SAY "the belt's ONE genuinely pure,
+    // multi-caller, anchorable member", and that was wrong. It rested on a scan
+    // for string literals of twelve characters or more — "84 of the 151 carry no
+    // string literal, four of the 43 pure ones are uniquely anchorable" — which
+    // is not what `strangle/anchor.ts` calls an anchor. Re-derived by the anchor
+    // rule, `research/fixtures/hook-helper-belt-<pin>.json` measures 125 of the
+    // 151 declarations anchorable and 31 of the 40 pure ones, and the fix round
+    // took three more of them (`hook-output-sync`, `hook-output-async`,
+    // `hook-invocation-text`). What remains true is the DOCTRINE the wave drew
+    // from the wrong number: purity decides whether a helper is worth owning,
+    // anchorability decides whether the mechanism can take it, and a
+    // single-caller pure helper folds into its caller's future module rather
+    // than becoming a row.
     //
     // `captures: []` IS THE POSITIVE CLAIM. Upstream's body has zero free
     // variables and the build derives that from the AST and refuses any

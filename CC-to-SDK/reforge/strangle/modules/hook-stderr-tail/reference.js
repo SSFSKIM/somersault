@@ -1,15 +1,17 @@
 // PARITY LAYER (§2.5 `reference`) — the stderr tail on a hook-output VALIDATION
 // ERROR (upstream `Xpt`, 2.1.251, chunk-fy12d89p @3015457, 96 bytes).
 //
-// THE BELT'S ONE GENUINELY PURE, MULTI-CALLER, ANCHORABLE MEMBER, and that
-// sentence is C10.6's Stage 1 finding compressed. The executor design pass
-// scoped Stage 1 as "the ~13.9 KB pure belt, ~34 helpers".
-// `research/tools/extract-hook-helpers.ts` derives the belt instead of reading
-// it, and the constraint turns out not to be purity: 84 of the 151 functions
-// the executors reach carry NO STRING LITERAL AT ALL, and only four of the 43
-// pure ones carry a literal occurring in exactly one bundle file. Three of those
-// four have a single caller and fold into that caller's future module. This is
-// the one that does not.
+// A PURE, MULTI-CALLER, ANCHORABLE MEMBER OF THE BELT. This comment used to say
+// "the belt's ONE", and C10.6's boundary review showed the measurement behind
+// that word was wrong: it counted string literals of twelve characters or more,
+// not anchors. Re-derived by `strangle/anchor.ts`'s own rule,
+// `research/tools/extract-hook-helpers.ts` finds 125 of the 151 declarations
+// anchorable and 31 of the 40 pure ones — and the fix round took three more
+// (`hook-output-sync`, `hook-output-async`, `hook-invocation-text`). The design
+// pass's "~13.9 KB pure belt, ~34 helpers" is still wrong in the other
+// direction, and the doctrine the wave drew still stands: purity decides worth,
+// anchorability decides takeability, and a single-caller pure helper folds into
+// its caller's future module.
 //
 // WHAT IT ACTUALLY FORMATS, and the name it is filed under here is the second
 // try. Its first argument is NOT the hook's stdout. Both call sites pass the
