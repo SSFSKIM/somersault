@@ -3376,3 +3376,286 @@ Named debts the roadmap owes an assignment:
 
 And the deferrals now recorded on ledger rows rather than in research notes: the compaction DRIVERS
 (`zRe`, `Tte`) are C16/W13's, and the hook executor is C10.6–C10.8's as of the C10.5 boundary review.
+
+## W7.6a — the executor's oracle, built before the executor (2026-09-02)
+
+The first of the three executor children (C10.6). Its charter was unusual and worth restating,
+because the shape is the point: **Stage 0 is oracle machinery only this subsystem needs**, and the
+cut exists so that a wave owning something else could not carry it as overhead and skip it. The wave
+therefore spends most of its effort on instruments for modules that do not exist yet, and lands two
+splices rather than a belt.
+
+Three of the design pass's own numbers did not survive the derivation, and one of them changes what
+Stage 1 could be.
+
+### Stage 0a — the trace becomes one ordered event log
+
+`strangle/hooks-parity.test.ts` graded each dispatcher on two things: what it yielded, and a TRACE
+of what its ports saw. The trace was a struct of per-port arrays — every `createBaseHookInput` call
+in one list, every executor request in another — which proves each port ran the right number of
+times with the right arguments and is blind to ORDER ACROSS PORTS. A tech-debt entry from 2026-09-01
+deferred the rewrite and named its own trigger: "the hook EXECUTOR itself: it spawns processes,
+races timeouts and propagates cancellation, and for that one interleaving IS the behaviour."
+
+`Trace` and `emptyTrace` are gone. `EventLog` records one ordered stream of
+`{port, args, pair?, hook?}` and the comparison is that stream. **The rewrite's red direction is
+measured rather than asserted**: swapping ONE adjacent pair of differently-ported events in each
+owned log reddens **204 of the 226** log comparisons — and moves the retired per-port projection in
+**zero** of them. `perPort()` stays on the class precisely so `orderControl` can assert the old
+shape's blindness on three real dispatchers rather than claim it.
+
+The entry's two smaller edges close with it. The serializer rewrites a present-but-`undefined` value
+to a sentinel, so a record that CARRIES a field with no value and one that omits it no longer compare
+equal; and a port called with `undefined` versus not called at all is now two positions in one stream
+rather than one array length. **Neither moved a single existing comparison** — 721 before and after —
+which is the honest reading that both blindnesses were latent rather than load-bearing.
+
+**And the half the entry could not have known: cleanup pairing.** `unpaired()` states "every derived
+signal was cleaned exactly once" over ONE run. Two sides that both leak compare EQUAL, so no
+comparison, however ordered, can state it — which is why this is a PROPERTY counted separately from
+comparisons and controls. It runs on every graded case (452 statements, 11 of which carry a lifecycle
+edge) with six non-vacuity controls, including the executor's own shape: five hooks released and a
+sixth leaked. The command arm releases its per-hook derived signal on six paths plus its catch, so
+this is the property the executor will actually be graded by.
+
+`comparePerHook` ships design §5(a)'s multi-hook mode — per-hook subsequences plus a global multiset,
+for `Qxt`'s unbounded merge — expressible and controlled on synthetic logs, grading nothing until a
+multi-hook consumer exists. Settling its shape after the executor arrives would be settling it under
+a failing case.
+
+### Stage 0b — stdout WRITE boundaries, which no surface in this campaign could express
+
+The command arm's async detection latches ONCE, on the first write after which the accumulated
+stdout's first line contains a brace. Upstream's `data` handler is extracted and re-hosted in a
+factory declaring the five closure variables it mutates, so a payload can be delivered under a
+scripted boundary list.
+
+The red direction is the capability's whole justification. `{"a":{"b":1},"async":true}` in **one**
+write parses and the async hook is adopted. The **same bytes** split after the NESTED brace leave a
+first line that already contains `}`: the latch is spent on a truncated document, the parse throws
+into a catch that only logs, and the completing write is never examined. A replay that reproduces
+stdout BYTES and not stdout WRITES grades the wrong behaviour.
+
+The mechanism the design pass first got wrong is now a test rather than a correction in prose:
+splitting mid-KEY (`{"async"` then `:true}`) is **indistinguishable** from one write, because the
+first write leaves no brace in the first line. The sensitivity is real and narrower than "any two
+writes differ". Two further arms ride along: a non-async first line spends the latch for good (a
+hook that prints a banner and then an async document is never adopted), and `forceSyncExecution`
+detects the async hook and deliberately declines to background it.
+
+### Stage 0c — grading a path that never settles
+
+`drainBounded` makes "did not settle" a graded OUTCOME rather than a hang, and `nonSettling`
+requires both halves — no yields AND no settling — because an arm that streams first and then hangs
+is a different behaviour.
+
+Driven on upstream's 261-byte shutdown wrapper: an allowlisted event under shutdown hangs with zero
+yields (the property), a non-allowlisted one **returns silently** with zero yields (the control — a
+healthy path must FAIL the mode), and **the two are indistinguishable by what they yield**. That pair
+is the argument for the mode in one line. An already-aborted caller streams through even under
+shutdown, because the predicate short-circuits.
+
+**A correction to the design pass rides with it: the arm that hangs is not inside either executor.**
+`Qxt` and `AE` never consult the flag on the streaming path — the 261-byte wrapper does, and it is
+the function the twenty-one dispatcher splices have been capturing as `executeHooks` since W5. The
+awaiting executor's own guard is a different rule with the same flag: SessionEnd is exempt, with no
+allowlist at all, so shutdown can still run it.
+
+**And the wrapper drops the executor's completion value on both arms** — the allowlisted one reads
+yields with `for await` and never sees the return; the other writes `yield* Xxt(e); return`, where
+the bare return discards what the delegation just produced. C8 found that exact shape as a real
+DEFECT in a shipped module; here it is upstream's own, and an owned copy that "fixed" it would
+diverge.
+
+### Stage 0d — module-level state, and what actually leaks
+
+Design §7 item 7 lists the leak surface as "the failure-notice singleton, the shutdown flag, six
+host-scoped lazy singletons and a plugin-usage map … none of it per-session". Derived instead:
+**six cells the belt reaches, of which exactly ONE is genuinely process-global** — the shutdown
+module's `committed` flag, whose entire chunk is a class with one boolean, a setter, a reader and a
+promise constructed to never resolve. It has a setter and no clearer anywhere in the bundle. The
+other five are keyed-lazy, four of them read through an `.of(G().host)` accessor. The spawn-failure
+set the design calls process-global is reached through
+`sessionScratch.surfacedHookSpawnFailures()` and is SESSION-scoped.
+
+That correction is the one a harness acts on: a host-keyed cell is reset by using a fresh host, a
+session-scratch cell by a fresh session, and only the process-global flag needs an explicit reset
+with no other way in. So the reset is STRUCTURAL — the shutdown module's four declarations are
+re-evaluated per case, and each case gets its own flag and its own never-settling promise.
+
+**Proven, not asserted.** The once-per-process spawn-failure arm gives `[surfaced, suppressed]` on
+its first run and the SAME verdict on a second run after a reset; the same pair WITHOUT a reset gives
+`[suppressed, suppressed]`. A twin that cannot be observed proves nothing, and it fails in the quiet
+direction.
+
+### Stage 1 — the belt is not what the design counted, and the constraint is not purity
+
+`research/tools/extract-hook-helpers.ts` is the **seventh pin-keyed fixture** and the fourth
+population this campaign had been carrying as a hand-written number, after the hook events (counted
+by judgment twice, wrong twice), the control-protocol arms and the prompt sections. The design pass
+read the belt as "roughly 13.9 KB across ~34 already-pure functions" and named ten of them.
+
+Measured: **151 in-chunk functions** reached from the dispatchers' four shared entry points, plus a
+281-name cross-chunk frontier. **43 are pure (5,961 B)**; none is pure-with-injection, because every
+injection candidate the design named lives in another chunk and is recorded on the frontier rather
+than classified.
+
+**The finding that shapes the stage is anchorability, not purity.** 84 of the 151 carry **no string
+literal at all**, and only **4 of the 43** pure ones carry a literal occurring in exactly one bundle
+file. The campaign's splice mechanism needs a true-substring-unique anchor, so "own the pure belt" is
+not a takeable plan — it is measurably not anchorable. Of those four, three have a single caller and
+fold into that caller's future module; one does not.
+
+Three derivations rather than judgments, each of which corrected something:
+
+- **The executors are found, not named.** Entry points are the callees six or more registry
+  dispatchers share. The streaming dispatchers do NOT call the streaming executor — they call the
+  shutdown wrapper — so "which function do the dispatchers delegate to" and "which function is the
+  executor" are two questions with different answers, and a belt rooted at the first is the whole
+  layer rather than a slice of it.
+- **The boundary is hops, not region.** A spatial rule was tried first — the run of top-level
+  declarations a bundler emits contiguously — and rejected: its edge lands on whichever declaration
+  nothing inside happens to reference, and widening the tolerance to cross that DOUBLED the answer.
+  A boundary that moves by a factor of two under a parameter nobody can justify is not a measurement.
+  Hops are the boundary instead, on the campaign's own doctrine: a helper reachable only THROUGH a
+  function nobody owns is that function's business.
+- **Design §2 is asserted, not believed.** The tool throws unless one executor is an
+  `async function*` and the other a plain `async function` and their callee sets overlap by under
+  half — measured 32 of 80 / 40, where the design read 30 of 87 / 38. A pin that unified them fails
+  the gate instead of quietly re-deriving a belt for an architecture that no longer holds.
+
+One bug found on the way, and it failed in the quiet direction: the anchor scan searched for the
+DECODED literal while the bundle stores source escapes, so every anchor containing `\n` returned zero
+files — and zero files reads as "no anchor" rather than as "wrong question". Counting the source form
+moves anchorability from 26 to 45. W7.5 learned the mirror image (read what a function RETURNS, not
+what its source says); here the SOURCE is the truth, because the consumer is a text search. A second
+one: a minified binding may be `$hr`, and `$` is a regexp anchor, so an unescaped name matches
+nothing and reports "no references".
+
+### The two recordings that were named and not taken
+
+The cut named a multi-hook scenario and a repeated-spawn-failure scenario, "if genuinely cheap".
+Both were named to make Stage 0's proofs possible, and **both proofs turned out to be available at
+the oracle level against upstream's own bytes**, which is strictly better evidence than a scenario: a
+scenario shows the arm ran, the oracle shows what it computed. The once-per-process arm is graded in
+process with its reset proof; the multi-hook comparison mode is controlled on synthetic logs.
+
+Neither is free later, and the cost is named rather than deferred silently. Each is roughly sixty
+lines of scenario plus one live recording. The multi-hook one additionally cannot DEMONSTRATE the
+comparison mode until something owns a multi-hook consumer, so it belongs to the wave that owns
+`Qxt` (C10.8) rather than to this one.
+
+### The two splices Stage 1 could actually take
+
+| row | upstream | bytes | what it owns |
+|---|---|---|---|
+| `hook-json-contract` | `Fq` | 5,993 | the whole hook protocol: two interleaved contracts, eighteen event arms, three throws |
+| `hook-stderr-tail` | `Xpt` | 96 | the stderr appended to a hook-output validation error when the hook also failed |
+
+**`Fq` is not pure, and the design pass said it was.** Its five free variables are a terminal-sequence
+sanitiser, a debug logger, a traced `JSON.stringify`, a telemetry probe and a message minter — all
+ordinary `effectful-port` captures, none of them a clock or a uuid. "Pure given an injected clock" is
+wrong in both halves. It is still the right Stage 1 target, and for the reason the design gave: it is
+what turns a hook's answer into behaviour, and its five call sites are all the streaming executor's,
+four directly and one through a helper whose own single caller is the executor again.
+
+**It throws on three conditions, not two, and the third is an asymmetry worth naming.** An unknown
+legacy `decision` throws. An unknown PreToolUse `permissionDecision` throws in the standalone
+pre-pass — but the SAME switch inside the event arm has no default clause, so the same bad value
+throws when it arrives one way and is silently ignored when the arm is reached the other way. And an
+event-name mismatch throws with the whole document embedded. Three of the four call sites sit inside
+a `try`/`catch`; the internal-callback fast path does not, so a throw there leaves the executor
+entirely. All reproduced, none fixed.
+
+**`Xpt`'s first argument is not the hook's stdout**, which is what the first draft of its module said
+and what its shape suggests. Both call sites pass the VALIDATION ERROR that the output parser
+produced, guarded on `status !== 2`, so the function's job is: when a hook wrote something that did
+not validate and it ALSO failed loudly, put the two complaints in one string. The two consumers then
+do entirely different things with the result — the streaming executor puts it in an error record's
+`stderr` field, the awaiting one makes it the message of a thrown `Error`. Design §2's "two
+consumers, never one core" at its smallest possible scale.
+
+### The darkness verdict, and a vocabulary the manifest did not have
+
+`Xpt` is spliced and **measured dark**. Both call sites are guarded on a hook-output VALIDATION
+ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not
+2. Of the corpus's ten command hooks, six write nothing to stdout, three `echo` plain text (which the
+parser returns as `plainText`, not as a validation error) and one writes its projection to a file.
+The guard is never satisfied over all 59 scenarios.
+
+**The inverted twin was built and replayed before the verdict was written**, which is what makes that
+a measurement rather than a shrug. It appends unconditionally, so it changes the result on every call
+rather than on the rare input; `hooks-command` and `hooks-precompact` both stayed GREEN. That is the
+call site never being reached, not a weak twin. The obvious twin — `!exitCode`, or the stderr left
+untrimmed — differs only on the rare input and would have failed in the quiet direction, which is the
+shape C9's five inert twins established.
+
+So the row is **adjudicated rather than un-spliced**, and the manifest gained the vocabulary to say
+so. `darkReason` has existed for chunk EXPORTS since W2 (§2.2); a splice could not say the same
+thing, so the only available answer for a function measured dark was to un-splice it — which C9 did
+three times, correctly, for functions with no observable effect at all. It is the wrong answer for a
+function with a real effect the corpus never CREATES, because un-splicing then trades owned bytes for
+nothing. The bar is the chunk-export bar: the reason must name the population, the inverted twin, and
+the surface that grades the function instead. `manifestViolations` refuses a row with neither
+coverage nor a reason and a row with both, and `strangle/mechanism.test.ts` drives both refusals on
+synthetic rows — a guard only ever fed valid input proves nothing about what it excludes.
+
+### What this wave leaves the next two
+
+Two owned-module rewrites the branch instrumenter forced, both behaviour-identical and both worth
+inheriting: upstream's inner `permissionDecision` switches carry no `default`, and a no-match path
+that is an arm of no clause cannot be marked, so they are if/else chains here with the no-match path
+an explicit final arm; and the eighteen-arm event switch got `default: break`, which matters because
+event names arrive from a hook's own JSON and an unrecognised one is a real input.
+
+Three corrections to the design pass that change what C10.7 and C10.8 will do, restated together:
+the streaming dispatchers call the shutdown WRAPPER rather than the streaming executor; the arm that
+hangs lives in that wrapper's 261 bytes and not in either executor; and the wrapper drops the
+executor's completion value on both arms. Plus the two the fixture makes: the belt is not takeable by
+anchor, and the module-state leak is one cell rather than a family.
+
+**Counts.** Gate **GATEPHASES**; hook oracle **721 → 1,499 comparisons, 121 → 195 controls**, plus
+**1,005 property statements over 11 paired cases**; attestation **460/996 executed with 536
+exclusions and zero unadjudicated**; manifest **74 → 75 splices** (76 rows with the S-chunk
+replacement); mechanism **119 → 122 checks**; corpus unchanged at **59**.
+
+### Seam notes for C10.7 (Stages 2–3), measured rather than recalled
+
+**`HookSourcePort`'s consumers are three, and the third is not an executor.** `Wie` has four call
+sites — `Rzn` (@3045351), `Qxt` (@3051548), and `DUt` TWICE (@3044856, @3044911). `DUt` calls it for
+`UserPromptSubmit` with and without `managedHooksOnly` and `JSON.stringify`s the pair into a
+fingerprint of the session's prompt-submit hooks for the host. So the port must serve a caller that
+wants the raw matcher lists and nothing else, which is the argument for keeping
+`configuredMatchers`/`sessionMatchers` separate rather than fusing them into one resolved answer. The
+belt fixture agrees at 4 in-chunk references, which is also the count the design pass corrected to.
+
+**The matcher's execution order is by TYPE, and the array literal says so.** `Rzn` returns
+`[...command, ...prompt, ...agent, ...http, ...mcp_tool, ...callback, ...function]`, with settings
+order preserved only *within* a type. Nothing states this anywhere today.
+
+**Dedupe is per type, and it deliberately does not apply to two of them.** Each of command, prompt,
+agent, http and mcp_tool is passed through `new Map(entries).values()` keyed by `Lq(entry, key)` —
+where the key is `AM(hook) ?? ""` for command/http/mcp_tool and `` `${hook.prompt}\x00${if ?? ""}` ``
+for prompt/agent. **`callback` and `function` are filtered straight through with no Map at all**, so
+registering the same callback twice runs it twice. And `AM`'s command arm falls back to `UD()`, a
+platform read, which is the single `EnvironmentPort.defaultShell()` the owned matcher needs.
+
+**Two refusals in `Rzn` an owned matcher has to reproduce.** If every matched entry is a callback or
+a function, it returns the raw list BEFORE the dedupe and `if:`-evaluation block runs at all. And the
+whole body is wrapped in `try { … } catch { return [] }` — a matcher that throws yields NO hooks,
+silently, which is a fail-open that looks exactly like "nothing matched".
+
+**`AE`'s shutdown guard is not the streaming one's.** `Yxt(event, signal)` is
+`event !== "SessionEnd" && isShuttingDown() && !signal?.aborted`, called as `if (Yxt(x, d)) await
+pm()` at @3081256 — *after* the `Promise.all` and before the telemetry and the return. No allowlist:
+every event except SessionEnd hangs, and SessionEnd is exempt precisely so shutdown can run it.
+
+**`zxt` is `AE` plus two lines** (298 B @3002662): it awaits `AE` with the shared `Li` timeout
+default, calls the session-env cache reset **only when the result list is non-empty**, and projects
+three fields — `results`, `watchPaths` (a `flatMap` of `watchPaths ?? []`) and `systemMessages` (the
+truthy `systemMessage`s). It is the only thing between the two watcher dispatchers and a closed edge.
+
+**And the correction that reorders Stage 2's thinking:** the streaming dispatchers do not call the
+streaming executor. They call the 261-byte shutdown wrapper, which is the function the manifest's own
+`executeHooks` capture has been deriving on twenty-one splices since W5. The awaiting executor they
+call directly. Whatever `HookSourcePort` and the matcher become, the wrapper sits above both.
