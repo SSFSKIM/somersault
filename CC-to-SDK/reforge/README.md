@@ -2957,10 +2957,214 @@ excluded, zero unadjudicated**, the permission oracle unchanged at 2,508 compari
 controls, and the hook oracle at **707 comparisons with 116 controls** after the new dispatcher's
 eight cases.
 
+## W7.5 — the completions wave: what was takeable, what was measured, and what the design pass refused (2026-09-02)
+
+The bloc-closing wave. Its four items were ordered so the cheap measurements landed before the
+expensive design work, and three of the four ended somewhere other than where the campaign expected.
+
+### The system-prompt sections: inventory first, then six splices
+
+"`OS()`'s ~20 prose sections" had been quoted since W3 — in the campaign spec, in this file, and in
+the W3/W4 scout. It is the third population in this campaign to have been carried as a number
+somebody wrote down, after the hook events (counted by judgment twice, wrong twice) and the
+control-protocol arms (hand-counted, wrong by three). Both of those were fixed the same way, and so
+is this one: **`research/tools/extract-prompt-sections.ts` derives the inventory from the pin** into
+`research/fixtures/prompt-sections-2.1.251.json`, and the gate re-derives it every run.
+
+The real shape is **27 dynamic section records, a six-element static head and a two-element tail.**
+
+The tool names nothing. It finds the section-RECORD CONSTRUCTOR by shape — a two-parameter function
+whose whole body returns `{name: p0, compute: p1, …}`, of which there is exactly one graph-wide —
+and then the one top-level function that calls it ten or more times with two arguments. **The naive
+version of the second pass is not unique and its top hit is a decoy**: the attachment-list builder in
+the same chunk makes 46 two-argument calls to an identically shaped runner and outranks the real
+target. Requiring the callee to carry a `compute` property collapses three candidates to one. That
+near-miss is recorded in the tool, because a shape-based extractor's real failure mode is a
+plausible impostor rather than a miss.
+
+Confirmed from two places that are neither pass: the **boundary sentinel** the already-owned block
+partition looks for with `findIndex` (reached through the return array, resolving to the constants
+chunk), and the **`defaultSystemPrompt`** property every caller binds the awaited result to. The
+second follows one binding hop rather than matching a name, so a chunk that merely mentions the
+property and separately imports the builder does not pass.
+
+Then six splices, all on the static head, about **11.2 KB of the preset's prose**:
+
+| row | upstream | bytes | what it renders |
+|---|---|---|---|
+| `executing-actions-section` | `x8t` | 3,625 | `# Executing actions with care` — **zero free variables**, one template literal |
+| `doing-tasks-section` | `P8t` | 4,067 | `# Doing tasks`, the largest prose section |
+| `system-section` | `R8t` | 1,116 | `# System` |
+| `using-tools-section` | `M8t` | 1,316 | `# Using your tools` — nine `primitive` captures |
+| `tone-and-style-section` | `D8t` | 626 | `# Tone and style` |
+| `identity-security-section` | `C8t` | 436 | the opener of the section list |
+
+**Every anchor is prose occurring once in 1,802 files** — the strongest class the doctrine has, and a
+deliberate contrast with C6's two structural anchors. Two near-misses are recorded on the rows: the
+`# Using your tools` heading occurs TWICE inside its own function's two arms, which `selectExcision`
+reads as a tie because it counts candidates rather than spans (C6 predicted this shape and left the
+mechanism alone; here it is met again and worked around by anchoring on prose the arms share); and
+the short form of the parallel-tools sentence also occurs twice, so the anchor is the long form.
+
+All six solo sabotages turn `sysprompt-preset` RED and the faithful build is green on all six
+covering scenarios. `strangle/prompt-parity.test.ts` went **178 → 217 comparisons and 8 → 23
+controls**; attestation **427/851 → 436/871** with eleven new reviewed exclusions, three
+`noBranchesReason` entries and zero unadjudicated.
+
+**One transcription lesson generalises past this wave.** The first take of the largest section was
+not byte-identical, and it failed in a way that looks correct: the prose was read out of the SOURCE
+TEXT between the template-literal delimiters, which carries upstream's own backslash escapes, so the
+owned copy compared equal against the source form while differing from the value. **Read what the
+function RETURNS, not what its source says.** Any later wave taking a prose target inherits this.
+
+**And one mechanism detail the taxonomy forced into the open:** a fold-in still has to be DECLARED.
+The capture inventory refuses an undeclared free variable, so the single-caller hooks paragraph rides
+as an owned `pure-helper` — derived, but neither forwarded nor called — which also keeps §5
+footprinting its upstream declaration.
+
+### Segment compaction: an ownability ceiling, and the campaign had the wrong function
+
+W4 left three adjudicated branch outcomes — `user_context`, `messages_summarized`, and the
+un-suppressed follow-up-question arm — "reachable only through the from/up_to segment variant", and
+every wave since carried that as a coverage debt waiting for an owner. The charter said measure
+reachability BEFORE budgeting coverage. The measurement says it is not a coverage debt at all.
+
+**The correction first.** The spec, this file, the W3/W4 scout and W4's own exclusion reasons all
+name `hRt` as the variant that passes five arguments to the `compact_boundary` constructor. `hRt` is
+513 bytes and is that path's summarization-PROMPT builder; it never calls the constructor. The
+function that does is **`E4n`** (4,710 B). Re-counted, the constructor has exactly three call sites,
+two passing three arguments and one passing five — so the SHAPE of W4's claim survives and only its
+subject changes.
+
+**The reachability.** `E4n` is imported by one chunk and called once, from a method on the
+interactive session controller that calls a host-required guard before it, reached only as a prop of
+an Ink dialog that a double-Escape keypress opens. Ruled out by enumeration rather than by argument:
+all 52 control-protocol arms filtered for the symbol (zero hits — and `rewind_conversation`, the
+tempting one, truncates rather than summarizes), all nineteen `Query` methods and the whole option
+surface, the PreCompact hook (whose trigger union has two values and which `E4n` calls with a
+hardcoded `"manual"`), and the registered slash-command list, which has no `rewind` and no
+`summarize` — "rewind" is a dialog label.
+
+**Verdict OPEN, and deliberately not DEAD.** The code is live, both fields are serialized onto the
+wire and read back, and a headless session that RESUMES an interactively-produced transcript will
+emit them. The reader side is reachable; the writer is the ceiling. Recorded in
+`research/2026-09-02-w75-segment-compaction-reachability.md`, the three W4 exclusions moved onto that
+evidence, and the variant routed to C16/W13 with the other compaction drivers. No machinery was
+built to force the path, which is what the charter asked for.
+
+### The hook executors: the design pass, and what it refused
+
+`subsystem/hook-dispatch` has been `spliced` since W5 and cannot close. §2.3 says an S-module is
+design-first; this is that pass (`research/2026-09-02-w75-hook-executor-design.md`), and it changed
+the problem enough to justify the rule.
+
+**The layer is ~56 KB, not the ~30 KB every prior scoping assumed.** The three named functions are
+30 KB; two functions nobody had named are 13 KB more — the command-hook subprocess runner (7,209 B,
+called by BOTH executors and by three callers outside this subsystem) and the JSON-contract
+interpreter (5,993 B, called only by the streaming one) — plus a ~14 KB belt of already-pure helpers.
+
+**Three names this repository used were wrong, and each changes a decision.** `getMatchingHooks` is
+two functions: one matches, the other resolves the SOURCES, and owning the first alone owns no
+sources. The session hooks store is not the layer reader the ledger named — it is a class whose
+fields are **public**, which is precisely why this is the right first S-module where W10's Bash
+executor is blocked on private fields. And the wrapper called "headless suppression" suppresses on
+**shutdown**: one process-wide flag set only in exit paths, after which six events hang forever on a
+promise that never settles and the rest return silently. A filter that does not exist was hiding a
+fail-closed gate that does.
+
+**The architecture decision:** the awaiting executor is not the streaming one's wrapper and must not
+share a core with it. Their return types are disjoint, it never calls the contract interpreter and
+silently drops the entire `hookSpecificOutput` permission contract, two of its arms are stubs, and it
+returns results in index order against the other's completion order. One core with two façades would
+make it honour fields upstream drops on thirteen events — an "improvement" arriving exactly where the
+gate is weakest, since the awaiting path has no yields to compare. Nine ports are proposed with the
+reason each grouping holds together; behind those cuts about 27 KB is pure or pure-once-ported and
+the effectful residue to write is about 12 KB.
+
+**And the pass refused its own implementation, for reasons that are properties of the target rather
+than of the schedule.** The oracle needs the interleaved-event-log rewrite BEFORE the first module:
+the tech-debt entry predicted this trigger and was right, and the design adds a reason it did not
+anticipate — cleanup pairing for per-hook derived signals, released on six paths plus a catch, is a
+property only an ordered log can state. Two further oracle capabilities land with it: reproducing
+stdout CHUNK boundaries (async detection fires on the first chunk containing a brace, so byte-equal
+stdout delivered in a different number of writes is different behaviour) and grading a path that
+never settles. And the corpus needs a multi-hook scenario and a repeated-spawn-failure scenario that
+do not exist, purely to make the merge and the once-per-process arms gradeable. Forcing it in would
+have produced the shape the campaign has already paid for twice: a module shipped ahead of its
+oracle, where the debt is real and the interest is invisible. Staged 0–5 in the design, awaiting
+executor before streaming one.
+
+### The riders
+
+**CwdChanged fired.** W5 left the event OPEN, correctly — no phase moved the tracked working
+directory. The mechanism was never in doubt: the Bash tool appends a `pwd` write to every command and
+reads it back, so a persisting `cd` moves the tracked cwd. The new `cwd-change` probe phase creates
+it and the event **FIRED** on both hook paths, with the record carrying `old_cwd` and `new_cwd` after
+the common prefix. `hooks-cwd-change` recorded it into the corpus (**58 → 59**) and `AUt` is spliced
+as `cwd-changed-hooks` — its twin's body with one string and two keys changed. The hooks oracle gains
+a field-order block (**707 → 721 comparisons, 116 → 121 controls**) because those two fields are the
+only bytes distinguishing this dispatcher's stdin stream from its twin's.
+
+Two things were corrected on the way past. Both the probe and the scenario first claimed two
+exchanges were REQUIRED because a `cd` inside one command's subshell moves nothing; the bundle does
+not say that, and "the second exchange is evidence, not mechanism" is what they say now. And the
+notifier that reaches this dispatcher consults the settings layer and plugin hooks **only** — never
+the global store `Options.hooks` callbacks land in — so a callback alone arms nothing, which is why
+both register their matcher through `Options.settings`.
+
+**`rewind_files` was measured and declined.** The charter's condition was "only if its scenario is
+genuinely cheap", and the scenario really is: one env knob, state the engine snapshots on its own, an
+answer that arrives as a `Query` method's return value rather than a transcript frame, and one
+recording reaching all four exits. It was still declined on two facts the condition does not cover.
+Four of the five free variables are effectful ports into the file-history subsystem, and what the
+body owns is two sentences, two guards, a branch and two field sets — the worst
+owned-decision-to-capture ratio in the family, with no byte-order contract to own. And all three of
+its good literals occur in TWO chunks, because the interactive host object carries a line-for-line
+twin; a `coLiteral` resolves it, but the only chunk-unique candidates belong to other arms of the
+same control ladder, so the row's locator would name neither the handler nor its subsystem. Logged in
+the tech-debt tracker with the measurement, rather than taken or silently skipped.
+
+### After the wave
+
+Gate **GATE_PHASES**, corpus **59 of 59**, attestation **436 of 871 executed, 435 excluded, zero
+unadjudicated**, splices **74**, ledger 47 rows with `spliced=9`. The prompt oracle is at 217
+comparisons with 23 controls and the hook oracle at 721 with 121.
+
 ## Next
 
-W5 has landed; **C9 and C10 (permission decisions, control protocol) close the bloc.** What they
-inherit, newest first:
+**The bloc is closed.** W3–W7 landed, and W7.5 closed it out. The campaign resumes at **C11/W8 (moat
+tools)**, with the S-module lane opening whenever the hook-executor staging in
+`research/2026-09-02-w75-hook-executor-design.md` is scheduled. What the next waves inherit, newest
+first:
+
+- **READ WHAT THE FUNCTION RETURNS, NOT WHAT ITS SOURCE SAYS.** W7.5's largest prose section was
+  transcribed out of the source text between the template-literal delimiters, which carries
+  upstream's own backslash escapes — so the owned copy compared equal against the source form while
+  differing from the value. Every wave that takes a prose target inherits this, and it is invisible
+  to a reviewer reading both sides.
+- **MEASURE REACHABILITY BEFORE BUDGETING COVERAGE.** Segment compaction was carried as a coverage
+  debt for three waves. One afternoon of enumeration — the control-protocol arms, the `Query`
+  methods, the option surface, the hook, the slash-command list — showed the producer sits behind a
+  terminal dialog and a keypress, so no scenario could ever have paid the debt. And the enumeration
+  found the campaign had been naming the wrong function for three waves. **A debt whose reachability
+  nobody measured may not be a debt.**
+- **A DESIGN PASS IS ALLOWED TO REFUSE ITS OWN IMPLEMENTATION.** W7.5's executor pass found the
+  target twice the assumed size, three of the names wrong, and three oracle capabilities missing —
+  and said so instead of starting. That is what §2.3's "design-first" buys; a pass that always
+  concludes "proceed" is a formality.
+- **AN OPEN ROW IS A STATE, AND CREATING ITS CONDITION IS USUALLY CHEAP.** CwdChanged had been OPEN
+  since W5 behind one `cd`. Before scheduling machinery for an OPEN row, check whether the condition
+  is one line away.
+- **"CHEAP SCENARIO" AND "GOOD SPLICE" ARE DIFFERENT QUESTIONS.** `rewind_files` passes the first and
+  fails the second: four of five free variables are ports, the body owns no byte-order contract, and
+  its only anchors need a `coLiteral` borrowed from an unrelated arm. Ask both.
+- **DERIVE THE ENUMERATION FROM THE ARTIFACT, NOT FROM JUDGMENT.** Three populations have now been
+  counted by hand and been wrong — the hook events (twice), the control-protocol arms, and the prompt
+  sections. All three are pin-keyed fixtures with gate phases now. If the artifact enumerates
+  something, read it. **A list a tester writes can only ever confirm the tester.**
+- **A SHAPE-BASED EXTRACTOR'S FAILURE MODE IS A PLAUSIBLE IMPOSTOR, NOT A MISS.** The naive version
+  of the prompt-section search returns three hits and the top one is a decoy that outranks the
+  target. Every such tool should name its near-miss and the discriminator that rejected it.
 
 - **DERIVE THE ENUMERATION FROM THE ARTIFACT, NOT FROM JUDGMENT.** W5 chose the population under
   test by hand twice — first from a stale doc line, then from a list of "events a tool-using turn
@@ -3041,13 +3245,17 @@ Named debts the roadmap owes an assignment:
 
 - **`subsystem/tool-result-validators`** — an `unowned` ledger row with no wave, filed under C4 because
   C4 subdivided it (open since W1).
-- **The preset's ~20 prose section builders** behind `OS()` — RENDERED by the corpus since W3, so the
-  follow-on cut is unblocked; it was not W3's, W4's or W5's.
+- **The preset's prose section builders** behind `OS()` — **six taken by W7.5** (the static head).
+  The inventory is now a pin-keyed fixture: 27 dynamic records remain, and the fixture says why each
+  is or is not takeable rather than leaving the count vague.
 - **Segment compaction** (named `hRt` here; W7.5 measured the producer to be `E4n` — `hRt` is only
   that path's prompt builder) — three of W4's adjudicated branch outcomes are reachable only through
   it, and W7.5 measured that nothing headless reaches it at all: see
   `research/2026-09-02-w75-segment-compaction-reachability.md`. Routed to C16/W13.
-- **The hook EXECUTORS** — the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`), its
+- **The hook EXECUTORS** — **designed by W7.5, not implemented** (`research/2026-09-02-w75-hook-executor-design.md`:
+  the layer is ~56 KB rather than 30 KB, three of the names below are corrected there, and the
+  implementation is staged 0–5 behind an oracle change). The stale description follows for
+  provenance: the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`), its
   awaiting sibling `AE`, and the watcher-hooks helper `zxt` that the second round surfaced. New with
   W5, S-module-shaped, and the largest thing standing between `subsystem/hook-dispatch` and
   `standalone-complete`.

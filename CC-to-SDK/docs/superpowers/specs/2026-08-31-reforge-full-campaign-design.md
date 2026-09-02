@@ -692,10 +692,17 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   `compact_boundary` constructor and the only one that leaves follow-up questions un-suppressed, so
   three of W4's adjudicated branch outcomes are reachable only through it — and `/compact
   <instructions>` does NOT reach it, so no cheap scenario buys them; whichever wave takes the variant
-  inherits the coverage); **the hook executors** (C8 flow-back: upstream `Qxt`, ~23 KB, plus
+  inherits the coverage) **[SUPERSEDED 2026-09-02 by C10.5: the function is `E4n`, not `hRt` (which
+  is only that path's prompt builder), and NOTHING HEADLESS REACHES IT — the three outcomes are an
+  ownability ceiling rather than coverage, and the variant is routed to C16/W13. See the C10.5
+  Revision Note and `reforge/research/2026-09-02-w75-segment-compaction-reachability.md`]**; **the hook executors** (C8 flow-back: upstream `Qxt`, ~23 KB, plus
   `Rzn`/`Xxt`/`jy`, AND its awaiting sibling `AE`, which C8's boundary round surfaced when it
   spliced the two dispatchers that call it — S-module-shaped, and the only thing between
-  `subsystem/hook-dispatch` and `standalone-complete`). **Routing decision (2026-09-01):** the accumulated S-method-sized
+  `subsystem/hook-dispatch` and `standalone-complete`) **[SCOPE CORRECTED 2026-09-02 by C10.5's
+  design pass: the layer is ~56 KB, not ~30 — two of its largest functions are unnamed here — and
+  three of the names in this sentence are wrong. See the C10.5 Revision Note and
+  `reforge/research/2026-09-02-w75-hook-executor-design.md`, which also stages the implementation and
+  says why it did not start in W7.5]**. **Routing decision (2026-09-01):** the accumulated S-method-sized
   remainders — the OS() prompt sections, segment compaction — congeal into a proposed
   bloc-closing **completions wave (W7.5)**, cut when C10 lands; the hook executors ride with it
   or get S-module treatment inside it per their own design pass. **C10 landed 2026-09-02, so the
@@ -739,7 +746,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C8 | W5 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md` | **landed, then corrected TWICE** — fourteen scenarios (corpus 31 → 45) covering the live hook events the corpus never reached, incl. the matrix's two command-hook cells via `Options.settings`, a `canUseTool` answered past the notify timer, and an authored API failure (`Scenario.deriveFault`); nineteen dispatcher splices, which with C5x's spike make **twenty functions over twenty-one of the TWENTY-THREE events the engine is measured to fire headlessly** out of upstream's 33-event dispatcher registry (the model-switch pair is a §2.3 deferral on the ledger row; the other ten registry events are OPEN with named conditions, not dead). The wave first claimed seven functions over all eight on a probe whose negatives were vacuous, then eleven over twelve on a probe that still chose its own watched list — see the two C8-fix Revision Notes. `strangle/hooks-parity.test.ts` grades 686 comparisons with 107 controls, which closed C5x's deferred attestation AND found a real defect in its shipped module (`return yield*` where upstream discards the completion value, invisible to every scenario); attestation 186/312 with 126 exclusions and zero un-adjudicated, incl. the campaign's first "unrecordable by construction" — one of which the new recordings then RETIRED by reaching it; all three hook execution helpers (`Qxt`, `AE`, `zxt`) named as the row's remaining gap; gate **77/77** |
 | C9 | W6 | scout: `reforge/research/2026-09-01-w5-w7-anchor-scout.md`; matrix: `reforge/research/2026-09-01-w6-permission-matrix.md` | **landed, then corrected once** (2026-09-02 boundary round: **NOT CONVERGED on the record side**, the code side sound — five things the artifacts claimed that the recordings did not support; see the C9-fix Revision Note) — thirteen splices over the decision chain, the mode axis and the headless broker's return leg, plus **three functions spliced, measured dark and un-spliced** (an output absorbed before any observable, at 45 call sites; a seam the headless handler bypasses; and an answer pinned by a disabled gate) — **two more were adjudicated dark and were not**, and the fix round spliced them: their twins returned what the healthy functions return on every corpus input, and their surviving callers live in the mode-aware body, under a mode the corpus had never entered. Thirteen new recordings (corpus 45 → 58), the last three from the fix round: `perm-working-dir` closes the `workingDir` decisionReason, `perm-auto-classifier-deny` closes the `classifier` one AND fires `PermissionDenied` (OPEN across two waves) by choosing a 400 for the auto-mode classifier's OWN API call at record time, and the re-recorded `perm-mode-walk` finally makes a decision in every turn. Gate **92/92** — quoted from the gate's own SUMMARY block, which is the fix round's correction to the earlier **121/121**: that figure counted printed LOG LINES, and a liveness phase prints one per covering scenario. Attestation **355/669 with 314 exclusions and zero unadjudicated**; `strangle/permissions-parity.test.ts` grades **2,508 comparisons with 49 controls** over axes derived from the bundle (`research/fixtures/permission-surface-2.1.251.json`: six modes agreed by four independent enumerations, three rule behaviours, eleven decisionReason kinds) and finds every module byte-faithful. **A measured correction to this spec: `bypassPermissions` does NOT short-circuit the rule engine** — the bypass arm is rung 11 of 13 in upstream's pre-check, so a deny rule still bites under bypass and the corpus's bypass scenarios exercise most of the pre-check rather than none of it. Five sabotage twins and one whole scenario were rewritten after being MEASURED INERT (a twin that cannot be observed proves nothing, and it fails in the quiet direction); the branch instrumenter gained a guarded body that returns (nine controls); the oracle now locates its subject by the build's own anchor rule. **A second: `auto` is NOT gate-dead** — accepted through both the spawn and the control-channel paths, because upstream's auto gate is three local conditions rather than a remote flag. **A third, from the fix round: `auto` DOES consult the classifier** — the wave read "the tool ran with no broker consult" as "the classifier was not reached", and the classifier makes its OWN `/v1/messages` call, which for the probed command answered `<severity>25` and allowed. Only its BLOCK verdict stays OPEN. **Two scenarios were caught by the BRANCH ATTESTATION rather than by any check** — both used a whole-tool deny rule, which upstream applies by removing the tool from the session, so both passed while executing none of the chain; re-recorded command-scoped, they fired `subcommandResults` (a kind the matrix had OPEN) and confirmed the bypass correction live. **And the GATE itself had the vacuity defect**: it read any non-zero exit as a RED, so a crashed or killed runner proved liveness, and one dead row was passing on exactly that — a RED now needs the runner's own verdict line or a timeout, and anything else FAILS as inconclusive. Three §2.3 gaps named on the ledger row: `von`, `createCanUseTool`, and `Dd` (no string literal at all). **And the fix round's structural deliverable: `attest --check` now diffs the COMMITTED report against the one the run would write**, so a stale attestation artifact fails the gate loudly instead of drifting — it had gone stale twice |
 | C10 | W7 | scout: `…w5-w7-anchor-scout.md` (now carrying a second supersession banner, for §3) | **landed** 2026-09-02 — five splices over the named handlers the live dispatch arms delegate to (`initialize` + the ~1 KB payload it answers with, `set_permission_mode`, `set_model`, `set_max_thinking_tokens`), which with W6's two response envelopes makes the round trip owned end to end for those subtypes. **The wave's substance is the measurement hole it closed**: `sdk.mjs` consumes control responses, so the protocol had ZERO coverage and no scenario could have given it any — `m2/raw-protocol.ts` now sends ten control requests ahead of its prompt and grades each answer on both engines. `strangle/control-parity.test.ts` grades 1,536 comparisons with 21 controls over axes read from `research/fixtures/control-protocol-2.1.251.json` (the fifth pin-keyed fixture: 52 arms / 54 subtypes / 37 sendable, derived from the engine's ladder AND from `sdk.mjs`, two artifacts sharing no machinery) and from the permission surface. `w7/probe-control-subtypes.ts` measures the whole population one subtype per session: **FIRED 38, DEAD 0, OPEN 16 of 54**, each OPEN with a written reason. Attestation 427/851 with 424 exclusions and zero unadjudicated, and **five of W6's exclusions RETIRED** because the driver's mode change executes them. Four scout corrections (the ladder is in the generator `runHeadless` drives, not in `runHeadless`; 52 arms not 55; two anchors that live in the arm rather than the handler; the interrupt helpers are W8's), one harness defect fixed at the source (the raw driver never reset or seeded its sandbox, so its recording captured the operator's own repository — invisible until a subtype that reads the system prompt was added), and one instrument defect caught by its own controls (two arms reported DEAD by a probe that closed stdin before their deferred answer landed). Gate **99/99** |
-| C10.5 | W7.5 | cut 2026-09-02 (Deferred section's "The W7.5 cut") | not-dispatched — the bloc-closing completions wave: OS() sections (inventory-first), segment compaction reachability, the hook executors as the first S-module splice (design pass gates implementation), CwdChanged/AUt rider. **Unblocked** (C10 landed + converged) |
+| C10.5 | W7.5 | cut 2026-09-02 (Deferred section's "The W7.5 cut"); wave record `reforge/README.md` "W7.5"; `reforge/research/2026-09-02-w75-hook-executor-design.md`, `…-w75-segment-compaction-reachability.md` | **landed** 2026-09-02 — three of the four items ended somewhere other than where the cut expected. **(1) OS() sections:** the inventory is a sixth pin-keyed fixture (`prompt-sections-2.1.251.json`, **27 dynamic records + a six-element static head + a two-element tail**, not the "~20" quoted since W3), found by shape from the section-record constructor and confirmed twice; then **six splices over the static head** (~11.2 KB of the preset's prose), every anchor prose occurring ONCE in 1,802 files, every solo sabotage RED on `sysprompt-preset`. Prompt oracle 178 → 217 comparisons / 8 → 23 controls. **(2) Segment compaction:** MEASURED **OPEN — an ownability ceiling, not a coverage debt**, and the campaign had been naming the wrong function (`hRt` is the prompt builder; the producer is `E4n`). Routed to C16/W13; W4's three exclusions moved onto the evidence. **(3) The hook executors:** design pass done and **implementation deliberately refused** — the layer is **~56 KB, not ~30**, two of its largest functions had never been named, three of the campaign's names for it were wrong, and the oracle needs three capabilities it does not have. **(4) Riders:** CwdChanged FIRED on a created condition, `hooks-cwd-change` recorded (corpus 58 → 59) and `AUt` spliced (hook oracle 707 → 721 / 116 → 121); `rewind_files` measured cheap-scenario/poor-splice and logged rather than taken. Gate **GATE_PHASES**, attestation **436/871 with 435 exclusions and zero unadjudicated**, 74 splices |
 | C11 | W8 | — | not-dispatched (decomposing at dispatch; inherits the interrupt-helper OPEN from C10) |
 | C12 | W9 | — | not-dispatched (controlled, fable) |
 | C13–C14 | W10–W11 | — | not-dispatched |
@@ -940,6 +947,89 @@ initiative, not this campaign.
 Pending — written at finish.
 
 ## Revision Notes
+
+- 2026-09-02 (C10.5 / W7.5 — the completions wave): the bloc's four remainders, ordered so the cheap
+  measurements landed before the expensive design work. **Three of the four ended somewhere other
+  than where the cut expected**, and each of those is a correction to this document rather than a
+  result within it. Gate **GATE_PHASES**; corpus 58 → **59**; splices 66 → **74**; attestation
+  **436/871 with 435 exclusions and zero unadjudicated**. Seven items change what the rest of the
+  campaign inherits.
+  - **THE PROMPT-SECTION COUNT WAS WRONG AND IT IS NOW A FIXTURE.** "`OS()`'s ~20 prose sections"
+    appears in this spec, in the reforge README and in the W3/W4 scout. The pin says **27 dynamic
+    section records plus a six-element static head and a two-element tail**. This is the THIRD
+    population the campaign counted by hand and got wrong — after the hook events (twice) and the
+    control-protocol arms — so it became the sixth pin-keyed fixture with its own gate phase.
+    `research/tools/extract-prompt-sections.ts` names nothing: it finds the section-RECORD
+    CONSTRUCTOR by shape, then the one function calling it ten or more times. **The naive second pass
+    is not unique and its top hit is a decoy** — an attachment-list builder in the same chunk makes 46
+    two-argument calls to an identically shaped runner and outranks the target. Requiring a `compute`
+    property collapses three candidates to one. Generalising: **a shape-based extractor's failure mode
+    is a plausible impostor, not a miss**, and each such tool should name its near-miss and the
+    discriminator that rejected it.
+  - **THE SIX SECTION SPLICES ARE THE STRONGEST ANCHOR CLASS THE CAMPAIGN HAS TAKEN.** Every one is
+    prose occurring ONCE over the 1,802-file set — a deliberate contrast with C6's two structural
+    anchors, which were admitted with their churn cost recorded. Two near-misses are on the rows
+    rather than in anyone's memory: the `# Using your tools` heading occurs twice inside its own
+    function's two arms, which `selectExcision` ties because it counts CANDIDATES rather than SPANS
+    (C6 predicted exactly this shape and left the mechanism alone; W7.5 met it again and anchored on
+    prose the arms share rather than fixing the mechanism inside a wave that does not own it), and the
+    short form of the parallel-tools sentence also recurs.
+  - **READ WHAT A FUNCTION RETURNS, NOT WHAT ITS SOURCE SAYS.** The first take of the largest section
+    was not byte-identical, and it failed in the way that looks correct: the prose was read out of the
+    SOURCE TEXT between the template-literal delimiters, which carries upstream's own backslash
+    escapes, so the owned copy compared equal against the source form while differing from the value.
+    Every later wave taking a prose target inherits this, and a reviewer comparing both sides by eye
+    cannot see it.
+  - **SEGMENT COMPACTION IS AN OWNABILITY CEILING, AND THIS SPEC NAMED THE WRONG FUNCTION.** C7's
+    flow-back, the Deferred section and W4's exclusion reasons all say `hRt` passes five arguments to
+    the `compact_boundary` constructor. `hRt` is 513 bytes and is that path's summarization-PROMPT
+    builder; it never calls the constructor. **`E4n` (4,710 B) does**, and the three-call-site /
+    five-argument shape of the claim survives with only its subject changed. Reachability, measured by
+    enumeration rather than argument: `E4n` has ONE caller, a method on the interactive session
+    controller behind a host guard, an Ink dialog and a double-Escape keypress. Zero of the 52
+    control-protocol arms delegate to it, no `Query` method or option reaches it, the PreCompact hook
+    cannot distinguish it, and there is no `rewind` or `summarize` slash command — "rewind" is a dialog
+    label. **Verdict OPEN, deliberately not DEAD**: the code is live, both fields are serialized and
+    read back, and a headless session resuming an interactively-produced transcript will emit them —
+    the READER side is reachable, the writer is the ceiling. W4's three exclusions now rest on that
+    evidence and the variant routes to C16/W13 with `zRe`/`Tte`. **Generalising: a debt whose
+    reachability nobody measured may not be a debt.**
+  - **THE FIRST S-MODULE DESIGN PASS REFUSED ITS OWN IMPLEMENTATION, and that is the pass working.**
+    The hook-execution layer is **~56 KB, not the ~30 KB** every prior scoping assumed: two of its
+    largest functions — the command-hook subprocess runner (7,209 B, shared with three callers OUTSIDE
+    this subsystem) and the JSON-contract interpreter (5,993 B) — had never been named anywhere. Three
+    of the campaign's names for it are wrong: `getMatchingHooks` is two functions and owning the
+    matcher alone owns no SOURCES; the session hooks store is not the layer reader this spec called
+    `IE` but a class whose fields are **public** (which is exactly why this is the right first
+    S-module, where §2.1's W10 finding blocks the Bash executor on PRIVATE fields); and the wrapper
+    called "headless suppression" suppresses on **shutdown**, after which six events hang forever on a
+    promise that never settles. **The architecture decision: the awaiting executor is not the streaming
+    one's wrapper and must not share a core with it** — disjoint return types, and it silently drops
+    the whole `hookSpecificOutput` permission contract, so a unified core would make it honour fields
+    upstream drops on thirteen events, exactly where the gate is weakest. Nine ports proposed; behind
+    those cuts ~27 KB is pure or pure-once-ported and the effectful residue is ~12 KB. Implementation
+    was NOT started, because the oracle needs three capabilities it lacks — the interleaved event log
+    (whose tech-debt entry predicted this trigger and was right, plus a reason it did not anticipate:
+    **cleanup pairing** for per-hook derived signals released on six paths plus a catch), stdout CHUNK
+    reproduction (async detection fires on the first chunk containing a brace), and grading a path that
+    never settles — and the corpus needs two scenarios that do not exist. Staged 0–5, awaiting executor
+    before streaming one. **A design pass that always concludes "proceed" is a formality.**
+  - **AN OPEN ROW IS A STATE, AND CREATING ITS CONDITION IS USUALLY CHEAP.** CwdChanged had been OPEN
+    since W5 behind one `cd`. The `cwd-change` phase created it, the event FIRED on both hook paths,
+    `hooks-cwd-change` recorded it (corpus 58 → 59) and `AUt` — its twin's body with one string and two
+    keys changed — is spliced, with the hook oracle gaining a field-order block because `old_cwd` and
+    `new_cwd` are the only bytes distinguishing this dispatcher's stdin stream from its twin's. Two
+    corrections rode with it: "two exchanges are required" was a mechanism claim the bundle does not
+    make (the tracker reads the cwd back after EVERY command, so the second exchange is evidence), and
+    the notifier consults the SETTINGS layer and plugin hooks only — never the global store
+    `Options.hooks` callbacks land in — so a callback alone arms nothing.
+  - **"CHEAP SCENARIO" AND "GOOD SPLICE" ARE DIFFERENT QUESTIONS, and the charter only asked the
+    first.** `rewind_files` passes it — one env knob, state the engine snapshots itself, an answer that
+    arrives as a `Query` method's return value, one recording reaching all four exits — and was still
+    declined: four of five free variables are ports into the file-history subsystem, the body owns no
+    byte-order contract, and all three of its good literals occur in two chunks because the interactive
+    host carries a line-for-line twin, so its `coLiteral` would have to be borrowed from an unrelated
+    arm of the control ladder. Logged with the measurement rather than taken or silently skipped.
 
 - 2026-08-31: initial version, approved in-session after a census-grounded design pass.
 - 2026-08-31 (rev 1): adversarial review round 1 (two Codex `gpt-5.6-sol` lenses) + the
