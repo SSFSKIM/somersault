@@ -2202,6 +2202,7 @@ describe("<ChatApp>", () => {
     const settingsFileDeps = {
       read: (_p: string): string => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
       write: (p: string, s: string) => { writes.push({ path: p, content: s }); },
+      home: "/fixture-home",   // pins the "User settings" destination description below to a fixed path
     };
     const fake = fakeSettingsRemote({ addRule: async (behavior, rule) => { addRuleCalls.push({ behavior, rule }); } });
     const { stdin, lastFrame } = render(<ChatApp makeSession={() => fake} client={{ kind: "loopback" }} cwd={process.cwd()} deps={{ settingsFileDeps }} />);
@@ -2219,7 +2220,10 @@ describe("<ChatApp>", () => {
     expect(frame(lastFrame)).toContain("Project settings (local)");
     expect(frame(lastFrame)).toContain("Project settings");
     expect(frame(lastFrame)).toContain("User settings");
-    expect(frame(lastFrame)).toContain("Saved in at ~/.claude/settings.json");   // the verbatim upstream typo, reproduced exactly
+    // bl14: derived from settingsFileDeps (the same seam addRule persists through below), not a verbatim
+    // canon literal — CLAUDE_CONFIG_DIR (or an attach's carried host root) moves this file, and the row must
+    // never describe one other than where the rule actually lands.
+    expect(frame(lastFrame)).toContain("Saved in /fixture-home/.claude/settings.json");
     stdin.write("\r");                                              // idx 0 default = "Project settings (local)" → localSettings
     await waitFor(() => addRuleCalls.length === 1);
     expect(addRuleCalls[0]).toEqual({ behavior: "allow", rule: "WebFetch" });

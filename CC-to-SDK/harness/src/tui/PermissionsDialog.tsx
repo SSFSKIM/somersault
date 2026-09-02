@@ -51,7 +51,7 @@ import type { KeyContextName, KeyEvent, TextEvent } from "./keys/types.js";
 import { ruleRows, workspaceRows, SOURCE_LABELS, type RuleRow, type DenialEntry } from "./permissionsModel.js";
 import { clipRowText } from "./rewindModel.js";
 import type { RenderLine } from "./render.js";
-import type { SettingsTarget } from "./settingsFile.js";
+import { settingsPath, type SettingsFileDeps, type SettingsTarget } from "./settingsFile.js";
 import type { AddDirVerdict } from "./addDir.js";
 import { AddDirDialog } from "./AddDirDialog.js";
 import { ACCENT } from "./theme.js";
@@ -70,9 +70,10 @@ type Behavior = "allow" | "ask" | "deny";
 const BEHAVIOR_OF: Partial<Record<Tab, Behavior>> = { Allow: "allow", Ask: "ask", Deny: "deny" };
 
 // Verbatim 2.1.220 copy (plan Global Constraints line 34) — every literal below is reproduced exactly,
-// including the upstream typo in the User-settings destination description. "Auto mode"'s own intro is
-// verbatim from chunk `y7da6q4n` (~L828247, the `or` node inside `ur`): "Extra rules for the auto mode
-// classifier. Rules are plain sentences; new rules are saved to your user settings."
+// EXCEPT the User-settings destination description (see DEST_OPTIONS below, a recorded divergence).
+// "Auto mode"'s own intro is verbatim from chunk `y7da6q4n` (~L828247, the `or` node inside `ur`):
+// "Extra rules for the auto mode classifier. Rules are plain sentences; new rules are saved to your user
+// settings."
 const INTRO: Record<Tab, string> = {
   "Recently denied": "Commands recently denied by the auto mode classifier.",
   Allow: "Claude Code won't ask before using allowed tools.",
@@ -102,10 +103,17 @@ const AUTO_MODE_EMPTY = "This section has no configured rules, so the built-ins 
 // false "navigate"/"select" affordance this string exists to avoid (see the `hintScope` computation below).
 const AUTO_MODE_FOOTER = "Esc to cancel";
 const DELETE_LABEL: Record<Behavior, string> = { allow: "allowed", ask: "ask", deny: "denied" };
-const DEST_OPTIONS: { label: string; desc: (cwd: string) => string; target: SettingsTarget }[] = [
+// DELIBERATE DIVERGENCE (bl14, filed against bl12's own userSettings-routing change): upstream's literal
+// here is "Saved in at ~/.claude/settings.json" — a fixed string that stopped being true the moment BL12
+// made `userSettings` route through `claudeConfigDir` (settingsFile.ts). Under `CLAUDE_CONFIG_DIR` —
+// including on an attach, where the effective root is the HOST's, carried in via `settingsFileDeps` — the
+// rule this row saves lands somewhere the literal never mentions. Same call as RECENT_FOOTER's own
+// divergence above: a rendered, user-visible destination that is WRONG is worse than one that isn't
+// verbatim canon, so this row now derives the real path via `settingsPath` instead of guessing at it.
+const DEST_OPTIONS: { label: string; desc: (cwd: string, settingsFileDeps?: SettingsFileDeps) => string; target: SettingsTarget }[] = [
   { label: "Project settings (local)", desc: (cwd) => `Saved in ${cwd}/.claude/settings.local.json`, target: "localSettings" },
   { label: "Project settings", desc: (cwd) => `Checked in at ${cwd}/.claude/settings.json`, target: "projectSettings" },
-  { label: "User settings", desc: () => "Saved in at ~/.claude/settings.json", target: "userSettings" },   // verbatim upstream typo — keep it
+  { label: "User settings", desc: (cwd, settingsFileDeps) => `Saved in ${settingsPath("userSettings", cwd, settingsFileDeps)}`, target: "userSettings" },
 ];
 const RULE_FLOW_FOOTER = "Enter to submit · Esc to cancel";     // covers BOTH add-rule steps (text entry + destination) — Global Constraints gives one footer for "the add-rule dialog"
 // DELIBERATE DIVERGENCE from the pinned upstream string (recorded by the controller after review, W3 T7
@@ -422,7 +430,7 @@ export const permissionsVisibleRows = (rows: number = process.stdout.rows ?? 24,
   Math.max(1, rows - PERMISSIONS_CHROME_ROWS - (tab === undefined || columns === undefined ? 0 : permissionsWrapRows(tab, columns)));
 
 export function PermissionsDialog({
-  tab, onTabChange, denials, cwd,
+  tab, onTabChange, denials, cwd, settingsFileDeps,
   fetchSettings, fetchDirs, addRule, removeRule, removeDir,
   addDirValidate, confirmAddDir, cancelAddDir,
   onDone, rows, columns,
@@ -431,6 +439,10 @@ export function PermissionsDialog({
   onTabChange: (tab: string) => void;
   denials: DenialEntry[];
   cwd: string;
+  /** Same value `addRule` persists `userSettings` through (`useChat`'s `deps.settingsFileDeps`) — the
+   *  "User settings" destination description (DEST_OPTIONS above) resolves through the identical seam so
+   *  the row can never describe a file other than the one a chosen rule actually lands in. */
+  settingsFileDeps?: SettingsFileDeps;
   fetchSettings: () => Promise<unknown>;
   fetchDirs: () => Promise<WorkspaceDir[]>;
   addRule: (behavior: Behavior, rule: string, target: SettingsTarget) => Promise<void>;
@@ -604,7 +616,8 @@ export function PermissionsDialog({
   // a genuinely dynamic, non-compile-time-literal string with no width bound: `ruleText` (live-typed),
   // `selectedRule.rule` (a settings-file rule string), the `SOURCE_LABELS[...] ?? selectedRule.source`
   // fallback (an unrecognized provenance string, permissionsModel.ts's `source: string`), `selectedDir` (a
-  // workspace path) and `o.desc(cwd)` (the launch cwd, threaded into a destination description). `subViewWidth`
+  // workspace path) and `o.desc(cwd, settingsFileDeps)` (the launch cwd plus the settings seam, threaded into
+  // a destination description). `subViewWidth`
   // is the same chrome every one of these boxes actually spends — `PERMISSIONS_FRAME_INSET`'s
   // `borderStyle="round"` + `paddingX={1}`, both sides — and `clipRowText` (newline-safe, unlike a bare
   // `truncateLabel`) is the general clip this file already reaches for elsewhere (`clipSegments`'s own
@@ -632,7 +645,7 @@ export function PermissionsDialog({
       {DEST_OPTIONS.map((o, i) => (
         <Box key={o.label} flexDirection="column">
           <Text color={i === destIdx ? ACCENT : undefined}>{i === destIdx ? "❯ " : "  "}{o.label}</Text>
-          <Text dimColor>    {clipRowText(o.desc(cwd), Math.max(1, subViewWidth - 4))}</Text>
+          <Text dimColor>    {clipRowText(o.desc(cwd, settingsFileDeps), Math.max(1, subViewWidth - 4))}</Text>
         </Box>
       ))}
       <Text dimColor>{RULE_FLOW_FOOTER}</Text>

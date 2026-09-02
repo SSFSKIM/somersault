@@ -1868,7 +1868,7 @@ export function ChatApp({ makeSession, client, onDetach, initialPrompt, hookOpts
                     onOpenModelPicker={openModelPicker} savePrefs={deps?.savePrefs} rows={overlayRows()} columns={terminalColumns()} />
                 : state.permissions.open
                 ? <PermissionsDialog tab={state.permissions.tab ?? "Allow"} onTabChange={setPermissionsTab}
-                    denials={state.denials} cwd={cwd}
+                    denials={state.denials} cwd={cwd} settingsFileDeps={deps?.settingsFileDeps}
                     fetchSettings={fetchPermSettings} fetchDirs={fetchPermDirs}
                     addRule={addPermRule} removeRule={removePermRule} removeDir={removeWorkspaceDir}
                     addDirValidate={addDirValidate} confirmAddDir={confirmAddDir} cancelAddDir={cancelAddDir}
