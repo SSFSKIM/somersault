@@ -2971,13 +2971,18 @@ control-protocol arms (hand-counted, wrong by three). Both of those were fixed t
 is this one: **`research/tools/extract-prompt-sections.ts` derives the inventory from the pin** into
 `research/fixtures/prompt-sections-2.1.251.json`, and the gate re-derives it every run.
 
-The real shape is **27 dynamic section records, a six-element static head and a two-element tail.**
+The real shape is **27 dynamic section records and a six-element static head**, assembled by a
+five-element return array: the static head (a conditional spread, six producers in its else arm and
+one, `L8t`, in its then arm), two single-element conditional spreads (`mQn` for
+`excludeDynamicSections`, `wO` for the boundary sentinel), the dynamic set itself, and **one**
+element after it, `kKe(t)`. The wave first wrote "a two-element tail", which miscounts the return
+array: one element follows the dynamic set, not two.
 
 The tool names nothing. It finds the section-RECORD CONSTRUCTOR by shape — a two-parameter function
 whose whole body returns `{name: p0, compute: p1, …}`, of which there is exactly one graph-wide —
 and then the one top-level function that calls it ten or more times with two arguments. **The naive
 version of the second pass is not unique and its top hit is a decoy**: the attachment-list builder in
-the same chunk makes 46 two-argument calls to an identically shaped runner and outranks the real
+the same chunk makes 47 two-argument calls to an identically shaped runner and outranks the real
 target. Requiring the callee to carry a `compute` property collapses three candidates to one. That
 near-miss is recorded in the tool, because a shape-based extractor's real failure mode is a
 plausible impostor rather than a miss.
@@ -3022,6 +3027,59 @@ The capture inventory refuses an undeclared free variable, so the single-caller 
 as an owned `pure-helper` — derived, but neither forwarded nor called — which also keeps §5
 footprinting its upstream declaration.
 
+**Two oracle preludes bind upstream bodies to OWNED constants, which is a deliberate exception to
+C7's rule.** The standing rule is that an extracted upstream body is bound to UPSTREAM's own helpers,
+never the wave's, so the oracle cannot share an input with the thing it grades. `M8t`'s prelude
+declares the nine tool-name identifiers from the owned `TASK_CREATE_TOOL`/`BASH_TOOL`/… constants,
+and `C8t`'s declares `rKe`/`jfe` from the owned `AGENT_IDENTITY`/`SECURITY_POLICY`. Both are
+`primitive` captures — tool names and two prose constants — and every one of them is compared against
+its upstream-derived value by `assertGraphValue` **on every delegation the corpus makes**, which is
+the check the taxonomy assigns to `primitive`. So the coverage is real and lives one layer down; what
+is exceptional is only where it lives. Logged in `docs/tech-debt-tracker.md` as C7's one tolerated
+exception, with that reason, so a later reader does not read it as a false green.
+
+### The 27 dynamic records: what the fixture carries, and the three gaps that are takeable today
+
+The wave record first said "the fixture says why each of the 27 dynamic records is or is not
+takeable". **It does not.** The fixture carries SHAPE — for each record its name expression, whether
+it sits behind a conditional spread, what its thunk produces (`call`, `constant`, `gated`, `inline`)
+and, where a producer resolves, its chunk, byte span and declaration kind. The reason each record is
+or is not takeable was a single class-level sentence in the ledger note, and that sentence was wrong
+in two ways.
+
+**It is wrong as arithmetic.** "Four are inline expressions or cross-chunk requires with nothing to
+excise" counts three: ONE inline thunk (`endconv_deferred_hint`, which resolves to no named producer
+at all) and TWO cross-chunk producers (`memory` → `pKe` in `chunk-9e2ns8ty.js`, and
+`subagent_steer_delegation` → `Rnr` in `chunk-bsdtxcdc.js`).
+
+**It is wrong as a reason.** "The rest are gated behind experiments, background jobs or remote
+surfaces the corpus does not enter" is false for records the corpus RENDERS. Probing each producer's
+prose literals against the `m1-sysprompt-preset` cassette, **nine of the 27 records render today**:
+
+| record | producer | bytes | shape | status |
+|---|---|---|---|---|
+| `communication…` | `d8t` | 4,213 | call | RENDERS — candidate, anchor not yet measured |
+| `pronouns` | `y8t` | 373 | constant | RENDERS — `variable-declarator` shape |
+| `session_guidance…` | `O8t` | **1,447** | call | **RENDERS — TAKEABLE NOW** |
+| `memory…` | `pKe` | 4,159 | call, cross-chunk | RENDERS — the port-heavy S-module; the one honest deferral in the old sentence |
+| `env_info_static` / `env_info_simple` ×2 | `ZGe` (55) / `H8t` (127) | — | call | **RENDERS — TAKEABLE NOW** (`# Environment`) |
+| `context_management` | `G8t` | 291 | constant | **RENDERS — TAKEABLE NOW** |
+| `act_dont_rederive` | `N8t` | 283 | gated constant | RENDERS — `variable-declarator` shape |
+
+The other eighteen do not render on this corpus, and for most of them the old class reason holds:
+`brief`, `focus_mode`, `language`, `bg-session`, `scratchpad` and the three `heron_brook` /
+`brook_heron` / `willow_tern` records are gate- or experiment-guarded, and `delivering_work_max`,
+`overcorrection`, `subagent_steer_delegation`, `autonomy_append`, `action_caution`,
+`task_continuity` and `tool_param_json` are prose behind conditions this corpus does not create.
+Those are still OPEN with a named condition rather than dead.
+
+**So: three named TAKEABLE-NOW gaps for a later completions pass** — `session_guidance` (1,447 B),
+`context_management` (291 B) and the `env_info` family — each rendered by an existing scenario, so
+each is gradeable the day it is taken, no new recording needed. The fixture stays a shape artifact
+and this table carries the reasons, because takeability is a two-input judgment: shape comes from the
+pin, rendering comes from the cassette, and the fixture is pin-keyed with a gate phase that FAILs on
+any diff — binding it to corpus state would make a re-recording stale a pin fixture.
+
 ### Segment compaction: an ownability ceiling, and the campaign had the wrong function
 
 W4 left three adjudicated branch outcomes — `user_context`, `messages_summarized`, and the
@@ -3040,10 +3098,21 @@ subject changes.
 interactive session controller that calls a host-required guard before it, reached only as a prop of
 an Ink dialog that a double-Escape keypress opens. Ruled out by enumeration rather than by argument:
 all 52 control-protocol arms filtered for the symbol (zero hits — and `rewind_conversation`, the
-tempting one, truncates rather than summarizes), all nineteen `Query` methods and the whole option
-surface, the PreCompact hook (whose trigger union has two values and which `E4n` calls with a
-hardcoded `"manual"`), and the registered slash-command list, which has no `rewind` and no
-`summarize` — "rewind" is a dialog label.
+tempting one, truncates rather than summarizes), all **27** methods the installed SDK's
+`interface Query` declares (`sdk.d.ts` 2522–2837 at 0.3.251 — the wave first said nineteen, counted
+by hand) and the whole option surface, the PreCompact hook (whose trigger union has two values and
+which `E4n` calls with a hardcoded `"manual"`), and the slash-command surface.
+
+**That last one was written wrong the first time and is worth the space.** The wave record said
+"there is no `rewind` or `summarize` command at all — 'rewind' is a dialog label". There is a
+`/rewind` command: `Snr` in `chunk-fy12d89p.js`, described "Restore the code and/or conversation to
+a previous point", aliased `checkpoint` and `undo`, whose `call` is
+`o.onQueryEvent?.({type:"open_message_selector"}), {type:"skip"}` — it asks the host to open exactly
+the dialog above. The verdict survives on two guards the note had not cited: the headless command
+filter `k0t` admits only `type === "local" && supportsNonInteractive`, and `/rewind` declares
+`supportsNonInteractive: !1`, so it is refused before its body runs; and the headless query-event
+sink in `chunk-dvbbv89q.js` is `if (e.type === "open_message_selector") return;`, so even a `call`
+that ran would emit a dropped event. The lesson is in the lessons list below.
 
 **Verdict OPEN, and deliberately not DEAD.** The code is live, both fields are serialized onto the
 wire and read back, and a headless session that RESUMES an interactively-produced transcript will
@@ -3246,8 +3315,11 @@ Named debts the roadmap owes an assignment:
 - **`subsystem/tool-result-validators`** — an `unowned` ledger row with no wave, filed under C4 because
   C4 subdivided it (open since W1).
 - **The preset's prose section builders** behind `OS()` — **six taken by W7.5** (the static head).
-  The inventory is now a pin-keyed fixture: 27 dynamic records remain, and the fixture says why each
-  is or is not takeable rather than leaving the count vague.
+  The inventory is now a pin-keyed fixture carrying each of the 27 remaining dynamic records' SHAPE;
+  the per-record takeability table is in the W7.5 record above, because rendering is measured from
+  the cassette and the fixture is pin-keyed. Three of the 27 are **takeable now**, each already
+  rendered by an existing scenario: `session_guidance` (`O8t`, 1,447 B), `context_management`
+  (`G8t`, 291 B) and the `env_info` family (`ZGe`/`H8t`).
 - **Segment compaction** (named `hRt` here; W7.5 measured the producer to be `E4n` — `hRt` is only
   that path's prompt builder) — three of W4's adjudicated branch outcomes are reachable only through
   it, and W7.5 measured that nothing headless reaches it at all: see

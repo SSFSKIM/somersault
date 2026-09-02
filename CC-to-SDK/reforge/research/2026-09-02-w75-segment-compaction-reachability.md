@@ -122,17 +122,40 @@ value anywhere in the bundle.**
   sendable, and named after the same dialog — but its body validates a target uuid, stops descendant
   tasks, persists an anchor and TRUNCATES the transcript. No summarization request, no boundary. A
   hand-rolled stdio client sending the raw subtype would not reach `E4n` either.
-- **The SDK surface.** All nineteen `Query` methods, every `subtype:"…"` literal in `sdk.mjs`, and
-  the option surface: no compaction method of any kind. `autoCompactEnabled`,
-  `precomputeCompactionEnabled` and `autoCompactWindow` tune the automatic threshold path, which is
-  the 3-argument one; nothing accepts a message anchor or a direction.
+- **The SDK surface.** Every method the installed SDK's `interface Query` declares — **27** of them
+  (`sdk.d.ts` 2522–2837, `@anthropic-ai/claude-agent-sdk` 0.3.251; an earlier draft of this note said
+  nineteen, counted by hand) — plus every `subtype:"…"` literal in `sdk.mjs` and the option surface:
+  no compaction method of any kind. The nearest neighbour is `rewindFiles`, which restores files and
+  never summarizes. `autoCompactEnabled`, `precomputeCompactionEnabled` and `autoCompactWindow` tune
+  the automatic threshold path, which is the 3-argument one; nothing accepts a message anchor or a
+  direction.
 - **Hooks.** `PreCompactHookInput.trigger` is `'manual' | 'auto'` with no third value, and `E4n`
   calls the PreCompact hook with a hardcoded `{ trigger: "manual", customInstructions: null }` — so
   a hook cannot distinguish it, let alone cause it.
 - **Slash commands.** `/compact` loads a module whose `call` routes to the precompute-aware reactive
-  pipeline and lands on the 3-argument constructor call. The registered command-name list contains
-  `compact`, `autocompact`, `context` and `recap`, and no `rewind` or `summarize` command at all —
-  "rewind" is a dialog label, not a command.
+  pipeline and lands on the 3-argument constructor call. **There IS a `/rewind` command** — an
+  earlier draft of this note said there was not, and that was wrong. `chunk-fy12d89p.js` registers
+
+  ```js
+  Snr = { description: "Restore the code and/or conversation to a previous point",
+          name: "rewind", aliases: ["checkpoint", "undo"], type: "local",
+          supportsNonInteractive: !1, load: () => import("…chunk-pn5vyxxp.js") }
+  ```
+
+  whose `call` is `o.onQueryEvent?.({type:"open_message_selector"}), {type:"skip"}` — it asks the
+  host to open the very dialog `handleSummarize` hangs off. It reaches nothing headless because of
+  **two guards, which are the actual reason and are what this bullet now cites**:
+
+  1. **The headless command filter.** `k0t` keeps only commands satisfying
+     `type === "local" && supportsNonInteractive`. `/rewind` declares `supportsNonInteractive: !1`,
+     so a headless session refuses it before its `call` body runs at all.
+  2. **The headless query-event sink drops the event.** Even if the `call` ran, the headless sink in
+     `chunk-dvbbv89q.js` is `if (e.type === "open_message_selector") return;`. Only the REPL's sink
+     opens the selector. So the command's single effect is a no-op off the terminal.
+
+  The general form of the mistake this replaces: **an enumeration that rules something out must cite
+  the guards that rule it out, not the absence of the thing.** "There is no such command" is a
+  negative the healthy case — a command that exists and is refused — does not falsify.
 
 ## Two things this does NOT say
 

@@ -560,3 +560,39 @@ correctness: nothing depends on the arm today.
 effort spent on `zxt` — the watcher-hooks helper both owned watcher dispatchers forward into, already
 named on the ledger gap — buys ownership depth in a subsystem the campaign is actively closing. Revisit
 if a later wave wants control-arm handler BREADTH rather than depth, or if a pin bump separates the twin.
+
+---
+
+## 2026-09-02 — two prompt-section oracle preludes bind upstream bodies to OWNED constants, the one tolerated exception to C7's rule
+
+**Source:** C10.5's boundary review · `reforge/strangle/prompt-parity.test.ts` (the `M8t` and `C8t`
+blocks) · the standing rule from C7's boundary round: *bind extracted upstream bodies to UPSTREAM's
+helpers, never the wave's own*, because an oracle that shares an input with the thing it grades is
+not an oracle.
+
+**What:** both blocks extract the pinned upstream section builder and evaluate it against a prelude
+that declares its free identifiers. For six of the eight W7.5 section splices the prelude declares
+upstream's own bytes. For two it does not:
+
+- `M8t` (`# Using your tools`) declares the nine tool-name identifiers from the OWNED
+  `TASK_CREATE_TOOL` / `TODO_WRITE_TOOL` / `BASH_TOOL` / … constants.
+- `C8t` (the identity/security opener) declares `rKe` and `jfe` from the OWNED `AGENT_IDENTITY` and
+  `SECURITY_POLICY`.
+
+Read alone, that is the shape C7 forbids: if the owned constant drifted from upstream, both sides of
+the comparison would drift together and the oracle would stay green.
+
+**Why it is not a false green:** all eleven identifiers are `primitive` captures, and the taxonomy's
+check for a `primitive` is a per-delegation `assertGraphValue` in the adapter, comparing the value
+DERIVED from the graph against the owned constant on **every request the corpus makes**. So the
+drift these preludes cannot see is caught one layer down, by a check that runs far more often than
+the oracle does. What is exceptional is only where the coverage lives, not whether it exists.
+
+**Cost:** a reader auditing `prompt-parity.test.ts` in isolation cannot tell a deliberate taxonomy
+choice from an oversight, and a future section splice could copy the pattern for a capture that is
+NOT a `primitive` — where no adapter assertion would catch it — without anything objecting.
+
+**Why deferred:** the alternative is re-deriving eleven string constants from the bundle inside the
+oracle, duplicating the manifest's own `derive` regexes to buy a check the adapter already performs
+per request. The honest fix is documentation, which this entry is. Revisit if a prelude ever declares
+a non-`primitive` capture from an owned value — that one would be a real hole.
