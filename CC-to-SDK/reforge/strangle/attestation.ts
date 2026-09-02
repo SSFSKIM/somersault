@@ -258,6 +258,27 @@ export const ATTESTED: AttestedModule[] = [
       "which is what makes this row's port a third execution path rather than a differently-named executor.",
   },
   {
+    module: "hook-json-contract",
+    row: "hook-json-contract",
+    // W7.6a — the layer BENEATH the dispatchers. Measured on the two scenarios
+    // whose hooks answer with a `hookSpecificOutput` AND whose answer changes
+    // what the engine then does: the UserPromptSubmit arm's injected context and
+    // the PermissionRequest arm's deny. Two of eighteen event arms; the other
+    // sixteen, both throwing guards and the whole legacy switch are excluded to
+    // the oracle below.
+    scenarios: ["hooks-prompt-submit", "perm-hook-deny"],
+  },
+  {
+    module: "hook-stderr-tail",
+    row: "hook-stderr-tail",
+    // NO SCENARIO, and the manifest row says why at length: both call sites are
+    // guarded on a hook-output validation error that no corpus command hook
+    // produces, and the INVERTED twin was built and replayed before the verdict
+    // was written. Every branch is excluded to the oracle, which runs the whole
+    // 90-case domain rather than a sample.
+    scenarios: [],
+  },
+  {
     module: "cwd-changed-hooks",
     row: "cwd-changed-hooks",
     scenarios: ["hooks-cwd-change"],
@@ -453,7 +474,430 @@ const W7_MODEL_SWITCH =
 const W7_INITIALIZE_HANDLER =
   "the handshake this corpus sends is nearly bare: the raw driver sends `{subtype:\"initialize\"}` with no configuration at all, and `sysprompt-append` sends one field. So sixteen of the seventeen configuration arms, the whole agent-selection arm and the entire REINITIALIZE half go unreached \u2014 and the reinitialize half is unreachable by construction rather than by budget, because it answers a host RECONNECTING to a session already in flight and nothing in this harness reconnects. Graded by strangle/control-parity.test.ts over eighteen request shapes x both auth-status answers, twelve agent-selection cells (unresolved, already active, built-in, prompt-donating, empty prompt, inherit model, exempt model, allowed model, restricted model, user-pinned model, initial prompt) and eight reinitialize cells (hooks resent or not x host ownership x pending requests present or not), with four controls including a handler that applies configuration during a reinitialize and one whose answer omits the pending-request fields.";
 
+
+// ---- W7.6a: the hook JSON contract, and the stderr tail measured dark -----
+// Five families for the interpreter and one for the helper. Each names the
+// KIND of unreachability, the POPULATION it was measured over, and the oracle
+// block that grades the arm instead — which is the whole bargain §3.1 strikes.
+const W76A_LEGACY_CONTRACT =
+  "THE LEGACY FLAT CONTRACT IS UNRECORDABLE BY CONSTRUCTION on this corpus, and the reason is the seam rather than the budget: every hook a scenario registers answers through the SDK's own callback type or through a command hook writing the documented shape, and both produce the MODERN nested document. Nothing in the corpus emits a top-level `decision`, `continue`, `stopReason`, `systemMessage` or `terminalSequence`, so the whole first third of this function — including the throw on an unknown `decision`, which is one of the three the executor propagates — goes unrendered. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives the legacy switch over every decision value INCLUDING the unknown one, asserts the thrown message, and holds controls on the arms that differ only by which field of the result they set.";
+const W76A_PRETOOL_PREPASS =
+  "THE PreToolUse PRE-PASS IS A SECOND READ OF A FIELD THE CORPUS SETS ONCE. It runs before the event switch, on any document whose `hookSpecificOutput.hookEventName` is PreToolUse, and it is the ONLY place an unknown `permissionDecision` throws — the same switch inside the event arm has no default. The corpus's PreToolUse hooks answer `deny` and nothing else, so the allow/ask/defer clauses, the throw, and the conjunction that copies the top-level reason onto a decided behaviour are all unreached. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives all four decision values plus an unknown one through BOTH switches and holds a control on the asymmetry itself — the value that throws by one route and is silently ignored by the other.";
+const W76A_EVENT_NAME =
+  "THE EVENT-NAME MISMATCH THROW cannot be recorded: it fires when a hook answers with a `hookSpecificOutput.hookEventName` DIFFERENT from the event the executor asked for, and every hook in the corpus answers the event it was invoked on — a scenario would have to register a deliberately mislabelled hook, which buys one throw for a live recording. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives the mismatch on both halves of the guard (an absent expectation, and a present one that disagrees) and asserts the thrown message embeds the WHOLE document rather than the offending field.";
+const W76A_EVENT_ARMS =
+  "SIXTEEN OF THE EIGHTEEN EVENT ARMS ARE UNREACHED, and the two that are reached are the two the corpus has hooks for: the UserPromptSubmit arm's injected context and the PermissionRequest arm's deny. The rest need a hook registered on that event which also ANSWERS with a `hookSpecificOutput` — the dispatchers W5 owns fire the events, but a callback that returns `{continue:true}` reaches none of these assignments. Sixteen live recordings would buy sixteen field copies. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives every arm over its own field set, including the present-but-undefined state most of them produce (the assignment is unconditional, so a hook that says nothing about context is distinguishable from one that was never asked) and the arms that differ only in whether they overwrite the top-level reason.";
+const W76A_BLOCKING_MESSAGE =
+  "THE BLOCKING-MESSAGE ARM needs a result that ended with a `blockingError`, which on this corpus happens only through the PermissionRequest deny — and that path leaves through the arm above rather than through this conditional's true side on the scenarios measured. Graded instead by strangle/hooks-parity.test.ts's hook-json-contract block, which drives both message shapes and asserts the minted attachment's own field set, with the clock and uuid the minter reads stubbed so the comparison is of the fields rather than of the moment.";
+const W76A_STDERR_TAIL =
+  "THE WHOLE FUNCTION IS ADJUDICATED DARK on the manifest row, with the population, the inverted twin and the firing condition written out there: both call sites are guarded on a hook-output VALIDATION ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not 2, and none of the corpus's ten command hooks produces one. The inverted twin was built and replayed before the verdict was written and both covering candidates stayed GREEN, which is the call site never being reached rather than a weak twin. Graded instead by strangle/hooks-parity.test.ts's hook-stderr-tail block, which runs the WHOLE domain rather than a sample — three error texts x five exit codes including `undefined` x six stderr shapes, ninety cases — with seven controls, one per decision the body makes.";
+
 export const EXCLUSIONS: Exclusion[] = [
+  {
+    branch: "hook-json-contract#hookJsonContract@0:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@1:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@1:F",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@2:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@3:taken",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@4:taken",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@6:taken",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@7:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@8:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@9:T",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@9:F",
+    reason: W76A_LEGACY_CONTRACT,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@10:T",
+    reason: W76A_PRETOOL_PREPASS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@11:T",
+    reason: W76A_PRETOOL_PREPASS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@18:taken",
+    reason: W76A_PRETOOL_PREPASS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@19:T",
+    reason: W76A_PRETOOL_PREPASS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@20:T",
+    reason: W76A_PRETOOL_PREPASS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@22:T",
+    reason: W76A_EVENT_NAME,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@23:F",
+    reason: W76A_EVENT_NAME,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@5:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@5:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@13:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@14:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@15:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@15:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@16:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@17:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@24:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@25:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@25:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@26:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@26:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@27:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@27:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@28:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@28:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@29:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@29:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@30:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@30:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@31:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@31:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@32:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@32:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@34:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@35:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@36:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@36:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@37:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@37:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@38:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@39:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@40:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@40:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@41:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@41:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@42:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@42:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@43:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@43:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@44:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@44:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@45:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@45:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@46:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@46:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@47:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@48:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@49:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@50:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@50:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@51:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@51:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@52:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@52:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@53:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@54:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@55:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@56:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@57:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@59:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@63:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@64:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@64:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@65:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@65:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@66:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@66:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@67:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@68:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@68:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@69:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@69:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@70:T",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@70:F",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@71:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@72:taken",
+    reason: W76A_EVENT_ARMS,
+  },
+  {
+    branch: "hook-json-contract#hookJsonContract@73:T",
+    reason: W76A_BLOCKING_MESSAGE,
+  },
+  {
+    branch: "hook-stderr-tail#hookStderrTail@0:T",
+    reason: W76A_STDERR_TAIL,
+  },
+  {
+    branch: "hook-stderr-tail#hookStderrTail@0:F",
+    reason: W76A_STDERR_TAIL,
+  },
+  {
+    branch: "hook-stderr-tail#hookStderrTail@1:T",
+    reason: W76A_STDERR_TAIL,
+  },
+  {
+    branch: "hook-stderr-tail#hookStderrTail@1:F",
+    reason: W76A_STDERR_TAIL,
+  },
+
   // ---- the subagent-steer arm (Glob, Grep) ---------------------------------
   // `Jk()` resolves in four steps and every one of them is pinned on a graded
   // run: CLAUDE_CODE_THISTLE_GREBE (an env var X6 forbids a child adding),

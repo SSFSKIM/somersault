@@ -188,26 +188,28 @@ export function hookJsonContract(
     switch (specific.hookEventName) {
       case "PreToolUse":
         if (specific.permissionDecision) {
-          // No `default` here: the pre-pass above already refused an unknown
-          // value that reached this arm, and a value that did not reach the
-          // pre-pass cannot reach this switch either.
-          switch (specific.permissionDecision) {
-            case "allow":
-              result.permissionBehavior = "allow";
-              break;
-            case "deny":
-              result.permissionBehavior = "deny";
-              result.blockingError = {
-                blockingError: specific.permissionDecisionReason || json.reason || "Blocked by hook",
-                command,
-              };
-              break;
-            case "ask":
-              result.permissionBehavior = "ask";
-              break;
-            case "defer":
-              result.permissionBehavior = "defer";
-              break;
+          // UPSTREAM HAS NO `default` HERE, and that absence is the contract:
+          // the standalone pre-pass above already threw on an unknown value, so
+          // this switch's no-match path is upstream's own statement that the
+          // second read is not a second guard. Written as an if/else chain
+          // rather than as a defaultless `switch` because the branch
+          // instrumenter refuses one — a no-match path that is an arm of no
+          // clause cannot be marked, and §3.1's inventory has to be complete.
+          // The chain is behaviourally identical and its final `else` is
+          // explicit, which is what makes the no-match path attestable at all.
+          const decision = specific.permissionDecision;
+          if (decision === "allow") {
+            result.permissionBehavior = "allow";
+          } else if (decision === "deny") {
+            result.permissionBehavior = "deny";
+            result.blockingError = {
+              blockingError: specific.permissionDecisionReason || json.reason || "Blocked by hook",
+              command,
+            };
+          } else if (decision === "ask") {
+            result.permissionBehavior = "ask";
+          } else if (decision === "defer") {
+            result.permissionBehavior = "defer";
           }
         }
         // Unconditional, and it OVERWRITES the top-level reason above — with
@@ -245,21 +247,23 @@ export function hookJsonContract(
 
       case "PreModelSwitch":
         if (specific.permissionDecision) {
-          // Three arms, not four: a model switch cannot be DEFERRED.
-          switch (specific.permissionDecision) {
-            case "allow":
-              result.permissionBehavior = "allow";
-              break;
-            case "deny":
-              result.permissionBehavior = "deny";
-              result.blockingError = {
-                blockingError: specific.permissionDecisionReason || json.reason || "Blocked by hook",
-                command,
-              };
-              break;
-            case "ask":
-              result.permissionBehavior = "ask";
-              break;
+          // THREE ARMS, NOT FOUR: a model switch cannot be DEFERRED. And no
+          // `default`, for the same reason the PreToolUse arm has none — written
+          // as an if/else chain so the no-match path is an explicit clause the
+          // branch inventory can carry (§3.1). Here the no-match path is wider
+          // than PreToolUse's: `defer` reaches it, so a hook that defers a model
+          // switch silently sets no behaviour at all.
+          const decision = specific.permissionDecision;
+          if (decision === "allow") {
+            result.permissionBehavior = "allow";
+          } else if (decision === "deny") {
+            result.permissionBehavior = "deny";
+            result.blockingError = {
+              blockingError: specific.permissionDecisionReason || json.reason || "Blocked by hook",
+              command,
+            };
+          } else if (decision === "ask") {
+            result.permissionBehavior = "ask";
           }
         }
         // Guarded, unlike PreToolUse's: this arm does not erase the top-level
@@ -338,6 +342,17 @@ export function hookJsonContract(
 
       case "MessageDisplay":
         result.displayContent = specific.displayContent;
+        break;
+
+      // UPSTREAM HAS NO `default` ON THIS SWITCH EITHER, and the arm is written
+      // out here rather than omitted because §3.1's branch inventory has to be
+      // complete: a no-match path that is an arm of no clause cannot be marked,
+      // so an omitted default is a branch nothing can attest. `default: break`
+      // is behaviourally identical to no default in final position, and it makes
+      // the path explicit — which matters more than usual here, because the
+      // event names arrive from a hook's own JSON and an unrecognised one is a
+      // real input rather than a theoretical one.
+      default:
         break;
     }
   }
