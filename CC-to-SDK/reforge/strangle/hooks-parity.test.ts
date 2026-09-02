@@ -59,6 +59,17 @@
 // keys and a top-level project memory fills three), and the executor requests —
 // where these nine differ from each other far more than their records do.
 //
+// AND WHAT SECTION 3 IS (C10.6 / W7.6a, Stage 0 b-d): three capabilities this
+// oracle lacked, landing BEFORE the executor modules they exist for rather than
+// with them. Upstream's stdout `data` handler is re-hosted so WRITE BOUNDARIES
+// can be scripted — the async-detection latch is one-shot, so byte-equal stdout
+// delivered in a different number of writes is different behaviour. A bounded
+// driver grades the path that NEVER SETTLES, which `drain` would deadlock on.
+// And upstream's shutdown module is re-evaluated per case, which is the
+// module-level-state reset every later stage's replay depends on, proven by a
+// once-per-process arm giving the same verdict twice and a control showing the
+// reset is not a no-op.
+//
 // WHAT THE PORT TRACE IS, since C10.6 / W7.6a: ONE ORDERED EVENT LOG, not a
 // struct of per-port call lists. The retired shape could not see order ACROSS
 // ports — a dispatcher that built its record before taking the activity hold
@@ -2570,16 +2581,390 @@ for (const [row, event] of [
   mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
 }
 
+// ============================================================================
+// 3. THE EXECUTOR ORACLE'S MACHINERY (C10.6 / W7.6a, Stage 0 b–d).
+//
+// Three capabilities the hooks oracle did not have, landing BEFORE the first
+// executor module rather than with it. Each is driven here against upstream's
+// own bytes, because a capability with no consumer is an untested capability
+// and the consumers arrive two waves from now.
+//
+// They are not conveniences. Each one is a path the existing oracle would
+// either mis-grade or HANG on:
+//
+//   (b) stdout WRITE BOUNDARIES. The command arm's async detection latches once,
+//       on the first write after which the accumulated stdout's FIRST LINE
+//       contains a brace. Byte-equal stdout delivered in a different number of
+//       writes is therefore different behaviour, and no surface in this campaign
+//       could express that.
+//   (c) A PATH THAT NEVER SETTLES. Six events await a promise constructed to
+//       never resolve. `drain` would deadlock and the suite would hang, which is
+//       strictly worse than failing.
+//   (d) MODULE-LEVEL STATE. One genuinely process-global flag with a setter and
+//       no clearer, plus keyed-lazy cells. A replay that does not reset them
+//       grades the previous case's residue.
+// ============================================================================
+
+// ---- (b) the stdout write-boundary driver ----------------------------------
+// UPSTREAM'S OWN HANDLER, not a model of it. The `data` handler is an arrow
+// initializer inside the subprocess runner's 7.2 KB body, so it is extracted by
+// its own text and re-hosted in a factory that declares the five closure
+// variables it mutates. Everything else it reads is passed in, which is exactly
+// the shape `ProcessPort` will have when C10.8 owns this.
+{
+  const NQ = extract(ENGINE, "Nq", /async function Nq\([\s\S]{0,80}?\)\{/);
+  void NQ;
+  const handlerSource = extract(
+    ENGINE,
+    "the command arm's stdout data handler",
+    /Tn=\(Yn\)=>\{if\(Sn\+=Yn,fn\+=Yn,!hn\)\{[\s\S]*?catch\(er\)\{[\w$]+\(`Hooks: Failed to parse initial response as JSON: \$\{er\}`\)\}\}\}/,
+  );
+
+  /** Upstream's first-line helper, and the `async` predicate the latch spends. */
+  const upstreamFirstLine = build<(s: string) => string>(
+    extract(readFileSync(join(BUNDLE_MODULES, "chunk-04aem4bh.js"), "utf8"), "wr", /function wr\([\w$]+\)\{return St\([\w$]+,`\n`\)\}/),
+    extract(readFileSync(join(BUNDLE_MODULES, "chunk-04aem4bh.js"), "utf8"), "St", /function St\([\w$]+,[\w$]+\)\{let [\w$]+=[\w$]+\.indexOf\([\w$]+\);return [\w$]+===-1\?[\w$]+:[\w$]+\.slice\(0,[\w$]+\)\}/),
+  );
+  const upstreamIsAsync = build<(v: Record<string, unknown>) => boolean>(
+    extract(ENGINE, "mS", /function mS\([\w$]+\)\{return"async"in [\w$]+&&[\w$]+\.async===!0\}/),
+  );
+
+  eq("the first-line helper cuts at the first newline", upstreamFirstLine('{"a":1}\n{"b":2}'), '{"a":1}');
+  eq("…and returns the whole buffer when there is none", upstreamFirstLine('{"a":1}'), '{"a":1}');
+  mustDiffer("the first line taken as the LAST line", upstreamFirstLine('{"a":1}\n{"b":2}'), '{"b":2}');
+  eq("the async predicate wants the literal true", upstreamIsAsync({ async: true }), true);
+  eq("…and refuses a truthy non-true", upstreamIsAsync({ async: 1 } as unknown as Record<string, unknown>), false);
+  mustDiffer("the async predicate accepting any truthy value", upstreamIsAsync({ async: 1 } as unknown as Record<string, unknown>), true);
+
+  /**
+   * Re-host the handler with its five mutated closure variables declared, and
+   * return both a feeder and the state the runner would go on to read.
+   */
+  interface Feeder {
+    feed: (chunk: string) => void;
+    state: () => { stdout: string; output: string; latched: boolean; backgrounded: boolean };
+  }
+  const makeFeeder = (forceSync: boolean, log: EventLog): Feeder => {
+    const factory = eval(
+      `(function make(wr,V,mS,b,n,B,Kxt,ht,jn,A,dn,t,r,nt,F){` +
+        `let Sn="",yn="",fn="",hn=!1,Lt=!1,ct=null;` +
+        `let ${handlerSource};` +
+        `return {feed:Tn,state:()=>({stdout:Sn,output:fn,latched:hn,backgrounded:Lt})};` +
+        `})`,
+    ) as (...a: unknown[]) => Feeder;
+    return factory(
+      upstreamFirstLine,
+      JSON.parse,
+      upstreamIsAsync,
+      (v: unknown) => JSON.stringify(v),
+      (m: string) => log.record("log", [m]),
+      forceSync,
+      (spec: Record<string, unknown>) => {
+        log.record("adoptBackground", [spec]);
+        return true;
+      },
+      { pid: 4242, stdout: { removeListener: () => log.record("stdoutOff", []) }, stderr: { removeListener: () => log.record("stderrOff", []) } },
+      () => undefined,
+      "hook-1",
+      "echo",
+      "PreToolUse",
+      "a hook",
+      "echo hi",
+      undefined,
+    );
+  };
+
+  /** Feed one payload under one boundary script; report the verdict and the log. */
+  const runBoundary = (payload: string, boundaries: number[], forceSync = false) => {
+    const log = new EventLog();
+    const f = makeFeeder(forceSync, log);
+    const writes = writeInChunks(f.feed, payload, boundaries);
+    return { writes, ...f.state(), log };
+  };
+
+  // THE RED DIRECTION, and it is the whole point of the capability: the same
+  // bytes, two boundary scripts, two different verdicts. The document has a
+  // NESTED object, so a write ending at its inner brace leaves a first line
+  // that already contains `}` — the latch is spent on a truncated document, the
+  // parse throws into a catch that only logs, and the complete document that
+  // arrives next is never examined.
+  const NESTED = '{"a":{"b":1},"async":true}';
+  const whole = runBoundary(NESTED, []);
+  const split = runBoundary(NESTED, [NESTED.indexOf("}") + 1]);
+  eq("one write: the whole document parses and the async hook is adopted", { writes: whole.writes, latched: whole.latched, backgrounded: whole.backgrounded }, {
+    writes: 1,
+    latched: true,
+    backgrounded: true,
+  });
+  eq("two writes split after the NESTED brace: same bytes, latch spent, never adopted", { writes: split.writes, latched: split.latched, backgrounded: split.backgrounded }, {
+    writes: 2,
+    latched: true,
+    backgrounded: false,
+  });
+  eq("…and the accumulated stdout is byte-identical across both", whole.stdout, split.stdout);
+  mustDiffer("a replay that reproduces stdout BYTES and not stdout WRITES", whole.backgrounded, split.backgrounded);
+  eq("the truncated parse is swallowed into a debug line, not raised", split.log.count("adoptBackground"), 0);
+
+  // THE MECHANISM THE DESIGN FIRST GOT WRONG, stated as a test so it stays
+  // corrected. Splitting mid-KEY — `{"async"` then `:true}` — behaves
+  // IDENTICALLY to one write, because the first write leaves no brace in the
+  // first line and the handler returns without spending the latch. The
+  // sensitivity is real and narrower than "any two writes differ".
+  const FLAT = '{"async":true}';
+  const midKey = runBoundary(FLAT, [FLAT.indexOf(":")]);
+  const flatWhole = runBoundary(FLAT, []);
+  eq("split mid-key is indistinguishable from one write", { latched: midKey.latched, backgrounded: midKey.backgrounded }, { latched: flatWhole.latched, backgrounded: flatWhole.backgrounded });
+  eq("…and it really was two writes", midKey.writes, 2);
+  mustDiffer("every boundary treated as significant, which would make this case differ", midKey.backgrounded, !flatWhole.backgrounded);
+
+  // The latch is ONE-SHOT across the whole call, not per line: a first line
+  // that parses to a non-async document spends it too, so a hook that prints a
+  // banner and then an async document is never adopted.
+  const banner = runBoundary('{"ok":1}\n{"async":true}\n', []);
+  eq("a non-async first line spends the latch for good", { latched: banner.latched, backgrounded: banner.backgrounded }, { latched: true, backgrounded: false });
+  mustDiffer("the handler re-reading later lines", banner.backgrounded, true);
+
+  // …and the forceSyncExecution arm: detected, deliberately not adopted.
+  const forced = runBoundary(FLAT, [], true);
+  eq("forceSyncExecution detects the async hook and waits anyway", { latched: forced.latched, backgrounded: forced.backgrounded }, { latched: true, backgrounded: false });
+  mustDiffer("forceSyncExecution ignored", forced.backgrounded, true);
+}
+
+
+// ---- (d) module-level state, and the reset between cases -------------------
+// The obligation comes with the wave (design §7 item 7), and the derivation
+// narrowed it: `research/fixtures/hook-helper-belt-<pin>.json` lists six cells
+// the layer reaches and exactly ONE is genuinely process-global — the shutdown
+// module's `committed` flag, whose whole chunk is a class with one boolean, a
+// setter, a reader and a promise constructed to never resolve. It has a setter
+// and NO clearer anywhere in the bundle, so a replay that commits shutdown in
+// one case has committed it for the life of the process.
+//
+// The reset is therefore STRUCTURAL rather than a list of assignments: the
+// module's own bytes are re-evaluated per case, so each case gets its own
+// class instance and its own never-settling promise. The forwarder discipline
+// is the same one the ports use, and for the same reason — a body `eval`ed once
+// holds its first binding forever.
+interface ModuleState {
+  isShuttingDown: () => boolean;
+  commitShutdown: () => void;
+  hang: () => Promise<never>;
+  /** the session-scratch set the once-per-process spawn-failure arm consults */
+  surfacedSpawnFailures: Set<string>;
+}
+
+const SHUTDOWN_CHUNK = readFileSync(join(BUNDLE_MODULES, "chunk-29shcjw2.js"), "utf8");
+/**
+ * Upstream's shutdown module, whole. It is four declarations, so it is taken as
+ * a unit rather than function by function: the flag, the reader, the setter and
+ * the never-settling promise are one another's meaning.
+ */
+const SHUTDOWN_SOURCE = extract(
+  SHUTDOWN_CHUNK,
+  "the shutdown module",
+  /class [\w$]+\{committed=!1\}var [\w$]+=new [\w$]+;function [\w$]+\(\)\{return [\w$]+\.committed\}function [\w$]+\(\)\{[\w$]+\.committed=!0\}var [\w$]+=new Promise\(\(\)=>\{\}\);function [\w$]+\(\)\{return [\w$]+\}/,
+);
+const SHUTDOWN_NAMES = [...SHUTDOWN_SOURCE.matchAll(/function ([\w$]+)\(\)/g)].map((m) => m[1]);
+
+function freshModuleState(): ModuleState {
+  const mod = eval(`(() => { ${SHUTDOWN_SOURCE} return {read:${SHUTDOWN_NAMES[0]},commit:${SHUTDOWN_NAMES[1]},hang:${SHUTDOWN_NAMES[2]}}; })()`) as {
+    read: () => boolean;
+    commit: () => void;
+    hang: () => Promise<never>;
+  };
+  return { isShuttingDown: mod.read, commitShutdown: mod.commit, hang: mod.hang, surfacedSpawnFailures: new Set<string>() };
+}
+
+let STATE: ModuleState = freshModuleState();
+/** What the oracle calls between cases. Every later stage's replay depends on it. */
+const resetModuleState = (): void => {
+  STATE = freshModuleState();
+};
+
+{
+  eq("the shutdown module declares exactly three functions", SHUTDOWN_NAMES.length, 3);
+  eq("…the reader answers false on a fresh instance", freshModuleState().isShuttingDown(), false);
+  mustDiffer("a shutdown module that starts committed", freshModuleState().isShuttingDown(), true);
+  eq("the whole module carries no clearer", /committed=!1[^]*?committed=!0/.test(SHUTDOWN_SOURCE) && !/committed=!1;/.test(SHUTDOWN_SOURCE.slice(SHUTDOWN_SOURCE.indexOf("=!0"))), true);
+
+  // The once-per-process arm, graded against upstream's own bytes: the FIRST
+  // `event:command` spawn failure is surfaced and the second is not. That is
+  // the arm design §5 names as gradeable "only by sequencing two identical
+  // failures in one scenario, with the port resettable between replays".
+  const upstreamNoteFailure = build<(event: string, command: string) => boolean>(
+    extract(ENGINE, "Vxt", /function Vxt\([\w$]+,[\w$]+\)\{let [\w$]+=mxn\(\),[\w$]+=`\$\{[\w$]+\}:\$\{[\w$]+\}`;if\([\w$]+\.has\([\w$]+\)\)return!1;return [\w$]+\.add\([\w$]+\),!0\}/),
+    "const mxn=()=>globalThis.__p_surfacedSpawnFailures();",
+  );
+  (globalThis as { __p_surfacedSpawnFailures?: () => Set<string> }).__p_surfacedSpawnFailures = () => STATE.surfacedSpawnFailures;
+
+  /** One case: the same spawn failure twice, which is the whole observable. */
+  const twice = (): boolean[] => [upstreamNoteFailure("PreToolUse", "echo hi"), upstreamNoteFailure("PreToolUse", "echo hi")];
+
+  resetModuleState();
+  const firstRun = twice();
+  eq("the same spawn failure is surfaced once and then suppressed", firstRun, [true, false]);
+  mustDiffer("a surfaced-failure set that forgets, so both are messaged", firstRun, [true, true]);
+  mustDiffer("the key built from the event alone, so a second COMMAND is suppressed too", upstreamNoteFailure("PreToolUse", "echo other"), false);
+
+  // THE PROOF THE OBLIGATION ASKS FOR: the same case, run again after a reset,
+  // gives the same verdict. Without this every later stage's second replay
+  // grades the first replay's residue.
+  resetModuleState();
+  const secondRun = twice();
+  eq("the same case after a reset gives the same verdict", secondRun, firstRun);
+
+  // …and the control that says the reset DOES something. A twin that cannot be
+  // observed proves nothing, and it fails in the quiet direction (C9).
+  const withoutReset = twice();
+  mustDiffer("the reset skipped: the second run grades the first run's residue", withoutReset, firstRun);
+  eq("…and what it grades instead is a fully suppressed pair", withoutReset, [false, false]);
+
+  // The process-global flag, same shape. A case that commits shutdown must not
+  // reach the next one.
+  resetModuleState();
+  STATE.commitShutdown();
+  const leaked = STATE.isShuttingDown();
+  resetModuleState();
+  eq("a committed shutdown does not survive the reset", { before: leaked, after: STATE.isShuttingDown() }, { before: true, after: false });
+  mustDiffer("a reset that reuses the module instance, so shutdown leaks", STATE.isShuttingDown(), true);
+}
+
+// ---- (c) grading the path that never settles -------------------------------
+// The shutdown wrapper is 261 bytes and it is where the whole behaviour lives.
+// `Qxt` and `AE` do not consult the flag themselves on the streaming path — the
+// wrapper the twenty-one dispatcher splices already capture as `executeHooks`
+// does — which is a correction to the design pass worth stating: the arm that
+// hangs is not inside the executor.
+{
+  // ORDER MATTERS HERE, and getting it wrong cost a debugging round worth
+  // writing down. `build` evaluates its bindings ONCE, at build time, so a
+  // binding that is a VALUE rather than a thunk captures whatever the global
+  // held then. Binding the allowlist as `c6n=globalThis.__p_shutdownHangEvents`
+  // before that global was assigned captured `undefined`, and `c6n.has(...)`
+  // then threw a TypeError that the comparison could not see because it
+  // compared yields and the return value but not the THROW. So: every global
+  // is assigned first, every binding that can be a thunk is one, and every
+  // comparison below carries `threw`.
+  const HANG_EVENTS = build<Set<string>>(
+    `function hangEvents(){return ${extract(ENGINE, "c6n", /new Set\(\["PreToolUse","PermissionRequest","UserPromptSubmit","UserPromptExpansion","TaskCompleted","TeammateIdle"\]\)/)}}`,
+  ) as unknown as () => Set<string>;
+
+  const g = globalThis as Record<string, unknown>;
+  g.__p_isShuttingDown = () => STATE.isShuttingDown();
+  g.__p_hang = () => STATE.hang();
+  g.__p_shutdownHangEvents = HANG_EVENTS();
+
+  const streamed: unknown[] = [{ decision: "continue" }, { decision: "second" }];
+  g.__p_streamingExecutor = async function* () {
+    for (const r of streamed) yield r;
+    return { executed: streamed.length };
+  };
+
+  const upstreamShutdownWrapper = build<(req: unknown) => AsyncGenerator<unknown, unknown>>(
+    extract(ENGINE, "jy", /async function\*jy\([\w$]+\)\{let [\w$]+=\(\)=>xo\(\)&&![\w$]+\.signal\?\.aborted;[\s\S]*?if\([\w$]+\(\)\)await pm\(\)\}/),
+    "const xo=()=>globalThis.__p_isShuttingDown(),pm=()=>globalThis.__p_hang(),Xxt=(r)=>globalThis.__p_streamingExecutor(r),c6n=globalThis.__p_shutdownHangEvents;",
+  );
+  const upstreamAwaitingGuard = build<(event: string, signal?: { aborted: boolean }) => boolean>(
+    extract(ENGINE, "Yxt", /function Yxt\([\w$]+,[\w$]+\)\{return [\w$]+!=="SessionEnd"&&xo\(\)&&![\w$]+\?\.aborted\}/),
+    "const xo=()=>globalThis.__p_isShuttingDown();",
+  );
+
+  const request = (event: string) => ({ hookInput: { hook_event_name: event }, signal: undefined });
+
+  // The allowlist is upstream's, read out of the bundle rather than retyped.
+  eq("the hang allowlist is the six events upstream names", [...HANG_EVENTS()].sort(), [
+    "PermissionRequest",
+    "PreToolUse",
+    "TaskCompleted",
+    "TeammateIdle",
+    "UserPromptExpansion",
+    "UserPromptSubmit",
+  ]);
+  mustDiffer("SessionEnd read into the hang allowlist", HANG_EVENTS().has("SessionEnd"), true);
+
+  // 1. HEALTHY. Not shutting down: the wrapper is transparent.
+  resetModuleState();
+  const healthy = await drainBounded(upstreamShutdownWrapper(request("PreToolUse")));
+  eq("not shutting down: the wrapper streams its executor through", { yielded: healthy.yielded, settled: healthy.settled, returned: healthy.returned, threw: healthy.threw }, {
+    yielded: streamed,
+    settled: true,
+    // AND THE COMPLETION VALUE IS DROPPED, on BOTH arms, which is behaviour
+    // rather than an artifact of the stub. The allowlisted arm reads the
+    // executor with `for await (… of Xxt(e)) { yield r }` and never sees the
+    // return; the other arm writes `yield* Xxt(e); return`, where the bare
+    // `return` discards the value the delegation just produced. So no caller of
+    // this wrapper can observe what the executor returned. C8 found this exact
+    // shape as a real DEFECT in a shipped module (`return yield*` written where
+    // upstream discards); here it is upstream's own, on both sides, and an
+    // owned copy that "fixed" it would diverge.
+    returned: undefined,
+    threw: undefined,
+  });
+  const forwarding = await drainBounded(upstreamShutdownWrapper(request("PostToolUse")));
+  eq("…and the delegating arm drops it too, because its `return` is bare", forwarding.returned, undefined);
+  mustDiffer("either arm rewritten as `return yield*`, which would forward it", healthy.returned, { executed: 2 });
+  propertyControl("a HEALTHY path must FAIL the non-settling mode", nonSettling(healthy));
+
+  // 2. THE NON-SETTLING PATH. Shutting down on an allowlisted event: no yields,
+  // and it never settles. The bounded driver is what makes this gradeable at
+  // all — `drain` would deadlock the suite.
+  resetModuleState();
+  STATE.commitShutdown();
+  const hung = await drainBounded(upstreamShutdownWrapper(request("PreToolUse")));
+  property("the shutdown arm produces no yields and does not settle", nonSettling(hung));
+  eq("…and the bounded driver reports it as unsettled rather than hanging the suite", { yielded: hung.yielded, settled: hung.settled, threw: hung.threw }, { yielded: [], settled: false, threw: undefined });
+  mustDiffer("the shutdown arm read as an ordinary empty return", hung.settled, true);
+
+  // 3. THE OTHER TWENTY-SEVEN EVENTS return SILENTLY under the same flag — a
+  // different behaviour that produces the same zero yields, which is exactly
+  // the pair an output-only comparison cannot separate.
+  resetModuleState();
+  STATE.commitShutdown();
+  const silent = await drainBounded(upstreamShutdownWrapper(request("PostToolUse")));
+  eq("a non-allowlisted event returns silently under shutdown", { yielded: silent.yielded, settled: silent.settled, returned: silent.returned, threw: silent.threw }, {
+    yielded: [],
+    settled: true,
+    returned: undefined,
+    threw: undefined,
+  });
+  propertyControl("the silent-return arm must FAIL the non-settling mode", nonSettling(silent));
+  eq("the two shutdown arms are INDISTINGUISHABLE by what they yield", silent.yielded, hung.yielded);
+  mustDiffer("…and are told apart only by settling, which is what this mode adds", silent.settled, hung.settled);
+
+  // 4. AN ABORTED CALLER short-circuits the whole predicate, so a cancelled hook
+  // dispatch under shutdown neither hangs nor goes silent.
+  resetModuleState();
+  STATE.commitShutdown();
+  const aborted = await drainBounded(
+    upstreamShutdownWrapper({ hookInput: { hook_event_name: "PreToolUse" }, signal: { aborted: true } }),
+  );
+  eq("an already-aborted caller streams through even under shutdown", { yielded: aborted.yielded, settled: aborted.settled, threw: aborted.threw }, { yielded: streamed, settled: true, threw: undefined });
+  propertyControl("the aborted path must FAIL the non-settling mode", nonSettling(aborted));
+
+  // 5. THE AWAITING EXECUTOR'S GUARD is a different rule with the same flag:
+  // SessionEnd is exempt so shutdown can still run it, and everything else
+  // hangs with no allowlist at all.
+  resetModuleState();
+  STATE.commitShutdown();
+  const guarded = [...HANG_EVENTS(), "PostToolUse", "SessionEnd", "PreCompact"].sort().map((e) => [e, upstreamAwaitingGuard(e)] as const);
+  eq("the awaiting guard exempts SessionEnd and nothing else", guarded.filter(([, v]) => !v).map(([e]) => e), ["SessionEnd"]);
+  mustDiffer("the awaiting guard reusing the streaming allowlist", guarded.filter(([, v]) => v).map(([e]) => e).length, HANG_EVENTS().size);
+  eq("…and an aborted signal exempts every event", upstreamAwaitingGuard("PreToolUse", { aborted: true }), false);
+  resetModuleState();
+  eq("…as does not shutting down", upstreamAwaitingGuard("PreToolUse"), false);
+  mustDiffer("a guard that hangs whenever the flag is clear", upstreamAwaitingGuard("PreToolUse"), true);
+}
+
 // ---- verdict ----------------------------------------------------------------
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
-if (checks < 721) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 134) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (checks < 750) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
+if (controls < 154) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
 // The pairing property is stated on every case, so its floor is the comparison
 // count's shape: two statements (upstream and owned) per graded case, plus the
 // two synthetic ones. And `pairedCases` is the floor that matters more — a
 // property nothing ever satisfies non-vacuously is a property nobody tested.
-if (properties < 452) failures.push(`only ${properties} property statement(s) ran`);
+if (properties < 453) failures.push(`only ${properties} property statement(s) ran`);
 if (pairedCases < 11) failures.push(`only ${pairedCases} case(s) carried a lifecycle edge — the pairing property is vacuous on the rest`);
 
 console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s), ${properties} property statement(s) over ${pairedCases} paired case(s) ===`);
