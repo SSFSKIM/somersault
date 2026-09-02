@@ -246,11 +246,20 @@ function readCorpus(): CorpusFacts {
   // times someone ran the gate rather than on what the corpus contains.
   //
   // The first version of this filter dropped every name CONTAINING `-observed-`
-  // and silently took seventeen real recordings with it: `m3-flip-observed-*`
-  // (the flip-liveness measurements, including the ONE cassette in which
-  // `PowerShell` is presented at all) and `m2-xresume-observed-*` share the
-  // substring for an unrelated reason. A population defined by a substring is a
-  // population whose boundary nobody has looked at.
+  // and silently took seventeen files with it: `m3-flip-observed-*` (fifteen
+  // flip-liveness measurements, including the ONE cassette in which `PowerShell`
+  // is presented at all) and `m2-xresume-observed-*` (two) share the substring
+  // for an unrelated reason. A population defined by a substring is a population
+  // whose boundary nobody has looked at.
+  //
+  // They are OBSERVATION DUMPS, not record-mode cassettes — a replay proxy wrote
+  // them from what the engine actually sent while replaying one — and they are
+  // in the corpus for that reason and not by being recordings: the bodies are
+  // real bodies from a real engine, which is all the presentation side asks. The
+  // distinction is worth keeping because it is exactly what made them dangerous:
+  // a dump is written per RUN, so one that is appended to instead of replaced
+  // makes the denominator a function of how often the gate ran (see
+  // `startReplayProxy`, which now truncates).
   const REPLAY_BYPRODUCT = /-observed-(A|A2|B)\.jsonl$/;
   const files = readdirSync(CASSETTE_DIR).filter((f) => f.endsWith(".jsonl") && !REPLAY_BYPRODUCT.test(f)).sort();
   const shapes = new Map<string, { bodies: number; files: Set<string>; tools: string[] }>();
