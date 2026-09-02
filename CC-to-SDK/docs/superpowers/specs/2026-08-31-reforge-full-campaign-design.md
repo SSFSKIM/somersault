@@ -59,9 +59,9 @@ zero JSX imports — holds essentially the whole agent; satellites add a few hun
 | Control-protocol switch (`control_request`/`control_response` subtypes) | high (one `switch` with literal cases) | `fy12d89p` @38.7k + `mfkbzdqf`, `kje2nmp8` |
 | Moat tools: `SendMessage`/`ListAgents`, `Workflow`, `ScheduleWakeup`, TaskCreate family, `Skill`, plan/worktree tools | per-tool (scenario-led) | `fy12d89p` various |
 | Session/transcript storage; resume/fork | a 31 KB writer class (136 members, ALL public) + a host-scoped store object + a 6.7 KB pure fold to a 39-field session projection (the W9 scout 2026-09-02; the original read "module-level (Result-monad fs layer)" — that layer is the gate-dead v5 backend) | `fy12d89p` @4–10k (chunk-relative pretty lines ≈3,545–9,900 — CORRECT, do not "fix"; 172,430 B contiguous) + `1x1tv6fk` (path derivation, 2.8 KB). `trstwd25` REMOVED (it is the remote-container dir-sync git worker, §1.2 periphery); `d78hxkfm` REMOVED to an exclusion (generic storage-v5 backend behind `tengu_hover_rest`, default false, no env override) |
-| Bash executor (exec/timeout/background) + command-safety AST | high (ES class) / medium | `fy12d89p` @2.9k, @100–105k; `w7bq1qyb` |
-| MCP adapter (thin layer over the vendored MCP SDK) | high | `4mp04j81`, `1bxday80` |
-| Slash commands + skills loading | high | `fy12d89p` @10–12.5k + `g461tywa` |
+| Bash executor (exec/timeout/background) + command-safety AST | four tiers (W10 scout 2026-09-02): S-chunk for the parser, S-method for the safety chain/prompt/tool object (an OBJECT LITERAL, 26 members, zero private fields — not a class), owned data for 17 KB of flag tables, S-module for the process core (four small classes, 11.2 KB, where the private fields actually live) | `fgwne0fb` (62,907 B — the hand-written bash parser, 7 exports, 1 import, zero I/O; never named before), `9e2ns8ty` @108,945–162,000 (53 KB classifier region; the rest of that chunk is W6's), `fy12d89p` @100–105k (correct) + four regions totalling 238 KB; `13d9rycm` as a shared edge. `w7bq1qyb` REMOVED — it is the `claude plugin eval` harness (287 KB leave the row; ~354 KB remain) |
+| MCP adapter (thin layer over the vendored MCP SDK) | "thin" survives; "high seam quality" does not — every prose anchor in the MCP surface ties 2× because the layer is a RUNTIME GENERATION FORK (W11 scout 2026-09-02) | `1bxday80` (v1, LIVE at this pin, 187,877 B) and `4mp04j81` (v2, DEAD, 193,087 B) are the same module one generation apart, selected by `bT()` (`cr9f4adc`) reading `MCP_SDK_GENERATION` BEFORE the gate `tengu_brindle_causeway`; eight module pairs fork this way; plus the accessor `6rdsq6fw`, the elicitation impl `5ww6p4vy`, the MCP-skills fetcher, ten MCP control arms (13,051 B) |
+| Slash commands + skills loading | high (all in one chunk, anchors clean) — W11 scout 2026-09-02 | `fy12d89p` @3,310–3,495 KB (commands + plugin/skill loading, 133-element registry, 181,873 B declared) and @2,019–2,058 KB (skills belt, 37,960 B) — the "@10–12.5k" locator pointed at prompt-expansion/LSP code; plus `304awr1a` (35,905 B, the expansion path, never named). `g461tywa` is a 302 KB / 198-export grab-bag, not a commands chunk and not S-chunk-able |
 | Agent/Task subagent dispatch | medium (nested loop reentry) | `fy12d89p` @55–58k, `bf5vvscj` |
 | Query loop / turn driver (retry, 529, model fallback, compaction driver) | module-level (long async generator) | `fy12d89p` @75–80k |
 | Sandboxing (platform launchers behind an interface) | module-level (CEL/protobuf tangle) | `q4xe0m2r` |
@@ -469,8 +469,8 @@ ones).
 | W7 | Control-protocol switch | S-method (switch-case shape) | raw-protocol depth |
 | W8 | Moat tools: task family, SendMessage/ListAgents, Workflow, ScheduleWakeup, plan/worktree | scenario-led (probe reachability per tool first) | moat scenarios; ledger rows per catalog tool |
 | W9 | Session/transcript storage (`SessionPort` + 6 sibling ports, 2 stubs) | **S-module debut** (fable), cut into four children 2026-09-02 | storage/resume depth + dirty-state matrix (14 cells, D1–D14); a synthetic TRANSCRIPT corpus (constructed files — the cheaper of the two synthetic corpora, and the one this subsystem needs) + the config half of the state-surface diff come online |
-| W10 | Bash executor + command-safety AST | S-method (class-method shape) → S-module | bash depth |
-| W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk | mcp/skills scenario families |
+| W10 | Bash executor + command-safety AST | S-chunk (parser) + S-method (safety chain) + owned data + S-module (process core); the class-method shape is NOT needed; cut into six children 2026-09-02 | bash depth + the backgrounding moat (which has NO scenario today: zero of the corpus's Bash calls set `run_in_background`) |
+| W11 | MCP adapter + slash commands + skills loading | S-method/S-chunk (the live MCP generation behind `McpClientPort`; two small S-chunks in skills); ONE family, three children 2026-09-02 | mcp/skills scenario families + the stdio-vs-SDK transport probe |
 | W12 | Agent/subagent dispatch + sandbox interface (`ToolRuntimePort` boundary) | S-module (fable) | subagent depth; sandbox matrix; mutation battery |
 | W13 | Query loop / turn driver (`ModelTransportPort`); **inversion milestone** — engine-ts becomes primary with extracted compatibility islands; **hermetic isolation substrate built** (§3.6) | S-module (fable) | controlled retry/interleaving + long-horizon traces; synthetic corpus required |
 | W14 | engine-ts closure: **OS-enforced hermetic** ownership gate (§3.6) with all four delegation-route negative controls; static reachability; full acceptance surface with engine-ts as engineB under strict replay | assembly (measured closure) | ledger complete or evidence-backed exclusions only |
@@ -640,13 +640,30 @@ follow as C4/C5.
   then reader → writer → GC/damaged-file paths. Blocked-by C1/C2/C3 (met). **Required.**
   Status: C12a unblocked, not-dispatched; C12b–d blocked in sequence.
 
-#### C13–C14: W10–W11 (bash executor + safety AST · MCP adapter + slash/skills) — autonomous at dispatch
-- Per §6 rows; C13 needs C1's class-method shape. **C13's charter widened (2026-09-01, C4
-  flow-back): it also owns `subsystem/tool-result-validators`** — the Edit `validateInput` unit
-  C4's scout split out of the formatter row (3,317 chars, effectful captures: file-staleness
-  side channel; W10 is the execution-depth wave, so the file-tool validation path rides with
-  it). C13's cut at dispatch decides S-method vs S-module for it. **Required.** Status:
-  not-dispatched.
+#### C13: W10 — bash executor + safety AST — CUT 2026-09-02 into C13a–C13f (see Deferred, "The W10 cut")
+- Scouted (`reforge/research/2026-09-02-w10-bash-executor-scout.md`). **The private-field
+  blocker is answered by measurement: S-module, do not build the accessor adapter.** The tool is
+  an object literal; the private fields live in four small classes (11.2 KB) and guard ~25 KB of
+  effectful residue out of a ~354 KB row. A whole-class adapter would need ~83 accessors of which
+  31 field identities are POSITIONAL-ONLY (bare declarations, no initializer, nothing to anchor)
+  — a derivation that cannot be machine-checked, contradicting §2.1's literal-anchoring bet and
+  §3.4's zero-positional rule. The class-method shape is not needed anywhere in W10. The other
+  two thirds are pure and unblocked today: the parser chunk (the cleanest S-chunk candidate the
+  campaign has found, 45× the pilot's size) and the safety chain with its data tables.
+  **Charter (2026-09-01, C4 flow-back) stands: `subsystem/tool-result-validators` rides with C13f.**
+  Status: C13a/C13b/C13c unblocked (disjoint files; serialize on the shared manifest/gate/ledger
+  surface behind C10.6 → C11a → C12a); C13d–f advisory behind their triggers.
+
+#### C14: W11 — MCP adapter + slash commands + skills — CUT 2026-09-02 into C14a–C14c (see Deferred, "The W11 cut")
+- Scouted (`reforge/research/2026-09-02-w11-mcp-slash-skills-scout.md`). One family, not two
+  waves: a single host switch disables both the slash surface and the `Skill` tool, MCP prompts
+  enter the COMMAND registry and are expanded by the same path, MCP resources enter the SKILL list,
+  and C10's owned `initialize` handler configures all three in one arm. The MCP half is a runtime
+  generation fork (v1 live, v2 dead, selected by an env var that precedes the gate), so every MCP
+  prose anchor ties 2× — a targeting nuisance bounded by the manifest's per-chunk anchor
+  resolution and by the gate's solo-sabotage liveness rule (a splice landing in the dead
+  generation stays GREEN under sabotage, which the tightened rule already fails loudly); C14c owes
+  the control that proves both. Status: C14a unblocked; C14b/C14c behind their triggers.
 
 #### C15: W12 — subagent dispatch + sandbox (`ToolRuntimePort`) — controlled (fable)
 - Per §6 row; mutation battery per §3.1. **Required.** Status: not-dispatched.
@@ -769,7 +786,12 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
   - **C10.8 / W7.6c — Stages 4–5** (fable-tier; cut when C10.7 lands). `ProcessPort` and the
     command-spec builder lifted out of `Nq`, serving the three non-hook callers through the same
     port; then `Qxt` with the merge, the aggregation projection and the permission-precedence
-    reducer.
+    reducer. **[parent-impact from the W10 scout, 2026-09-02]:** `Nq` uses the process handle
+    (`B2`) and the output buffer (`jx`) directly and never touches the Bash-specific spawn layer
+    (`LG`: shell provider, snapshot, sandbox wrap, worktree guards, cwd write-back — whose only
+    other consumer is PowerShell). So `ProcessPort` should be DESIGNED as the two ports W10 will
+    share — `ShellProcessPort` (handle) and `ShellOutputSinkPort` (buffer, spill, truncation) —
+    and must not absorb the layer above; C13d takes that layer behind Bash-only ports.
   - **Binding across all three:** two consumers of shared pure helpers, **never one core with
     façades** — their return types are disjoint and `AE` drops the `hookSpecificOutput` permission
     contract on thirteen events, so a unified core would make it honour fields upstream drops,
@@ -801,10 +823,20 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     seventh pin-keyed fixture `tool-catalog-2.1.251.json` derived from `Y0()`'s 67 elements with
     per-tool guard expressions and measured corpus presence. Rides along: the gate-fixture
     extractor's `recordEnvOverride` widened to accept a coerced return (`Me(e)`), which is why the
-    override inventory misses the cross-session kill switch `CLAUDE_CODE_HARBOR_KITE`.
+    override inventory misses the cross-session kill switch `CLAUDE_CODE_HARBOR_KITE` — AND (W11
+    scout) the second, structurally different blind spot: an env arm that PRECEDES and bypasses the
+    gate (`MCP_SDK_GENERATION` is read before `tengu_brindle_causeway` is consulted), which hides a
+    whole-subsystem switch; plus `research/tools/symbol-map.ts` harvesting `export{X as Name}`
+    aliases (three W11 chunks name their own API — 112/121/63 names — and the map has no entry for
+    them). Both are C3-fixture work handed to the wave that next touches the extractors, not patched
+    inside a tool wave. The `tool-catalog` fixture must also carry the catalog's THREE contributors
+    (natives after `bE` strips four names; MCP tools incl. the three resource tools a server can
+    re-add; `skillTools`), sorted in two groups by `SD`.
   • **C11c / W8c — the task and notification core** (fable-tier; ADVISORY, cut when C11b lands):
-    `TaskStorePort`, `TaskOutputPort` (with `DiskTaskOutput`'s twelve private fields behind the
-    port, not marshalled), `NotificationQueuePort` over the `ssn` closure factory (10.9 KB — harder
+    `TaskStorePort`, `TaskOutputPort` (READ-SIDE only — the W10 scout measured `DiskTaskOutput`
+    with ONE constructor site bundle-wide, the Bash executor's spill path, so its twelve private
+    fields and six private methods go behind W10's `ShellOutputSinkPort`; the task tools reach task
+    output through free functions), `NotificationQueuePort` over the `ssn` closure factory (10.9 KB — harder
     than a private-field class: no receiver exists to marshal through), and the three frame
     emitters; §3.1's S-module bar. Edges → C12/W9 (both storage leaks), C15/W12, C13/W10, C8/W5.
   • **C11d / W8d — cross-session messaging** (fable-tier; ADVISORY, cut ONLY if C11b's probe
@@ -837,7 +869,12 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     snapshot waits on an observed quiesce — DECIDE and write it down. Acceptance: a seeded torn
     tail, a seeded cycle and a seeded `ENOSPC` each produce a named stable verdict on both engines;
     each new run-id rule fails a mutation of itself; the config snapshot is byte-stable across two
-    replays. Riders: the ledger's `subsystem/session-storage` row gains its symmetric edges (→ C11c
+    replays — which REQUIRES (W11 scout, 2026-09-02) normalizing `.claude.json`'s `skillUsage`: it is
+    the shared invocation counter for prompt-type slash commands AND the `Skill` tool, written by
+    `Ndt` with a 60 s per-session debounce and never reset, monotonic across the corpus (155 today
+    from the W5 probe's project command alone); a value-scrub in the differ or a reset in
+    `resetSandbox()`, decided with C14a, or the criterion cannot pass once any slash/skill scenario
+    exists. Riders: the ledger's `subsystem/session-storage` row gains its symmetric edges (→ C11c
     for the shared `queue-operation` record and the task store's session-keyed directory, → C11d for
     `<config>/sessions/`, → C7 for `compactMetadata`, → C15/W12 subagent transcripts, → C16/W13 the
     segment form) and its 235-name public surface as artifact list; `d78hxkfm` recorded as an
@@ -874,6 +911,131 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
     (dir-sync periphery); bridge/CCR/artifact records (21 KB, stubbed); the resume LOOP half in
     `dvbbv89q` (C16/W13); `ssn` itself (C11c — but the `queue-operation` record contract is shared,
     and its contract test should be written once).
+- **The W10 cut (2026-09-02, from `reforge/research/2026-09-02-w10-bash-executor-scout.md` —
+  adopted with grades):** six children in four mechanism tiers; the machinery child runs in
+  PARALLEL with two children that need none, because the private-field measurement moved 179 KB
+  of the 354 KB row off the blocker's critical path.
+  • **C13a / W10a — the shell parser, whole-chunk** (autonomous, opus-tier; cut NOW): own
+    `chunk-fgwne0fb.js` outright — 62,907 B, 107 declarations at 99 % density, 7 exports, 4 named
+    importers, one import of its own (telemetry), zero `process.`/`require`/fs. A hand-written
+    recursive-descent bash tokenizer/parser emitting tree-sitter-shaped nodes. Full export-and-
+    consumer inventory per §2.2, branch attestation from the chunk's own AST, contract tests over
+    partitioned command strings (quoting, heredocs, brace expansion, arithmetic, process
+    substitution, the byte-offset table, the length cap, the abort symbol). Riders: the ledger's
+    `tool/PowerShell` row (→ C13) and `subsystem/tool-result-validators`'s wave field (C4 → C13).
+  • **C13b / W10b — the command-safety chain and its data tables** (autonomous, opus-tier; cut
+    NOW; parse types from C13a): the five engine-chunk regions (124,832 B) + `9e2ns8ty`'s
+    classifier region (53,180 B: the parse entry, the eleven-predicate too-complex gate, the 10 KB
+    command-tree walker, argv/env/redirect/heredoc extraction). Own the ~17 KB of flag/effect
+    tables outright with adapter equality assertions; S-method rows on the prose anchors (≥16
+    anchors 1-of-1 across all 1,800 module files — "Bash has no graph-unique literal" was true of
+    the FORMATTER only; correct the README note); fold in the unanchorable pure helpers at their
+    spliced callers. Adds `bash-compound-safety`, which closes the two live-but-dark `Fy` callers
+    W6 recorded (the multi-cd aggregator and the subcommand merge tie-break). Edge → C9/W6: this is
+    the Bash half of the permission surface — the `subcommandResults` aggregate every corpus Bash
+    denial carries. Rider: the `bash-tool-result` row's `useTaskAck` capture derives from a gate
+    (`FE()`) that returns `!1` unconditionally in this build — the capture is live, the BRANCH is
+    dead; say so in the row.
+  • **C13c / W10c — executor oracle machinery** (controlled, opus-tier; cut NOW; serializes per
+    X5): the three capabilities no oracle has and only this subsystem needs — a scripted child
+    process committed into the sandbox with a declarative argv (byte schedule, exit code, signal
+    behaviour, prompt-shaped tail); injectable timers for the six shell deadlines (2 s background
+    hint through 45 s stall detect); child-process SUPERVISION as `src/state.ts`'s third snapshot
+    root (descendant set at scenario end, deliberately-detached children declared) — W9's named
+    carry-over lands here. Each with a negative control (a perturbed schedule changes the graded
+    output; a leaked child FAILS the state diff; a perturbed timer moves the background hint).
+    Plus the six recordings that need no machinery. Rider: the seven sandbox attestation
+    exclusions whose reason reads "§3.3 pins the gate state and X6 forbids the env overrides" —
+    the premise is wrong: `isSandboxingEnabled()` resolves to `settings.sandbox.enabled ?? false`,
+    a SETTINGS KEY with no `tengu_*` gate and no env var in the chain; the conclusion (unreached)
+    stands, and the remedy is one settings object in one scenario on a macOS host with
+    `sandbox-exec`, which C15/W12 inherits.
+  • **C13d / W10d — the executor S-module** (fable-tier; ADVISORY, cut when C13c lands):
+    `ShellProcessPort` + `ShellOutputSinkPort` (SHARED with the hook runner per the C10.8
+    parent-impact above), `ShellProviderPort`, `CwdTrackingPort`, `ShellTimingPort`,
+    `ShellTelemetryPort`, and `SandboxPort`/`RemoteConstraintsPort` as throwing stubs. Owns the
+    four private-field classes (`Pde` pure lifecycle: status/kill/background/detach/cleanup;
+    `jx` a handle wrapping a pure core — line counting, tail sampling, truncation — split along
+    that line; `C_t`/`DiskTaskOutput`; `vde`/`jUe`), `LG`, `Gcr`, the snapshot machinery and the
+    cwd write-back (`tengu_shell_set_cwd`) — ~25 KB effectful + ~25 KB snapshot. §3.1's full bar:
+    the D1–D14 dirty-state matrix (cwd persistence across calls, env inheritance, background job
+    lifecycle, kill on abort, timeout, output over the truncation threshold), the mutation battery
+    (swallowed exit codes, dropped kill escalation, reordered progress yields, ignored cancellation,
+    wrong task-id propagation, missing spill). Edges → C8/W5, C15/W12, C11c/W8c (`TaskRegistryPort`),
+    C12/W9 (`storageV5` output persistence — gate-dead today).
+  • **C13e / W10e — the backgrounding and notification moat** (fable-tier; ADVISORY, cut when
+    C13d's ports exist; its scenarios may start when C13c lands): `Gcr`'s four arms —
+    `backgroundedByTurnAbort` is DEAD headlessly (sole producer of `turn-abort` is the interactive
+    session controller `6thm48px`; the headless loop never constructs it — recorded with the
+    producer named); `backgroundedByUser` is the CHEAPEST route to the moat behaviour: the
+    `background_tasks` control subtype the installed SDK can send, which W7 fired against an empty
+    registry (FIRED arm / UNREACHED effect — correct the W7 matrix row); plus the explicit
+    `run_in_background` arm, the stall detector, the pressure reaper, the `background_hint` progress
+    channel. Records `bash-background-explicit` and `bash-background-control`. Separate from C13d
+    because it is the wave's PRODUCT CLAIM — "bash with background notification" is one of the
+    four named moat behaviours and has NO scenario today (the `background-task` scenario drives the
+    AGENT tool's flag; zero of the corpus's Bash calls set `run_in_background`).
+  • **C13f / W10f — PowerShell and the validators row** (autonomous, opus-tier; ADVISORY, cut
+    last): `tool/PowerShell` (tool object, schema, prose, cmdlet tables; the executor comes free from
+    C13d — `hw8qz4q5` imports 62 engine symbols and shares `LG`/`jx`/`Kee`/`Kdt`) behind the
+    `CLAUDE_CODE_USE_POWERSHELL_TOOL` recording axis; `subsystem/tool-result-validators` (the Edit
+    `validateInput` unit + its 19 siblings).
+  • **Binding across W10**: S-module for the process core, NO accessor adapter (joint-view reason:
+    31 positional-only field identities cannot be machine-checked — §2.1/§3.4); the two shared
+    ports with the hook runner and nothing above them; `detectBlockedSleepPattern` is gate-dead
+    (its one caller's arm is guarded on `tengu_amber_sentinel`, the Monitor gate — the "Monitor
+    with an until-loop" prose in the tool description ships gated off at this pin).
+  • **Not W10's**: `w7bq1qyb` (plugin eval), the sandbox chunk `q4xe0m2r` beyond the `SandboxPort`
+    stub (C15/W12), the task store/notification queue (C11c), the permission pre-check (C9).
+- **The W11 cut (2026-09-02, from `reforge/research/2026-09-02-w11-mcp-slash-skills-scout.md` —
+  adopted with grades):** one family, three children, separated by MECHANISM not topic.
+  • **C14a / W11a — the command-and-skill filter belt** (autonomous, opus-tier; cut NOW): (1) the
+    eighth pin-keyed fixture, `slash-commands-2.1.251.json`, derived from the registry assembler
+    (`frr()`) — one row per element: name, aliases, type, `supportsNonInteractive` /
+    `disableNonInteractive`, `isEnabled` source, `isHidden`, load-thunk chunk, and its `k0t`
+    verdict; gate-checked. The headless filter, measured in full: `type==="prompt" &&
+    !disableNonInteractive || type==="local" && supportsNonInteractive` — W7.5 recorded only the
+    `local` clause; the `prompt` clause admits BY DEFAULT (project command files, plugin commands,
+    MCP prompts), and twenty commands ship a purpose-built headless implementation selected by
+    `Le()` (`!isInteractive()`); 28 of 104 statically-resolvable entries pass; the corpus reaches
+    two. (2) The filter core as ONE owned module (`k0t` 0 captures, `Rce`, `Xve`, `SD`, `krr`, `sz`,
+    `oX` — seven fold-ins, ~1.6 KB). (3) The skill-usage module (`Ndt`/`Tqn`/`WIe`) with `xft`'s
+    usage fields behind a port to W9's config writer, and the `skillUsage` normalization C12a's
+    byte-stability criterion requires (decided jointly). Acceptance: a contract test over `k0t` ×
+    the fixture population (a filter with a complete enumeration is the cheapest non-vacuity
+    instrument in the wave); one recording — a batch session driving three or four `Le()`-gated
+    commands, converting the headless-only slash surface from a reading into a graded fact.
+  • **C14b / W11b — reachability probes and the recordings they justify** (controlled, opus-tier;
+    blocked-by C14a on the shared surface, X5 for recordings): `w11/probe-mcp-transport.ts` — four
+    phases, with the SDK-NEGATIVE phase written in: elicitation is live headlessly for STDIO
+    servers and explicitly skipped for in-process SDK ones, so the obvious cheap probe would have
+    produced a clean-looking false negative; a committed fixture MCP server (stdio and SDK builds of
+    the same server: clean tool, `anyOf` tool, invalid-property-key tool, all four `_meta` keys,
+    resources, prompts, an eliciting tool); the `pf` permission-prompt-tool probe through the raw
+    driver; 11–14 recordings. Resolves the hook registry's two `Elicitation*` OPEN rows to
+    FIRED-with-stdio / MEASURED-DEAD-with-SDK with the measurement; ledger rows for
+    `tool/ListMcpResources`, `tool/ReadMcpResource`, `tool/ReadMcpResourceDir`, `tool/RefreshMcpTools`
+    and the `mcp__*` projection family (X2: one row per catalog tool). The `Skill` tool (7,284 B,
+    a thirteen-code refusal matrix) and `qdt` ride here so splice and scenario land together.
+  • **C14c / W11c — the MCP adapter behind `McpClientPort`** (fable-tier; ADVISORY, cut when C14b
+    lands): the LIVE generation `chunk-1bxday80.js` — lifecycle (`connectToServer`'s stdio/http/sse
+    arms, `ensureConnectedClient`, the dial memo with identity-epoch eviction, reconnect,
+    `setupSdkMcpClients`), `hydrateToolsFromListing` as the projection (the highest-value single
+    function; eight `tengu_mcp_degraded` cells give the mutation battery real targets), the call
+    path, the elicitation implementation (`5ww6p4vy`, 3,427 B, five functions — take whole), and a
+    generation-guard tripwire reproducing the accessor's. Plus the ten MCP control arms (13,051 B —
+    C10 routed `mcp_message`'s 58 B here; the surface is 120× that line) for whichever have
+    gradeable success paths. Binding: every MCP row's anchor is scoped to `chunk-1bxday80.js` (the
+    manifest resolves anchors per chunk, so the 2× tie across the fork is a targeting nuisance, not
+    a mechanism gap), AND the wave ships the negative control that a row aimed at
+    `chunk-4mp04j81.js` FAILS — the gate's solo-sabotage liveness rule should already refuse it
+    (a dead-generation splice stays GREEN under sabotage), and the control proves that it does.
+    Risk stated plainly: if C14b's phase A says a stdio server cannot be driven under the harness,
+    this child narrows to the SDK transport plus the projection.
+  • **Not W11's**: the vendored SDK + zod chunks; the Chrome and Computer-Use in-process servers;
+    `claudeai-proxy` and the OAuth redirect leg (server boundary); `sse-ide`/`ws-ide`; the v2
+    generation (exclusion with its env lever named); `g461tywa` (take exports, never the chunk);
+    the hook dispatchers themselves (W5 owns them; W11 owns their call sites).
 - **Explicitly out of scope:** §1.2's exclusion ledger, cross-referenced as standing exclusions.
 
 ### Tracking map
@@ -903,7 +1065,15 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C12b | W9b | as C12a | not-dispatched — the reader (fable; ~18 KB pure: records → session projection, chain helpers, `ENTRY_APPEND_POLICY` as data) graded from a synthetic transcript corpus over all 37 record types with zero recordings; **blocked by C12a** |
 | C12c | W9c | as C12a | not-dispatched — the writer + lifecycle behind `SessionPort` (absorbs the C1 `session-materialize` splice); **blocked by C12b** |
 | C12d | W9d | as C12a | not-dispatched — the transcript GC, remove-by-uuid, torn-tail sealing, relocation, atomicity contract asserted directly; **blocked by C12c** |
-| C13–C14 | W10–W11 | — | not-dispatched |
+| C13a | W10a | scout: `reforge/research/2026-09-02-w10-bash-executor-scout.md` (cut 2026-09-02, Deferred section's "The W10 cut") | not-dispatched — the shell parser WHOLE-CHUNK (`fgwne0fb`, 62,907 B, zero I/O), contract tests over partitioned command strings, no port/scenario/engine run; riders: `tool/PowerShell` ledger row → C13, `subsystem/tool-result-validators` wave C4 → C13. **Unblocked** |
+| C13b | W10b | as C13a | not-dispatched — the command-safety chain (five engine regions, 124,832 B) + the classifier region (53,180 B) + 17 KB of flag tables owned outright; adds `bash-compound-safety` (closes W6's two live-but-dark `Fy` callers). **Unblocked** (parse types from C13a) |
+| C13c | W10c | as C13a | not-dispatched — executor oracle machinery: a scripted child process (byte schedule / exit / signal), injectable timers for the six shell deadlines, child-process SUPERVISION as `src/state.ts`'s third root; the six machinery-free recordings; rider: the seven sandbox attestation exclusions reworded onto the real guard (`settings.sandbox.enabled`, not a gate). **Unblocked**, serializes per X5 |
+| C13d | W10d | as C13a (advisory) | not-cut — the executor S-module behind `ShellProcessPort`/`ShellOutputSinkPort` (SHARED with the hook runner) + `ShellProviderPort`/`CwdTrackingPort`/`ShellTimingPort`/`ShellTelemetryPort` (Bash-only) + `SandboxPort`/`RemoteConstraintsPort` stubs; `DiskTaskOutput` lives here; cut when C13c lands |
+| C13e | W10e | as C13a (advisory) | not-cut — the backgrounding + notification MOAT: `Gcr`'s four arms (one DEAD headlessly with its producer named — the interactive controller's `turn-abort`), the `background_tasks` control subtype (W7 fired the ARM against an empty registry; the EFFECT is unreached), stall detector, pressure reaper; records `bash-background-explicit` and `bash-background-control`; cut when C13d's ports exist |
+| C13f | W10f | as C13a (advisory) | not-cut — `tool/PowerShell` (executor comes free from C13d; `hw8qz4q5` shares `LG`/`jx`/`Kee`/`Kdt` and the notification path) + `subsystem/tool-result-validators`; cut last |
+| C14a | W11a | scout: `reforge/research/2026-09-02-w11-mcp-slash-skills-scout.md` (cut 2026-09-02, Deferred section's "The W11 cut") | not-dispatched — the command-and-skill filter belt: the eighth pin-keyed fixture `slash-commands-2.1.251.json` derived from the 133-element registry with each row's `k0t` verdict (28 pass headlessly; the corpus reaches 2), the filter core as one owned module (7 fold-ins), the skill-usage module with the `skillUsage` normalization C12a needs; 1 recording. **Unblocked** |
+| C14b | W11b | as C14a | not-dispatched — `w11/probe-mcp-transport.ts` (stdio vs SDK, with the SDK-NEGATIVE phase: elicitation is live for stdio servers and explicitly skipped for in-process ones), a committed fixture MCP server, the `pf` probe via the raw driver, 11–14 recordings; resolves the hook registry's two `Elicitation*` OPEN rows; the `Skill` tool + `qdt` ride here; **blocked by C14a** (shared surface) |
+| C14c | W11c | as C14a (advisory) | not-cut — the live MCP generation behind `McpClientPort` (`hydrateToolsFromListing` as the projection, the call path, the 3.4 KB elicitation impl whole, a generation-guard tripwire) + the negative control proving a row aimed at the dead generation FAILS the build; cut when C14b lands |
 | C15 | W12 | — | not-dispatched (controlled, fable) |
 | C16 | W13 | — | not-dispatched — deliberately late |
 | C17 | W14 | — | not-dispatched — deliberately late |
@@ -1104,6 +1274,53 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- 2026-09-02 (W10 scout — the Bash executor re-measured, and the C13 cut): **the campaign's
+  oldest open blocker is answered by measurement, and it guards a third of what it was thought
+  to guard.** The Bash tool is an object literal (26 members, zero private fields); the private
+  fields live in four small classes totalling 11.2 KB inside a ~354 KB row (not ~550 KB — the
+  census's only named satellite, `w7bq1qyb`, is the `claude plugin eval` harness and leaves; two
+  chunks nobody had named join: `fgwne0fb`, a 62,907 B hand-written bash parser with zero I/O —
+  the cleanest S-chunk candidate found anywhere — and a 53 KB classifier region inside `9e2ns8ty`).
+  A whole-class accessor adapter would need ~83 accessors of which 31 field identities are
+  positional-only, so its derivation cannot be machine-checked: **S-module, no adapter**, and the
+  class-method shape §2.1 budgeted for W10 is not needed at all. Three further corrections: the
+  named moat behaviour "bash with background notification" has NO scenario (zero of the corpus's
+  Bash calls set `run_in_background`; `background-task` drives the Agent tool) — one of its four
+  arms is dead headlessly with the producer named, and the cheapest live route is a control
+  subtype W7 already fired against an empty registry; the sandbox is behind `settings.sandbox
+  .enabled`, a settings key with no gate and no env var, so seven attestation exclusion reasons
+  are wrong in premise (right in conclusion); `detectBlockedSleepPattern` is gate-dead behind the
+  Monitor gate. The hook runner `Nq` never touches the Bash spawn layer, so C10.8's `ProcessPort`
+  is re-specified as the two ports W10 shares (recorded as a parent-impact on the executor cut),
+  and `DiskTaskOutput` moves from C11c's port to W10's (one constructor site bundle-wide). Cut:
+  six children — parser and safety chain (179 KB, unblocked, no port, no machinery) in parallel
+  with the oracle machinery (scripted child, injectable deadlines, child-process supervision),
+  then the S-module, then the moat, then PowerShell + validators. **Lesson: a blocker measured is
+  a blocker bounded** — "private fields" had been carried as the row's seam quality since the
+  census; measured, it is 25 KB behind a handle-shaped port.
+- 2026-09-02 (W11 scout — MCP, slash commands and skills re-measured, and the C14 cut): **the MCP
+  adapter is a runtime GENERATION FORK, not one module.** The two chunks the census and §1.1
+  called "transports" and "call+validate" are v1 (live, 187,877 B) and v2 (dead, 193,087 B) of
+  the same module, selected at `import.meta.require` time by `bT()` reading `MCP_SDK_GENERATION`
+  BEFORE the gate — an env arm that bypasses the gate, and the second structurally-different shape
+  the gate-fixture extractor cannot see (after W8's coerced-return miss). Eight module pairs fork
+  this way, so every prose anchor in the MCP surface ties exactly 2× bundle-wide; the manifest's
+  per-chunk anchor resolution scopes it and the liveness rule refuses a dead-generation splice,
+  and C14c owes the control. The slash surface was mis-located (the "@10–12.5k" locator pointed at
+  prompt-expansion code; the real belts are at 3,310–3,495 KB and 2,019–2,058 KB, plus a 36 KB
+  expansion chunk never named), and W7.5's headless filter was quoted from one half of a two-clause
+  rule: the missing `prompt` clause admits by default, twenty commands ship a purpose-built
+  headless implementation, 28 of 104 entries pass, the corpus reaches two. `skillUsage` in
+  `.claude.json` is the shared counter for prompt-type slash commands and the `Skill` tool, never
+  reset — a live hazard for C12a's byte-stable config snapshot, recorded there as a cross-child
+  contract. C10 routed `mcp_message`'s 58 bytes here; the MCP control surface is ten subtypes and
+  13 KB. Cut: one family, three children by mechanism — the filter belt with the eighth fixture
+  (a filter over a complete enumeration is the cheapest non-vacuity instrument), the transport
+  probe with its SDK-negative phase written in (elicitation is live for stdio servers and skipped
+  for in-process ones — the obvious cheap probe would have produced a clean false negative), the
+  live generation behind `McpClientPort`. **Lesson: when two large chunks look like two halves,
+  check whether they are two VERSIONS** — a subset relation between export lists (112 of 112 ⊂ 121)
+  is the tell, and it turns a size question into a targeting one.
 - 2026-09-02 (W9 scout — session storage re-measured, and the C12 cut): the first scout to
   EXONERATE a census locator (`fy12d89p @4–10k` is right — chunk-relative pretty lines, and it
   should not be "corrected") while removing both of the row's satellites: `trstwd25` (177,692 B)
