@@ -1015,6 +1015,96 @@ async function drain(g: AsyncGenerator<unknown, unknown>): Promise<{ yielded: un
 }
 
 /**
+ * How long a bounded drive waits on one `next()` before calling the path
+ * non-settling. Every settling path in this file resolves in microtasks — the
+ * ports are synchronous stubs — so a quarter second is three orders of
+ * magnitude of headroom, and the control below measures that rather than
+ * assuming it: a healthy case driven through the same driver must report
+ * SETTLED.
+ */
+const NON_SETTLING_MS = 250;
+
+/**
+ * `drain`, bounded — the grading mode for a path that NEVER SETTLES (Stage 0c).
+ *
+ * `drain` runs to completion, which is right for every dispatcher and wrong for
+ * the layer beneath them. The executor's shutdown wrapper awaits a promise
+ * constructed to never resolve, so six events HANG rather than return; an
+ * oracle that drained that path would deadlock, and a suite that hangs is worse
+ * than one that fails — it is the vacuity shape the gate's own three-outcome
+ * fix refused, one level down. So the drive is bounded and "did not settle" is
+ * a graded OUTCOME rather than an absence of one.
+ *
+ * The abandoned `next()` promise stays pending after a timeout. That is
+ * deliberate and it is why this is safe to run in-process: a promise nobody
+ * resolves holds no timer and no handle, so it cannot keep the event loop
+ * alive.
+ */
+async function drainBounded(
+  g: AsyncGenerator<unknown, unknown>,
+  ms = NON_SETTLING_MS,
+): Promise<{ yielded: unknown[]; settled: boolean; returned?: unknown; threw?: string }> {
+  const yielded: unknown[] = [];
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const step = await Promise.race([
+      g.next().then((s) => ({ s }) as const, (e: Error) => ({ e }) as const),
+      new Promise<{ readonly late: true }>((res) => {
+        timer = setTimeout(() => res({ late: true }), ms);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if ("late" in step) return { yielded, settled: false };
+    if ("e" in step) return { yielded, settled: true, threw: `${step.e.name}: ${step.e.message}` };
+    if (step.s.done) return { yielded, settled: true, returned: step.s.value };
+    yielded.push(step.s.value);
+  }
+}
+
+/**
+ * The non-settling VERDICT, said as violations: "produced no yields and did not
+ * settle within N ms".
+ *
+ * Both halves matter and the second is the one a lazier mode would drop. A path
+ * that yields a progress message and THEN hangs is a different behaviour from
+ * one that hangs before producing anything, and upstream's shutdown arm is the
+ * second — so a mode that only checked "did not settle" would pass an
+ * implementation that streamed first.
+ */
+function nonSettling(run: { yielded: unknown[]; settled: boolean }): string[] {
+  const bad: string[] = [];
+  if (run.settled) bad.push("the run SETTLED, so this is not the non-settling path");
+  if (run.yielded.length > 0) bad.push(`the run yielded ${run.yielded.length} value(s) before hanging`);
+  return bad;
+}
+
+/**
+ * Deliver one stdout payload to a `data` handler in a SCRIPTED number of writes
+ * (Stage 0b).
+ *
+ * Byte-equal stdout delivered in a different number of writes is different
+ * behaviour in this layer, so a replay surface that reproduces stdout BYTES is
+ * not reproducing stdout. `boundaries` are absolute offsets into the payload at
+ * which a write ends; `[]` is the single-write case.
+ */
+function writeInChunks(onData: (chunk: string) => void, payload: string, boundaries: number[]): number {
+  let at = 0;
+  let writes = 0;
+  for (const stop of [...boundaries, payload.length]) {
+    const end = Math.min(stop, payload.length);
+    if (end <= at) continue;
+    onData(payload.slice(at, end));
+    writes++;
+    at = end;
+  }
+  if (at < payload.length) {
+    onData(payload.slice(at));
+    writes++;
+  }
+  return writes;
+}
+
+/**
  * Grade one case's two event logs, and state the pairing property over them.
  *
  * The comparison is the ORDERED log, so it now sees what the retired per-port

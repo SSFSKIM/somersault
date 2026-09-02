@@ -134,6 +134,19 @@ for (const [label, argv] of [
   // boundary sentinel the already-owned partitioner looks for, and the
   // `defaultSystemPrompt` property every caller binds the result to.
   ["prompt-section fixture matches the pin", ["research/tools/extract-prompt-sections.ts", "--check"]],
+  // The hook EXECUTION LAYER's call graph, W7.6a's fixture and the fourth
+  // population this campaign had been carrying as a hand-written number (after
+  // the hook events, the control-protocol arms and the prompt sections). The
+  // executor design pass counted the helper belt by reading — "roughly 13.9 KB
+  // across ~34 already-pure functions" — and named ten of them; the derivation
+  // disagrees in both dimensions and, more usefully, measures the thing the
+  // design never asked about: ANCHORABILITY. Two structural facts the campaign
+  // now depends on are asserted by the tool rather than believed: the two
+  // executors are one `async function*` and one plain `async function`, and
+  // their callee sets overlap by well under half — which is design §2's "two
+  // consumers, never one core" restated as a check that fails if a pin ever
+  // unifies them.
+  ["hook-helper belt fixture matches the pin", ["research/tools/extract-hook-helpers.ts", "--check"]],
   ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so

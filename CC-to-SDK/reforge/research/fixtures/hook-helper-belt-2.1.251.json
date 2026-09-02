@@ -1,0 +1,4677 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-hook-helpers.ts",
+  "entryPoints": [
+    {
+      "name": "Ea",
+      "sharedBy": 32,
+      "bytes": 602,
+      "form": "function"
+    },
+    {
+      "name": "jy",
+      "sharedBy": 18,
+      "bytes": 261,
+      "form": "async function*"
+    },
+    {
+      "name": "AE",
+      "sharedBy": 12,
+      "bytes": 6323,
+      "form": "async function"
+    },
+    {
+      "name": "oT",
+      "sharedBy": 8,
+      "bytes": 235,
+      "form": "function"
+    }
+  ],
+  "executors": [
+    {
+      "name": "Qxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3050920,
+      "bytes": 23385,
+      "form": "async function*",
+      "callees": 80
+    },
+    {
+      "name": "AE",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074990,
+      "bytes": 6323,
+      "form": "async function",
+      "callees": 40
+    }
+  ],
+  "executorOverlap": {
+    "shared": 32,
+    "ofLarger": 80,
+    "ofSmaller": 40
+  },
+  "counts": {
+    "dispatchersRead": 33,
+    "reached": 151,
+    "pure": 43,
+    "pureWithInjection": 0,
+    "effectful": 108,
+    "boundary": 281,
+    "pureBytes": 5961,
+    "pureWithInjectionBytes": 0,
+    "pureWithUniqueAnchor": 4,
+    "reachedWithUniqueAnchor": 45,
+    "reachedWithNoLiteral": 84
+  },
+  "belt": [
+    {
+      "name": "_2e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 609551,
+      "bytes": 89,
+      "form": "async function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "j6",
+        "rge"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "j6",
+        "rge"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "_9",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 667489,
+      "bytes": 291,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Nq",
+        "Qxt",
+        "ck",
+        "i6n",
+        "p6n"
+      ],
+      "callSitesInChunk": 9,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "$5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3034268,
+      "bytes": 354,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "fge",
+        "mge",
+        "n",
+        "oMt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "fge",
+        "mge",
+        "n",
+        "oMt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " hook not run for a call served to a cloud session (",
+        "files": 1
+      }
+    },
+    {
+      "name": "$ie",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2983638,
+      "bytes": 17,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "Oxt",
+        "Qxt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "$Me",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3033190,
+      "bytes": 304,
+      "form": "function",
+      "hops": 2,
+      "params": 4,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "MTt",
+        "Q6",
+        "n",
+        "tMt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "MTt",
+        "Q6",
+        "n",
+        "tMt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Invalid regex pattern in hook matcher: ",
+        "files": 1
+      }
+    },
+    {
+      "name": "a3",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 674165,
+      "bytes": 301,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq",
+        "pVe"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "kJt",
+        "o3"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "kJt",
+        "o3"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "a5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2990827,
+      "bytes": 51,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "l5n"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "A5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3015030,
+      "bytes": 266,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "xPe"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Jd",
+        "Ps",
+        "l9"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Jd",
+        "Ps",
+        "l9"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "parseHookOutput: json lines (",
+        "files": 1
+      }
+    },
+    {
+      "name": "a6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043633,
+      "bytes": 6,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Sce"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "AE",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074990,
+      "bytes": 6323,
+      "form": "async function",
+      "hops": 0,
+      "params": 1,
+      "callersInBelt": [],
+      "callSitesInChunk": 13,
+      "free": [
+        "Bie",
+        "Hfe",
+        "It",
+        "J7",
+        "JT",
+        "Ja",
+        "Li",
+        "Nq",
+        "Nv",
+        "Q",
+        "Qw",
+        "Rzn",
+        "Sce",
+        "Xpt",
+        "Ypt",
+        "Yxt",
+        "_9",
+        "aMt",
+        "b",
+        "dee",
+        "g",
+        "h",
+        "iMt",
+        "ip",
+        "lMt",
+        "la",
+        "mS",
+        "n",
+        "p",
+        "pm",
+        "s",
+        "vzn",
+        "wMe",
+        "xPe",
+        "y",
+        "zpt"
+      ],
+      "freeThatArePure": [
+        "Li",
+        "Xpt",
+        "_9",
+        "aMt",
+        "dee",
+        "iMt",
+        "ip",
+        "mS"
+      ],
+      "injections": [],
+      "effectful": [
+        "Bie",
+        "Hfe",
+        "It",
+        "J7",
+        "JT",
+        "Ja",
+        "Nq",
+        "Nv",
+        "Q",
+        "Qw",
+        "Rzn",
+        "Sce",
+        "Ypt",
+        "Yxt",
+        "b",
+        "g",
+        "h",
+        "lMt",
+        "la",
+        "n",
+        "p",
+        "pm",
+        "s",
+        "vzn",
+        "wMe",
+        "xPe",
+        "y",
+        "zpt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": ". Function hooks should only be used in REPL context (Stop hooks).",
+        "files": 1
+      }
+    },
+    {
+      "name": "age",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 642754,
+      "bytes": 153,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "lct"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "a"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "a"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "-ExecutionPolicy",
+        "files": 3
+      }
+    },
+    {
+      "name": "AM",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3040696,
+      "bytes": 296,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Rzn",
+        "e6n",
+        "t6n"
+      ],
+      "callSitesInChunk": 7,
+      "free": [
+        "UD",
+        "b"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "UD",
+        "b"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "mcp_tool\\x00",
+        "files": 1
+      }
+    },
+    {
+      "name": "aMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043952,
+      "bytes": 86,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "az",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1713218,
+      "bytes": 982,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "zpt"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "UT"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "UT"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "B2",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 105814,
+      "bytes": 72,
+      "form": "function",
+      "hops": 2,
+      "params": 7,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Pde",
+        "ZOe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Pde",
+        "ZOe"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "B6",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 608585,
+      "bytes": 163,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Go"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Go"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "bge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673055,
+      "bytes": 122,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Bie",
+        "Fq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "JE",
+        "Zb",
+        "Zp",
+        "yJt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "JE",
+        "Zb",
+        "Zp",
+        "yJt"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Bie",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074627,
+      "bytes": 317,
+      "form": "function",
+      "hops": 1,
+      "params": 2,
+      "callersInBelt": [
+        "AE"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "bge",
+        "ip",
+        "kge",
+        "n"
+      ],
+      "freeThatArePure": [
+        "ip"
+      ],
+      "injections": [],
+      "effectful": [
+        "bge",
+        "kge",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " returned a terminalSequence that was rejected by the allowlist (only OSC 0/1/2/9/99/777 and BEL are permitted, and OSC 9 bodies may not begin with a digit unless in the 9;4 progress form)",
+        "files": 1
+      }
+    },
+    {
+      "name": "C2e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 617780,
+      "bytes": 56,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "q6"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "c5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2992385,
+      "bytes": 453,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "wMe"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "b"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "b"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "c6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3049119,
+      "bytes": 119,
+      "form": "function",
+      "hops": 1,
+      "params": 0,
+      "callersInBelt": [
+        "jy"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "TeammateIdle",
+        "files": 5
+      }
+    },
+    {
+      "name": "cge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 655650,
+      "bytes": 105,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "ck",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 667780,
+      "bytes": 91,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 16,
+      "free": [
+        "_9"
+      ],
+      "freeThatArePure": [
+        "_9"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "statusMessage",
+        "files": 19
+      }
+    },
+    {
+      "name": "cun",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3050525,
+      "bytes": 395,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "n",
+        "oKe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "n",
+        "oKe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " permissionDecision=allow ignored: a confined session takes grants only from its command line",
+        "files": 1
+      }
+    },
+    {
+      "name": "Cxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2974053,
+      "bytes": 5156,
+      "form": "async function",
+      "hops": 3,
+      "params": 9,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Axt",
+        "CM",
+        "Iq",
+        "Ja",
+        "MYn",
+        "Mn",
+        "RYn",
+        "Rb",
+        "Sb",
+        "Tp",
+        "Ut",
+        "_n",
+        "c",
+        "f0",
+        "fA",
+        "he",
+        "l",
+        "mm",
+        "n",
+        "pD",
+        "pi",
+        "s",
+        "sX",
+        "xe",
+        "zr"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Axt",
+        "CM",
+        "Iq",
+        "Ja",
+        "MYn",
+        "Mn",
+        "RYn",
+        "Rb",
+        "Sb",
+        "Tp",
+        "Ut",
+        "_n",
+        "c",
+        "f0",
+        "fA",
+        "he",
+        "l",
+        "mm",
+        "n",
+        "pD",
+        "pi",
+        "s",
+        "sX",
+        "xe",
+        "zr"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "You are evaluating a stop-condition hook in Claude Code. Read the conversation transcript carefully, then judge whether the user-provided condition is satisfied.\n\nYour response must be a JSON object with one of these shapes:\n- {\"ok\": true, \"reason\": \"<quote evidence from the transcript that satisfies the condition>\"}\n- {\"ok\": false, \"reason\": \"<quote what is missing or what blocks the condition>\"}\n- {\"ok\": false, \"impossible\": true, \"reason\": \"<explain why the condition can never be satisfied>\"}\n\nAlways include a \"reason\" field, quoting specific text from the transcript whenever possible. If the transcript does not contain clear evidence that the condition is satisfied, return {\"ok\": false, \"reason\": \"insufficient evidence in transcript\"}.\n\nOnly use {\"ok\": false, \"impossible\": true} when the condition is genuinely unachievable in this session \\u2014 for example: the condition is self-contradictory, it depends on a resource or capability that is unavailable, or the assistant has explicitly tried, exhausted reasonable approaches, and stated it cannot be done. Apply your own judgment when deciding this \\u2014 the assistant claiming the goal is impossible is evidence, not proof; independently confirm the condition is genuinely unachievable rather than deferring to the assistant's self-assessment. Do not use it just because the goal has not been reached yet or because progress is slow. When in doubt, return {\"ok\": false} without \"impossible\".",
+        "files": 1
+      }
+    },
+    {
+      "name": "cye",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 96488,
+      "bytes": 105,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "jx"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "Hin",
+        "uee",
+        "xin"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Hin",
+        "uee",
+        "xin"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "BASH_MAX_OUTPUT_LENGTH",
+        "files": 5
+      }
+    },
+    {
+      "name": "Czn",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3031307,
+      "bytes": 990,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Gde",
+        "OMe",
+        "S5n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Gde",
+        "OMe",
+        "S5n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "InstructionsLoaded",
+        "files": 5
+      }
+    },
+    {
+      "name": "D_e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1070745,
+      "bytes": 101,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "x5n"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "PostToolUseFailure",
+        "files": 8
+      }
+    },
+    {
+      "name": "D2",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 97143,
+      "bytes": 38,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "jx"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "BKt",
+        "G"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "BKt",
+        "G"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "D5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3034170,
+      "bytes": 98,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "d6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3084887,
+      "bytes": 479,
+      "form": "async function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Fq",
+        "mS"
+      ],
+      "freeThatArePure": [
+        "mS"
+      ],
+      "injections": [],
+      "effectful": [
+        "Fq"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "dee",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 617643,
+      "bytes": 92,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 4,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Dxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2990162,
+      "bytes": 240,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Nxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": " (private/link-local address). Loopback (127.0.0.1, ::1) is allowed for local dev.",
+        "files": 1
+      }
+    },
+    {
+      "name": "E2e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 616864,
+      "bytes": 392,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "wMe"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "G6",
+        "iAt",
+        "n",
+        "oge",
+        "sge"
+      ],
+      "freeThatArePure": [
+        "G6",
+        "sge"
+      ],
+      "injections": [],
+      "effectful": [
+        "iAt",
+        "n",
+        "oge"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "tool cgroup: mcp release at hook fire skipped (",
+        "files": 1
+      }
+    },
+    {
+      "name": "e6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3040992,
+      "bytes": 166,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "AM",
+        "Jxt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "AM",
+        "Jxt"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Ea",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3012901,
+      "bytes": 602,
+      "form": "function",
+      "hops": 0,
+      "params": 4,
+      "callersInBelt": [],
+      "callSitesInChunk": 1,
+      "free": [
+        "$J",
+        "F_",
+        "il",
+        "lg",
+        "om",
+        "tw",
+        "w5n"
+      ],
+      "freeThatArePure": [
+        "w5n"
+      ],
+      "injections": [],
+      "effectful": [
+        "$J",
+        "F_",
+        "il",
+        "lg",
+        "om",
+        "tw"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "eMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3013503,
+      "bytes": 189,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Ypt",
+        "xPe"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Hxt",
+        "V",
+        "l9",
+        "n",
+        "p3"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Hxt",
+        "V",
+        "l9",
+        "n",
+        "p3"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Successfully parsed and validated hook JSON output",
+        "files": 1
+      }
+    },
+    {
+      "name": "eO",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 380032,
+      "bytes": 10,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Qw",
+        "sWe"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "rWe"
+      ],
+      "freeThatArePure": [
+        "rWe"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "eu",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 674466,
+      "bytes": 360,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Kxt",
+        "Qxt"
+      ],
+      "callSitesInChunk": 24,
+      "free": [
+        "n",
+        "o3",
+        "wu"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "n",
+        "o3",
+        "wu"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "hook_response",
+        "files": 8
+      }
+    },
+    {
+      "name": "fP",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 669804,
+      "bytes": 7,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Fq",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3016250,
+      "bytes": 5993,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt",
+        "d6n"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "Mn",
+        "R5n",
+        "b",
+        "bge",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Mn",
+        "R5n",
+        "b",
+        "bge",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": ") returned a terminalSequence that was rejected by the allowlist (only OSC 0/1/2/9/99/777 and BEL are permitted, and OSC 9 bodies may not begin with a digit unless in the 9;4 progress form)",
+        "files": 1
+      }
+    },
+    {
+      "name": "G6",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 615389,
+      "bytes": 312,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "E2e",
+        "J9e"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "InstructionsLoaded",
+        "files": 5
+      }
+    },
+    {
+      "name": "Ghr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043383,
+      "bytes": 246,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Ct",
+        "N3",
+        "Tt",
+        "Yt",
+        "a",
+        "pr",
+        "qhr"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Ct",
+        "N3",
+        "Tt",
+        "Yt",
+        "a",
+        "pr",
+        "qhr"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Gie",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3042974,
+      "bytes": 104,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Kxt",
+        "Sce",
+        "qhr",
+        "vzn"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "xp"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "xp"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "gv",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 619992,
+      "bytes": 202,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "m0",
+        "y7t"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "m0",
+        "y7t"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "H5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3036864,
+      "bytes": 3410,
+      "form": "async function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "BMe",
+        "Dq",
+        "Hie",
+        "Jqe",
+        "Kwe",
+        "Y7",
+        "Z5n",
+        "jie",
+        "n6n",
+        "nh",
+        "pP",
+        "r6n",
+        "su",
+        "vf"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "BMe",
+        "Dq",
+        "Hie",
+        "Jqe",
+        "Kwe",
+        "Y7",
+        "Z5n",
+        "jie",
+        "n6n",
+        "nh",
+        "pP",
+        "r6n",
+        "su",
+        "vf"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "project_configured",
+        "files": 1
+      }
+    },
+    {
+      "name": "Hb",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1070885,
+      "bytes": 121,
+      "form": "function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 7,
+      "free": [
+        "DR",
+        "Lon"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "DR",
+        "Lon"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "HO",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 681567,
+      "bytes": 266,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Kxt"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "Pu",
+        "Wa",
+        "Wt",
+        "et",
+        "hl"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Pu",
+        "Wa",
+        "Wt",
+        "et",
+        "hl"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "task-notification",
+        "files": 32
+      }
+    },
+    {
+      "name": "hv",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 335204,
+      "bytes": 154,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 7,
+      "free": [
+        "Jt",
+        "w4t"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Jt",
+        "w4t"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Hxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2995017,
+      "bytes": 1134,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "eMt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Bxt",
+        "Oq",
+        "Uxt",
+        "b",
+        "vMe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Bxt",
+        "Oq",
+        "Uxt",
+        "b",
+        "vMe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " (top-level decision is the legacy approve|block field; for \"ask\" use hookSpecificOutput.permissionDecision in a PreToolUse hook)",
+        "files": 1
+      }
+    },
+    {
+      "name": "i3",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673855,
+      "bytes": 114,
+      "form": "function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "o3",
+        "wu"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "o3",
+        "wu"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "hook_started",
+        "files": 5
+      }
+    },
+    {
+      "name": "i5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2990719,
+      "bytes": 108,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "zpt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Je"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Je"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "i6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3042318,
+      "bytes": 520,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "_9",
+        "n"
+      ],
+      "freeThatArePure": [
+        "_9"
+      ],
+      "injections": [],
+      "effectful": [
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " for a call served for a cloud session; refusing rather than skipping that gate",
+        "files": 1
+      }
+    },
+    {
+      "name": "IE",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 538966,
+      "bytes": 310,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Wie"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "Dr",
+        "Jpn",
+        "LW",
+        "Nv",
+        "TX",
+        "die",
+        "f_",
+        "ho",
+        "zO"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Dr",
+        "Jpn",
+        "LW",
+        "Nv",
+        "TX",
+        "die",
+        "f_",
+        "ho",
+        "zO"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "iMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3042838,
+      "bytes": 70,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "ip",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 653676,
+      "bytes": 52,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Bie",
+        "Kxt",
+        "Qxt"
+      ],
+      "callSitesInChunk": 19,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "IUt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3015296,
+      "bytes": 161,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "xPe"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "V",
+        "wr"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "V",
+        "wr"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "J7",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3012830,
+      "bytes": 26,
+      "form": "function",
+      "hops": 1,
+      "params": 0,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 5,
+      "free": [
+        "L6"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "L6"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "J7t",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 647588,
+      "bytes": 6003,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "l9"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "De",
+        "H",
+        "N",
+        "Q7t",
+        "_e",
+        "dt",
+        "f",
+        "i",
+        "ie",
+        "jL",
+        "m",
+        "q"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "De",
+        "H",
+        "N",
+        "Q7t",
+        "_e",
+        "dt",
+        "f",
+        "i",
+        "ie",
+        "jL",
+        "m",
+        "q"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Whether Claude should continue after hook (default: true)",
+        "files": 1
+      }
+    },
+    {
+      "name": "J9e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 615702,
+      "bytes": 48,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "G6",
+        "qi"
+      ],
+      "freeThatArePure": [
+        "G6"
+      ],
+      "injections": [],
+      "effectful": [
+        "qi"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "jhr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3032656,
+      "bytes": 162,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "x5n"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "jx",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 97181,
+      "bytes": 3294,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "C_t",
+        "D2",
+        "Ffe",
+        "G5e",
+        "Lne",
+        "N5t",
+        "NKt",
+        "UKt",
+        "Wjt",
+        "YX",
+        "cye",
+        "n",
+        "q5e",
+        "wde",
+        "yl"
+      ],
+      "freeThatArePure": [
+        "NKt",
+        "UKt",
+        "wde"
+      ],
+      "injections": [],
+      "effectful": [
+        "C_t",
+        "D2",
+        "Ffe",
+        "G5e",
+        "Lne",
+        "N5t",
+        "Wjt",
+        "YX",
+        "cye",
+        "n",
+        "q5e",
+        "yl"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "). This usually means another Claude Code process in the same project deleted it during startup cleanup.>",
+        "files": 1
+      }
+    },
+    {
+      "name": "jxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2996151,
+      "bytes": 1293,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "xPe"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "b"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "b"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "string (optional) - Feedback for the model; the conversation continues so the model can act on it",
+        "files": 1
+      }
+    },
+    {
+      "name": "jy",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3049300,
+      "bytes": 261,
+      "form": "async function*",
+      "hops": 0,
+      "params": 1,
+      "callersInBelt": [],
+      "callSitesInChunk": 19,
+      "free": [
+        "Xxt",
+        "c6n",
+        "pm",
+        "xo"
+      ],
+      "freeThatArePure": [
+        "c6n"
+      ],
+      "injections": [],
+      "effectful": [
+        "Xxt",
+        "pm",
+        "xo"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "k5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3011216,
+      "bytes": 7,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "Kxt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "kge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673543,
+      "bytes": 30,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Bie",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "r3"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "r3"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "kJt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673969,
+      "bytes": 196,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "a3"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "o3",
+        "wu"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "o3",
+        "wu"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "hook_progress",
+        "files": 8
+      }
+    },
+    {
+      "name": "Kxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3011646,
+      "bytes": 1184,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Gie",
+        "HO",
+        "Sce",
+        "V",
+        "Zxt",
+        "eu",
+        "ip",
+        "k5n",
+        "pVe"
+      ],
+      "freeThatArePure": [
+        "ip",
+        "k5n"
+      ],
+      "injections": [],
+      "effectful": [
+        "Gie",
+        "HO",
+        "Sce",
+        "V",
+        "Zxt",
+        "eu",
+        "pVe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Stop hook blocking error from command \"",
+        "files": 1
+      }
+    },
+    {
+      "name": "l5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2990878,
+      "bytes": 249,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "zpt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Na",
+        "a5n",
+        "n"
+      ],
+      "freeThatArePure": [
+        "a5n"
+      ],
+      "injections": [],
+      "effectful": [
+        "Na",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " not in allowedEnvVars, skipping interpolation",
+        "files": 1
+      }
+    },
+    {
+      "name": "l6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3044068,
+      "bytes": 144,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Wie"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "dl",
+        "ye"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "dl",
+        "ye"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "policySettings",
+        "files": 58
+      }
+    },
+    {
+      "name": "l9",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 653592,
+      "bytes": 83,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "A5n",
+        "Ypt",
+        "eMt"
+      ],
+      "callSitesInChunk": 5,
+      "free": [
+        "J7t",
+        "N",
+        "dt",
+        "f",
+        "m",
+        "v"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "J7t",
+        "N",
+        "dt",
+        "f",
+        "m",
+        "v"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "lct",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 642907,
+      "bytes": 46,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "age"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "age"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Li",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1070693,
+      "bytes": 9,
+      "form": "function",
+      "hops": 1,
+      "params": 0,
+      "callersInBelt": [
+        "AE",
+        "Nq",
+        "Qxt",
+        "wMe",
+        "zpt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "lMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3049060,
+      "bytes": 55,
+      "form": "function",
+      "hops": 1,
+      "params": 2,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Vn",
+        "c",
+        "cIn",
+        "w"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Vn",
+        "c",
+        "cIn",
+        "w"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Lq",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3042908,
+      "bytes": 66,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 5,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "LR",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 337968,
+      "bytes": 262,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq",
+        "Z9e"
+      ],
+      "callSitesInChunk": 4,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "\" isn't set. Open /plugin manage to configure it, or check that the plugin's userConfig schema declares \"",
+        "files": 1
+      }
+    },
+    {
+      "name": "m6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3086154,
+      "bytes": 148,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "CLAUDE_PLUGIN_DATA",
+        "files": 2
+      }
+    },
+    {
+      "name": "mb",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 380132,
+      "bytes": 38,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Qw"
+      ],
+      "callSitesInChunk": 10,
+      "free": [
+        "G",
+        "nWe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "G",
+        "nWe"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Mi",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 148175,
+      "bytes": 41,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "ml"
+      ],
+      "callSitesInChunk": 51,
+      "free": [
+        "G",
+        "nzn"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "G",
+        "nzn"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "ml",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 138162,
+      "bytes": 53,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "om"
+      ],
+      "callSitesInChunk": 5,
+      "free": [
+        "Mi"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Mi"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Mn",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2966631,
+      "bytes": 204,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Cxt",
+        "Fq",
+        "Oxt",
+        "Qxt",
+        "u6n"
+      ],
+      "callSitesInChunk": 91,
+      "free": [
+        "hxt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "hxt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "queued_command",
+        "files": 12
+      }
+    },
+    {
+      "name": "mS",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 653728,
+      "bytes": 47,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Nq",
+        "Qxt",
+        "d6n"
+      ],
+      "callSitesInChunk": 10,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "NKt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 96597,
+      "bytes": 11,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "jx"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "nMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3031157,
+      "bytes": 150,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "PostModelSwitch",
+        "files": 5
+      }
+    },
+    {
+      "name": "Nq",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3022608,
+      "bytes": 7209,
+      "form": "async function",
+      "hops": 1,
+      "params": 18,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 5,
+      "free": [
+        "$At",
+        "B2",
+        "B6",
+        "D",
+        "E",
+        "Ede",
+        "Ghr",
+        "HQe",
+        "J9e",
+        "Kxt",
+        "LMe",
+        "LR",
+        "Le",
+        "Li",
+        "Na",
+        "Oxe",
+        "P5n",
+        "R",
+        "UAt",
+        "UD",
+        "V",
+        "WN",
+        "Y",
+        "Z9e",
+        "_2e",
+        "_9",
+        "a",
+        "a3",
+        "b",
+        "gv",
+        "hv",
+        "jx",
+        "l",
+        "lct",
+        "m6n",
+        "mS",
+        "n",
+        "q6",
+        "uun",
+        "wr"
+      ],
+      "freeThatArePure": [
+        "LR",
+        "Li",
+        "Z9e",
+        "_9",
+        "m6n",
+        "mS",
+        "q6"
+      ],
+      "injections": [],
+      "effectful": [
+        "$At",
+        "B2",
+        "B6",
+        "D",
+        "E",
+        "Ede",
+        "Ghr",
+        "HQe",
+        "J9e",
+        "Kxt",
+        "LMe",
+        "Le",
+        "Na",
+        "Oxe",
+        "P5n",
+        "R",
+        "UAt",
+        "UD",
+        "V",
+        "WN",
+        "Y",
+        "_2e",
+        "a",
+        "a3",
+        "b",
+        "gv",
+        "hv",
+        "jx",
+        "l",
+        "lct",
+        "n",
+        "uun",
+        "wr"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "PowerShell hook command references $CLAUDE_PROJECT_DIR, which PowerShell reads as an undefined variable ($null). Use $env:CLAUDE_PROJECT_DIR or \\${CLAUDE_PROJECT_DIR} instead. Command: ",
+        "files": 1
+      }
+    },
+    {
+      "name": "nWe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 379958,
+      "bytes": 22,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "mb"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "J",
+        "tWe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "J",
+        "tWe"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Nxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2989665,
+      "bytes": 497,
+      "form": "function",
+      "hops": 2,
+      "params": 3,
+      "callersInBelt": [
+        "zpt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "Dxt",
+        "Lxt",
+        "XIe",
+        "t5n"
+      ],
+      "freeThatArePure": [
+        "Dxt"
+      ],
+      "injections": [],
+      "effectful": [
+        "Lxt",
+        "XIe",
+        "t5n"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "o3",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673762,
+      "bytes": 93,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "a3",
+        "eu",
+        "i3",
+        "kJt"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "SJt",
+        "_y",
+        "cVe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "SJt",
+        "_y",
+        "cVe"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "O5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3033494,
+      "bytes": 213,
+      "form": "async function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Ur",
+        "Vd",
+        "rMt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Ur",
+        "Vd",
+        "rMt"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "o6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3041731,
+      "bytes": 339,
+      "form": "function",
+      "hops": 3,
+      "params": 4,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "fge",
+        "mge",
+        "n",
+        "oMt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "fge",
+        "mge",
+        "n",
+        "oMt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " hook not run for a call served to a cloud session (",
+        "files": 1
+      }
+    },
+    {
+      "name": "oge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 616258,
+      "bytes": 30,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "E2e"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "Hw",
+        "a7t"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Hw",
+        "a7t"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "ok",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 646221,
+      "bytes": 544,
+      "form": "function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 6,
+      "free": [
+        "D2e",
+        "Dsn",
+        "Jt",
+        "L2e",
+        "Umt",
+        "Vt",
+        "Y7t",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "D2e",
+        "Dsn",
+        "Jt",
+        "L2e",
+        "Umt",
+        "Vt",
+        "Y7t",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "pluginActivity: recorded ",
+        "files": 1
+      }
+    },
+    {
+      "name": "om",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 138285,
+      "bytes": 85,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "Ea"
+      ],
+      "callSitesInChunk": 20,
+      "free": [
+        "Hl",
+        "K",
+        "Se",
+        "Sl",
+        "ml",
+        "wa"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Hl",
+        "K",
+        "Se",
+        "Sl",
+        "ml",
+        "wa"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "oT",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3045074,
+      "bytes": 235,
+      "form": "function",
+      "hops": 0,
+      "params": 3,
+      "callersInBelt": [],
+      "callSitesInChunk": 11,
+      "free": [
+        "TX",
+        "die",
+        "f_",
+        "zO"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "TX",
+        "die",
+        "f_",
+        "zO"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Oxe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 617345,
+      "bytes": 298,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "Ute",
+        "Xxn",
+        "vpe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Ute",
+        "Xxn",
+        "vpe"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Oxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2983656,
+      "bytes": 4074,
+      "form": "async function",
+      "hops": 3,
+      "params": 8,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "$ie",
+        "CM",
+        "Dd",
+        "Ext",
+        "Hl",
+        "Iq",
+        "Ixt",
+        "Ja",
+        "Kx",
+        "Mn",
+        "Qo",
+        "Vn",
+        "b",
+        "c",
+        "e5n",
+        "f3",
+        "fA",
+        "fbe",
+        "gr",
+        "jYn",
+        "l",
+        "le",
+        "mm",
+        "mp",
+        "n",
+        "pi",
+        "po",
+        "qs",
+        "s",
+        "xe"
+      ],
+      "freeThatArePure": [
+        "$ie"
+      ],
+      "injections": [],
+      "effectful": [
+        "CM",
+        "Dd",
+        "Ext",
+        "Hl",
+        "Iq",
+        "Ixt",
+        "Ja",
+        "Kx",
+        "Mn",
+        "Qo",
+        "Vn",
+        "b",
+        "c",
+        "e5n",
+        "f3",
+        "fA",
+        "fbe",
+        "gr",
+        "jYn",
+        "l",
+        "le",
+        "mm",
+        "mp",
+        "n",
+        "pi",
+        "po",
+        "qs",
+        "s",
+        "xe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "\n\nUse the available tools to inspect the codebase and verify the condition.\nUse as few steps as possible - be efficient and direct.\n\nWhen done, return your result using the ",
+        "files": 1
+      }
+    },
+    {
+      "name": "p3",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 674875,
+      "bytes": 654,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "eMt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " Did you mean hookSpecificOutput.additionalContext (with a hookEventName)?",
+        "files": 1
+      }
+    },
+    {
+      "name": "P5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3022243,
+      "bytes": 365,
+      "form": "async function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "$a",
+        "O",
+        "qD",
+        "r$"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "$a",
+        "O",
+        "qD",
+        "r$"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "p5t",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 380047,
+      "bytes": 9,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "sWe"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "p6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3085686,
+      "bytes": 468,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "_9"
+      ],
+      "freeThatArePure": [
+        "_9"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Pde",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 101936,
+      "bytes": 3878,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "B2"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "$A",
+        "$t",
+        "Cde",
+        "D",
+        "GE",
+        "GU",
+        "H_t",
+        "KKt",
+        "R_t",
+        "WKt",
+        "WUe",
+        "ZOe",
+        "Za",
+        "jjt",
+        "qKt",
+        "vde",
+        "zKt",
+        "zUe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "$A",
+        "$t",
+        "Cde",
+        "D",
+        "GE",
+        "GU",
+        "H_t",
+        "KKt",
+        "R_t",
+        "WKt",
+        "WUe",
+        "ZOe",
+        "Za",
+        "jjt",
+        "qKt",
+        "vde",
+        "zKt",
+        "zUe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Command killed: its output file was replaced or could no longer be verified",
+        "files": 1
+      }
+    },
+    {
+      "name": "PUt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3030190,
+      "bytes": 220,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "TeammateIdle",
+        "files": 5
+      }
+    },
+    {
+      "name": "pVe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 677228,
+      "bytes": 608,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Kxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "a3",
+        "h3",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "a3",
+        "h3",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Hooks: Registering async hook ",
+        "files": 1
+      }
+    },
+    {
+      "name": "q1",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 385105,
+      "bytes": 119,
+      "form": "function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "y5t",
+        "yme"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "y5t",
+        "yme"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "q6",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 618423,
+      "bytes": 109,
+      "form": "function",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "C2e"
+      ],
+      "freeThatArePure": [
+        "C2e"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "<claude-code-hint",
+        "files": 1
+      }
+    },
+    {
+      "name": "qhr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043247,
+      "bytes": 136,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Ghr"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Gie",
+        "I"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Gie",
+        "I"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "tengu_amber_lattice",
+        "files": 1
+      }
+    },
+    {
+      "name": "Qw",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 380170,
+      "bytes": 177,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 8,
+      "free": [
+        "eO",
+        "mb",
+        "sWe"
+      ],
+      "freeThatArePure": [
+        "eO",
+        "sWe"
+      ],
+      "injections": [],
+      "effectful": [
+        "mb"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Qxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3050920,
+      "bytes": 23385,
+      "form": "async function*",
+      "hops": 2,
+      "params": 1,
+      "callersInBelt": [
+        "Xxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "$5n",
+        "$ie",
+        "Cxt",
+        "D5n",
+        "Dr",
+        "Fq",
+        "H5n",
+        "Hb",
+        "Hfe",
+        "J7",
+        "JT",
+        "Ja",
+        "Li",
+        "MS",
+        "Mn",
+        "Nq",
+        "Oxt",
+        "PUt",
+        "Po",
+        "Q",
+        "QZ",
+        "Qw",
+        "Rzn",
+        "SKn",
+        "Sce",
+        "U5n",
+        "Vt",
+        "Vxt",
+        "Wie",
+        "Wxt",
+        "Xhr",
+        "Xpt",
+        "Ypt",
+        "_9",
+        "aMt",
+        "ae",
+        "b",
+        "c",
+        "ce",
+        "ck",
+        "cun",
+        "d6n",
+        "dee",
+        "eu",
+        "fP",
+        "ft",
+        "fve",
+        "g",
+        "h",
+        "i3",
+        "i6n",
+        "iMt",
+        "ip",
+        "kge",
+        "l",
+        "lMt",
+        "la",
+        "mS",
+        "n",
+        "o6n",
+        "ok",
+        "p",
+        "p6n",
+        "q1",
+        "s",
+        "s6n",
+        "sk",
+        "u6n",
+        "v2",
+        "vzn",
+        "wMe",
+        "wl",
+        "xPe",
+        "y",
+        "yKn",
+        "yce",
+        "ywe",
+        "zpt"
+      ],
+      "freeThatArePure": [
+        "$ie",
+        "D5n",
+        "Li",
+        "PUt",
+        "QZ",
+        "Xpt",
+        "_9",
+        "aMt",
+        "ck",
+        "dee",
+        "fP",
+        "iMt",
+        "ip",
+        "mS",
+        "p6n",
+        "s6n"
+      ],
+      "injections": [],
+      "effectful": [
+        "$5n",
+        "Cxt",
+        "Dr",
+        "Fq",
+        "H5n",
+        "Hb",
+        "Hfe",
+        "J7",
+        "JT",
+        "Ja",
+        "MS",
+        "Mn",
+        "Nq",
+        "Oxt",
+        "Po",
+        "Q",
+        "Qw",
+        "Rzn",
+        "SKn",
+        "Sce",
+        "U5n",
+        "Vt",
+        "Vxt",
+        "Wie",
+        "Wxt",
+        "Xhr",
+        "Ypt",
+        "ae",
+        "b",
+        "c",
+        "ce",
+        "cun",
+        "d6n",
+        "eu",
+        "ft",
+        "fve",
+        "g",
+        "h",
+        "i3",
+        "i6n",
+        "kge",
+        "l",
+        "lMt",
+        "la",
+        "n",
+        "o6n",
+        "ok",
+        "p",
+        "q1",
+        "s",
+        "sk",
+        "u6n",
+        "v2",
+        "vzn",
+        "wMe",
+        "wl",
+        "xPe",
+        "y",
+        "yKn",
+        "yce",
+        "ywe",
+        "zpt"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " events (no conversation context is available). Use a command-type hook instead.",
+        "files": 1
+      }
+    },
+    {
+      "name": "QZ",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1649492,
+      "bytes": 389,
+      "form": "async function*",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "r3",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 673404,
+      "bytes": 38,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "kge"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "G",
+        "_Jt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "G",
+        "_Jt"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "rge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 609037,
+      "bytes": 83,
+      "form": "async function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "_2e"
+      ],
+      "callSitesInChunk": 3,
+      "free": [
+        "K",
+        "be",
+        "j6",
+        "le"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "K",
+        "be",
+        "j6",
+        "le"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "rMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3033707,
+      "bytes": 463,
+      "form": "async function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "O5n"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Vd",
+        "no"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Vd",
+        "no"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "PostToolUseFailure",
+        "files": 8
+      }
+    },
+    {
+      "name": "rWe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 379981,
+      "bytes": 47,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "eO"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Rzn",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3045309,
+      "bytes": 3129,
+      "form": "async function",
+      "hops": 1,
+      "params": 6,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "$Me",
+        "AM",
+        "Czn",
+        "Lq",
+        "O5n",
+        "Wie",
+        "cge",
+        "e6n",
+        "l",
+        "n",
+        "nMt",
+        "t6n",
+        "te",
+        "x5n",
+        "zie"
+      ],
+      "freeThatArePure": [
+        "Lq",
+        "cge",
+        "nMt",
+        "zie"
+      ],
+      "injections": [],
+      "effectful": [
+        "$Me",
+        "AM",
+        "Czn",
+        "O5n",
+        "Wie",
+        "e6n",
+        "l",
+        "n",
+        "t6n",
+        "te",
+        "x5n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Hooks: could not establish whose settings define a hook (",
+        "files": 1
+      }
+    },
+    {
+      "name": "s5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2990402,
+      "bytes": 317,
+      "form": "async function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "zpt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "/$bunfs/root/chunk-6v95pkgg.js",
+        "files": 2
+      }
+    },
+    {
+      "name": "s6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3042070,
+      "bytes": 248,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Sce",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043640,
+      "bytes": 312,
+      "form": "function",
+      "hops": 1,
+      "params": 3,
+      "callersInBelt": [
+        "AE",
+        "Kxt",
+        "Qxt"
+      ],
+      "callSitesInChunk": 8,
+      "free": [
+        "Gie",
+        "Po",
+        "a6n",
+        "c",
+        "s"
+      ],
+      "freeThatArePure": [
+        "a6n"
+      ],
+      "injections": [],
+      "effectful": [
+        "Gie",
+        "Po",
+        "c",
+        "s"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "tengu_hook_plugin_metrics",
+        "files": 1
+      }
+    },
+    {
+      "name": "sge",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 617256,
+      "bytes": 89,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "E2e"
+      ],
+      "callSitesInChunk": 3,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "sk",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2998401,
+      "bytes": 811,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "Ue",
+        "_l",
+        "d5n",
+        "w7"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Ue",
+        "_l",
+        "d5n",
+        "w7"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "sandbox-queued",
+        "files": 2
+      }
+    },
+    {
+      "name": "sWe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 380347,
+      "bytes": 181,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Qw"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "eO",
+        "p5t"
+      ],
+      "freeThatArePure": [
+        "eO",
+        "p5t"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "t6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3041158,
+      "bytes": 275,
+      "form": "function",
+      "hops": 2,
+      "params": 4,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "AM",
+        "ye"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "AM",
+        "ye"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "tMt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3030874,
+      "bytes": 175,
+      "form": "function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "$Me"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Vd",
+        "r1e"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Vd",
+        "r1e"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "U5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3034800,
+      "bytes": 1175,
+      "form": "async function",
+      "hops": 3,
+      "params": 3,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "BMe",
+        "EUt",
+        "GO",
+        "Is",
+        "Na",
+        "Whr",
+        "a",
+        "ee",
+        "jie",
+        "n",
+        "nh",
+        "sMt",
+        "su",
+        "vf",
+        "wT",
+        "ye"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "BMe",
+        "EUt",
+        "GO",
+        "Is",
+        "Na",
+        "Whr",
+        "a",
+        "ee",
+        "jie",
+        "n",
+        "nh",
+        "sMt",
+        "su",
+        "vf",
+        "wT",
+        "ye"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Hooks: a served call's hooks run without ",
+        "files": 1
+      }
+    },
+    {
+      "name": "u6n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3083950,
+      "bytes": 937,
+      "form": "async function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Ja",
+        "Mn",
+        "h"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Ja",
+        "Mn",
+        "h"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "Function hook execution error",
+        "files": 1
+      }
+    },
+    {
+      "name": "UKt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 96618,
+      "bytes": 8,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "jx"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "UT",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 1712771,
+      "bytes": 42,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "az"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "TCn"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "TCn"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "uun",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074305,
+      "bytes": 295,
+      "form": "async function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "$a",
+        "G",
+        "Vhr",
+        "_5n",
+        "jie",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "$a",
+        "G",
+        "Vhr",
+        "_5n",
+        "jie",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " no longer exists; running hooks from ",
+        "files": 1
+      }
+    },
+    {
+      "name": "Vhr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3074604,
+      "bytes": 22,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "uun"
+      ],
+      "callSitesInChunk": 0,
+      "free": [
+        "J"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "J"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Vxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3048976,
+      "bytes": 84,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "mxn"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "mxn"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "vzn",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3043078,
+      "bytes": 169,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Gie"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Gie"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "w4t",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 335358,
+      "bytes": 118,
+      "form": "async function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "hv"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "vn",
+        "xY"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "vn",
+        "xY"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "w5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3012860,
+      "bytes": 40,
+      "form": "function",
+      "hops": 1,
+      "params": 0,
+      "callersInBelt": [
+        "Ea"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "wde",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 95438,
+      "bytes": 663,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "jx"
+      ],
+      "callSitesInChunk": 1,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "Wie",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3044212,
+      "bytes": 398,
+      "form": "function",
+      "hops": 2,
+      "params": 4,
+      "callersInBelt": [
+        "Qxt",
+        "Rzn"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "IE",
+        "l6n",
+        "rgt",
+        "ye"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "IE",
+        "l6n",
+        "rgt",
+        "ye"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "policySettings",
+        "files": 58
+      }
+    },
+    {
+      "name": "wMe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2992838,
+      "bytes": 1310,
+      "form": "async function",
+      "hops": 1,
+      "params": 6,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "A0",
+        "E2e",
+        "Fc",
+        "GO",
+        "Ja",
+        "Li",
+        "Zo",
+        "c5n",
+        "gI",
+        "l",
+        "n"
+      ],
+      "freeThatArePure": [
+        "Li"
+      ],
+      "injections": [],
+      "effectful": [
+        "A0",
+        "E2e",
+        "Fc",
+        "GO",
+        "Ja",
+        "Zo",
+        "c5n",
+        "gI",
+        "l",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "mcp_tool hooks are not available for the '",
+        "files": 1
+      }
+    },
+    {
+      "name": "Wxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2997444,
+      "bytes": 220,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "vMe"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "vMe"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " hook output invalid: ",
+        "files": 1
+      }
+    },
+    {
+      "name": "x5n",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3032818,
+      "bytes": 372,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "D_e",
+        "hxn",
+        "jhr",
+        "n"
+      ],
+      "freeThatArePure": [
+        "D_e",
+        "jhr"
+      ],
+      "injections": [],
+      "effectful": [
+        "hxn",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "\\` matches no tool (it is compared as an exact string). To match all tools from this server, use \\`",
+        "files": 1
+      }
+    },
+    {
+      "name": "Xhr",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3085366,
+      "bytes": 320,
+      "form": "function",
+      "hops": 3,
+      "params": 2,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "Un",
+        "wl"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Un",
+        "wl"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "SubagentStart",
+        "files": 7
+      }
+    },
+    {
+      "name": "XIe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2988224,
+      "bytes": 84,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "Nxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Fxt",
+        "Lxt",
+        "n5n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Fxt",
+        "Lxt",
+        "n5n"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "xPe",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3014197,
+      "bytes": 833,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 4,
+      "free": [
+        "A5n",
+        "IUt",
+        "eMt",
+        "jxt",
+        "l",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "A5n",
+        "IUt",
+        "eMt",
+        "jxt",
+        "l",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": ". Emit the payload with a JSON encoder (jq, ConvertTo-Json, json.dumps) rather than string concatenation so backslashes and quotes inside strings are escaped.",
+        "files": 1
+      }
+    },
+    {
+      "name": "Xpt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3015457,
+      "bytes": 96,
+      "form": "function",
+      "hops": 1,
+      "params": 3,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "\n\nHook exited ",
+        "files": 1
+      }
+    },
+    {
+      "name": "Xxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3049561,
+      "bytes": 964,
+      "form": "async function*",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "jy"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Qxt",
+        "ka"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "Qxt",
+        "ka"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "y7t",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 618952,
+      "bytes": 1040,
+      "form": "async function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "gv"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "A2e",
+        "D",
+        "FO",
+        "K6",
+        "Va",
+        "a",
+        "g",
+        "h7t",
+        "y"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "A2e",
+        "D",
+        "FO",
+        "K6",
+        "Va",
+        "a",
+        "g",
+        "h7t",
+        "y"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "/opt/microsoft/powershell/7/pwsh",
+        "files": 1
+      }
+    },
+    {
+      "name": "yce",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3013692,
+      "bytes": 505,
+      "form": "async function",
+      "hops": 3,
+      "params": 4,
+      "callersInBelt": [
+        "Qxt"
+      ],
+      "callSitesInChunk": 6,
+      "free": [
+        "D9",
+        "I_",
+        "O9",
+        "Z8n",
+        "c",
+        "rue",
+        "s"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "D9",
+        "I_",
+        "O9",
+        "Z8n",
+        "c",
+        "rue",
+        "s"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " chars \\u2014 persist-to-disk failed: ",
+        "files": 1
+      }
+    },
+    {
+      "name": "yJt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 672426,
+      "bytes": 629,
+      "form": "function",
+      "hops": 3,
+      "params": 1,
+      "callersInBelt": [
+        "bge"
+      ],
+      "callSitesInChunk": 1,
+      "free": [
+        "JE",
+        "UI",
+        "fJt",
+        "gJt",
+        "hJt",
+        "mJt"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "JE",
+        "UI",
+        "fJt",
+        "gJt",
+        "hJt",
+        "mJt"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Ypt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3015553,
+      "bytes": 511,
+      "form": "function",
+      "hops": 1,
+      "params": 1,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "eMt",
+        "l9",
+        "n"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "eMt",
+        "l9",
+        "n"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "HTTP hook returned empty body, treating as empty JSON object",
+        "files": 1
+      }
+    },
+    {
+      "name": "Yxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3049239,
+      "bytes": 61,
+      "form": "function",
+      "hops": 1,
+      "params": 2,
+      "callersInBelt": [
+        "AE"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "xo"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "xo"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    },
+    {
+      "name": "Z9e",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 338230,
+      "bytes": 57,
+      "form": "function",
+      "hops": 2,
+      "params": 2,
+      "callersInBelt": [
+        "Nq"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "LR"
+      ],
+      "freeThatArePure": [
+        "LR"
+      ],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": null
+    },
+    {
+      "name": "zie",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3032301,
+      "bytes": 354,
+      "form": "function",
+      "hops": 2,
+      "params": 0,
+      "callersInBelt": [
+        "Rzn"
+      ],
+      "callSitesInChunk": 0,
+      "free": [],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [],
+      "verdict": "pure",
+      "anchor": {
+        "literal": "InstructionsLoaded",
+        "files": 5
+      }
+    },
+    {
+      "name": "zpt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 2991127,
+      "bytes": 1258,
+      "form": "async function",
+      "hops": 1,
+      "params": 5,
+      "callersInBelt": [
+        "AE",
+        "Qxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "Ja",
+        "Li",
+        "Nxt",
+        "PC",
+        "Pl",
+        "az",
+        "i5n",
+        "l",
+        "l5n",
+        "n",
+        "s5n",
+        "yh"
+      ],
+      "freeThatArePure": [
+        "Li",
+        "s5n"
+      ],
+      "injections": [],
+      "effectful": [
+        "Ja",
+        "Nxt",
+        "PC",
+        "Pl",
+        "az",
+        "i5n",
+        "l",
+        "l5n",
+        "n",
+        "yh"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": " does not match any pattern in allowedHttpHookUrls",
+        "files": 1
+      }
+    },
+    {
+      "name": "Zxt",
+      "chunk": "chunk-fy12d89p.js",
+      "offset": 3011168,
+      "bytes": 34,
+      "form": "function",
+      "hops": 3,
+      "params": 0,
+      "callersInBelt": [
+        "Kxt"
+      ],
+      "callSitesInChunk": 2,
+      "free": [
+        "$hr",
+        "G"
+      ],
+      "freeThatArePure": [],
+      "injections": [],
+      "effectful": [
+        "$hr",
+        "G"
+      ],
+      "verdict": "effectful",
+      "anchor": null
+    }
+  ]
+}
