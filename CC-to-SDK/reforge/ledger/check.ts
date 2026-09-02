@@ -37,10 +37,23 @@
 //      span, against whichever chunk each one names (W1 boundary review).
 //   2. SPAN SANITY — integer offsets, `start < end`, and within the chunk.
 //   3. UPSTREAM BYTES — with the extraction bundle present, the chunk must
-//      exist and the span's bytes must hash to `target.sha256`. Bundle absent
-//      is a WARN-and-skip (a checkout on another machine has no bundle);
-//      a mismatch is a hard FAIL, because that is exactly the pin-drift signal
-//      §5 exists to catch.
+//      exist and the span's bytes must hash to `target.sha256` IN THE UPSTREAM
+//      BASIS. Bundle absent is a WARN-and-skip (a checkout on another machine
+//      has no bundle); a mismatch is a hard FAIL, because that is exactly the
+//      pin-drift signal §5 exists to catch.
+//
+//      This rule used to accept EITHER basis — upstream or materialized — and
+//      that tolerance is what let a wrong-basis record through a green gate.
+//      W7.6a's two new capture records were copied raw out of
+//      build/footprints.json, so their offsets named the materialized graph
+//      while the ledger's declared basis is upstream; rule 3 hashed both ways,
+//      found a match in the second, and passed. The offsets pointed at bytes
+//      that are a DIFFERENT DECLARATION upstream (`bge`'s recorded span lands on
+//      `}}async function VE(`), so §5's whole purpose — stale this row when the
+//      declaration moves — was defeated on a row that looked fully recorded.
+//      A materialized-only match is therefore REFUSED by name, with the
+//      conversion named in the message: ledger/backfill-captures.ts exists for
+//      exactly this and is now a gate phase.
 //   4. EVIDENCE — `standalone-complete` and `assembled` are ownership claims,
 //      so they require a footprint AND at least one resolvable evidence link
 //      (`commit:<sha>` or `scenario:<tag>`); `standalone-complete` on a
@@ -52,10 +65,11 @@
 // SPAN BASIS: the ledger records offsets into the **upstream bundle module**
 // (`~/claude-code-bundle/<pin>/modules/<chunk>`), which is the same on every
 // machine — targets and capture declarations alike. strangle/build.ts emits
-// offsets into its *materialized* copy, whose absolute path shifts them, so rule
-// 3 accepts either basis and only fails when neither resolves to the recorded
-// digest, and `toUpstreamOffset` below is the conversion that puts a freshly
-// emitted footprint into the committed basis.
+// offsets into its *materialized* copy, whose absolute path shifts them, and
+// `toUpstreamOffset` below is the conversion that puts a freshly emitted
+// footprint into the committed basis. Rule 3 accepts ONE basis, the committed
+// one; a record that only resolves in the emitted basis has not been converted
+// and is refused rather than tolerated.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -390,9 +404,22 @@ export function checkLedger(doc: unknown, opts: CheckOptions = {}): CheckResult 
         if (end > src.upstream.length && end > src.materialized.length) {
           return fail(`${where}: span [${start}, ${end}] runs past the end of ${chunkName} (${src.upstream.length} chars)`);
         }
-        if (sha256(src.upstream.slice(start, end)) !== digest && sha256(src.materialized.slice(start, end).replaceAll(STRANGLED_PREFIX, BUNFS)) !== digest) {
-          fail(`${where}: bytes at [${start}, ${end}] of ${chunkName} do not hash to ${digest.slice(0, 12)}… — the footprint points at something the pinned bundle does not contain`);
+        if (sha256(src.upstream.slice(start, end)) === digest) return;
+        // ONE BASIS, AND IT IS THE COMMITTED ONE. A span that resolves only
+        // against the materialized rendering is a record copied straight out of
+        // build/footprints.json without the conversion — which points at
+        // different bytes upstream, so §5 can no longer stale the row when the
+        // declaration moves. Named as its own failure rather than folded into
+        // the generic mismatch, because the fix is a tool rather than an
+        // investigation.
+        if (sha256(src.materialized.slice(start, end).replaceAll(STRANGLED_PREFIX, BUNFS)) === digest) {
+          return fail(
+            `${where}: bytes at [${start}, ${end}] of ${chunkName} hash to ${digest.slice(0, 12)}… only in the MATERIALIZED basis — ` +
+              `this record was copied from build/footprints.json without conversion, and upstream those offsets are a different declaration. ` +
+              `Rebase it: npx tsx ledger/backfill-captures.ts`,
+          );
         }
+        fail(`${where}: bytes at [${start}, ${end}] of ${chunkName} do not hash to ${digest.slice(0, 12)}… — the footprint points at something the pinned bundle does not contain`);
       };
       if (!isRecord(f)) return fail(": not an object");
       const chunk = chunkPath(f.chunk, fail, ".chunk");

@@ -454,12 +454,27 @@ if (!buildAndBoot([])) {
 // Each spawns a real engine or hashes the 60 MB runtime, so neither belongs in
 // the build-free determinism block; both are cheap enough (seconds) to be
 // phases rather than a separate recipe nobody remembers to run.
-console.log("\n━━━ auxiliary: credential never reaches the engine; the runtime pin is the bytes ━━━");
-for (const [label, script] of [
-  ["credential leak (end-to-end, X6)", "src/credential-leak.test.ts"],
-  ["runtime pin is the bytes (§3.5)", "strangle/toolchain.test.ts"],
-] as [string, string][]) {
-  const r = run("npx", ["tsx", script]);
+console.log("\n━━━ auxiliary: credential never reaches the engine; the runtime pin is the bytes; the ledger's captures are in the committed basis ━━━");
+for (const [label, argv] of [
+  ["credential leak (end-to-end, X6)", ["src/credential-leak.test.ts"]],
+  ["runtime pin is the bytes (§3.5)", ["strangle/toolchain.test.ts"]],
+  // THE LEDGER'S CAPTURES, RE-DERIVED FROM THE BUILD THAT JUST RAN. `ledger/check.ts`
+  // in the determinism block proves each recorded span hashes to what it
+  // recorded; it cannot prove the record is the one THIS build emits, because it
+  // has no emission to compare against. That comparison is what
+  // `backfill-captures.ts --check` does, and until now nothing ran it — so
+  // W7.6a's captures went in unconverted, in the emitter's basis, and a green
+  // gate said nothing. A check nothing runs is a check nothing enforces (C6's X7
+  // finding, arriving one artifact over).
+  //
+  // It sits HERE rather than in the determinism block because it needs a
+  // FAITHFUL build/footprints.json, which only exists after the equivalence
+  // phase above rebuilds one — every phase between the liveness loop and that
+  // rebuild leaves a sabotaged emission behind, and the tool refuses those by
+  // variant rather than reading them.
+  ["ledger captures match this build, rebased upstream (§5)", ["ledger/backfill-captures.ts", "--check"]],
+] as [string, string[]][]) {
+  const r = run("npx", ["tsx", ...argv]);
   const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));
   for (const l of lines) console.log(`  ${l.trim()}`);
   // A suite that died before printing anything must still say why, or a red

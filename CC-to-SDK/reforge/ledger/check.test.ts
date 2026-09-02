@@ -16,16 +16,20 @@
 // off by one, in either chunk, is rejected rather than believed.
 //
 // Run: cd reforge && npx tsx ledger/check.test.ts
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { checkLedger, FOOTPRINTS_PATH, LEDGER_PATH, type CheckOptions, type Footprint, type FootprintCapture, type Ledger, type LedgerRow } from "./check.js";
 import { CANONICAL_ROWS } from "./rows.js";
 // The live X7 registry, imported for its side effects — the same view
 // ledger/check.ts takes when no `ownedSubsystems` override is given.
 import "../engine-ts/modules/index.js";
 import { ownedSubsystems } from "../engine-ts/registry.js";
-import { ENGINE_VERSION } from "../src/pin.js";
+import { BUNDLE_MODULES, BUNFS, ENGINE_VERSION } from "../src/pin.js";
+
+const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 
 const real = JSON.parse(readFileSync(LEDGER_PATH, "utf8")) as Ledger;
 /** Deep clone so each case mutates in isolation. */
@@ -201,6 +205,45 @@ rejects("malformed target sha256 is rejected", (l) => {
   f.target.sha256 = "deadbeef";
   rowOf(l, "tool/Bash").footprint = [f];
 }, /sha256/);
+
+// --- span BASIS (C10.6 boundary review) ---
+// Rule 3 used to accept either basis, and that tolerance let a wrong-basis
+// record through a green gate: W7.6a's capture records were copied raw out of
+// build/footprints.json, so their offsets named the MATERIALIZED graph while the
+// ledger's declared basis is upstream. Upstream those offsets are a different
+// declaration, so §5's staling — the whole reason a footprint is recorded —
+// could no longer fire on that row.
+//
+// The control is derived rather than pasted: take a real capture, shift it
+// FORWARD by the same `n × delta` the materialization applies, and re-digest it
+// through the materialized rendering. That is exactly the record a raw copy
+// produces.
+{
+  const STRANGLED = join(dirname(dirname(fileURLToPath(import.meta.url))), "build", "strangled") + "/";
+  const delta = STRANGLED.length - BUNFS.length;
+  const upstream = readFileSync(join(BUNDLE_MODULES, REAL_FOOTPRINT.chunk), "utf8");
+  /** The forward transform prepare.ts applies: every rewritten specifier before `offset` widens it by `delta`. */
+  const shift = (offset: number): number => offset + (upstream.slice(0, offset).split(BUNFS).length - 1) * delta;
+  const c = realCapture();
+  const materialized = upstream.replaceAll(BUNFS, STRANGLED);
+  const start = shift(c.declStart);
+  const end = shift(c.declEnd);
+  const shifted = start !== c.declStart;
+  check("the basis control is not vacuous — the chunk really does carry a rewritten specifier before this capture", shifted, `${c.declStart} -> ${start}`);
+  if (shifted) {
+    rejects("a capture recorded in the MATERIALIZED basis is refused by name", (l) => {
+      const f = realFootprint();
+      f.captures = [{ ...c, declStart: start, declEnd: end, sha256: sha256(materialized.slice(start, end).replaceAll(STRANGLED, BUNFS)) }];
+      rowOf(l, "tool/Bash").footprint = [f];
+    }, /MATERIALIZED basis/);
+  }
+  // …and the legitimate neighbour: the same declaration in the committed basis.
+  accepts("…while the same declaration in the upstream basis is accepted", (l) => {
+    const f = realFootprint();
+    f.captures = [c];
+    rowOf(l, "tool/Bash").footprint = [f];
+  });
+}
 
 // --- span sanity (the review's reversed-span defect) ---
 rejects("a reversed span is rejected", (l) => {
