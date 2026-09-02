@@ -4967,7 +4967,7 @@ export const SPLICES: Splice[] = [
   //
   // THE POPULATION IS DERIVED, not listed. `research/fixtures/moat-tools-<pin>.json`
   // reads the recorded request bodies for what the engine actually presented
-  // (197 bodies over 82 recorded cassettes, 12 distinct catalogs, baseline 22 tools) and then finds each
+  // (199 bodies over 82 recorded cassettes, 12 distinct catalogs, baseline 22 tools) and then finds each
   // description's producing DECLARATIONS by searching the graph for the rendered
   // text itself, in every form the source's QUOTING could give it. Three
   // descriptions turn out to have more than one carrier; each row below claims

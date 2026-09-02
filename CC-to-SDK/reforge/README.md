@@ -3882,7 +3882,7 @@ prompt sections, the hook-helper belt) and fixed it the same way each time. C11a
 "these are the sixteen builders", so the derivation came before the splices:
 `research/fixtures/moat-tools-2.1.251.json`, the **eighth pin-keyed fixture** and a gate phase.
 
-* **The corpus side** reads every recorded request body's `tools` array — 197 bodies over 82
+* **The corpus side** reads every recorded request body's `tools` array — 199 bodies over 82
   cassettes, 12 distinct catalog shapes, the 22-tool baseline in 59 of them and the plan-mode
   catalog in 14.
 * **The bundle side** finds each description's producing DECLARATIONS by *searching the graph for
@@ -3915,7 +3915,7 @@ a local while the manifest splices the enclosing free function.
 Deriving the corpus side surfaced that **"267 cassettes" is the count of FILES in `cassettes/`**, and
 186 of those are `-observed-A|A2|B` dumps a replay writes beside the cassette it replayed. They are
 byte-identical traffic on a green run and their number depends on how many times someone ran the
-gate. The recorded corpus is **82 cassettes carrying 197 request bodies**. Every prose claim in the
+gate. The recorded corpus is **82 cassettes carrying 199 request bodies**. Every prose claim in the
 owned code, the ledger and the manifest is corrected; the W8 scout keeps its own text, because a
 research document records what was measured then.
 
@@ -3933,7 +3933,7 @@ the one caller of nine that did not delete the file first. Its two dumps had acc
 9.5 MB each, **236 of the 431 bodies** the corpus side then counted — so the recorded-body count grew
 by four every time anyone ran the gate. The pattern-exact filter had fixed which FILES count and
 left a file whose BODY count is a function of gate runs; truncation now belongs to the proxy rather
-than to each caller. The honest recorded corpus is **197 bodies**.
+than to each caller. The honest recorded corpus is **199 bodies**.
 
 ### Sixteen splices, and the shapes they actually have
 
@@ -4113,3 +4113,103 @@ five suites.
 * **The four task-family DESCRIPTIONS are unowned and cheap.** They render in 6 recorded cassettes,
   their carriers are in the fixture, and they are the same four shapes this wave already spliced.
   They are outside C11a's sixteen only because the sixteen are defined as "zero execution coverage".
+
+## W8a-fix — the C11a boundary review: the belt held, the record did not (2026-09-03)
+
+The review reproduced the wave: **every owned byte, every anchor, every liveness row and every
+reviewed exclusion**. Both load-bearing defects were in what the wave *said* — in the derivation
+fixture and in the numbers four documents quoted from it — which is why the verdict was NOT
+CONVERGED on the record and converged on the code. Six findings, all fixed; gate re-run at
+**133 of 133 summary phases, zero FAIL** (quoted from the gate's own summary block; attestation unchanged at **474/1030 with 556 exclusions**, and its committed report is this run's own output).
+
+### The fixture attributed a description to a declaration that does not produce it
+
+Two independent errors in one routine, and both inflated the same number.
+
+**The search assumed one spelling per window.** `carriersFor` looks for 48-character windows of the
+RENDERED description inside minified SOURCE, and source is quoted. ScheduleWakeup's window at offset
+1488 cannot match its own builder — that chunk single-quotes the literal, so it carries `user\'s` —
+and matched the tool's memoized zod `.describe(…)` copy in another chunk instead, exactly once. The
+fixture recorded the **schema getter** as a third carrier of the description. This wave already
+carried "quoting is an escape layer" as an ANCHOR lesson; the rule was never applied to the search
+that finds the anchor's target, and **it fails worse there**: a mis-spelled anchor points at the
+wrong file, a mis-spelled search names a declaration that does not produce the text at all. Windows
+are now searched for as every quoting style would write them, hits summed across the forms.
+Locatable windows rose from 1,191 to 1,342 of 1,505.
+
+**And a local is not a carrier.** The walk resolved a window to the INNERMOST enclosing declaration,
+so a builder's local `const o = …` counted as a carrier of its own — which nothing can splice, since
+excising the enclosing function takes it along. CronCreate's "three declarations" and SendMessage's
+"two" were that, and the artifact had put SendMessage's *primary* carrier on a local while
+`strangle/manifest.ts` splices the enclosing free function. The walk keeps the outermost declaration
+now, with the one exception the campaign's splice shapes require: an object-literal method is
+independently excisable, which is how TaskOutput's description is owned.
+
+**Carriers 29 → 25. The descriptions genuinely composed of more than one declaration are three —
+EnterPlanMode, ScheduleWakeup, Workflow — not five.** Generalising: when a derivation resolves
+"which X produces this" through an AST, the node kind it stops at has to be the kind the consumer
+can act on.
+
+### The check compared a subset of the fields the fixture writes
+
+`bodiesWithTools: 423` in the committed fixture; 427 measured at review time; **PASS** printed by
+`--check` in the same breath as the stale number. `--check` compared the per-tool rows and the
+bundle half, so `counts`, `catalogs` and `outsideW8` were stated and never read — and the staleness
+was invisible *because* the field it printed was the field it did not compare. Every count is
+compared now: floors where growth is legitimate (cassette files, request bodies, catalog shapes),
+exact everywhere else, a recorded catalog shape may gain bodies but not vanish, and the tools
+outside the wave's scope are held to presence and byte identity. Every new comparison was driven red
+before it landed. **Every number a fixture states is a claim; a claim nothing compares is prose that
+looks like evidence.**
+
+The drift itself was not a re-record's doing, and chasing it found the real defect.
+`startReplayProxy` **appends** to its observation dump; eight of its nine callers delete the file
+first; `m2/cross-resume.ts` did not, and had accumulated **59 runs** of its own traffic — 9.5 MB per
+dump, 118 request bodies apiece and 236 of the 431 bodies the corpus side counted, growing by four every time anyone ran the gate.
+W8a's own denominator correction was therefore still wrong one layer down: the pattern-exact filter
+fixed which FILES count and left a file whose BODY count is a function of gate runs. Truncation now
+belongs to the proxy — *a per-run invariant nine call sites must remember is one a call site will
+not* — and the recorded corpus is **82 cassettes carrying 199 request bodies**.
+
+One more turn of the same screw, worth recording because it is the same mistake in miniature. The
+first regenerated fixture said **197**, because the accumulated dumps were trimmed to their last
+*two* lines on the assumption that a run writes two — and a `cross-resume` run writes **four** (a
+`HEAD` probe and a `POST` per query, and it drives two queries through one proxy). The gate's own
+run corrected it: a fixture derived from a hand-trimmed artifact is a fixture derived from an
+assumption. 199 is what a real run leaves, verified by re-deriving after the gate and re-running
+`--check`.
+
+### The four smaller ones
+
+* **A blind spot described as the wrong kind of blind spot.** The seven `DH(…)` gate reads do not
+  "land in the extractor's 2,549 `unresolved` sites": `extract-gate-defaults.ts` enters only calls
+  with exactly two arguments, so a three-argument read is never visited and no unresolved entry has
+  `DH` as its callee. **Invisible, not unresolved** — an unresolved site is a gap the fixture
+  declares and can be counted. The substance holds (five of the seven gates absent, including the
+  cron kill switch, which itself defaults TRUE so no coverage claim moves), and C11b's repair grows:
+  the arity filter has to be widened as well as the alias taught.
+* **§1.2 gains the one exclusion kind that expires.** `tool/Monitor` was filed under §1.2 while
+  §1.2 says feature gates are neither spliced nor excluded — a rule about gated CODE INSIDE an owned
+  row, not about a row whose whole surface a gate makes unreachable. It stays excluded under a kind
+  the table now names, **gate-dead with no lever at this pin**, and the condition is declared
+  (`ExcludedRow.gateDead`) rather than described: `ledger/check.ts` holds it against
+  `gate-defaults-<pin>.json`, so a bump that flips the default, drops the gate or gives it an env
+  override reddens the ledger. Three controls, one per way it can go red.
+* **A fix whose absence is invisible is a fix the next refactor removes.** The X6 rider routed
+  `engine-ts/skeleton.test.ts` through `engineEnv` and asserted nothing about it. The wrapper reads
+  exactly one variable, so poisoning `BUN` in the parent is a canary the spawn path consumes: the
+  allowlisted environment still reports the pin, the same spawn inheriting the parent dies at 127.
+  Verified by deleting the option.
+* **Terminology, in three places.** The seventeen files the first `-observed-` filter nearly ate are
+  replay-proxy OBSERVATION DUMPS carrying real request bodies (fifteen `m3-flip-observed-*`, two
+  `m2-xresume-observed-*`), not record-mode cassettes. They belong in the corpus because their
+  bodies are real bodies from a real engine — which is also exactly why a dump that accumulates runs
+  corrupts a denominator.
+
+### Flagged, not fixed
+
+Three LOCAL cassettes — `m1-background-task`, `m1-hooks-subagent`, `m1-subagent` — carry the
+operator's identity in a recorded request body (`Git user: SSFSKIM`, out of the environment block).
+`cassettes/` is gitignored and nothing is committed, so this is hygiene rather than a leak, but a
+corpus that ever becomes shareable would carry it. The scrub belongs with whichever wave re-records
+those three.
