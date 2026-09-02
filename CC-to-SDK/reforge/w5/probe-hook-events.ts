@@ -148,14 +148,13 @@ const CONDITIONS: Record<string, { phase: string | null; firedIn?: string; condi
       "MCP route needs a server — the phase that tried it was removed rather than left standing as a fake negative.",
   },
   CwdChanged: {
-    phase: null,
+    phase: "cwd-change",
     condition:
       "the tracked cwd MOVES (`onCwdChanged`), with a CwdChanged or FileChanged hook registered to arm the watcher. " +
-      "The tracked cwd CAN move headlessly — the Bash tool's post-command tracking (the `tengu_shell_set_cwd` block) " +
-      "reads the shell's final PWD and calls `onCwdChanged` when a `cd` persists — but the file-watch phase, which " +
-      "arms the watcher and has Bash enabled, never runs a `cd`, so the condition stays uncreated. OPEN, not a " +
-      "negative; cheaply closable by a follow-up phase that runs one persisting `cd` (if it fires, `AUt` becomes " +
-      "recordable — it shares `zxt` with the already-spliced `CUt`).",
+      "The tracked cwd moves headlessly through the Bash tool's post-command tracking (the `tengu_shell_set_cwd` " +
+      "block), which reads the shell's final PWD and calls `onCwdChanged` when a `cd` persists past the command. " +
+      "W5 left this OPEN because no phase ran a `cd`; the `cwd-change` phase creates the condition, so the verdict " +
+      "here is now a measurement in either direction.",
   },
   FileChanged: { phase: "file-watch", condition: "a watcher event on a path a FileChanged hook's MATCHER named (the matcher arms chokidar; hook output does not)" },
   PreModelSwitch: { phase: "model-switch", condition: "a model change proposed (`/model`), before it is applied" },
@@ -537,6 +536,32 @@ async function main(): Promise<void> {
           ? "Use the Write tool to create a file `watched.txt` containing exactly `one`. Then use the Write tool again to overwrite it with exactly `two`. Then reply with exactly REFORGE_PROBE_WATCHED."
           : null,
       focus: ["FileChanged", "CwdChanged"],
+    },
+    {
+      // The other watcher event, and the one W5 left OPEN. `file-watch` arms the
+      // watcher and enables Bash but never MOVES the tracked cwd, so CwdChanged's
+      // condition went uncreated — an absence of evidence, not a negative. This
+      // phase creates it: the Bash tool's post-command tracking reads the shell's
+      // final PWD and calls `onCwdChanged` when a `cd` persists past the command,
+      // so one `cd` into a subdirectory of the armed matcher is the whole
+      // condition. The matcher is the sandbox and the subdirectory is inside it,
+      // so the watcher covers the destination as well as the origin.
+      //
+      // Two exchanges, not one: the `cd` has to persist INTO a later command for
+      // the tracker to report a move, and a single command's own subshell is not
+      // that. The second command's `pwd` is what makes the persistence visible in
+      // the transcript when the verdict needs explaining.
+      label: "cwd-change",
+      condition: "a Bash `cd` that persists past its command, under an armed CwdChanged matcher",
+      extra: { allowedTools: ["Bash"], maxTurns: 8 },
+      prepare: () => mkdirSync(join(SANDBOX, "moved"), { recursive: true }),
+      next: (r) =>
+        r === 0
+          ? "Use the Bash tool to run exactly `cd moved` and nothing else."
+          : r === 1
+            ? "Use the Bash tool to run exactly `pwd`, then reply with exactly REFORGE_PROBE_CWD."
+            : null,
+      focus: ["CwdChanged", "FileChanged"],
     },
     {
       // `gdt` fires from the app-state reducer when `mainLoopModel` actually
