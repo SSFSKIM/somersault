@@ -2,6 +2,16 @@
 
 **Pin 2.1.251 · written 2026-09-02 (W7.5/C10.5) · this document GATES implementation**
 
+> **Revised again 2026-09-02 after C10.6 IMPLEMENTED Stages 0–1.** This document is still the brief
+> for C10.7 and C10.8, so the sentences implementation contact showed to be wrong are corrected in
+> place rather than annotated — the same policy the previous round used, and for the same reason: a
+> brief that carries known-wrong sentences hands them to the next wave. Five corrections, each
+> flagged inline as **[C10.6]** and each recorded as a `[parent-impact]` item in the campaign spec's
+> Revision Notes: the helper belt's size and — more importantly — its *anchorability*; `Fq`'s
+> purity; where the shutdown arm actually lives; the module-level-state inventory; and the executors'
+> measured callee overlap. `reforge/research/fixtures/hook-helper-belt-2.1.251.json` is now the
+> authority for the layer's call graph, and it is re-derived by a gate phase every run.
+
 > **Revised 2026-09-02 after C10.5's boundary review.** Because this document is the brief for the
 > C10.6–C10.8 executor waves, every sentence a reviewer showed to be wrong was corrected in place
 > rather than annotated: `Fq`'s call-site count and its transitive reachability through `d6n`;
@@ -40,8 +50,12 @@ with `Rzn`/`Xxt`/`jy`), its awaiting sibling `AE`, and the watcher-hooks helper 
 | `jy` | 261 | 19 | the shutdown wrapper |
 | `zxt` | 298 | 2 | the watcher-hooks helper |
 
-Plus a helper belt of roughly **13.9 KB** across ~34 already-pure functions (`Czn`, `xPe`, `Ypt`,
-`AM`, `$Me`, `PUt`, `Xpt`, `D5n`, `iMt`, `Lq`, `Yxt`, …), the model-facing evaluators `Cxt` (5,156 B)
+Plus a helper belt **[C10.6: MEASURED — 151 in-chunk functions reached from the layer's four
+shared entry points, of which 43 are pure and total 5,961 B, not "roughly 13.9 KB across ~34". And
+the number that actually bounds Stage 1 is neither: 84 of the 151 carry NO STRING LITERAL AT ALL and
+only FOUR of the 43 pure ones carry a literal occurring in exactly one bundle file, three of those
+with a single caller. The belt is not takeable by anchor. See the fixture.]** of already-pure
+functions (`Czn`, `xPe`, `Ypt`, `AM`, `$Me`, `PUt`, `Xpt`, `D5n`, `iMt`, `Lq`, `Yxt`, …), the model-facing evaluators `Cxt` (5,156 B)
 and `Oxt` (4,074 B), the served-call pair `U5n`/`H5n` (4,585 B), and the session registry class
 `k2e` (1,867 B).
 
@@ -97,7 +111,11 @@ The obvious design — one owned core, two façades — is wrong, and the measur
 
 The two executors share their first ~892 bytes in behaviour: trust refusal, match, the empty and
 pre-aborted returns, the same telemetry event computed by the same helpers, the same stringify. But
-their callee sets overlap by **30 of 87 (`Qxt`) and 30 of 38 (`AE`)** — `AE` calls almost nothing
+their callee sets overlap by **30 of 87 (`Qxt`) and 30 of 38 (`AE`)** — **[C10.6: re-measured by
+the fixture's own counter as 32 of 80 and 32 of 40. The conclusion is unchanged and is now ASSERTED
+rather than believed: `research/tools/extract-hook-helpers.ts` throws unless one executor is an
+`async function*` and the other a plain `async function` and their callee sets overlap by under half,
+so a pin that unified them fails the gate]** — `AE` calls almost nothing
 `Qxt` does not, while `Qxt` calls 57 things `AE` never touches — and everything after the front
 matter diverges:
 
@@ -263,8 +281,11 @@ of 8.
 
 ## 4. What is pure, and therefore what ownership actually buys
 
-**Already pure, as free functions of their inputs:** ~13.9 KB across ~34 helpers — the JSON-contract
-interpreter (5,993 B, needing only an injected clock and uuid), the match query builder, the two
+**Already pure, as free functions of their inputs [C10.6: the JSON-contract interpreter is NOT one
+of them. Measured, its five free variables are a terminal-sequence sanitiser, a debug logger, a
+traced `JSON.stringify`, a telemetry probe and a message minter — five ordinary `effectful-port`
+captures, none of them a clock or a uuid. It is still the right Stage 1 target and it is owned as
+`hook-json-contract`, but "pure given an injected clock" is wrong in both halves]:** — the match query builder, the two
 output parsers, the served-call refusal and rewrite, the matcher regex test, the missing-script
 heuristic, the delegated-observation filter, and two dozen leaf predicates.
 
@@ -328,8 +349,14 @@ number of writes is therefore different behaviour, and a replay harness must rep
 CHUNKING, not just stdout bytes — which no surface in this campaign currently does. The capability
 stays on Stage 0; only the example changes.
 
-**(c) The shutdown arm never settles.** Any oracle that awaits the executor to completion deadlocks
-on that path. It has to be graded as "produced no yields and did not settle within N ms", driven by
+**(c) The shutdown arm never settles — and [C10.6] it is NOT INSIDE EITHER EXECUTOR.** `Qxt` and
+`AE` never consult the shutdown flag on the streaming path; the 261-byte wrapper `jy` does, and it is
+the function the twenty-one dispatcher splices have been capturing as `executeHooks` since W5. Under
+shutdown an allowlisted event hangs with zero yields and every OTHER event returns silently with zero
+yields — indistinguishable by what they yield, which is the argument for the grading mode in one
+line. The wrapper also DROPS the executor's completion value on both arms (`yield* Xxt(e); return`,
+where the bare return discards the delegated value). Any oracle that awaits the executor to
+completion deadlocks on that path. It has to be graded as "produced no yields and did not settle within N ms", driven by
 stubbing `SchedulingPort.isShuttingDown()`.
 
 **Arms that differ only by effect** — these need the trace, and an output comparison would pass on
@@ -462,10 +489,17 @@ stage's replay depends on it.
    per-hook generator that becomes a non-blocking-error yield whose message can then be suppressed by
    the once-per-process set; on the internal-callback fast path there is **no try/catch**, so the
    same throw propagates out of the executor to the dispatcher.
-7. **Module-level mutable state survives across calls** — the failure-notice singleton, the shutdown
-   flag, six host-scoped lazy singletons and a plugin-usage map. None of it is per-session, so a
-   replay that does not reset it leaks between scenarios. This is a harness obligation, not an
-   implementation detail.
+7. **Module-level mutable state survives across calls** — **[C10.6: MEASURED, and narrower than
+   this. Six cells the belt reaches, of which exactly ONE is genuinely process-global: the shutdown
+   module's `committed` flag, whose whole chunk is a class with one boolean, a setter, a reader and a
+   promise constructed to never resolve, with no clearer anywhere in the bundle. The other five are
+   KEYED-LAZY, four of them read through an `.of(G().host)` accessor. The spawn-failure set this
+   document calls process-global is reached through `sessionScratch.surfacedHookSpawnFailures()` and
+   is SESSION-scoped. That distinction is the one a harness acts on: a keyed cell is reset by using a
+   fresh key; only the flag needs an explicit reset with no other way in.]** This is a harness
+   obligation, not an implementation detail, and it is discharged — `strangle/hooks-parity.test.ts`
+   re-evaluates the shutdown module's own bytes per case, proven by a once-per-process arm giving the
+   same verdict twice with a control showing the reset is not a no-op.
 8. **Live bindings are observable.** The source reads happen at call time, so hook registration
    racing dispatch is a real behaviour — and it is the mechanism behind an artifact this repository
    has already recorded once.
