@@ -3659,3 +3659,31 @@ truthy `systemMessage`s). It is the only thing between the two watcher dispatche
 streaming executor. They call the 261-byte shutdown wrapper, which is the function the manifest's own
 `executeHooks` capture has been deriving on twenty-one splices since W5. The awaiting executor they
 call directly. Whatever `HookSourcePort` and the matcher become, the wrapper sits above both.
+
+**The model-switch pair, re-placed to C10.7 by the W13 scout — measured here rather than relayed.**
+It is the pair W5 left as a §2.3 deferral on the ledger row, and the structural fact that decides
+whether it is ownable is the same one that decided the session registry: **`class qvt { pending = [];
+landedOn = null; inFlight = new Set }`** (`chunk-fy12d89p.js` @2570039) has three **public** class
+fields, held in a keyed-lazy store `var Kvt = new Ln(() => new qvt)` @2570091 that the PostModelSwitch
+dispatcher reads through `Kvt.of(session)`. Public, not ECMAScript-private — so it can cross an
+adapter boundary as a typed port over its own fields, which is precisely what W10's Bash executor
+cannot do. It also joins the module-state list this wave derived: a keyed-lazy cell, reset by using a
+fresh key rather than by an explicit clear.
+
+The PreModelSwitch half is `CS` (`chunk-9gqmx4zx.js` @7274) and it is **already driven headlessly**:
+of its five call sites across four chunks, two pass `source: "sdk"` and one of those sits in the
+`set_model` path W7 owns the envelope of. Three things an owned copy must reproduce. It **short-
+circuits before any hook runs** when the matcher list is empty (`{decision:"proceed", skipConfirm:
+false, messages: []}`), which is the common case and the arm a corpus reaches first. Its aggregation
+is not a fold over equals — a `block` returns IMMEDIATELY with the first reason, an `ask` latches and
+keeps the FIRST reason via `f ??= M.reason`, and `skipConfirm` is an AND across everything else. And
+it **re-reads the session fingerprint after the awaits** (`Av(t()) !== s`): if the model changed while
+a PreModelSwitch hook was running it either refuses with "the session model changed while a
+PreModelSwitch hook was running; pick again" or **recurses into itself** with `revalidating: true`,
+concatenating the messages. That is design §7.8's "live bindings are observable" with a written
+remedy, and it is the only self-recursive function in this layer.
+
+One hazard the same look turned up, and it is the reason this wave's call-site counter is scoped to
+the defining chunk: **`qvt` in `chunk-g461tywa.js` is a completely unrelated three-element string
+array** (`["systemPrompt","appendSystemPrompt","appendSubagentSystemPrompt"]`). A bundle-wide count of
+a minified local name is a collision count, not a call-site count.
