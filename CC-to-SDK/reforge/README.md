@@ -3690,10 +3690,10 @@ the §2.4 captures, and the rest by class.
 | `iMt` | function | 70 | 2 | yes | **§2.4 capture, takeable now** — the internal-callback predicate |
 | `$ie` | constant | 17 | 2 | yes | multi-consumer value — the hook-agent id prefix |
 
-The remaining 29 are single-consumer: **22 anchorable functions and values that fold into their one
+The remaining 29 are single-consumer: **19 anchorable non-class declarations (15 functions, 3 Sets, 1 regex) that fold into their one
 caller's future module** (the C7 rule — owning them separately would split a private detail across
-two modules), **two classes**, which are not helpers, and **five tiny numeric constants plus two
-regexes with no untainted run of eight characters at all**, which ride with whatever consumes them.
+two modules), **two classes**, which are not helpers, and **eight with no untainted run of eight characters at all — six constants, one regex, one
+57-byte function**, which ride with whatever consumes them.
 So the honest reading of Stage 1's remainder is **four more §2.4 captures and two shared values**,
 not "a belt", and not "nothing takeable".
 
@@ -3733,7 +3733,7 @@ the ledger-capture check and three liveness rows. Hook oracle **1,549 comparison
 1,005 property statements over 11 paired cases; attestation **465/1010 executed with 545 exclusions
 and zero un-adjudicated**; manifest **78 splices** (79 rows with the S-chunk replacement); mechanism
 **133 checks**; corpus unchanged at **59**; ledger 47 rows with 27 footprints on the hook-dispatch
-row, all 731 spans resolving in the committed upstream basis.
+row, all 734 spans (79 footprints) resolving in the committed upstream basis.
 
 The first gate run of the round failed one phase and it was the right one: contract X7's
 registration check, which caught the three new modules missing from the engine-ts skeleton. That is

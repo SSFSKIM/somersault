@@ -1,5 +1,5 @@
 // PARITY LAYER (§2.5 `reference`) — the text that says WHAT a hook will run
-// (upstream `_9`, 2.1.251, chunk-fy12d89p @667541, 291 bytes).
+// (upstream `_9`, 2.1.251, chunk-fy12d89p @667489, 291 bytes).
 //
 // THE SECOND LIVE TAKE of C10.6's fix round, and the largest pure function in
 // the belt with more than one caller. Six consumers inside the layer alone — the

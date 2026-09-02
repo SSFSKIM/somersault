@@ -1436,6 +1436,32 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- 2026-09-03 (C10.6-fix verification round — **CONVERGED**, W7.6a's review loop closed): a
+  bounded round reproduced every fix-wave claim, including its own full gate run at exactly 115
+  summary phases, zero FAIL. The midnight rule now drops the whole wrapped rollover MESSAGE,
+  field-scoped to `messages[]`, with the emitted shapes tested and four must-survive neighbours
+  (the sentence inside a user prompt still diffs); the helper extractor implements the anchor
+  doctrine mechanically (taint, maximal untainted runs ≥ 8, shortest unique window confirmed by
+  an exact count over 1,802 text modules) and its corrected table reproduces — 151 declarations,
+  126 functions, 40 pure, 125 anchorable, 31 pure anchorable; the three new splices are
+  byte-faithful with non-prose 1/1 anchors, `mS` and `_9` demonstrated RED live, and `ip`'s
+  darkness is a GUARD artifact (all nineteen call sites sit behind JSON-stdout, async, http, mcp
+  or elicitation conditions no corpus hook creates); the `darkOver` teeth run in the gate (24
+  tags GREEN as required) with chunk exports on the same path; the ledger basis check refuses a
+  materialized-only span by name and is a gate phase; the relay names a deliberately broken
+  first-of-59 scenario on both hops. Six minors, closed in the loop's final commit: the dark
+  row's population sentence said twelve hook-registering scenarios where the corpus has EIGHTEEN
+  (the reviewer replayed the six omitted under the twin — all GREEN — so the verdict held and
+  `darkOver` is widened to all eighteen, six more ~3 s replays per gate run), three module-header
+  offsets, the C10.7 remainder split (19 anchorable non-class + 2 classes + 8 anchorless), "731
+  spans" → 734, the midnight rule's stated cost (the whole message is invisible — wrong turn,
+  never, twice, wrong date — and the `date_change` renderer's owner owes a contract test), and a
+  misnamed consumer. Doctrine recorded twice over: **a dark row's population is a doctrine
+  obligation, not a mechanical one** — `darkOver` can be declared narrow enough to hide
+  liveness, and the only mechanical rule is non-emptiness, so the reviewer's enumeration of the
+  population is part of every dark verdict's review. **Stop-signal honored**: W7.6a closes at one
+  review + one fix + one converged verification, three of whose five load-bearing findings were
+  harness mechanisms (the scrub shape, the relay, the dark-row teeth) rather than owned bytes.
 - 2026-09-03 (C10.6 / W7.6a — the BOUNDARY ROUND: **NOT CONVERGED → fixed**). The review reproduced
   every code claim — `Fq` byte-faithful, the hook oracle at 1,499 comparisons / 195 controls /
   1,005 property statements, every twin red, the gate at 110 of 110 — and found two harness

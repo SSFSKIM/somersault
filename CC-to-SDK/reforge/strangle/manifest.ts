@@ -4196,8 +4196,11 @@ export const SPLICES: Splice[] = [
     // MEASURED DARK, and the measurement is the point of the row rather than a
     // disappointment. It was spliced expecting liveness — nineteen call sites,
     // four consumers — and the inverted twin was built and replayed against
-    // TWELVE scenarios, every one that registers a hook of any kind, before the
-    // verdict was written. All twelve stayed GREEN.
+    // EIGHTEEN scenarios — every one that registers a hook of any kind — before the
+    // verdict was written. Twelve at the wave; the C10.6-fix verification round
+    // found six more hook-registering scenarios the sentence had omitted (hooks,
+    // hooks-tasks, hooks-stop-failure, hooks-file-watch, hooks-cwd-change,
+    // perm-hook-rewrite), replayed them under the twin, and all eighteen stayed GREEN.
     //
     // DARK IS NOT UNREACHED, and this row is the campaign's clearest example of
     // the difference. The branch attestation records this predicate's FALSE arm
@@ -4228,10 +4231,16 @@ export const SPLICES: Splice[] = [
       "hooks-tool-failure",
       "hooks-slash",
       "hooks-memory",
+      "hooks",
+      "hooks-tasks",
+      "hooks-stop-failure",
+      "hooks-file-watch",
+      "hooks-cwd-change",
+      "perm-hook-rewrite",
     ],
     darkReason:
       "The predicate is CALLED — the branch attestation records its false arm on the corpus — but no CONSUMER of the answer reaches an observable: every use of it is dominated by a second condition the corpus never satisfies. The callback sites read the LEGACY decision:\"block\" field while both answering corpus hooks use hookSpecificOutput; the terminal-sequence sink returns early without a terminalSequence; the delegated-observation filter needs a subagent observation; and the parser's fast path needs a command hook whose STDOUT parses as JSON, which none of the eleven in w5/scenarios.ts writes. " +
-      "The INVERTED twin was built and replayed over twelve scenarios before the verdict was written — every scenario that registers a hook of any kind — and all stayed GREEN; the SIBLING row hook-output-async, whose twin is the same inversion of the complementary predicate, reddens two of them, so this is the call sites never being reached rather than a weak twin. " +
+      "The INVERTED twin was built and replayed over eighteen scenarios — every scenario that registers a hook of any kind (twelve at the wave, six added by the C10.6-fix verification round) — and all stayed GREEN; the SIBLING row hook-output-async, whose twin is the same inversion of the complementary predicate, reddens two of them, so this is the call sites never being reached rather than a weak twin. " +
       "Graded instead by strangle/hooks-parity.test.ts's hook-output-sync block, which runs the WHOLE domain against upstream's own bytes — every document shape the union admits, including the two the corpus cannot make (`async:false` and a non-boolean `async`) — with controls for each of the two decisions the body makes.",
   },
 

@@ -485,7 +485,7 @@ no scenario needed.
 > shared VALUES rather than helpers (`G6`, a 312 B Set, and `$ie`, the 17 B hook-agent id prefix),
 > which take the `variable-declarator` shape with a build-time value comparison. The other 29 are
 > single-consumer and fold into their one caller's future module by the C7 rule, except two classes
-> and seven tiny constants and regexes with no untainted run of eight characters. The full table with
+> and eight declarations with no untainted run of eight characters — six constants, one regex, one 57-byte function. The full table with
 > per-helper verdicts is in `reforge/README.md`'s W7.6a record; the fixture is the authority.
 
 **Stage 2 — `HookSourcePort` + the matcher.** Sources behind the port, the matching body owned pure

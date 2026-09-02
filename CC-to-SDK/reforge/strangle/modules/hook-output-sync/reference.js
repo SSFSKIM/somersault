@@ -1,5 +1,5 @@
 // PARITY LAYER (§2.5 `reference`) — "is this hook-output document SYNCHRONOUS?"
-// (upstream `ip`, 2.1.251, chunk-fy12d89p @653684, 52 bytes).
+// (upstream `ip`, 2.1.251, chunk-fy12d89p @653676, 52 bytes).
 //
 // ONE OF THE TWO SPLICES C10.6's FIX ROUND TAKES TO PROVE A CORRECTED CLAIM.
 // The wave reported "the belt is not takeable by anchor" — 84 of 151 with no
@@ -24,8 +24,10 @@
 // schema is a union of the two. This predicate is the discriminator, and it is
 // read as a TYPE GUARD at nineteen call sites before anything reads `decision`,
 // `systemMessage`, `metrics`, `hookSpecificOutput` or `terminalSequence` off the
-// document. Four consumers use it: the awaiting executor, the streaming
-// executor, the terminal-sequence sink and the standalone callback runner.
+// document. Four in-belt consumers use it: the awaiting executor, the streaming
+// executor, the terminal-sequence sink and the async-hook completion handler
+// (`Kxt`); two more sit outside the belt — the async-output parser (`uVe`) and
+// the elicitation mapper (`pun`). Nineteen call sites in all.
 //
 // TWO DECISIONS IN FIFTY-TWO BYTES, and each is a wrong turn a reimplementation
 // could take quietly:

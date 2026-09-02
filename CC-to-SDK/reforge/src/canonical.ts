@@ -313,10 +313,12 @@ function scrubEngineAuthoredFields(o: unknown): unknown {
  * see "one engine noticed midnight and the other did not". That is not a
  * property of the graph under test — it is the wall clock landing between two
  * process spawns — and it belongs with the run-scoped ids the differ already
- * maps out. Everything else in the notice is a fixed upstream sentence with no
- * variable but the date, so nothing about an owned reimplementation becomes
- * invisible: the date the notice CARRIES is still compared everywhere else it
- * appears, by the rule below.
+ * maps out. The whole message is dropped, so NOTHING in it is compared: an
+ * engine that emits the notice at the wrong turn, never, twice, or with the
+ * wrong date is invisible to this surface (measured by the C10.6-fix
+ * verification round). That is the rule's cost, accepted because no scenario
+ * can create the rollover; whichever wave owns the `date_change` renderer owes
+ * a contract test for it.
  *
  * The em dash is `—` in the bundle's source and a real character in the
  * emitted string; the pattern spans it with a bounded run of non-newline

@@ -1,5 +1,5 @@
 // PARITY LAYER (§2.5 `reference`) — "is this hook-output document an ASYNC
-// ACKNOWLEDGEMENT?" (upstream `mS`, 2.1.251, chunk-fy12d89p @653736, 47 bytes).
+// ACKNOWLEDGEMENT?" (upstream `mS`, 2.1.251, chunk-fy12d89p @653728, 47 bytes).
 //
 // THE OTHER HALF of the pair `hook-output-sync` documents, and the second of the
 // two splices C10.6's fix round takes to prove the corrected anchorability
