@@ -3716,6 +3716,70 @@
               "sha256": "64142a82d9044bd462e052f8b2b4af14a89a075cd81752c991e129019bb969c2"
             }
           ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3016250,
+            "end": 3022243,
+            "sha256": "711159f78ee716d62ac77fe99704be14609586bd5189e5cccede483ed257a8b6"
+          },
+          "captures": [
+            {
+              "name": "bge",
+              "as": "sanitizeTerminalSequence",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 691175,
+              "declEnd": 691297,
+              "sha256": "f482fee8bb21eeb262cc83f1e2f7590b2829901cd2a49262687fc56b355e2c9c"
+            },
+            {
+              "name": "n",
+              "as": "logDebug",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3339,
+              "declEnd": 3340,
+              "sha256": "1b16b1df538ba12dc3f97edbb85caa7050d46c148134290feba80f8236c83db9"
+            },
+            {
+              "name": "b",
+              "as": "stringify",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 3253,
+              "declEnd": 3254,
+              "sha256": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d"
+            },
+            {
+              "name": "R5n",
+              "as": "probeMcpRewrite",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 3041951,
+              "declEnd": 3042110,
+              "sha256": "2d35b11d2b433c24561ee4f211e9dbd9152a9255dc225a75fd7ab482176ebfc2"
+            },
+            {
+              "name": "Mn",
+              "as": "hookMessage",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 2992431,
+              "declEnd": 2992635,
+              "sha256": "977d29f24f16d2b27ec3888bf528c8ba5a7f4a4da30636e9290dadbe2bd82c48"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 3015457,
+            "end": 3015553,
+            "sha256": "21a8d4ac9adb2c21904017fe61e01d1fbf9224dd7860df85ba22d9bf7526a683"
+          },
+          "captures": []
         }
       ],
       "evidence": [
@@ -3740,6 +3804,10 @@
         "strangle/manifest.ts:user-prompt-expansion-hooks",
         "strangle/manifest.ts:file-changed-hooks",
         "strangle/manifest.ts:cwd-changed-hooks",
+        "strangle/manifest.ts:hook-json-contract",
+        "strangle/manifest.ts:hook-stderr-tail",
+        "research/tools/extract-hook-helpers.ts",
+        "research/fixtures/hook-helper-belt-2.1.251.json",
         "strangle/hooks-parity.test.ts",
         "w5/probe-hook-events.ts",
         "scenario:hooks",
