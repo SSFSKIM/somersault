@@ -3614,7 +3614,7 @@ hangs lives in that wrapper's 261 bytes and not in either executor; and the wrap
 executor's completion value on both arms. Plus the two the fixture makes: the belt is not takeable by
 anchor, and the module-state leak is one cell rather than a family.
 
-**Counts.** Gate **GATEPHASES**; hook oracle **721 → 1,499 comparisons, 121 → 195 controls**, plus
+**Counts.** Gate **110 of 110 summary phases, zero FAIL**; hook oracle **721 → 1,499 comparisons, 121 → 195 controls**, plus
 **1,005 property statements over 11 paired cases**; attestation **460/996 executed with 536
 exclusions and zero unadjudicated**; manifest **74 → 75 splices** (76 rows with the S-chunk
 replacement); mechanism **119 → 122 checks**; corpus unchanged at **59**.
