@@ -291,7 +291,9 @@ derived signal on six different paths plus its catch, and "every derived signal 
 once" is a property only an ordered log can state. So this is no longer deferred work to schedule
 alongside the executor — it is a **precondition** of the first executor module, and the design stages
 it as Stage 0. Two further oracle capabilities land with it: reproducing stdout CHUNK boundaries (the
-async-detection path fires on the first chunk containing a brace, so byte-equal stdout delivered in a
+async-detection path latches on the first write after which the accumulated stdout's first line contains
+a `}` — and the latch is one-shot, so a write that ends after a NESTED brace parses a truncated
+document and the complete one that follows is never re-examined. Byte-equal stdout delivered in a
 different number of writes is a different behaviour), and grading a path that never settles (the
 shutdown arm awaits a promise that by construction never resolves).
 

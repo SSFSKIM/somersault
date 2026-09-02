@@ -1,0 +1,130 @@
+T-CLICK Task 3 — bl10 pty cell: click-to-expand a truncated result, then click its EXPANDED blank
+tail (well past end-of-text, on a different row AND after a >500ms gap from the first click) and
+assert byte-identical return to the collapsed frame.
+
+Real `ccx` binary (harness/dist/cli/bin.js, built from worktree HEAD f144f7dcf + this task's docs
+commit), private tmux socket (`-L bl10click`, sessions `tc-<pid>`/`tc-host-<pid>`, torn down by name
+via an EXIT trap — no shared/PTC session touched, never `kill-server`). Keyless: fake-host.mjs's
+`mysteryerr` producer (a standalone "Mystery" tool call whose `is_error:true` result is 12 physical
+lines — two past the 10-line `ERROR_PHYSICAL_ROWS` clip — never fold-classified, so `resultBody`
+stamps its gutter-block `clickable:true` and renders a genuinely dim "… +2 lines" marker under the
+default collapsed projection). 100x30, `CLAUDE_CODE_NO_FLICKER=1` (fullscreen renderer). Two-tap
+mechanics followed select-pty.sh's own house discipline: SGR press+release with NOTHING sent between
+them (an intervening `?1003` any-motion report between press and release drops the tap).
+
+Recipe pointer: this reuses the bl4 T-CLICKGATE pty cell's own method
+(`.doperpowers/sdd/2026-08-24-bl4-round/t-clickgate-pty-c9.txt`) — a genuine standalone clickable
+error result, clicked open and clicked closed, `diff`ed byte-for-byte against the original frame —
+narrowed to this ticket's new claim: the SECOND click lands on the row's BLANK TAIL (not the header or
+marker text) and is placed to dodge canon's own same-pixel double-click word-select window (D10):
+a different row than the first click (13 vs 15) AND a 700ms gap (>500ms) — either condition alone is
+enough per the ticket's acceptance, both are satisfied here for a clean, unambiguous PASS.
+
+=== [1]-[2] fake host ===
+launched: `env CCX_FLEET_ROOT=<home>/.claude/ccx FAKE_HOST_SCRIPT=mysteryerr node scripts/fake-host.mjs`
+printed `SHORT=aa895a32` — the roster id `ccx attach` resolves against.
+
+=== [3]-[4] attach + ready ===
+launched: `env HOME=<home> CCX_FLEET_ROOT=<home>/.claude/ccx TERM=xterm-256color CI=false
+CLAUDE_CODE_NO_FLICKER=1 node dist/cli/bin.js attach aa895a32`
+reached the ready composer ("⏸ manual mode on · ? for shortcuts").
+
+=== [5]-[6] BEFORE — collapsed, clickable, bare marker (before.txt) ===
+
+⏺ Mystery()
+  ⎿  Error: err line 1
+     err line 2
+     err line 3
+     err line 4
+     err line 5
+     err line 6
+     err line 7
+     err line 8
+     err line 9
+     err line 10
+     … +2 lines
+
+⏺ mystery done
+
+  ⏸ manual mode on · ? for shortcuts
+
+(waited for the marker, the first body line, AND the closing "mystery done" text — the fold-run
+BREAKER — before capturing, so the frame is fully quiesced, not caught mid-stagger between
+fake-host.mjs's three delayed pushes.)
+
+Raw ANSI (before-ansi.txt) confirms the COLLAPSED row carries no background at all — only the dim
+marker escape:
+  row 13 (the "… +2 lines" marker row): `\x1b[2m… +2 lines\x1b[0m` — dim only, NO `\x1b[48;...`
+  background. This is the asymmetric rule's collapsed half: glyph-width paint, no band.
+
+=== [7] first click — SGR press+release at the marker row (row 13, col 6), zero sleep between ===
+
+=== [8] EXPANDED — after the click (expanded.txt) ===
+
+⏺ Mystery()
+  ⎿  Error: err line 1
+     err line 2
+     err line 3
+     err line 4
+     err line 5
+     err line 6
+     err line 7
+     err line 8
+     err line 9
+     err line 10
+     err line 11
+     err line 12
+
+⏺ mystery done
+
+  ⏸ manual mode on · ? for shortcuts
+
+All 12 lines now visible (lines 11-12 revealed, past the original 10-line clip); the "… +2 lines"
+marker is gone.
+
+Raw ANSI (expanded-ansi.txt) confirms the row-model claim beyond plain text:
+  row 13 (now "err line 11", content shifted down two rows by the reveal):
+    `\x1b[49m     \x1b[38;2;255;107;128m\x1b[48;2;70;70;70merr line 11\x1b[39m`
+  — the error-red foreground AND the `\x1b[48;2;70;70;70m` band background together, confirmed on a
+  content row.
+  row 15 — one past "err line 12", the trailing pad row `withExpandedMarker` mints:
+    `\x1b[49m     \x1b[48;2;70;70;70m`
+  — a REAL row in the row model, painted with the SAME band background, blank of all text: this is
+  the row the second click targets below.
+
+=== [9]-[10] second click — 700ms gap (>500ms), pad row 15 (a DIFFERENT row than click 1's row 13), col 90 (well past end-of-text — the row has NO text at all) ===
+
+D10 check: both dodges applied (different row AND >500ms), so this click cannot be read as a
+same-pixel rapid re-click / double-click word-select under canon's 500ms window — it registers as a
+single click on the band's blank tail.
+
+=== [11]-[12] COLLAPSED — after the second click (collapsed.txt) ===
+
+`diff before.txt collapsed.txt` → IDENTICAL (byte-for-byte). The click on the expanded band's blank
+tail — well past the row's own text, nowhere near the marker or header — collapsed the block back to
+a frame indistinguishable from the original.
+
+Raw ANSI (collapsed-ansi.txt) confirms row 15 is back to plain "mystery done" text with no background
+escape at all, matching before-ansi.txt exactly at that row.
+
+=== teardown ===
+`tmux -L bl10click list-sessions` after the run: "no server running on
+/private/tmp/tmux-501/bl10click" — clean teardown, no stray sessions or processes left behind.
+
+Verdict: PASS. Demonstrated end to end in the real ccx binary: a genuine `is_error:true` standalone
+result of 12 physical lines clips to 10 with a bare "… +2 lines" marker; a single SGR press+release on
+the collapsed marker row expands it in place, with the raw ANSI dump confirming the full-width band
+background (`\x1b[48;2;70;70;70m`) now covers both a content row and the trailing pad row that has no
+text at all; a second click on that pad row's blank tail — a different row from the first click and
+700ms later, clear of canon's 500ms double-click word-select window — collapses the block back to a
+frame byte-identical to the original BEFORE capture. The asymmetric rule is directly visible in the
+raw ANSI: the collapsed marker row (before-ansi.txt row 13) carries no background escape at all, while
+the same visual position once expanded (expanded-ansi.txt row 13) does — glyph-width-only when
+collapsed, full-width band when expanded, exactly as the T-CLICK Task 1/2 commits and the revised
+`docs/parity/tui-ux.md` blank-tail rule describe.
+
+Script: scripted standalone (not folded into scripts/select-pty.sh's own cell registry this round) —
+reused select-pty.sh's send_sgr/press/release/tap helpers and wait/capture discipline verbatim. Full
+frame captures (before/expanded/collapsed, plain + raw ANSI) retained alongside this transcript for
+inspection: before.txt, before-ansi.txt, expanded.txt, expanded-ansi.txt, collapsed.txt,
+collapsed-ansi.txt.

@@ -1018,7 +1018,8 @@ Pending — written at finish.
     was NOT started, because the oracle needs three capabilities it lacks — the interleaved event log
     (whose tech-debt entry predicted this trigger and was right, plus a reason it did not anticipate:
     **cleanup pairing** for per-hook derived signals released on six paths plus a catch), stdout CHUNK
-    reproduction (async detection fires on the first chunk containing a brace), and grading a path that
+    reproduction (async detection latches, once, on the first write after which the accumulated stdout's
+    first line contains a brace), and grading a path that
     never settles — and the corpus needs two scenarios that do not exist. Staged 0–5, awaiting executor
     before streaming one. **A design pass that always concludes "proceed" is a formality.**
   - **AN OPEN ROW IS A STATE, AND CREATING ITS CONDITION IS USUALLY CHEAP.** CwdChanged had been OPEN

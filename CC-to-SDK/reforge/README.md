@@ -3130,13 +3130,16 @@ the problem enough to justify the rule.
 **The layer is ~56 KB, not the ~30 KB every prior scoping assumed.** The three named functions are
 30 KB; two functions nobody had named are 13 KB more — the command-hook subprocess runner (7,209 B,
 called by BOTH executors and by three callers outside this subsystem) and the JSON-contract
-interpreter (5,993 B, called only by the streaming one) — plus a ~14 KB belt of already-pure helpers.
+interpreter (5,993 B, five call sites all reached through the streaming executor, one of them
+transitively through the callback arm's per-hook body) — plus a ~14 KB belt of already-pure helpers.
 
 **Three names this repository used were wrong, and each changes a decision.** `getMatchingHooks` is
 two functions: one matches, the other resolves the SOURCES, and owning the first alone owns no
-sources. The session hooks store is not the layer reader the ledger named — it is a class whose
-fields are **public**, which is precisely why this is the right first S-module where W10's Bash
-executor is blocked on private fields. And the wrapper called "headless suppression" suppresses on
+sources — and the source fan-out has a THIRD consumer, a non-executor that fingerprints the session's
+`UserPromptSubmit` hooks for the host, so the port serves someone outside this subsystem. The layer
+reader the ledger named is real, but it is not the store: the store behind it is a class whose fields
+are **public**, which is precisely why this is the right first S-module where W10's Bash executor is
+blocked on private fields. And the wrapper called "headless suppression" suppresses on
 **shutdown**: one process-wide flag set only in exit paths, after which six events hang forever on a
 promise that never settles and the rest return silently. A filter that does not exist was hiding a
 fail-closed gate that does.
@@ -3155,7 +3158,8 @@ than of the schedule.** The oracle needs the interleaved-event-log rewrite BEFOR
 the tech-debt entry predicted this trigger and was right, and the design adds a reason it did not
 anticipate — cleanup pairing for per-hook derived signals, released on six paths plus a catch, is a
 property only an ordered log can state. Two further oracle capabilities land with it: reproducing
-stdout CHUNK boundaries (async detection fires on the first chunk containing a brace, so byte-equal
+stdout CHUNK boundaries (async detection latches on the first WRITE after which the accumulated
+stdout's first line contains a `}`, and the latch is one-shot, so byte-equal
 stdout delivered in a different number of writes is different behaviour) and grading a path that
 never settles. And the corpus needs a multi-hook scenario and a repeated-spawn-failure scenario that
 do not exist, purely to make the merge and the once-per-process arms gradeable. Forcing it in would

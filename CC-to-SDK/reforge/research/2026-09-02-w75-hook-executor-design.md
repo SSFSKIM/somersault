@@ -2,6 +2,14 @@
 
 **Pin 2.1.251 · written 2026-09-02 (W7.5/C10.5) · this document GATES implementation**
 
+> **Revised 2026-09-02 after C10.5's boundary review.** Because this document is the brief for the
+> C10.6–C10.8 executor waves, every sentence a reviewer showed to be wrong was corrected in place
+> rather than annotated: `Fq`'s call-site count and its transitive reachability through `d6n`;
+> `Wie`'s count and its third consumer `DUt`; the `AM` dedupe key's one environment read; the
+> async-detection example in §5(b), which was wrong about the mechanism while right about the
+> capability; the `IE` correction, which was stated as a contradiction of something the ledger never
+> claimed; the `AE` caller count the ledger actually names; and the classifier cap, now cited.
+
 `subsystem/hook-dispatch` has been `spliced` since W5 and cannot close. Twenty-two dispatchers are
 owned — every per-event entry point the engine is measured to fire headlessly except the
 model-switch pair — and every one of them delegates into an execution layer nobody owns. This is
@@ -25,10 +33,10 @@ with `Rzn`/`Xxt`/`jy`), its awaiting sibling `AE`, and the watcher-hooks helper 
 | `Qxt` | **23,385** | 2 | the streaming executor: 20 destructured options, matching, five invocation kinds, timeouts, cancellation, aggregation |
 | `AE` | **6,323** | **13** | the awaiting sibling: 9 options, a flat array return, no attachments, no yields |
 | `Nq` | **7,209** | 5 | **the command-hook subprocess runner** — called by BOTH executors, and by three non-hook callers |
-| `Fq` | **5,993** | 4 | **the JSON-contract interpreter** — hook output → result fields. Called ONLY by `Qxt` |
+| `Fq` | **5,993** | **5** | **the JSON-contract interpreter** — hook output → result fields. Reached only through `Qxt`, one of them transitively |
 | `Rzn` | 3,129 | 2 | matcher evaluation, per-type dedupe, `if:` conditions, the SessionStart/Setup HTTP ban |
 | `Xxt` | 964 | 2 | the delegated-observation result filter |
-| `Wie` | 398 | 5 | **the matcher-source fan-out** — which layers contribute matchers at all |
+| `Wie` | 398 | **4** | **the matcher-source fan-out** — which layers contribute matchers at all |
 | `jy` | 261 | 19 | the shutdown wrapper |
 | `zxt` | 298 | 2 | the watcher-hooks helper |
 
@@ -40,18 +48,37 @@ and `Oxt` (4,074 B), the served-call pair `U5n`/`H5n` (4,585 B), and the session
 **So the layer is ~42.5 KB of executor across seven functions, plus ~14 KB of helpers — about
 56 KB, not 30 KB.** `Nq` and `Fq` are the mass, and neither was named in any prior scoping.
 
+**Two of those call-site counts were corrected by C10.5's boundary review**, and both corrections
+change something an implementer would do:
+
+- **`Fq` has five call sites, not four.** The fifth is a spread — `...Fq(` inside `d6n`
+  (`chunk-fy12d89p.js` @3084902), the `function`/callback arm's per-hook body. An
+  identifier-boundary regex that excludes a preceding `.` skips it. `d6n` has exactly one caller of
+  its own (`Qxt` @3055332, a `yield await`), so **"reached only through `Qxt`" survives, but
+  transitively** — an owned `Fq` must satisfy two callers, not one, and the second reaches it through
+  a function that is itself only `Qxt`'s.
+- **`Wie` has four call sites, not five.** The fifth occurrence is its own declaration. The four are
+  `Rzn` (@3045351), `Qxt` (@3051548), and **`DUt` TWICE** (@3044856, @3044911). `DUt` is not an
+  executor: it calls `Wie` for `UserPromptSubmit` with and without `managedHooksOnly` and
+  `JSON.stringify`s the pair into a fingerprint of the session's prompt-submit hooks for the host.
+  So `HookSourcePort` has a consumer outside `Rzn`/`Qxt` — recorded on the port in §3.2.
+
 ### Three names the campaign has been using are wrong, and each changes a design decision
 
 1. **`getMatchingHooks` is two functions.** `Rzn` does *matching*. **`Wie`** (398 B, 5 call sites)
    does *source resolution* — it is where the settings layers, the policy gates and the session
    registry are read. Owning `Rzn` alone owns no sources, which would make the owned matcher a
    function of inputs nobody produced.
-2. **The session hooks store is not `IE`.** `IE` (310 B) is a composed *layer reader* — gate,
-   SDK-callback global store, four policy filters, then concatenation with the settings snapshot
-   and the main-thread agent hooks. The store itself is **`class k2e`** (1,867 B), instantiated per
-   session and passed in as `sessionHooks` / `sessionHooksRegistry`. Its fields are **public**, not
-   ECMAScript-private — which is the single most important structural fact for this design, because
-   W10's Bash executor is blocked on exactly the opposite (see §7).
+2. **The ledger and the spec name `IE` where the design needs `k2e`.** They call `IE` "the lookup
+   the executor consults unconditionally", which is accurate as far as it goes: `IE` (310 B) is a
+   composed *layer reader* — gate, SDK-callback global store, four policy filters, then
+   concatenation with the settings snapshot and the main-thread agent hooks. What neither names is
+   the STORE those layers read through: **`class k2e`** (1,867 B), instantiated per session and
+   passed in as `sessionHooks` / `sessionHooksRegistry`. Its fields are **public**, not
+   ECMAScript-private — the single most important structural fact for this design, because W10's Bash
+   executor is blocked on exactly the opposite (see §7). The correction is an addition, not a
+   contradiction: an inventory that stops at the layer reader never reaches the fact that decides
+   whether this subsystem is ownable at all.
 3. **`jy` suppresses on SHUTDOWN, not on headlessness.** Its predicate reads one process-wide
    `committed` boolean, set only in exit paths. On shutdown, six events *hang forever* on a promise
    that never settles and every other event returns silently. Calling it "the headless-suppression
@@ -59,7 +86,8 @@ and `Oxt` (4,074 B), the served-call pair `U5n`/`H5n` (4,585 B), and the session
    exist and hides a fail-closed gate that does.
 
 Two smaller corrections: `Xxt`'s predicate is specifically *delegated-observation* subagents, not
-agent context generally; and `AE` has **13** callers, not the three the ledger names.
+agent context generally; and `AE` has **13** callers, not the **six** the ledger names ("six await a
+second executor (`AE`) because their callers have no conversation left to stream into").
 
 ---
 
@@ -125,9 +153,15 @@ cgroup cap release that mutates a host-scoped server list.
 **Model** — one structured query for prompt hooks; a full nested agent loop with a synthetic agent
 id, a temporary transcript grant and a 50-turn cap for agent hooks.
 
-**Environment reads** — subprocess env, cwd, original cwd, home, platform, default shell, shell
+**Environment reads** — subprocess env, cwd, original cwd, home, platform, **default shell**, shell
 discovery, terminal size, path existence, plugin user config and data dir, the session env file, the
-transcript path.
+transcript path. One of these reaches further up than it looks: **the dedupe key `AM` is not pure.**
+Its `command` arm is
+`` `command\x00${e.shell ?? UD()}\x00${e.command}\x00…` `` and `UD()` (`chunk-2z83fvw5`) is
+`as() ? "bash" : "powershell"` — a platform read. So the matcher's per-type dedupe, which §4 lists on
+the pure side, needs exactly one `EnvironmentPort` member (`defaultShell()`) injected. It is one
+argument, but it is the difference between an owned dedupe that reproduces upstream on Windows and
+one that silently collapses two distinct command hooks into one.
 
 **Conversation-visible events** — three record kinds enqueued into the interleaved stream. **These
 are output, not telemetry**, and the distinction is a design decision (§3.2, port 7).
@@ -160,8 +194,14 @@ port.** That is what makes the pure mass (§4) actually owned rather than nomina
    *One port because three mechanisms answer one question* — "which matchers exist for this event?" —
    and the **merge order is the only observable thing about them**. Behind it, `Wie` + `IE` + `oT`
    become data and `Rzn`'s 3.1 KB of dedupe, `if:` evaluation and regex matching becomes an owned
-   pure function. The port must be re-read per invocation: the stores mutate mid-session, and that
+   function — *pure except for one `EnvironmentPort.defaultShell()` read*, which the dedupe key `AM`
+   needs (§3.1). The port must be re-read per invocation: the stores mutate mid-session, and that
    race is the mechanism behind the SessionStart-callback-silence timing artifact already recorded.
+   **Its consumers are `Rzn`, `Qxt` AND `DUt`** — the last one a non-executor that fingerprints the
+   session's `UserPromptSubmit` hooks for the host by calling `Wie` twice, with and without
+   `managedHooksOnly`. So the port's shape must serve a caller that wants the raw matcher lists and
+   nothing else, which is an argument for keeping `configuredMatchers`/`sessionMatchers` as separate
+   members rather than fusing them into one resolved answer.
 
 2. **`SchedulingPort`** — `derive(parent, timeoutMs) -> {signal, cleanup}`, `now()`, `isoNow()`,
    `uuid()`, `isShuttingDown()`, `hang()`, `isStreamClosedAbort(e)`, `pollProgress(getOutput, onTick)`.
@@ -225,8 +265,13 @@ of 8.
 
 **Already pure, as free functions of their inputs:** ~13.9 KB across ~34 helpers — the JSON-contract
 interpreter (5,993 B, needing only an injected clock and uuid), the match query builder, the two
-output parsers, the served-call refusal and rewrite, the dedupe key, the matcher regex test, the
-missing-script heuristic, the delegated-observation filter, and two dozen leaf predicates.
+output parsers, the served-call refusal and rewrite, the matcher regex test, the missing-script
+heuristic, the delegated-observation filter, and two dozen leaf predicates.
+
+**Pure with ONE injected read:** the dedupe key `AM`, whose `command` arm falls back to `UD()` —
+`as() ? "bash" : "powershell"` — when a hook declares no `shell`. One `EnvironmentPort.defaultShell()`
+argument makes it pure; leaving it out makes the owned dedupe wrong on Windows and right on every
+machine that would notice.
 
 **Pure once ported:** the command-spec builder (~4.5 KB of `Nq`), the matcher body minus source
 resolution (~2.6 KB of `Rzn`), `Qxt`'s aggregation projection table and permission-precedence reducer
@@ -258,10 +303,30 @@ problem. A yield-sequence comparison is sound only for single-hook cases; multi-
 compared as **per-hook subsequences plus a global multiset**, and the corpus needs at least one
 deliberately multi-hook scenario to exercise the merge at all.
 
-**(b) Chunk boundaries are semantic.** The async-detection path fires on the **first stdout chunk
-containing `}`**. A hook printing `{"async"` and `:true}` in two writes behaves differently from one
-printing them in a single write. A replay harness must reproduce stdout CHUNKING, not just stdout
-bytes — which no surface in this campaign currently does.
+**(b) Chunk boundaries are semantic — though not in the way this document first said.** The
+`data` handler is
+
+```js
+Tn = (Yn) => { if (Sn += Yn, fn += Yn, !hn) {
+  let xr = wr(Sn).trim();          // wr = first line of the ACCUMULATED stdout
+  if (!xr.includes("}")) return;   // not yet — wait for more
+  hn = !0;                         // spent, once and for all
+  try { let er = V(xr); … } catch (er) { /* debug log only */ }
+} };
+```
+
+It parses the accumulated buffer, not the individual write, so the tempting example is wrong: a hook
+printing `{"async"` and then `:true}` in two writes behaves **identically** to one printing
+`{"async":true}` in a single write. The first write leaves no `}` in the first line and returns; the
+second re-reads the whole buffer and parses it.
+
+The sensitivity is real but narrower, and it is a one-shot latch. If a write ends *after* a nested
+closing brace — a hook emitting `{"a":{"b":1}` and then `,"async":true}` — the first line already
+contains `}`, so `hn` is set, `V` parses a truncated document, the `catch` logs and returns, and **the
+complete document that arrives next is never examined**. Byte-equal stdout delivered in a different
+number of writes is therefore different behaviour, and a replay harness must reproduce stdout
+CHUNKING, not just stdout bytes — which no surface in this campaign currently does. The capability
+stays on Stage 0; only the example changes.
 
 **(c) The shutdown arm never settles.** Any oracle that awaits the executor to completion deadlocks
 on that path. It has to be graded as "produced no yields and did not settle within N ms", driven by
@@ -293,7 +358,16 @@ the first executor module rather than after.
 
 **Injection points the oracle must own:** the attachment clock and uuid, the hook-id generator,
 `Date.now()` behind every duration, the 10,000-character persistence threshold and the reference path
-it returns, the 2,000-character classifier cap, and the default timeout constant itself.
+it returns, the classifier cap, and the default timeout constant itself.
+
+The classifier cap was named without a citation in this document's first draft and C10.5's review
+could not find it; it is real and here it is. The constant is **`fP = 2000`**
+(`chunk-fy12d89p.js` @669804), applied through `ce(value, fP)` — a surrogate-safe head truncation in
+`chunk-04aem4bh.js` @954 — at the aggregation site @3068735, whose debug line reads
+`provided classifierContext (${…} chars after cap)`. It is enforced at exactly one place inside this
+layer, so it is one injection point, not a family. The bound is also asserted in the hook-output
+schema's own prose ("Capped at 2000 UTF-16 code units"), which is where a reader looking for a
+`.max(2000)` would fail to find one — the schema does not enforce it, the executor does.
 
 ---
 
@@ -321,13 +395,15 @@ reproduce stdout chunking; add non-settling-path grading.
 
 **Stage 1 — the pure belt, no ports.** The ~13.9 KB of already-pure helpers, led by the JSON-contract
 interpreter (5,993 B), which is the single highest-yield unit in the layer: it is what turns hook
-output into behaviour, it has one caller, and it is a pure function of its input given an injected
-clock. Graded entirely by the contract-test shape, no scenario needed.
+output into behaviour, its five call sites are all `Qxt`'s (four directly, one through `d6n`), and it
+is a pure function of its input given an injected clock. Graded entirely by the contract-test shape,
+no scenario needed.
 
-**Stage 2 — `HookSourcePort` + the matcher.** Sources behind the port, the matching body owned pure.
-This is what makes "which hooks ran, in which order" an owned decision, and its execution order is
-by hook TYPE with dedupe that deliberately does not apply to callbacks — a contract nothing currently
-states.
+**Stage 2 — `HookSourcePort` + the matcher.** Sources behind the port, the matching body owned pure
+except for the one `EnvironmentPort.defaultShell()` read the dedupe key needs. This is what makes
+"which hooks ran, in which order" an owned decision, and its execution order is by hook TYPE with
+dedupe that deliberately does not apply to callbacks — a contract nothing currently states. The port
+serves three consumers, not two: `Rzn`, `Qxt` and the host-facing fingerprint `DUt`.
 
 **Stage 3 — `AE`.** The smaller executor, taken as its own consumer of the Stage-1 belt. Its
 `Promise.all` ordering makes it gradeable without the merge machinery, and thirteen callers give it
