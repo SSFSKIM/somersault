@@ -3203,11 +3203,33 @@ Gate **107 of 107 summary phases, zero FAIL**, corpus **59 of 59**, attestation 
 unadjudicated**, **74 manifest rows** (73 splices plus the one S-chunk replacement), ledger 47 rows with `spliced=9`. The prompt oracle is at 217
 comparisons with 23 controls and the hook oracle at 721 with 121.
 
+### The C10.5 boundary round: converged on the code, NOT CONVERGED on the record
+
+The review reproduced every code claim above — the gate, the prompt oracle at 59 of 59, the
+attestation split, both oracles, three live sabotages RED. **Everything it rejected was a document**,
+so the fix round was documentation only: no code, no re-recording, no re-gating.
+
+| what the record claimed | what the bundle holds |
+|---|---|
+| "no `rewind` or `summarize` command at all — 'rewind' is a dialog label" (four artifacts) | `/rewind` is registered, aliased `checkpoint`/`undo`, and asks the host to open the message selector. The verdict survives on two guards nothing had cited: the headless command filter rejects `supportsNonInteractive: !1`, and the headless query-event sink drops `open_message_selector` |
+| "all nineteen `Query` methods" | the installed SDK's `interface Query` declares **27**; none touches compaction |
+| "the fixture says why each of the 27 dynamic records is or is not takeable" | the fixture carries shape; the reasons were one class-level sentence, and it was wrong for the nine records the corpus renders |
+| the design doc's `Fq`/`Wie` call-site counts, its `AM`-is-pure claim, its async-detection example, its `IE` correction and its uncited classifier cap | five wrong, one merely uncited — all corrected in place, because that doc is the brief for three waves not yet cut |
+
+**The lesson, and it is the general form of the `/rewind` error: an enumeration that rules something
+out must cite the GUARDS that rule it out, not the absence of the thing.** "There is no such command"
+is a negative that the healthy case — a command that exists and is refused — does not falsify, so it
+survives review by being unfalsifiable rather than by being true. Every other line in that same
+enumeration named a mechanism (a filter, a union with two values, a hardcoded argument) and every one
+of them held.
+
 ## Next
 
-**The bloc is closed.** W3–W7 landed, and W7.5 closed it out. The campaign resumes at **C11/W8 (moat
-tools)**, with the S-module lane opening whenever the hook-executor staging in
-`research/2026-09-02-w75-hook-executor-design.md` is scheduled. What the next waves inherit, newest
+**The bloc is closed.** W3–W7 landed, W7.5 closed it out, and the C10.5 boundary review closed the
+record side after a documentation-only fix round. The campaign resumes at **C11/W8 (moat tools)**,
+and the S-module lane is now cut rather than pending: **C10.6/W7.6a → C10.7/W7.6b → C10.8/W7.6c**,
+each reviewed before the next is cut, with
+`research/2026-09-02-w75-hook-executor-design.md` as the brief for all three. What the next waves inherit, newest
 first:
 
 - **READ WHAT THE FUNCTION RETURNS, NOT WHAT ITS SOURCE SAYS.** W7.5's largest prose section was
@@ -3225,6 +3247,11 @@ first:
   target twice the assumed size, three of the names wrong, and three oracle capabilities missing —
   and said so instead of starting. That is what §2.3's "design-first" buys; a pass that always
   concludes "proceed" is a formality.
+- **AN ENUMERATION THAT RULES SOMETHING OUT MUST CITE THE GUARDS, NOT THE ABSENCE.** W7.5's
+  reachability note ruled out the slash-command surface by saying no such command exists. One does;
+  two guards refuse it. Every other line of the same enumeration named a mechanism and every one of
+  them held. A negative stated as an absence cannot be falsified by the healthy case, so it passes
+  review without ever having been checked.
 - **AN OPEN ROW IS A STATE, AND CREATING ITS CONDITION IS USUALLY CHEAP.** CwdChanged had been OPEN
   since W5 behind one `cd`. Before scheduling machinery for an OPEN row, check whether the condition
   is one line away.
@@ -3328,9 +3355,14 @@ Named debts the roadmap owes an assignment:
   that path's prompt builder) — three of W4's adjudicated branch outcomes are reachable only through
   it, and W7.5 measured that nothing headless reaches it at all: see
   `research/2026-09-02-w75-segment-compaction-reachability.md`. Routed to C16/W13.
-- **The hook EXECUTORS** — **designed by W7.5, not implemented** (`research/2026-09-02-w75-hook-executor-design.md`:
-  the layer is ~56 KB rather than 30 KB, three of the names below are corrected there, and the
-  implementation is staged 0–5 behind an oracle change). The stale description follows for
+- **The hook EXECUTORS** — **designed by W7.5, not implemented, and now ASSIGNED**
+  (`research/2026-09-02-w75-hook-executor-design.md`: the layer is ~56 KB rather than 30 KB, three of
+  the names below are corrected there, and the implementation is staged 0–5 behind an oracle change).
+  The C10.5 boundary review cut the implementation as its own wave family rather than folding it into
+  W8: **C10.6/W7.6a** takes Stages 0–1 (the interleaved event log, stdout write-boundary reproduction,
+  non-settling-path grading, then the pure belt led by `Fq`), **C10.7/W7.6b** Stages 2–3
+  (`HookSourcePort` + the matcher, then `AE` and `zxt`), **C10.8/W7.6c** Stages 4–5 (`ProcessPort` +
+  the command-spec builder, then `Qxt`). The row reaches `standalone-complete` at the end of C10.8. The stale description follows for
   provenance: the 23 KB generator one (upstream `Qxt`, with `Rzn`/`Xxt`/`jy`), its
   awaiting sibling `AE`, and the watcher-hooks helper `zxt` that the second round surfaced. New with
   W5, S-module-shaped, and the largest thing standing between `subsystem/hook-dispatch` and
@@ -3341,4 +3373,4 @@ Named debts the roadmap owes an assignment:
   they fire does.
 
 And the deferrals now recorded on ledger rows rather than in research notes: the compaction DRIVERS
-(`zRe`, `Tte`) are C16/W13's, and the hook executor is unassigned.
+(`zRe`, `Tte`) are C16/W13's, and the hook executor is C10.6–C10.8's as of the C10.5 boundary review.
