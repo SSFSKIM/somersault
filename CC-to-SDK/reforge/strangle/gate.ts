@@ -41,8 +41,9 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
+import { relayOutput } from "../m2/relay.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
-import { runnerFor } from "./runners.js";
+import { classifyReplay, darkVerdict, runnerFor, type ReplayOutcome } from "./runners.js";
 
 // build.ts boot-checks the graph it writes, so a build that exits 0 has already
 // proven it boots at the pinned version; the gate only has to relay the failure.
@@ -84,6 +85,14 @@ console.log("━━━ determinism: env schema, canonicalization, state surface,
 for (const [label, argv] of [
   ["env schema + credential matrix", ["src/env.test.ts"]],
   ["canonicalization scrubs", ["src/canonical.test.ts"]],
+  // The gate's claim about ITSELF: "a phase that can fail has to say what
+  // failed." It was defeated in two independent places at once — the aggregate
+  // relayed a tail of six lines out of a 59-scenario verdict block, and the
+  // replay proxy's positional-serve diagnostic matched neither the verdict shape
+  // nor the reason filter — and both are invisible on a green run, which is how
+  // they survived a full gate. The control asserts the RED direction and, for
+  // each half, that the retired shape would have missed it.
+  ["gate names every failing verdict, and the proxy's reason", ["m2/relay.test.ts"]],
   // The differ's other half of the same spec. §3.4 asks every normalization rule
   // to carry a regression test; the value-level scrubs have had one since W0, the
   // run-ID MAP had none — and W4 widened it to the compact_boundary's uuid fields,
@@ -301,6 +310,8 @@ interface LivenessTarget {
   coverage: string[];
   /** set when the corpus provably cannot observe this target — a reviewed adjudication, not a skip */
   darkReason?: string;
+  /** the scenarios that adjudication was measured over, which the gate RE-MEASURES every run */
+  darkOver?: string[];
 }
 const TARGETS: LivenessTarget[] = [
   // A SPLICE may now be adjudicated dark as well, on the same terms a chunk
@@ -309,26 +320,65 @@ const TARGETS: LivenessTarget[] = [
   // wrong when it has a real effect the corpus simply never CREATES, because it
   // then trades owned bytes for nothing. `assertManifest` refuses a row that
   // claims both and a row that claims neither.
-  ...SPLICES.map((sp) => ({ id: sp.name, label: sp.name, coverage: sp.coverage, darkReason: sp.darkReason })),
+  ...SPLICES.map((sp) => ({ id: sp.name, label: sp.name, coverage: sp.coverage, darkReason: sp.darkReason, darkOver: sp.darkOver })),
   ...CHUNK_REPLACEMENTS.flatMap((cr) =>
     cr.exports.map((e) => ({
       id: `${cr.name}:${e.as}`,
       label: `${cr.name} export ${e.as}`,
       coverage: e.coverage,
       darkReason: e.darkReason,
+      darkOver: e.darkOver,
     })),
   ),
 ];
 
+/**
+ * Replay one covering tag against a build and say what happened, with the
+ * THREE-OUTCOME rule this loop has needed since C9: a runner that crashed, was
+ * killed, or graded nothing is INCONCLUSIVE, not evidence.
+ *
+ * Shared by the two directions the loop now grades. A LIVE row requires RED —
+ * sabotage it and its coverage must break. A DARK row requires GREEN — sabotage
+ * it and nothing must move, because "nothing observes this" is a claim that can
+ * only be re-measured by observing.
+ */
+function replayTag(tag: string): { outcome: ReplayOutcome; note: string } {
+  const r = run("npx", ["tsx", ...runnerFor(tag, "engine-strangled")], SABOTAGE_TIMEOUT_MS);
+  // `spawnSync`'s own timeout report, not the exit code: the child here is
+  // `npx`, which catches the SIGTERM and exits 143 of its own accord, so
+  // `signal` is null and `status` is an ordinary number. Only `error.code`
+  // distinguishes "we stopped it" from "it stopped".
+  const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+  // The reading itself lives in `runners.ts` — pure, and driven on synthetic
+  // runner output in `mechanism.test.ts`, because the gate reads it in two
+  // opposite directions now and neither can be exercised by spawning.
+  return classifyReplay(tag, `${r.stdout ?? ""}${r.stderr ?? ""}`, timedOut, r.status);
+}
+
 for (const t of TARGETS) {
   if (t.coverage.length === 0 && t.darkReason) {
-    // Not a pass by omission: the manifest carries a written reason, chunk.ts
-    // refuses an empty coverage without one, and something else grades it —
-    // which the reason has to name. Printed at gate time so the adjudication is
-    // read every run rather than buried in a manifest comment.
-    console.log(`\n━━━ liveness: ${t.label} is DARK to the corpus — reviewed exclusion ━━━`);
+    // DARKNESS IS RE-MEASURED, NOT RECALLED. This branch used to push a pass and
+    // `continue` before any build: the adjudication was written once, in prose,
+    // and nothing ever checked it again — so the day a scenario created the
+    // firing condition the row would keep reporting "dark, adjudicated" while
+    // running live and ungraded. A reason nothing re-runs is an assertion.
+    //
+    // So a dark row is built and replayed like every other, and its `darkOver`
+    // population — the scenarios the reason claims to have measured over — must
+    // come back GREEN. The direction is the inverse of the live case and the
+    // argument is the same: sabotage the target, then look. A RED here means the
+    // corpus now reaches the function, which is the row's own claim failing, and
+    // it fails the gate loudly rather than quietly staying true-by-assertion.
+    console.log(`\n━━━ liveness: ${t.label} is DARK — sabotage it and ${t.darkOver!.join(", ")} must stay GREEN ━━━`);
     console.log(`  ${t.darkReason}`);
-    results.push({ label: `liveness ${t.label} (dark, adjudicated)`, pass: true });
+    if (!buildAndBoot(["--sabotage", t.id])) {
+      results.push({ label: `liveness ${t.label} (dark)`, pass: false });
+      continue;
+    }
+    const seen = t.darkOver!.map((tag) => ({ tag, ...replayTag(tag) }));
+    const { stillDark, lines } = darkVerdict(t.label, seen);
+    for (const l of lines) console.log(`  ${l}`);
+    results.push({ label: `liveness ${t.label} (dark over ${t.darkOver!.length} scenario(s))`, pass: stillDark });
     continue;
   }
   console.log(`\n━━━ liveness: sabotage ONLY ${t.id} → ${t.coverage.join(", ")} must go RED ━━━`);
@@ -346,50 +396,14 @@ for (const t of TARGETS) {
   }
   let allRed = true;
   for (const tag of t.coverage) {
-    // THREE OUTCOMES, NOT TWO. `status !== 0` used to mean RED on its own, which
-    // is the vacuous-positive shape this campaign has now hit twice: a runner
-    // that CRASHES, or one an operator kills, exits non-zero without having
-    // graded anything, and the gate reads that as proof of liveness.
-    //
-    // So a RED now needs POSITIVE evidence — either the runner's own verdict
-    // line for this tag, or a timeout, which is itself a divergence because the
-    // faithful build replays the same cassette in seconds (the EQUIVALENCE phase
-    // below establishes that on every run — it is the only phase that replays the
-    // corpus on a faithful build, and it runs after this loop so that the
-    // instrumented and sabotaged builds cannot be the ones it grades).
-    // Anything else is INCONCLUSIVE and fails the phase rather than passing it,
-    // because "we could not measure it" is not "we measured it and it diverged".
     // Not every covering tag is a corpus scenario: the control protocol is
     // graded by the no-wrapper driver, because sdk.mjs consumes the frames a
     // corpus scenario would have to see (strangle/runners.ts).
-    const r = run("npx", ["tsx", ...runnerFor(tag, "engine-strangled")], SABOTAGE_TIMEOUT_MS);
-    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-    // `spawnSync`'s own timeout report, not the exit code: the child here is
-    // `npx`, which catches the SIGTERM and exits 143 of its own accord, so
-    // `signal` is null and `status` is an ordinary number. Only `error.code`
-    // distinguishes "we stopped it" from "it stopped".
-    const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-    const graded = out.includes(`FAIL  ${tag}`) || out.includes(`PASS  ${tag}`);
-    // ORDER MATTERS, and it resolves toward STRICTNESS. A GRADED VERDICT WINS
-    // OVER A TIMEOUT. The two can both be true — the runner can print its verdict
-    // for this tag and then hang on teardown — and reading the timeout first
-    // would turn "the sabotaged engine still PASSED this scenario", which is the
-    // exact dead-code finding this loop exists to catch, into a RED that passes
-    // the phase. The timeout is only ever a PROXY for divergence; the verdict
-    // line is the measurement itself, so the measurement is read first and the
-    // proxy is consulted only when there is none.
-    if (graded) {
-      const red = out.includes(`FAIL  ${tag}`);
-      console.log(`  ${tag}: ${red ? "RED (as required)" : "GREEN — the target is dead code on this scenario"}`);
-      allRed &&= red;
-      continue;
-    }
-    if (timedOut) {
-      console.log(`  ${tag}: RED (as required) — the sabotaged engine graded nothing and did not finish inside ${SABOTAGE_TIMEOUT_MS / 60_000}m, which the faithful one replays in seconds`);
-      continue;
-    }
-    console.log(`  ${tag}: INCONCLUSIVE — the runner produced no verdict (exit ${r.status}); a run that graded nothing is not evidence of liveness`);
-    allRed = false;
+    const { outcome, note } = replayTag(tag);
+    if (outcome === "red") console.log(`  ${tag}: RED (as required)${note ? ` — ${note}` : ""}`);
+    else if (outcome === "green") console.log(`  ${tag}: GREEN — the target is dead code on this scenario`);
+    else console.log(`  ${tag}: INCONCLUSIVE — ${note}; a run that graded nothing is not evidence of liveness`);
+    allRed &&= outcome === "red";
   }
   results.push({ label: `liveness ${t.label}`, pass: allRed });
 }
@@ -412,8 +426,7 @@ if (!buildAndBoot([])) {
   results.push({ label: "equivalence (faithful)", pass: false });
 } else {
   const r = run("npx", ["tsx", "m2/all.ts", "--engineB", "engine-strangled"]);
-  const lines = (r.stdout ?? "").split("\n");
-  const verdicts = lines.filter((l) => /^\s+(PASS|FAIL)\s{2}/.test(l));
+  const { verdicts, fails, reasons } = relayOutput(r.stdout ?? "");
   // The five SUITE verdicts are the tail; they are what a green run needs to
   // show. On a red one they are the least useful five lines in the file.
   for (const v of verdicts.slice(-5)) console.log(`  ${v.trim()}`);
@@ -422,14 +435,17 @@ if (!buildAndBoot([])) {
   // the same defect class C9 fixed one block up, where any non-zero exit was
   // read as RED without the runner's own verdict. A phase that can fail has to
   // say what failed, or its failure is a rumour.
+  //
+  // Both halves of that used to leak. The aggregate relayed a TAIL, so a corpus
+  // failure outside the last five scenarios never reached this filter at all;
+  // and the reason filter was prose the replay proxy does not write, so the
+  // commonest cause of a red run — a request served POSITIONALLY because its
+  // body hash missed — was neither a verdict nor a reason. Both live in
+  // `m2/relay.ts` now, shared with the runner that prints them.
   if (r.status !== 0) {
-    const failed = verdicts.filter((l) => /^\s+FAIL\s{2}/.test(l));
-    console.log(`  ${failed.length} failing verdict(s):`);
-    for (const f of failed) console.log(`    ${f.trim()}`);
-    // …and the reason lines the runner printed for them, which is where a
-    // replay mismatch or a differ hit actually explains itself.
-    const why = lines.filter((l) => /diverge|mismatch|differs|unexpected|no cassette|timed out/i.test(l)).slice(0, 12);
-    for (const w of why) console.log(`    ${w.trim()}`);
+    console.log(`  ${fails.length} failing verdict(s):`);
+    for (const f of fails) console.log(`    ${f.trim()}`);
+    for (const w of reasons) console.log(`    ${w.trim()}`);
   }
   results.push({ label: "equivalence (faithful)", pass: r.status === 0 });
 }

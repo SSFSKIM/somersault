@@ -56,6 +56,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { resolveAnchor } from "./anchor.js";
 import { manifestViolations } from "./manifest.js";
+import { classifyReplay, darkVerdict } from "./runners.js";
 import { assertSignature, chunkAst, excise, formatSignature, gradeDeclaratorValue, literalStringValue, selectExcision } from "./ast.js";
 import { spliceFootprint } from "./footprint.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
@@ -770,13 +771,59 @@ function footprintOf(owner: string, helper: string) {
 // are driven here on synthetic rows — and the real manifest is asserted clean by
 // the same function at import time.
 {
-  const row = (name: string, coverage: string[], darkReason?: string) => ({ name, coverage, darkReason });
+  const row = (name: string, coverage: string[], darkReason?: string, darkOver?: string[]) => ({ name, coverage, darkReason, darkOver });
   check("a splice with no coverage and no darkReason is refused",
     manifestViolations([row("ungated", [])]).length === 1);
   check("a splice claiming BOTH coverage and a darkReason is refused",
-    manifestViolations([row("both", ["s"], "because")]).length === 1);
+    manifestViolations([row("both", ["s"], "because", ["t"])]).length === 1);
   check("…and a row that is graded, or one that is adjudicated, passes",
-    manifestViolations([row("graded", ["s"]), row("dark", [], "because")]).length === 0);
+    manifestViolations([row("graded", ["s"]), row("dark", [], "because", ["t"])]).length === 0);
+  // The `darkOver` half, both directions. A darkness verdict with no population
+  // is an assertion the gate cannot re-measure, which is the defect the
+  // affordance was found to have: the reason was written once and nothing ever
+  // checked it again.
+  check("a darkReason with no darkOver is refused",
+    manifestViolations([row("unmeasured", [], "because")]).length === 1);
+  check("…and an empty darkOver is the same omission",
+    manifestViolations([row("empty", [], "because", [])]).length === 1);
+  check("a darkOver with no darkReason is refused",
+    manifestViolations([row("unadjudicated", ["s"], undefined, ["t"])]).length === 1);
+}
+
+// ---------------------------------------------------------------------------
+// …and the RUNTIME half of the same finding, on synthetic runner output.
+//
+// The structural rules above only say a dark row must NAME a population. What
+// makes the adjudication a measurement rather than an assertion is that the
+// gate re-runs it: a dark row is built with its own sabotage, its `darkOver`
+// tags are replayed, and every one of them must come back GREEN. Neither
+// direction can be driven by spawning a gate, so the reading is pure and it is
+// driven here — including the outcome that used to be impossible to reach,
+// where a dark row's twin goes RED and the row has to fail loudly.
+// ---------------------------------------------------------------------------
+{
+  const green = (tag: string) => classifyReplay(tag, `\n  PASS  ${tag}\n`, false, 0);
+  const red = (tag: string) => classifyReplay(tag, `\n  FAIL  ${tag}\n`, false, 1);
+  check("a verdict line is read as the outcome it states",
+    green("hooks-command").outcome === "green" && red("hooks-command").outcome === "red");
+  check("a runner that graded nothing is INCONCLUSIVE, not evidence",
+    classifyReplay("hooks-command", "boom\n", false, 1).outcome === "inconclusive");
+  check("a timeout with no verdict is RED — the faithful build replays in seconds",
+    classifyReplay("hooks-command", "", true, null).outcome === "red");
+  check("…but a GRADED verdict beats a timeout, so a green scenario that hangs on teardown is not a false RED",
+    classifyReplay("hooks-command", "  PASS  hooks-command\n", true, null).outcome === "green");
+
+  const over = ["hooks-command", "hooks-precompact", "perm-hook-deny"];
+  const allGreen = darkVerdict("hook-stderr-tail", over.map((t) => ({ tag: t, ...green(t) })));
+  check("a dark row whose whole population stays GREEN is still dark", allGreen.stillDark);
+  // THE CONTROL, and the reason the affordance needed teeth: before this, the
+  // gate pushed a pass without building, so this outcome could not occur.
+  const oneRed = darkVerdict("hook-stderr-tail", over.map((t, i) => ({ tag: t, ...(i === 1 ? red(t) : green(t)) })));
+  check("a dark row whose twin goes RED fails, and says NO LONGER DARK",
+    !oneRed.stillDark && oneRed.lines.some((l) => l.includes("NO LONGER DARK") && l.includes("hooks-precompact")));
+  check("an inconclusive replay cannot re-measure darkness either",
+    !darkVerdict("hook-stderr-tail", [{ tag: "hooks-command", ...classifyReplay("hooks-command", "", false, 7) }]).stillDark);
+  check("an empty population is never 'still dark'", !darkVerdict("hook-stderr-tail", []).stillDark);
 }
 
 console.log(`=== splice mechanism: ${pass} check(s) ===`);

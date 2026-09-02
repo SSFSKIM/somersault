@@ -149,6 +149,29 @@ export interface Splice {
    * refuses a reason alongside a non-empty coverage — a row may not hold both.
    */
   darkReason?: string;
+  /**
+   * THE POPULATION THE DARKNESS WAS MEASURED OVER, as scenario tags — and the
+   * thing that gives `darkReason` runtime teeth.
+   *
+   * Without this, darkness was measured ONCE, in prose, by whoever wrote the
+   * row, and never re-measured: the gate pushed a pass and skipped the build
+   * entirely, so the day a scenario created the firing condition the row would
+   * stay "dark, adjudicated" while running live and ungraded. A reason nothing
+   * re-runs is an assertion, not a measurement — the same shape as a check
+   * nobody runs (C6's X7 finding), one level in.
+   *
+   * So the liveness loop BUILDS the dark row's sabotage like any other, replays
+   * exactly these tags, and requires every one of them GREEN. A twin that goes
+   * RED means the corpus now reaches the function, and the gate fails loudly as
+   * "no longer dark" rather than passing on last month's prose.
+   *
+   * The tags are not the row's coverage — a dark row has none by definition.
+   * They are the scenarios that WOULD see the effect if the firing condition
+   * ever occurred, which is exactly the population the reason claims to have
+   * checked. `manifestViolations` requires them alongside a reason, in both
+   * directions.
+   */
+  darkOver?: string[];
 }
 
 // ============================================================================
@@ -184,6 +207,12 @@ export interface ChunkExportSpec extends ChunkBinding {
   coverage: string[];
   /** required when `coverage` is empty: why the corpus cannot observe it, reviewed */
   darkReason?: string;
+  /**
+   * The population the darkness was measured over — see `Splice.darkOver`. The
+   * gate flattens splices and chunk exports into ONE liveness loop, so the
+   * runtime teeth are the same code and the obligation is the same obligation.
+   */
+  darkOver?: string[];
 }
 
 export interface ChunkReplacement {
@@ -4156,12 +4185,16 @@ export const SPLICES: Splice[] = [
     // command hook whose stdout PARSES AS JSON and then fails the hook-output
     // schema, with a non-zero exit that is also not 2.
     //
-    // POPULATION: all 59 corpus scenarios, whose command hooks are the ten in
-    // `w5/scenarios.ts`. Six write nothing to stdout, three `echo` plain text —
-    // which the parser returns as `plainText`, not as a validation error — and
-    // one writes its projection to a file. None emits a JSON document that then
-    // fails the schema, so the guard is never satisfied and the function is
-    // never called.
+    // POPULATION: all 59 corpus scenarios, whose command hooks are the ELEVEN in
+    // `w5/scenarios.ts` (counted, not recalled — the first version of this row
+    // said ten and mis-split them). SEVEN write nothing to stdout (`exit 1`
+    // twice, `true` twice, and three that echo only to stderr before exiting
+    // non-zero); TWO `echo` plain text to stdout — which the parser returns as
+    // `plainText`, not as a validation error; and TWO are `node -e` projections
+    // that write their result to a FILE (`STDIN_PROJECTION`,
+    // `SESSION_START_PROJECTION`) and print nothing. None emits a JSON document
+    // that then fails the schema, so the guard is never satisfied and the
+    // function is never called.
     //
     // THE INVERTED TWIN WAS TRIED FIRST, which is what makes this a measurement.
     // It appends unconditionally rather than only when the hook failed loudly,
@@ -4185,9 +4218,28 @@ export const SPLICES: Splice[] = [
     // and therefore needs a re-recording, and because the arm it would light is
     // C10.8's rather than this wave's.
     coverage: [],
+    // THE POPULATION, AS TAGS THE GATE REPLAYS. The reason below is a claim
+    // about what the corpus's command hooks write to stdout; these are the
+    // scenarios that register one, or that drive a hook to a loud failure —
+    // the ten a reviewer replayed to check the verdict. The liveness loop
+    // builds the twin and requires every one of them GREEN, so the day a
+    // scenario starts emitting a JSON document that fails the schema, this row
+    // fails as "no longer dark" instead of coasting on the prose above.
+    darkOver: [
+      "hooks-command",
+      "hooks-precompact",
+      "hooks-session-start",
+      "hooks-session-end",
+      "hooks-stop-failure",
+      "hooks-tool-failure",
+      "hooks-file-watch",
+      "hooks-cwd-change",
+      "hooks-prompt-submit",
+      "perm-hook-deny",
+    ],
     darkReason:
       "Both call sites are guarded on a hook-output VALIDATION ERROR — stdout that parses as JSON and then fails the schema — with a non-zero exit that is also not 2. " +
-      "Measured over all 59 scenarios: of the corpus's ten command hooks, six write nothing to stdout, three echo plain text (which the parser returns as plainText, not as a validation error) and one writes to a file, so the guard is never satisfied. " +
+      "Measured over all 59 scenarios: of the corpus's ELEVEN command hooks, seven write nothing to stdout, two echo plain text (which the parser returns as plainText, not as a validation error) and two are node -e projections that write to a file, so the guard is never satisfied. " +
       "The INVERTED twin was built and replayed first — it appends unconditionally, so it changes the result on every call rather than on the rare input — and hooks-command and hooks-precompact both stayed GREEN, which is the call site never being reached rather than a weak twin. " +
       "Graded instead by strangle/hooks-parity.test.ts's hook-stderr-tail block: the whole 90-case domain (three error texts x five exit codes including undefined x six stderr shapes) against upstream's own bytes, with seven controls. " +
       "The firing condition is named and cheap — one command hook printing {\"decision\":\"maybe\"} and exiting 1 — but it changes what the engine sends to the model and so needs a re-recording, and the arm it lights is C10.8's.",
@@ -4807,6 +4859,12 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         // declares, every build. A differential red can only see a constant a
         // scenario happens to render; this sees any change at all.
         coverage: [],
+        // The population, as tags the gate replays. The two scenarios that
+        // render this chunk's tool surface are where a REPL name would first
+        // become observable if the entrypoint gate ever opened, so they are
+        // what the darkness was measured over; the liveness loop builds the
+        // twin and requires both GREEN every run.
+        darkOver: ["search-tools", "search-tools-lean"],
         darkReason:
           "the REPL tool is unreachable headlessly (`ty()` requires an interactive entrypoint), so no corpus request can carry this name; " +
           "graded instead by the build-time value comparison against the pinned chunk (chunk.ts rule 5)",
@@ -4894,7 +4952,7 @@ function sections(as: string, body: string): [string, string] {
  * quietly become the row's story after the scenarios that covered it were
  * renamed away.
  */
-export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverage" | "darkReason">[]): string[] {
+export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverage" | "darkReason" | "darkOver">[]): string[] {
   const bad: string[] = [];
   for (const sp of rows) {
     if (sp.coverage.length === 0 && sp.darkReason === undefined) {
@@ -4903,10 +4961,30 @@ export function manifestViolations(rows: readonly Pick<Splice, "name" | "coverag
     if (sp.coverage.length > 0 && sp.darkReason !== undefined) {
       bad.push(`${sp.name}: declares BOTH covering scenarios and a darkReason — a row is either graded by the corpus or adjudicated, not both`);
     }
+    // The second rule, and the one that turns the adjudication into a
+    // measurement: a reason must name the population it was measured over, as
+    // tags the gate can replay. Both directions, for the same argument the
+    // first pair makes — a `darkOver` with no reason is a population nobody
+    // adjudicated, and a reason with no `darkOver` is an adjudication nothing
+    // re-runs.
+    if (sp.darkReason !== undefined && (sp.darkOver === undefined || sp.darkOver.length === 0)) {
+      bad.push(`${sp.name}: declares a darkReason with no darkOver — darkness measured over no population is an assertion, and the gate has nothing to re-measure it against`);
+    }
+    if (sp.darkReason === undefined && sp.darkOver !== undefined) {
+      bad.push(`${sp.name}: declares darkOver without a darkReason — a population with no adjudication grades nothing`);
+    }
   }
   return bad;
 }
 {
-  const bad = manifestViolations(SPLICES);
+  // Chunk exports go through the SAME rules: the gate flattens both row types
+  // into one liveness loop, so an export adjudicated dark owes the same
+  // population a splice does. `chunk.ts` keeps its own build-time refusal for
+  // the coverage/reason pair; this adds the `darkOver` half at import, where
+  // every consumer of the manifest sees it.
+  const bad = manifestViolations([
+    ...SPLICES,
+    ...CHUNK_REPLACEMENTS.flatMap((cr) => cr.exports.map((e) => ({ name: `${cr.name}:${e.as}`, coverage: e.coverage, darkReason: e.darkReason, darkOver: e.darkOver }))),
+  ]);
   if (bad.length > 0) throw new Error(`manifest: ${bad.join("; ")}`);
 }
