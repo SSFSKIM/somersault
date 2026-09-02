@@ -3727,6 +3727,18 @@ would keep reporting "dark, adjudicated" while running live and ungraded. A dark
 sabotage like any other row and requires every one of those tags GREEN; a RED fails the gate as
 **NO LONGER DARK**. The same loop serves chunk exports, so §2.2's darkness gets the same teeth.
 
+**Counts after the round.** Gate **115 of 115 summary phases, zero FAIL** — quoted from the gate's
+own summary block — where 110 was the wave's figure and the five new phases are the relay control,
+the ledger-capture check and three liveness rows. Hook oracle **1,549 comparisons, 210 controls**,
+1,005 property statements over 11 paired cases; attestation **465/1010 executed with 545 exclusions
+and zero un-adjudicated**; manifest **78 splices** (79 rows with the S-chunk replacement); mechanism
+**133 checks**; corpus unchanged at **59**; ledger 47 rows with 27 footprints on the hook-dispatch
+row, all 731 spans resolving in the committed upstream basis.
+
+The first gate run of the round failed one phase and it was the right one: contract X7's
+registration check, which caught the three new modules missing from the engine-ts skeleton. That is
+the phase W3 added after C5x's three modules went unregistered through a green gate.
+
 The minors, each measured rather than reworded: the ordered-log comparison count is **225**, not 226,
 and both it and the 204 are now derived and printed every run with a floor; the pairing property has
 **five** controls, not six; the corpus has **eleven** command hooks, not ten, split seven silent /
