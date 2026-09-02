@@ -22,3 +22,26 @@ export const REPL_TOOL_NAME = "REPL";
 // Upstream `ar`, in the primitives chunk. Read by the subagent prompt's notes
 // block, by permission-rule matching and by a dozen prose sites.
 export const WRITE_TOOL_NAME = "Write";
+
+// ---- the moat catalog (C11a / W8a) -----------------------------------------
+// Eight more, read by the description belt's prose. Upstream scatters them the
+// same way: `lm`/`FS` in the cron chunk, `ma` in the Monitor barrel, `Ji` in the
+// AskUserQuestion chunk, `UE`/`Wh` in the plan-mode chunks, `Xr` in the
+// SendMessage name chunk, `Ys` beside the ListAgents description. Every one is
+// interpolated into another tool's description, which is exactly the drift a
+// single owned binding exists to catch: the value can move while the minified
+// name stays put, and no anchor or footprint hash moves with it.
+export const CRON_CREATE_TOOL_NAME = "CronCreate";
+export const CRON_DELETE_TOOL_NAME = "CronDelete";
+export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+export const ENTER_PLAN_MODE_TOOL_NAME = "EnterPlanMode";
+export const EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
+export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
+export const LIST_AGENTS_TOOL_NAME = "ListAgents";
+// The one tool in this file the engine never presents: `Monitor`'s own
+// `isEnabled()` reads `tengu_amber_sentinel`, whose compiled-in default is false
+// and which has no per-gate env override, so it is absent from all 267 recorded
+// catalogs. Its NAME is here because CronCreate's description points at it — the
+// only place in the whole catalog where a live tool's prose names a gate-dead
+// one, and the arm that does is dark in the corpus for the same reason.
+export const MONITOR_TOOL_NAME = "Monitor";

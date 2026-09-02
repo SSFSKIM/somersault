@@ -17,7 +17,8 @@
 // Run: cd reforge && npx tsx engine-ts/skeleton.test.ts
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { ENGINE_VERSION } from "../src/pin.js";
+import { engineEnv } from "../src/env.js";
+import { BUN, ENGINE_VERSION } from "../src/pin.js";
 import { SUBSYSTEM_IDS } from "../ledger/rows.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "../strangle/manifest.js";
 import { lookup, ownedSet, register, resetRegistryForTests, unownedSubsystems } from "./registry.js";
@@ -25,13 +26,27 @@ import { lookup, ownedSet, register, resetRegistryForTests, unownedSubsystems } 
 const WRAPPER = join(import.meta.dirname, "..", "engines", "engine-ts");
 const TIMEOUT_MS = 30_000;
 
+/**
+ * X6 — THE WRAPPER IS SPAWNED THROUGH THE ALLOWLISTED ENVIRONMENT, like every
+ * other engine this repository starts.
+ *
+ * This suite is a gate phase, and it used to hand `spawnSync` no `env` at all,
+ * so the wrapper inherited whatever the operator happened to have exported. That
+ * is the exact violation `strangle/prepare.ts:bootCheck` was written to close
+ * one artifact over, and it matters more here than there: engine-ts is the
+ * engine the inversion makes PRIMARY, so an environment-dependent skeleton test
+ * would be the last thing to notice that the substrate had started reading the
+ * operator's shell.
+ */
+const ENGINE_ENV = engineEnv({ mode: "replay", bun: BUN, configDir: join(import.meta.dirname, "..", "config") });
+
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail && !ok ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
 };
 const run = (args: string[], input = "") => {
-  const r = spawnSync(WRAPPER, args, { input, encoding: "utf8", timeout: TIMEOUT_MS });
+  const r = spawnSync(WRAPPER, args, { input, encoding: "utf8", timeout: TIMEOUT_MS, env: ENGINE_ENV });
   return { code: r.status, signal: r.signal, out: r.stdout ?? "", err: r.stderr ?? "" };
 };
 const threw = (fn: () => unknown): string | null => {

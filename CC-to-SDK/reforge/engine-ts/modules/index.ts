@@ -72,6 +72,22 @@ import * as hookStderrTail from "../../strangle/modules/hook-stderr-tail/referen
 // C10.6's fix round — three more of the pure belt, taken to prove the corrected
 // anchorability measurement rather than to add bytes.
 import * as hookOutputSync from "../../strangle/modules/hook-output-sync/reference.js";
+import * as cronCreateDescription from "../../strangle/modules/cron-create-description/reference.js";
+import * as cronDeleteDescription from "../../strangle/modules/cron-delete-description/reference.js";
+import * as cronListDescription from "../../strangle/modules/cron-list-description/reference.js";
+import * as enterWorktreeDescription from "../../strangle/modules/enter-worktree-description/reference.js";
+import * as exitWorktreeDescription from "../../strangle/modules/exit-worktree-description/reference.js";
+import * as reportFindingsDescription from "../../strangle/modules/report-findings-description/reference.js";
+import * as taskStopDescription from "../../strangle/modules/task-stop-description/reference.js";
+import * as remoteTriggerDescription from "../../strangle/modules/remote-trigger-description/reference.js";
+import * as listAgentsDescription from "../../strangle/modules/list-agents-description/reference.js";
+import * as sendMessageDescription from "../../strangle/modules/send-message-description/reference.js";
+import * as scheduleWakeupDescription from "../../strangle/modules/schedule-wakeup-description/reference.js";
+import * as taskOutputDescription from "../../strangle/modules/task-output-description/reference.js";
+import * as workflowDescription from "../../strangle/modules/workflow-description/reference.js";
+import * as enterPlanModeDescription from "../../strangle/modules/enter-plan-mode-description/reference.js";
+import * as exitPlanModeDescription from "../../strangle/modules/exit-plan-mode-description/reference.js";
+import * as askUserQuestionDescription from "../../strangle/modules/ask-user-question-description/reference.js";
 import * as hookOutputAsync from "../../strangle/modules/hook-output-async/reference.js";
 import * as hookInvocationText from "../../strangle/modules/hook-invocation-text/reference.js";
 import * as permissionDecision from "../../strangle/modules/permission-decision/reference.js";
@@ -267,6 +283,27 @@ const OWNED: [string, string, unknown][] = [
   ["model-switch", "subsystem/control-protocol", modelSwitch.applyModelSwitchRequest],
   ["initialize-payload", "subsystem/control-protocol", initializePayload.buildInitializeResponsePayload],
   ["initialize-handler", "subsystem/control-protocol", initializeHandler.handleInitialize],
+  // C11a / W8a — the moat-tool description belt. Sixteen tools whose prose the
+  // engine renders into every graded request body and whose `call` no scenario
+  // has ever run; owning the description is the whole of what is observable
+  // about them today, and under this campaign's strategy it is also the whole
+  // of what makes them customizable.
+  ["cron-create-description", "subsystem/moat-tools", cronCreateDescription.cronCreateDescription],
+  ["cron-delete-description", "subsystem/moat-tools", cronDeleteDescription.cronDeleteDescription],
+  ["cron-list-description", "subsystem/moat-tools", cronListDescription.cronListDescription],
+  ["enter-worktree-description", "subsystem/moat-tools", enterWorktreeDescription.enterWorktreeDescription],
+  ["exit-worktree-description", "subsystem/moat-tools", exitWorktreeDescription.exitWorktreeDescription],
+  ["report-findings-description", "subsystem/moat-tools", reportFindingsDescription.reportFindingsDescription],
+  ["task-stop-description", "subsystem/moat-tools", taskStopDescription.taskStopDescription],
+  ["remote-trigger-description", "subsystem/moat-tools", remoteTriggerDescription.remoteTriggerDescription],
+  ["list-agents-description", "subsystem/moat-tools", listAgentsDescription.listAgentsDescription],
+  ["send-message-description", "subsystem/moat-tools", sendMessageDescription.sendMessageDescription],
+  ["schedule-wakeup-description", "subsystem/moat-tools", scheduleWakeupDescription.scheduleWakeupDescription],
+  ["task-output-description", "subsystem/moat-tools", taskOutputDescription.taskOutputDescription],
+  ["workflow-description", "subsystem/moat-tools", workflowDescription.workflowDescription],
+  ["enter-plan-mode-description", "subsystem/moat-tools", enterPlanModeDescription.enterPlanModeDescription],
+  ["exit-plan-mode-description", "subsystem/moat-tools", exitPlanModeDescription.exitPlanModeDescription],
+  ["ask-user-question-description", "subsystem/moat-tools", askUserQuestionDescription.askUserQuestionDescription],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

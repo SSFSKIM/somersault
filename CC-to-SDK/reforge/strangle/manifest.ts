@@ -4955,6 +4955,311 @@ export const SPLICES: Splice[] = [
     // cannot go red is a row the gate passes without testing.
     coverage: ["raw-protocol", "sysprompt-append"],
   },
+
+  // ---- the moat-tool DESCRIPTION belt (subsystem/moat-tools, C11a / W8a) ----
+  //
+  // Sixteen rows, one per moat tool whose description the engine renders into
+  // every graded request body and which no scenario has ever EXECUTED. That
+  // asymmetry is the wave: the ledger assigns C11 twenty tool rows, all twenty
+  // put their description and JSON schema on the differential surface on every
+  // turn, and sixteen of them do nothing else — so this belt is ~30 KB of owned
+  // prose bought with zero new recordings, on a surface where every arm is live.
+  //
+  // THE POPULATION IS DERIVED, not listed. `research/fixtures/moat-tools-<pin>.json`
+  // reads the recorded request bodies for what the engine actually presented
+  // (901 bodies, 12 distinct catalogs, baseline 22 tools) and then finds each
+  // description's producing DECLARATIONS by searching the graph for the rendered
+  // text itself. Five descriptions turn out to have more than one carrier; each
+  // row below claims the primary one and the fixture records the remainder, so
+  // "we own Workflow's description" is stated as 102 of 110 locatable windows
+  // rather than as a whole.
+  //
+  // THE ANCHORS ARE PROSE AND EACH OCCURS ONCE over the 1,802-file module set.
+  // Two of them are NOT the tool's opening sentence, deliberately: CronDelete's
+  // and CronList's opening clauses occur twice apiece, once per arm of their own
+  // ternary, and an anchor that matches twice inside its own target is a tie the
+  // resolver refuses. The derivations obey the same rule one level down — every
+  // one is a window that overlaps exactly one renameable identifier, its own
+  // capture, so no derivation bets on a second minifier letter.
+  //
+  // COVERAGE IS TWO TAGS, and the split is measured: thirteen of the sixteen are
+  // in all 267 recorded catalogs, so `plain` covers them; AskUserQuestion,
+  // EnterPlanMode and ExitPlanMode are in the 51-cassette plan-mode catalog
+  // only, so `perm-plan-mode` covers those three.
+
+  {
+    name: "cron-create-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "Schedule a prompt to be enqueued at a future time",
+    fn: "cronCreateDescription",
+    captures: [
+      {
+        as: "cronCreateToolName",
+        kind: "primitive",
+        derive: pick("cron-create-description", "cronCreateToolName", new RegExp(`\\$\\{(${ID})\\} re-runs a prompt at fixed wall-clock i`)),
+      },
+      {
+        as: "cronDeleteToolName",
+        kind: "primitive",
+        derive: pick("cron-create-description", "cronDeleteToolName", new RegExp(`ns a job ID you can pass to \\$\\{(${ID})`)),
+      },
+      {
+        as: "monitorToolName",
+        kind: "primitive",
+        derive: pick("cron-create-description", "monitorToolName", new RegExp(`the moment something changes, use the \\$\\{(${ID})`)),
+      },
+      {
+        as: "recurringMaxAgeDays",
+        kind: "primitive",
+        derive: pick("cron-create-description", "recurringMaxAgeDays", new RegExp(`ion lifetime\\. Tell the user about the \\$\\{(${ID})`)),
+      },
+      {
+        as: "monitorEnabled",
+        kind: "effectful-port",
+        derive: pick("cron-create-description", "monitorEnabled", new RegExp(`\\$\\{(${ID})\\(\\)\\?\`\\n## Not for live watch`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "cron-delete-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "Removes it from .claude/scheduled_tasks.json (durable jobs)",
+    fn: "cronDeleteDescription",
+    captures: [
+      {
+        as: "cronCreateToolName",
+        kind: "primitive",
+        derive: pick("cron-delete-description", "cronCreateToolName", new RegExp(`eduled with \\$\\{(${ID})\\}\\. Removes it from the in-memory session`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "cron-list-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: ", both durable (.claude/scheduled_tasks.json) and session-only.",
+    fn: "cronListDescription",
+    captures: [
+      {
+        as: "cronCreateToolName",
+        kind: "primitive",
+        derive: pick("cron-list-description", "cronCreateToolName", new RegExp(`all cron jobs scheduled via \\$\\{(${ID})\\} in this session\\.`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "enter-worktree-description",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "Use this tool ONLY when explicitly instructed to work in a worktree",
+    fn: "enterWorktreeDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "exit-worktree-description",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "Exit a worktree session created by EnterWorktree and return",
+    fn: "exitWorktreeDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "report-findings-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 1 },
+    anchor: "Report code-review findings as a typed list",
+    fn: "reportFindingsDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "task-stop-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 1 },
+    anchor: "- Stops a running background task by its ID",
+    fn: "taskStopDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "remote-trigger-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 2 },
+    anchor: "Call the claude.ai remote-trigger API.",
+    fn: "remoteTriggerDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "list-agents-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: "Names are the address: send with",
+    fn: "listAgentsDescription",
+    valueUngraded:
+      "the interpolated SendMessage tool name makes this a template EXPRESSION; `strangle/moat-parity.test.ts` grades the value against upstream's own declarator.",
+    captures: [
+      {
+        as: "sendMessageToolName",
+        kind: "primitive",
+        derive: pick("list-agents-description", "sendMessageToolName", new RegExp(`ists agents you can \\$\\{(${ID})`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "send-message-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    anchor: "the name IS the address; there is no separate address syntax",
+    fn: "sendMessageDescription",
+    captures: [
+      {
+        as: "listAgentsToolName",
+        kind: "primitive",
+        derive: pick("send-message-description", "listAgentsToolName", new RegExp(`er it now AND subscribe\\. Never poll \\\\\`\\$\\{(${ID})`)),
+      },
+      {
+        as: "crossSessionEnabled",
+        kind: "effectful-port",
+        derive: pick("send-message-description", "crossSessionEnabled", new RegExp(`(${ID})\\(\\)\\?\`\\n\\n## Cross-session\\n\\nUs`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "schedule-wakeup-description",
+    target: "free-function",
+    signature: { params: 1, ancestry: ["SourceFile"] },
+    // NOT the "ticks are collapsed" sentence, which reads as the obvious choice
+    // and is a TRAP: this chunk single-quotes the string, so its source carries
+    // `user\'s` while chunk-fy12d89p carries the same sentence unescaped. An
+    // occurrence count over the graph therefore says "unique" and points at the
+    // WRONG FILE. Checking the escape layer before counting an anchor is the
+    // scout's own rule (§3a, written for `\u2014`); it bites on quoting too.
+    anchor: "There is no cache cliff inside that range to pace around",
+    fn: "scheduleWakeupDescription",
+    captures: [
+      {
+        as: "scheduleWakeupPreamble",
+        kind: "primitive",
+        derive: pick("schedule-wakeup-description", "scheduleWakeupPreamble", new RegExp(`\\$\\{(${ID})\\}\\n\\n\\$\\{'Set \`noop: true\` if nothing change`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "task-output-description",
+    target: "sibling-method",
+    signature: { params: 0, ancestry: ["ObjectLiteralExpression", "SourceFile"] },
+    anchor: "DEPRECATED: Background tasks return their output file path",
+    fn: "taskOutputDescription",
+    captures: [],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "workflow-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 4 },
+    anchor: "Execute a workflow script that orchestrates multiple subagents",
+    fn: "workflowDescription",
+    valueUngraded:
+      "the interpolated Agent tool name makes this a template EXPRESSION; `strangle/moat-parity.test.ts` grades the value against upstream's own declarator.",
+    captures: [
+      {
+        as: "agentToolName",
+        kind: "primitive",
+        derive: pick("workflow-description", "agentToolName", new RegExp(`NOT call this tool\\. Use the \\$\\{(${ID})`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
+  {
+    name: "enter-plan-mode-description",
+    target: "free-function",
+    signature: { params: 0, ancestry: ["SourceFile"] },
+    anchor: "Use this tool proactively when you're about to start",
+    fn: "enterPlanModeDescription",
+    captures: [
+      {
+        as: "askUserQuestionToolName",
+        kind: "primitive",
+        derive: pick("enter-plan-mode-description", "askUserQuestionToolName", new RegExp(`u would use \\$\\{(${ID})\\} to clarify the approach, use EnterPlan`)),
+      },
+      {
+        as: "whatHappensSection",
+        kind: "effectful-port",
+        derive: pick("enter-plan-mode-description", "whatHappensSection", new RegExp(`\\$\\{(${ID})\\(\\)\\}## Examples\\n\\n### GOOD - Use EnterPlan`)),
+      },
+      {
+        as: "agentToolNote",
+        kind: "effectful-port",
+        derive: pick("enter-plan-mode-description", "agentToolNote", new RegExp(`(${ID})\\(\\);return\`Use this tool proactively when`)),
+      },
+    ],
+    coverage: ["perm-plan-mode"],
+  },
+
+  {
+    name: "exit-plan-mode-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 0 },
+    anchor: "Use this tool when you are in plan mode and have finished writing",
+    fn: "exitPlanModeDescription",
+    valueUngraded:
+      "the initializer interpolates the AskUserQuestion tool name, so it is a template EXPRESSION and the build cannot fold it. `strangle/moat-parity.test.ts` evaluates upstream's own declarator with upstream's own constant and requires byte identity with this module's output — a stronger check than the fold, because it also grades the arms no request renders.",
+    captures: [
+      {
+        as: "askUserQuestionToolName",
+        kind: "primitive",
+        derive: pick("exit-plan-mode-description", "askUserQuestionToolName", new RegExp(`s about requirements or approach, use \\$\\{(${ID})`)),
+      },
+    ],
+    coverage: ["perm-plan-mode"],
+  },
+
+  {
+    name: "ask-user-question-description",
+    target: "variable-declarator",
+    signature: { params: 0, ancestry: ["SourceFile"], declarator: 2 },
+    anchor: "Use this tool only when you are blocked on a decision",
+    fn: "askUserQuestionDescription",
+    valueUngraded:
+      "two interpolated tool names make the initializer a template EXPRESSION; `strangle/moat-parity.test.ts` grades the value against upstream's own declarator, evaluated with upstream's own constants.",
+    captures: [
+      {
+        as: "enterPlanModeToolName",
+        kind: "primitive",
+        derive: pick("ask-user-question-description", "enterPlanModeToolName", new RegExp(` switch into plan mode, use \\$\\{(${ID})`)),
+      },
+      {
+        as: "exitPlanModeToolName",
+        kind: "primitive",
+        derive: pick("ask-user-question-description", "exitPlanModeToolName", new RegExp(`er cannot see the plan until you call \\$\\{(${ID})`)),
+      },
+    ],
+    coverage: ["perm-plan-mode"],
+  },
 ];
 
 

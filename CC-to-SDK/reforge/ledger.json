@@ -629,17 +629,17 @@
         "scenario:edit-tool",
         "scenario:task-family"
       ],
-      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too \u2014 the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (\u00a72.4), one per effectful-port capture that leaves this row: `tool/Read` \u2014 the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` \u2014 the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery \u00a71.1 files under the Bash executor; `subsystem/subagent-dispatch` \u2014 TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (\u00a73.3), so it is a port with no edge."
+      "note": "TEN of the graph's 44 `mapToolResultToToolResultBlockParam` methods are excised and delegated to reforge-owned modules (Write, Glob, TaskCreate from M3-B; Read, Edit, Bash, Grep, TaskGet, TaskList, TaskUpdate from C4/W1), 6,568 minified chars. Every one of the ten owned MODULES is standalone-complete and registered in engine-ts/modules/index.ts: it ships its own constants and pure helpers, and only typed ports cross the adapter (Read's WeakMap+clock staleness prefix and tab-separator gate, Bash's background output path and task-ack envelope/ending, TaskUpdate's two agent-team predicates). The SUBSYSTEM row nevertheless stays `spliced`, not `standalone-complete`: 34 formatters remain, so the family is not owned. Coverage is honest too — the corpus renders one of Read's six result arms, one of Grep's three and the plain stdout path of Bash's six, and never truncates a Glob result; the arms it cannot reach are graded by strangle/contracts.test.ts (135 checks). DEPENDENCY EDGES (§2.4), one per effectful-port capture that leaves this row: `tool/Read` — the Read formatter's staleness prefix is a module WeakMap keyed by the result object and populated inside the Read tool's CALL path, then rendered through a Date.now()-derived day count, so it is a side channel owned by Read's execution, not data this wave can own; `subsystem/bash-executor` — the Bash formatter's background output path reads the live outputPathBindings registry, and its task-ack envelope/ending reach the background-task machinery §1.1 files under the Bash executor; `subsystem/subagent-dispatch` — TaskUpdate's completion nudge is gated on the session's agent/team identity. Read's tab-separator capture is a feature gate, and gates are neither spliced nor excluded (§3.3), so it is a port with no edge."
     },
     {
       "id": "subsystem/tool-result-validators",
       "kind": "subsystem",
       "title": "Tool-result validators (Edit's validateInput and its 19 siblings)",
-      "wave": "C4",
+      "wave": "C13",
       "state": "unowned",
       "edges": [],
       "footprint": null,
-      "note": "Split out of \u00a71.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads \u2014 mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it \u2014 the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
+      "note": "Split out of §1.1's 'formatters + validators' row by C4 with measured evidence: the Edit tool's error results (\"String to replace not found in file.\", \"File has not been read yet.\", the stale-read and match-count messages) are NOT produced by `mapToolResultToToolResultBlockParam`. They are returned by a sibling `async validateInput`, 3,317 minified chars against the formatters' 155-1,590, carrying filesystem reads, readFileState access, `tengu_edit_tool_stale_read` telemetry and gate reads — mostly `effectful-port` captures. It needs its own scenario (a deliberately missing `old_string`) and its own gate row, so C4 scoped it out rather than smuggling it in behind a formatter wave. 20 `validateInput` methods exist in chunk-fy12d89p.js. OPEN: this row is filed under C4 because that is the child that subdivided it, and C4 does not close it — the roadmap owes it a wave assignment (campaign spec Revision Notes, 2026-09-01)."
     },
     {
       "id": "subsystem/tool-descriptions",
@@ -889,7 +889,7 @@
               "declStart": 2171,
               "declEnd": 3430,
               "sha256": "e212d4afb1c8445114a8c3e85e43690059bbadd2267d6952db913532c86f5ec6",
-              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row \u2014 conservative staling, not a narrowed contract",
+              "note": "the transitive closure could not be enumerated (the closure exceeds 20 declarations, which is a subsystem rather than a helper); every chunk the walk reached is hashed WHOLE instead, so an unrelated upstream edit in one of them stales this row — conservative staling, not a narrowed contract",
               "closure": [
                 {
                   "name": "chunk-qe0j59w7.js",
@@ -899,7 +899,7 @@
                   "declStart": 0,
                   "declEnd": 4188,
                   "sha256": "67e46af70a6bb035bcfbe20be524f402b35b26871ab9bb6646c1af1f6f0974af",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-04aem4bh.js",
@@ -909,7 +909,7 @@
                   "declStart": 0,
                   "declEnd": 5767,
                   "sha256": "e8af93a4d91fae5ac8b9e5b62394d42fb9e5e4c802b5d6c4469370fb6cea1259",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-38213y7h.js",
@@ -919,7 +919,7 @@
                   "declStart": 0,
                   "declEnd": 94444,
                   "sha256": "210dc834a30092805d6cd139337048efe5c1e01adf214be33adc3ccc19642a6b",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-w3k8bej2.js",
@@ -929,7 +929,7 @@
                   "declStart": 0,
                   "declEnd": 57148,
                   "sha256": "2f1f54062ae10f93dff9c7771a6324067cbb78472e9452ac52c780f37cac36b1",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 },
                 {
                   "name": "chunk-nt3hxpjz.js",
@@ -939,7 +939,7 @@
                   "declStart": 0,
                   "declEnd": 1762,
                   "sha256": "bb8a594e87857dde76a57b3b22868c9aab77173166a3631f0b1133e9dda01966",
-                  "note": "whole-chunk hash \u2014 the closure exceeds 20 declarations, which is a subsystem rather than a helper"
+                  "note": "whole-chunk hash — the closure exceeds 20 declarations, which is a subsystem rather than a helper"
                 }
               ]
             }
@@ -1691,7 +1691,7 @@
         "attestation/coverage.md",
         "research/fixtures/prompt-sections-2.1.251.json"
       ],
-      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt \u2014 plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first. W7.5 TAKES SIX OF THE SECTION BUILDERS THIS ROW NAMED AS ITS GAP, and corrects the count it named them with: the inventory is not '~20 prose sections' but 27 dynamic section records plus a six-element static head, assembled by a five-element return array in which exactly ONE element (kKe) follows the dynamic set - not the 'two-element tail' the wave first wrote - derived from the pin as research/fixtures/prompt-sections-2.1.251.json and re-derived by the gate (research/tools/extract-prompt-sections.ts, found by shape from the section-record constructor and confirmed twice - by the boundary sentinel the block partition looks for, and by the defaultSystemPrompt property every caller binds the result to). The six rows are the STATIC HEAD: the identity/security opener, # System, # Doing tasks, # Executing actions with care, # Using your tools and # Tone and style - about 11.2 KB of the preset's prose, every one of them rendered by sysprompt-preset and every solo sabotage measured RED against it. All six anchors are PROSE occurring once over the 1,802-file set, the strongest class the doctrine has and a deliberate contrast with C6's two structural anchors; two near-misses are recorded on the rows (the # Using your tools heading occurs twice inside its own function's two arms, which selectExcision ties because it counts candidates rather than spans, and the short form of the parallel-tools sentence also occurs twice). The bullet formatter is a pure-helper with fifteen call sites, owned in a shared file with upstream's copy left live; the hooks paragraph has one caller and folds in - and the fold-in still has to be DECLARED, because the capture inventory refuses an undeclared free variable, so it rides as an owned pure-helper that is derived but neither forwarded nor called. THE REMAINING GAP IS NAMED RATHER THAN IMPLIED, and W7.5's boundary review corrected how: the 27 dynamic records are still upstream's, the FIXTURE carries their SHAPE (name expression, conditional-spread flag, thunk kind, and each producer's chunk/bytes/declKind) and the per-record TAKEABILITY TABLE lives in the README's W7.5 record, because rendering is measured from the cassette and the fixture is pin-keyed with a gate phase that fails on any diff. THREE - not four - have nothing to excise: one inline thunk (endconv_deferred_hint) and two cross-chunk producers (memory -> pKe in chunk-9e2ns8ty, subagent_steer_delegation -> Rnr in chunk-bsdtxcdc). Nine of the 27 RENDER on the m1-sysprompt-preset cassette, so the class reason 'gated behind experiments, background jobs or remote surfaces the corpus does not enter' is right only for the eighteen that do not. THREE ARE TAKEABLE NOW and are named work for a later completions pass: session_guidance (O8t, 1,447 B), context_management (G8t, 291 B) and the env_info family (ZGe 55 B / H8t 127 B) - each already rendered by an existing scenario, so each is gradeable the day it is taken. The memory section stays deferred as a port-heavy S-module, and several remaining records are single string constants, i.e. variable-declarator or primitive shapes rather than function splices. So is the per-tool serializer Eie. The row stays spliced."
+      "note": "W3 (C6) owns the assembly pipeline: the identity-line selector, the ambient-context tail, the block partition and its cache scoping, the wire shaping, the CLAUDE.md/system-reminder injection, and the dispatched-agent prompt — plus W0a's env block, whose far side is now reached as a port BY subagent-prompt (an edge inside this row). The row stays `spliced` rather than standalone-complete: the SECTION BUILDERS behind the preset's 27 KB block (upstream OS() and its ~45 free variables) are still upstream's, and so is the per-tool serializer Eie, which the scout measured as not a clean seam and referred to the tool-runtime wave. The static-prompt gate is pinned false by S3.3, so two of the partition's three paths are graded by strangle/prompt-parity.test.ts rather than by the corpus; attestation/coverage.md records all 38 exclusions with that oracle named. Two typed-port edges leave the row: the message constructor that stamps uuid and timestamp onto the system-reminder message (session/transcript), and the prompt-cache-control builder plus the remaining-token attachment (query loop). The env-block port is an edge INSIDE the row, which is the campaign's first. W7.5 TAKES SIX OF THE SECTION BUILDERS THIS ROW NAMED AS ITS GAP, and corrects the count it named them with: the inventory is not '~20 prose sections' but 27 dynamic section records plus a six-element static head, assembled by a five-element return array in which exactly ONE element (kKe) follows the dynamic set - not the 'two-element tail' the wave first wrote - derived from the pin as research/fixtures/prompt-sections-2.1.251.json and re-derived by the gate (research/tools/extract-prompt-sections.ts, found by shape from the section-record constructor and confirmed twice - by the boundary sentinel the block partition looks for, and by the defaultSystemPrompt property every caller binds the result to). The six rows are the STATIC HEAD: the identity/security opener, # System, # Doing tasks, # Executing actions with care, # Using your tools and # Tone and style - about 11.2 KB of the preset's prose, every one of them rendered by sysprompt-preset and every solo sabotage measured RED against it. All six anchors are PROSE occurring once over the 1,802-file set, the strongest class the doctrine has and a deliberate contrast with C6's two structural anchors; two near-misses are recorded on the rows (the # Using your tools heading occurs twice inside its own function's two arms, which selectExcision ties because it counts candidates rather than spans, and the short form of the parallel-tools sentence also occurs twice). The bullet formatter is a pure-helper with fifteen call sites, owned in a shared file with upstream's copy left live; the hooks paragraph has one caller and folds in - and the fold-in still has to be DECLARED, because the capture inventory refuses an undeclared free variable, so it rides as an owned pure-helper that is derived but neither forwarded nor called. THE REMAINING GAP IS NAMED RATHER THAN IMPLIED, and W7.5's boundary review corrected how: the 27 dynamic records are still upstream's, the FIXTURE carries their SHAPE (name expression, conditional-spread flag, thunk kind, and each producer's chunk/bytes/declKind) and the per-record TAKEABILITY TABLE lives in the README's W7.5 record, because rendering is measured from the cassette and the fixture is pin-keyed with a gate phase that fails on any diff. THREE - not four - have nothing to excise: one inline thunk (endconv_deferred_hint) and two cross-chunk producers (memory -> pKe in chunk-9e2ns8ty, subagent_steer_delegation -> Rnr in chunk-bsdtxcdc). Nine of the 27 RENDER on the m1-sysprompt-preset cassette, so the class reason 'gated behind experiments, background jobs or remote surfaces the corpus does not enter' is right only for the eighteen that do not. THREE ARE TAKEABLE NOW and are named work for a later completions pass: session_guidance (O8t, 1,447 B), context_management (G8t, 291 B) and the env_info family (ZGe 55 B / H8t 127 B) - each already rendered by an existing scenario, so each is gradeable the day it is taken. The memory section stays deferred as a port-heavy S-module, and several remaining records are single string constants, i.e. variable-declarator or primitive shapes rather than function splices. So is the per-tool serializer Eie. The row stays spliced."
     },
     {
       "id": "subsystem/compaction",
@@ -1729,7 +1729,7 @@
               "declStart": 24074,
               "declEnd": 24090,
               "sha256": "a1e48f62bc230dadb386dbf8667b960613e4ae42daed051067c793faf9fc832d",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             }
           ]
         },
@@ -2331,7 +2331,7 @@
               "declStart": 2170797,
               "declEnd": 2170814,
               "sha256": "f8161e08e471529d29f435220ac614d67c6582c538536366659385c35f76571e",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "I_e",
@@ -2504,7 +2504,7 @@
               "declStart": 3005677,
               "declEnd": 3005694,
               "sha256": "e0a1938fa4ba991d87c6e49a0c76d07ccd34b43031e6d67ad34839f6e0ea7929",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -2567,7 +2567,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -2821,7 +2821,7 @@
               "declStart": 3004197,
               "declEnd": 3004214,
               "sha256": "d918842d2a2d7872b10357d32233101801426d3cb79b267444ed13c0e2206591",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3290,7 +3290,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3353,7 +3353,7 @@
               "declStart": 3007883,
               "declEnd": 3007900,
               "sha256": "3d94bfc3d46ca35bc52b7f3274562fbb668001404c2c708dae2024419942c015",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -3494,7 +3494,7 @@
               "declStart": 3008687,
               "declEnd": 3008704,
               "sha256": "dd21e625a7aaaf1aa3399529cb6030c9c3981654012ec4f2876882d1beb7d80b",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "jy",
@@ -5220,7 +5220,7 @@
         "scenario:perm-broker-updates",
         "scenario:perm-mode-walk"
       ],
-      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: TEN splices here plus C5x's deny-stamping link (whose value this wave's oracle now grades, closing the C7/C9 carve-out), and TWO owned functions in shared/ that are deliberately not rows. THE ASK-RULE PREDICATE AND THE SAFETY-CHECK FINDER WERE TWO MORE OF THE NOT-ROWS AND ARE NOW ROWS OF THEIR OWN, and the adjudication they replace is worth recording because every part of it was checkable and wrong. It said their remaining callers were the mode-aware body's GATE-DEAD auto/dontAsk arms: `auto` is not gate-dead (this same wave measured it accepted through both paths), and the dontAsk half never applies because the mode-aware body returns on dontAsk before reaching either call. It said the corpus's decisions carry NO decisionReason at all: every Bash denial carries subcommandResults, which is exactly the shape both functions recurse into. And the two callers left after the pre-check and the rule checker take their copies are on the LIVE headless Bash path - the multi-cd aggregator and the subcommand merge's tie-break - kept quiet not by a gate but by needing a command SHAPE no cell wrote. What actually hid them was the pair of twins: one returned undefined and one returned false, which is what the healthy functions return on every input the corpus produces. Inverted twins plus the corpus's first `auto` cell (perm-auto-classifier-deny) redden both. A DARKNESS VERDICT IS A MEASUREMENT, and it inherits the limits of the twin and the corpus it was taken against. The message builder (ql, 45 call sites) is different: it RUNS on every tool call and its output is absorbed before it reaches any observable a headless corpus can produce \u2014 an ask's message never travels to the SDK host, and the one path on which it reaches the model takes the rule checker's annotating arm, which keeps the tool's own message. All three are graded against upstream's bytes by the parity oracle, and two control_response envelopes recorded on subsystem/control-protocol. A FIFTH was measured DARK and dropped in the same way: Uct/classifierOnlyStreakActive runs on the allow arm of every tool call in every mode, and its answer is pinned false by the disabled streak gate, so the maximal twin \u2014 return true always \u2014 leaves both covering scenarios byte-identical; the row had been carried as live on a RED the gate inferred from a non-zero exit rather than from a graded verdict. A FOURTH function was measured off the headless path and dropped outright: K0/setPermissionModeWithGuards joins the guard to the transition and reads like the set_permission_mode seam, but the headless runtime's handler calls the guard DIRECTLY and applies the mode itself, so even a twin that refused every mode change left a mode walk green. Its two ends are both owned and both live, so only the joint is unowned. Fourteen recordings now, three of them added by C9's boundary-fix round: perm-working-dir closes the workingDir decisionReason cell, perm-auto-classifier-deny closes the classifier one (a chosen 400 on the classifier's OWN API call reaches upstream's fail-closed arm), and the re-recorded perm-mode-walk finally executes the plan-with-bypass disjunct its exclusion had described. Graded by strangle/permissions-parity.test.ts (2,508 comparisons, 49 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter \u2014 a \u00a72.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
+      "note": "W6 owns the decision chain from the pre-check down, the mode axis end to end, and the headless broker's return leg: TEN splices here plus C5x's deny-stamping link (whose value this wave's oracle now grades, closing the C7/C9 carve-out), and TWO owned functions in shared/ that are deliberately not rows. THE ASK-RULE PREDICATE AND THE SAFETY-CHECK FINDER WERE TWO MORE OF THE NOT-ROWS AND ARE NOW ROWS OF THEIR OWN, and the adjudication they replace is worth recording because every part of it was checkable and wrong. It said their remaining callers were the mode-aware body's GATE-DEAD auto/dontAsk arms: `auto` is not gate-dead (this same wave measured it accepted through both paths), and the dontAsk half never applies because the mode-aware body returns on dontAsk before reaching either call. It said the corpus's decisions carry NO decisionReason at all: every Bash denial carries subcommandResults, which is exactly the shape both functions recurse into. And the two callers left after the pre-check and the rule checker take their copies are on the LIVE headless Bash path - the multi-cd aggregator and the subcommand merge's tie-break - kept quiet not by a gate but by needing a command SHAPE no cell wrote. What actually hid them was the pair of twins: one returned undefined and one returned false, which is what the healthy functions return on every input the corpus produces. Inverted twins plus the corpus's first `auto` cell (perm-auto-classifier-deny) redden both. A DARKNESS VERDICT IS A MEASUREMENT, and it inherits the limits of the twin and the corpus it was taken against. The message builder (ql, 45 call sites) is different: it RUNS on every tool call and its output is absorbed before it reaches any observable a headless corpus can produce — an ask's message never travels to the SDK host, and the one path on which it reaches the model takes the rule checker's annotating arm, which keeps the tool's own message. All three are graded against upstream's bytes by the parity oracle, and two control_response envelopes recorded on subsystem/control-protocol. A FIFTH was measured DARK and dropped in the same way: Uct/classifierOnlyStreakActive runs on the allow arm of every tool call in every mode, and its answer is pinned false by the disabled streak gate, so the maximal twin — return true always — leaves both covering scenarios byte-identical; the row had been carried as live on a RED the gate inferred from a non-zero exit rather than from a graded verdict. A FOURTH function was measured off the headless path and dropped outright: K0/setPermissionModeWithGuards joins the guard to the transition and reads like the set_permission_mode seam, but the headless runtime's handler calls the guard DIRECTLY and applies the mode itself, so even a twin that refused every mode change left a mode walk green. Its two ends are both owned and both live, so only the joint is unowned. Fourteen recordings now, three of them added by C9's boundary-fix round: perm-working-dir closes the workingDir decisionReason cell, perm-auto-classifier-deny closes the classifier one (a chosen 400 on the classifier's OWN API call reaches upstream's fail-closed arm), and the re-recorded perm-mode-walk finally executes the plan-with-bypass disjunct its exclusion had described. Graded by strangle/permissions-parity.test.ts (2,508 comparisons, 49 controls) over the axes research/fixtures/permission-surface-2.1.251.json derives from the bundle: six modes, three rule behaviours, eleven decisionReason kinds. THREE NAMED GAPS, all deferrals rather than omissions. (1) `von`, the 11.6 KB mode-aware decision body ABOVE the pre-check: sixty free variables, a model-classifier call, a mutable per-session denial counter — a §2.3 designed port, not a transcription. (2) `createCanUseTool`, the broker's own class method: five mutable maps on its receiver plus thirty-five module imports, the same shape. (3) `Dd`, the chain's two-line entry point, carries no string literal at all and is not takeable by the anchor mechanism; both of its neighbours are owned. A fourth, `eln`/initializeToolPermissionContext (5.4 KB, sixty free variables, filesystem and settings I/O), belongs with the settings layer rather than with the decision chain. The row cannot close on any of them."
     },
     {
       "id": "subsystem/control-protocol",
@@ -6390,7 +6390,7 @@
               "declStart": 145340,
               "declEnd": 145356,
               "sha256": "cd5a1f2c5ad546ad0e5eabaec50631f24a7c0b70f26151eeb9affbd16a58965f",
-              "note": "exporting module 'crypto' is not part of the graph \u2014 only the import site is covered"
+              "note": "exporting module 'crypto' is not part of the graph — only the import site is covered"
             },
             {
               "name": "K",
@@ -6428,16 +6428,429 @@
         "scenario:sysprompt-append",
         "scenario:plain"
       ],
-      "note": "W6 took the two response ENVELOPES ahead of W7 (the can_use_tool round trip is the only control request the permission chain itself issues). W7 owns the REQUEST leg for the four subtypes with a named handler: initialize (the handler AND the ~1 KB payload it answers with), set_permission_mode, set_model and set_max_thinking_tokens. THE LADDER ITSELF IS NOT TAKEN, and that is a shape decision rather than a deferral: research/fixtures/control-protocol-2.1.251.json derives 52 else-if arms over 54 subtypes, seventeen of which carry a loop-control jump relative to the enclosing for-await and all of which close over the frame handler\u2019s locals. An excised arm would have to hand loop control back through a return value, which is a different mechanism rather than a generalisation of an existing one. GAPS, named rather than implied. (1) The interrupt arm is INLINED \u2014 no named handler \u2014 and its five helpers are the auto-react and task-notification subsystems rather than this one (kill-auto-react-subscriptions plus four artifact/task-notification partitioners, four of them in chunk-fy12d89p). Their firing condition is an interrupt with live tasks, artifact subscriptions or a queued command, and the corpus\u2019s interrupt scenario creates none of those, so the row is OPEN with that condition named and belongs with W8\u2019s task family. Nothing here claims they are dark: no twin has been measured against a population that reaches them. (2) rewind_files (Tf, 485 B) is takeable and anchorable but has no scenario of its own; the probe FIRES the arm, and nothing grades its answer. (3) mcp_message (QKn, 58 B) is one line into the MCP transport and belongs with W11. (4) The other 48 arms are peripheral: 16 serve subtypes no installed SDK can send at all, and a dozen more reach outside the harness entirely. MEASURED: 38 of the 54 subtypes FIRE on the headless seam, none is dead, and 16 are OPEN each with a written reason (w7/probe-control-subtypes.ts)."
+      "note": "W6 took the two response ENVELOPES ahead of W7 (the can_use_tool round trip is the only control request the permission chain itself issues). W7 owns the REQUEST leg for the four subtypes with a named handler: initialize (the handler AND the ~1 KB payload it answers with), set_permission_mode, set_model and set_max_thinking_tokens. THE LADDER ITSELF IS NOT TAKEN, and that is a shape decision rather than a deferral: research/fixtures/control-protocol-2.1.251.json derives 52 else-if arms over 54 subtypes, seventeen of which carry a loop-control jump relative to the enclosing for-await and all of which close over the frame handler’s locals. An excised arm would have to hand loop control back through a return value, which is a different mechanism rather than a generalisation of an existing one. GAPS, named rather than implied. (1) The interrupt arm is INLINED — no named handler — and its five helpers are the auto-react and task-notification subsystems rather than this one (kill-auto-react-subscriptions plus four artifact/task-notification partitioners, four of them in chunk-fy12d89p). Their firing condition is an interrupt with live tasks, artifact subscriptions or a queued command, and the corpus’s interrupt scenario creates none of those, so the row is OPEN with that condition named and belongs with W8’s task family. Nothing here claims they are dark: no twin has been measured against a population that reaches them. (2) rewind_files (Tf, 485 B) is takeable and anchorable but has no scenario of its own; the probe FIRES the arm, and nothing grades its answer. (3) mcp_message (QKn, 58 B) is one line into the MCP transport and belongs with W11. (4) The other 48 arms are peripheral: 16 serve subtypes no installed SDK can send at all, and a dozen more reach outside the harness entirely. MEASURED: 38 of the 54 subtypes FIRE on the headless seam, none is dead, and 16 are OPEN each with a written reason (w7/probe-control-subtypes.ts)."
     },
     {
       "id": "subsystem/moat-tools",
       "kind": "subsystem",
       "title": "Moat tools: SendMessage/ListAgents, Workflow, ScheduleWakeup, TaskCreate family, Skill, plan/worktree tools",
       "wave": "C11",
-      "state": "unowned",
-      "edges": [],
-      "footprint": null
+      "state": "spliced",
+      "edges": [
+        "subsystem/session-storage",
+        "subsystem/hook-dispatch",
+        "subsystem/subagent-dispatch",
+        "subsystem/bash-executor",
+        "subsystem/permissions"
+      ],
+      "footprint": [
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "target": {
+            "start": 1825,
+            "end": 5286,
+            "sha256": "4906550cec63fea1aa7489be664554c8ade5bd5aec29abd7dae7ca050122e9ca"
+          },
+          "captures": [
+            {
+              "name": "lm",
+              "as": "cronCreateToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 853,
+              "declEnd": 868,
+              "sha256": "870b499ba515d1c06d435510ec3c4efc7ba7a84140431cde4c7ae12a41180796"
+            },
+            {
+              "name": "FS",
+              "as": "cronDeleteToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 869,
+              "declEnd": 884,
+              "sha256": "ce697942f662e99fb03de664ba0978c520db2a6eb552364b17be9347bb6f263c"
+            },
+            {
+              "name": "ma",
+              "as": "monitorToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 809,
+              "declEnd": 811,
+              "sha256": "3c44c3e1b8b7844786724ac776d3d90ee7eac452bdbcb44495b77dec2ef73cfe",
+              "from": {
+                "chunk": "chunk-q1e724p4.js",
+                "exportedAs": "ma",
+                "declStart": 619,
+                "declEnd": 631,
+                "sha256": "8c8dad269e7ad008e54afdb1a71157c3dd82cafefcd0246c92253a6c29ae496f"
+              }
+            },
+            {
+              "name": "NX",
+              "as": "recurringMaxAgeDays",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 913,
+              "declEnd": 945,
+              "sha256": "92b82d90fd74d33b6520f0d6d556ac6973fcf94a1f8bf93a4d8b5c92b3689d9f"
+            },
+            {
+              "name": "RI",
+              "as": "monitorEnabled",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 762,
+              "declEnd": 764,
+              "sha256": "91d19006c4397461ab9912a25f8d7b52ad39d438d884005edd54006f576d7869",
+              "from": {
+                "chunk": "chunk-90dd95xm.js",
+                "exportedAs": "RI",
+                "declStart": 1197,
+                "declEnd": 1247,
+                "sha256": "f82387351e41c9ac4d9a97831fcedc06d83367e366620b55719ca54ab6be89f4"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "target": {
+            "start": 5330,
+            "end": 5618,
+            "sha256": "09e02c8022c2e8a0afd4c08a0fa44374b95500612192a1ea98e1b04defd4f352"
+          },
+          "captures": [
+            {
+              "name": "lm",
+              "as": "cronCreateToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 853,
+              "declEnd": 868,
+              "sha256": "870b499ba515d1c06d435510ec3c4efc7ba7a84140431cde4c7ae12a41180796"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-gnfg1bn5.js",
+          "target": {
+            "start": 5653,
+            "end": 5840,
+            "sha256": "ca7963eff18c8adcedcc863357e263c124d0aa0d1ba603fb00e899f6cea338e7"
+          },
+          "captures": [
+            {
+              "name": "lm",
+              "as": "cronCreateToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 853,
+              "declEnd": 868,
+              "sha256": "870b499ba515d1c06d435510ec3c4efc7ba7a84140431cde4c7ae12a41180796"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2394617,
+            "end": 2397929,
+            "sha256": "47a44dfd663a08ac9fc17caa6b191404c0d0da1dc9500228775abbbf9ab6616e"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2404892,
+            "end": 2406878,
+            "sha256": "ec15ed5d154931ec7c0fa105f0f77f23a33536b9509248668fa2e3e7abe2a854"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1021117,
+            "end": 1021693,
+            "sha256": "fefdaf49d466b3b326438deab9674bd59b3e30ae3dc3582bbe771a364cf244df"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-n855n58h.js",
+          "target": {
+            "start": 637,
+            "end": 1017,
+            "sha256": "60fd1316b7c2746a61cc2a0f8768f8133384d8955ff23f4af4d49d7991d00c47"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-9bs8dvhj.js",
+          "target": {
+            "start": 9630,
+            "end": 12501,
+            "sha256": "d7806013e17b59bbe499703fbd3a608726386dc39c93a7a0112f586015b0f5ab"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-b2bvtpa2.js",
+          "target": {
+            "start": 726,
+            "end": 1517,
+            "sha256": "27d756416c78d23097235694cc86cafd6ef7e6c8e50af9541d295a927464c510"
+          },
+          "captures": [
+            {
+              "name": "Xr",
+              "as": "sendMessageToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 622,
+              "declEnd": 624,
+              "sha256": "fc899307664ac746294bd2a08c7a6a4b6a3d769ec41fe972bc0675435f9f8cf2",
+              "from": {
+                "chunk": "chunk-thhspf9s.js",
+                "exportedAs": "Xr",
+                "declStart": 619,
+                "declEnd": 635,
+                "sha256": "025e56afa6b5d3a33774876b6c10395d06f35eb18cf76f8b4c5444211ed7f463"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-0ak8xf05.js",
+          "target": {
+            "start": 18432,
+            "end": 22773,
+            "sha256": "40433dbaf7b9544bea5cc3f24431263d4c0cacd00258e795a712a4b80b8fc47a"
+          },
+          "captures": [
+            {
+              "name": "Ys",
+              "as": "listAgentsToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 4920,
+              "declEnd": 4922,
+              "sha256": "fa5c31d5981affa4891020224562b20050c7b3e4f40d8970dffcac5bb0bea956",
+              "from": {
+                "chunk": "chunk-b2bvtpa2.js",
+                "exportedAs": "Ys",
+                "declStart": 666,
+                "declEnd": 681,
+                "sha256": "82b70876cc5ba73ddecbaf7c2f42af3ec343cd8ec40eafd768e779f746f1bd41"
+              }
+            },
+            {
+              "name": "Yo",
+              "as": "crossSessionEnabled",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 6392,
+              "declEnd": 6394,
+              "sha256": "4eeac15ae345b99db2b063be34cfa006fd7d551f5805a296e5f9fc72ff6efcad",
+              "from": {
+                "chunk": "chunk-f16234j0.js",
+                "exportedAs": "Yo",
+                "declStart": 800,
+                "declEnd": 966,
+                "sha256": "92546c42f69ef85571f6a532f292ec4e28a66a914c7526a528f3ab6a0d36c9e0"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-7f6rqxc5.js",
+          "target": {
+            "start": 1942,
+            "end": 6854,
+            "sha256": "a79e8827166e28a91846146fbedb43c211cf6b1ce9b2616757db1a252d7bc30c"
+          },
+          "captures": [
+            {
+              "name": "t",
+              "as": "scheduleWakeupPreamble",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 699,
+              "declEnd": 1941,
+              "sha256": "0fecccb2b990cbca99e99bba16b80b1a5bf9b9780fd2442914e2e62a9cc7393d"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2252716,
+            "end": 2253804,
+            "sha256": "c0a56c9f7bb856870da2488266200d20c224e2f0c04833d1f646b1d8a2662e73"
+          },
+          "captures": []
+        },
+        {
+          "chunk": "chunk-s9vr7jq9.js",
+          "target": {
+            "start": 840,
+            "end": 3920,
+            "sha256": "7e65590b184d8b702040e7fa4c9beccdd2f1c1c55d2d42fc8dcff78869b02e3c"
+          },
+          "captures": [
+            {
+              "name": "yt",
+              "as": "agentToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 717,
+              "declEnd": 719,
+              "sha256": "3d40f99acd3b0e84749b6e7117480b41f14c4f84aead9bf4f579edf96fcbab40",
+              "from": {
+                "chunk": "chunk-k8vt31j7.js",
+                "exportedAs": "yt",
+                "declStart": 619,
+                "declEnd": 629,
+                "sha256": "1f25c7bbddb03e09144c247973f8914b6885529ed9e184bc15748cb8263958c1"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 2389399,
+            "end": 2393041,
+            "sha256": "bde157c7653b8f52aecbbd4ee275a87172beea67cc986108c81e769403129d1c"
+          },
+          "captures": [
+            {
+              "name": "Ji",
+              "as": "askUserQuestionToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3116,
+              "declEnd": 3118,
+              "sha256": "d6e635844a97d6a5dd2e34e56038297bddb58033cbdf546e7f6aceaf889401fe",
+              "from": {
+                "chunk": "chunk-nqngh5mm.js",
+                "exportedAs": "Ji",
+                "declStart": 689,
+                "declEnd": 709,
+                "sha256": "345bc5666eb4a11c66f8cad6f53fb4eec67d64a4ae6ee8342778bc4d1aa1913d"
+              }
+            },
+            {
+              "name": "X$n",
+              "as": "whatHappensSection",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 2388965,
+              "declEnd": 2389399,
+              "sha256": "5538df7964023035940cb55e9d0df04b185b5da8149032406838da7418d17cf3"
+            },
+            {
+              "name": "Y$n",
+              "as": "agentToolNote",
+              "kind": "effectful-port",
+              "declKind": "function",
+              "declStart": 2388891,
+              "declEnd": 2388965,
+              "sha256": "4a22ad361182a693bd4b71d26f67440d16f4077ec956d475fbbfa1a384ebcbe1"
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "target": {
+            "start": 1867525,
+            "end": 1869346,
+            "sha256": "e2d80c40d0256de4ebae90ccc19b44f982b3323967c65d23827e1a33364ea5c0"
+          },
+          "captures": [
+            {
+              "name": "Ji",
+              "as": "askUserQuestionToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 3116,
+              "declEnd": 3118,
+              "sha256": "d6e635844a97d6a5dd2e34e56038297bddb58033cbdf546e7f6aceaf889401fe",
+              "from": {
+                "chunk": "chunk-nqngh5mm.js",
+                "exportedAs": "Ji",
+                "declStart": 689,
+                "declEnd": 709,
+                "sha256": "345bc5666eb4a11c66f8cad6f53fb4eec67d64a4ae6ee8342778bc4d1aa1913d"
+              }
+            }
+          ]
+        },
+        {
+          "chunk": "chunk-nqngh5mm.js",
+          "target": {
+            "start": 2327,
+            "end": 3161,
+            "sha256": "5d1a39b9114e6c0d6059e5d7b32e6b3b2c91a1f16bf9103de188e8713ddffc2d"
+          },
+          "captures": [
+            {
+              "name": "UE",
+              "as": "enterPlanModeToolName",
+              "kind": "primitive",
+              "declKind": "variable",
+              "declStart": 666,
+              "declEnd": 684,
+              "sha256": "f0c8d94c6af10d71b650396bfda8df753da89b75a26e62096f711d71d9031503"
+            },
+            {
+              "name": "Wh",
+              "as": "exitPlanModeToolName",
+              "kind": "primitive",
+              "declKind": "import",
+              "declStart": 622,
+              "declEnd": 624,
+              "sha256": "42d88c641a15267614e8cc798146c878542c3170b1398b54bbde7d55128562bd",
+              "from": {
+                "chunk": "chunk-b8scx3qk.js",
+                "exportedAs": "Wh",
+                "declStart": 619,
+                "declEnd": 636,
+                "sha256": "89a9f9282a1277af9a6da2b80eac8647da5b9caf483c9fb4a8c7ac47198789d0"
+              }
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:cron-create-description",
+        "strangle/manifest.ts:cron-delete-description",
+        "strangle/manifest.ts:cron-list-description",
+        "strangle/manifest.ts:enter-worktree-description",
+        "strangle/manifest.ts:exit-worktree-description",
+        "strangle/manifest.ts:report-findings-description",
+        "strangle/manifest.ts:task-stop-description",
+        "strangle/manifest.ts:remote-trigger-description",
+        "strangle/manifest.ts:list-agents-description",
+        "strangle/manifest.ts:send-message-description",
+        "strangle/manifest.ts:schedule-wakeup-description",
+        "strangle/manifest.ts:task-output-description",
+        "strangle/manifest.ts:workflow-description",
+        "strangle/manifest.ts:enter-plan-mode-description",
+        "strangle/manifest.ts:exit-plan-mode-description",
+        "strangle/manifest.ts:ask-user-question-description",
+        "strangle/manifest.ts:task-create-result",
+        "strangle/manifest.ts:task-get-result",
+        "strangle/manifest.ts:task-list-result",
+        "strangle/manifest.ts:task-update-result",
+        "research/fixtures/moat-tools-2.1.251.json",
+        "scenario:plain",
+        "scenario:perm-plan-mode",
+        "scenario:task-family"
+      ],
+      "note": "C11a/W8a owns the DESCRIPTION BELT and nothing else yet: sixteen tools whose prose the engine renders into every graded request body and whose `call` no scenario has ever executed. That asymmetry is measured rather than assumed — research/fixtures/moat-tools-2.1.251.json reads the 901 recorded request bodies for what the engine presented (12 catalog shapes, baseline 22 tools) and then locates each description's producing declarations by searching the graph for the rendered text. Five descriptions have more than one carrier; each row claims the primary one and the fixture records the rest, so Workflow is owned as '102 of 110 locatable windows' rather than as a whole. 'spliced' is the honest state and 'standalone-complete' would be an overclaim by a wide margin: no moat tool's call, validateInput, checkPermissions or input schema is owned, and the four already-owned result formatters (C4/W1's task family) plus these sixteen descriptions are the entire footprint. EDGES, measured and not inherited: session-storage (the task store writes <config>/tasks/<sessionId>/<taskId>.json and the peer registry writes <config>/sessions/<pid>.json), hook-dispatch (TaskCreate/TaskUpdate call the W5-owned TaskCreated/TaskCompleted dispatchers), subagent-dispatch (background Agent shares the task registry), bash-executor (Bash backgrounding shares it too), permissions (EnterWorktree.call relocates the permission root). The belt's two dark arms are named on their modules: CronCreate's Monitor paragraph is behind the gate-dead tengu_amber_sentinel, and SendMessage's cross-session-disabled arm is behind tengu_harbor_kite, whose default is TRUE. Both are graded by strangle/moat-parity.test.ts against upstream's own body. C11b converts catalog-only tools into executed ones; C11c and C11d own the stateful core and the cross-session layer."
     },
     {
       "id": "subsystem/session-storage",
@@ -6554,7 +6967,7 @@
         "strangle/manifest.ts:session-materialize",
         "scenario:resume"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` \u2014 the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` \u2014 W9 owns the SessionPort."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort."
     },
     {
       "id": "subsystem/bash-executor",
@@ -6705,7 +7118,7 @@
         "strangle/manifest.ts:text-delta",
         "scenario:plain"
       ],
-      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` \u2014 the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
+      "note": "C1's switch-case mechanism spike, kept as a permanent splice: the streaming assembler's text_delta arm is owned; retry, fallback and the compaction driver are not. `spliced` — the content block under assembly and the engine's telemetry plumbing cross as `effectful-port` captures. C4/W1 retrofit: no capture changed hands (the telemetry brands were already owned at W0a), but the module moved to the reference/sabotage layout and is registered in engine-ts/modules/index.ts, so both halves of dual-wiring now exist for it. The SUBSYSTEM stays `spliced`: one delta arm is not the turn driver."
     },
     {
       "id": "subsystem/sandboxing",
@@ -6719,7 +7132,7 @@
     {
       "id": "tool/Agent",
       "kind": "tool",
-      "title": "Agent \u2014 subagent dispatch tool",
+      "title": "Agent — subagent dispatch tool",
       "wave": "C15",
       "state": "unowned",
       "edges": [],
@@ -6852,6 +7265,16 @@
       "footprint": null
     },
     {
+      "id": "tool/PowerShell",
+      "kind": "tool",
+      "title": "PowerShell — presented only under the in-allowlist CLAUDE_CODE_USE_POWERSHELL_TOOL override",
+      "wave": "C13",
+      "state": "unowned",
+      "edges": [],
+      "footprint": null,
+      "note": "Added 2026-09-03 by W8a, from the W8 scout's measurement of the flip cassette: the flipped headless catalog is 23 tools, not 22, and PowerShell is INSERTED at the sorted index 10 while Read shifts to 11 and stays. Three documents recorded that positional diff as a substitution. Its tool object (7,739 B) lives in chunk-hw8qz4q5.js, which the W5-W7 scout already assigns to W10, and it shares the executor and the notification path with Bash — so the row is C13's."
+    },
+    {
       "id": "tool/Read",
       "kind": "tool",
       "title": "Read",
@@ -6963,16 +7386,7 @@
       "id": "tool/WebFetch",
       "kind": "tool",
       "title": "WebFetch",
-      "wave": "C11",
-      "state": "unowned",
-      "edges": [],
-      "footprint": null
-    },
-    {
-      "id": "tool/WebSearch",
-      "kind": "tool",
-      "title": "WebSearch \u2014 server-executed; the client-side surface is formatting only (\u00a71.2)",
-      "wave": "C11",
+      "wave": "C5",
       "state": "unowned",
       "edges": [],
       "footprint": null

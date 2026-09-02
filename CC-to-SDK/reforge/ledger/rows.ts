@@ -55,7 +55,13 @@ const SUBSYSTEM_ROWS: CanonicalRow[] = [
   // Notes for the subdivision, and reforge/ledger.json for the validator row's
   // open wave assignment.
   { id: "subsystem/tool-result-formatters", kind: "subsystem", wave: "C4", title: "Tool result formatters (Read, Edit, Bash, Grep, Glob, Write, task family)" },
-  { id: "subsystem/tool-result-validators", kind: "subsystem", wave: "C4", title: "Tool-result validators (Edit's validateInput and its 19 siblings)" },
+  // REASSIGNED C4 -> C13 (2026-09-03, W8a, on the W10 scout's measurement): the
+  // validator family is not a formatter sibling that C4 happened not to reach.
+  // Its largest members are the Bash tool's, they share the command-safety
+  // chain and the shell parser with the executor, and owning them apart from
+  // that chain would mean owning a caller whose callee is upstream's. The wave
+  // that owns the parser owns them.
+  { id: "subsystem/tool-result-validators", kind: "subsystem", wave: "C13", title: "Tool-result validators (Edit's validateInput and its 19 siblings)" },
   { id: "subsystem/tool-descriptions", kind: "subsystem", wave: "C5", title: "Tool-description functions + their satellite chunks' other exports" },
   { id: "subsystem/environment-and-system-prompt", kind: "subsystem", wave: "C6", title: "Environment block + system-prompt assembly" },
   { id: "subsystem/compaction", kind: "subsystem", wave: "C7", title: "Compaction: summarization prompt, compact_boundary emit, trigger policy" },
@@ -101,6 +107,15 @@ const TOOL_ROWS: CanonicalRow[] = [
   { id: "tool/Grep", kind: "tool", wave: "C4", title: "Grep" },
   { id: "tool/ListAgents", kind: "tool", wave: "C11", title: "ListAgents" },
   { id: "tool/NotebookEdit", kind: "tool", wave: "C4", title: "NotebookEdit" },
+  // ADDED 2026-09-03 (W8a). X2 says one row per headless catalog tool, and
+  // `PowerShell` IS presented headlessly — under `CLAUDE_CODE_USE_POWERSHELL_TOOL`,
+  // which is inside the env allowlist, and proven so by the committed
+  // `m3-flip-observed-flip-…` cassette: the flipped catalog is 23 tools, not 22.
+  // (The same measurement corrects a claim three documents carried: `Read` does
+  // NOT leave the array. PowerShell is INSERTED at the sorted index 10 and Read
+  // shifts to 11 — a positional diff read as a substitution.) Its chunk is
+  // W10's, so the row is C13's and not this wave's.
+  { id: "tool/PowerShell", kind: "tool", wave: "C13", title: "PowerShell — presented only under the in-allowlist CLAUDE_CODE_USE_POWERSHELL_TOOL override" },
   { id: "tool/Read", kind: "tool", wave: "C4", title: "Read" },
   { id: "tool/RemoteTrigger", kind: "tool", wave: "C11", title: "RemoteTrigger" },
   { id: "tool/ReportFindings", kind: "tool", wave: "C11", title: "ReportFindings" },
@@ -113,8 +128,12 @@ const TOOL_ROWS: CanonicalRow[] = [
   { id: "tool/TaskOutput", kind: "tool", wave: "C11", title: "TaskOutput" },
   { id: "tool/TaskStop", kind: "tool", wave: "C11", title: "TaskStop" },
   { id: "tool/TaskUpdate", kind: "tool", wave: "C11", title: "TaskUpdate" },
-  { id: "tool/WebFetch", kind: "tool", wave: "C11", title: "WebFetch" },
-  { id: "tool/WebSearch", kind: "tool", wave: "C11", title: "WebSearch — server-executed; the client-side surface is formatting only (§1.2)" },
+  // REASSIGNED C11 -> C5 (2026-09-03, W8a). It sat at C11 by the default rule
+  // above, not by a judgement about WebFetch: nothing in it is moat work, and
+  // the only client-side surface anything owns today is its description, which
+  // C5 spliced (`webfetch-description`) and which C5's subsystem row already
+  // names as an edge.
+  { id: "tool/WebFetch", kind: "tool", wave: "C5", title: "WebFetch" },
   { id: "tool/Workflow", kind: "tool", wave: "C11", title: "Workflow" },
   { id: "tool/Write", kind: "tool", wave: "C4", title: "Write" },
 ];
@@ -137,6 +156,39 @@ export interface ExcludedRow {
  * exclusion (the §1.2 table excludes whole *areas*, which never entered the
  * ledger at all).
  */
-export const EXCLUDED_ROWS: ExcludedRow[] = [];
+export const EXCLUDED_ROWS: ExcludedRow[] = [
+  // ---- 2026-09-03, W8a: the first two rows to leave by this door ----------
+  //
+  // Both were C11 rows by the default assignment rule above, and W8's scout
+  // measured that neither is moat work. They leave in opposite directions and
+  // the difference is the point: one has a client-side surface other rows
+  // already own, the other has no client-side surface at all.
+  {
+    id: "tool/WebSearch",
+    kind: "tool",
+    reason:
+      "§1.2 server boundary. A tool row closes on OWNED EXECUTION, and WebSearch has none to own: the search runs API-side and the client never issues a query. " +
+      "What is left on this side is a description and a result formatter over a server-shaped payload, and those belong to subsystem/tool-descriptions and " +
+      "subsystem/tool-result-formatters — neither of which can close a tool row. Excluding it is therefore narrower than it sounds: it removes a row that could " +
+      "never have been closed, and removes nothing anyone could have owned.",
+    evidence:
+      "reforge/research/2026-09-02-w8-moat-tools-scout.md §7.4; the row's own §1.3 title, which said so before it was assigned; " +
+      "research/fixtures/moat-tools-2.1.251.json (WebSearch presented in the corpus with FOUR description variants and no execution path in any recorded body)",
+  },
+  {
+    id: "tool/Monitor",
+    kind: "tool",
+    reason:
+      "GATE-DEAD AT THIS PIN, WITH NO LEVER — and it is here because 'the moat includes persistent notifications' is a standing product claim that deserved a " +
+      "measured answer rather than an absence. `MonitorTool.isEnabled(){return RI()&&as()}` and `RI(){return I(\"tengu_amber_sentinel\",!1)}`; the compiled-in " +
+      "default in research/fixtures/gate-defaults-2.1.251.json is false, §3.3 pins every gate to its compiled-in default, and `tengu_amber_sentinel` is not among " +
+      "that fixture's per-gate env overrides — so flip-liveness cannot reach it either. It is absent from all 267 recorded catalogs, and the GUARDS are what rule " +
+      "it out; the absence alone would only have been a coincidence.",
+    evidence:
+      "reforge/research/2026-09-02-w8-moat-tools-scout.md §2.4 and §5.3; research/fixtures/gate-defaults-2.1.251.json (default false, absent from perGateEnvOverrides); " +
+      "research/fixtures/moat-tools-2.1.251.json (12 recorded catalog shapes, none containing Monitor); " +
+      "strangle/modules/shared/tool-names.js:MONITOR_TOOL_NAME (its name is owned because CronCreate's description points at it, and that arm is dark for the same reason)",
+  },
+];
 
 export const SUBSYSTEM_IDS: string[] = SUBSYSTEM_ROWS.map((r) => r.id);
