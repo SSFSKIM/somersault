@@ -3126,8 +3126,8 @@ the tech-debt tracker with the measurement, rather than taken or silently skippe
 
 ### After the wave
 
-Gate **GATE_PHASES**, corpus **59 of 59**, attestation **436 of 871 executed, 435 excluded, zero
-unadjudicated**, splices **74**, ledger 47 rows with `spliced=9`. The prompt oracle is at 217
+Gate **107 of 107 summary phases, zero FAIL**, corpus **59 of 59**, attestation **436 of 871 executed, 435 excluded, zero
+unadjudicated**, **74 manifest rows** (73 splices plus the one S-chunk replacement), ledger 47 rows with `spliced=9`. The prompt oracle is at 217
 comparisons with 23 controls and the hook oracle at 721 with 121.
 
 ## Next
