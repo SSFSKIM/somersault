@@ -52,16 +52,68 @@
   },
   "counts": {
     "dispatchersRead": 33,
+    "graphModules": 1802,
     "reached": 151,
-    "pure": 43,
+    "pure": 40,
     "pureWithInjection": 0,
-    "effectful": 108,
+    "effectful": 111,
     "boundary": 281,
-    "pureBytes": 5961,
+    "pureBytes": 5453,
     "pureWithInjectionBytes": 0,
-    "pureWithUniqueAnchor": 4,
-    "reachedWithUniqueAnchor": 45,
-    "reachedWithNoLiteral": 84
+    "byKind": {
+      "function": {
+        "reached": 126,
+        "pure": 24,
+        "bytes": 94816,
+        "pureBytes": 3687,
+        "anchorable": 112,
+        "pureAnchorable": 23
+      },
+      "class": {
+        "reached": 4,
+        "pure": 2,
+        "bytes": 7882,
+        "pureBytes": 710,
+        "anchorable": 4,
+        "pureAnchorable": 2
+      },
+      "instance": {
+        "reached": 3,
+        "pure": 0,
+        "bytes": 54,
+        "pureBytes": 0,
+        "anchorable": 0,
+        "pureAnchorable": 0
+      },
+      "set": {
+        "reached": 4,
+        "pure": 4,
+        "bytes": 886,
+        "pureBytes": 886,
+        "anchorable": 4,
+        "pureAnchorable": 4
+      },
+      "regexp": {
+        "reached": 2,
+        "pure": 2,
+        "bytes": 96,
+        "pureBytes": 96,
+        "anchorable": 1,
+        "pureAnchorable": 1
+      },
+      "constant": {
+        "reached": 12,
+        "pure": 8,
+        "bytes": 7013,
+        "pureBytes": 74,
+        "anchorable": 4,
+        "pureAnchorable": 1
+      }
+    },
+    "pureWithUniqueAnchor": 31,
+    "reachedWithUniqueAnchor": 125,
+    "reachedWithNoAnchor": 26,
+    "anchorScans": 235
   },
   "belt": [
     {
@@ -69,6 +121,7 @@
       "chunk": "chunk-fy12d89p.js",
       "offset": 609551,
       "bytes": 89,
+      "declKind": "function",
       "form": "async function",
       "hops": 2,
       "params": 2,
@@ -87,13 +140,19 @@
         "rge"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "}-hook-$",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "_9",
       "chunk": "chunk-fy12d89p.js",
       "offset": 667489,
       "bytes": 291,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -111,13 +170,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "l;case\"m",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 11
     },
     {
       "name": "$5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3034268,
       "bytes": 354,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -141,15 +206,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " hook not run for a call served to a cloud session (",
-        "files": 1
-      }
+        "literal": ".model_h",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "$ie",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2983638,
       "bytes": 17,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -163,13 +231,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "=\"hook-a",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "$Me",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3033190,
       "bytes": 304,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 4,
@@ -193,15 +267,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Invalid regex pattern in hook matcher: ",
-        "files": 1
-      }
+        "literal": "rn in ho",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 11
     },
     {
       "name": "a3",
       "chunk": "chunk-fy12d89p.js",
       "offset": 674165,
       "bytes": 301,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -221,13 +298,19 @@
         "o3"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "utput().",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 16
     },
     {
       "name": "a5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2990827,
       "bytes": 51,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -240,13 +323,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "/[\\r\\n\\x",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "A5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3015030,
       "bytes": 266,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -268,15 +357,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "parseHookOutput: json lines (",
-        "files": 1
-      }
+        "literal": "n!1;usin",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 12
     },
     {
       "name": "a6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043633,
       "bytes": 6,
+      "declKind": "constant",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -289,13 +381,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "AE",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3074990,
       "bytes": 6323,
+      "declKind": "function",
       "form": "async function",
       "hops": 0,
       "params": 1,
@@ -382,15 +476,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": ". Function hooks should only be used in REPL context (Stop hooks).",
-        "files": 1
-      }
+        "literal": "lHooks: ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 219
     },
     {
       "name": "age",
       "chunk": "chunk-fy12d89p.js",
       "offset": 642754,
       "bytes": 153,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -408,15 +505,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "-ExecutionPolicy",
-        "files": 3
-      }
+        "literal": "ctive\"];",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "AM",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3040696,
       "bytes": 296,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -438,15 +538,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "mcp_tool\\x00",
-        "files": 1
-      }
+        "literal": "urn`comm",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 14
     },
     {
       "name": "aMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043952,
       "bytes": 86,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -460,13 +563,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "k.type]=",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "az",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1713218,
       "bytes": 982,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -483,13 +592,19 @@
         "UT"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "gExp(`:$",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 40
     },
     {
       "name": "B2",
       "chunk": "chunk-fy12d89p.js",
       "offset": 105814,
       "bytes": 72,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 7,
@@ -508,13 +623,19 @@
         "ZOe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "ner\"){re",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 2
     },
     {
       "name": "B6",
       "chunk": "chunk-fy12d89p.js",
       "offset": 608585,
       "bytes": 163,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -531,13 +652,19 @@
         "Go"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "xOf(\" -\"",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "bge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673055,
       "bytes": 122,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -561,13 +688,19 @@
         "yJt"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "nd===\"be",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "Bie",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3074627,
       "bytes": 317,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 2,
@@ -592,15 +725,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " returned a terminalSequence that was rejected by the allowlist (only OSC 0/1/2/9/99/777 and BEL are permitted, and OSC 9 bodies may not begin with a digit unless in the 9;4 progress form)",
-        "files": 1
-      }
+        "literal": ".terminalSequence)return;let ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "C2e",
       "chunk": "chunk-fy12d89p.js",
       "offset": 617780,
       "bytes": 56,
+      "declKind": "regexp",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -613,13 +749,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "^[ \\t]*<",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "c5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2992385,
       "bytes": 453,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -636,13 +778,19 @@
         "b"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "/\\$\\{([a",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 24
     },
     {
       "name": "c6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3049119,
       "bytes": 119,
+      "declKind": "set",
       "form": "function",
       "hops": 1,
       "params": 0,
@@ -656,15 +804,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "TeammateIdle",
-        "files": 5
-      }
+        "literal": "Use\",\"Pe",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "cge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 655650,
       "bytes": 105,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -677,13 +828,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "l&&\"devi",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "ck",
       "chunk": "chunk-fy12d89p.js",
       "offset": 667780,
       "bytes": 91,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -701,15 +858,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "statusMessage",
-        "files": 19
-      }
+        "literal": ".statusMessage)return ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "cun",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3050525,
       "bytes": 395,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -729,15 +889,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " permissionDecision=allow ignored: a confined session takes grants only from its command line",
-        "files": 1
-      }
+        "literal": "ision=al",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 8
     },
     {
       "name": "Cxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2974053,
       "bytes": 5156,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 9,
@@ -803,15 +966,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "You are evaluating a stop-condition hook in Claude Code. Read the conversation transcript carefully, then judge whether the user-provided condition is satisfied.\n\nYour response must be a JSON object with one of these shapes:\n- {\"ok\": true, \"reason\": \"<quote evidence from the transcript that satisfies the condition>\"}\n- {\"ok\": false, \"reason\": \"<quote what is missing or what blocks the condition>\"}\n- {\"ok\": false, \"impossible\": true, \"reason\": \"<explain why the condition can never be satisfied>\"}\n\nAlways include a \"reason\" field, quoting specific text from the transcript whenever possible. If the transcript does not contain clear evidence that the condition is satisfied, return {\"ok\": false, \"reason\": \"insufficient evidence in transcript\"}.\n\nOnly use {\"ok\": false, \"impossible\": true} when the condition is genuinely unachievable in this session \\u2014 for example: the condition is self-contradictory, it depends on a resource or capability that is unavailable, or the assistant has explicitly tried, exhausted reasonable approaches, and stated it cannot be done. Apply your own judgment when deciding this \\u2014 the assistant claiming the goal is impossible is evidence, not proof; independently confirm the condition is genuinely unachievable rather than deferring to the assistant's self-assessment. Do not use it just because the goal has not been reached yet or because progress is slow. When in doubt, return {\"ok\": false} without \"impossible\".",
-        "files": 1
-      }
+        "literal": "ntStop\";",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 112
     },
     {
       "name": "cye",
       "chunk": "chunk-fy12d89p.js",
       "offset": 96488,
       "bytes": 105,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -833,15 +999,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "BASH_MAX_OUTPUT_LENGTH",
-        "files": 5
-      }
+        "literal": "(\"BASH_M",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "Czn",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3031307,
       "bytes": 990,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -863,15 +1032,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "InstructionsLoaded",
-        "files": 5
-      }
+        "literal": "l_name;c",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 23
     },
     {
       "name": "D_e",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1070745,
       "bytes": 101,
+      "declKind": "set",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -885,15 +1057,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "PostToolUseFailure",
-        "files": 8
-      }
+        "literal": "=new Set([\"PreToolUse\",\"PostToolUse\",\"PostToolUseFailure\",\"PermissionRequest\",\"PermissionDenied\"])",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "D2",
       "chunk": "chunk-fy12d89p.js",
       "offset": 97143,
       "bytes": 38,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -912,13 +1087,15 @@
         "G"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 3
     },
     {
       "name": "D5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3034170,
       "bytes": 98,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -931,13 +1108,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": ".deviceF",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "d6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3084887,
       "bytes": 479,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 1,
@@ -957,13 +1140,19 @@
         "Fq"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": " 0}),out",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 20
     },
     {
       "name": "dee",
       "chunk": "chunk-fy12d89p.js",
       "offset": 617643,
       "bytes": 92,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -977,13 +1166,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "n_id,eff",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "Dxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2990162,
       "bytes": 240,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -997,15 +1192,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": " (private/link-local address). Loopback (127.0.0.1, ::1) is allowed for local dev.",
-        "files": 1
-      }
+        "literal": "(`HTTP h",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "E2e",
       "chunk": "chunk-fy12d89p.js",
       "offset": 616864,
       "bytes": 392,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -1032,15 +1230,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "tool cgroup: mcp release at hook fire skipped (",
-        "files": 1
-      }
+        "literal": ".fs);ret",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 16
     },
     {
       "name": "e6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3040992,
       "bytes": 166,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -1059,13 +1260,19 @@
         "Jxt"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": ".type===\"function\"||",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "Ea",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3012901,
       "bytes": 602,
+      "declKind": "function",
       "form": "function",
       "hops": 0,
       "params": 4,
@@ -1093,13 +1300,19 @@
         "tw"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "e?.()??{",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 27
     },
     {
       "name": "eMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3013503,
       "bytes": 189,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1126,15 +1339,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Successfully parsed and validated hook JSON output",
-        "files": 1
-      }
+        "literal": "ully par",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "eO",
       "chunk": "chunk-fy12d89p.js",
       "offset": 380032,
       "bytes": 10,
+      "declKind": "instance",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -1150,15 +1366,19 @@
         "rWe"
       ],
       "injections": [],
-      "effectful": [],
-      "verdict": "pure",
-      "anchor": null
+      "effectful": [
+        "<module-level instance>"
+      ],
+      "verdict": "effectful",
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "eu",
       "chunk": "chunk-fy12d89p.js",
       "offset": 674466,
       "bytes": 360,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1181,15 +1401,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "hook_response",
-        "files": 8
-      }
+        "literal": "kName} (",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 20
     },
     {
       "name": "fP",
       "chunk": "chunk-fy12d89p.js",
       "offset": 669804,
       "bytes": 7,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -1202,13 +1425,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "Fq",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3016250,
       "bytes": 5993,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1235,15 +1460,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": ") returned a terminalSequence that was rejected by the allowlist (only OSC 0/1/2/9/99/777 and BEL are permitted, and OSC 9 bodies may not begin with a digit unless in the 9;4 progress form)",
-        "files": 1
-      }
+        "literal": "Reason}i",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 173
     },
     {
       "name": "G6",
       "chunk": "chunk-fy12d89p.js",
       "offset": 615389,
       "bytes": 312,
+      "declKind": "set",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -1258,15 +1486,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "InstructionsLoaded",
-        "files": 5
-      }
+        "literal": "et([\"Not",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "Ghr",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043383,
       "bytes": 246,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1295,13 +1526,19 @@
         "qhr"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "}:{}}let",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 12
     },
     {
       "name": "Gie",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3042974,
       "bytes": 104,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1321,13 +1558,15 @@
         "xp"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 4
     },
     {
       "name": "gv",
       "chunk": "chunk-fy12d89p.js",
       "offset": 619992,
       "bytes": 202,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -1346,13 +1585,19 @@
         "y7t"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": ".powerShellPath}",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "H5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3036864,
       "bytes": 3410,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 3,
@@ -1396,15 +1641,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "project_configured",
-        "files": 1
-      }
+        "literal": "xts??[],",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 120
     },
     {
       "name": "Hb",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1070885,
       "bytes": 121,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 3,
@@ -1423,13 +1671,19 @@
         "Lon"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "?.agentContext;return ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "HO",
       "chunk": "chunk-fy12d89p.js",
       "offset": 681567,
       "bytes": 266,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1455,15 +1709,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "task-notification",
-        "files": 32
-      }
+        "literal": "ation)({",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 14
     },
     {
       "name": "hv",
       "chunk": "chunk-fy12d89p.js",
       "offset": 335204,
       "bytes": 154,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -1482,13 +1739,19 @@
         "w4t"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "{optionV",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "Hxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2995017,
       "bytes": 1134,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -1514,15 +1777,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " (top-level decision is the legacy approve|block field; for \"ask\" use hookSpecificOutput.permissionDecision in a PreToolUse hook)",
-        "files": 1
-      }
+        "literal": "&!(\"hook",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 26
     },
     {
       "name": "i3",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673855,
       "bytes": 114,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 3,
@@ -1542,15 +1808,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "hook_started",
-        "files": 5
-      }
+        "literal": "arted\",h",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "i5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2990719,
       "bytes": 108,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -1567,13 +1836,19 @@
         "Je"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "wedUrls:",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "i6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3042318,
       "bytes": 520,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -1594,15 +1869,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " for a call served for a cloud session; refusing rather than skipping that gate",
-        "files": 1
-      }
+        "literal": "!==!0?\"g",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 14
     },
     {
       "name": "IE",
       "chunk": "chunk-fy12d89p.js",
       "offset": 538966,
       "bytes": 310,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1635,13 +1913,19 @@
         "zO"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "&&!(\"dev",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 15
     },
     {
       "name": "iMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3042838,
       "bytes": 70,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -1655,13 +1939,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": ".hook.in",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "ip",
       "chunk": "chunk-fy12d89p.js",
       "offset": 653676,
       "bytes": 52,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -1677,13 +1967,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "rn!((\"as",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "IUt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3015296,
       "bytes": 161,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1702,13 +1998,19 @@
         "wr"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "ll&&\"asy",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "J7",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3012830,
       "bytes": 26,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 0,
@@ -1726,13 +2028,15 @@
         "L6"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     },
     {
       "name": "J7t",
       "chunk": "chunk-fy12d89p.js",
       "offset": 647588,
       "bytes": 6003,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -1772,15 +2076,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Whether Claude should continue after hook (default: true)",
-        "files": 1
-      }
+        "literal": " hook (d",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 96
     },
     {
       "name": "J9e",
       "chunk": "chunk-fy12d89p.js",
       "offset": 615702,
       "bytes": 48,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1800,13 +2107,19 @@
         "qi"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "hooks\"):",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "jhr",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3032656,
       "bytes": 162,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1819,13 +2132,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": " -]+$/.t",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "jx",
       "chunk": "chunk-fy12d89p.js",
       "offset": 97181,
       "bytes": 3294,
+      "declKind": "class",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -1872,15 +2191,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "). This usually means another Claude Code process in the same project deleted it during startup cleanup.>",
-        "files": 1
-      }
+        "literal": "{taskId;",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 111
     },
     {
       "name": "jxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2996151,
       "bytes": 1293,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -1898,15 +2220,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "string (optional) - Feedback for the model; the conversation continues so the model can act on it",
-        "files": 1
-      }
+        "literal": "inue:\"bo",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "jy",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3049300,
       "bytes": 261,
+      "declKind": "function",
       "form": "async function*",
       "hops": 0,
       "params": 1,
@@ -1928,13 +2253,19 @@
         "xo"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "t_name))",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 13
     },
     {
       "name": "k5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3011216,
       "bytes": 7,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -1947,13 +2278,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "kge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673543,
       "bytes": 30,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -1971,13 +2304,15 @@
         "r3"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     },
     {
       "name": "kJt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673969,
       "bytes": 196,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -1997,15 +2332,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "hook_progress",
-        "files": 8
-      }
+        "literal": "s\",hook_",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "Kxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3011646,
       "bytes": 1184,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -2040,15 +2378,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Stop hook blocking error from command \"",
-        "files": 1
-      }
+        "literal": ".code,ou",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 63
     },
     {
       "name": "l5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2990878,
       "bytes": 249,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -2071,15 +2412,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " not in allowedEnvVars, skipping interpolation",
-        "files": 1
-      }
+        "literal": "\\{([A-Z_",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "l6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3044068,
       "bytes": 144,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -2099,15 +2443,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "policySettings",
-        "files": 58
-      }
+        "literal": "ngs\")?.h",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 8
     },
     {
       "name": "l9",
       "chunk": "chunk-fy12d89p.js",
       "offset": 653592,
       "bytes": 83,
+      "declKind": "constant",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -2136,13 +2483,15 @@
         "v"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 4
     },
     {
       "name": "lct",
       "chunk": "chunk-fy12d89p.js",
       "offset": 642907,
       "bytes": 46,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -2159,13 +2508,19 @@
         "age"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "(),\"-Com",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "Li",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1070693,
       "bytes": 9,
+      "declKind": "constant",
       "form": "function",
       "hops": 1,
       "params": 0,
@@ -2182,13 +2537,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "lMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3049060,
       "bytes": 55,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 2,
@@ -2212,13 +2569,15 @@
         "w"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     },
     {
       "name": "Lq",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3042908,
       "bytes": 66,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -2231,13 +2590,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "oot??\"\"}",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "LR",
       "chunk": "chunk-fy12d89p.js",
       "offset": 337968,
       "bytes": 262,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -2252,15 +2617,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "\" isn't set. Open /plugin manage to configure it, or check that the plugin's userConfig schema declares \"",
-        "files": 1
-      }
+        "literal": "isn't se",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "m6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3086154,
       "bytes": 148,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -2274,15 +2642,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "CLAUDE_PLUGIN_DATA",
-        "files": 2
-      }
+        "literal": "CT_DIR\",",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "mb",
       "chunk": "chunk-fy12d89p.js",
       "offset": 380132,
       "bytes": 38,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -2301,13 +2672,15 @@
         "nWe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 3
     },
     {
       "name": "Mi",
       "chunk": "chunk-fy12d89p.js",
       "offset": 148175,
       "bytes": 41,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -2326,13 +2699,15 @@
         "nzn"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 3
     },
     {
       "name": "ml",
       "chunk": "chunk-fy12d89p.js",
       "offset": 138162,
       "bytes": 53,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -2349,13 +2724,19 @@
         "Mi"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "oject?.s",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "Mn",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2966631,
       "bytes": 204,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -2377,15 +2758,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "queued_command",
-        "files": 12
-      }
+        "literal": "id(),tim",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "mS",
       "chunk": "chunk-fy12d89p.js",
       "offset": 653728,
       "bytes": 47,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -2401,13 +2785,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "){return\"async\"in ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 3
     },
     {
       "name": "NKt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 96597,
       "bytes": 11,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -2420,13 +2810,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 1
     },
     {
       "name": "nMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3031157,
       "bytes": 150,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -2440,15 +2832,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "PostModelSwitch",
-        "files": 5
-      }
+        "literal": "!==\"PreM",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "Nq",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3022608,
       "bytes": 7209,
+      "declKind": "function",
       "form": "async function",
       "hops": 1,
       "params": 18,
@@ -2546,15 +2941,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "PowerShell hook command references $CLAUDE_PROJECT_DIR, which PowerShell reads as an undefined variable ($null). Use $env:CLAUDE_PROJECT_DIR or \\${CLAUDE_PROJECT_DIR} instead. Command: ",
-        "files": 1
-      }
+        "literal": "and)&&!/",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 211
     },
     {
       "name": "nWe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 379958,
       "bytes": 22,
+      "declKind": "instance",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -2569,17 +2967,20 @@
       "freeThatArePure": [],
       "injections": [],
       "effectful": [
+        "<module-level instance>",
         "J",
         "tWe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 1
     },
     {
       "name": "Nxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2989665,
       "bytes": 497,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 3,
@@ -2603,13 +3004,19 @@
         "t5n"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "=\"all\"in",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 22
     },
     {
       "name": "o3",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673762,
       "bytes": 93,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -2633,13 +3040,19 @@
         "cVe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "().allHo",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "O5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3033494,
       "bytes": 213,
+      "declKind": "function",
       "form": "async function",
       "hops": 2,
       "params": 2,
@@ -2660,13 +3073,19 @@
         "rMt"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "ntent):!",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "o6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3041731,
       "bytes": 339,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 4,
@@ -2690,15 +3109,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " hook not run for a call served to a cloud session (",
-        "files": 1
-      }
+        "literal": "],heldFo",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "oge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 616258,
       "bytes": 30,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -2717,13 +3139,15 @@
         "a7t"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     },
     {
       "name": "ok",
       "chunk": "chunk-fy12d89p.js",
       "offset": 646221,
       "bytes": 544,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 3,
@@ -2755,15 +3179,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "pluginActivity: recorded ",
-        "files": 1
-      }
+        "literal": "nd!==\"ho",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 25
     },
     {
       "name": "om",
       "chunk": "chunk-fy12d89p.js",
       "offset": 138285,
       "bytes": 85,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -2790,13 +3217,15 @@
         "wa"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 4
     },
     {
       "name": "oT",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3045074,
       "bytes": 235,
+      "declKind": "function",
       "form": "function",
       "hops": 0,
       "params": 3,
@@ -2817,13 +3246,19 @@
         "zO"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "===void 0)return!1;return(typeof ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 8
     },
     {
       "name": "Oxe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 617345,
       "bytes": 298,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -2844,13 +3279,19 @@
         "vpe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "{CLAUDEC",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 13
     },
     {
       "name": "Oxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2983656,
       "bytes": 4074,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 8,
@@ -2927,15 +3368,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "\n\nUse the available tools to inspect the codebase and verify the condition.\nUse as few steps as possible - be efficient and direct.\n\nWhen done, return your result using the ",
-        "files": 1
-      }
+        "literal": "ssing ag",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 117
     },
     {
       "name": "p3",
       "chunk": "chunk-fy12d89p.js",
       "offset": 674875,
       "bytes": 654,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -2953,15 +3397,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " Did you mean hookSpecificOutput.additionalContext (with a hookEventName)?",
-        "files": 1
-      }
+        "literal": "Output.$",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 23
     },
     {
       "name": "P5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3022243,
       "bytes": 365,
+      "declKind": "function",
       "form": "async function",
       "hops": 2,
       "params": 2,
@@ -2984,13 +3431,19 @@
         "r$"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "sion},{r",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "p5t",
       "chunk": "chunk-fy12d89p.js",
       "offset": 380047,
       "bytes": 9,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3003,13 +3456,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "p6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3085686,
       "bytes": 468,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3026,13 +3481,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "ap(({hoo",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 15
     },
     {
       "name": "Pde",
       "chunk": "chunk-fy12d89p.js",
       "offset": 101936,
       "bytes": 3878,
+      "declKind": "class",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3084,15 +3545,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Command killed: its output file was replaced or could no longer be verified",
-        "files": 1
-      }
+        "literal": "=null;ta",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 146
     },
     {
       "name": "PUt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3030190,
       "bytes": 220,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3106,15 +3570,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "TeammateIdle",
-        "files": 5
-      }
+        "literal": "===\"Task",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 12
     },
     {
       "name": "pVe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 677228,
       "bytes": 608,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3136,15 +3603,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Hooks: Registering async hook ",
-        "files": 1
-      }
+        "literal": ".asyncTi",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 33
     },
     {
       "name": "q1",
       "chunk": "chunk-fy12d89p.js",
       "offset": 385105,
       "bytes": 119,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 3,
@@ -3163,13 +3633,19 @@
         "yme"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "eturn{_P",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "q6",
       "chunk": "chunk-fy12d89p.js",
       "offset": 618423,
       "bytes": 109,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 1,
@@ -3187,15 +3663,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "<claude-code-hint",
-        "files": 1
-      }
+        "literal": "g,`\n\n`)}",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "qhr",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043247,
       "bytes": 136,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3215,15 +3694,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "tengu_amber_lattice",
-        "files": 1
-      }
+        "literal": "e\",{}).p",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "Qw",
       "chunk": "chunk-fy12d89p.js",
       "offset": 380170,
       "bytes": 177,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -3237,22 +3719,27 @@
         "mb",
         "sWe"
       ],
-      "freeThatArePure": [
-        "eO",
-        "sWe"
-      ],
+      "freeThatArePure": [],
       "injections": [],
       "effectful": [
-        "mb"
+        "eO",
+        "mb",
+        "sWe"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "Usage.ge",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "Qxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3050920,
       "bytes": 23385,
+      "declKind": "function",
       "form": "async function*",
       "hops": 2,
       "params": 1,
@@ -3425,15 +3912,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " events (no conversation context is available). Use a command-type hook instead.",
-        "files": 1
-      }
+        "literal": "oteCall,",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 909
     },
     {
       "name": "QZ",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1649492,
       "bytes": 389,
+      "declKind": "function",
       "form": "async function*",
       "hops": 3,
       "params": 2,
@@ -3446,13 +3936,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "next().t",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 21
     },
     {
       "name": "r3",
       "chunk": "chunk-fy12d89p.js",
       "offset": 673404,
       "bytes": 38,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3471,13 +3967,15 @@
         "_Jt"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 3
     },
     {
       "name": "rge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 609037,
       "bytes": 83,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 0,
@@ -3500,13 +3998,19 @@
         "le"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "(),\"session-env\",",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "rMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3033707,
       "bytes": 463,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 2,
@@ -3526,15 +4030,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "PostToolUseFailure",
-        "files": 8
-      }
+        "literal": "?.prepar",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 17
     },
     {
       "name": "rWe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 379981,
       "bytes": 47,
+      "declKind": "class",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3547,13 +4054,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "{flusher",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "Rzn",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3045309,
       "bytes": 3129,
+      "declKind": "function",
       "form": "async function",
       "hops": 1,
       "params": 6,
@@ -3601,15 +4114,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Hooks: could not establish whose settings define a hook (",
-        "files": 1
-      }
+        "literal": "t_name);",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 130
     },
     {
       "name": "s5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2990402,
       "bytes": 317,
+      "declKind": "function",
       "form": "async function",
       "hops": 2,
       "params": 0,
@@ -3620,18 +4136,23 @@
       "free": [],
       "freeThatArePure": [],
       "injections": [],
-      "effectful": [],
-      "verdict": "pure",
+      "effectful": [
+        "<reaches outside its own text>"
+      ],
+      "verdict": "effectful",
       "anchor": {
-        "literal": "/$bunfs/root/chunk-6v95pkgg.js",
-        "files": 2
-      }
+        "literal": "){let{Sa",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "s6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3042070,
       "bytes": 248,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3644,13 +4165,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "gError==",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 9
     },
     {
       "name": "Sce",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043640,
       "bytes": 312,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 3,
@@ -3679,15 +4206,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "tengu_hook_plugin_metrics",
-        "files": 1
-      }
+        "literal": "(\"hook_plugin_metrics\",{...Object.fromEntries(",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 15
     },
     {
       "name": "sge",
       "chunk": "chunk-fy12d89p.js",
       "offset": 617256,
       "bytes": 89,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -3700,13 +4230,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "arttime)",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "sk",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2998401,
       "bytes": 811,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3730,15 +4266,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "sandbox-queued",
-        "files": 2
-      }
+        "literal": "ndbox:nu",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 30
     },
     {
       "name": "sWe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 380347,
       "bytes": 181,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -3751,19 +4290,26 @@
         "p5t"
       ],
       "freeThatArePure": [
-        "eO",
         "p5t"
       ],
       "injections": [],
-      "effectful": [],
-      "verdict": "pure",
-      "anchor": null
+      "effectful": [
+        "eO"
+      ],
+      "verdict": "effectful",
+      "anchor": {
+        "literal": "red=!0,p",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 7
     },
     {
       "name": "t6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3041158,
       "bytes": 275,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 4,
@@ -3782,13 +4328,19 @@
         "ye"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "rse())fo",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 12
     },
     {
       "name": "tMt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3030874,
       "bytes": 175,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 3,
@@ -3807,13 +4359,19 @@
         "r1e"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "?/^[a-zA",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 5
     },
     {
       "name": "U5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3034800,
       "bytes": 1175,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 3,
@@ -3861,15 +4419,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Hooks: a served call's hooks run without ",
-        "files": 1
-      }
+        "literal": "rigin.la",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 43
     },
     {
       "name": "u6n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3083950,
       "bytes": 937,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 1,
@@ -3891,15 +4452,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "Function hook execution error",
-        "files": 1
-      }
+        "literal": "age,comm",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 40
     },
     {
       "name": "UKt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 96618,
       "bytes": 8,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3912,13 +4476,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 0
     },
     {
       "name": "UT",
       "chunk": "chunk-fy12d89p.js",
       "offset": 1712771,
       "bytes": 42,
+      "declKind": "constant",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3935,13 +4501,19 @@
         "TCn"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "=`zzwild",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 2
     },
     {
       "name": "uun",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3074305,
       "bytes": 295,
+      "declKind": "function",
       "form": "async function",
       "hops": 2,
       "params": 2,
@@ -3969,15 +4541,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " no longer exists; running hooks from ",
-        "files": 1
-      }
+        "literal": "Hooks: w",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 12
     },
     {
       "name": "Vhr",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3074604,
       "bytes": 22,
+      "declKind": "instance",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -3991,16 +4566,19 @@
       "freeThatArePure": [],
       "injections": [],
       "effectful": [
+        "<module-level instance>",
         "J"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 1
     },
     {
       "name": "Vxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3048976,
       "bytes": 84,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -4017,13 +4595,15 @@
         "mxn"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     },
     {
       "name": "vzn",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3043078,
       "bytes": 169,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -4041,13 +4621,19 @@
         "Gie"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "uginId:\"",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 8
     },
     {
       "name": "w4t",
       "chunk": "chunk-fy12d89p.js",
       "offset": 335358,
       "bytes": 118,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 2,
@@ -4066,13 +4652,19 @@
         "xY"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "]??{};re",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 6
     },
     {
       "name": "w5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3012860,
       "bytes": 40,
+      "declKind": "regexp",
       "form": "function",
       "hops": 1,
       "params": 0,
@@ -4085,13 +4677,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 1
     },
     {
       "name": "wde",
       "chunk": "chunk-fy12d89p.js",
       "offset": 95438,
       "bytes": 663,
+      "declKind": "class",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -4104,13 +4698,19 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": {
+        "literal": "pacity;b",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 24
     },
     {
       "name": "Wie",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3044212,
       "bytes": 398,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 4,
@@ -4135,15 +4735,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "policySettings",
-        "files": 58
-      }
+        "literal": "ksOnly){",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 17
     },
     {
       "name": "wMe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2992838,
       "bytes": 1310,
+      "declKind": "function",
       "form": "async function",
       "hops": 1,
       "params": 6,
@@ -4183,15 +4786,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "mcp_tool hooks are not available for the '",
-        "files": 1
-      }
+        "literal": "r the '$",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 45
     },
     {
       "name": "Wxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2997444,
       "bytes": 220,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -4209,15 +4815,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " hook output invalid: ",
-        "files": 1
-      }
+        "literal": "0)??\"\";i",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "x5n",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3032818,
       "bytes": 372,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -4242,15 +4851,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "\\` matches no tool (it is compared as an exact string). To match all tools from this server, use \\`",
-        "files": 1
-      }
+        "literal": "(\"__\"))?",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 10
     },
     {
       "name": "Xhr",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3085366,
       "bytes": 320,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 2,
@@ -4270,15 +4882,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "SubagentStart",
-        "files": 7
-      }
+        "literal": ":case\"El",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 8
     },
     {
       "name": "XIe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2988224,
       "bytes": 84,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -4299,13 +4914,15 @@
         "n5n"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 4
     },
     {
       "name": "xPe",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3014197,
       "bytes": 833,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -4334,15 +4951,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": ". Emit the payload with a JSON encoder (jq, ConvertTo-Json, json.dumps) rather than string concatenation so backslashes and quotes inside strings are escaped.",
-        "files": 1
-      }
+        "literal": " with {,",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 21
     },
     {
       "name": "Xpt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3015457,
       "bytes": 96,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 3,
@@ -4357,15 +4977,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "\n\nHook exited ",
-        "files": 1
-      }
+        "literal": "}\n\nHook ",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "Xxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3049561,
       "bytes": 964,
+      "declKind": "function",
       "form": "async function*",
       "hops": 1,
       "params": 1,
@@ -4384,13 +5007,19 @@
         "ka"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "text)){y",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 27
     },
     {
       "name": "y7t",
       "chunk": "chunk-fy12d89p.js",
       "offset": 618952,
       "bytes": 1040,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 0,
@@ -4424,15 +5053,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "/opt/microsoft/powershell/7/pwsh",
-        "files": 1
-      }
+        "literal": "\"pwsh\");",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 32
     },
     {
       "name": "yce",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3013692,
       "bytes": 505,
+      "declKind": "function",
       "form": "async function",
       "hops": 3,
       "params": 4,
@@ -4462,15 +5094,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " chars \\u2014 persist-to-disk failed: ",
-        "files": 1
-      }
+        "literal": "gth,pers",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 21
     },
     {
       "name": "yJt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 672426,
       "bytes": 629,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 1,
@@ -4497,13 +5132,19 @@
         "mJt"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "nd:\"bel\"",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 27
     },
     {
       "name": "Ypt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3015553,
       "bytes": 511,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 1,
@@ -4526,15 +5167,18 @@
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": "HTTP hook returned empty body, treating as empty JSON object",
-        "files": 1
-      }
+        "literal": "rse({});",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 21
     },
     {
       "name": "Yxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3049239,
       "bytes": 61,
+      "declKind": "function",
       "form": "function",
       "hops": 1,
       "params": 2,
@@ -4551,13 +5195,19 @@
         "xo"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": {
+        "literal": "ionEnd\"&",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 4
     },
     {
       "name": "Z9e",
       "chunk": "chunk-fy12d89p.js",
       "offset": 338230,
       "bytes": 57,
+      "declKind": "function",
       "form": "function",
       "hops": 2,
       "params": 2,
@@ -4574,13 +5224,15 @@
       "injections": [],
       "effectful": [],
       "verdict": "pure",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 3
     },
     {
       "name": "zie",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3032301,
       "bytes": 354,
+      "declKind": "set",
       "form": "function",
       "hops": 2,
       "params": 0,
@@ -4594,15 +5246,18 @@
       "effectful": [],
       "verdict": "pure",
       "anchor": {
-        "literal": "InstructionsLoaded",
-        "files": 5
-      }
+        "literal": "nied\",\"U",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 1
     },
     {
       "name": "zpt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 2991127,
       "bytes": 1258,
+      "declKind": "function",
       "form": "async function",
       "hops": 1,
       "params": 5,
@@ -4626,8 +5281,7 @@
         "yh"
       ],
       "freeThatArePure": [
-        "Li",
-        "s5n"
+        "Li"
       ],
       "injections": [],
       "effectful": [
@@ -4640,19 +5294,23 @@
         "l",
         "l5n",
         "n",
+        "s5n",
         "yh"
       ],
       "verdict": "effectful",
       "anchor": {
-        "literal": " does not match any pattern in allowedHttpHookUrls",
-        "files": 1
-      }
+        "literal": "wedUrls!",
+        "files": 1,
+        "occurrences": 1
+      },
+      "anchorCandidates": 49
     },
     {
       "name": "Zxt",
       "chunk": "chunk-fy12d89p.js",
       "offset": 3011168,
       "bytes": 34,
+      "declKind": "function",
       "form": "function",
       "hops": 3,
       "params": 0,
@@ -4671,7 +5329,8 @@
         "G"
       ],
       "verdict": "effectful",
-      "anchor": null
+      "anchor": null,
+      "anchorCandidates": 2
     }
   ],
   "moduleState": [

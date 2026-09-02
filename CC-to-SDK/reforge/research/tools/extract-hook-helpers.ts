@@ -50,7 +50,7 @@
 // second input is recorded here while the decision lives in the wave record.
 // The C10.5 lesson, applied: a pin-keyed fixture carries SHAPE, and a claim
 // that needs a second input belongs where both inputs are visible.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -103,6 +103,8 @@ export interface BeltEntry {
   chunk: string;
   offset: number;
   bytes: number;
+  /** what the declaration IS — a third of the reached set is not a function */
+  declKind: DeclKind;
   /** `function`, `function*`, `async function`, `async function*`, or `arrow`/`expression` */
   form: string;
   params: number;
@@ -137,8 +139,14 @@ export interface BeltEntry {
   /** the subset of `free` that is neither, i.e. what makes it effectful */
   effectful: string[];
   verdict: Verdict;
-  /** a string literal occurring inside the body, and how many bundle files carry it */
-  anchor: { literal: string; files: number } | null;
+  /**
+   * The SHORTEST UNIQUE UNTAINTED SUBSTRING of the declaration — an anchor by
+   * `strangle/anchor.ts`'s own rule, not a string literal. `null` when the
+   * enumeration found none.
+   */
+  anchor: AnchorMeasurement | null;
+  /** how many untainted runs of >= 8 characters the enumeration considered */
+  anchorCandidates: number;
 }
 
 /**
@@ -175,6 +183,8 @@ export interface BeltFixture {
   executorOverlap: { shared: number; ofLarger: number; ofSmaller: number };
   counts: {
     dispatchersRead: number;
+    /** graph text modules the anchor search counts against (cli + every .js, recursively) */
+    graphModules: number;
     reached: number;
     pure: number;
     pureWithInjection: number;
@@ -182,12 +192,22 @@ export interface BeltFixture {
     boundary: number;
     pureBytes: number;
     pureWithInjectionBytes: number;
-    /** of the pure set, how many carry a literal unique across the bundle's files */
+    /**
+     * BY DECLARATION KIND, because "151 in-chunk functions" was not a count of
+     * functions: the reached set is top-level DECLARATIONS, and a third of it is
+     * Sets, regexes, constants, classes and one module-level instance. Every
+     * figure a stage plans against — how many, how many bytes, how many pure —
+     * has to be read per kind or it sizes the wrong population.
+     */
+    byKind: Record<DeclKind, { reached: number; pure: number; bytes: number; pureBytes: number; anchorable: number; pureAnchorable: number }>;
+    /** of the pure set, how many carry a unique untainted anchor */
     pureWithUniqueAnchor: number;
     /** of EVERYTHING reached, how many do — the real bound on what a splice can take */
     reachedWithUniqueAnchor: number;
-    /** …and how many carry no string literal at all, which is the commonest case */
-    reachedWithNoLiteral: number;
+    /** …and how many the enumeration found none for */
+    reachedWithNoAnchor: number;
+    /** how many exact graph-wide substring counts the enumeration had to run */
+    anchorScans: number;
   };
   belt: BeltEntry[];
   /** what a replay has to reset between cases, and how each cell is scoped */
@@ -224,6 +244,65 @@ const rx = (name: string): string => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 const isFunctionNode = (n: ts.Node): boolean =>
   ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n);
+
+/**
+ * WHAT THE DECLARATION IS — and the reason the belt's headline number was wrong
+ * in a second, independent way.
+ *
+ * The reached set is "top-level declarations", which is functions AND everything
+ * else a chunk declares at top level. The counts reported them all as
+ * "functions": "151 in-chunk functions, 43 pure (5,961 B)" folded in four Sets,
+ * two regexes, eight numeric or string constants, two class declarations and a
+ * class INSTANCE. A wave planning "own the pure belt" would have been sizing a
+ * population a third of which is not a function at all, and the byte total is
+ * not a byte total of functions either.
+ *
+ * `instance` is called out separately because it is the one kind that can never
+ * be pure however its constructor classifies: a `new X` bound at module scope IS
+ * module state, and duplicating it splits an identity two call sites share.
+ */
+export type DeclKind = "function" | "class" | "instance" | "set" | "regexp" | "constant";
+
+const COLLECTION_CTORS = new Set(["Set", "Map", "WeakSet", "WeakMap"]);
+
+function declKindOf(decl: ts.Node, node: ts.Node): DeclKind {
+  if (ts.isClassDeclaration(decl)) return "class";
+  if (isFunctionNode(node)) return "function";
+  const init = ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
+  if (init === undefined) return "constant";
+  if (ts.isNewExpression(init) && ts.isIdentifier(init.expression)) {
+    return COLLECTION_CTORS.has(init.expression.text) ? "set" : "instance";
+  }
+  if (ts.isRegularExpressionLiteral(init)) return "regexp";
+  return "constant";
+}
+
+/**
+ * Does this declaration reach code that is not in its own text?
+ *
+ * A dynamic `import()`, a `require()` or `import.meta` pulls in a whole module
+ * at run time, and the scope analysis cannot see any of it: `import` is a
+ * keyword, the specifier is a string literal, and `require` is an ambient
+ * global. So a function that does nothing else has NO free identifiers and the
+ * fixed point calls it pure — which is how `s5n`, whose entire body is
+ * `await import("…/chunk-6v95pkgg.js")` followed by a `SandboxManager` call,
+ * was counted among the 43 pure helpers of a hook layer.
+ *
+ * "No free variables" answers a question about NAMES. Purity is a question about
+ * EFFECTS, and these three shapes are the ones where the two come apart.
+ */
+function reachesOutsideItsText(n: ts.Node): boolean {
+  let found = false;
+  const visit = (x: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(x) && x.expression.kind === ts.SyntaxKind.ImportKeyword) found = true;
+    else if (ts.isCallExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === "require") found = true;
+    else if (ts.isMetaProperty(x)) found = true;
+    if (!found) ts.forEachChild(x, visit);
+  };
+  visit(n);
+  return found;
+}
 
 function formOf(n: ts.Node): string {
   if (ts.isArrowFunction(n)) return "arrow";
@@ -265,7 +344,30 @@ function topLevelFunction(sf: ts.SourceFile, name: string): { node: ts.Node; dec
   return null;
 }
 
+const DECL_KINDS: DeclKind[] = ["function", "class", "instance", "set", "regexp", "constant"];
+
+function kindBreakdown(belt: BeltEntry[]): Record<DeclKind, { reached: number; pure: number; bytes: number; pureBytes: number; anchorable: number; pureAnchorable: number }> {
+  const out = {} as Record<DeclKind, { reached: number; pure: number; bytes: number; pureBytes: number; anchorable: number; pureAnchorable: number }>;
+  for (const k of DECL_KINDS) {
+    const here = belt.filter((b) => b.declKind === k);
+    const pure = here.filter((b) => b.verdict === "pure");
+    out[k] = {
+      reached: here.length,
+      pure: pure.length,
+      bytes: here.reduce((n, b) => n + b.bytes, 0),
+      pureBytes: pure.reduce((n, b) => n + b.bytes, 0),
+      anchorable: here.filter((b) => b.anchor !== null).length,
+      pureAnchorable: pure.filter((b) => b.anchor !== null).length,
+    };
+  }
+  return out;
+}
+
 export function extract(version = ENGINE_VERSION): BeltFixture {
+  // The anchor enumeration's own work counter is module-level, so reset it here:
+  // a second call in one process would otherwise report the sum of both and the
+  // committed fixture would depend on how many times the tool was invoked.
+  exactCounts = 0;
   const registry = readRegistry(version);
   const layerChunk = registry.registry.chunk;
   const text = readFileSync(join(BUNDLE_MODULES, layerChunk), "utf8");
@@ -415,12 +517,26 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
   // pure belt function. Seeded with the zero-free-variable set and grown until
   // it stops growing, so a two-deep chain of pure leaves is pure rather than
   // effectful-by-depth.
+  //
+  // TWO THINGS ARE EXCLUDED BEFORE THE FIXED POINT RUNS, and each was found by
+  // reading an entry the first version called pure:
+  //
+  //   * a declaration that reaches outside its own text (a dynamic import, a
+  //     `require`, `import.meta`) — no free NAMES, but arbitrary effects;
+  //   * a module-level `new X` INSTANCE, which is state rather than a value. It
+  //     also poisons its readers correctly: the flush registrar mutates
+  //     `eO.exitFlushRegistered` and registers a `process.on("exit")` handler,
+  //     and it was reaching the pure set through the instance being "pure".
+  const impure = new Set<string>();
+  for (const [name, r] of reached) {
+    if (declKindOf(r.decl, r.node) === "instance" || reachesOutsideItsText(r.node)) impure.add(name);
+  }
   const pure = new Set<string>();
-  for (const [name, f] of free) if (f.length === 0) pure.add(name);
+  for (const [name, f] of free) if (f.length === 0 && !impure.has(name)) pure.add(name);
   for (;;) {
     let grew = false;
     for (const [name, f] of free) {
-      if (pure.has(name)) continue;
+      if (pure.has(name) || impure.has(name)) continue;
       if (f.every((x) => pure.has(x))) {
         pure.add(name);
         grew = true;
@@ -428,33 +544,6 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
     }
     if (!grew) break;
   }
-
-  // THE SOURCE FORM, NOT THE VALUE. A minified bundle stores `\n` as a
-  // backslash and an `n`, so searching for the DECODED literal returns zero
-  // files for every anchor containing an escape — and zero files reads as "no
-  // anchor" rather than as "wrong question", which is the quiet direction. The
-  // splice's own anchor matching is a true-substring test against the chunk
-  // TEXT, so the text is what has to be counted. This is the same lesson W7.5
-  // learned from the other side (read what a function RETURNS, not what its
-  // source says) arriving in the mirror image: here the SOURCE is the truth
-  // because the consumer is a text search.
-  const literalsIn = (n: ts.Node): string[] => {
-    const out: string[] = [];
-    const visit = (x: ts.Node): void => {
-      if (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) {
-        const raw = x.getText(sf);
-        out.push(raw.slice(1, -1));
-      } else if (ts.isTemplateLiteral(x) && ts.isTemplateExpression(x)) {
-        for (const span of [x.head, ...x.templateSpans.map((t) => t.literal)]) {
-          const raw = span.getText(sf);
-          out.push(raw.replace(/^[`}]/, "").replace(/[`$]\{?$/, ""));
-        }
-      }
-      ts.forEachChild(x, visit);
-    };
-    visit(n);
-    return [...new Set(out)].filter((s) => s.length >= 12).sort((a, b) => b.length - a.length);
-  };
 
   const belt: BeltEntry[] = [];
   for (const [name, r] of [...reached].sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -468,6 +557,14 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
       if (kind === null) effectful.push(x);
       else injections.push(`${x}:${kind}`);
     }
+    // An IMPURE-BY-SHAPE entry has no free names to put in `effectful`, so the
+    // reason is recorded there explicitly rather than left to be inferred from
+    // an empty list — without it, `s5n` reads as "pure-with-injection with no
+    // injections", which is the same wrong answer wearing a different label.
+    if (impure.has(name)) {
+      if (declKindOf(r.decl, r.node) === "instance") effectful.push("<module-level instance>");
+      if (reachesOutsideItsText(r.node)) effectful.push("<reaches outside its own text>");
+    }
     const verdict: Verdict = pure.has(name) ? "pure" : effectful.length === 0 ? "pure-with-injection" : "effectful";
     const start = r.decl.getStart(sf);
     belt.push({
@@ -475,6 +572,7 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
       chunk: layerChunk,
       offset: start,
       bytes: r.decl.getEnd() - start,
+      declKind: declKindOf(r.decl, r.node),
       form: formOf(r.node),
       hops: r.hops,
       params: (r.node as ts.FunctionLikeDeclaration).parameters?.length ?? 0,
@@ -490,7 +588,10 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
       // are a debug log and a telemetry probe, both ordinary ports — and an
       // anchor scan restricted to the pure set would have said nothing about
       // the single largest thing this layer has to own.
-      anchor: anchorFor(literalsIn(r.node)),
+      ...(() => {
+        const { anchor, candidates } = anchorFor(r.decl, sf, text);
+        return { anchor, anchorCandidates: candidates };
+      })(),
     });
   }
 
@@ -562,6 +663,7 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
     executorOverlap,
     counts: {
       dispatchersRead,
+      graphModules: bundle().length,
       reached: belt.length,
       pure: belt.filter((b) => b.verdict === "pure").length,
       pureWithInjection: belt.filter((b) => b.verdict === "pure-with-injection").length,
@@ -569,9 +671,11 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
       boundary: external.size,
       pureBytes: sum("pure"),
       pureWithInjectionBytes: sum("pure-with-injection"),
-      pureWithUniqueAnchor: belt.filter((b) => b.verdict !== "effectful" && b.anchor !== null && b.anchor.files === 1).length,
-      reachedWithUniqueAnchor: belt.filter((b) => b.anchor !== null && b.anchor.files === 1).length,
-      reachedWithNoLiteral: belt.filter((b) => b.anchor === null).length,
+      byKind: kindBreakdown(belt),
+      pureWithUniqueAnchor: belt.filter((b) => b.verdict === "pure" && b.anchor !== null).length,
+      reachedWithUniqueAnchor: belt.filter((b) => b.anchor !== null).length,
+      reachedWithNoAnchor: belt.filter((b) => b.anchor === null).length,
+      anchorScans: exactCounts,
     },
     belt,
     moduleState,
@@ -580,15 +684,116 @@ export function extract(version = ENGINE_VERSION): BeltFixture {
 
 // ---- bundle-wide measurements ----------------------------------------------
 
-let BUNDLE_TEXT: { file: string; text: string }[] | null = null;
+/**
+ * THE GRAPH'S TEXT MODULES — the exact population a splice's anchor is resolved
+ * against, and not a near-neighbour of it.
+ *
+ * `strangle/prepare.ts` materializes `f === "cli" || f.endsWith(".js")`,
+ * RECURSIVELY, and `resolveAnchor` then requires true-substring uniqueness
+ * across everything it materialized. This reader used to take a flat
+ * `.js`/`.mjs`/`.cjs` listing of the top level, which is 1,800 files and misses
+ * two: the extensionless `cli`, and one nested module under
+ * `src/plugins/functionHooks/hooks-worker/`. So the tool was answering "unique
+ * among 1,800" for a question that is asked of 1,802 — a population gap in the
+ * safe direction (a missed file can only make an anchor look MORE unique than
+ * it is), but a gap, and one that two documents had already disagreed about.
+ *
+ * Measured at this pin: 1,802 modules, 34,375,923 characters.
+ */
+let GRAPH_TEXT: { file: string; text: string }[] | null = null;
 const bundle = (): { file: string; text: string }[] => {
-  if (BUNDLE_TEXT === null) {
-    BUNDLE_TEXT = readdirSync(BUNDLE_MODULES)
-      .filter((f) => f.endsWith(".js") || f.endsWith(".mjs") || f.endsWith(".cjs"))
+  if (GRAPH_TEXT === null) {
+    GRAPH_TEXT = readdirSync(BUNDLE_MODULES, { recursive: true, encoding: "utf8" })
+      .filter((f) => f === "cli" || f.endsWith(".js"))
+      .filter((f) => statSync(join(BUNDLE_MODULES, f)).isFile())
+      .sort()
       .map((f) => ({ file: f, text: readFileSync(join(BUNDLE_MODULES, f), "utf8") }));
   }
-  return BUNDLE_TEXT;
+  return GRAPH_TEXT;
 };
+
+/**
+ * The whole graph as ONE string, plus an 8-gram occurrence index over it.
+ *
+ * WHY AN INDEX. Anchorability is now measured by ENUMERATION — every untainted
+ * span of every declaration, counted graph-wide — which is thousands of
+ * substring queries where the old literal scan made a few dozen. A full scan of
+ * 34 MB costs about 10 ms, so the enumeration would cost minutes.
+ *
+ * The index is a saturating count of every 8-character window, bucketed by a
+ * rolling hash. It is used in ONE direction only: a needle whose rarest 8-gram
+ * bucket holds exactly one entry occurs at most once in the graph, because hash
+ * collisions can only ADD to a bucket, never remove. So `bucket === 1` proves
+ * uniqueness outright and anything else falls through to an exact count. The
+ * approximation can therefore cost time, never correctness.
+ *
+ * The separator is eight spaces: it cannot forge a match inside a needle taken
+ * from a declaration (those never contain an eight-space run in minified
+ * source) and it keeps cross-file windows from being counted as real ones.
+ */
+const GRAM = 8;
+const HASH_BITS = 26;
+const HASH_BASE = 131;
+let CORPUS: string | null = null;
+let GRAMS: Uint8Array | null = null;
+function corpus(): string {
+  if (CORPUS === null) CORPUS = bundle().map((m) => m.text).join(" ".repeat(GRAM));
+  return CORPUS;
+}
+function grams(): Uint8Array {
+  if (GRAMS !== null) return GRAMS;
+  const text = corpus();
+  const counts = new Uint8Array(1 << HASH_BITS);
+  const mask = (1 << HASH_BITS) - 1;
+  let pow = 1;
+  for (let i = 0; i < GRAM - 1; i++) pow = Math.imul(pow, HASH_BASE);
+  let h = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (i >= GRAM) h = (h - Math.imul(text.charCodeAt(i - GRAM), pow)) | 0;
+    h = (Math.imul(h, HASH_BASE) + text.charCodeAt(i)) | 0;
+    if (i >= GRAM - 1) {
+      const at = (h >>> 0) & mask;
+      if (counts[at] < 255) counts[at]++;
+    }
+  }
+  GRAMS = counts;
+  return counts;
+}
+
+/** The rarest 8-gram bucket in `needle` — an UPPER BOUND on its occurrence count. */
+function gramBound(needle: string): number {
+  const counts = grams();
+  const mask = (1 << HASH_BITS) - 1;
+  let pow = 1;
+  for (let i = 0; i < GRAM - 1; i++) pow = Math.imul(pow, HASH_BASE);
+  let h = 0;
+  let best = 255;
+  for (let i = 0; i < needle.length; i++) {
+    if (i >= GRAM) h = (h - Math.imul(needle.charCodeAt(i - GRAM), pow)) | 0;
+    h = (Math.imul(h, HASH_BASE) + needle.charCodeAt(i)) | 0;
+    if (i >= GRAM - 1) best = Math.min(best, counts[(h >>> 0) & mask]);
+  }
+  return best;
+}
+
+let exactCounts = 0;
+/** Graph-wide occurrences of `needle`, stopping at `cap`. */
+function occurrences(needle: string, cap = 2): number {
+  exactCounts++;
+  const text = corpus();
+  let n = 0;
+  let at = 0;
+  for (;;) {
+    const i = text.indexOf(needle, at);
+    if (i < 0) return n;
+    n++;
+    if (n >= cap) return n;
+    at = i + 1;
+  }
+}
+
+/** Does `needle` occur exactly once across the graph? */
+const isUnique = (needle: string): boolean => (needle.length >= GRAM && gramBound(needle) === 1) || occurrences(needle) === 1;
 
 /**
  * Identifier-boundary call sites, EXCLUDING a preceding `.`.
@@ -605,16 +810,147 @@ function countCallSites(chunkText: string, name: string): number {
   return all - [...chunkText.matchAll(declared)].length;
 }
 
-/** The longest literal in the body that occurs in the fewest bundle FILES. */
-function anchorFor(literals: string[]): { literal: string; files: number } | null {
-  let best: { literal: string; files: number } | null = null;
-  for (const literal of literals.slice(0, 12)) {
-    const files = bundle().filter((b) => b.text.includes(literal)).length;
-    if (files === 0) continue;
-    if (best === null || files < best.files) best = { literal, files };
-    if (best.files === 1) break;
+/**
+ * ANCHORABILITY, MEASURED BY THE DOCTRINE'S OWN RULE.
+ *
+ * `strangle/anchor.ts` says what an anchor is: a TRUE SUBSTRING of the chunk
+ * that occurs exactly once across the graph, chosen so that it does not bet on a
+ * minified letter — `hui`→`q6t` and `yzv`→`APn` in a single pin bump is the
+ * lesson. It says nothing about prose, and nothing about string literals. Rows
+ * in this manifest are anchored on `].filter(Boolean)}`-shaped fragments,
+ * property-name pairs and `?.` chains as readily as on sentences.
+ *
+ * The first version of this tool measured something else and reported it under
+ * this name: it collected STRING LITERALS of at least twelve characters and
+ * called a helper unanchorable when it had none. That is how "84 of 151 carry no
+ * string literal at all" became "the belt is not takeable by anchor" — a claim
+ * about a scan, restated as a claim about the mechanism. Six of the largest
+ * supposedly-unanchorable helpers turn out to carry a one-occurrence anchor
+ * apiece.
+ *
+ * So the derivation is now the rule itself:
+ *
+ *   1. TAINT every identifier the minifier is free to rename — every
+ *      `Identifier` in a binding or value position that is not an ambient
+ *      global. Property NAMES, object-literal KEYS, destructuring property
+ *      names, class field and method names and everything inside a string or a
+ *      regex are untainted: this bundler preserves them, which is the same bet
+ *      the campaign's existing string-literal anchors already make, and it is a
+ *      bet that fails LOUDLY — `resolveAnchor` throws when an anchor stops
+ *      resolving, it does not silently excise the wrong node.
+ *   2. The candidate spans are the MAXIMAL UNTAINTED RUNS of the declaration's
+ *      own text, of at least `MIN_ANCHOR` characters. There is no twelve-char
+ *      floor and no prose requirement.
+ *   3. A run that occurs more than once graph-wide contains no unique substring
+ *      at all — every substring occurs at least as often — so it is discarded
+ *      with one count. A unique run is then narrowed by two pointers to the
+ *      SHORTEST unique window inside it, which is well defined because
+ *      uniqueness is monotone in both directions: if `[i, j)` is unique so is
+ *      `[i, j+1)`, and the minimal end for `i` never decreases as `i` grows.
+ *   4. The shortest window over all runs is the helper's anchor; the exact
+ *      occurrence and FILE counts are then measured on it, not inferred.
+ *
+ * `null` means the enumeration found no unique untainted run — and the entry
+ * records how many candidates it considered, so "unanchorable" is a measurement
+ * with a denominator rather than a shrug.
+ */
+const MIN_ANCHOR = 8;
+
+/** Identifiers this bundler does not rename, so an anchor may span them. */
+function isStableName(n: ts.Identifier): boolean {
+  if (AMBIENT_GLOBALS.has(n.text)) return true;
+  const p = n.parent;
+  if (p === undefined) return false;
+  if (ts.isPropertyAccessExpression(p) && p.name === n) return true;
+  if (ts.isQualifiedName(p) && p.right === n) return true;
+  if (ts.isPropertyAssignment(p) && p.name === n) return true;
+  if (ts.isPropertyDeclaration(p) && p.name === n) return true;
+  if (ts.isMethodDeclaration(p) && p.name === n) return true;
+  if ((ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) && p.name === n) return true;
+  if (ts.isBindingElement(p) && p.propertyName === n) return true;
+  if (ts.isEnumMember(p) && p.name === n) return true;
+  // A shorthand `{a}` is deliberately NOT stable: renaming `a` rewrites it to
+  // `{a: b}`, so the key moves with the binding.
+  return false;
+}
+
+/** The maximal runs of `decl`'s text that carry no renameable identifier. */
+function untaintedRuns(decl: ts.Node, sf: ts.SourceFile, text: string): string[] {
+  const from = decl.getStart(sf);
+  const to = decl.getEnd();
+  const cuts: [number, number][] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isPrivateIdentifier(n)) cuts.push([n.getStart(sf), n.getEnd()]);
+    else if (ts.isIdentifier(n) && !isStableName(n)) cuts.push([n.getStart(sf), n.getEnd()]);
+    ts.forEachChild(n, visit);
+  };
+  visit(decl);
+  cuts.sort((a, b) => a[0] - b[0]);
+  const runs: string[] = [];
+  let at = from;
+  for (const [a, b] of cuts) {
+    if (a > at) runs.push(text.slice(at, a));
+    at = Math.max(at, b);
   }
-  return best;
+  if (to > at) runs.push(text.slice(at, to));
+  return runs.filter((r) => r.length >= MIN_ANCHOR);
+}
+
+export interface AnchorMeasurement {
+  literal: string;
+  /** graph FILES carrying it — 1 by construction, kept because the fixture is read by humans */
+  files: number;
+  occurrences: number;
+}
+
+/**
+ * The shortest unique untainted window in `decl`, and how many runs were tried.
+ *
+ * THE SEARCH IS DRIVEN BY THE INDEX, and the reason is a measured one: the exact
+ * form of this loop — two pointers over every window of every run, each window
+ * settled by a graph-wide scan — did not finish in two minutes. The index makes
+ * the same search essentially free, and it does so without weakening the answer:
+ *
+ *   * `gramBound(w) === 1` PROVES `w` is unique (collisions only add to a
+ *     bucket), so every window this returns is a real anchor.
+ *   * `gramBound` is monotone in both directions — growing a window adds 8-grams
+ *     and can only lower the minimum; shrinking from the left can only raise it
+ *     — so a two-pointer finds, for each start, the shortest window the index
+ *     can certify, in one pass and with no scans at all.
+ *   * The winner is then counted EXACTLY, once, which is where `files` and
+ *     `occurrences` come from. So the fixture's numbers are measured even though
+ *     the search that found them was approximate.
+ *
+ * What the approximation can cost is a character or two of length: a window the
+ * index cannot certify may still be unique. That is why a helper the index finds
+ * nothing for is not written off — every run is then counted exactly, and only a
+ * run that genuinely occurs more than once is discarded (no substring of it can
+ * be unique, since every substring occurs at least as often).
+ */
+function anchorFor(decl: ts.Node, sf: ts.SourceFile, text: string): { anchor: AnchorMeasurement | null; candidates: number } {
+  const runs = untaintedRuns(decl, sf, text);
+  let best: string | null = null;
+  for (const run of runs) {
+    let j = MIN_ANCHOR;
+    for (let i = 0; i + MIN_ANCHOR <= run.length; i++) {
+      if (j < i + MIN_ANCHOR) j = i + MIN_ANCHOR;
+      while (j <= run.length && gramBound(run.slice(i, j)) !== 1) j++;
+      if (j > run.length) break;
+      if (best === null || j - i < best.length) best = run.slice(i, j);
+    }
+  }
+  // The index certified nothing. Fall back to exact counts, one per run: a run
+  // that occurs more than once contains no unique substring at all, and a run
+  // that occurs exactly once IS an anchor even though no 8-gram of it is rare.
+  if (best === null) {
+    for (const run of runs) {
+      if (occurrences(run) !== 1) continue;
+      if (best === null || run.length < best.length) best = run;
+    }
+  }
+  if (best === null) return { anchor: null, candidates: runs.length };
+  const files = bundle().filter((b) => b.text.includes(best!)).length;
+  return { anchor: { literal: best, files, occurrences: occurrences(best, 8) }, candidates: runs.length };
 }
 
 /** The committed fixture, for the oracle and the wave record. */
@@ -644,9 +980,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `${fx.moduleState.filter((c) => c.kind === "process-global").length} process-global with no clearer, ` +
       `${fx.moduleState.filter((c) => c.kind.endsWith("lazy")).length} keyed-lazy`,
   );
+  console.log(`  declarations by kind: ${DECL_KINDS.map((k) => `${k}=${fx.counts.byKind[k].reached}/${fx.counts.byKind[k].pure} pure`).join(", ")}`);
   console.log(
-    `  anchorability: ${fx.counts.reachedWithUniqueAnchor} of ${fx.counts.reached} carry a literal occurring in exactly ONE bundle file ` +
-      `(${fx.counts.pureWithUniqueAnchor} of them pure); ${fx.counts.reachedWithNoLiteral} carry no string literal at all`,
+    `  anchorability (shortest unique untainted substring, ${fx.counts.graphModules} graph modules, ${fx.counts.anchorScans} exact scans): ` +
+      `${fx.counts.reachedWithUniqueAnchor} of ${fx.counts.reached} are anchorable (${fx.counts.pureWithUniqueAnchor} of them pure); ` +
+      `${fx.counts.reachedWithNoAnchor} are not`,
+  );
+  console.log(
+    `  pure and anchorable by kind: ${DECL_KINDS.filter((k) => fx.counts.byKind[k].pureAnchorable > 0).map((k) => `${k}=${fx.counts.byKind[k].pureAnchorable}`).join(", ") || "none"}`,
   );
 
   if (checkOnly) {
