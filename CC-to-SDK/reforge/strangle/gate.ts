@@ -412,8 +412,25 @@ if (!buildAndBoot([])) {
   results.push({ label: "equivalence (faithful)", pass: false });
 } else {
   const r = run("npx", ["tsx", "m2/all.ts", "--engineB", "engine-strangled"]);
-  const verdicts = (r.stdout ?? "").split("\n").filter((l) => /^\s+(PASS|FAIL)\s{2}/.test(l)).slice(-5);
-  for (const v of verdicts) console.log(`  ${v.trim()}`);
+  const lines = (r.stdout ?? "").split("\n");
+  const verdicts = lines.filter((l) => /^\s+(PASS|FAIL)\s{2}/.test(l));
+  // The five SUITE verdicts are the tail; they are what a green run needs to
+  // show. On a red one they are the least useful five lines in the file.
+  for (const v of verdicts.slice(-5)) console.log(`  ${v.trim()}`);
+  // EVERY FAILING LINE, NAMED. The tail-only view discarded WHICH scenario
+  // failed, which made a red equivalence phase undiagnosable from the log —
+  // the same defect class C9 fixed one block up, where any non-zero exit was
+  // read as RED without the runner's own verdict. A phase that can fail has to
+  // say what failed, or its failure is a rumour.
+  if (r.status !== 0) {
+    const failed = verdicts.filter((l) => /^\s+FAIL\s{2}/.test(l));
+    console.log(`  ${failed.length} failing verdict(s):`);
+    for (const f of failed) console.log(`    ${f.trim()}`);
+    // …and the reason lines the runner printed for them, which is where a
+    // replay mismatch or a differ hit actually explains itself.
+    const why = lines.filter((l) => /diverge|mismatch|differs|unexpected|no cassette|timed out/i.test(l)).slice(0, 12);
+    for (const w of why) console.log(`    ${w.trim()}`);
+  }
   results.push({ label: "equivalence (faithful)", pass: r.status === 0 });
 }
 
