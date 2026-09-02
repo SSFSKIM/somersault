@@ -59,6 +59,21 @@
 // keys and a top-level project memory fills three), and the executor requests —
 // where these nine differ from each other far more than their records do.
 //
+// WHAT THE PORT TRACE IS, since C10.6 / W7.6a: ONE ORDERED EVENT LOG, not a
+// struct of per-port call lists. The retired shape could not see order ACROSS
+// ports — a dispatcher that built its record before taking the activity hold
+// instead of after produced identical per-port lists — and it could not state
+// cleanup pairing at all. Both matter here for the layer this oracle is being
+// prepared to grade rather than for the dispatchers it grades today: the hook
+// EXECUTOR spawns processes, races timeouts and propagates cancellation, and
+// releases a per-hook derived signal on six paths plus its catch. `EventLog`
+// below carries the ordering, `unpaired()` states the pairing, and
+// `comparePerHook` carries the multi-hook mode the executor's unbounded merge
+// will need. The rewrite's own red direction is measured rather than asserted:
+// swapping ONE adjacent pair of differently-ported events in each owned log
+// reddens 204 of the 226 log comparisons and moves the retired per-port
+// projection in NONE of them.
+//
 // HOW IT BINDS, and the lesson it inherits (C7's boundary review). Where an
 // upstream body calls a helper this wave also OWNS, the helper is extracted and
 // compared on its own first, and the body is then bound to UPSTREAM's copy.
@@ -130,16 +145,34 @@ const reforge = (globalThis as { __reforge?: Record<string, (...a: unknown[]) =>
 
 let checks = 0;
 let controls = 0;
+let properties = 0;
+/** cases whose log carried a lifecycle edge at all — the pairing property's own floor */
+let pairedCases = 0;
 const failures: string[] = [];
 
 const ENGINE = readFileSync(join(BUNDLE_MODULES, "chunk-fy12d89p.js"), "utf8");
 /** The plain-object predicate lives in its own single-export chunk. */
 const PREDICATE_CHUNK = readFileSync(join(BUNDLE_MODULES, "chunk-79e2v0j6.js"), "utf8");
 
+/**
+ * The serialization both comparisons run through.
+ *
+ * `JSON.stringify` drops a key whose value is `undefined`, so a record that
+ * CARRIES a field with no value and one that omits the field entirely compared
+ * EQUAL — one of the two smaller blindnesses the retired trace entry named
+ * alongside the ordering one. The replacer rewrites a present-but-undefined
+ * value to a sentinel; an absent key is never visited, so the two now differ.
+ * A top-level `undefined` becomes the sentinel on both sides, which leaves the
+ * old `?? "undefined"` fallback reachable only for a value the replacer cannot
+ * see.
+ */
+const UNDEFINED = "<undefined>";
+const show = (v: unknown): string => JSON.stringify(v, (_k, x) => (x === undefined ? UNDEFINED : x)) ?? "undefined";
+
 function eq(label: string, upstream: unknown, owned: unknown): void {
   checks++;
-  const a = JSON.stringify(upstream) ?? "undefined";
-  const b = JSON.stringify(owned) ?? "undefined";
+  const a = show(upstream);
+  const b = show(owned);
   if (a === b) return;
   let at = 0;
   while (at < a.length && a[at] === b[at]) at++;
@@ -156,8 +189,30 @@ function eq(label: string, upstream: unknown, owned: unknown): void {
  */
 function mustDiffer(label: string, upstream: unknown, perturbedOwned: unknown): void {
   controls++;
-  if ((JSON.stringify(upstream) ?? "undefined") !== (JSON.stringify(perturbedOwned) ?? "undefined")) return;
+  if (show(upstream) !== show(perturbedOwned)) return;
   failures.push(`CONTROL ${label}: the perturbed owned result compared EQUAL — this file cannot see a wrong implementation`);
+}
+
+/**
+ * A PROPERTY of one run, counted apart from both of the above.
+ *
+ * A comparison says "the two sides agree"; a property says "the thing that
+ * happened is a legal shape", and cleanup pairing is the second kind: two sides
+ * that both leak a derived signal agree with each other. `mustDiffer` is the
+ * non-vacuity control for a comparison; `propertyControl` below is the one for
+ * this.
+ */
+function property(label: string, violations: string[]): void {
+  properties++;
+  if (violations.length === 0) return;
+  failures.push(`PROPERTY ${label}: ${violations.join("; ")}`);
+}
+
+/** The non-vacuity control for a property: a shape that MUST be reported. */
+function propertyControl(label: string, violations: string[]): void {
+  controls++;
+  if (violations.length > 0) return;
+  failures.push(`CONTROL ${label}: the property reported no violation on a log that violates it`);
 }
 
 // ---- extraction -------------------------------------------------------------
@@ -415,56 +470,273 @@ const upstreamIsPlainObject = build<(v: unknown) => boolean>(
 // 2. THE DISPATCHERS.
 // ============================================================================
 
-/** Everything the stubs saw, per case. Compared alongside the yielded sequence. */
-interface Trace {
-  hasHookForEvent: unknown[][];
-  base: unknown[][];
-  cwd: number;
-  executor: unknown[][];
-  chain: unknown[][];
-  confined: unknown[][];
-  stableKey: unknown[];
-  moduleHandlers: unknown[][];
-  backgroundTasks: unknown[][];
-  sessionCrons: number;
-  agentTranscriptPath: unknown[][];
-  sessionTitle: unknown[][];
-  uuid: number;
-  log: unknown[][];
-  /** the AWAITING executor (upstream `AE`) — PreCompact's and SessionEnd's */
-  executorAwait: unknown[][];
-  /** the session-id coercion SessionStart applies to an override */
-  sessionId: unknown[][];
-  /** the activity-hold bracket around a SessionStart dispatch, in call order */
-  activity: string[];
-  /** what SessionEnd wrote to stderr, and what it cleared from the registry */
-  stderr: string[];
-  registryClear: unknown[][];
-  /** the watcher-hooks helper (upstream `zxt`) — FileChanged's, and neither executor */
-  watcher: unknown[][];
+/**
+ * ONE ORDERED EVENT LOG, not a struct of per-port call lists (C10.6 / W7.6a,
+ * Stage 0 — it retires the tech-debt entry of 2026-09-01).
+ *
+ * The shape this replaced put every `createBaseHookInput` call in one array,
+ * every executor request in another, and compared the arrays. That proves each
+ * port ran the right number of times with the right arguments and is BLIND TO
+ * ORDER ACROSS PORTS: a dispatcher that built its record before taking the
+ * activity hold instead of after produces identical per-port lists. The debt
+ * entry deferring the rewrite named its own trigger — "the hook EXECUTOR
+ * itself: it spawns processes, races timeouts and propagates cancellation, and
+ * for that one interleaving IS the behaviour" — and the executor design pass
+ * added a second reason it did not anticipate: CLEANUP PAIRING. The command arm
+ * releases its per-hook derived signal on six paths plus its catch, and "every
+ * derived signal was cleaned exactly once" is a property only an ordered log
+ * can state. Both are stated here, and the ordering half carries its own
+ * two-sided control (`orderControl`) showing what the retired shape could not
+ * see.
+ *
+ * It lands BEFORE the first executor module rather than with it, which is the
+ * whole reason Stage 0 is its own wave: an oracle capability shipped after the
+ * module it grades is a module shipped ahead of its oracle.
+ */
+type PairPhase = "acquire" | "release";
+
+interface LogEvent {
+  /** the port that ran, or the value that was written */
+  port: string;
+  /** what it was called with */
+  args: unknown[];
+  /** set on a lifecycle edge: which resource, and which half of the pair */
+  pair?: { key: string; phase: PairPhase };
+  /**
+   * Which hook this event belongs to, when a case drives more than one.
+   *
+   * UNSET on every case this file grades today, and deliberately so: `Qxt`
+   * races its per-hook generators with unbounded concurrency, so a global
+   * sequence comparison is unsound the moment a case has two hooks. The
+   * comparison mode that handles it (`comparePerHook`) is built and controlled
+   * here so its shape is settled before the executor arrives; nothing grades
+   * with it until a multi-hook scenario exists, and it is proven on synthetic
+   * logs rather than left as an untested capability.
+   */
+  hook?: string;
 }
-const emptyTrace = (): Trace => ({
-  hasHookForEvent: [],
-  base: [],
-  cwd: 0,
-  executor: [],
-  chain: [],
-  confined: [],
-  stableKey: [],
-  moduleHandlers: [],
-  backgroundTasks: [],
-  sessionCrons: 0,
-  agentTranscriptPath: [],
-  sessionTitle: [],
-  uuid: 0,
-  log: [],
-  executorAwait: [],
-  sessionId: [],
-  activity: [],
-  stderr: [],
-  registryClear: [],
-  watcher: [],
-});
+
+class EventLog {
+  readonly events: LogEvent[] = [];
+
+  record(port: string, args: unknown[], extra: Omit<LogEvent, "port" | "args"> = {}): void {
+    this.events.push({ port, args, ...extra });
+  }
+
+  /** the argument list of every call to `port`, in order */
+  calls(port: string): unknown[][] {
+    return this.events.filter((e) => e.port === port).map((e) => e.args);
+  }
+
+  /** how many times `port` ran */
+  count(port: string): number {
+    return this.events.reduce((n, e) => n + (e.port === port ? 1 : 0), 0);
+  }
+
+  /** the first argument of every call to `port` — for the ports that take one */
+  writes(port: string): unknown[] {
+    return this.calls(port).map((a) => a[0]);
+  }
+
+  /** every lifecycle edge in call order, rendered `<phase>:<key>` */
+  lifecycle(): string[] {
+    return this.events.filter((e) => e.pair !== undefined).map((e) => `${e.pair!.phase}:${e.pair!.key}`);
+  }
+
+  /** the ordered port names — the thing the retired per-port lists could not state */
+  order(): string[] {
+    return this.events.map((e) => e.port);
+  }
+
+  /**
+   * The PER-PORT PROJECTION: exactly what the retired shape compared, kept so
+   * the rewrite can prove it bought something rather than asserting it. A
+   * permutation that leaves this equal and the ordered log different is the
+   * whole finding.
+   */
+  perPort(): Record<string, unknown[][]> {
+    const grouped = new Map<string, unknown[][]>();
+    for (const e of this.events) {
+      const at = grouped.get(e.port);
+      if (at === undefined) grouped.set(e.port, [e.args]);
+      else at.push(e.args);
+    }
+    // Keys in NAME order, not first-seen order. The struct this models had a
+    // fixed field order, so a port swap could not move it; a record built in
+    // first-seen order would move its own key order under the permutation and
+    // the control would read that as "the old shape saw it too".
+    const out: Record<string, unknown[][]> = {};
+    for (const port of [...grouped.keys()].sort()) out[port] = grouped.get(port)!;
+    return out;
+  }
+
+  /**
+   * "Every derived signal was cleaned exactly once", said as violations.
+   *
+   * Four shapes are violations and each is one an executor could ship: a
+   * resource acquired and never released (the leak the command arm's six
+   * release paths exist to avoid), one released twice, one released before it
+   * was acquired, and one acquired twice without an intervening release.
+   */
+  unpaired(): string[] {
+    const held = new Map<string, number>();
+    const bad: string[] = [];
+    for (const e of this.events) {
+      if (e.pair === undefined) continue;
+      const { key, phase } = e.pair;
+      const depth = held.get(key) ?? 0;
+      if (phase === "acquire") {
+        if (depth > 0) bad.push(`${key} acquired again while still held`);
+        held.set(key, depth + 1);
+      } else {
+        if (depth === 0) bad.push(`${key} released without being acquired`);
+        held.set(key, Math.max(0, depth - 1));
+      }
+    }
+    for (const [key, depth] of held) if (depth > 0) bad.push(`${key} acquired and never released`);
+    return bad;
+  }
+
+  /** what the comparison serialises: the ordered events, with `undefined` visible */
+  snapshot(): unknown {
+    return this.events;
+  }
+}
+
+/**
+ * The MULTI-HOOK comparison mode of design §5(a): per-hook subsequences plus a
+ * global multiset.
+ *
+ * `Qxt` merges its per-hook generators with unbounded concurrency, so which
+ * hook's event lands first is wall-clock timing rather than behaviour, while
+ * the order WITHIN one hook is entirely behaviour. Comparing the global
+ * sequence would grade the scheduler; comparing only per-hook lists would lose
+ * "these are all the events there were". So: each hook's subsequence must be
+ * equal in order, and the multiset of all events must be equal.
+ *
+ * Returns the violations rather than throwing, so the same function serves the
+ * grading path and its own controls.
+ */
+function comparePerHook(upstream: EventLog, owned: EventLog): string[] {
+  const bad: string[] = [];
+  const bucket = (l: EventLog): Map<string, LogEvent[]> => {
+    const m = new Map<string, LogEvent[]>();
+    for (const e of l.events) {
+      const k = e.hook ?? "";
+      const at = m.get(k);
+      if (at === undefined) m.set(k, [e]);
+      else at.push(e);
+    }
+    return m;
+  };
+  const up = bucket(upstream);
+  const own = bucket(owned);
+  for (const k of new Set([...up.keys(), ...own.keys()])) {
+    const a = show(up.get(k) ?? []);
+    const b = show(own.get(k) ?? []);
+    if (a !== b) bad.push(`hook ${k || "<none>"}: subsequence differs`);
+  }
+  const multiset = (l: EventLog): string => [...l.events].map((e) => show(e)).sort().join("\n");
+  if (multiset(upstream) !== multiset(owned)) bad.push("the global event multiset differs");
+  return bad;
+}
+
+/**
+ * THE REWRITE'S OWN RED DIRECTION, and it is two-sided.
+ *
+ * Permute one REAL log so two adjacent events with DIFFERENT ports swap places.
+ * The per-port projection — exactly what the retired shape compared — must stay
+ * EQUAL, because a rewrite claiming to see more has to show the old shape
+ * seeing less rather than assert it. The ordered log must differ. A log that
+ * cannot carry the permutation fails the control instead of passing quietly,
+ * which is the vacuity shape this campaign has been corrected for twice.
+ */
+function orderControl(label: string, log: EventLog): void {
+  controls++;
+  const at = log.events.findIndex((e, i) => i > 0 && e.port !== log.events[i - 1].port);
+  if (at < 1) {
+    failures.push(`CONTROL ${label}: no two adjacent events have different ports, so the permutation is not expressible on this log`);
+    return;
+  }
+  const permuted = logOf(...log.events);
+  [permuted.events[at - 1], permuted.events[at]] = [permuted.events[at], permuted.events[at - 1]];
+  if (show(log.perPort()) !== show(permuted.perPort())) {
+    failures.push(`CONTROL ${label}: the permutation moved the PER-PORT projection too, so it does not isolate ordering`);
+    return;
+  }
+  if (show(log.snapshot()) === show(permuted.snapshot())) {
+    failures.push(`CONTROL ${label}: the ordered log compared EQUAL to a permutation of itself — this rewrite bought nothing`);
+  }
+}
+
+/** A log assembled from given events — for the synthetic controls and the permutation. */
+const logOf = (...events: LogEvent[]): EventLog => {
+  const l = new EventLog();
+  for (const e of events) l.events.push(e);
+  return l;
+};
+
+// ---- Stage 0 machinery: the log's two new capabilities, driven ---------------
+// Neither has a live consumer inside this file yet, and a capability with no
+// consumer is an untested capability — which is the exact shape "a module
+// shipped ahead of its oracle" takes one level down. So both are driven here on
+// SYNTHETIC logs, which is also the only place their violating shapes can
+// exist: a dispatcher that leaked a derived signal would be a failure, not a
+// fixture.
+{
+  const edge = (key: string, phase: PairPhase): LogEvent => ({
+    port: phase === "acquire" ? "deriveSignal" : "cleanupSignal",
+    args: [key],
+    pair: { key, phase },
+  });
+
+  // (i) CLEANUP PAIRING — the property the design pass added to the debt
+  // entry's own argument. The command arm releases its per-hook derived signal
+  // on six paths plus its catch; the shape below is that arm with five hooks
+  // released and one leaked, which is the defect an ordered log exists to see.
+  property("a signal acquired and released exactly once is paired", logOf(edge("sig", "acquire"), edge("sig", "release")).unpaired());
+  propertyControl("a signal acquired and never released", logOf(edge("sig", "acquire")).unpaired());
+  propertyControl(
+    "a signal released twice — two of the six release paths both running",
+    logOf(edge("sig", "acquire"), edge("sig", "release"), edge("sig", "release")).unpaired(),
+  );
+  propertyControl("a signal released before it was acquired", logOf(edge("sig", "release")).unpaired());
+  propertyControl("a signal acquired again while still held", logOf(edge("sig", "acquire"), edge("sig", "acquire")).unpaired());
+  propertyControl(
+    "one hook of six leaking its derived signal while the other five release",
+    logOf(
+      ...["h1", "h2", "h3", "h4", "h5"].flatMap((k) => [edge(k, "acquire"), edge(k, "release")]),
+      edge("h6", "acquire"),
+    ).unpaired(),
+  );
+
+  // (ii) THE MULTI-HOOK MODE — design §5(a). `Qxt` merges its per-hook
+  // generators with unbounded concurrency, so WHICH hook's event lands first is
+  // wall-clock timing and the order WITHIN one hook is entirely behaviour.
+  // Grading the global sequence would grade the scheduler; grading only
+  // per-hook lists would lose "these are all the events there were".
+  const ev = (hook: string, port: string, ...args: unknown[]): LogEvent => ({ port, args, hook });
+  const merged = logOf(ev("h1", "spawn"), ev("h2", "spawn"), ev("h1", "exit", 0), ev("h2", "exit", 0));
+  const racedTheOtherWay = logOf(ev("h2", "spawn"), ev("h1", "spawn"), ev("h2", "exit", 0), ev("h1", "exit", 0));
+  property("a merge that raced the other way is legal per-hook", comparePerHook(merged, racedTheOtherWay));
+  mustDiffer("the ORDERED mode, which is what single-hook cases use, rejects that same reordering", merged.snapshot(), racedTheOtherWay.snapshot());
+  propertyControl(
+    "one hook's own order reversed — behaviour, not scheduling",
+    comparePerHook(merged, logOf(ev("h1", "exit", 0), ev("h2", "spawn"), ev("h1", "spawn"), ev("h2", "exit", 0))),
+  );
+  propertyControl(
+    "an event dropped from the merge, which only the global multiset can see",
+    comparePerHook(merged, logOf(ev("h1", "spawn"), ev("h2", "spawn"), ev("h1", "exit", 0))),
+  );
+  propertyControl(
+    "one hook's exit code changed",
+    comparePerHook(merged, logOf(ev("h1", "spawn"), ev("h2", "spawn"), ev("h1", "exit", 1), ev("h2", "exit", 0))),
+  );
+  // The mode is EXPRESSIBLE, not in use: no case in this file drives two hooks,
+  // so every `hook` field above is synthetic and every graded comparison below
+  // is the ordered one. It is built now because settling its shape after the
+  // executor arrives is settling it under the pressure of a failing case.
+}
 
 interface StubSpec {
   /** what the registration guard answers */
@@ -496,59 +768,62 @@ const BASE_PREFIX = {
   effort: undefined,
 };
 
-function makePorts(spec: StubSpec, sink: Trace) {
+function makePorts(spec: StubSpec, log: EventLog) {
   const results = spec.results ?? [{ decision: "continue" }, { decision: "second" }];
   return {
     hasHookForEvent: (...args: unknown[]) => {
-      sink.hasHookForEvent.push(args);
+      log.record("hasHookForEvent", args);
       return spec.registered;
     },
     createBaseHookInput: (...args: unknown[]) => {
-      sink.base.push(args);
+      log.record("base", args);
       return { ...BASE_PREFIX };
     },
     cwd: () => {
-      sink.cwd++;
+      log.record("cwd", []);
       return "/sandbox";
     },
     executeHooks: async function* (request: unknown) {
-      sink.executor.push([request]);
+      log.record("executor", [request]);
       if (spec.executorThrows !== undefined) throw new Error(spec.executorThrows);
       for (const r of results) yield r;
       return { executed: results.length };
     },
     executeWatcherHooks: async (...args: unknown[]) => {
-      sink.watcher.push(args);
+      log.record("watcher", args);
       return spec.watcherResult ?? { results: [], watchPaths: [], systemMessages: [] };
     },
     executeHooksAwait: async (request: unknown) => {
-      sink.executorAwait.push([request]);
+      log.record("executorAwait", [request]);
       if (spec.executorThrows !== undefined) throw new Error(spec.executorThrows);
       return spec.awaitResults ?? [];
     },
     sessionId: (...args: unknown[]) => {
-      sink.sessionId.push(args);
+      log.record("sessionId", args);
       return `coerced:${String(args[0])}`;
     },
     beginActivity: (...args: unknown[]) => {
-      sink.activity.push(`begin(${args.join(",")})`);
+      // The one acquire/release pair in the dispatcher family, and the shape the
+      // executor's per-hook derived signals will reuse: the log carries the edge,
+      // and `unpaired()` states the property over it.
+      log.record("beginActivity", args, { pair: { key: `activity:${String(args[0])}`, phase: "acquire" } });
     },
     endActivity: (...args: unknown[]) => {
-      sink.activity.push(`end(${args.join(",")})`);
+      log.record("endActivity", args, { pair: { key: `activity:${String(args[0])}`, phase: "release" } });
     },
     // NOT a capture: SessionEnd reads the registry off its own options bag. It
     // is stubbed here anyway so each side gets its own sink — an argument shared
     // between the two runs would record both into one and grade neither.
     sessionHooks: {
       clear: (...args: unknown[]) => {
-        sink.registryClear.push(args);
+        log.record("registryClear", args);
       },
     },
     /** Collect what a dispatcher wrote to stderr instead of printing it. */
     captureStderr: async <T>(run: () => Promise<T>): Promise<T> => {
       const original = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string | Uint8Array) => {
-        sink.stderr.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        log.record("stderr", [typeof chunk === "string" ? chunk : Buffer.from(chunk).toString()]);
         return true;
       }) as typeof process.stderr.write;
       try {
@@ -558,43 +833,43 @@ function makePorts(spec: StubSpec, sink: Trace) {
       }
     },
     uuid: () => {
-      sink.uuid++;
+      log.record("uuid", []);
       return "44444444-4444-4444-8444-444444444444";
     },
     sessionTitle: (...args: unknown[]) => {
-      sink.sessionTitle.push(args);
+      log.record("sessionTitle", args);
       return "a session title";
     },
     backgroundTasks: (...args: unknown[]) => {
-      sink.backgroundTasks.push(args);
+      log.record("backgroundTasks", args);
       return [{ id: "task-1", type: "local_bash", status: "running" }];
     },
     sessionCrons: () => {
-      sink.sessionCrons++;
+      log.record("sessionCrons", []);
       return [];
     },
     agentTranscriptPath: (...args: unknown[]) => {
-      sink.agentTranscriptPath.push(args);
+      log.record("agentTranscriptPath", args);
       return `/t/agent-${String(args[0])}.jsonl`;
     },
     log: (...args: unknown[]) => {
-      sink.log.push(args);
+      log.record("log", args);
     },
     stableKeys: {
       stableKey: (v: unknown) => {
-        sink.stableKey.push(v);
+        log.record("stableKey", [v]);
         return JSON.stringify(v);
       },
     },
     moduleHandlers: {
       hasModuleHandlers: (...args: unknown[]) => {
-        sink.moduleHandlers.push(args);
+        log.record("moduleHandlers", args);
         return spec.moduleHandlers === true;
       },
     },
     preToolChain: {
       executePreToolUseChain: async function* (request: { runSettingsHooks: (i?: unknown, o?: unknown) => AsyncIterable<unknown> }) {
-        sink.chain.push([{ ...request, runSettingsHooks: "<closure>" }]);
+        log.record("chain", [{ ...request, runSettingsHooks: "<closure>" }]);
         for (const r of spec.chainResults ?? [{ type: "chain" }]) yield r;
         // The chain calls back into the dispatcher's closure — with a rewritten
         // input and with per-call options — and that closure's request is the
@@ -603,7 +878,7 @@ function makePorts(spec: StubSpec, sink: Trace) {
       },
     },
     stripConfinedHookApproval: (result: unknown, label: unknown) => {
-      sink.confined.push([result, label]);
+      log.record("confined", [result, label]);
       return result;
     },
   };
@@ -739,29 +1014,44 @@ async function drain(g: AsyncGenerator<unknown, unknown>): Promise<{ yielded: un
   }
 }
 
-/** Run both sides of one case against fresh sinks, and compare output AND trace. */
+/**
+ * Grade one case's two event logs, and state the pairing property over them.
+ *
+ * The comparison is the ORDERED log, so it now sees what the retired per-port
+ * lists could not: which port ran before which. The property is separate on
+ * purpose — two sides that both leak a derived signal COMPARE EQUAL, so a
+ * comparison can never state "cleaned exactly once" no matter how ordered it is.
+ */
+function gradeLogs(label: string, upstream: EventLog, owned: EventLog): void {
+  // The log is the half a callback corpus cannot see: which ports ran, with
+  // what, in what order, and how often. The EXECUTOR REQUEST rides in it, so
+  // this comparison is what actually grades the hook record's field set.
+  eq(`${label} [ports]`, upstream.snapshot(), owned.snapshot());
+  property(`${label} [cleanup pairing, upstream]`, upstream.unpaired());
+  property(`${label} [cleanup pairing, owned]`, owned.unpaired());
+  if (upstream.lifecycle().length > 0) pairedCases++;
+}
+
+/** Run both sides of one case against fresh logs, and compare output AND the log. */
 async function compare(
   label: string,
   spec: StubSpec,
   constants: Record<string, unknown>,
   runUpstream: (p: PortSet) => AsyncGenerator<unknown, unknown>,
   runOwned: (p: PortSet) => AsyncGenerator<unknown, unknown>,
-): Promise<{ upstream: { yielded: unknown[]; returned?: unknown; threw?: string }; trace: Trace }> {
-  const upSink = emptyTrace();
-  const upPorts = makePorts(spec, upSink);
+): Promise<{ upstream: { yielded: unknown[]; returned?: unknown; threw?: string }; trace: EventLog }> {
+  const upLog = new EventLog();
+  const upPorts = makePorts(spec, upLog);
   bindGlobals(upPorts);
   const up = await drain(runUpstream(upPorts));
 
-  const ownSink = emptyTrace();
-  const ownPorts = makePorts(spec, ownSink);
+  const ownLog = new EventLog();
+  const ownPorts = makePorts(spec, ownLog);
   const own = await drain(runOwned(ownPorts));
 
   eq(`${label} [yields+return]`, up, own);
-  // The trace is the half a callback corpus cannot see: which ports ran, with
-  // what, and how often. The EXECUTOR REQUEST rides in it, so this comparison is
-  // what actually grades the hook record's field set and order.
-  eq(`${label} [ports]`, upSink, ownSink);
-  return { upstream: up, trace: upSink };
+  gradeLogs(label, upLog, ownLog);
+  return { upstream: up, trace: upLog };
 }
 
 /** Await a value-returning dispatcher, grading a throw rather than swallowing it. */
@@ -787,19 +1077,19 @@ async function compareValue(
   spec: StubSpec,
   runUpstream: (p: PortSet) => Promise<unknown>,
   runOwned: (p: PortSet) => Promise<unknown>,
-): Promise<{ upstream: { returned?: unknown; threw?: string }; trace: Trace }> {
-  const upSink = emptyTrace();
-  const upPorts = makePorts(spec, upSink);
+): Promise<{ upstream: { returned?: unknown; threw?: string }; trace: EventLog }> {
+  const upLog = new EventLog();
+  const upPorts = makePorts(spec, upLog);
   bindGlobals(upPorts);
   const up = await upPorts.captureStderr(() => settle(runUpstream(upPorts)));
 
-  const ownSink = emptyTrace();
-  const ownPorts = makePorts(spec, ownSink);
+  const ownLog = new EventLog();
+  const ownPorts = makePorts(spec, ownLog);
   const own = await ownPorts.captureStderr(() => settle(runOwned(ownPorts)));
 
   eq(`${label} [returns]`, up, own);
-  eq(`${label} [ports]`, upSink, ownSink);
-  return { upstream: up, trace: upSink };
+  gradeLogs(label, upLog, ownLog);
+  return { upstream: up, trace: upLog };
 }
 
 const SESSION = { id: "session-1", project: "/sandbox" };
@@ -851,7 +1141,11 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 10), ...forwarded(p, constants)),
   );
-  const record = (trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  // The rewrite's red direction, on a REAL streaming dispatcher's log rather
+  // than a toy: this dispatcher's ports are compared in the order they ran, and
+  // the projection the retired shape compared is asserted blind to the swap.
+  orderControl("post-tool-hooks: the ordered log sees a port swap the per-port lists cannot", trace);
+  const record = (trace.calls("executor")[0][0] as { hookInput: Record<string, unknown> }).hookInput;
   eq("post-tool-hooks field order", Object.keys(record), [
     "session_id",
     "transcript_path",
@@ -909,7 +1203,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[7][2]),
     (p) => owned(...(cases[7][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  mustDiffer("the confined-session filter skipped on the chain path", chained.trace.confined.length, 0);
+  mustDiffer("the confined-session filter skipped on the chain path", chained.trace.count("confined"), 0);
   mustDiffer("the chain path falling through to the settings path as well", chained.upstream.yielded.length, 0);
   const arrayInput = await compare(
     "pre-tool-hooks array-input control",
@@ -918,7 +1212,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[8][2]),
     (p) => owned(...(cases[8][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  mustDiffer("an array tool input offered to the chain", arrayInput.trace.chain.length, 1);
+  mustDiffer("an array tool input offered to the chain", arrayInput.trace.count("chain"), 1);
   const refused = await compare(
     "pre-tool-hooks refusal control",
     { registered: false },
@@ -926,8 +1220,8 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  mustDiffer("a refusal that still built the record", refused.trace.base.length, 1);
-  mustDiffer("a refusal that still logged", refused.trace.log.length, 1);
+  mustDiffer("a refusal that still built the record", refused.trace.count("base"), 1);
+  mustDiffer("a refusal that still logged", refused.trace.count("log"), 1);
 }
 
 // ---- PostToolBatch (upstream `Fct`) ----------------------------------------
@@ -961,7 +1255,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[3][2]),
     (p) => owned(...(cases[3][2] as unknown[]).slice(0, 6), ...forwarded(p, constants)),
   );
-  mustDiffer("the batch guard consulted under the acting agent alone", fanned.trace.hasHookForEvent[0][2], ["agent-1"]);
+  mustDiffer("the batch guard consulted under the acting agent alone", fanned.trace.calls("hasHookForEvent")[0][2], ["agent-1"]);
   const off = await compare(
     "post-tool-batch-hooks refusal control",
     { registered: false },
@@ -969,7 +1263,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 6), ...forwarded(p, constants)),
   );
-  mustDiffer("an unregistered batch that still called the executor", off.trace.executor.length, 1);
+  mustDiffer("an unregistered batch that still called the executor", off.trace.count("executor"), 1);
 }
 
 // ---- UserPromptSubmit (upstream `bSe`) -------------------------------------
@@ -1000,7 +1294,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { timeoutMs: number };
+  const request = trace.calls("executor")[0][0] as { timeoutMs: number };
   mustDiffer("the shared 600 s hook timeout used instead of this event's own 30 s", request.timeoutMs, DEFAULT_HOOK_TIMEOUT_MS);
   mustDiffer("the prompt-submit timeout drifting from the pinned declaration", PROMPT_SUBMIT_TIMEOUT_MS, 60000);
   const off = await compare(
@@ -1010,8 +1304,8 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  mustDiffer("an unregistered submission that still called the executor", off.trace.executor.length, 1);
-  mustDiffer("the fan-out rule applied to a prompt submission", off.trace.hasHookForEvent[0][2], ["session-1"]);
+  mustDiffer("an unregistered submission that still called the executor", off.trace.count("executor"), 1);
+  mustDiffer("the fan-out rule applied to a prompt submission", off.trace.calls("hasHookForEvent")[0][2], ["session-1"]);
 }
 
 // ---- Stop / SubagentStop (upstream `y9`) -----------------------------------
@@ -1057,7 +1351,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  const subRecord = (sub.trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  const subRecord = (sub.trace.calls("executor")[0][0] as { hookInput: Record<string, unknown> }).hookInput;
   eq("stop-hooks SubagentStop field order", Object.keys(subRecord), [
     "session_id",
     "transcript_path",
@@ -1081,9 +1375,9 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  const plainRecord = (plain.trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  const plainRecord = (plain.trace.calls("executor")[0][0] as { hookInput: Record<string, unknown> }).hookInput;
   mustDiffer("the Stop arm carrying the subagent fields", Object.keys(plainRecord), Object.keys(subRecord));
-  mustDiffer("the Stop arm resolving an agent transcript path", plain.trace.agentTranscriptPath.length, 1);
+  mustDiffer("the Stop arm resolving an agent transcript path", plain.trace.count("agentTranscriptPath"), 1);
   const toolOnlyRun = await compare(
     "stop-hooks empty-text control",
     { registered: true },
@@ -1091,7 +1385,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[10][2]),
     (p) => owned(...(cases[10][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  const emptyTextRecord = (toolOnlyRun.trace.executor[0][0] as { hookInput: { last_assistant_message?: unknown } }).hookInput;
+  const emptyTextRecord = (toolOnlyRun.trace.calls("executor")[0][0] as { hookInput: { last_assistant_message?: unknown } }).hookInput;
   mustDiffer("an empty last-assistant text carried as \"\" rather than dropped", emptyTextRecord.last_assistant_message, "");
   const reactionsOff = await compare(
     "stop-hooks reactions control",
@@ -1100,7 +1394,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[7][2]),
     (p) => owned(...(cases[7][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  mustDiffer("the reactions phase running without a registered function hook", reactionsOff.trace.executor.length, 1);
+  mustDiffer("the reactions phase running without a registered function hook", reactionsOff.trace.count("executor"), 1);
   const delegated = await compare(
     "stop-hooks delegated control",
     { registered: true },
@@ -1108,7 +1402,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[4][2]),
     (p) => owned(...(cases[4][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  mustDiffer("a delegated-observation subagent that still consulted the registry", delegated.trace.hasHookForEvent.length, 1);
+  mustDiffer("a delegated-observation subagent that still consulted the registry", delegated.trace.count("hasHookForEvent"), 1);
   const managed = await compare(
     "stop-hooks web-fetch control",
     { registered: false },
@@ -1116,7 +1410,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[5][2]),
     (p) => owned(...(cases[5][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  mustDiffer("the web-fetch subagent running with settings hooks as well", (managed.trace.executor[0][0] as { managedHooksOnly: boolean }).managedHooksOnly, false);
+  mustDiffer("the web-fetch subagent running with settings hooks as well", (managed.trace.calls("executor")[0][0] as { managedHooksOnly: boolean }).managedHooksOnly, false);
 }
 
 // ---- SubagentStart (upstream `kUt`) ----------------------------------------
@@ -1145,10 +1439,10 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { matchQuery: string; toolUseID: string };
+  const request = trace.calls("executor")[0][0] as { matchQuery: string; toolUseID: string };
   mustDiffer("the agent ID used as the match query instead of the agent TYPE", request.matchQuery, "agent-1");
   mustDiffer("a real tool-use id expected where this event mints one", request.toolUseID, "tu-1");
-  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.count("hasHookForEvent"), 1);
 }
 
 // ---- MessageDisplay (upstream `Zqe`) ---------------------------------------
@@ -1177,11 +1471,11 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { toolUseID: string; forceSyncExecution: boolean; suppressPerInvocationTelemetry: boolean };
+  const request = trace.calls("executor")[0][0] as { toolUseID: string; forceSyncExecution: boolean; suppressPerInvocationTelemetry: boolean };
   mustDiffer("the correlation id built from the turn rather than the message", request.toolUseID, "turn-1-3");
   mustDiffer("display hooks deferred rather than run synchronously", request.forceSyncExecution, false);
   mustDiffer("per-invocation telemetry left on for a per-message event", request.suppressPerInvocationTelemetry, false);
-  mustDiffer("the common prefix built with a permission mode this event does not have", trace.base[0].length, 4);
+  mustDiffer("the common prefix built with a permission mode this event does not have", trace.calls("base")[0].length, 4);
 }
 
 // ============================================================================
@@ -1225,7 +1519,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 10), ...forwarded(p, constants)),
   );
-  const record = (trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  const record = (trace.calls("executor")[0][0] as { hookInput: Record<string, unknown> }).hookInput;
   eq("post-tool-failure-hooks field order", Object.keys(record), [
     "session_id",
     "transcript_path",
@@ -1249,7 +1543,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     "session_id", "transcript_path", "cwd", "prompt_id", "permission_mode", "effort",
     "hook_event_name", "tool_name", "tool_input", "error", "tool_use_id", "is_interrupt", "duration_ms",
   ].join(","));
-  const request = trace.executor[0][0] as Record<string, unknown>;
+  const request = trace.calls("executor")[0][0] as Record<string, unknown>;
   mustDiffer("a managed-hooks option forwarded, which this dispatcher does not take", "managedHooksOnly" in request, true);
   const refused = await compare(
     "post-tool-failure-hooks refusal control",
@@ -1258,8 +1552,8 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 10), ...forwarded(p, constants)),
   );
-  mustDiffer("a refusal that still built the record", refused.trace.base.length, 1);
-  mustDiffer("a refusal that still called the executor", refused.trace.executor.length, 1);
+  mustDiffer("a refusal that still built the record", refused.trace.count("base"), 1);
+  mustDiffer("a refusal that still called the executor", refused.trace.count("executor"), 1);
 }
 
 // ---- SessionStart (upstream `vUt`) ------------------------------------------
@@ -1296,7 +1590,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { session: { id: string }; hookInput: Record<string, unknown> };
+  const request = trace.calls("executor")[0][0] as { session: { id: string }; hookInput: Record<string, unknown> };
   eq("session-start-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1314,7 +1608,7 @@ const context = (over: Record<string, unknown> = {}) => ({
   // still given the real session. Collapsing them either stamps the wrong id or
   // runs the hooks against the wrong registry, and nothing else here sees it.
   mustDiffer("the executor handed the synthetic session instead of the real one", request.session.id, "coerced:other-session");
-  mustDiffer("the title derived from the REAL session id rather than the record's", trace.sessionTitle[0], ["session-1"]);
+  mustDiffer("the title derived from the REAL session id rather than the record's", trace.calls("sessionTitle")[0], ["session-1"]);
   const spread = await compare(
     "session-start-hooks spread control",
     { registered: true },
@@ -1322,7 +1616,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[4][2]),
     (p) => owned(...(cases[4][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
   );
-  const spreadRecord = (spread.trace.executor[0][0] as { hookInput: Record<string, unknown> }).hookInput;
+  const spreadRecord = (spread.trace.calls("executor")[0][0] as { hookInput: Record<string, unknown> }).hookInput;
   mustDiffer("the extra fields merged BEFORE the named ones, so the named one wins", spreadRecord.model, "claude-opus-5");
   const threw = await compare(
     "session-start-hooks hold control",
@@ -1331,7 +1625,22 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[7][2]),
     (p) => owned(...(cases[7][2] as unknown[]).slice(0, 12), ...forwarded(p, constants)),
   );
-  mustDiffer("the hold left un-released when the executor throws", threw.trace.activity, [`begin(hook_exec,${ACTIVITY_HOLD})`]);
+  // The same intent as before the log rewrite — a `finally` that does not run
+  // leaves the hold taken — restated against the lifecycle edges rather than
+  // against a formatted string. The hold's REASON is still graded: it rides in
+  // the `beginActivity` event's arguments inside the ordered log, which is
+  // compared whole. And this control now has a second, stronger reading below:
+  // `unpaired()` states the leak as a PROPERTY of one run, which no comparison
+  // between two leaking sides could ever state.
+  // The same intent as before the log rewrite — a `finally` that does not run
+  // leaves the hold taken — restated against the lifecycle EDGES rather than
+  // against a formatted string. The hold's reason still rides in the
+  // `beginActivity` event's arguments inside the compared log, and it has its
+  // own constant control on the next line. The stronger reading is the property
+  // rather than this comparison: `unpaired()` states the leak over ONE run,
+  // which no comparison between two equally leaking sides could state.
+  mustDiffer("the hold left un-released when the executor throws", threw.trace.lifecycle(), ["acquire:activity:hook_exec"]);
+  mustDiffer("the hold released without ever being taken", threw.trace.lifecycle(), ["release:activity:hook_exec"]);
   mustDiffer("the hold's reason string drifting from the pinned declaration", ACTIVITY_HOLD, "hook-hold");
   mustDiffer("the timeout constant drifting from the pinned declaration", DEFAULT_HOOK_TIMEOUT_MS, 60000);
 }
@@ -1375,7 +1684,10 @@ const context = (over: Record<string, unknown> = {}) => ({
     (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
     (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
   );
-  eq("session-end-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+  // …and on an AWAITING dispatcher, whose ports differ from the streaming
+  // family's and whose stderr reporting is interleaved with them.
+  orderControl("session-end-hooks: the ordered log sees a port swap the per-port lists cannot", trace);
+  eq("session-end-hooks field order", Object.keys((trace.calls("executorAwait")[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
     "session_id",
     "transcript_path",
     "cwd",
@@ -1385,22 +1697,22 @@ const context = (over: Record<string, unknown> = {}) => ({
     "hook_event_name",
     "reason",
   ]);
-  mustDiffer("a failed hook reported without naming the command that failed", trace.stderr, ["SessionEnd hook failed: it broke\n"]);
-  mustDiffer("the registry left uncleared", trace.registryClear, []);
+  mustDiffer("a failed hook reported without naming the command that failed", trace.writes("stderr"), ["SessionEnd hook failed: it broke\n"]);
+  mustDiffer("the registry left uncleared", trace.calls("registryClear"), []);
   const quiet = await compareValue(
     "session-end-hooks silence control",
     specs[2][1],
     (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
     (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
   );
-  mustDiffer("a SUCCEEDED hook's output written to stderr as well", quiet.trace.stderr.length, 1);
+  mustDiffer("a SUCCEEDED hook's output written to stderr as well", quiet.trace.count("stderr"), 1);
   const empty = await compareValue(
     "session-end-hooks teardown control",
     specs[0][1],
     (p) => upstream(SESSION, "clear", optionSets[0][1](p)),
     (p) => owned(SESSION, "clear", optionSets[0][1](p), ...forwarded(p, constants)),
   );
-  mustDiffer("the clear skipped when no hook ran", empty.trace.registryClear, []);
+  mustDiffer("the clear skipped when no hook ran", empty.trace.calls("registryClear"), []);
   mustDiffer("this event's own 1500 ms timeout replaced by the shared one", SESSION_END_TIMEOUT_MS, DEFAULT_HOOK_TIMEOUT_MS);
 }
 
@@ -1445,7 +1757,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[9][2]),
     (p) => owned(...(cases[9][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  eq("pre-compact-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+  eq("pre-compact-hooks field order", Object.keys((trace.calls("executorAwait")[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
     "session_id",
     "transcript_path",
     "cwd",
@@ -1542,7 +1854,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[7][2]),
     (p) => owned(...(cases[7][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  eq("post-compact-hooks field order", Object.keys((trace.executorAwait[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
+  eq("post-compact-hooks field order", Object.keys((trace.calls("executorAwait")[0][0] as { hookInput: Record<string, unknown> }).hookInput), [
     "session_id",
     "transcript_path",
     "cwd",
@@ -1574,7 +1886,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[8][2]),
     (p) => owned(...(cases[8][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  mustDiffer("the delegated arm still running the hooks", obs.trace.executorAwait.length, 1);
+  mustDiffer("the delegated arm still running the hooks", obs.trace.count("executorAwait"), 1);
 }
 
 // ---- Notification (upstream `EE`) — the family's simplest awaited one --------
@@ -1611,7 +1923,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[3][2]),
     (p) => owned(...(cases[3][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
   );
-  const request = trace.executorAwait[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
+  const request = trace.calls("executorAwait")[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
   eq("notification-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1625,7 +1937,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     "notification_type",
   ]);
   mustDiffer("the message used as the match query instead of the notification TYPE", request.matchQuery, "a tool needs your approval");
-  mustDiffer("the common prefix built with a permission mode this event does not pass", trace.base[0].length, 4);
+  mustDiffer("the common prefix built with a permission mode this event does not pass", trace.calls("base")[0].length, 4);
   const defaulted = await compareValue(
     "notification-hooks timeout-default control",
     cases[0][1],
@@ -1634,7 +1946,7 @@ const context = (over: Record<string, unknown> = {}) => ({
   );
   mustDiffer(
     "the timeout left undefined when the caller passes no options",
-    (defaulted.trace.executorAwait[0][0] as { timeoutMs: unknown }).timeoutMs,
+    (defaulted.trace.calls("executorAwait")[0][0] as { timeoutMs: unknown }).timeoutMs,
     undefined,
   );
 }
@@ -1669,7 +1981,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[6][2]),
     (p) => owned(...(cases[6][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  const request = trace.executorAwait[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
+  const request = trace.calls("executorAwait")[0][0] as { matchQuery: string; hookInput: Record<string, unknown> };
   eq("instructions-loaded-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1693,7 +2005,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 5), ...forwarded(p, constants)),
   );
-  const bareRequest = bare.trace.executorAwait[0][0] as { timeoutMs: unknown; hookInput: Record<string, unknown> };
+  const bareRequest = bare.trace.calls("executorAwait")[0][0] as { timeoutMs: unknown; hookInput: Record<string, unknown> };
   mustDiffer("the three optional fields dropped rather than set to undefined", Object.keys(bareRequest.hookInput).length, 10);
   mustDiffer("the timeout left undefined when the caller passes no options", bareRequest.timeoutMs, undefined);
 }
@@ -1735,7 +2047,7 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[2][2]),
     (p) => owned(...(cases[2][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
   );
-  const request = trace.executorAwait[0][0] as { matchQuery: string; sessionHooks: unknown; getAppState: unknown; hookInput: Record<string, unknown> };
+  const request = trace.calls("executorAwait")[0][0] as { matchQuery: string; sessionHooks: unknown; getAppState: unknown; hookInput: Record<string, unknown> };
   eq("stop-failure-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1750,8 +2062,8 @@ const context = (over: Record<string, unknown> = {}) => ({
   ]);
   // The registration guard is called with the SESSION ID, not with the
   // permission-scoped agent fan-out every tool event uses.
-  eq("stop-failure-hooks guard arguments", trace.hasHookForEvent[0], ["StopFailure", trace.hasHookForEvent[0][1], "session-1"]);
-  mustDiffer("the guard keyed on the agent fan-out rather than the session id", trace.hasHookForEvent[0][2], ["agent-1"]);
+  eq("stop-failure-hooks guard arguments", trace.calls("hasHookForEvent")[0], ["StopFailure", trace.calls("hasHookForEvent")[0][1], "session-1"]);
+  mustDiffer("the guard keyed on the agent fan-out rather than the session id", trace.calls("hasHookForEvent")[0][2], ["agent-1"]);
   mustDiffer("the session hooks registry left off the executor request", request.sessionHooks, undefined);
   mustDiffer("the app-state reader left off the executor request", "getAppState" in request, false);
   mustDiffer("the error kind not used as the match query", request.matchQuery, "StopFailure");
@@ -1761,15 +2073,15 @@ const context = (over: Record<string, unknown> = {}) => ({
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
   );
-  mustDiffer("an unregistered session still reaching the executor", refused.trace.executorAwait.length, 1);
-  mustDiffer("an unregistered session still building a record", refused.trace.base.length, 1);
+  mustDiffer("an unregistered session still reaching the executor", refused.trace.count("executorAwait"), 1);
+  mustDiffer("an unregistered session still building a record", refused.trace.count("base"), 1);
   const obs = await compareValue(
     "stop-failure-hooks delegated-observation control",
     cases[1][1],
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 3), ...forwarded(p, constants)),
   );
-  mustDiffer("the delegated guard checked AFTER the registration guard", obs.trace.hasHookForEvent.length, 1);
+  mustDiffer("the delegated guard checked AFTER the registration guard", obs.trace.count("hasHookForEvent"), 1);
   const silent = await compareValue(
     "stop-failure-hooks empty-text control",
     cases[3][1],
@@ -1778,7 +2090,7 @@ const context = (over: Record<string, unknown> = {}) => ({
   );
   mustDiffer(
     "an empty join left as the empty string rather than coerced to undefined",
-    (silent.trace.executorAwait[0][0] as { hookInput: { last_assistant_message: unknown } }).hookInput.last_assistant_message,
+    (silent.trace.calls("executorAwait")[0][0] as { hookInput: { last_assistant_message: unknown } }).hookInput.last_assistant_message,
     "",
   );
   const unknownError = await compareValue(
@@ -1789,7 +2101,7 @@ const context = (over: Record<string, unknown> = {}) => ({
   );
   mustDiffer(
     "a missing error kind left undefined rather than falling back to 'unknown'",
-    (unknownError.trace.executorAwait[0][0] as { hookInput: { error: unknown } }).hookInput.error,
+    (unknownError.trace.calls("executorAwait")[0][0] as { hookInput: { error: unknown } }).hookInput.error,
     undefined,
   );
 }
@@ -1827,7 +2139,7 @@ for (const [row, event] of [
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 9), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { toolUseID: string; hookInput: Record<string, unknown> };
+  const request = trace.calls("executor")[0][0] as { toolUseID: string; hookInput: Record<string, unknown> };
   eq(`${row} field order`, Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1851,9 +2163,9 @@ for (const [row, event] of [
   // undefined and `agent_type` falls back to the ambient default.
   mustDiffer("a match query added, letting a matcher narrow by task", "matchQuery" in request, true);
   mustDiffer("a real tool-use id expected where this event mints one", request.toolUseID, "tu-1");
-  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.base[0].length, 4);
+  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.calls("base")[0].length, 4);
   mustDiffer("the twin's event name stamped instead of this one's", request.hookInput.hook_event_name, event === "TaskCreated" ? "TaskCompleted" : "TaskCreated");
-  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.count("hasHookForEvent"), 1);
 }
 
 // ---- PermissionRequest (upstream `Tee`) -------------------------------------
@@ -1887,7 +2199,7 @@ for (const [row, event] of [
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
+  const request = trace.calls("executor")[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
   eq("permission-request-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1900,15 +2212,15 @@ for (const [row, event] of [
     "tool_input",
     "permission_suggestions",
   ]);
-  eq("permission-request-hooks logs its entry", trace.log[0], ["executePermissionRequestHooks called for tool: Bash"]);
-  mustDiffer("the entry log dropped", trace.log.length, 0);
-  mustDiffer("a log level passed where upstream passes one argument", trace.log[0].length, 2);
+  eq("permission-request-hooks logs its entry", trace.calls("log")[0], ["executePermissionRequestHooks called for tool: Bash"]);
+  mustDiffer("the entry log dropped", trace.count("log"), 0);
+  mustDiffer("a log level passed where upstream passes one argument", trace.calls("log")[0].length, 2);
   // The only tool-scoped dispatcher that forwards the REAL tool-use id: at this
   // point the call exists and has not run, so there is something to correlate to.
   mustDiffer("a minted uuid used where the real tool-use id is in hand", request.toolUseID, "44444444-4444-4444-8444-444444444444");
   mustDiffer("the tool-use id used as the match query instead of the tool name", request.matchQuery, "toolu_2");
   mustDiffer("a tool_use_id field added to the record", "tool_use_id" in request.hookInput, true);
-  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.hasHookForEvent.length, 1);
+  mustDiffer("this dispatcher gaining a registration guard it does not have", trace.count("hasHookForEvent"), 1);
 }
 
 // ---- PermissionDenied (upstream `VNt`) --------------------------------------
@@ -1952,7 +2264,7 @@ for (const [row, event] of [
     () => upstream(...cases[1][2]),
     (p) => owned(...(cases[1][2] as unknown[]).slice(0, 8), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
+  const request = trace.calls("executor")[0][0] as { toolUseID: string; matchQuery: string; hookInput: Record<string, unknown> };
   eq("permission-denied-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -1967,10 +2279,10 @@ for (const [row, event] of [
     "reason",
   ]);
   eq("permission-denied-hooks stamps its own event", request.hookInput.hook_event_name, "PermissionDenied");
-  eq("permission-denied-hooks asks its guard once", trace.hasHookForEvent.length, 1);
+  eq("permission-denied-hooks asks its guard once", trace.count("hasHookForEvent"), 1);
   // What separates it from the sibling it is otherwise a copy of, and what a
   // twin could quietly break.
-  mustDiffer("the registration guard dropped, dispatching on every session in the world", trace.hasHookForEvent.length, 0);
+  mustDiffer("the registration guard dropped, dispatching on every session in the world", trace.count("hasHookForEvent"), 0);
   mustDiffer("a minted uuid used where the real tool-use id is in hand", request.toolUseID, "44444444-4444-4444-8444-444444444444");
   mustDiffer("the match query dropped, so a tool-scoped matcher stops narrowing", "matchQuery" in request, false);
   mustDiffer("the tool-use id used as the match query instead of the tool name", request.matchQuery, "toolu_1");
@@ -1978,7 +2290,7 @@ for (const [row, event] of [
   mustDiffer("the tool_use_id field dropped from the record, as its PermissionRequest sibling does", "tool_use_id" in request.hookInput, false);
   mustDiffer("permission_suggestions carried instead, as its sibling does", "permission_suggestions" in request.hookInput, true);
   mustDiffer("the sibling's event name stamped instead of this one's", request.hookInput.hook_event_name, "PermissionRequest");
-  mustDiffer("an entry log added, which this dispatcher does not write", trace.log.length, 1);
+  mustDiffer("an entry log added, which this dispatcher does not write", trace.count("log"), 1);
 }
 
 // ---- UserPromptExpansion (upstream `Ldt`) -----------------------------------
@@ -2011,7 +2323,7 @@ for (const [row, event] of [
     () => upstream(...cases[2][2]),
     (p) => owned(...(cases[2][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
   );
-  const request = trace.executor[0][0] as { toolUseID: string; timeoutMs: number; hookInput: Record<string, unknown> };
+  const request = trace.calls("executor")[0][0] as { toolUseID: string; timeoutMs: number; hookInput: Record<string, unknown> };
   eq("user-prompt-expansion-hooks field order", Object.keys(request.hookInput), [
     "session_id",
     "transcript_path",
@@ -2026,14 +2338,14 @@ for (const [row, event] of [
     "command_source",
     "prompt",
   ]);
-  eq("user-prompt-expansion-hooks guard keys on the session when there is no agent", trace.hasHookForEvent[0][2], "session-1");
-  mustDiffer("the guard keyed on the session id even inside a subagent", trace.hasHookForEvent[0][2], "agent-1");
+  eq("user-prompt-expansion-hooks guard keys on the session when there is no agent", trace.calls("hasHookForEvent")[0][2], "session-1");
+  mustDiffer("the guard keyed on the session id even inside a subagent", trace.calls("hasHookForEvent")[0][2], "agent-1");
   // No timeout PARAMETER: the constant is read inside the body, which makes the
   // owned copy load-bearing at runtime rather than only as a differential check.
   eq("user-prompt-expansion-hooks uses the shared timeout", request.timeoutMs, DEFAULT_HOOK_TIMEOUT_MS);
   mustDiffer("this event's timeout drifting from the shared constant", request.timeoutMs, 1000);
   mustDiffer("a match query added, letting a matcher narrow by command name", "matchQuery" in request, true);
-  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.base[0].length, 4);
+  mustDiffer("the common prefix given the tool-use context as its fourth argument", trace.calls("base")[0].length, 4);
   const agent = await compare(
     "user-prompt-expansion-hooks agent-keyed guard control",
     cases[4][1],
@@ -2041,7 +2353,7 @@ for (const [row, event] of [
     () => upstream(...cases[4][2]),
     (p) => owned(...(cases[4][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
   );
-  eq("user-prompt-expansion-hooks guard keys on the agent when there is one", agent.trace.hasHookForEvent[0][2], "agent-1");
+  eq("user-prompt-expansion-hooks guard keys on the agent when there is one", agent.trace.calls("hasHookForEvent")[0][2], "agent-1");
   const refused = await compare(
     "user-prompt-expansion-hooks refusal control",
     cases[0][1],
@@ -2049,8 +2361,8 @@ for (const [row, event] of [
     () => upstream(...cases[0][2]),
     (p) => owned(...(cases[0][2] as unknown[]).slice(0, 7), ...forwarded(p, constants)),
   );
-  mustDiffer("an unregistered session still reaching the executor", refused.trace.executor.length, 1);
-  mustDiffer("an unregistered session still minting a tool-use id", refused.trace.uuid, 1);
+  mustDiffer("an unregistered session still reaching the executor", refused.trace.count("executor"), 1);
+  mustDiffer("an unregistered session still minting a tool-use id", refused.trace.count("uuid"), 1);
 }
 
 // ---- FileChanged (upstream `CUt`) — neither async nor a generator -----------
@@ -2085,7 +2397,7 @@ for (const [row, event] of [
     () => upstream(...cases[3][2]),
     (p) => owned(...(cases[3][2] as unknown[]).slice(0, 4), ...forwarded(p, constants)),
   );
-  const call = trace.watcher[0] as [unknown, Record<string, unknown>, unknown];
+  const call = trace.calls("watcher")[0] as [unknown, Record<string, unknown>, unknown];
   eq("file-changed-hooks field order", Object.keys(call[1]), [
     "session_id",
     "transcript_path",
@@ -2103,8 +2415,8 @@ for (const [row, event] of [
   eq("file-changed-hooks calls the watcher helper with three arguments", call.length, 3);
   mustDiffer("the record wrapped in a request object, the way both executors take theirs", call[1], { hookInput: call[1] });
   mustDiffer("the event kind stamped under a different key", "change_type" in call[1], true);
-  mustDiffer("the common prefix built with a permission mode this event does not have", trace.base[0].length, 4);
-  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.executorAwait.length, 1);
+  mustDiffer("the common prefix built with a permission mode this event does not have", trace.calls("base")[0].length, 4);
+  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.count("executorAwait"), 1);
   mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
 }
 
@@ -2146,7 +2458,9 @@ for (const [row, event] of [
     () => upstream(...cases[3][2]),
     (p) => owned(...(cases[3][2] as unknown[]).slice(0, 4), ...forwarded(p, constants)),
   );
-  const call = trace.watcher[0] as [unknown, Record<string, unknown>, unknown];
+  // …and on the third shape, which reaches neither executor.
+  orderControl("cwd-changed-hooks: the ordered log sees a port swap the per-port lists cannot", trace);
+  const call = trace.calls("watcher")[0] as [unknown, Record<string, unknown>, unknown];
   eq("cwd-changed-hooks field order", Object.keys(call[1]), [
     "session_id",
     "transcript_path",
@@ -2162,7 +2476,7 @@ for (const [row, event] of [
   mustDiffer("the two ends stamped in the wrong order", [call[1].old_cwd, call[1].new_cwd], ["/b", "/a"]);
   mustDiffer("the destination stamped under the twin's key", "file_path" in call[1], true);
   mustDiffer("the event literal left as the twin's", call[1].hook_event_name, "FileChanged");
-  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.executorAwait.length, 1);
+  mustDiffer("this dispatcher reaching an executor rather than the watcher helper", trace.count("executorAwait"), 1);
   mustDiffer("the options bag dropped rather than forwarded", call[2], undefined);
 }
 
@@ -2170,9 +2484,15 @@ for (const [row, event] of [
 // Floors set to the counts this file actually reaches, so an edit that deletes
 // half the cross-product fails rather than passing faster.
 if (checks < 721) failures.push(`only ${checks} comparison(s) ran — the cross-product is incomplete`);
-if (controls < 121) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+if (controls < 134) failures.push(`only ${controls} non-vacuity control(s) ran — this file's ability to fail is unproven`);
+// The pairing property is stated on every case, so its floor is the comparison
+// count's shape: two statements (upstream and owned) per graded case, plus the
+// two synthetic ones. And `pairedCases` is the floor that matters more — a
+// property nothing ever satisfies non-vacuously is a property nobody tested.
+if (properties < 452) failures.push(`only ${properties} property statement(s) ran`);
+if (pairedCases < 11) failures.push(`only ${pairedCases} case(s) carried a lifecycle edge — the pairing property is vacuous on the rest`);
 
-console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s) ===`);
+console.log(`=== hook-dispatch parity: ${checks} comparison(s), ${controls} control(s), ${properties} property statement(s) over ${pairedCases} paired case(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 console.log(
   failures.length === 0

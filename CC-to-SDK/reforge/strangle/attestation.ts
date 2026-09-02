@@ -384,8 +384,6 @@ const ORACLE_RULECHECK =
   "strangle/permissions-parity.test.ts grades it: the rule-checker block runs the same cross-product against upstream's own bytes and compares the port trace, which is the only instrument that can separate this function from the pre-check it twins — two ladders that agree on every recorded transcript and differ in which input they read.";
 const ORACLE_ALLOWRULE =
   "strangle/permissions-parity.test.ts grades it: the allow-rule block runs the delegation over a tool that allows, one that denies, one that asks and one that throws, on both `crashIsObjection` settings, and compares the value and the trace.";
-const ORACLE_STREAK =
-  "strangle/permissions-parity.test.ts grades it: the streak block drives all three terms of the conjunction independently and asserts the short-circuit order, which no run that cannot reach the later terms could observe.";
 const ORACLE_GUARD =
   "strangle/permissions-parity.test.ts grades it: the guard block runs six modes x four context shapes x the gate, comparing every refusal against the text research/fixtures/permission-surface-<pin>.json reads out of the bundle — so a guard that gains a refusal upstream widens the case list instead of leaving a hole.";
 const ORACLE_TRANSITION =

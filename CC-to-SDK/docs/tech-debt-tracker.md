@@ -250,7 +250,7 @@ loud-failure argument this entry rests on.
 
 ---
 
-## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded — **ASSIGNED 2026-09-02 to C10.6/W7.6a, Stage 0**
+## 2026-09-01 — reforge's hooks parity trace compares per-port call lists, so cross-port INTERLEAVING is ungraded — **PAID 2026-09-02 (C10.6/W7.6a, Stage 0)**
 
 **Source:** the C8 boundary review (finding 5, logged rather than fixed) ·
 `reforge/strangle/hooks-parity.test.ts` (`Trace`, `compare`, `compareValue`).
@@ -299,8 +299,29 @@ shutdown arm awaits a promise that by construction never resolves).
 
 **Assigned 2026-09-02.** The C10.5 boundary review cut the executor implementation as its own wave
 family (campaign spec, Deferred section, "The executor cut"), and this rewrite is **C10.6/W7.6a's
-Stage 0** — scheduled *before* the first executor module rather than alongside it. The entry leaves
-this file when that stage lands.
+Stage 0** — scheduled *before* the first executor module rather than alongside it.
+
+**PAID 2026-09-02 (C10.6/W7.6a, Stage 0a).** `Trace` and `emptyTrace` are gone; `EventLog` records
+one ordered stream of `{port, args, pair?, hook?}` and the comparison is the ordered stream. What the
+entry asked for, measured rather than asserted: swapping ONE adjacent pair of differently-ported
+events in each owned log reddens **204 of the 226** log comparisons, and moves the per-port
+projection this entry described in **zero** of them — the projection is kept on the class
+(`perPort()`) precisely so the control can assert the old shape's blindness rather than claim it.
+**Both smaller edges the entry named are closed with it**: the serializer now rewrites a
+present-but-`undefined` value to a sentinel, so a carried-but-empty field and an absent one no longer
+compare equal; and a port called with `undefined` versus not called at all is now two different
+positions in one stream rather than one array length. Neither change moved a single existing
+comparison — 721 before and after — which is the honest reading that the two blindnesses were latent
+rather than load-bearing.
+
+**And the reason it was a precondition rather than a companion**, which the entry could not have
+known: `unpaired()` states "every derived signal was cleaned exactly once" as a PROPERTY of one run.
+Two sides that both leak compare equal, so no comparison — however ordered — can state it. The
+property runs on every graded case (452 statements over 11 cases that carry a lifecycle edge) and has
+six non-vacuity controls, including the executor's own shape: five hooks released and a sixth leaked.
+The multi-hook mode of design §5(a) — per-hook subsequences plus a global multiset, for `Qxt`'s
+unbounded merge — ships expressible and controlled on synthetic logs, and grades nothing until a
+multi-hook scenario exists.
 
 ## 2026-09-01 — the CwdChanged hook event is one `cd` away from a verdict, and `AUt` from recordability — **PAID 2026-09-02 (W7.5)**
 
