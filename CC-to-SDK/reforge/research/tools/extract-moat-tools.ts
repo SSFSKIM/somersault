@@ -32,12 +32,19 @@
 //      mechanism must be measured by that mechanism's definition; this fixture
 //      is where W8a inherits it.
 //
-// WHAT `--check` COMPARES. The bundle side exactly: a pin bump that moves a
-// description, re-points a builder or changes an anchor reddens here. The corpus
-// side is exact on BYTES and a FLOOR on cassette counts, deliberately: C11b adds
-// nine to eleven recordings and C11c/C11d more, and a fixture that fails every
-// time the corpus GROWS is a tax on every later wave. Growth is fine; drift is
-// not.
+// WHAT `--check` COMPARES: EVERY FIELD IT WRITES. The bundle side exactly — a
+// pin bump that moves a description, re-points a builder or changes an anchor
+// reddens here. The corpus side is exact on BYTES and on the catalog SHAPES, and
+// a FLOOR on every count that can only grow, deliberately: C11b adds nine to
+// eleven recordings and C11c/C11d more, and a fixture that fails every time the
+// corpus GROWS is a tax on every later wave. Growth is fine; drift is not.
+//
+// "Every field" is the correction rather than the design. The first version
+// compared the per-tool rows and the bundle half, so `counts`, `catalogs` and
+// `outsideW8` were stated and never read — and `bodiesWithTools` was four bodies
+// stale while this tool printed PASS and printed the stale number in the same
+// breath. EVERY NUMBER A FIXTURE STATES IS A CLAIM, and a claim nothing compares
+// is prose that looks like evidence.
 //
 // WHAT THIS IS NOT. The full tool catalog — `Y0()`'s 67 elements with a guard
 // expression apiece — is C11b's `tool-catalog-<pin>.json` and deliberately not
@@ -83,8 +90,8 @@ const W8_TOOLS = [
  * A window has to be long enough to be unique in 34 MB of minified source and
  * short enough that an interpolation boundary does not swallow a whole builder.
  * 48 characters with a 24-character stride was chosen by measurement: it
- * attributes every byte of fifteen of the twenty descriptions to a single
- * carrier, and the five it splits are exactly the five whose `prompt` composes
+ * attributes every byte of seventeen of the twenty descriptions to a single
+ * carrier, and the three it splits are exactly the three whose `prompt` composes
  * more than one declaration.
  */
 const WINDOW = 48;
@@ -92,6 +99,40 @@ const STRIDE = 24;
 
 /** The bundle escapes every non-ASCII character; an anchor must be written the same way (scout §3a). */
 const escapeNonAscii = (s: string) => s.replace(/[^\x00-\x7F]/g, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`);
+
+/**
+ * THE WAYS THE BUNDLE COULD HAVE WRITTEN THESE CHARACTERS — every quoting style,
+ * because a search over SOURCE is a search through a quoting layer.
+ *
+ * W8a's anchor lesson was "quoting is an escape layer": the same sentence reads
+ * `user's` inside a double-quoted literal and `user\'s` inside a single-quoted
+ * one, so an anchor counted in one style can be unique and point at the wrong
+ * file. The same rule holds for THIS search, and it fails worse here. A window
+ * written in one style does not merely miss its producer — it can match some
+ * other declaration that happens to quote the other way, and the fixture then
+ * records a NON-PRODUCER as a carrier. ScheduleWakeup's offset-1488 window did
+ * exactly that: its builder single-quotes the apostrophe, so the raw needle
+ * missed the builder and matched the tool's own zod `.describe(…)` copy instead,
+ * and the fixture grew a third "carrier" that is the memoized schema getter.
+ *
+ * So a window is searched for as each style would render it: the enclosing
+ * quote, the backslash and every non-ASCII character escaped, plus the control
+ * characters for the two QUOTED styles — a template literal carries its newlines
+ * literally, which is why they get a form of their own rather than a shared one.
+ * Hits are summed over the forms, so a sentence that occurs once per style stays
+ * AMBIGUOUS rather than being attributed to whichever style was tried first.
+ */
+const sourceForms = (s: string): string[] => {
+  const escaped = escapeNonAscii(s).replace(/\\(?!u[0-9a-f]{4})/g, "\\\\");
+  const controls = (t: string) => t.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+  return [
+    ...new Set([
+      controls(escaped).replace(/'/g, "\\'"),
+      controls(escaped).replace(/"/g, '\\"'),
+      escaped.replace(/`/g, "\\`").replace(/\$\{/g, "\\${"),
+    ]),
+  ];
+};
 
 export interface CatalogShape {
   /** the tool names, sorted as the engine sorts them */
@@ -273,16 +314,34 @@ function astOf(file: string, text: string): ts.SourceFile {
   return sf;
 }
 
-/** The innermost declaration-shaped node containing `at`. */
+/**
+ * The declaration that OWNS the byte at `at` — which is not the innermost one.
+ *
+ * A carrier is a unit a manifest row could excise, and a builder's local
+ * `const o = …` is not one: it is a declaration and it does contain the bytes,
+ * but nothing can splice it on its own, because excising the enclosing function
+ * takes it along. Reading the innermost declaration made CronCreate look
+ * composed of three declarations and SendMessage of two when each has a single
+ * producer, and "this description has three carriers" is a claim about the
+ * SPLICE surface rather than about the AST.
+ *
+ * So the walk keeps the OUTERMOST declaration containing the byte, with the one
+ * exception the campaign's own splice shapes require: a method of an object
+ * literal IS independently excisable — that is what the S-method transform does,
+ * and TaskOutput's description is owned that way — so an object-literal member
+ * wins over the declarator that holds the object.
+ */
 function carrierAt(sf: ts.SourceFile, at: number): ts.Node | null {
-  let found: ts.Node | null = null;
+  const enclosing: ts.Node[] = [];
   const visit = (n: ts.Node): void => {
     if (n.getStart(sf) > at || at >= n.getEnd()) return;
-    if (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) found = n;
+    if (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) enclosing.push(n);
     ts.forEachChild(n, visit);
   };
   ts.forEachChild(sf, visit);
-  return found;
+  if (enclosing.length === 0) return null;
+  const member = [...enclosing].reverse().find((n) => ts.isMethodDeclaration(n) && ts.isObjectLiteralExpression(n.parent));
+  return member ?? enclosing[0];
 }
 
 function shapeOf(n: ts.Node): Carrier["shape"] {
@@ -321,6 +380,11 @@ function literalValued(n: ts.Node): boolean | null {
  * outright; a window that occurs zero times fell across an interpolation, and a
  * window that occurs many times is prose too generic to place. Both are counted,
  * so `located / windows` is the derivation's own confidence rather than a claim.
+ *
+ * "Occurs once" is counted over every SOURCE FORM the window could have (see
+ * `sourceForms`) and resolved to the OWNING declaration (see `carrierAt`), which
+ * is what makes the count a statement about producers rather than about quoting
+ * accidents and local bindings.
  */
 function carriersFor(rendered: string): { carriers: Map<ts.Node, { file: string; hits: number }>; located: number; windows: number } {
   const graph = bundle();
@@ -329,18 +393,21 @@ function carriersFor(rendered: string): { carriers: Map<ts.Node, { file: string;
   let windows = 0;
   for (let i = 0; i + WINDOW <= rendered.length; i += STRIDE) {
     windows++;
-    const needle = escapeNonAscii(rendered.slice(i, i + WINDOW));
+    const needles = sourceForms(rendered.slice(i, i + WINDOW));
     let hitFile: string | null = null;
     let hitAt = -1;
     let hits = 0;
     for (const m of graph) {
-      let at = m.text.indexOf(needle);
-      while (at >= 0) {
-        hits++;
+      for (const needle of needles) {
+        let at = m.text.indexOf(needle);
+        while (at >= 0) {
+          hits++;
+          if (hits > 1) break;
+          hitFile = m.file;
+          hitAt = at;
+          at = m.text.indexOf(needle, at + 1);
+        }
         if (hits > 1) break;
-        hitFile = m.file;
-        hitAt = at;
-        at = m.text.indexOf(needle, at + 1);
       }
       if (hits > 1) break;
     }
@@ -577,6 +644,45 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (now.cassetteFilesAtLeast < t.cassetteFilesAtLeast) {
       problems.push(`${t.name}: presented in ${now.cassetteFilesAtLeast} cassettes, below the recorded floor of ${t.cassetteFilesAtLeast}`);
     }
+  }
+  // EVERY NUMBER THIS FIXTURE STATES IS COMPARED, and the ones that can only grow
+  // are compared as FLOORS. The first version compared the per-tool rows and the
+  // bundle half and nothing else, so `counts`, `catalogs` and `outsideW8` were
+  // written down and then never read: `bodiesWithTools` sat at a value four
+  // request bodies stale while `--check` printed PASS, because the check could
+  // not see the field it was printing. A fixture that compares a subset of its
+  // own fields is a fixture whose other fields are prose.
+  const floor = (label: string, now: number, was: number): void => {
+    if (now < was) problems.push(`${label}: ${now}, below the recorded floor of ${was}`);
+  };
+  floor("cassetteFiles", fx.counts.cassetteFiles, committed.counts.cassetteFiles);
+  floor("bodiesWithTools", fx.counts.bodiesWithTools, committed.counts.bodiesWithTools);
+  floor("catalogShapes", fx.counts.catalogShapes, committed.counts.catalogShapes);
+  // The rest of `counts` is EXACT, including `baselineCatalog`: "the catalog the
+  // most bodies carry is 22 tools" is a claim the wave's documents quote, and a
+  // corpus that moves it has moved something every one of them says.
+  for (const k of ["graphModules", "baselineCatalog", "w8Tools", "describedOnly", "carriers", "carriersAnchorable", "descriptionBytes", "anchorScans"] as const) {
+    if (fx.counts[k] !== committed.counts[k]) problems.push(`counts.${k}: ${committed.counts[k]} -> ${fx.counts[k]}`);
+  }
+  // A recorded catalog SHAPE may gain bodies and files; it may not vanish. (A
+  // NEW shape is growth and passes — that is C11b recording a tool.)
+  const shapeNow = new Map(fx.catalogs.map((c) => [c.tools.join(" "), c]));
+  for (const c of committed.catalogs) {
+    const now = shapeNow.get(c.tools.join(" "));
+    if (now === undefined) {
+      problems.push(`catalog shape of ${c.tools.length} tools (${c.tools.slice(0, 3).join(", ")}…) is no longer recorded by any body`);
+      continue;
+    }
+    floor(`catalog[${c.tools.length} tools].bodies`, now.bodies, c.bodies);
+    floor(`catalog[${c.tools.length} tools].files`, now.files, c.files);
+  }
+  // The tools OUTSIDE the W8 set are the boundary of this wave's scope, so they
+  // are checked the same way the inside is: present, and byte-identical.
+  const outsideNow = new Map(fx.outsideW8.map((o) => [o.name, o]));
+  for (const o of committed.outsideW8) {
+    const now = outsideNow.get(o.name);
+    if (now === undefined) problems.push(`${o.name}: outside the W8 set and no longer presented by any recorded body`);
+    else if (now.renderedBytes !== o.renderedBytes) problems.push(`${o.name} (outside W8): the rendered description changed (${o.renderedBytes} B -> ${now.renderedBytes} B)`);
   }
   // The bundle half is exact.
   // The exact half. `cassetteFilesAtLeast` is a floor and is compared above;

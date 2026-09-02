@@ -4,15 +4,15 @@
   "counts": {
     "graphModules": 1802,
     "cassetteFiles": 82,
-    "bodiesWithTools": 423,
+    "bodiesWithTools": 197,
     "catalogShapes": 12,
     "baselineCatalog": 22,
     "w8Tools": 20,
     "describedOnly": 16,
-    "carriers": 29,
-    "carriersAnchorable": 29,
+    "carriers": 25,
+    "carriersAnchorable": 25,
     "descriptionBytes": 36787,
-    "anchorScans": 58
+    "anchorScans": 54
   },
   "catalogs": [
     {
@@ -225,7 +225,7 @@
         "Workflow",
         "Write"
       ],
-      "bodies": 360,
+      "bodies": 134,
       "files": 59
     },
     {
@@ -426,7 +426,7 @@
       "schemaSha256": "2a274d99ce84bc250a9994d7952ff64a457cace96334495a33e0c4246f37ba01",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 102,
+      "located": 106,
       "windows": 120,
       "carriers": [
         {
@@ -449,43 +449,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 78
-        },
-        {
-          "chunk": "chunk-gnfg1bn5.js",
-          "name": "o",
-          "kind": "VariableDeclaration",
-          "bytes": 611,
-          "offset": 1845,
-          "shape": "variable-declarator",
-          "free": [
-            "e"
-          ],
-          "literalValued": false,
-          "anchor": {
-            "literal": "?`## Dur",
-            "files": 1,
-            "occurrences": 1
-          },
-          "windows": 15
-        },
-        {
-          "chunk": "chunk-gnfg1bn5.js",
-          "name": "s",
-          "kind": "VariableDeclaration",
-          "bytes": 273,
-          "offset": 2457,
-          "shape": "variable-declarator",
-          "free": [
-            "e"
-          ],
-          "literalValued": false,
-          "anchor": {
-            "literal": "le jobs ",
-            "files": 1,
-            "occurrences": 1
-          },
-          "windows": 9
+          "windows": 106
         }
       ]
     },
@@ -616,7 +580,7 @@
       "schemaSha256": "b1eec893032bf0ca96a82a3effa80b53cab40592663f255b9a36ac353d3a7de9",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 97,
+      "located": 133,
       "windows": 133,
       "carriers": [
         {
@@ -633,7 +597,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 97
+          "windows": 133
         }
       ]
     },
@@ -676,7 +640,7 @@
       "schemaSha256": "2cc3f9ef86ce57093a6f4c273c818e95b730f9b5f81c623618d3d9193ebd2c3c",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 55,
+      "located": 79,
       "windows": 79,
       "carriers": [
         {
@@ -693,7 +657,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 55
+          "windows": 79
         }
       ]
     },
@@ -705,7 +669,7 @@
       "schemaSha256": "9213e8ea54c9d2d62202b14372a16cc2acdfb4eae965a391c6e07348c4ba26de",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 23,
+      "located": 25,
       "windows": 31,
       "carriers": [
         {
@@ -724,7 +688,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 23
+          "windows": 25
         }
       ]
     },
@@ -794,7 +758,7 @@
       "schemaSha256": "94a34dab6c5d1b8b096fe5d5a2240de8ba411463cd9649b8b4200cb63021f2bb",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 101,
+      "located": 107,
       "windows": 130,
       "carriers": [
         {
@@ -813,7 +777,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 68
+          "windows": 71
         },
         {
           "chunk": "chunk-7f6rqxc5.js",
@@ -829,32 +793,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 32
-        },
-        {
-          "chunk": "chunk-fy12d89p.js",
-          "name": "EFn",
-          "kind": "VariableDeclaration",
-          "bytes": 1219,
-          "offset": 2244185,
-          "shape": "variable-declarator",
-          "free": [
-            "NL",
-            "hne",
-            "i",
-            "m",
-            "ot",
-            "q",
-            "tTe",
-            "v"
-          ],
-          "literalValued": false,
-          "anchor": {
-            "literal": "({delayS",
-            "files": 1,
-            "occurrences": 1
-          },
-          "windows": 1
+          "windows": 36
         }
       ]
     },
@@ -866,28 +805,9 @@
       "schemaSha256": "efe24484d55e0285e40340e6bcf59436564ca0c97569927c0d06f1cfc04bc6bc",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 88,
+      "located": 123,
       "windows": 140,
       "carriers": [
-        {
-          "chunk": "chunk-0ak8xf05.js",
-          "name": "o",
-          "kind": "VariableDeclaration",
-          "bytes": 2486,
-          "offset": 18661,
-          "shape": "variable-declarator",
-          "free": [
-            "Yo",
-            "Ys"
-          ],
-          "literalValued": false,
-          "anchor": {
-            "literal": "()?`\n\n##",
-            "files": 1,
-            "occurrences": 1
-          },
-          "windows": 69
-        },
         {
           "chunk": "chunk-0ak8xf05.js",
           "name": "We",
@@ -905,7 +825,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 19
+          "windows": 123
         }
       ]
     },
@@ -917,7 +837,7 @@
       "schemaSha256": "05ec1bd6f1f74730a9af44aae7957cdd10e243d946f3e0c19b0ea18f598abc14",
       "cassetteFilesAtLeast": 6,
       "variants": 1,
-      "located": 50,
+      "located": 52,
       "windows": 88,
       "carriers": [
         {
@@ -936,7 +856,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 50
+          "windows": 52
         }
       ]
     },
@@ -1066,7 +986,7 @@
       "schemaSha256": "41f3183bd7eac231405d45505e803f8ba44d527cdca7e1c8af6c3b15c18b1e78",
       "cassetteFilesAtLeast": 6,
       "variants": 1,
-      "located": 64,
+      "located": 88,
       "windows": 92,
       "carriers": [
         {
@@ -1083,7 +1003,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 64
+          "windows": 88
         }
       ]
     },
@@ -1095,7 +1015,7 @@
       "schemaSha256": "d070e01fe6735311ea5c0669121b189acc8b70290dd2ea2a4e99b4be208f7bf9",
       "cassetteFilesAtLeast": 82,
       "variants": 1,
-      "located": 110,
+      "located": 128,
       "windows": 144,
       "carriers": [
         {
@@ -1114,7 +1034,7 @@
             "files": 1,
             "occurrences": 1
           },
-          "windows": 102
+          "windows": 120
         },
         {
           "chunk": "chunk-s9vr7jq9.js",
@@ -1152,17 +1072,18 @@
         },
         {
           "chunk": "chunk-3kxn5jvk.js",
-          "name": "O",
-          "kind": "VariableDeclaration",
-          "bytes": 82,
-          "offset": 124716,
-          "shape": "variable-declarator",
+          "name": "Ct",
+          "kind": "FunctionDeclaration",
+          "bytes": 259,
+          "offset": 124575,
+          "shape": "free-function",
           "free": [
-            "x"
+            "St",
+            "_t"
           ],
-          "literalValued": false,
+          "literalValued": null,
           "anchor": {
-            "literal": "?' The u",
+            "literal": "deline:\"",
             "files": 1,
             "occurrences": 1
           },
