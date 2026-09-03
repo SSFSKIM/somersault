@@ -64,6 +64,13 @@ export function lexemeClass(v: string): string {
   // control requests `reforge-<what>`. Classified so it stops arriving as an
   // unclassified value under a mapped key.
   if (/^reforge-[a-z0-9_-]+$/.test(v)) return "harness-literal";
+  // The SESSION SLUG: the name the engine mints per run and writes into the
+  // envelope of every record after a compaction. Its last two components are
+  // random words and what precedes them is either one more random word
+  // (`curious-yawning-pebble`) or a prompt-derived title
+  // (`use-the-read-tool-humming-bentley`) — a run-scoped identifier that looks
+  // nothing like one, and the reason the `slug` rule has no value guard.
+  if (/^[a-z0-9]+(-[a-z0-9]+){2,}$/.test(v)) return "session-slug";
   if (/^[0-9a-f]{64}$/.test(v)) return "sha256";
   return "other";
 }

@@ -157,8 +157,11 @@ export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
   //    mapped because it is a fact about THIS MACHINE that would otherwise put an
   //    operator's home directory into every state-surface finding, and because
   //    `src/state.ts` lifts it out of the entry path deliberately so this map can
-  //    reach the path string too. IT IS THE ONE KEY WITH A VALUE GUARD (below),
-  //    because the property name is OVERLOADED upstream.
+  //    reach the path string too. THE PROPERTY NAME IS OVERLOADED: the same key
+  //    carries the project key here, a per-run three-word name in the envelope of
+  //    every record after a compaction, and an artifact name in records the
+  //    headless corpus never reaches. All three are mapped; see
+  //    `RUN_ID_VALUE_GUARDS` below for what that costs and what bounds it.
   "parentUuid",
   "logicalParentUuid",
   "leafUuid",
@@ -176,22 +179,41 @@ export const RUN_ID_ARRAY_KEYS: ReadonlySet<string> = new Set(["uuids", "all_uui
 const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >= 6;
 
 /**
- * Per-key VALUE guards. Empty except for one entry, and that entry is a measured
- * correction to the rule above rather than a precaution.
+ * Per-key VALUE guards. EMPTY, and it took two corrections to get here.
  *
- * `slug` is two different fields upstream. In the message envelope it is the
- * project key — the cwd with its separators flattened, so it always begins with
- * a separator-turned-dash. In the artifact records it is an ARTIFACT slug
- * (`artifactRead:{slug,ver}`, the `artifact-changed` queue events), which is a
- * NAME and therefore behaviour: two engines naming different artifacts must
- * diff. Found by the run-id-shapes census, which reported 124 `slug` values in
- * no known lexeme class alongside 2,531 project keys.
+ * `slug` is not one field. The census found 124 values under it in no known
+ * lexeme class beside 2,531 project keys, and the first reading of that — the
+ * artifact records (`artifactRead:{slug,ver}`, the `artifact-changed` queue
+ * events) name an ARTIFACT, and a name is behaviour — produced a guard that
+ * mapped only values beginning with the flattened path separator. The reading
+ * was wrong about which field the 124 were. Measured on a compacted transcript:
+ * every record AFTER a compact_boundary carries `slug: "encapsulated-noodling-neumann"`,
+ * a three-word name the engine mints PER RUN, and the guard left it unmapped —
+ * which reddened all seven compaction-bearing corpus scenarios on the state
+ * surface and, through them, two dark liveness rows whose covering scenarios
+ * they are.
  *
- * Without the guard the map would bind those names and an engine that touched a
- * DIFFERENT artifact would grade identical — the wrong-match direction §3.4
- * calls the unsafe one, arriving through a key rather than a shape.
+ * WHAT MAPPING THE WHOLE VALUE COSTS, since a partial scrub is not available:
+ * the slug's leading component is a PROMPT-DERIVED TITLE when the session has
+ * one (`use-the-read-tool-humming-bentley`) and one more random word when it
+ * does not (`curious-yawning-pebble`), so the plan-file rule in
+ * `src/canonical.ts` — keep the prefix, scrub the two random words — is not
+ * stable here: it would leave a random adjective in place on every untitled
+ * session. Mapping the whole value therefore hides which prompt a session was
+ * named after. That claim is not lost, it moves: the title path is C12c's
+ * (`saveCustomTitle` / `saveAiGeneratedTitle`) and belongs in that wave's
+ * contract test, where it can be graded directly instead of inferred from a
+ * scrubbed name.
+ *
+ * The other residual risk is recorded rather than guarded: an artifact slug IS a name, and mapping it would let two engines
+ * naming different artifacts grade identical. It is bounded today by
+ * reachability — no recorded body or transcript in the corpus contains an
+ * artifact record, which is what the census's 124 turned out NOT to be — and the
+ * one-to-one map keeps the weaker claim alive regardless (an engine that used
+ * two slugs where the oracle used one still diffs). Whichever wave makes the
+ * artifact family reachable re-adjudicates this rule.
  */
-const RUN_ID_VALUE_GUARDS: Record<string, RegExp> = { slug: /^-[A-Za-z0-9]/ };
+const RUN_ID_VALUE_GUARDS: Record<string, RegExp> = {};
 
 function collectRunIds(v: unknown, into: Map<string, string>, keys: ReadonlySet<string> = RUN_ID_KEYS): void {
   if (Array.isArray(v)) {

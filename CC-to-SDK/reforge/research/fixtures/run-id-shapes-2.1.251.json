@@ -16,7 +16,7 @@
       "lexemes": [
         {
           "class": "a+16hex",
-          "observedAtLeast": 37,
+          "observedAtLeast": 33,
           "from": [
             "stored-envelope",
             "transcripts"
@@ -82,7 +82,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 190,
+          "observedAtLeast": 168,
           "from": [
             "stored-envelope"
           ]
@@ -139,7 +139,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 1481,
+          "observedAtLeast": 1279,
           "from": [
             "stored-envelope"
           ]
@@ -152,7 +152,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 451,
+          "observedAtLeast": 382,
           "from": [
             "stored-envelope"
           ]
@@ -185,7 +185,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 2531,
+          "observedAtLeast": 2226,
           "from": [
             "stored-envelope"
           ]
@@ -210,15 +210,15 @@
       "arrayValued": false,
       "lexemes": [
         {
-          "class": "other",
-          "observedAtLeast": 124,
+          "class": "path-slug",
+          "observedAtLeast": 2226,
           "from": [
             "stored-envelope"
           ]
         },
         {
-          "class": "path-slug",
-          "observedAtLeast": 2531,
+          "class": "session-slug",
+          "observedAtLeast": 140,
           "from": [
             "stored-envelope"
           ]
@@ -264,7 +264,7 @@
       "lexemes": [
         {
           "class": "uuid-v4",
-          "observedAtLeast": 3598,
+          "observedAtLeast": 3374,
           "from": [
             "stored-envelope",
             "transcripts"
@@ -318,6 +318,6 @@
   ],
   "sources": {
     "transcriptFiles": 213,
-    "censusResets": 169
+    "censusResets": 148
   }
 }

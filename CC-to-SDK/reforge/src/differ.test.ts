@@ -288,27 +288,28 @@ for (const [key, mutate, defect] of [
   check(`${key}: deleting the rule from the map makes two healthy runs DIFFER (the rule is load-bearing)`, withoutKey(key, stored(P), stored(Q)));
 }
 
-// THE `slug` RULE'S VALUE GUARD. Upstream overloads the property name: in the
-// message envelope it is the project key, in the artifact records it is the
-// NAME of an artifact — and a name is behaviour. Found by the run-id-shapes
-// census (124 values in no known lexeme, next to 2,531 project keys).
+// THE `slug` RULE, AND THE OVERLOAD THAT MADE IT TWO CORRECTIONS. The property
+// name carries the project key, a per-run three-word name written into the
+// envelope of every record after a compaction, and (in records the headless
+// corpus never reaches) an artifact name. All three are mapped; what survives is
+// the one-to-one map's weaker claim, which is asserted here.
 check(
-  "an ARTIFACT slug is not a project key, so it is not mapped and still discriminates",
-  differs(
-    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: P.session }],
-    [{ type: "artifact-changed", slug: "annual-report", sessionId: Q.session }],
-  ),
-);
-check(
-  "…while two runs touching the SAME artifact still agree",
+  "the per-run three-word slug a compaction mints is mapped, so two runs agree",
   !differs(
-    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: P.session }],
-    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: Q.session }],
+    [{ type: "user", slug: "encapsulated-noodling-neumann", sessionId: P.session }],
+    [{ type: "user", slug: "linear-launching-squirrel", sessionId: Q.session }],
   ),
 );
 check(
-  "…and the project key, which begins with the flattened separator, is still mapped",
+  "…and the project key, which begins with the flattened separator, is mapped too",
   !differs([{ type: "user", slug: P.slug, sessionId: P.session }], [{ type: "user", slug: Q.slug, sessionId: Q.session }]),
+);
+check(
+  "…while an engine that used TWO slugs where the oracle used one still diffs",
+  differs(
+    [{ type: "user", slug: "encapsulated-noodling-neumann", sessionId: P.session }, { type: "user", slug: "encapsulated-noodling-neumann", sessionId: P.session }],
+    [{ type: "user", slug: "linear-launching-squirrel", sessionId: Q.session }, { type: "user", slug: "ancient-splashing-wall", sessionId: Q.session }],
+  ),
 );
 
 // MUST-SURVIVE NEIGHBOURS. Each is the same lexeme as a mapped key, under a key
