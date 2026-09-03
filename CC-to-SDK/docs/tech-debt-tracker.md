@@ -668,3 +668,7 @@ NOT a `primitive` — where no adapter assertion would catch it — without anyt
 oracle, duplicating the manifest's own `derive` regexes to buy a check the adapter already performs
 per request. The honest fix is documentation, which this entry is. Revisit if a prelude ever declares
 a non-`primitive` capture from an owned value — that one would be a real hole.
+
+## 2026-09-03 — `twn-claim-shutdown` / `twn-release-shutdown-claim` darkOver is two of three signal paths
+
+Found by the C16b fix-wave verification (pre-existing, not introduced by the fix range). Both rows declare `darkOver: [sigterm-mid-turn, sighup-mid-turn]`; the D2 principle (the population is all three headless signal paths) applies the same way. Defensible today because their darkness rests on interactive-only callers, but the honest population is three. Fix is a one-line widening of each row; it needs a gate run to grade, so it rides on the next gate-running wave (C12a) rather than a standalone three-hour run. Close this entry when that gate lands with `dark over 3 scenario(s)` on both rows.
