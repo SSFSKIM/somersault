@@ -2,17 +2,25 @@
 // streaming-input channel (for multi-turn scenarios that must wait for a result
 // before sending the next user message), sandbox reset, and a query driver.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { ENGINE_VERSION } from "./pin.js";
+import { censusConfigDir } from "./observed.js";
+import { applyPrecondition, EMPTY_PRECONDITION, wipeConfigDir, type ConfigPrecondition } from "./precondition.js";
 import { join } from "node:path";
 import { query, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { CONFIG_DIR, SANDBOX, sdkEnv } from "./runTurn.js";
+import { CONFIG_DIR, REFORGE_ROOT, SANDBOX, sdkEnv } from "./runTurn.js";
 import type { EngineEnvKnobs, EnvMode } from "./env.js";
 import type { FaultKind } from "./faults.js";
 import type { RecordInjector } from "./proxy.js";
+
+export { EMPTY_PRECONDITION, emptyPreconditionFor, projectKeyFor, type ConfigPrecondition, type FsFault, type FsFaultKind, type SeedFile } from "./precondition.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
 // it). Re-exported for callers that import it from here.
 export { CONFIG_DIR };
+
+/** Where `src/observed.ts` accumulates what each reset saw before wiping it (derived; gitignored). */
+export const CONFIG_CENSUS_PATH = join(REFORGE_ROOT, "build", "config-observed.json");
 
 export interface ScenarioContext {
   /** absolute path of the engine wrapper under test */
@@ -74,6 +82,17 @@ export interface Scenario {
    * requests recorded after it are the ones it really made.
    */
   recordInject?: RecordInjector;
+  /**
+   * The DECLARED state of the harness config dir before this scenario runs
+   * (`src/precondition.ts`). Absent means `EMPTY_PRECONDITION` — which is itself
+   * a declaration, not an absence: the reset seeds the documented baseline.
+   *
+   * The runner records what it applied next to the cassette and applies THAT on
+   * replay, so a replay reproduces the filesystem the recording was made
+   * against; a declaration that has since changed is reported as a finding
+   * rather than silently re-recorded.
+   */
+  precondition?: ConfigPrecondition;
 }
 
 // --- small assertion helpers for scenario checks ----------------------------
@@ -112,22 +131,42 @@ export function baseOptions(ctx: ScenarioContext): Options {
 }
 
 /**
- * Wipe the shared sandbox cwd so every engine run sees the same filesystem.
+ * Reset the machine to a DECLARED state: wipe the sandbox cwd, wipe everything
+ * the engine wrote into the harness config dir, then seed what the scenario's
+ * precondition declares (`src/precondition.ts`).
  *
- * THE PLAN DIRECTORY GOES TOO, and it is not in the sandbox. Plan mode makes the
- * engine render a plan-file preamble into the system prompt whose text depends on
- * whether that file already exists, and the file lands in the harness CONFIG dir
- * rather than the cwd — so a plan-mode recording that writes one leaves the next
- * run a different prompt and a `Write` that comes back "File has not been read
- * yet". Measured: the mode walk's plan turn recorded a successful write and then
- * replayed as a tool error, three requests missing their body hash and being
- * served positionally. Engine state a run creates has to be reset with the
- * sandbox, wherever the engine happens to keep it.
+ * THE CONFIG DIR GOES TOO, and that is C12a/W9a's change. The principle was
+ * already written here and applied to one directory: plan mode makes the engine
+ * render a plan-file preamble whose text depends on whether that file already
+ * exists, and the file lands in the config dir rather than the cwd — so a
+ * plan-mode recording that wrote one left the next run a different prompt and a
+ * `Write` that came back "File has not been read yet". Measured then; the
+ * sentence it produced was "engine state a run creates has to be reset with the
+ * sandbox, wherever the engine happens to keep it", and `plans/` was the only
+ * place anyone had checked.
+ *
+ * The rest of that state had been accumulating since W0: 1,087 task directories,
+ * 3,939 empty `session-env/` directories, 412 session transcripts, 247 shell
+ * snapshots, and a `.claude.json` whose `skillUsage` counter is monotonic across
+ * the whole corpus because nothing ever reset it. None of it is a controlled
+ * input, and the config half of the state surface (§3.2) cannot grade a
+ * directory whose contents are three days of history.
+ *
+ * The wipe is total because CONFIG_DIR is entirely derived — nothing is
+ * committed there and the engine creates what it needs. What the ENGINE writes
+ * is nonetheless a measured population rather than an assumption: every reset
+ * censuses the tree before deleting it (`src/observed.ts`), and
+ * `research/tools/extract-config-inventory.ts --check` holds that census against
+ * the pinned inventory. That check is the tripwire for the state surface's own
+ * blind spot — its config root is an INCLUDE-LIST, so a pin that started writing
+ * a seventh family would otherwise be seen by nothing.
  */
-export function resetSandbox(): void {
+export function resetSandbox(precondition: ConfigPrecondition = EMPTY_PRECONDITION): void {
   mkdirSync(SANDBOX, { recursive: true });
   for (const entry of readdirSync(SANDBOX)) rmSync(join(SANDBOX, entry), { recursive: true, force: true });
-  rmSync(join(CONFIG_DIR, "plans"), { recursive: true, force: true });
+  censusConfigDir(CONFIG_DIR, CONFIG_CENSUS_PATH, ENGINE_VERSION);
+  wipeConfigDir(CONFIG_DIR);
+  applyPrecondition(CONFIG_DIR, precondition, ENGINE_VERSION);
 }
 
 /** Drive a query to completion, capturing every SDK message. */

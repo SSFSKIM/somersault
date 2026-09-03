@@ -72,7 +72,9 @@ async function writeThenResume(
   resumer: string,
   tag: string,
 ): Promise<{ sessionId: string; files: string[]; wrote: unknown[]; resumed: unknown[] }> {
-  rmSync(projectsDir, { recursive: true, force: true });
+  // `resetSandbox` now wipes the whole config dir and seeds the declared
+  // precondition (C12a/W9a), so the ad-hoc projects-dir delete this suite used
+  // to need is gone — it was the harness's only other precondition primitive.
   resetSandbox();
   return withSharedProxy(tag, async (mk) => {
     const w = mk();

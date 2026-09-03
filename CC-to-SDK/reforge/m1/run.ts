@@ -9,11 +9,11 @@
 // engine-ts exists, every diff is a reimplementation defect.
 //
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
-import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { EMPTY_PRECONDITION, resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "../src/harness.js";
 import { deriveFaultCassette } from "../src/faults.js";
 import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { gateCacheCheck } from "../src/leakcheck.js";
@@ -65,7 +65,7 @@ interface RunResult {
   ok: boolean;
 }
 
-async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string): Promise<RunResult> {
+async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string, precondition: ConfigPrecondition): Promise<RunResult> {
   const observedFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}-observed-${side}.jsonl`);
   rmSync(observedFile, { force: true });
   const proxy =
@@ -77,7 +77,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
     collect: (event, payload) => events.push({ event, payload }),
     mode, // X6: record passes the one selected credential; replay passes the placeholder
   };
-  resetSandbox();
+  resetSandbox(precondition);
   let messages: unknown[];
   try {
     messages = await s.run(ctx);
@@ -213,8 +213,9 @@ async function oracleVariance(
   s: Scenario,
   cassette: string,
   a: RunResult,
+  applied: ConfigPrecondition,
 ): Promise<{ transcripts: OracleVariance; events: OracleVariance; requests: OracleVariance; state: OracleVariance; total: number }> {
-  const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2");
+  const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2", applied);
   const n1 = makeRunNormalizer(a.messages);
   const n2 = makeRunNormalizer(a2.messages);
   const transcripts = varianceOf(diffTranscripts(a.messages, a2.messages));
@@ -241,6 +242,23 @@ for (const s of SCENARIOS) {
   console.log(`\n━━━ ${s.tag} — ${s.title} ━━━`);
   const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
 
+  // THE PRECONDITION IS PART OF THE RECORDING (C12a/W9a). The scenario DECLARES
+  // one; the cassette carries the one that was actually applied when it was
+  // recorded; a replay applies the recorded one, because a cassette answers the
+  // requests an engine made against a particular filesystem and replaying it
+  // against a different one is a different experiment wearing the same name.
+  // When the two disagree the scenario FAILS by name — the wave that changed the
+  // declaration re-records deliberately, with the reason stated, rather than
+  // discovering later that a green run graded the wrong world.
+  const declared = s.precondition ?? EMPTY_PRECONDITION;
+  const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
+  const recordedPre: ConfigPrecondition = existsSync(preFile)
+    ? (JSON.parse(readFileSync(preFile, "utf8")) as ConfigPrecondition)
+    : EMPTY_PRECONDITION;
+  const preconditionDrift =
+    existsSync(cassette) && !rerecord && JSON.stringify(recordedPre) !== JSON.stringify(declared);
+  const applied = preconditionDrift ? recordedPre : declared;
+
   if (!existsSync(cassette) || rerecord) {
     // Record to a temp path and only promote on success: a re-record that hits
     // an outage must not destroy the good cassette it was refreshing. (Measured:
@@ -249,7 +267,7 @@ for (const s of SCENARIOS) {
     const staged = `${cassette}.recording`;
     rmSync(staged, { force: true });
     console.log("  recording live via engine-real ...");
-    const rec = await runOnce(s, "engine-real", "record", staged, "record");
+    const rec = await runOnce(s, "engine-real", "record", staged, "record", declared);
     if (!rec.ok) {
       rmSync(staged, { force: true });
       console.log("    DISCARDED: recording failed its determinism checks — nothing promoted");
@@ -293,13 +311,21 @@ for (const s of SCENARIOS) {
       console.log(`  derived the '${s.deriveFault}' fault into the cassette before promoting it`);
     }
     renameSync(staged, cassette);
+    if (JSON.stringify(declared) === JSON.stringify(EMPTY_PRECONDITION)) rmSync(preFile, { force: true });
+    else writeFileSync(preFile, JSON.stringify(declared, null, 2) + "\n");
   } else {
     console.log("  cassette exists — reusing");
   }
+  if (preconditionDrift) {
+    console.log(
+      "    FINDING: this scenario's DECLARED config precondition is not the one its cassette was recorded against — " +
+        "replaying the recorded one. Re-record deliberately (--rerecord) with the reason stated.",
+    );
+  }
 
   console.log(`  replaying offline: A=engine-real, B=${engineB} ...`);
-  const a = await runOnce(s, "engine-real", "replay", cassette, "A");
-  const b = await runOnce(s, engineB, "replay", cassette, "B");
+  const a = await runOnce(s, "engine-real", "replay", cassette, "A", applied);
+  const b = await runOnce(s, engineB, "replay", cassette, "B", applied);
   const replayOk = a.ok && b.ok;
   saveTranscript(`m1-${s.tag}-A`, { engine: "engine-real", messages: a.messages, durationMs: 0 });
   saveTranscript(`m1-${s.tag}-B`, { engine: engineB, messages: b.messages, durationMs: 0 });
@@ -324,7 +350,7 @@ for (const s of SCENARIOS) {
   let variance: Awaited<ReturnType<typeof oracleVariance>> | undefined;
   if (tFind.length + eFind.length + rFind.length + sFind.length > 0) {
     console.log("    (diff seen — replaying the oracle again to separate nondeterminism)");
-    variance = await oracleVariance(s, cassette, a);
+    variance = await oracleVariance(s, cassette, a, applied);
     if (variance.total > 0) console.log(`    oracle is nondeterministic on ${variance.total} path(s)`);
   }
 
@@ -365,7 +391,7 @@ for (const s of SCENARIOS) {
     : [];
   for (const [side, failure] of substance) console.log(`    substance: FAIL [${side}] — ${failure}`);
   if (s.check && substance.length === 0) console.log("    substance: ok");
-  verdicts.push({ tag: s.tag, pass: replayOk && tOk && eOk && rOk && sOk && substance.length === 0 });
+  verdicts.push({ tag: s.tag, pass: replayOk && tOk && eOk && rOk && sOk && substance.length === 0 && !preconditionDrift });
 }
 
 console.log("\n=== M1 corpus verdicts ===");

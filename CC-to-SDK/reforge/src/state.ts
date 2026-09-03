@@ -270,20 +270,23 @@ export function projectTranscript(text: string): { records: unknown[]; tornTail:
 /**
  * `.claude.json`, projected.
  *
- * WHAT IT HIDES: `machineID`, `userID` and `firstStartTime` — a per-install
- * identity pair and the clock that stamps it. They are minted the first time the
- * engine sees an empty config dir, so under the per-run config reset (§ the
- * precondition primitive) two engines would mint two different ones and the
- * surface would diff on every scenario for a reason that is not behaviour.
- * WHAT IT WOULD MISS: an engine that wrote a DIFFERENT identity where the oracle
- * re-used one, or that re-minted an identity the seed already provided. Both are
- * bounded by the `keys` list below, which still records that the fields exist —
- * so an engine that DROPPED one, or added a fourth, still diffs. Reproducing the
- * mint is not a storage contract; reproducing the read-modify-write around it is,
- * and that is what the rest of the projection grades.
+ * NOTHING IS HIDDEN, and that is a decision the precondition primitive bought.
+ * `machineID`, `userID` and `firstStartTime` are minted the first time the engine
+ * meets an empty config dir, so under a per-run wipe two engines would mint two
+ * different identities and this surface would diff on every scenario for a reason
+ * that is not behaviour. The obvious fix — project them away — would have made
+ * the surface blind to an engine that RE-MINTED an identity it was handed, which
+ * is a real storage defect (the read-modify-write around this file is the
+ * contract). So the empty precondition SEEDS them instead (`src/precondition.ts`),
+ * they become a declared input rather than a mint, and the projection grades them
+ * like everything else. Measured: with the seed present the engine preserves all
+ * three byte for byte and writes no `backups/` entry at all; without it, it mints
+ * fresh ones and a clock-named backup on every run.
+ *
+ * The sorted `keys` list rides alongside the values for the same reason it does
+ * on a transcript record: it is the only thing that sees a key the projection
+ * would otherwise not name.
  */
-const CONFIG_JSON_IDENTITY = new Set(["machineID", "userID", "firstStartTime"]);
-
 export function projectConfigJson(text: string): unknown {
   let parsed: Record<string, unknown>;
   try {
@@ -291,9 +294,7 @@ export function projectConfigJson(text: string): unknown {
   } catch {
     return { malformed: true, bytes: text.length };
   }
-  const out: Record<string, unknown> = { keys: Object.keys(parsed).sort() };
-  for (const [k, v] of Object.entries(parsed)) if (!CONFIG_JSON_IDENTITY.has(k)) out[k] = v;
-  return out;
+  return { keys: Object.keys(parsed).sort(), ...parsed };
 }
 
 /** One filesystem entry, read without following symlinks. `read` decides how a file is recorded. */

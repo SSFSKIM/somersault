@@ -148,15 +148,15 @@ try {
       (() => { const e = entries.find((x) => x.path === "sessions/4711.json")!; return typeof e.sha256 === "string" && e.records === undefined; })());
     check("the project-key slug is lifted out of the path as a property the differ can map",
       entries.filter((e) => e.path.startsWith("projects/")).every((e) => e.slug === slug));
-    check(".claude.json's per-install identity is projected away, and its presence still recorded",
+    check(".claude.json is projected with its keys AND its values",
       (() => {
         const p = (entries.find((x) => x.path === ".claude.json")!.records ?? [])[0] as Record<string, unknown>;
-        return p.machineID === undefined && p.userID === undefined && p.firstStartTime === undefined &&
-          JSON.stringify(p.keys) === JSON.stringify(["firstStartTime", "machineID", "skillUsage", "userID"]);
+        return p.machineID === "m" && JSON.stringify(p.keys) === JSON.stringify(["firstStartTime", "machineID", "skillUsage", "userID"]);
       })());
-    // …and the identity fields are a blind spot ON PURPOSE, watched being blind.
-    writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "OTHER", userID: "OTHER", firstStartTime: "OTHER", skillUsage: {} }));
-    check("a re-minted machine identity is IGNORED, as the projection says", !differs(entries, rootEntriesOf(root)));
+    // The per-install identity is a DECLARED INPUT (the empty precondition seeds
+    // it), so an engine that re-minted one is a difference rather than noise.
+    writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "OTHER", userID: "u", firstStartTime: "t", skillUsage: {} }));
+    check("an engine that RE-MINTED the seeded machine identity is caught", differs(entries, rootEntriesOf(root)));
     writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "m", userID: "u", firstStartTime: "t", skillUsage: { probe: { usageCount: 1 } } }));
     check("…but a changed skillUsage counter is caught", differs(entries, rootEntriesOf(root)));
 
