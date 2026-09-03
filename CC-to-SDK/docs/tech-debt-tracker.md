@@ -500,7 +500,7 @@ row's capture list.
 
 ---
 
-## 2026-09-02 — closure-ledger evidence was regenerated one commit after the commit that changed what it describes
+## 2026-09-02 — ledger evidence is regenerated one commit after the commit that changed what it describes — **RECURRED 2026-09-03 (C16b/W13b)**
 
 **Source:** the W6/C9 fix round's own commit sequence · `reforge/ledger.json`
 (row `subsystem/permissions` and the hook-dispatch row), `reforge/ledger/check.ts`.
@@ -527,6 +527,18 @@ form would be a pre-commit or CI assertion that a commit touching `reforge/stran
 also touches `reforge/ledger.json`. That is deliberately not built yet — one occurrence is not
 enough evidence that a rule needs enforcement machinery, and the check would fire on manifest edits
 that genuinely change no ownership.
+
+**RECURRENCE, 2026-09-03 (C16b / W13b), found by the boundary review.** Two splice commits carried no
+ledger change: `d467459` (the shutdown latch owned whole as `CHUNK_REPLACEMENTS[1]`) and `2fe7e0e`
+(four of `TWn`'s 44 members), with the ledger evidence landing in `ba7edff` and `2d75065`. Not
+retro-fixable — rewriting landed history to move evidence between commits costs more than the lag
+does. What the recurrence changes is the tooling argument above: one occurrence was not enough
+evidence that the rule needs machinery, and two on different waves is closer to enough. The
+mechanical form is unchanged — assert that a commit touching `reforge/strangle/manifest.ts`'s splice
+arrays also touches `reforge/ledger.json` — and so is the objection to it: manifest edits that change
+no ownership, such as this round's own `darkReason` rewordings, would fire it. If it happens a third
+time, build the check with an explicit opt-out marker in the commit message rather than continuing
+to log it.
 
 ## 2026-09-02 — three debt-grade residues from the C9-fix verification round (CONVERGED)
 

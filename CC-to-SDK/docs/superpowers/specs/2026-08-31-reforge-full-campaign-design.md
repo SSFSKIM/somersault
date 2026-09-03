@@ -1476,6 +1476,11 @@ Pending — written at finish.
     graph against the oracle — a twin-sabotage check that cannot fail. The flag is now REQUIRED (exit
     2 with the reason) rather than re-defaulted: a driver whose whole purpose is to grade one engine
     against another should not guess which one, and the gate already passes it from `strangle/runners.ts`.
+  - **PROCESS, logged rather than fixed:** two C16b commits carried splices with no ledger change —
+    `d467459` (the chunk taken whole) and `2fe7e0e` (the four `TWn` members) — with the evidence
+    landing in `ba7edff` and `2d75065`. Not retro-fixable. The 2026-09-02 closure-ledger entry in
+    `docs/tech-debt-tracker.md` now records this as a RECURRENCE, which is what moves the "promote it
+    to a check" argument: one occurrence was not enough evidence, two on different waves is closer.
 
 - 2026-09-03 (**C16b / W13b — the process lifecycle, LANDED**): the first of the seven W13 children,
   cut to land before the loop it belongs to because the hook-executor children reciprocally need what
