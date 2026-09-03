@@ -4596,14 +4596,17 @@ The cut said decide by measurement, in a fixed order. The order was followed to 
 **(a) Byte-stable, no mechanism.** `w9/measure.ts --phase flush --scenario resume`: five replays,
 same byte length, same record count, identical projected snapshot. On that evidence the answer was
 (a) — and one scenario was not the population. `compact-continue` produced **33,175 / 33,175 / 33,166
-/ 34,220 bytes and 49, 50 or 71 records** across replays of the same engine, while its **29 SDK
+/ 34,220 bytes and a MULTI-VALUED record count (49, 50, 53 and 71 observed across takes)** across replays of the same engine, while its **29 SDK
 messages and 8 results were byte-identical every time** and the proxy served zero fallbacks. The
 engine's observable behaviour is deterministic; what it leaves on disk is not.
 
 **(b) Observed quiesce.** Implemented and insufficient. The variance survived it unchanged, because
 it is not a sampling error: the scenario COMPACTS, and the transcript compactor rewrites the file in
-place while the 100 ms drain is still appending. The timer arm lands on 49 records (the rewrite won)
-or 71 (it did not). Waiting longer cannot decide a race that has already been decided.
+place while the 100 ms drain is still appending. The timer arm lands on 49 records (the rewrite won),
+on 71 (it did not), or on one of the intermediate counts a partly-completed rewrite leaves: the
+distribution is MULTI-VALUED (49, 50, 53, 71 observed), not a coin flip between two outcomes — an
+earlier draft of this section binarised it. Waiting longer cannot decide a race that has already been
+decided.
 
 **(c) `CLAUDE_CODE_EAGER_FLUSH` enters X6**, ON by default — the one determinism knob that is a
 property of the measurement regime rather than of a scenario, so it stands with the four telemetry
@@ -4679,15 +4682,28 @@ Two measurements came out of the cycle scenario and both are worth more than the
 exchange the fault graded nothing: the chain walk collects both records and then sees the repeat, so
 the cycled seed and the healthy one produced byte-identical requests. With two exchanges — so the
 cycle has something to cost — **it still costs nothing**. `src/precondition.test.ts` walks the seeded
-file and proves the first exchange is off the chain; the engine sends it anyway. So at this pin the
-headless resume path does not rebuild its history by walking `parentUuid`, whatever D8's
-`tengu_chain_parent_cycle` belongs to. The scenario is kept to pin that measurement, and C12b — which
-owns the chain walk and can reach it from a synthetic corpus with no engine at all — inherits a
-measured boundary instead of an assumption.
+file and proves the first exchange is off the chain; the engine sends it anyway.
+
+**WHY it costs nothing is not what this wave first wrote down** (corrected by the C12a fix round,
+2026-09-03). The first reading was "the headless resume does not rebuild its history by walking
+`parentUuid`". It does walk it: `BSe` in `chunk-fy12d89p.js` walks up from the leaf, sees the repeat,
+logs `Cycle detected in parentUuid chain … Returning partial transcript` and fires
+`tengu_chain_parent_cycle` — the scout's D8 codeword, on the path a `--print` resume takes. What the
+scout's row does not carry is the HEAL: on a parent that is missing or already seen, `QVt` picks the
+nearest not-yet-visited record whose timestamp falls within `YVt` = **5,000 ms** before the current
+one, fires `tengu_chain_timestamp_fallback`, and the walk continues through it. The transcript is
+whole because the fallback rebuilt it. **So the seed's bytes are load-bearing**: its records are one
+second apart, inside that window; at six-second spacing the fallback finds nothing and the walk
+recovers 2 of 4 records. The scenario pins the seed as much as the fault, and C12b — which owns the
+chain walk and can reach it from a synthetic corpus with no engine at all — must reproduce the walk
+AND the fallback, not the intact result alone.
 
 **ENOSPC is not among them, and the omission is declared.** The store fence latches on `{ENOSPC,
-EROFS, EDQUOT, ENAMETOOLONG}` and none of the four can be raised against a chosen path by an
-unprivileged process on a normal filesystem. The two mechanisms that would reach it — a mounted disk
+EROFS, EDQUOT, ENAMETOOLONG}` and three of the four — `ENOSPC`, `EROFS`, `EDQUOT` — cannot be raised
+against a chosen path by an unprivileged process on a normal filesystem. (The fourth CAN: a
+300-character filename returns `ENAMETOOLONG`. The wave's first round claimed all four; the fix round
+measured otherwise and handed C12d the route — a pathologically deep sandbox cwd, a fault of the PATH
+rather than of the filesystem.) The two mechanisms that would reach it — a mounted disk
 image (a machine fact, not a harness fact) and an fs shim preloaded into the engine child (which
 changes the binary under test and collides with the BUNFS reachability rule) — are named in
 `src/precondition.ts` with why neither is bought here. `store-read-only` grades the store's OTHER
@@ -4719,8 +4735,10 @@ codes. C12d owns the fence and inherits the decision.
 - **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
   needs no engine, and `projectRecord`/`projectTranscript` are the shape its oracle expectations
   should be written against — including the torn-tail marker, which is a property of the FILE and not
-  of any record. Its D8 arm has a measured boundary now: whatever walks `parentUuid`, the headless
-  resume does not.
+  of any record. Its D8 arm has a measured boundary now, and it is BINDING: the headless resume walks
+  `parentUuid` (`BSe`), detects the cycle (`tengu_chain_parent_cycle`) and heals it through `QVt`'s
+  5,000 ms timestamp-proximity fallback (`tengu_chain_timestamp_fallback`) — the reader must reproduce
+  both, and the scenario pins the seed's one-second record spacing that makes the fallback succeed.
 - **C14a** inherits the `skillUsage` decision: the counter is RESET by the config wipe, so a scenario
   that wants a non-zero one seeds it through `ConfigPrecondition.seed` — `.claude.json` with a
   `skillUsage` block, which the projection grades in full.
