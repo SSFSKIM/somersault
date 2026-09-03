@@ -4410,7 +4410,7 @@ Four of 44 members, chosen by what the lifecycle question is made of rather than
 | `claimShutdown` | 68 | **spliced, DARK** — both `t3e()` callers unmount or re-exec a terminal UI |
 | `releaseShutdownClaim` | 72 | **spliced, DARK** — its one caller is the agent-select remount |
 | `shutdownSync` | 292 | **spliced, LIVE** — the no-op twin hangs `plain`: the process never exits |
-| `shutdown` | 1,096 | **NOT EXCISABLE** — its body performs a dynamic `import()` of a graph chunk by literal specifier, which the mechanism cannot forward as a capture (captures are identifiers) and an owned module may not reproduce, because `engine-ts/check-reachability.ts` forbids reaching the extracted graph |
+| `shutdown` | 1,096 | **NOT EXCISABLE BY THE CURRENT CAPTURE MECHANISM** — its body performs a dynamic `import()` of a graph chunk by literal specifier. `Capture.derive` yields an identifier or a member expression and `assertCaptureInventory` reconciles the body's FREE IDENTIFIERS against it, so a string specifier is not a thing this mechanism can forward; and an owned module may not simply reproduce the literal, because `engine-ts/check-reachability.ts`'s BUNFS rule forbids any specifier carrying `/$bunfs/root/`. That is a limit of the mechanism, not of the method: a **lazy-import capture kind, rendered on the GRAPH side** — the graph passes in a thunk that performs its own `import()`, which keeps the specifier where it is already legal — would lift it |
 | the other 39 | — | upstream's: startup watchdogs, the uncaught/HTTP2 breakers, the failsafe timers, `install`, the orphan check, the resume hint |
 
 Two corrections to the cut fall out of this. The scout attributes `await executeSessionEndHooks` to
