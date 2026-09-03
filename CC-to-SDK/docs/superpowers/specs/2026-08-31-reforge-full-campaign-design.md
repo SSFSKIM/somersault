@@ -700,7 +700,9 @@ follow as C4/C5.
   supervised delegate over one declared channel, so `check-reachability.ts` keeps its static ban);
   the substrate gates nothing until an engine-ts-primary artifact exists. Blocked-by: C16a/C16b
   nothing (cut now; serialize on the shared surface); C16c–g per the table. **Required.**
-  Status: C16a/C16b not-dispatched, unblocked; C16c–g advisory behind their triggers.
+  Status: **C16b LANDED 2026-09-03** (the process lifecycle — see the tracking row and the Revision
+  Note; it also ships the signal-delivery primitive C16a's capability (iii) generalises, and corrects
+  the scout's L17 premise); C16a not-dispatched, unblocked; C16c–g advisory behind their triggers.
 #### C17: W14 — engine-ts closure — controlled
 - The hermetic ownership gate with its four delegation-route negative controls; the campaign's
   recomposition verification follows its landing. Blocked-by: all. **Required.** Status:
@@ -1237,7 +1239,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C15a4 | W12a4 | as C15b1 (advisory) | not-cut — the dispatch S-module (~55 KB: `Ane.call`, `Bb`, `n9`, `kan` the inheritance contract, `$Ft`, the task-record writers, the worktree disposition closure) behind `AgentRuntimePort`, `ChildQueryPort` (= `Kx` — W12 must NOT own it), `TaskRegistryPort`, `NotificationPort`, `WorktreePort`, `AgentClockPort`, `AgentTelemetryPort` + `TeammatePort`/`RemoteAgentPort`/`ObserverPort` stubs; mutation battery incl. the leaked concurrency slot, the shared `readFileState`, the double `task_notification`; cut when C15a3 lands |
 | C15a5 | W12a5 | as C15b1 (advisory) | not-cut — worktree isolation (17 KB), observers (14 KB + `jna7qpeb`), teammates (`eyzf721y`, 29 KB, OPEN behind the `--agent-teams` ARGV flag the raw driver controls — the gate `tengu_amber_flint` defaults TRUE); three axes, cut last |
 | C16a | W13a | scout: `reforge/research/2026-09-02-w13-query-loop-scout.md` (cut 2026-09-02, Deferred section's "The W13 cut") | not-dispatched — the loop oracle machinery: per-event stream control in the replay proxy (drop-after-N / delay / destroy / inject-malformed at `proxy.ts`'s entry loop, strict-fallback rules untouched), the SYNTHETIC RESPONSE CORPUS generalising `src/faults.ts` (spec-mandated since W9, absent), signal delivery + the no-further-yields verdict shape, raw-wire multi-turn, opt-in unscrubbed cache-breakpoint comparison — each with a negative control. **Unblocked** (no dependency on any wave); serializes on the shared harness surface |
-| C16b | W13b | as C16a | not-dispatched — the process lifecycle: own `chunk-29shcjw2.js` outright (780 B, 10 importers, 3 exports — the campaign's smallest whole-chunk ownership) + `TWn`'s shutdown pair as `LifecyclePort` (`isShuttingDown`, `hang`, `claimShutdown`, `releaseShutdownClaim`); the hook-executor children drop their `isShuttingDown` stub and consume it. **Unblocked**, dispatch after C10.6's review (shared manifest) |
+| C16b | W13b | as C16a; wave record `reforge/README.md` "W13b" | **landed** 2026-09-03 — the process lifecycle. `chunk-29shcjw2.js` owned OUTRIGHT as `CHUNK_REPLACEMENTS[1]` (780 B of file, **165 B of code**, three exports, zero imports) — the campaign's second S-chunk and the first taken because its STATE is the contract rather than because it is small: three exports that are meaningless apart, so three S-method splices would have been three correct-looking modules that together are not the latch. **The population is derived from the artifact** (`research/fixtures/process-lifecycle-2.1.251.json`, the NINTH pin-keyed fixture and a gate phase) and it corrects the row's own headline before a line was spliced: `grep -l` answers **313 importers**, the cut says 10, and both are true — 303 chunks carry a BARE side-effect import for the bundler's evaluation ordering. Ten named importers, **90 call sites for 165 bytes** (`isShuttingDown` 62 / `commitShutdown` 3 / `hang` 25). Four of `TWn`'s **44** members spliced (`isShuttingDown`, `claimShutdown`, `releaseShutdownClaim`, `shutdownSync`) plus the headless dispatcher's SIGINT handler `Hn`. **Four corrections to this bullet, all measured**: (1) the shutdown PAIR cannot be taken whole — `shutdown` (1,096 B) performs a dynamic `import()` of a graph chunk by literal specifier, which the mechanism cannot forward as a capture and an owned module may not reproduce, and it is `shutdown` rather than `shutdownSync` that awaits `executeSessionEndHooks`; (2) `LifecyclePort` ships FIVE members, because two different flags are called "is shutting down" — the one-way LATCH (`committed`, no clearer in the bundle) and the two-way CLAIM (`TWn.shutdownInProgress`) — and a port with `claimShutdown`/`releaseShutdownClaim` and no reader is write-only; the fifth is `TWn.isShuttingDown`, an upstream counterpart, exposed as `shutdownClaimed`; (3) the scout's cell **L17 premise is wrong for the SIGTERM path** — every hang consultation reads `isShuttingDown() && !aborted` and upstream's handler ABORTS before it exits, so `commitShutdown` and `hang` are corpus-DARK with a measured reason and a `darkOver` population the gate re-measures; (4) there are TWO signal-handler families, not one, and only **one of the graph's six lifecycle handlers fits a target shape** — SIGTERM's `br` writes back to a captured once-guard and stays OPEN with that mechanical reason. New harness capability, the minimal half of C16a's (iii): `src/signal.ts` delivers a signal at a DECLARED FRAME COUNT (never a clock) and grades "no further turn progress + the exit status the handler CHOSE"; `w13/signals.ts` runs three plans over one cassette (SIGTERM→143, SIGINT→0, SIGHUP→129) on both engines. `strangle/chunk.ts` gains **rule 2b** (declared module state) with its own perturbation control — and three of the five existing chunk fixture controls had to be generalised first, because they keyed on facts about the first owned chunk and would have "passed" on this one by rejecting nothing. Ledger: `subsystem/query-loop`'s **edge array was empty and now carries eight outbound edges**, the inbound edge from `subsystem/hook-dispatch`, and the `sealTranscriptAppendsForShutdown` edge to `subsystem/session-storage` recorded NOT owned. The hooks-parity stub is now a CONSUMER of the owned module on the owned side of the oracle. Gate **GATE_PHASES**; manifest **94 → 99 splices**, whole-chunk rows **1 → 2**; attestation **478/1038 with 560 exclusions**; corpus **83 cassettes / 201 request bodies** (one new recording). **Unblocks C10.7/C10.8** — they consume `LifecyclePort` instead of the stub |
 | C16c | W13c | as C16a (advisory) | not-cut — transport + streaming assembler (`HIt` 67 KB, `XN`/`sX`, `kQ` retry + seven classifiers, both `EIt` `stream:false` arms — the corpus records only the 404 arm; C3's mid-stream arm has NO recording) behind `ModelTransportPort` + `RetryPolicyPort`; absorbs C1's `text_delta` splice; blocked by C16a |
 | C16d | W13d | as C16a (advisory) | not-cut — the turn driver `DAt` + `ORe` + the compaction drivers `zRe`/`Tte`/`wFt`/`E4n` + context accounting + PostToolBatch, behind `QueryLoopPort` (= `zve`'s `run`), `CompactionDriverPort`, `ToolExecutorPort`, `LoopStatePort`/`CostLedgerPort` over the 105 accessors; blocked by C16c, C10.6–8, C15, C12a |
 | C16e | W13e | as C16a (advisory) | not-cut — the headless half (`GH`, `ky`'s drain loop and writer, `hu`, `ku`, `Uy` resume) + the 42 frame exports (`system:init`'s 103 graded fields, `result`'s 48); NOT the 52 ladder arms; blocked by C16d |
@@ -1440,6 +1442,102 @@ initiative, not this campaign.
 Pending — written at finish.
 
 ## Revision Notes
+
+- 2026-09-03 (**C16b / W13b — the process lifecycle, LANDED**): the first of the seven W13 children,
+  cut to land before the loop it belongs to because the hook-executor children reciprocally need what
+  it owns. Gate **GATE_PHASES**; corpus **83 cassettes / 201 request bodies** (one new recording,
+  shared by three scenario tags); manifest **94 -> 99 splices** and **1 -> 2 whole-chunk rows**;
+  attestation **478/1038 executed with 560 exclusions**, zero un-adjudicated. Every headline number
+  the cut gave this child was answering a question next to the one asked, and the corrections are the
+  substance of the wave.
+  - **THE POPULATION, AND THE NUMBER THAT WAS TRUE OF A DIFFERENT QUESTION.** The cut says the latch
+    has "10 importers". A literal `grep -l` over the graph answers **313**, because 303 chunks carry a
+    BARE side-effect import of it for the bundler's evaluation ordering and exactly ten carry a named
+    import clause. Both are true; only one is "who reads the latch". `research/fixtures/process-lifecycle-2.1.251.json`
+    is the **ninth pin-keyed fixture** and a gate phase, derived entirely by shape: the latch chunk
+    (780 B of file, **165 B of code**), its ten named importers with the ROLE each imports and its call
+    sites (`isShuttingDown` 62 / `commitShutdown` 3 / `hang` 25 — **90 call sites for 165 bytes**), the
+    coordinator's 44 members and the twelve a free-function facade exposes, and **every
+    `process.on("SIG...")` in the graph** (25 registrations, 23 readable, **6 touching the lifecycle
+    surface**) each carrying its exit status, its guards and its EXCISABILITY as a measurement.
+  - **TWO THINGS ARE CALLED "IS SHUTTING DOWN" AND THEY ARE NOT THE SAME THING.** The LATCH
+    (`committed`, one-way, **no clearer anywhere in the bundle**, 62 reads) means "this process has
+    decided to go down"; the CLAIM (`TWn.shutdownInProgress`, two-way, 37 reads) means "a shutdown is
+    currently in flight". They move together on the graceful path and come apart exactly where it
+    matters — the interactive relauncher claims without committing, and the headless SIGTERM handler
+    reads the CLAIM as its once-guard while committing the LATCH. `LifecyclePort` refuses to merge
+    them, and that refusal is why it ships **five** members rather than the cut's four: a port that
+    lets a consumer take and release a claim while giving it no way to READ one is write-only, and
+    the only way to close that without inventing anything is to expose `TWn.isShuttingDown` under a
+    name that is not `isShuttingDown`. **[parent-impact, additive]** against the C16b bullet's
+    four-member list — no member lacks an upstream counterpart, which was the binding rule.
+  - **THE SCOUT'S L17 PREMISE DOES NOT DESCRIBE THE SIGTERM PATH.** Cell L17 reads "shutdown during a
+    turn (`xo()` true -> `await pm()`)". Every consultation of the hang in the reachable set is written
+    `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own SIGTERM handler runs
+    `commit, killShells, runController.abort, requestShutdown(143)` — **the abort short-circuits the
+    guard the commit exists to open.** SIGHUP is the path where nothing aborts and it does not help
+    either: the coordinator force-exits before any in-flight continuation resumes, and the shell kill
+    has already taken the tool that continuation was waiting on. Both twins were built and driven over
+    both paths on both engines; neither moved. So `commitShutdown` and `hang` are **corpus-DARK with a
+    measured reason and a population the gate re-measures every run**, and the wave's headline chunk
+    has one live export of three. **[parent-impact]** against the cut's L17 wording.
+  - **THE `TWn` SHUTDOWN PAIR CANNOT BE TAKEN WHOLE.** `shutdownSync` (292 B) is spliced and live —
+    its no-op twin hangs `plain`, because the process never exits. `shutdown` (1,096 B) is **not
+    excisable at all**: its body performs a dynamic `import()` of a graph chunk by literal specifier,
+    which the mechanism cannot forward as a capture (captures are identifiers) and an owned module
+    may not reproduce, because `engine-ts/check-reachability.ts` forbids reaching the extracted graph.
+    A second correction in the same place: the cut says `shutdownSync` awaits `executeSessionEndHooks`;
+    **`shutdown` does**, and `shutdownSync` reaches it only through `this.shutdown(...)`.
+    **[parent-impact]** against "`TWn`'s shutdown pair".
+  - **ONE OF THE GRAPH'S SIX LIFECYCLE SIGNAL HANDLERS FITS A TEMPLATE, AND THE REFUSALS ARE
+    MECHANICAL.** The fixture records, per handler, the free identifiers its body ASSIGNS to — a
+    splice forwards captures BY VALUE, so a body that writes back to one cannot be delegated. SIGINT
+    `Hn` (148 B) has none and is **spliced**; SIGTERM `br` (61 B) assigns `Gn`, the once-guard declared
+    beside it, and is **OPEN with that mechanical reason**, owned through the chunk instead (the
+    `commitShutdown()` it calls is this wave's export); the coordinator's four are inline arguments to
+    `process.on` with no declaration to replace. The scout collapsed two handler FAMILIES into one:
+    the coordinator's SIGINT/SIGTERM are suppressed in print mode by a marker the dispatcher sets, its
+    SIGHUP is not — which is why a headless engine answers SIGTERM from `ky` and SIGHUP from the
+    coordinator, with different statuses and different observability for the latch.
+  - **A SIGNAL PRIMITIVE WHOSE TRIGGER IS A FRAME COUNT, NEVER A CLOCK** (`src/signal.ts`) — the
+    minimal half of C16a's capability (iii). "Send SIGTERM 800 ms in" is not a measurement; a
+    wall-clock trigger lands at a different point in the engine's control flow on different runs, and
+    a differential harness whose stimulus moves cannot attribute a difference in response to the
+    engine. The verdict reuses `hooks-parity`'s `drainBounded`/`nonSettling` shape one level out, and
+    **the exit STATUS is the load-bearing half**: a process that ignores a signal also stops, and only
+    `code: 143, signal: null` says the engine's own handler ran. `w13/signals.ts` grades three plans
+    over ONE cassette (SIGTERM->143, SIGINT->0, SIGHUP->129), each on both engines, each also asserting
+    exactly one `/v1/messages` request — which on the SIGINT plan is load-bearing rather than
+    corroborating, since an engine that never got the signal also exits 0.
+  - **THE RECORDING MUST NOT BE THE EXPERIMENT.** The first driver signalled during the live take and
+    produced a cassette with no `/v1/messages` entry: the engine writes its `assistant` frame from the
+    last SSE event, a tick before the recording proxy sees its upstream response END, so killing on
+    that frame killed the run inside that tick. The replay then had nothing to serve, spent ten
+    retries discovering it, and graded a synthetic error turn — a green-looking pipeline measuring
+    nothing. Recording clean is also the better experiment: the cassette is a real complete
+    conversation and the INTERRUPTION is the variable.
+  - **RULE 2b — DECLARED MODULE STATE** (`strangle/chunk.ts`). The audit refuses a whole-file
+    replacement over any constructing top-level declarator, which is right, and wrong about the one
+    shape where the construction IS the module: a latch object and a promise built never to settle,
+    which the replacement RE-DECLARES at module scope with the same one-per-process identity ESM gives
+    upstream's. The row now declares them and the build checks the declaration in both directions,
+    including that an entry matching nothing fails. **Three of the five existing chunk fixture
+    controls had to be generalised first**, and that is a finding: they keyed on `var x="Glob"` and a
+    leading `import{`, which are facts about the FIRST owned chunk, so on a chunk with no string
+    literal and no imports both mutations were no-ops and both controls would have "passed" by
+    rejecting nothing. **A control that cannot fire on a row is not a control for that row.**
+  - **LEDGER: `subsystem/query-loop`'s edge array was empty and now is not.** Eight outbound edges
+    per the scout section 3.2 table, the inbound edge from `subsystem/hook-dispatch` (the executor
+    children consume the owned latch rather than the stub they were going to build), and the
+    `sealTranscriptAppendsForShutdown` edge to `subsystem/session-storage` **recorded, not owned** —
+    measured as `Ccn`, wired by the headless dispatcher as the session store's
+    `onInternalEventLaneClosed` callback. Row stays `spliced`; one latch is not the loop.
+  - **ENVIRONMENT, and it will recur.** Mid-child the ORACLE side began failing: Claude Code's own
+    auto-updater had pruned `~/.local/share/claude/versions/2.1.251`, leaving `build/real-binary` a
+    dangling symlink. Restored from Anthropic's official release endpoint, verified against the
+    published `darwin-arm64` manifest checksum, with the operator's own `claude` symlink untouched.
+    A project pinned to an old version of a self-updating tool should expect this; the repair is a
+    download and a checksum because the release manifest still serves the pin.
 
 - 2026-09-03 (C11a-fix / W8a boundary review — **NOT CONVERGED on the record**, converged on the
   code): the review reproduced every owned byte, every anchor, every liveness row and every

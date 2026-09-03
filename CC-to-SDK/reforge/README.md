@@ -4213,3 +4213,229 @@ operator's identity in a recorded request body (`Git user: SSFSKIM`, out of the 
 `cassettes/` is gitignored and nothing is committed, so this is hygiene rather than a leak, but a
 corpus that ever becomes shareable would carry it. The scrub belongs with whichever wave re-records
 those three.
+
+## W13b — the process lifecycle: 780 bytes, and the two flags nobody was distinguishing (2026-09-03)
+
+C16b, the first of the seven W13 children to land, and the one the campaign's ordering needed first:
+the hook-executor children (C10.7/C10.8) reciprocally need the shutdown latch, so this child ships it
+as a standalone before the loop it belongs to is touched. The charter was small — "own
+`chunk-29shcjw2.js` outright (780 B, 10 importers, 3 exports — the campaign's smallest whole-chunk
+ownership) + `TWn`'s shutdown pair as `LifecyclePort`" — and almost every number in it turned out to
+be answering a question next to the one that was asked.
+
+### The population, and the number that was true of a different question
+
+Five waves in a row have been wrong about a population they carried as a hand-written number (hook
+events, control-protocol arms, prompt sections, the helper belt, the moat-tool belt), and each was
+fixed by deriving it from the artifact. This one was wrong before a line was spliced.
+
+`grep -l chunk-29shcjw2 *.js` answers **313**. The scout says **10**. Both are right: 303 chunks
+carry a BARE side-effect `import"…/chunk-29shcjw2.js"` for the bundler's evaluation ordering, and
+exactly ten carry a NAMED import clause. "Who reads the latch" is the second question, and only a
+fixture keeps the difference from being a matter of which command someone happened to run. So
+`research/fixtures/process-lifecycle-2.1.251.json` is the **ninth pin-keyed fixture** and a gate
+phase, derived entirely by SHAPE:
+
+* **the latch chunk** — the one module in 1,802 whose top level is exactly a class with the single
+  field `committed = false`, an instance of it, a reader of that field, a setter of that field, a
+  promise built with an empty executor, a reader of that promise, and one export clause. 780 B of
+  file, **165 B of code**.
+* **the importers** — 10 named, 303 bare, with the ROLE each imports and its call sites counted per
+  chunk: `isShuttingDown` **62** sites in all ten, `commitShutdown` **3** in two, `hang` **25** in
+  three. Ninety call sites for 165 bytes.
+* **the coordinator** — the one class in the graph declaring both `claimShutdown` and
+  `releaseShutdownClaim`: `TWn`, 8,919 B, **44 members**, 0 private, of which **12** are exposed
+  through a derived free-function facade and 13 are reachable only from inside the class.
+* **every `process.on("SIG…")` in the graph** — 25 registrations, 23 the walk can read, **6 touching
+  the lifecycle surface**, each carrying its exit status, its guards, its free identifiers and its
+  EXCISABILITY as a measurement.
+
+The shadowing question is answered rather than assumed: the headless dispatch chunk declares its own
+`function pm` while importing the latch's reader and setter, so the tool THROWS on a local
+declaration that shares an imported name rather than blending two bindings into one count.
+
+### The anchor problem, and what a chunk with no string literal is anchored on
+
+165 characters of minified declarations contain no string literal at all. The mechanical rule
+(`research/tools/anchor-enum.ts`) answers `"ted=!1}v"` — eight characters, unique in 34 MB, and
+unreadable. The row takes the whole untainted run instead, `{committed=!1}var`: `committed` is a
+class FIELD name, which this bundler preserves, and `!1` is its constant-folding of `false`. Same
+bet every property-name anchor in the manifest already makes, and legible enough that a reader can
+tell what was anchored.
+
+### Rule 2b: the audit that was right to refuse, and the one shape it was wrong about
+
+`strangle/chunk.ts` refuses a whole-file replacement over any top-level declarator whose initializer
+CONSTRUCTS, because replacing the file drops whatever the construction did. That is the right
+default and this chunk is the case it is wrong about: its entire content is two constructions — the
+latch object and the never-settling promise — and the replacement does not drop them, it
+**re-declares them**, at module scope, where ESM's once-per-URL evaluation gives them exactly the
+one-instance-per-process identity `var e = new t` has.
+
+So the row DECLARES them (`moduleState`) and the build checks the declaration: every constructing
+declarator must be claimed by an entry whose derivation resolves to that binding, the entry names the
+construct it expects, and an entry that matches nothing fails as loudly as a missing one. A carve-out
+nothing exercises is a carve-out nobody re-reads. `strangle/perturb.ts` gained a sixth per-chunk
+fixture control that inserts an UNDECLARED construction and requires the build to refuse it — on the
+row that has the affordance as much as on the row that does not.
+
+Three of the five existing chunk fixture controls also had to be generalised, and that is a finding
+in its own right: they keyed on `var x="Glob"` and on a leading `import{`, which are facts about the
+FIRST owned chunk. The shutdown latch has no string literal anywhere in it and imports nothing, so
+both mutations were no-ops on it and both controls would have "passed" by rejecting nothing. **A
+control that cannot fire on a row is not a control for that row**, and the loop runs once per row.
+
+### The two flags, which is the correction everything else in this child rests on
+
+Two things in this engine are called "is shutting down" and they are not the same thing:
+
+| | the LATCH | the CLAIM |
+|---|---|---|
+| where | `chunk-29shcjw2`'s `committed` | `TWn.shutdownInProgress` |
+| direction | ONE-WAY — a setter and **no clearer anywhere in the bundle** | two-way: `claimShutdown` sets, `releaseShutdownClaim` clears |
+| means | "this process has decided to go down" | "a shutdown is currently in flight" |
+| read by | `xo()`, 62 sites | `TWn.isShuttingDown()` via `Hs()`, 37 sites |
+
+They move together on the graceful path, which is what makes them look like one flag, and they come
+apart exactly where it matters: the interactive relauncher claims without ever committing, and the
+headless SIGTERM handler reads the CLAIM as its once-guard while committing the LATCH. A consumer
+that fused them would hang on a shutdown that was about to be released, or fail to hang on one that
+was not. `LifecyclePort` refuses to merge them, and that refusal is why it ships five members rather
+than the cut's four (see below).
+
+### The signal primitive, and why the trigger is a frame count
+
+Cell **L17** of the W13 scout's edge matrix — "shutdown during a turn" — is one of ten the matrix
+marks missing, and the only one of those ten that needs neither the synthetic response corpus nor
+per-event stream control. What it needs is a signal delivered to the engine child at a point a replay
+reproduces. `src/signal.ts` is that primitive, minimal and deliberately narrower than C16a's
+capability (iii):
+
+* the trigger is **"after the Nth frame of type T"**, never a clock. "Send SIGTERM 800 ms in" is not
+  a measurement, it is a coin flip with good odds: the engine's timing moves with the machine, so a
+  wall-clock trigger delivers the signal at a different point in the engine's control flow on
+  different runs, and a differential harness whose stimulus moves cannot attribute a difference in
+  response to the engine.
+* the verdict is `strangle/hooks-parity.test.ts`'s `drainBounded`/`nonSettling` shape one level out:
+  bounded observation, and "produced nothing further within N ms" recorded as an OUTCOME rather than
+  as the absence of one. The behaviour under test does not fail, throw or return — it stops.
+* **the exit STATUS is the load-bearing half.** A process that ignores SIGTERM also stops; what
+  separates the two is HOW. A default disposition kills the process (`signal: "SIGTERM"`, no code); an
+  executed handler exits with the status it chose (`code: 143`, no signal). Only the second is
+  evidence that the engine's own handler ran, and grading them apart is what stops the scenario from
+  passing a build with the handler removed.
+
+The driver `w13/signals.ts` runs **three plans over one cassette**, because the signal chooses which
+of the engine's three handlers answers and each picks a different status: SIGTERM → the headless
+dispatcher's `br`, exit **143**; SIGINT → the dispatcher's `Hn`, exit **0**; SIGHUP → the
+coordinator's own, exit **129**. Each is graded on both engines, and each also asserts that the turn
+did not CONTINUE — exactly one `/v1/messages` request, read off the proxy's observation dump. That
+request count is the sharpest assertion in the wave, and on the SIGINT plan it is load-bearing rather
+than corroborating: an engine that never received the signal also exits 0, but it cannot finish a
+tool turn on one request.
+
+**The recording is NOT interrupted, and the first version of this driver was.** Signalling during the
+live take produced a cassette with no `/v1/messages` entry at all: the engine writes its `assistant`
+frame from the last SSE event, a tick before the recording proxy sees its upstream response END, so
+killing the engine on that frame killed the run inside that tick. The replay then had nothing to
+serve, the engine spent ten retries discovering that, and the driver graded a synthetic error turn —
+a green-looking pipeline measuring nothing. Recording clean is also the better experiment: the
+cassette is a real complete conversation, the INTERRUPTION is the variable, and re-recording is not a
+race.
+
+### What the corpus can and cannot see, measured rather than reasoned
+
+The scout's L17 reads "`xo()` true → `await pm()`". **On the SIGTERM path that never happens**, and
+finding out took building the lane for it:
+
+Every consultation of the hang in the reachable set is written `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own SIGTERM handler runs `commitShutdown(), killShells(), runController.abort(), requestShutdown(143)` — **the abort short-circuits the very guard the commit exists to open.** So the latch contributes nothing a scenario can see on that path. SIGHUP is the path where nothing aborts, and it does not help either: the coordinator force-exits before any in-flight continuation resumes, and `killShells()` has already killed the tool the continuation was waiting on.
+
+Both twins were built and driven over both paths on both engines. Neither moved: same frames, same
+exit status, same one request. So `commitShutdown` and `hang` are adjudicated **corpus-DARK with a
+measured reason and a re-measured population** (`darkOver: ["sigterm-mid-turn", "sighup-mid-turn"]`,
+which the gate replays every run and fails loudly as "no longer dark" the day upstream's ordering
+changes). What grades them instead is stronger than a differential would be, because the domain is
+finite: the hooks-parity oracle runs the owned module against upstream's own chunk bytes over the
+whole partition.
+
+### The handler pair: one of six fits a template, and the refusals are mechanical
+
+The brief said to splice the SIGINT/SIGTERM closures **only if a template fits** and not to force
+one. The fixture answers that as a measurement rather than a judgement, by recording for each
+handler the free identifiers its body ASSIGNS to — a splice forwards captures BY VALUE, so a body
+that writes back to one cannot be delegated:
+
+| handler | where | shape | verdict |
+|---|---|---|---|
+| SIGINT `Hn` | `ky` | arrow initializer, 148 B, no writes to captures | **SPLICEABLE — spliced** |
+| SIGTERM `br` | `ky` | arrow initializer, 61 B | **OPEN** — assigns `Gn`, the once-guard declared beside it in the same `let`; the delegated body could read that flag and never write it back, and the write is the whole of what a once-guard does. Owned THROUGH the chunk instead: the `commitShutdown()` it calls is this wave's owned export |
+| SIGINT / SIGTERM / SIGHUP ×2 | `TWn.install()` | inline arguments to `process.on` | **OPEN** — no declaration to replace, so no target shape fits |
+
+The scout collapsed the two families into one. They are not: the coordinator's SIGINT and SIGTERM
+handlers are suppressed in print mode by a marker the headless dispatcher sets immediately after
+registering its own, while its SIGHUP handler is **not** suppressed — which is why a headless engine
+answers SIGTERM from `ky` and SIGHUP from the coordinator, and why the two produce different exit
+statuses and different observability for the latch.
+
+`ky-sigint-handler` is the wave's sharpest red. Its twin takes upstream's own already-shutting-down
+arm unconditionally — nothing throws, nothing is missing — and the covering plan reddens twice over
+and by name: `user` and `result:success` frames are turn progress the shutdown path does not produce,
+and two `/v1/messages` requests are one more than an abandoned turn makes. **The exit status alone
+would not have caught it**, which is precisely why the plan grades the request count too.
+
+### `TWn`: what was measured, what was taken, and what stays upstream's
+
+Four of 44 members, chosen by what the lifecycle question is made of rather than by size:
+
+| member | B | verdict |
+|---|---|---|
+| `isShuttingDown` | 48 | **spliced, LIVE** — twin answers true and both signal plans go red with the engine producing no frames at all |
+| `claimShutdown` | 68 | **spliced, DARK** — both `t3e()` callers unmount or re-exec a terminal UI |
+| `releaseShutdownClaim` | 72 | **spliced, DARK** — its one caller is the agent-select remount |
+| `shutdownSync` | 292 | **spliced, LIVE** — the no-op twin hangs `plain`: the process never exits |
+| `shutdown` | 1,096 | **NOT EXCISABLE** — its body performs a dynamic `import()` of a graph chunk by literal specifier, which the mechanism cannot forward as a capture (captures are identifiers) and an owned module may not reproduce, because `engine-ts/check-reachability.ts` forbids reaching the extracted graph |
+| the other 39 | — | upstream's: startup watchdogs, the uncaught/HTTP2 breakers, the failsafe timers, `install`, the orphan check, the resume hint |
+
+Two corrections to the cut fall out of this. The scout attributes `await executeSessionEndHooks` to
+`shutdownSync`; **it is `shutdown` that awaits it**, and `shutdownSync` reaches it only through
+`this.shutdown(...)`. And the pair the cut asks for cannot be taken whole, because half of it is the
+one method in the class the transform structurally cannot express.
+
+### `LifecyclePort`, and the fifth member the artifact forced
+
+`strangle/modules/shared/lifecycle-port.js` — §2.3's "identity/lifecycle → handle-shaped port", built
+so C10.7/C10.8 consume one thing instead of three modules and a coordinator instance. Every member
+has an upstream counterpart, which was the binding rule: `isShuttingDown` = `xo`, `hang` = `pm`,
+`claimShutdown`/`releaseShutdownClaim` = the two `TWn` methods (both found where the brief guessed
+they would be), and **`shutdownClaimed` = `TWn.isShuttingDown`**. The cut named four. A port that
+lets a consumer TAKE and RELEASE a claim while giving it no way to READ one is write-only, and the
+only way to close that without inventing anything is to expose the reader upstream already has —
+deliberately NOT named `isShuttingDown`. `commitShutdown` is deliberately absent: the executor
+children read the lifecycle, they do not drive it.
+
+### The rider: the hooks-parity stub becomes a consumer
+
+`strangle/hooks-parity.test.ts`'s section (d) evaluated upstream's chunk text once per case,
+precisely so a case that commits shutdown does not commit it for the suite. **That stays exactly as
+it is** — oracle doctrine is that the upstream side binds upstream's bytes. What the rider adds is
+the other side: the same wrapper driven a second time with the owned module in its place, and the two
+required to agree.
+
+The ORDER is the contract. The oracle resets per case; the owned module cannot, and **must not learn
+how**. In a real process there is one latch and it is one-way; making the owned copy resettable to
+make it easier to test would be the tail wagging the dog and would delete the property every consumer
+depends on. So the block is ordered instead — every claim about the clear state first, on both sides,
+then one commit on both sides, then every claim about the committed state — and it sits after every
+other consumer of the oracle's state so nothing downstream inherits it.
+
+### Environment: the pin's binary was gone, and that will recur
+
+Mid-child, `m1/run.ts` began failing on side A — the ORACLE — with `engines not materialized`. Cause:
+Claude Code's own auto-updater had pruned `~/.local/share/claude/versions/2.1.251` (the directory now
+holds 2.1.252 / .257 / .258 / .259), leaving `build/real-binary` a dangling symlink. The pin was
+restored from Anthropic's official release endpoint and verified against the published manifest
+checksum for `darwin-arm64` (`625869b0…`), byte-for-byte; the operator's own `claude` symlink was left
+pointing at 2.1.259 and was not touched. **This is a standing hazard for a project pinned to an
+old version of a self-updating tool**, and the repair is worth writing down: the manifest at
+`downloads.claude.ai/claude-code-releases/<version>/manifest.json` still serves the pin, so
+re-materialising is a download and a checksum rather than an archaeology problem.
