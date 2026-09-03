@@ -1,6 +1,7 @@
 // M2b aggregate — the full acceptance surface for an engine build:
 //   corpus (happy paths) + faults (error paths) + partials (stream shape)
 //   + cross-resume (store contract) + raw protocol (no-wrapper wire)
+//   + SIGTERM mid-turn (the process lifecycle, which needs a signal and a pid)
 // This is what any future engine-ts must satisfy, and what every strangler
 // replacement is gated on.
 //
@@ -33,6 +34,11 @@ const SUITES: [string, string[]][] = [
   ["partials (stream shape)", ["m2/partials.ts", "--engineB", engineB]],
   ["cross-resume (store)", ["m2/cross-resume.ts", "--engineB", engineB]],
   ["raw protocol (no sdk)", ["m2/raw-protocol.ts", "--engineB", engineB]],
+  // C16b / W13b. In the FAITHFUL acceptance surface and not only in the
+  // liveness loop, for the reason every suite here is: a scenario that runs
+  // exclusively against sabotaged builds is never graded green, so nothing
+  // notices the day it stops meaning what it meant.
+  ["SIGTERM mid-turn (process lifecycle)", ["w13/sigterm.ts", "--engineB", engineB]],
 ];
 
 const results: { name: string; pass: boolean; detail: string }[] = [];

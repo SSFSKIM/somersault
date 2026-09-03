@@ -188,14 +188,22 @@ for (const cr of CHUNK_REPLACEMENTS) {
     (s) => s.replace(/export\{([^}]*)\}/, (m, names: string) => `export{${names.replace(new RegExp(`(^|,)${first.derive(src)}(,|$)`), `$1Z${first.derive(src)}Z$2`)}}`),
     /export clause does not list|whole export surface/,
   );
+  // The three surface mutations below are written against the EXPORT CLAUSE
+  // rather than against any one chunk's contents, and that is a correction the
+  // second owned chunk forced. They used to key on `var x="Glob"` and on a
+  // leading `import{`, which are facts about the first row: the shutdown latch
+  // has no string literal anywhere in it and imports nothing at all, so both
+  // mutations were no-ops on it and both fixtures would have "passed" by
+  // rejecting nothing. A control that cannot fire on a row is not a control for
+  // that row, and the loop runs once per row.
   mustReject(
     "an export the manifest does not claim",
-    (s) => s.replace(/var ([\w$]+)="Glob"/, 'var reforgeUnclaimed="x";var $1="Glob"').replace(/export\{/, "export{reforgeUnclaimed,"),
+    (s) => s.replace(/\nexport\{/, '\nvar reforgeUnclaimed="x";\nexport{reforgeUnclaimed,'),
     /whole export surface|UNCLAIMED/,
   );
   mustReject(
     "an import binding the manifest does not classify",
-    (s) => s.replace(/^import\{/m, "import{reforgeUnclassified,"),
+    (s) => s.replace(/\nexport\{/, '\nimport{reforgeUnclassified}from"/$bunfs/root/chunk-reforge-nonexistent.js";\nexport{'),
     /classify every import binding|UNCLASSIFIED/,
   );
   mustReject(
@@ -211,11 +219,23 @@ for (const cr of CHUNK_REPLACEMENTS) {
     (s) => s.replace(/\nexport\{/, '\nvar reforgeEffect=globalThis.__reforgeRegister("chunk");\nexport{'),
     /initializes with a CallExpression|runs when the chunk is evaluated/,
   );
+  // Rule 2b's control (C16b). The audit now ACCEPTS a constructing declarator
+  // the row declares as `moduleState`, which is the affordance the shutdown
+  // latch needs — its whole content is two constructions the owned module
+  // re-declares. An affordance is also a hole, so the fixture proves the hole is
+  // exactly the declared shape: a construction the row did NOT declare must
+  // still abort the build, on the row that has the affordance as much as on the
+  // row that does not.
+  mustReject(
+    "a constructing declarator the row does not declare",
+    (s) => s.replace(/\nexport\{/, "\nvar reforgeUndeclaredState=new Map();\nexport{"),
+    /Declare it as `moduleState`|runs when the chunk is evaluated/,
+  );
 }
 
 console.log(`\n=== derivation perturbation: ${checks} check(s) + ${inventories} capture inventor(ies) + ${plans} chunk fixture(s) ===`);
 for (const f of failures) console.log(`  FAIL  ${f}`);
-const expectedPlans = CHUNK_REPLACEMENTS.length * 5;
+const expectedPlans = CHUNK_REPLACEMENTS.length * 6;
 if (checks === 0 || inventories !== SPLICES.length || plans !== expectedPlans) {
   // An empty run reporting success is exactly the vacuous pass this file exists
   // to forbid — and a run that skipped a splice's inventory, or a chunk row's

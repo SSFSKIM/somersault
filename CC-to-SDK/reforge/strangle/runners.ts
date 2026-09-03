@@ -21,6 +21,11 @@
 /** Tags graded by something other than the corpus runner, and by what. */
 const NON_CORPUS: Record<string, string[]> = {
   "raw-protocol": ["m2/raw-protocol.ts"],
+  // C16b / W13b. Also structural rather than incidental: the stimulus is an OS
+  // signal to the engine process, and the corpus runner drives through
+  // `sdk.mjs`, which owns the spawn and exposes no pid. A scenario cannot ask
+  // for a signal it has no way to send, so the lane that CAN send one grades it.
+  "sigterm-mid-turn": ["w13/sigterm.ts"],
 };
 
 /** The argv (after `npx tsx`) that grades one coverage tag against `engineB`. */

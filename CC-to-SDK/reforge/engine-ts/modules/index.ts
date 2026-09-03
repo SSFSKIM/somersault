@@ -40,6 +40,7 @@ import * as envBlock from "../../strangle/modules/env-block/reference.js";
 import * as textDelta from "../../strangle/modules/text-delta/reference.js";
 import * as sessionMaterialize from "../../strangle/modules/session-materialize/reference.js";
 import * as globDescription from "../../strangle/modules/glob-description/reference.js";
+import * as processLifecycle from "../../strangle/modules/process-lifecycle/reference.js";
 import * as readDescription from "../../strangle/modules/read-description/reference.js";
 import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
 import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
@@ -304,6 +305,13 @@ const OWNED: [string, string, unknown][] = [
   ["enter-plan-mode-description", "subsystem/moat-tools", enterPlanModeDescription.enterPlanModeDescription],
   ["exit-plan-mode-description", "subsystem/moat-tools", exitPlanModeDescription.exitPlanModeDescription],
   ["ask-user-question-description", "subsystem/moat-tools", askUserQuestionDescription.askUserQuestionDescription],
+  // C16b / W13a — the process lifecycle latch, the campaign's second S-CHUNK.
+  // Registered under the query loop because that is what consults it: the turn
+  // driver reads it, the streaming tool loop reads it, and the hook layer's
+  // shutdown arms are built out of it. The row does not close on it — one latch
+  // is not the loop — but the executor children (C10.7/C10.8) can now consume
+  // `isShuttingDown`/`hang` from an owned module instead of stubbing them.
+  ["process-lifecycle", "subsystem/query-loop", processLifecycle.isShuttingDown],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

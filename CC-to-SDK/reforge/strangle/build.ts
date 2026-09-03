@@ -235,6 +235,7 @@ for (const plan of chunkPlans) {
     `replaced ${plan.chunk} [chunk] with ${plan.row.module}: ${plan.source.length} chars -> ${replacement.length} ` +
       `(exports: ${plan.exports.map((e) => `${e.as}=${e.name}${sabotaged.has(e.as) ? " [SABOTAGE]" : ""}${e.darkReason ? " [dark]" : ""}`).join(", ")}` +
       `; ports: ${plan.imports.map((i) => `${i.as}=${i.name}`).join(", ")}` +
+      `${plan.state.length > 0 ? `; module state re-declared: ${plan.state.map((st) => `${st.as}=${st.binding}→${st.reproducedBy}`).join(", ")}` : ""}` +
       `${checked.length > 0 ? `; values verified: ${checked.join(", ")}` : ""})`,
   );
 }

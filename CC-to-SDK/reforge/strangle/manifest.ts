@@ -215,6 +215,32 @@ export interface ChunkExportSpec extends ChunkBinding {
   darkOver?: string[];
 }
 
+/**
+ * A top-level declarator whose initializer CONSTRUCTS, declared deliberately
+ * (chunk.ts rule 2b).
+ *
+ * The default refusal is right for the common case — replacing a file whole
+ * drops whatever its module body did — and wrong for the case where the
+ * construction IS the module: a latch object, or a promise built with an empty
+ * executor so that awaiting it never returns. The owned module re-declares
+ * those at module scope, where ESM gives them the same one-per-process identity
+ * upstream's have, so nothing is dropped. `why` is the adjudication and it is
+ * printed every build; the build checks the DERIVATION and the construct kind,
+ * because those are the parts a pin can move underneath the prose.
+ */
+export interface ChunkStateSpec {
+  /** the handle the row and the build log refer to it by */
+  as: string;
+  /** recover the minified declarator name from the pinned chunk; must throw when the shape moved */
+  derive: (source: string) => string;
+  /** the initializer's `ts.SyntaxKind` name — a different construct is a mismatch, not a pass */
+  construct: string;
+  /** the binding in `<module>/reference.js` that re-declares it */
+  reproducedBy: string;
+  /** why re-declaring it preserves the semantics, and what grades that claim */
+  why: string;
+}
+
 export interface ChunkReplacement {
   /** row name; also the `--sabotage <name>:<export>` prefix */
   name: string;
@@ -229,6 +255,12 @@ export interface ChunkReplacement {
   helpers?: { from: string; names: string[] }[];
   /** statements emitted before the declarations — the `primitive` equality assertions */
   prologue?: (port: (as: string) => string) => string;
+  /**
+   * Constructing top-level declarators the owned module re-declares rather than
+   * drops. Absent, any construction at the chunk's top level refuses the build
+   * — see `ChunkStateSpec` and chunk.ts rule 2b.
+   */
+  moduleState?: ChunkStateSpec[];
 }
 
 /** A capture with its per-build identifier resolved — what the build actually wires. */
@@ -250,6 +282,24 @@ export function deriveCaptures(sp: Splice, body: string): DerivedCapture[] {
     }
     return { as: c.as, kind: c.kind, owned: c.owned === true, identifier };
   });
+}
+
+/**
+ * The latch chunk's derivations, which need a capture group other than the first.
+ *
+ * `pick` reads group 1, and that is enough everywhere a row can anchor on prose
+ * around its target. The shutdown latch has no prose: the binding it wants is
+ * identified only by the binding NEXT to it (`var n = new Promise(()=>{});
+ * function pm(){return n}` — the promise names the reader, and only a
+ * backreference ties the two together), so the shape has to be matched whole and
+ * the answer read out of it.
+ */
+function latchBinding(as: string, re: RegExp, group: number): (source: string) => string {
+  return (source) => {
+    const m = source.match(re);
+    if (!m || m[group] === undefined) throw new Error(`process-lifecycle: could not derive '${as}' — ${re}`);
+    return m[group];
+  };
 }
 
 /** A derivation helper: one regex, one capture group, one loud failure. */
@@ -5267,11 +5317,20 @@ export const SPLICES: Splice[] = [
 
 
 /**
- * Whole chunks the strangler owns (§2.2). One row so far: the campaign's S-chunk
- * debut, chosen because it is the smallest surface that exercises the whole
- * mechanism — three exports, two of them constants thirteen other chunks read,
- * one function with a single consumer, and two effectful imports that must stay
- * ports.
+ * Whole chunks the strangler owns (§2.2). Two rows.
+ *
+ * The first is the campaign's S-chunk debut, chosen because it is the smallest
+ * surface that exercises the whole mechanism — three exports, two of them
+ * constants thirteen other chunks read, one function with a single consumer, and
+ * two effectful imports that must stay ports.
+ *
+ * The second is the other reason to take a whole chunk, and it is not size. The
+ * shutdown latch is three exports that are meaningless apart: a boolean, its
+ * one-way setter, and a promise built never to settle. Splicing them
+ * individually would leave each owned function reading a different upstream
+ * `var` — three correct-looking modules that together are not the latch. When
+ * the STATE is the contract, the module is the unit, and that is what §2.2's
+ * whole-chunk row buys that three S-method splices cannot.
  */
 export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
   {
@@ -5372,6 +5431,99 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
     // The one `primitive` that crosses INTO the replacement rather than out of
     // it. Asserted once at module load, which is where upstream interpolated it.
     prologue: (port) => `assertGraphValue("glob-description","agentToolName",${port("agentToolName")},AGENT_TOOL_NAME);`,
+  },
+
+  {
+    // C16b / W13b — the process lifecycle latch: 780 B of file, 165 B of code,
+    // three exports, ZERO imports, ten named importers and ninety call sites.
+    // The campaign's smallest whole-chunk ownership, and the one where the
+    // MODULE rather than any of its functions is the unit: a reader bound to a
+    // different boolean than the setter writes, or a hang that minted a fresh
+    // promise per call, would pass every output comparison in the corpus and
+    // destroy the behaviour. See modules/process-lifecycle/reference.js.
+    name: "process-lifecycle",
+    module: "process-lifecycle",
+    // THE CHUNK HAS NO STRING LITERAL AT ALL — not one, in 165 characters — so
+    // the anchor is what `research/tools/anchor-enum.ts` calls an untainted run:
+    // a span carrying no identifier the minifier may rename. `committed` is a
+    // class FIELD name, which this bundler preserves (the same bet every
+    // property-name anchor in this manifest already makes), and `!1` is its
+    // constant-folding of `false`. The mechanical rule's shortest unique window
+    // is `ted=!1}v`; this row takes the whole run instead, because eight
+    // characters that begin mid-word buy nothing and cost a reader's ability to
+    // recognise what was anchored. Both are unique graph-wide — the fixture
+    // records the measurement.
+    anchor: "{committed=!1}var",
+    exports: [
+      {
+        // `function xo(){return e.committed}` — the latch reader, and the hook
+        // executor design's `SchedulingPort.isShuttingDown()`. Sixty-two call
+        // sites across all ten importers: every one of them reads this.
+        as: "isShuttingDown",
+        // `effectful-port` in the §2.4 sense that matters here: not pure, not a
+        // constant. The owned module holds the state rather than forwarding it,
+        // which is the whole point of taking the chunk instead of the function.
+        kind: "effectful-port",
+        owned: "isShuttingDown",
+        derive: latchBinding("isShuttingDown", /function ([A-Za-z_$][\w$]*)\(\)\{return [A-Za-z_$][\w$]*\.committed\}/, 1),
+        declare: (name, owned) => `function ${name}(){return ${owned}()}`,
+        coverage: ["plain", "bash-tool"],
+      },
+      {
+        // `function S8e(){e.committed=!0}` — the one-way commit. THREE call
+        // sites bundle-wide and the fixture names all three: the coordinator's
+        // `shutdown` and `shutdownSync`, and the headless dispatcher's SIGTERM
+        // handler. Nothing in the bundle clears it.
+        as: "commitShutdown",
+        kind: "effectful-port",
+        owned: "commitShutdown",
+        derive: latchBinding("commitShutdown", /function ([A-Za-z_$][\w$]*)\(\)\{[A-Za-z_$][\w$]*\.committed=!0\}/, 1),
+        declare: (name, owned) => `function ${name}(){${owned}()}`,
+        coverage: ["sigterm-mid-turn"],
+      },
+      {
+        // `var n=new Promise(()=>{});function pm(){return n}` — the promise
+        // that never settles, and the mechanism by which a turn stops without
+        // unwinding. Twenty-five call sites, and all but a handful are the same
+        // sentence: `if (isShuttingDown() && !aborted) await hang()`.
+        as: "hang",
+        kind: "effectful-port",
+        owned: "hang",
+        derive: latchBinding("hang", /var ([A-Za-z_$][\w$]*)=new Promise\(\(\)=>\{\}\);function ([A-Za-z_$][\w$]*)\(\)\{return \1\}/, 2),
+        declare: (name, owned) => `function ${name}(){return ${owned}()}`,
+        coverage: ["sigterm-mid-turn"],
+      },
+    ],
+    // Nothing. The `[]` is the positive claim, machine-checked: chunk.ts refuses
+    // any import binding the row does not classify, in both directions.
+    imports: [],
+    // Rule 2b (chunk.ts). Both declarators CONSTRUCT, which the default audit
+    // refuses because replacing a file whole normally drops what its body did.
+    // Here the construction IS the module, and the owned copy re-declares it at
+    // module scope — where ESM's once-per-URL evaluation gives it exactly the
+    // one-instance-per-process identity `var e = new t` has.
+    moduleState: [
+      {
+        as: "latchInstance",
+        derive: latchBinding("latchInstance", /class ([A-Za-z_$][\w$]*)\{committed=!1\}var ([A-Za-z_$][\w$]*)=new \1/, 2),
+        construct: "NewExpression",
+        reproducedBy: "latch",
+        why:
+          "one object with one boolean field, constructed once at module scope. The owned module declares `const latch = { committed: false }`, " +
+          "so the reader and the setter share a referent exactly as upstream's do; ESM evaluates the module body once per process, which is the " +
+          "same guarantee `var e = new t` has. Graded by strangle/hooks-parity.test.ts against upstream's own chunk bytes, and by per-export sabotage.",
+      },
+      {
+        as: "hangPromise",
+        derive: latchBinding("hangPromise", /var ([A-Za-z_$][\w$]*)=new Promise\(\(\)=>\{\}\)/, 1),
+        construct: "NewExpression",
+        reproducedBy: "never",
+        why:
+          "a promise whose executor takes neither resolve nor reject and does nothing, so it can never settle. Constructed once, at module scope, " +
+          "and returned by identity: a per-call `new Promise(() => {})` would behave the same for one awaiter and differently for any caller that " +
+          "races two of them or compares identity. The same oracle grades it, and the `hang` twin — which RESOLVES — is what proves the difference is observable.",
+      },
+    ],
   },
 ];
 

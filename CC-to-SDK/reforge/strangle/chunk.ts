@@ -71,7 +71,7 @@ import type { Excision } from "./ast.js";
 import { chunkAst } from "./ast.js";
 import { resolveAnchor } from "./anchor.js";
 import { spliceFootprint, type SpliceFootprint } from "./footprint.js";
-import type { ChunkReplacement, DerivedCapture } from "./manifest.js";
+import type { ChunkReplacement, ChunkStateSpec, DerivedCapture } from "./manifest.js";
 
 /** One derived export: the minified name, the owned binding it is bound to. */
 export interface PlannedExport {
@@ -102,6 +102,8 @@ export interface ChunkPlan {
   source: string;
   exports: PlannedExport[];
   imports: PlannedImport[];
+  /** the declared module state, with each binding resolved this build (rule 2b) */
+  state: { as: string; binding: string; construct: string; reproducedBy: string; why: string }[];
   /** every export name, in the order the original export clause listed them */
   exportOrder: string[];
   /**
@@ -190,25 +192,86 @@ function inertInitializer(n: ts.Node): { kind: string; at: number } | null {
  * Rule 2: a chunk with top-level side effects is not clean for whole-file
  * replacement. Refusing is the point — the scout's "zero side effects" reading is
  * a claim about the pinned bytes, and this is what re-checks it every build.
+ *
+ * ## Rule 2b — MODULE STATE, declared (C16b / W13b)
+ *
+ * The refusal above reads "replacing the file whole would DROP it", and for the
+ * first owned chunk that was the whole story: its constructions were the ones a
+ * replacement would silently lose. The second owned chunk is the other case, and
+ * it is not an exception to the rule so much as the rule's other half. Its
+ * entire content is two constructions — a latch object and a promise built with
+ * an empty executor so it can never settle — and the replacement does not drop
+ * them: it RE-DECLARES them, at module scope, with the same one-per-process
+ * identity ESM gives upstream's.
+ *
+ * That distinction cannot be inferred from the AST, so the row DECLARES it and
+ * this checks the declaration:
+ *
+ *   * every constructing declarator must be claimed by a `moduleState` entry
+ *     whose derivation resolves to that same binding, so a construction the row
+ *     did not think about still fails;
+ *   * the entry names the CONSTRUCT it expects, so an upstream `new Foo` that
+ *     becomes `new Bar(io())` is a mismatch rather than a silent pass;
+ *   * every entry must match something, so an exemption that has stopped
+ *     applying fails as loudly as a missing one. A carve-out nothing exercises
+ *     is a carve-out nobody re-reads.
+ *
+ * What it deliberately does NOT try to do is prove the owned module reproduces
+ * the semantics. Nothing static can. That claim is `why`, printed every build,
+ * and it is graded where the campaign grades every other parity claim: a
+ * contract test against upstream's own bytes, plus per-export sabotage.
  */
-function auditTopLevel(sf: ts.SourceFile, name: string): void {
+function auditTopLevel(sf: ts.SourceFile, name: string, state: ReadonlyMap<string, ChunkStateSpec>): void {
+  const claimed = new Set<string>();
   for (const s of sf.statements) {
     if (ts.isVariableStatement(s)) {
       for (const d of s.declarationList.declarations) {
         const effect = d.initializer && inertInitializer(d.initializer);
         if (!effect) continue;
+        const binding = d.name.getText(sf);
+        const declared = state.get(binding);
+        if (declared !== undefined && declared.construct === effect.kind) {
+          claimed.add(declared.as);
+          continue;
+        }
         throw new Error(
-          `${name}: top-level declarator '${d.name.getText(sf)}' initializes with a ${effect.kind} at offset ${effect.at} — ` +
-            `that runs when the chunk is evaluated, and replacing the file whole would drop it. ` +
-            `Fall back to S-method splices of the individual functions (§2.2).`,
+          `${name}: top-level declarator '${binding}' initializes with a ${effect.kind} at offset ${effect.at} — ` +
+            `that runs when the chunk is evaluated, and replacing the file whole would drop it.` +
+            (declared === undefined
+              ? ` Declare it as \`moduleState\` if the owned module re-declares it with the same identity, or fall back to S-method splices (§2.2).`
+              : ` The row declares '${declared.as}' as a ${declared.construct}, which is not what upstream has here.`),
         );
       }
       continue;
     }
     if (ts.isImportDeclaration(s) || ts.isFunctionDeclaration(s) || ts.isExportDeclaration(s)) continue;
+    // A CLASS DECLARATION, but only the inert kind. Defining a class evaluates
+    // its STATIC field initializers and runs its static blocks; instance field
+    // initializers run per `new`, not here. So a class with neither is a binding
+    // like any other declaration and a replacement that re-declares it drops
+    // nothing — while one with a static initializer runs code at module
+    // evaluation and is exactly what this audit exists to refuse.
+    if (ts.isClassDeclaration(s)) {
+      const eager = s.members.find(
+        (m) => ts.isClassStaticBlockDeclaration(m) || (ts.canHaveModifiers(m) && (ts.getModifiers(m) ?? []).some((x) => x.kind === ts.SyntaxKind.StaticKeyword)),
+      );
+      if (eager === undefined) continue;
+      throw new Error(
+        `${name}: top-level class '${s.name?.text ?? "<anonymous>"}' has a static member or static block at offset ${eager.getStart(sf)} — ` +
+          `that runs when the chunk is evaluated, and replacing the file whole would drop it. ` +
+          `Fall back to S-method splices of the individual functions (§2.2).`,
+      );
+    }
     throw new Error(
       `${name}: top-level ${ts.SyntaxKind[s.kind]} at offset ${s.getStart(sf)} — the chunk has side effects beyond declarations, ` +
         `so replacing the file whole would drop behaviour. Fall back to S-method splices of the individual functions (§2.2).`,
+    );
+  }
+  for (const spec of state.values()) {
+    if (claimed.has(spec.as)) continue;
+    throw new Error(
+      `${name}: moduleState '${spec.as}' matched no constructing top-level declarator — the carve-out is stale. ` +
+        `Either upstream stopped constructing it (drop the entry) or the derivation now resolves elsewhere (re-derive it).`,
     );
   }
 }
@@ -249,7 +312,15 @@ export function planChunkReplacement(
   const { path, source } = resolveAnchor(sources, row, label);
   const chunk = label(path);
   const sf = chunkAst(path, source);
-  auditTopLevel(sf, row.name);
+  // The state declarations are resolved BEFORE the audit, from upstream's own
+  // bytes, so the audit compares bindings rather than the row's prose.
+  const state = new Map<string, ChunkStateSpec>();
+  for (const spec of row.moduleState ?? []) {
+    const binding = spec.derive(source); // throws when the shape moved
+    if (state.has(binding)) throw new Error(`${row.name}: two moduleState entries derived the same binding '${binding}'`);
+    state.set(binding, spec);
+  }
+  auditTopLevel(sf, row.name, state);
 
   const exportOrder = exportClause(sf, row.name);
   const exports: PlannedExport[] = row.exports.map((e) => {
@@ -307,6 +378,7 @@ export function planChunkReplacement(
     source,
     exports,
     imports,
+    state: [...state].map(([binding, spec]) => ({ as: spec.as, binding, construct: spec.construct, reproducedBy: spec.reproducedBy, why: spec.why })),
     exportOrder,
     render(modulesRoot, sabotaged) {
       // Graph imports first, grouped by specifier and emitted in the order the
