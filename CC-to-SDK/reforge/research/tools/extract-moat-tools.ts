@@ -58,6 +58,10 @@ import ts from "typescript";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../../src/pin.js";
 import { freeIdentifiers } from "../../strangle/scope.js";
 import { anchorFor, bundle, exactScans, resetExactScans, type AnchorMeasurement } from "./anchor-enum.js";
+import { ENGINE_PROMPT_SCRUBS } from "../../src/canonical.js";
+
+/** The shared engine-prose clock scrub (src/canonical.ts), applied to a rendered description. */
+const applyEnginePromptScrubs = (text: string): string => ENGINE_PROMPT_SCRUBS.reduce((acc, [re, to]) => acc.replace(re, to), text);
 
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
 export const FIXTURE_DIR = join(TOOL_DIR, "..", "fixtures");
@@ -292,9 +296,19 @@ function readCorpus(): CorpusFacts {
       shapes.set(key, shape);
       for (const t of body.tools) {
         const per = byTool.get(t.name) ?? new Map<string, Set<string>>();
-        const seen = per.get(t.description ?? "") ?? new Set<string>();
+        // THE SHARED CLOCK RULE, applied here for the same reason the replay
+        // hash applies it (C12a/W9a). WebSearch's description renders THE CURRENT
+        // MONTH ("The current month is August 2026"), so a corpus recorded across
+        // a month boundary carries two byte-different descriptions for a tool
+        // nothing changed — and this fixture compares its bytes EXACTLY. The
+        // proxy has scrubbed that sentence since C10.6-fix; a fixture that did
+        // not was measuring a calendar. Measured on 2026-09-03: four recordings
+        // taken in September reddened this phase against 51 bodies recorded in
+        // August, 1,319 B against 1,322 B, entirely on the month name.
+        const description = applyEnginePromptScrubs(t.description ?? "");
+        const seen = per.get(description) ?? new Set<string>();
         seen.add(f);
-        per.set(t.description ?? "", seen);
+        per.set(description, seen);
         byTool.set(t.name, per);
         if (!schemas.has(t.name)) schemas.set(t.name, JSON.stringify(t.input_schema ?? null));
       }

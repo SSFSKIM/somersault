@@ -65,7 +65,11 @@ async function once(seedBaseline: boolean, eagerFlush = true): Promise<{ entries
     // genuinely empty config dir and mints its own first-run state.
     rmSync(join(CONFIG_DIR, ".claude.json"), { force: true });
   }
-  const proxy = await startReplayProxy(cassette, join(REFORGE_ROOT, "cassettes", `w9-measure-observed.jsonl`));
+  const proxy = await startReplayProxy(cassette, // Named to the REPLAY-BYPRODUCT pattern (`-observed-A.jsonl`) on purpose: a
+    // dump this tool writes is not a recording, and `extract-moat-tools.ts`
+    // defines the corpus by excluding exactly that pattern. A scratch file that
+    // does not match it becomes a corpus member and moves a denominator.
+    join(REFORGE_ROOT, "cassettes", "w9-measure-observed-A.jsonl"));
   const ctx: ScenarioContext = {
     engine: enginePath("engine-real"),
     baseUrl: `http://127.0.0.1:${proxy.port}`,
