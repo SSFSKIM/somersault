@@ -82,7 +82,7 @@ const VALUE_SCRUBS = RUN_VALUE_SCRUBS;
  * diff still fires. What is discarded is only the value of an id nothing else
  * can pin.
  */
-const RUN_ID_KEYS = new Set([
+export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
   "session_id",
   "uuid",
   "agentId",
@@ -148,19 +148,19 @@ const RUN_ID_ARRAY_KEYS = new Set(["uuids", "all_uuids"]);
 
 const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >= 6;
 
-function collectRunIds(v: unknown, into: Map<string, string>): void {
+function collectRunIds(v: unknown, into: Map<string, string>, keys: ReadonlySet<string> = RUN_ID_KEYS): void {
   if (Array.isArray(v)) {
-    for (const x of v) collectRunIds(x, into);
+    for (const x of v) collectRunIds(x, into, keys);
     return;
   }
   if (v === null || typeof v !== "object") return;
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (RUN_ID_KEYS.has(k) && isRunId(val) && !into.has(val)) {
+    if (keys.has(k) && isRunId(val) && !into.has(val)) {
       into.set(val, `<id${into.size}>`);
     } else if (RUN_ID_ARRAY_KEYS.has(k) && Array.isArray(val)) {
       for (const id of val) if (isRunId(id) && !into.has(id)) into.set(id, `<id${into.size}>`);
     }
-    collectRunIds(val, into);
+    collectRunIds(val, into, keys);
   }
 }
 
@@ -204,8 +204,21 @@ export function normalizeValue(v: unknown): unknown {
  * output can be handed to diffTranscripts safely.
  */
 export function makeRunNormalizer(...sources: unknown[]): (v: unknown) => unknown {
+  return makeRunNormalizerOver(RUN_ID_KEYS, sources);
+}
+
+/**
+ * The same normalizer over a CHOSEN key set — the mutation seam §3.4 asks for.
+ *
+ * A rule in `RUN_ID_KEYS` is only evidence if removing it changes an answer, and
+ * that cannot be shown from outside a module whose key set is a constant. So the
+ * set is a parameter here and `src/differ.test.ts` runs each rule's own controls
+ * with that rule deleted: a rule whose deletion changes nothing is a rule that
+ * was never load-bearing, and the test says so by name.
+ */
+export function makeRunNormalizerOver(keys: ReadonlySet<string>, sources: readonly unknown[]): (v: unknown) => unknown {
   const ids = new Map<string, string>();
-  for (const s of sources) collectRunIds(s, ids);
+  for (const s of sources) collectRunIds(s, ids, keys);
   const scrub = makeScrubString(ids);
   return (v: unknown) => normalizeWith(v, scrub);
 }
