@@ -235,8 +235,13 @@ const ENVELOPE_FIELDS = [
 export function projectRecord(record: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of ENVELOPE_FIELDS) if (f in record) out[f] = record[f];
-  const message = record.message as { role?: unknown } | undefined;
+  const message = record.message as { role?: unknown; content?: unknown } | undefined;
   if (message && typeof message === "object" && "role" in message) out.role = message.role;
+  // The tool_use_id of a record that carries exactly one tool_result block. It
+  // comes from the CASSETTE, so it is identical on both engines — which is what
+  // makes it usable as the sort key below.
+  const id = singleToolResultId(record);
+  if (id !== null) out.toolUseId = id;
   // The sorted key list — what `m2/cross-resume` had, kept because it is the
   // only thing that sees a key the projection does not name.
   out.keys = Object.keys(record).sort();
@@ -247,15 +252,58 @@ export function projectRecord(record: Record<string, unknown>): Record<string, u
   return out;
 }
 
+const singleToolResultId = (record: Record<string, unknown>): string | null => {
+  const content = (record.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content) || content.length !== 1) return null;
+  const b = content[0] as { type?: string; tool_use_id?: unknown };
+  return b?.type === "tool_result" && typeof b.tool_use_id === "string" ? b.tool_use_id : null;
+};
+
+/**
+ * PARALLEL TOOL RESULTS ARE WRITTEN IN COMPLETION ORDER, and completion order is
+ * a race — the same race `src/differ.ts` already canonicalizes on the SDK
+ * transcript, arriving here as the ORDER OF RECORDS IN THE FILE. Measured on the
+ * identical-code pair: `parallel-tools` wrote the same sixteen records both
+ * sides, each result correctly chained to its OWN `tool_use`, and differed only
+ * in which of the three landed first — which shifts the run-id map's first-seen
+ * numbering and reports as two `parentUuid` differences.
+ *
+ * So each maximal run of consecutive single-tool_result records is sorted by
+ * `toolUseId`, exactly as the transcript rule sorts its own. WHAT IT HIDES: the
+ * arrival order of parallel results. WHAT IT WOULD MISS: nothing the chain claim
+ * needs — every result's `parentUuid` still names its own `tool_use` record and
+ * is still compared, so a result chained to the WRONG call still diffs, and a
+ * missing or extra result still diffs. Only the interleaving goes.
+ */
+function canonicalizeToolResultRuns(records: Record<string, unknown>[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < records.length; ) {
+    if (typeof records[i].toolUseId !== "string") {
+      out.push(records[i++]);
+      continue;
+    }
+    let j = i;
+    while (j < records.length && typeof records[j].toolUseId === "string") j++;
+    const run = records.slice(i, j);
+    if (run.length > 1) run.sort((a, b) => String(a.toolUseId).localeCompare(String(b.toolUseId)));
+    out.push(...run);
+    i = j;
+  }
+  return out;
+}
+
 /** A JSONL transcript, projected record by record; an unparseable trailing line is recorded as one. */
-export function projectTranscript(text: string): { records: unknown[]; tornTail: boolean } {
+export function projectTranscript(text: string): { records: unknown[]; tornTail: boolean; firstTimestamp: string | null } {
   const lines = text.split("\n");
   const tornTail = text.length > 0 && !text.endsWith("\n");
-  const records: unknown[] = [];
+  let firstTimestamp: string | null = null;
+  const records: Record<string, unknown>[] = [];
   for (const line of lines) {
     if (line === "") continue;
     try {
-      records.push(projectRecord(JSON.parse(line) as Record<string, unknown>));
+      const record = JSON.parse(line) as Record<string, unknown>;
+      if (firstTimestamp === null && typeof record.timestamp === "string") firstTimestamp = record.timestamp;
+      records.push(projectRecord(record));
     } catch {
       // A torn write, a cycle-seeded rewrite that broke JSON, or a half-flushed
       // record. Its BYTES are not projected — the tail of a real record would
@@ -264,7 +312,7 @@ export function projectTranscript(text: string): { records: unknown[]; tornTail:
       records.push({ malformed: true, bytes: line.length });
     }
   }
-  return { records, tornTail };
+  return { records: canonicalizeToolResultRuns(records), tornTail, firstTimestamp };
 }
 
 /**
@@ -297,6 +345,25 @@ export function projectConfigJson(text: string): unknown {
   return { keys: Object.keys(parsed).sort(), ...parsed };
 }
 
+/**
+ * SESSION FILES ARE NAMED AFTER A RANDOM UUID, so listing a project directory in
+ * lexicographic order is a coin flip: a scenario that leaves two sessions (any
+ * `/clear`, any fork) puts them in a different order on every run, which shifts
+ * the run-id map's first-seen numbering and reports as fifty differences that
+ * mean nothing. MEASURED on `hooks-session-end`, the corpus's `/clear` scenario.
+ *
+ * So sibling transcripts are ordered by SESSION CREATION — the timestamp of the
+ * file's first record, which is the fact that actually distinguishes them. The
+ * clock is used as an ORDERING KEY ONLY and is never recorded (mtimes and
+ * timestamps stay out of the snapshot for the reason the header gives). WHAT IT
+ * HIDES: nothing. Every path is still compared, a missing or extra session file
+ * still diffs, and the paths themselves go through the run-id map. WHAT IT WOULD
+ * MISS: two sessions whose first records share a millisecond, where the tie
+ * falls back to the file name and the coin flip returns — which then reports as
+ * a difference, the safe direction.
+ */
+const ORDER_KEY = new WeakMap<StateEntry, string>();
+
 /** One filesystem entry, read without following symlinks. `read` decides how a file is recorded. */
 function entryOf(path: string, abs: string, read: ReadAs): StateEntry {
   const st = lstatSync(abs);
@@ -306,9 +373,10 @@ function entryOf(path: string, abs: string, read: ReadAs): StateEntry {
   const bytes = readFileSync(abs);
   const entry: StateEntry = { path, kind: "file" };
   if (read === "transcript") {
-    const { records, tornTail } = projectTranscript(bytes.toString("utf8"));
+    const { records, tornTail, firstTimestamp } = projectTranscript(bytes.toString("utf8"));
     entry.records = records;
     if (tornTail) entry.tornTail = true;
+    if (firstTimestamp !== null) ORDER_KEY.set(entry, firstTimestamp);
   } else if (read === "config-json") {
     entry.records = [projectConfigJson(bytes.toString("utf8"))];
   } else {
@@ -350,19 +418,42 @@ export function rootEntriesOf(root: StateRoot): StateEntry[] {
   const admits = root.include;
   const descend = admits === undefined ? () => true : (rel: string) => configDescend(rel);
   const walk = (dir: string): void => {
+    // Two passes over one directory: build every child entry in readdir order,
+    // then permute the transcript entries AMONG THEMSELVES by creation order
+    // before emitting. The interleaving of files and directories is untouched —
+    // only which session file occupies which transcript slot changes.
+    type Slot = { rel: string; abs: string; entry: StateEntry | null };
+    const slots: Slot[] = [];
     for (const name of readdirSync(dir).sort()) {
       const abs = join(dir, name);
       const rel = relative(root.path, abs);
-      const isDir = lstatSync(abs).isDirectory();
-      if (isDir) {
+      let st;
+      try {
+        st = lstatSync(abs);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
         if (!descend(rel)) continue;
-        out.push(withSlug({ path: rel, kind: "dir" }));
-        walk(abs);
+        slots.push({ rel, abs, entry: null });
         continue;
       }
       const read = admits === undefined ? "hash" : admits(rel);
       if (read === null) continue;
-      out.push(entryOf(rel, abs, read));
+      slots.push({ rel, abs, entry: entryOf(rel, abs, read) });
+    }
+    const ordered = slots.filter((s) => s.entry !== null && ORDER_KEY.has(s.entry));
+    const byCreation = ordered
+      .map((s) => s.entry!)
+      .sort((a, b) => ORDER_KEY.get(a)!.localeCompare(ORDER_KEY.get(b)!) || a.path.localeCompare(b.path));
+    ordered.forEach((slot, i) => (slot.entry = byCreation[i]));
+    for (const slot of slots) {
+      if (slot.entry === null) {
+        out.push(withSlug({ path: slot.rel, kind: "dir" }));
+        walk(slot.abs);
+      } else {
+        out.push(slot.entry);
+      }
     }
   };
   if (rootEntry.kind === "dir") walk(root.path);
@@ -411,3 +502,100 @@ export function stateSnapshot(roots: readonly StateRoot[], messages: readonly un
 /** The entries of one registered root, by name — for reporting, never for grading a subset. */
 export const entriesOf = (snap: StateSnapshot, name: string): StateEntry[] =>
   snap.roots.find((r) => r.name === name)?.entries ?? [];
+
+// ---- the flush schedule (W9 scout §4.3, capability 1) -----------------------
+//
+// The engine writes its transcript on a 100 ms timer (`FLUSH_INTERVAL_MS`), so
+// "what is in the file" is a function of when you look. The cut said to decide
+// by measurement, in a fixed order; the measurements are in `w9/measure.ts` and
+// the decision landed on the third branch. It is recorded in full at
+// `EngineEnvKnobs.eagerFlush` in `src/env.ts`, because that is where the knob
+// lives; in one line: the drain is forced synchronous for every graded run
+// (`CLAUDE_CODE_EAGER_FLUSH`, an X6 determinism knob with a negative control),
+// because a quiesce cannot decide a race the compactor already lost.
+//
+// THE QUIESCE STAYS ANYWAY, and this is why. It is what turns "the file was
+// still moving when I read it" from an invisible sampling error into a named,
+// failing outcome — `awaitQuiesce` reports `settled: false` and the runner fails
+// the scenario rather than snapshotting a moving file. The knob above makes that
+// case not arise for the transcript; it says nothing about the OTHER things a
+// run leaves behind, and the next state root in line (C15a's task-output
+// directory, written by a backgrounded agent that legitimately outlives its
+// turn) has no such knob.
+//
+// WHAT THE WAIT CHANGES: nothing the engine does. It runs after the query has
+// finished, delays only the harness's observation, and is applied identically to
+// every engine. WHAT IT HIDES: WHEN a record landed — which this surface has
+// never recorded (mtimes are deliberately excluded), so nothing that was graded
+// stops being graded. WHAT IT WOULD MISS: an engine that writes a record later
+// than the timeout below — bounded rather than invisible, because the timeout is
+// a reported outcome.
+export interface QuiesceResult {
+  waitedMs: number;
+  /** false when the timeout expired while the tree was still changing */
+  settled: boolean;
+}
+
+/** Size and mtime of every file the roots admit — an ordering-stable fingerprint, never a graded value. */
+function fingerprint(roots: readonly StateRoot[]): string {
+  const parts: string[] = [];
+  for (const root of roots) {
+    const admits = root.include;
+    const walk = (dir: string): void => {
+      let names: string[];
+      try {
+        names = readdirSync(dir).sort();
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        const abs = join(dir, name);
+        const rel = relative(root.path, abs);
+        let st;
+        try {
+          st = lstatSync(abs);
+        } catch {
+          continue;
+        }
+        if (st.isDirectory()) {
+          if (admits === undefined || configDescend(rel)) {
+            parts.push(`${root.name}/${rel}|dir`);
+            walk(abs);
+          }
+          continue;
+        }
+        if (admits !== undefined && admits(rel) === null) continue;
+        parts.push(`${root.name}/${rel}|${st.size}|${st.mtimeMs}`);
+      }
+    };
+    if (lstatSync(root.path, { throwIfNoEntry: false })) walk(root.path);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Wait until the roots stop changing for one full flush window.
+ *
+ * `windowMs` is deliberately larger than the engine's 100 ms `FLUSH_INTERVAL_MS`:
+ * a window equal to the timer could observe two samples inside one interval and
+ * call a pending drain settled.
+ */
+export async function awaitQuiesce(
+  roots: readonly StateRoot[],
+  { windowMs = 250, timeoutMs = 10_000, pollMs = 25 }: { windowMs?: number; timeoutMs?: number; pollMs?: number } = {},
+): Promise<QuiesceResult> {
+  const started = Date.now();
+  let last = fingerprint(roots);
+  let stableSince = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, pollMs));
+    const now = fingerprint(roots);
+    if (now !== last) {
+      last = now;
+      stableSince = Date.now();
+    } else if (Date.now() - stableSince >= windowMs) {
+      return { waitedMs: Date.now() - started, settled: true };
+    }
+    if (Date.now() - started >= timeoutMs) return { waitedMs: Date.now() - started, settled: false };
+  }
+}

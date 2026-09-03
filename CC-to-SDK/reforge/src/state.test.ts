@@ -10,7 +10,7 @@
 //
 // That argument applies to the sandbox ROOT as much as to its contents, which is
 // what the W1 boundary review found missing: see the final block.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer } from "./differ.js";
@@ -179,6 +179,32 @@ try {
       differs(mapped(transcript), mapped(rechained)));
     check("…while a genuine re-run with different uuids does NOT diff",
       !differs(mapped(transcript), mapped(transcript.split("aaaaaaaa").join("bbbbbbbb"))));
+
+    // TWO SESSIONS IN ONE PROJECT — the `/clear` shape, and the one that made
+    // `hooks-session-end` report fifty meaningless differences: the file names
+    // are random uuids, so listing them alphabetically is a coin flip. Ordered
+    // by session creation, two runs whose files sort in OPPOSITE alphabetical
+    // order still agree; and a run that lost a session still diffs.
+    {
+      const twoRuns = (names: [string, string]) => {
+        const dir = join(cfg, "projects", slug);
+        for (const f of readdirSync(dir)) if (f.endsWith(".jsonl")) rmSync(join(dir, f));
+        writeFileSync(join(dir, `${names[0]}.jsonl`), line({ type: "user", uuid: `${names[0]}-u`, sessionId: names[0], timestamp: "2026-09-03T00:00:01.000Z", message: { role: "user" } }));
+        writeFileSync(join(dir, `${names[1]}.jsonl`), line({ type: "user", uuid: `${names[1]}-u`, sessionId: names[1], timestamp: "2026-09-03T00:00:02.000Z", message: { role: "user" } }));
+        return rootEntriesOf(root).filter((e) => e.path.endsWith(".jsonl"));
+      };
+      const ascending = twoRuns(["aaaa1111-first", "zzzz9999-second"]);
+      const descending = twoRuns(["zzzz9999-first", "aaaa1111-second"]);
+      check("two sessions are listed in CREATION order, not file-name order",
+        !differs(ascending.map(makeRunNormalizer(ascending)), descending.map(makeRunNormalizer(descending))),
+        JSON.stringify(descending.map((e) => e.path)));
+      // …and the negative control: losing one is still a difference.
+      rmSync(join(cfg, "projects", slug, "aaaa1111-second.jsonl"));
+      const one = rootEntriesOf(root).filter((e) => e.path.endsWith(".jsonl"));
+      check("…and a run that left only one session still diffs", differs(descending.map(makeRunNormalizer(descending)), one.map(makeRunNormalizer(one))));
+      for (const f of readdirSync(join(cfg, "projects", slug))) if (f.endsWith(".jsonl")) rmSync(join(cfg, "projects", slug, f));
+      writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript);
+    }
 
     // The torn tail (scout §4.4 D7): a file whose last line has no newline.
     writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript.slice(0, -20));

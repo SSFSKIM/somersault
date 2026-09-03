@@ -31,9 +31,33 @@ export interface ConfigCensus {
   resets: number;
   /** generalized path pattern -> { kind, times seen } */
   entries: Record<string, { kind: "file" | "dir"; seen: number }>;
+  /**
+   * The other half of the census, and the reason it is here rather than in a
+   * separate walk: run-id property name -> observed LEXEME class -> count, read
+   * off the stored transcripts the reset is about to delete.
+   *
+   * The differ maps these ids by PROPERTY NAME because their values are
+   * ambiguous — an agent id and a task id are both `a`+16 hex, four envelope ids
+   * are all RFC-4122. That choice is only safe if the lexemes each key actually
+   * carries are known, and the stored envelope is the only artifact that carries
+   * most of them (`parentUuid`, `leafUuid`, `promptId` and the project slug never
+   * appear in an SDK transcript). `research/tools/extract-run-id-shapes.ts` holds
+   * this against the committed fixture.
+   */
+  idShapes: Record<string, Record<string, number>>;
 }
 
-const EMPTY = (engineVersion: string): ConfigCensus => ({ engineVersion, resets: 0, entries: {} });
+const EMPTY = (engineVersion: string): ConfigCensus => ({ engineVersion, resets: 0, entries: {}, idShapes: {} });
+
+/** The lexeme classes the campaign distinguishes. `other` is deliberate: an unclassified value is a finding. */
+export function lexemeClass(v: string): string {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)) return "uuid-v4";
+  if (/^a[0-9a-f]{16}$/.test(v)) return "a+16hex";
+  if (/^-[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)) return "path-slug";
+  if (/^(req|msg|toolu)_[A-Za-z0-9]+$/.test(v)) return `${v.split("_")[0]}_*`;
+  if (/^[0-9a-f]{64}$/.test(v)) return "sha256";
+  return "other";
+}
 
 /**
  * A concrete path, generalized to the pattern the fixture declares.
@@ -59,7 +83,7 @@ export function censusConfigDir(configDir: string, censusPath: string, engineVer
   let doc: ConfigCensus;
   try {
     const prior = JSON.parse(readFileSync(censusPath, "utf8")) as ConfigCensus;
-    doc = prior.engineVersion === engineVersion ? prior : EMPTY(engineVersion);
+    doc = prior.engineVersion === engineVersion ? { ...EMPTY(engineVersion), ...prior } : EMPTY(engineVersion);
   } catch {
     doc = EMPTY(engineVersion);
   }
@@ -75,7 +99,62 @@ export function censusConfigDir(configDir: string, censusPath: string, engineVer
     }
   };
   walk(configDir);
+  tallyIdShapes(configDir, doc);
   doc.resets++;
   mkdirSync(dirname(censusPath), { recursive: true });
-  writeFileSync(censusPath, JSON.stringify({ ...doc, entries: Object.fromEntries(Object.entries(doc.entries).sort()) }, null, 2) + "\n");
+  writeFileSync(
+    censusPath,
+    JSON.stringify(
+      { ...doc, entries: Object.fromEntries(Object.entries(doc.entries).sort()), idShapes: Object.fromEntries(Object.entries(doc.idShapes).sort()) },
+      null,
+      2,
+    ) + "\n",
+  );
+}
+
+/** Every stored transcript under `projects/`, tallied by run-id key and lexeme class. */
+function tallyIdShapes(configDir: string, doc: ConfigCensus): void {
+  const projects = join(configDir, "projects");
+  if (!existsSync(projects)) return;
+  const files: string[] = [];
+  const find = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) find(abs);
+      else if (name.endsWith(".jsonl")) files.push(abs);
+    }
+  };
+  find(projects);
+  const note = (key: string, value: unknown): void => {
+    if (typeof value !== "string" || value.length < 6) return;
+    const per = (doc.idShapes[key] ??= {});
+    const cls = lexemeClass(value);
+    per[cls] = (per[cls] ?? 0) + 1;
+  };
+  const walkValue = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      for (const x of v) walkValue(x);
+      return;
+    }
+    if (v === null || typeof v !== "object") return;
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (Array.isArray(val)) for (const x of val) note(k, x);
+      else note(k, val);
+      walkValue(val);
+    }
+  };
+  for (const f of files) {
+    for (const line of readFileSync(f, "utf8").split("\n")) {
+      if (!line) continue;
+      try {
+        const record = JSON.parse(line) as Record<string, unknown>;
+        // The project key is a fact about the PATH, not a field of any record.
+        note("slug", relative(projects, f).split("/")[0]);
+        walkValue(record);
+      } catch {
+        // A torn or fault-seeded line contributes no ids; the entry census
+        // already recorded that the file exists.
+      }
+    }
+  }
 }

@@ -231,6 +231,21 @@ const BASE = { baseUrl: "http://127.0.0.1:1234", configDir: "/reforge/config", b
     "an INHERITED auto-compact override is dropped",
     !("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in engineEnv({ ...BASE, mode: "record", parent: { ...parent, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "99" } })),
   );
+  // CLAUDE_CODE_EAGER_FLUSH is the one determinism knob that is ON by default
+  // (C12a/W9a): it is a property of the measurement regime, like the four
+  // telemetry switches, not of one scenario. So the checks run the other way
+  // round from the knob above — present unless opted out — and the inheritance
+  // rule is the same as every other allowlisted var: the knob decides, the
+  // operator's shell never does.
+  check("CLAUDE_CODE_EAGER_FLUSH is set by default", engineEnv({ ...BASE, mode: "record", parent }).CLAUDE_CODE_EAGER_FLUSH === "1");
+  check(
+    "…and the negative control can turn it off",
+    !("CLAUDE_CODE_EAGER_FLUSH" in engineEnv({ ...BASE, mode: "record", parent, knobs: { eagerFlush: false } })),
+  );
+  check(
+    "…and an INHERITED eager-flush setting cannot turn it off",
+    engineEnv({ ...BASE, mode: "record", parent: { ...parent, CLAUDE_CODE_EAGER_FLUSH: "" } }).CLAUDE_CODE_EAGER_FLUSH === "1",
+  );
   // configDir: null is how the isolation probe asks for the UNISOLATED env.
   check("configDir null omits the var", !("CLAUDE_CONFIG_DIR" in engineEnv({ ...BASE, mode: "replay", parent, knobs: { configDir: null } })));
 

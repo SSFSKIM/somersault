@@ -19,7 +19,7 @@ import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/prox
 import { gateCacheCheck } from "../src/leakcheck.js";
 import { scrubRequestBody } from "../src/canonical.js";
 import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX, saveTranscript } from "../src/runTurn.js";
-import { defaultStateRoots, entriesOf, stateSnapshot, type StateSnapshot } from "../src/state.js";
+import { awaitQuiesce, defaultStateRoots, entriesOf, stateSnapshot, type StateSnapshot } from "../src/state.js";
 import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
@@ -85,8 +85,16 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
     messages = [{ type: "reforge-exception", name: (e as Error).name, message: String((e as Error).message).slice(0, 200) }];
   }
   // Taken BEFORE the next run resets the sandbox, and before the proxy closes —
-  // nothing after this point touches the tree.
-  const state = stateSnapshot(defaultStateRoots(SANDBOX, CONFIG_DIR), messages);
+  // nothing after this point touches the tree. AFTER AN OBSERVED QUIESCE: the
+  // engine's transcript is written on a 100 ms timer and a long scenario's file
+  // is still moving when the query resolves (measured; see src/state.ts's flush
+  // header). The wait changes nothing the engine does and is applied identically
+  // to every engine; a run that never settles fails rather than being snapshotted
+  // mid-drain.
+  const roots = defaultStateRoots(SANDBOX, CONFIG_DIR);
+  const quiesce = await awaitQuiesce(roots);
+  if (!quiesce.settled) console.log(`    WARN ${side}: the state roots never stopped changing (${quiesce.waitedMs} ms) — the snapshot would be of a moving file`);
+  const state = stateSnapshot(roots, messages);
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallback = mode === "replay" ? proxy.fallbackServed() : 0;
@@ -99,7 +107,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   // §3.3: the gate caches must never appear in the harness config dir, after
   // EITHER mode — a record writes config, and so does a replay.
   const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
-  return { messages, events, observedFile, state, ok: fallbackOk && gateOk };
+  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled };
 }
 
 /**

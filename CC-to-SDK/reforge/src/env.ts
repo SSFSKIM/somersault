@@ -137,6 +137,54 @@ export interface EngineEnvKnobs {
   /** Extra platform vars a specific driver needs (e.g. GIT_* pinning). Names are asserted. */
   platform?: Record<string, string>;
   /**
+   * `CLAUDE_CODE_EAGER_FLUSH` — DEFAULT ON. The engine writes its session
+   * transcript on a 100 ms timer, and what is in the file when the query
+   * resolves is therefore a race. This makes the drain synchronous: six sites in
+   * the headless loop chunk (`chunk-dvbbv89q.js`) read the variable and
+   * `await flushSessionStorage()` after each record.
+   *
+   * THE CUT SAID DECIDE BY MEASUREMENT, IN ORDER, AND THE ORDER WAS FOLLOWED.
+   *  (a) Byte-stable, no mechanism? Refuted. `resume` (16 records) was stable
+   *      across five replays, but `compact-continue` (~50 records) produced
+   *      33,175 / 33,175 / 33,166 / 34,220 bytes and 49, 50 or 71 records across
+   *      replays of the SAME engine — while its 29 SDK messages and 8 results
+   *      were byte-identical every time and the proxy served zero fallbacks. The
+   *      engine's observable behaviour is deterministic; what it leaves on disk
+   *      is not.
+   *  (b) Observed quiesce? Implemented (`awaitQuiesce`, and KEPT — see below) and
+   *      insufficient: the variance survived it unchanged, because it is not a
+   *      sampling error. Measured cause: this scenario COMPACTS, and the
+   *      transcript compactor rewrites the file in place while the 100 ms drain
+   *      is still appending — so the timer arm lands on 49 records (the rewrite
+   *      won) or 71 (it did not), for the same eight exchanges. Waiting longer
+   *      cannot decide a race that has already been decided.
+   *  (c) So this, with the negative control the cut asked for:
+   *      `w9/measure.ts --phase flush` runs BOTH arms and requires the contrast —
+   *      unstable without the knob, stable with it. A determinism knob whose
+   *      absence changes nothing would be grading nothing.
+   *
+   * WHAT IT CHANGES ON THE DIFFERENTIAL SURFACE, per §3.4. It removes the write
+   * QUEUE's batching from every graded run: the file is now written record by
+   * record, so a reimplementation that dropped, reordered or double-counted
+   * entries INSIDE the queue would leave the same file as one that did not. That
+   * is a real loss and it is where C12c's mutation battery has to pay for it —
+   * "dropped pendingEntries replay" and "queue item resolved before its bytes
+   * landed" are already on that wave's list, and they are now load-bearing rather
+   * than belt-and-braces. What it does NOT change is the CONTENT contract: the
+   * eager arm produces the SETTLED state every time — 49 records, the
+   * post-compaction file — where the timer arm produces the settled state or the
+   * one where the rewrite lost, at random.
+   * It also touches no API traffic, so no cassette's body hash moves.
+   *
+   * `awaitQuiesce` stays in `src/state.ts` even though this made it unnecessary
+   * for the corpus: it is what turns "the file was still moving" from an
+   * invisible sampling error into a named, failing outcome, and the next
+   * storage-bearing surface (C15a's task-output directory) has no such knob.
+   *
+   * Set false ONLY by the negative control.
+   */
+  eagerFlush?: boolean;
+  /**
    * `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` — the auto-compaction threshold, as a
    * percentage of the effective context window, for the ONE scenario that grades
    * the trigger policy. A string because the engine parses it with `parseFloat`.
@@ -263,6 +311,7 @@ export const HARNESS_SET_VARS = [
   "CLAUDE_CODE_ENTRYPOINT", //       pinned (see PINNED_ENTRYPOINT) — the engine writes it into every request body
   "CLAUDE_AGENT_SDK_VERSION", //     set by sdk.mjs from its own version; listed so assertSchema accepts it
   "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", // C7/W4: the auto-compact threshold knob (see `autoCompactPct`; C3 sign-off in the spec's C6–C10 bloc)
+  "CLAUDE_CODE_EAGER_FLUSH", //      C12a/W9a: the transcript drain, made synchronous so the fourth surface grades a file and not a race (see `eagerFlush`)
 ] as const;
 
 /**
@@ -350,6 +399,11 @@ export function engineEnv(opts: EngineEnvOptions): Record<string, string> {
   // corpus is graded at the engine's own threshold, and exactly one scenario
   // lowers it (X6, see `autoCompactPct`).
   if (knobs.autoCompactPct !== undefined) env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = knobs.autoCompactPct;
+  // The transcript drain, synchronous by default (see `eagerFlush`). Unlike the
+  // knobs above it is ON unless a caller opts out, because it is a property of
+  // the harness's measurement regime rather than of one scenario — the same
+  // standing as the four telemetry switches.
+  if (knobs.eagerFlush !== false) env.CLAUDE_CODE_EAGER_FLUSH = "1";
   if (opts.bun) env.BUN = opts.bun;
 
   if (opts.mode === "record") {

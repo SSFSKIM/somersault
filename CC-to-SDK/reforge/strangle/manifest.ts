@@ -5403,7 +5403,11 @@ export const SPLICES: Splice[] = [
       "so no corpus scenario and neither signal plan can reach it: the signal handlers call `shutdown`/`shutdownSync`, which write the flag " +
       "directly and never take the claim. Graded instead by `strangle/contracts.test.ts`, which drives both arms of the pair against a " +
       "recording receiver and asserts the orphan-check disarm as well as the flag, and by the build's own derivation and footprint.",
-    darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+    // ALL THREE headless signal paths, not two (C16b-fix's D2 population
+    // principle, applied here by C12a as a rider). The darkness rests on the
+    // claim that no headless path takes the claim, and SIGINT is a headless path
+    // — measuring it over two of the three left the third asserting nothing.
+    darkOver: ["sigterm-mid-turn", "sighup-mid-turn", "sigint-mid-turn"],
   },
 
   {
@@ -5420,7 +5424,8 @@ export const SPLICES: Splice[] = [
       "the agent-select remount, which releases after the new terminal root is mounted. A headless run has no terminal root to mount, " +
       "so the condition cannot be created; the shutdown paths a headless run does take never release, because they exit. " +
       "Graded instead by `strangle/contracts.test.ts` over the claim/release pair and by the build's derivation and footprint.",
-    darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+    // All three, for the reason on the claim above.
+    darkOver: ["sigterm-mid-turn", "sighup-mid-turn", "sigint-mid-turn"],
   },
 
   {

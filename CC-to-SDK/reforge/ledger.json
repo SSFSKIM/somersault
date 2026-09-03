@@ -6859,7 +6859,12 @@
       "title": "Session/transcript storage; resume/fork",
       "wave": "C12",
       "state": "spliced",
-      "edges": [],
+      "edges": [
+        "subsystem/compaction",
+        "subsystem/moat-tools",
+        "subsystem/subagent-dispatch",
+        "subsystem/query-loop"
+      ],
       "footprint": [
         {
           "chunk": "chunk-fy12d89p.js",
@@ -6966,9 +6971,11 @@
       ],
       "evidence": [
         "strangle/manifest.ts:session-materialize",
-        "scenario:resume"
+        "scenario:resume",
+        "research/fixtures/session-storage-surface-2.1.251.json",
+        "research/2026-09-02-w9-session-storage-scout.md"
       ],
-      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort."
+      "note": "C1's class-method mechanism spike, kept as a permanent splice: one method of the transcript store (materializeSessionFile) is owned, the store is not. `spliced` — the store instance itself crosses as the delegation's receiver, which is exactly the `SessionPort` C12 will design. C4/W1 retrofit: the three pure error predicates (errorCode/isExpected/formatError) are now owned outright, so the module is standalone-complete behind its store/log/report ports and is registered in engine-ts/modules/index.ts. The SUBSYSTEM stays `spliced` — W9 owns the SessionPort. C12a/W9a (machinery child): the row's EDGE ARRAY was empty while three spliced rows pointed edges AT it, so the list was one-directional; it now carries the four symmetric edges the W9 scout named (→ compaction for the boundary's compactMetadata, which W4 writes and GVt consumes here; → moat-tools for BOTH C11c's shared `queue-operation` record, which `ssn` writes and this subsystem's transcript carries, AND the task store's session-keyed <config>/tasks/<sessionId>/ directory, plus C11d's <config>/sessions/ registry; → subagent-dispatch for the route-by-agent subagent transcripts; → query-loop for E4n's segment form). The ARTIFACT LIST is no longer one 723-byte method: research/fixtures/session-storage-surface-2.1.251.json derives the barrel's 235 public names and, for each, who imports its local out of the engine chunk — 148 have a cross-chunk consumer, 87 are barrel-only, 42 chunks import at least one. Two measured corrections to the scout: 13 *ForTesting exports, not 12 (dropPrecautionarySuppressionForTesting), and 42 importing chunks, not 43."
     },
     {
       "id": "subsystem/bash-executor",

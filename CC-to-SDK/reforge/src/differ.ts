@@ -41,6 +41,32 @@ export const SCRUB_KEYS = new Set([
   // session id it is not correlated with anything else in the transcript, so
   // there is no consistency claim to preserve.
   "pid",
+  // C12a/W9a — `.claude.json`'s volatile block, which the config half of the
+  // state surface reads. The per-project record the engine rewrites at the end
+  // of every run carries a wall clock, four durations and a cost; `skillUsage`
+  // carries the timestamp of the last invocation next to the COUNT.
+  //
+  // ENUMERATED RATHER THAN PATTERNED, deliberately. The obvious pattern —
+  // anything ending `Time`, `At`, `Duration` — would also eat `firstStartTime`,
+  // which this wave made a DECLARED INPUT (the empty precondition seeds it) and
+  // therefore a graded fact. §3.4's rule is that over-scrubbing is the worse
+  // direction, and a new volatile field appearing in a later pin should show up
+  // as a red diff someone reads rather than be silently eaten by a pattern.
+  //
+  // WHAT THEY HIDE: how long the last run took and what it cost. WHAT THEY WOULD
+  // MISS: nothing this surface claims — the neighbouring fields in the same
+  // block are graded (`lastTotalInputTokens`, `lastLinesAdded`,
+  // `lastGracefulShutdown`, `lastVersionBase`, `skillUsage.*.usageCount`), and
+  // `lastSessionId` is not scrubbed at all: its value is the session uuid the
+  // run-id map already bound from the transcript, so an engine that named a
+  // DIFFERENT session there still diffs.
+  "lastCost",
+  "lastAPIDuration",
+  "lastAPIDurationWithoutRetries",
+  "lastToolDuration",
+  "lastDuration",
+  "lastStartTime",
+  "lastUsedAt",
 ]);
 
 // Clock-valued keys follow naming conventions — scrub by pattern, not enumeration.
@@ -144,7 +170,7 @@ export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
  * The same keys, whose values are ARRAYS of uuids rather than one uuid. Kept
  * separate so the walk cannot mistake an arbitrary string array for identifiers.
  */
-const RUN_ID_ARRAY_KEYS = new Set(["uuids", "all_uuids"]);
+export const RUN_ID_ARRAY_KEYS: ReadonlySet<string> = new Set(["uuids", "all_uuids"]);
 
 const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >= 6;
 

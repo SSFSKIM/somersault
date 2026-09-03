@@ -219,6 +219,31 @@ export const EXCLUDED_ROWS: ExcludedRow[] = [
       "research/fixtures/moat-tools-2.1.251.json (12 recorded catalog shapes, none containing Monitor); " +
       "strangle/modules/shared/tool-names.js:MONITOR_TOOL_NAME (its name is owned because CronCreate's description points at it, and that arm is dark for the same reason)",
   },
+  // ---- 2026-09-03, C12a/W9a: the storage row's second chunk leaves --------
+  //
+  // The third row through this door and the SECOND pin-conditional one, so the
+  // `gateDead` machinery C11a-fix built for Monitor is now used by a row it was
+  // not designed around — which is the test of whether that kind generalises.
+  // It does, with one difference worth naming: Monitor is a whole TOOL whose
+  // surface is unreachable, while this is a whole BACKEND of a row that stays
+  // canonical. `subsystem/session-storage` is not excluded; the v5 storage
+  // backend behind it is, and the row's live layer is owned by C12b–d.
+  {
+    id: "subsystem/session-storage-v5-backend",
+    kind: "subsystem",
+    gateDead: { gate: "tengu_hover_rest", default: false },
+    reason:
+      "GATE-DEAD AT THIS PIN, WITH NO LEVER — §1.2's pin-conditional kind, declared in `gateDead` so `ledger/check.ts` holds it against the pinned gate fixture. `chunk-d78hxkfm.js` is the generic " +
+      "storage-v5 backend (the Result-monad filesystem layer §1.1's storage row used to describe as the seam itself); the shipped path is the class-based layer in `chunk-fy12d89p.js`, which C12b–d own. " +
+      "The compiled-in default of `tengu_hover_rest` in research/fixtures/gate-defaults-2.1.251.json is false over 2 sites, §3.3 pins every gate to its compiled-in default, and the gate is not among that " +
+      "fixture's per-gate env overrides — so flip-liveness cannot reach it either. There is a second, INDEPENDENT reason it is unreachable and it is upstream's own defect, which is why the exclusion does not " +
+      "rest on the gate alone: when v5 IS on, `chunk-kc98mm72.js` hands children `CLAUDE_CODE_HOVER_REST:\"1\"`, the child's `rEt` sees a string where it expects a boolean, warns, and pins v5 OFF — the flag " +
+      "does not survive a process boundary. What this exclusion does NOT license is pretending the arm is absent: 43 of the layer's 477 declarations carry at least one v5 branch (61,139 B by whole-declaration " +
+      "size), so an owned module implements the pinned-false path and RECORDS the branch as an adjudicated exclusion, exactly as C10.5 did for segment compaction.",
+    evidence:
+      "reforge/research/2026-09-02-w9-session-storage-scout.md §1.6 and §6.1; research/fixtures/gate-defaults-2.1.251.json (tengu_hover_rest: default false, 2 sites, absent from perGateEnvOverrides); " +
+      "the campaign spec's §1.1 storage row, which already records `d78hxkfm` REMOVED to an exclusion",
+  },
 ];
 
 export const SUBSYSTEM_IDS: string[] = SUBSYSTEM_ROWS.map((r) => r.id);

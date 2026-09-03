@@ -1,0 +1,1233 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-storage-surface.ts",
+  "barrel": "chunk-e6cn1914.js",
+  "engineChunk": "chunk-fy12d89p.js",
+  "note": "The public surface of subsystem/session-storage, derived from the barrel's export map, with each name's cross-chunk consumers counted by who imports its LOCAL directly out of the engine chunk (the barrel itself is reached only dynamically and is not a seam). Names and the local mapping are exact; consumer counts are floors.",
+  "counts": {
+    "exports": 235,
+    "withConsumer": 148,
+    "barrelOnly": 87,
+    "forTesting": 13,
+    "importingChunksAtLeast": 42
+  },
+  "topConsumers": [
+    {
+      "chunk": "chunk-6thm48px.js",
+      "namesTakenAtLeast": 59
+    },
+    {
+      "chunk": "chunk-dvbbv89q.js",
+      "namesTakenAtLeast": 42
+    },
+    {
+      "chunk": "chunk-ew5rqxht.js",
+      "namesTakenAtLeast": 31
+    },
+    {
+      "chunk": "chunk-ht7zfm7n.js",
+      "namesTakenAtLeast": 16
+    },
+    {
+      "chunk": "chunk-n6h5jfvv.js",
+      "namesTakenAtLeast": 14
+    },
+    {
+      "chunk": "chunk-pt5wap5v.js",
+      "namesTakenAtLeast": 14
+    },
+    {
+      "chunk": "chunk-g461tywa.js",
+      "namesTakenAtLeast": 12
+    },
+    {
+      "chunk": "chunk-s257r9w5.js",
+      "namesTakenAtLeast": 12
+    },
+    {
+      "chunk": "chunk-z779gcyq.js",
+      "namesTakenAtLeast": 10
+    },
+    {
+      "chunk": "chunk-s8ntz0t7.js",
+      "namesTakenAtLeast": 8
+    }
+  ],
+  "exports": [
+    {
+      "name": "addSessionMirror",
+      "local": "vcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "adoptForkSessionMetadata",
+      "local": "ote",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "adoptResumedSessionFile",
+      "local": "m9",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "adoptResumedSessionFileAsync",
+      "local": "g9",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "agentTranscriptExists",
+      "local": "izn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "AgentTranscriptFetchError",
+      "local": "wPe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "appendEntryToCurrentTranscriptNow",
+      "local": "Ppt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "appendEntryToFileAsync",
+      "local": "lk",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "appendEntryToSessionForTesting",
+      "local": "RCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "applyEndedByModelOnResume",
+      "local": "$qe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "beginTranscriptRelocationForTesting",
+      "local": "DCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "buildConversationChain",
+      "local": "BSe",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "buildForkAdoptionMeta",
+      "local": "TPe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "cacheAgentName",
+      "local": "zSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "cacheAiTitle",
+      "local": "jCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "cacheHookSessionTitle",
+      "local": "VSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "cacheSessionTitle",
+      "local": "uF",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "canFetchAgentTranscriptsOnDemand",
+      "local": "Opt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "checkResumeConsistency",
+      "local": "pzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "claimPrecautionHoldForObservedCause",
+      "local": "ite",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "cleanMessagesForLogging",
+      "local": "CPe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "clearBridgeSession",
+      "local": "u2",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "clearBridgeSessionCache",
+      "local": "$pt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "clearInternalEventWriter",
+      "local": "Acn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "clearSessionMessagesCache",
+      "local": "mzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "clearSessionMetadata",
+      "local": "qqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "collectReplIds",
+      "local": "wUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "collectTailUuids",
+      "local": "uzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "compactTranscriptForTesting",
+      "local": "ECr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "copyPrecautionarySuppressionTo",
+      "local": "dUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "currentSessionFileIsFor",
+      "local": "FSe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "deleteRemoteAgentMetadata",
+      "local": "Scn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "doesMessageExistInSession",
+      "local": "Bpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "dropPrecautionarySuppressionForTesting",
+      "local": "UCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "dropSessionHistorySuppression",
+      "local": "Bcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "emitSessionFileMaterializedForTesting",
+      "local": "kCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "endTranscriptRelocationForTesting",
+      "local": "OCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "enrichLogs",
+      "local": "cte",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "ensureSidecarDirFor",
+      "local": "bPe",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "ENTRY_APPEND_POLICY",
+      "local": "hhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "extractAgentIdsFromMessages",
+      "local": "Qcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "extractLastSyncedEventUuid",
+      "local": "khr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "extractLatestIntersectingSyncedUuid",
+      "local": "Hhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "fetchLogs",
+      "local": "Mcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "findDeferredToolMarkerInTranscript",
+      "local": "hzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "findFirstMessageLog",
+      "local": "gzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "findUnresolvedToolUse",
+      "local": "jpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "findUnresolvedToolUseInTranscript",
+      "local": "Fhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "fireSessionMirror",
+      "local": "HCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "flushAppendEntryQueues",
+      "local": "Npt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "flushSessionStorage",
+      "local": "gl",
+      "consumerChunksAtLeast": 9
+    },
+    {
+      "name": "flushSessionStorageAtExit",
+      "local": "Ahr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getAgentTranscript",
+      "local": "ate",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "getBridgeBoundConversationSid",
+      "local": "Gcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getCurrentSessionAgentColor",
+      "local": "hce",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "getCurrentSessionAgentName",
+      "local": "ZG",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "getCurrentSessionAiTitle",
+      "local": "d2",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "getCurrentSessionBridge",
+      "local": "cF",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "getCurrentSessionDisplayTitle",
+      "local": "G7",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "getCurrentSessionFile",
+      "local": "oUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getCurrentSessionIsolationLatch",
+      "local": "zqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "getCurrentSessionOffBoxPeerName",
+      "local": "gUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getCurrentSessionPeerName",
+      "local": "mUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getCurrentSessionPeerNameFor",
+      "local": "Wqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "getCurrentSessionTitle",
+      "local": "Yc",
+      "consumerChunksAtLeast": 6
+    },
+    {
+      "name": "getDerivedTranscriptPathForSession",
+      "local": "Uqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getFirstMeaningfulUserMessageTextContent",
+      "local": "Lpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getLastSessionLog",
+      "local": "X7",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "getLogByIndex",
+      "local": "GCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getMaterializedSessionFile",
+      "local": "ml",
+      "consumerChunksAtLeast": 10
+    },
+    {
+      "name": "getNodeEnv",
+      "local": "whr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getPersistenceSuppressionCause",
+      "local": "kpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getSessionFilesLite",
+      "local": "lte",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getSessionFilesWithMtime",
+      "local": "vPe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getSessionIdFromLog",
+      "local": "Jc",
+      "consumerChunksAtLeast": 7
+    },
+    {
+      "name": "getSessionSidecarDir",
+      "local": "fce",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getTranscriptPathForSession",
+      "local": "om",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "getTranscriptWriteFailureSeq",
+      "local": "tte",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "getTranscriptWriterDegraded",
+      "local": "Ehr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getTranscriptWriterHealth",
+      "local": "rUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "getUserType",
+      "local": "bcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "getValidatedCCRTip",
+      "local": "aUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "hasRecordedUserPrompt",
+      "local": "ycn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "hasRemoteWorkerEventLog",
+      "local": "ICr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "holdPrecautionarySuppressionFor",
+      "local": "QL",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "holdSessionHistorySuppression",
+      "local": "$cn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "holdSessionHistorySuppressionFor",
+      "local": "Bqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "hydrateForkContext",
+      "local": "vhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "hydrateFromCCRv2InternalEvents",
+      "local": "Ocn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "hydrateRemoteSession",
+      "local": "Pcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "INDEX_BOUNDARY_SCAN_BYTES",
+      "local": "yhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "INDEX_HEAD_SCAN_BYTES",
+      "local": "_hr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "INDEX_LAST_PROMPT_SCAN_BYTES",
+      "local": "Shr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "isBridgeBindingForeign",
+      "local": "gce",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isChainParticipant",
+      "local": "dce",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isCompactPairWithheldFromRemote",
+      "local": "W7",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "isConversationEgressTainted",
+      "local": "fUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isCustomTitleEnabled",
+      "local": "pce",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "isEphemeralToolProgress",
+      "local": "_cn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isForeignToBinding",
+      "local": "Fpt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "isLiteLog",
+      "local": "p2",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isLiveBridgeSuppressed",
+      "local": "Phr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "isLoggableMessage",
+      "local": "eM",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "isMessageTurnUnanswered",
+      "local": "Vqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isOwnTranscriptFile",
+      "local": "j7",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isPrecautionarySuppressionHeld",
+      "local": "Ihr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "isPrecautionarySuppressionHeldFor",
+      "local": "c2",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isRemoteEgressSuppressedFor",
+      "local": "q7",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isScanUncertaintyHoldFor",
+      "local": "Wcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isSessionHistorySuppressed",
+      "local": "JL",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "isSessionHistorySuppressedFor",
+      "local": "QG",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isSyncedTranscriptEntry",
+      "local": "Dqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "isTranscriptFileResumeArg",
+      "local": "jSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "isTranscriptMessage",
+      "local": "eI",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "isTranscriptPersistenceDisabled",
+      "local": "Xc",
+      "consumerChunksAtLeast": 7
+    },
+    {
+      "name": "isTranscriptRelocationInProgress",
+      "local": "xhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "isTurnUnanswered",
+      "local": "Lhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "LAST_PROMPT_PREFIX_SCAN_BYTES",
+      "local": "bhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "linkSessionToPR",
+      "local": "FCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "listRemoteAgentMetadata",
+      "local": "tzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "loadAllLogsFromSessionFile",
+      "local": "Xqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "loadAllProjectsMessageLogs",
+      "local": "qCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "loadAllProjectsMessageLogsProgressive",
+      "local": "APe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "loadAllSubagentTranscriptsFromDisk",
+      "local": "Zcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "loadFullLog",
+      "local": "V7",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "loadMessageLogs",
+      "local": "Nhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "loadSameRepoMessageLogs",
+      "local": "Kqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "loadSameRepoMessageLogsProgressive",
+      "local": "KSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "loadSubagentTranscripts",
+      "local": "bUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "loadTranscriptFile",
+      "local": "K7",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "loadTranscriptFromEntries",
+      "local": "WCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "loadTranscriptFromFile",
+      "local": "Fqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "markPrecautionClearResilientFor",
+      "local": "h9",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "markScanUncertaintyHoldFor",
+      "local": "jqe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "markSessionEndedByModel",
+      "local": "Ncn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "markSessionHistorySuppressedFor",
+      "local": "Ucn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "matchesHistorySuppressionLine",
+      "local": "uUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "MAX_TRANSCRIPT_READ_BYTES",
+      "local": "bCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "mergeArtifactCommentMonitorEntries",
+      "local": "yUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "mirrorInternalEntryForTesting",
+      "local": "$Cr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "mirrorLeafCheckpointToRemote",
+      "local": "xpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "mirrorWorkerEventToRemote",
+      "local": "Rcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "OBSERVER_REF_TAIL_SCAN_BYTES",
+      "local": "szn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "onSessionFileMaterialized",
+      "local": "Ecn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "peekResumedArtifactAutoReactLedger",
+      "local": "Jcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "persistLeafCheckpoint",
+      "local": "$Se",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "pinSessionId",
+      "local": "Ta",
+      "consumerChunksAtLeast": 6
+    },
+    {
+      "name": "primeSessionMessagesCache",
+      "local": "SUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "readAgentMetadata",
+      "local": "KA",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "readCCRTip",
+      "local": "Rhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "readHistorySuppressionFromDisk",
+      "local": "Fcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "readLastObserverRef",
+      "local": "lzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "readTranscriptTailForTip",
+      "local": "lUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "readTranscriptTailV5",
+      "local": "azn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "reAppendSessionMetadata",
+      "local": "Dhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "reAppendSessionMetadataAfterCompaction",
+      "local": "Upt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "reAppendSessionMetadataAsyncForTesting",
+      "local": "vCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "reAppendSessionMetadataAtExit",
+      "local": "wcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordArtifactAutoReactLedger",
+      "local": "kcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "recordArtifactCommentMonitor",
+      "local": "Kcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "recordAttributionSnapshot",
+      "local": "PCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordContentReplacement",
+      "local": "USe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "recordContextCollapseCommit",
+      "local": "LCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordContextCollapseReset",
+      "local": "NCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordContextCollapseSnapshot",
+      "local": "MCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordCostState",
+      "local": "Chr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordFileHistoryDelta",
+      "local": "czn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordFileHistorySnapshot",
+      "local": "xcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordForkContextRef",
+      "local": "rzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordObserverRef",
+      "local": "ozn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordQueueOperation",
+      "local": "Ipt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "recordSessionAlias",
+      "local": "nUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "recordSidechainTranscript",
+      "local": "rte",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "recordTranscript",
+      "local": "Wb",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "registerForeignConversationProbe",
+      "local": "pUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "registerForeignTranscriptExitReStamp",
+      "local": "Hpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "registerLiveSuppressionProbe",
+      "local": "mce",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "registerTranscriptExitDrain",
+      "local": "Tcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "registerTranscriptExitReStamp",
+      "local": "nte",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "releasePrecautionarySuppressionFor",
+      "local": "jcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "releaseScanUncertaintyHoldFor",
+      "local": "qcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "relocateSessionTranscript",
+      "local": "SPe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "removeExtraFields",
+      "local": "Mpt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "removeRemoteAgentMetadata",
+      "local": "f9",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "removeTranscriptMessage",
+      "local": "Nqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "removeTranscriptMessageIfPersisted",
+      "local": "Hcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "reportRelocateSessionTranscriptFailure",
+      "local": "sUt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "resetProjectFlushStateForTesting",
+      "local": "wCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "resetProjectForTesting",
+      "local": "TCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "resetSessionFilePointer",
+      "local": "YL",
+      "consumerChunksAtLeast": 5
+    },
+    {
+      "name": "restoreSessionMetadata",
+      "local": "eH",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "saveAgentColor",
+      "local": "Gqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "saveAgentName",
+      "local": "z7",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "saveAgentSetting",
+      "local": "GSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "saveAiGeneratedTitle",
+      "local": "l2",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "saveBridgeSession",
+      "local": "WSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "saveCustomTitle",
+      "local": "tI",
+      "consumerChunksAtLeast": 5
+    },
+    {
+      "name": "saveIsolationLatch",
+      "local": "ez",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "saveMode",
+      "local": "ste",
+      "consumerChunksAtLeast": 3
+    },
+    {
+      "name": "savePermissionMode",
+      "local": "hUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "saveWorktreeState",
+      "local": "XA",
+      "consumerChunksAtLeast": 4
+    },
+    {
+      "name": "scanTranscriptForSuppression",
+      "local": "fzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "sealTornTranscriptTail",
+      "local": "Icn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "sealTranscriptAppendsForShutdown",
+      "local": "Ccn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "searchSessionsByCustomTitle",
+      "local": "ZL",
+      "consumerChunksAtLeast": 5
+    },
+    {
+      "name": "sessionIdExists",
+      "local": "Rpt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "sessionLogFromTranscriptLoad",
+      "local": "Mhr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "setInternalEventReader",
+      "local": "Mqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "setInternalEventWriter",
+      "local": "Lqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "setRemoteIngressUrlForTesting",
+      "local": "xCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "setSessionFileForTesting",
+      "local": "ACr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "setTranscriptLocalGcEnabled",
+      "local": "hcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "snapshotSessionMetadata",
+      "local": "BCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "subscribeSessionAgentNameChanged",
+      "local": "zcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "subscribeSessionTitleChanged",
+      "local": "Vcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "SUPPRESSION_SCAN_MAX_LINES",
+      "local": "cUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "takeResumedArtifactAutoReactLedger",
+      "local": "Ycn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "takeResumedArtifactCommentMonitor",
+      "local": "Xcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "titleCacheStillOn",
+      "local": "EPe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "touchSessionTranscript",
+      "local": "iUt",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "transcriptCursorEnd",
+      "local": "Oqe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "transcriptExitHooksLatches",
+      "local": "Thr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "TranscriptFileFormatError",
+      "local": "B7",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "transcriptFileHasContentEntry",
+      "local": "Dpt",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "transcriptStores",
+      "local": "nzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "transcriptTailForHydrateForTesting",
+      "local": "CCr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "UNLATCHED_RESUMED_ATIS",
+      "local": "Ohr",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "updateAgentMetadata",
+      "local": "U7",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "updateCCRTipFromAckedBatch",
+      "local": "Dcn",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "warnIfTranscriptUnchained",
+      "local": "Lcn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "worktreeStateSignals",
+      "local": "_Ut",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "writeAgentMetadata",
+      "local": "NSe",
+      "consumerChunksAtLeast": 1
+    },
+    {
+      "name": "writeHistorySuppression",
+      "local": "qSe",
+      "consumerChunksAtLeast": 2
+    },
+    {
+      "name": "writeHydratedAgentTranscript",
+      "local": "dzn",
+      "consumerChunksAtLeast": 0
+    },
+    {
+      "name": "writeRemoteAgentMetadata",
+      "local": "ezn",
+      "consumerChunksAtLeast": 0
+    }
+  ]
+}
