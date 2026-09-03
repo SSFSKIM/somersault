@@ -5291,6 +5291,105 @@ export const SPLICES: Splice[] = [
     coverage: ["perm-plan-mode"],
   },
 
+  // ---- process lifecycle: the shutdown COORDINATOR (subsystem/query-loop) ----
+  // C16b / W13b. The latch itself is a whole chunk (see CHUNK_REPLACEMENTS);
+  // these four are the coordinator methods around it. `TWn` is 8,919 B across 44
+  // members with zero private fields, and this wave takes the ones the lifecycle
+  // question is actually made of — the in-progress claim, its two writers, and
+  // the synchronous shutdown entry point. The rest stay upstream's with a
+  // verdict apiece in the ledger row.
+  //
+  // None of the four carries a string literal except `shutdownSync`, so three of
+  // them are anchored on their own METHOD NAMES — untainted runs by
+  // `research/tools/anchor-enum.ts`'s rule, since this bundler does not rename
+  // property names. Each is unique graph-wide as a whole run, which is what the
+  // rows use: the mechanical minimum for two of them is an eight-character
+  // window starting mid-word, and a reader cannot tell what that names.
+
+  {
+    // `isShuttingDown(){return this.shutdownInProgress}` — the CLAIM's reader,
+    // and NOT the latch's. 37 call sites through the `Hs()` facade, 29 of them
+    // in the headless dispatcher, including the once-guard on both of its own
+    // signal handlers.
+    name: "twn-is-shutting-down",
+    target: "class-method",
+    signature: { params: 0, ancestry: ["ClassDeclaration", "SourceFile"] },
+    anchor: "isShuttingDown(){return this.shutdownInProgress}",
+    fn: "twnIsShuttingDown",
+    captures: [],
+    coverage: ["sigterm-mid-turn", "sighup-mid-turn"],
+  },
+
+  {
+    // `claimShutdown(){this.shutdownInProgress=!0,this.disarmOrphanCheck()}`
+    name: "twn-claim-shutdown",
+    target: "class-method",
+    signature: { params: 0, ancestry: ["ClassDeclaration", "SourceFile"] },
+    anchor: "claimShutdown(){this.shutdownInProgress=!0,this.disarmOrphanCheck()}",
+    fn: "twnClaimShutdown",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "both call sites are INTERACTIVE. Measured from the artifact rather than inferred: the `t3e()` facade has exactly two callers " +
+      "bundle-wide, and each unmounts or replaces a live terminal UI — the agent-select flow (which calls `Io.get(process.stdout)?.unmount()` " +
+      "two statements later) and the relauncher (which re-execs the CLI with `--resume`). Neither can occur in a headless `--print` run, " +
+      "so no corpus scenario and neither signal plan can reach it: the signal handlers call `shutdown`/`shutdownSync`, which write the flag " +
+      "directly and never take the claim. Graded instead by `strangle/contracts.test.ts`, which drives both arms of the pair against a " +
+      "recording receiver and asserts the orphan-check disarm as well as the flag, and by the build's own derivation and footprint.",
+    darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+  },
+
+  {
+    // `releaseShutdownClaim(){this.shutdownInProgress=!1,this.armOrphanCheck()}`
+    name: "twn-release-shutdown-claim",
+    target: "class-method",
+    signature: { params: 0, ancestry: ["ClassDeclaration", "SourceFile"] },
+    anchor: "releaseShutdownClaim(){this.shutdownInProgress=!1,this.armOrphanCheck()}",
+    fn: "twnReleaseShutdownClaim",
+    captures: [],
+    coverage: [],
+    darkReason:
+      "the inverse of the claim and dark for the same measured reason, one caller narrower: `Uin()` has exactly ONE caller bundle-wide, " +
+      "the agent-select remount, which releases after the new terminal root is mounted. A headless run has no terminal root to mount, " +
+      "so the condition cannot be created; the shutdown paths a headless run does take never release, because they exit. " +
+      "Graded instead by `strangle/contracts.test.ts` over the claim/release pair and by the build's derivation and footprint.",
+    darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+  },
+
+  {
+    // `shutdownSync(e=0,t="other"){…}` — the fire-and-forget entry point, and
+    // the second of the THREE latch-commit sites in the bundle. Anchored on its
+    // own failure sentence, which is prose and unique graph-wide; the method
+    // name is not usable here because the `Jr()` facade calls it by name in the
+    // same chunk.
+    name: "twn-shutdown-sync",
+    target: "class-method",
+    signature: { params: 2, ancestry: ["ClassDeclaration", "SourceFile"] },
+    anchor: "Graceful shutdown failed: ",
+    fn: "twnShutdownSync",
+    captures: [
+      {
+        // the process-lifecycle latch's commit. Owned one row over, and still
+        // FORWARDED: the graph's binding is what upstream called, so forwarding
+        // keeps the edge and commits the same singleton.
+        as: "commitShutdown",
+        kind: "effectful-port",
+        derive: pick("twn-shutdown-sync", "commitShutdown", new RegExp(`process\\.exitCode=${ID},(${ID})\\(\\)`)),
+      },
+      {
+        as: "logError",
+        kind: "effectful-port",
+        derive: pick("twn-shutdown-sync", "logError", new RegExp(`(${ID})\\(\`Graceful shutdown failed`)),
+      },
+      {
+        as: "resetTerminal",
+        kind: "effectful-port",
+        derive: pick("twn-shutdown-sync", "resetTerminal", new RegExp(`\\{level:"error"\\}\\),(${ID})\\(\\)`)),
+      },
+    ],
+    coverage: ["plain"],
+  },
+
   {
     name: "ask-user-question-description",
     target: "variable-declarator",
@@ -5467,7 +5566,13 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         owned: "isShuttingDown",
         derive: latchBinding("isShuttingDown", /function ([A-Za-z_$][\w$]*)\(\)\{return [A-Za-z_$][\w$]*\.committed\}/, 1),
         declare: (name, owned) => `function ${name}(){return ${owned}()}`,
-        coverage: ["plain", "bash-tool"],
+        // ONE tag, deliberately. The twin answers true from the first tick, so
+        // every guard in the graph takes its shutdown arm and the engine stops
+        // producing — measured: the replay does not finish, which the gate reads
+        // as RED under its liveness rule because the faithful build replays the
+        // same cassette in seconds. A second tag would buy nothing but a second
+        // five-minute timeout in the gate.
+        coverage: ["plain"],
       },
       {
         // `function S8e(){e.committed=!0}` — the one-way commit. THREE call
@@ -5479,7 +5584,18 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         owned: "commitShutdown",
         derive: latchBinding("commitShutdown", /function ([A-Za-z_$][\w$]*)\(\)\{[A-Za-z_$][\w$]*\.committed=!0\}/, 1),
         declare: (name, owned) => `function ${name}(){${owned}()}`,
-        coverage: ["sigterm-mid-turn"],
+        coverage: [],
+        darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+        darkReason:
+          "the latch commits only as the process is going down, and by then nothing observes it. Measured, not reasoned: the wave built " +
+          "a signal lane for exactly this cell (scout L17) and drove BOTH shutdown paths a headless engine has — SIGTERM, answered by the " +
+          "dispatcher's own handler, and SIGHUP, answered by the coordinator's — with this twin built, on both engines. Neither moved: " +
+          "same frames, same exit status, same one API request. The reason is upstream's ordering. On the SIGTERM path the handler ABORTS " +
+          "the run controller in the same statement list, and every consultation of the latch in the reachable set reads " +
+          "`isShuttingDown() && !signal.aborted`, so the abort short-circuits the guard the commit exists to open. On the SIGHUP path " +
+          "nothing aborts, but the coordinator force-exits before any in-flight continuation resumes, so the guard is never re-reached. " +
+          "Graded instead by `strangle/hooks-parity.test.ts`, which runs this owned module against upstream's own chunk bytes over the " +
+          "whole partition — a three-function module whose domain is enumerable, which makes the oracle stronger than a differential.",
       },
       {
         // `var n=new Promise(()=>{});function pm(){return n}` — the promise
@@ -5491,7 +5607,15 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         owned: "hang",
         derive: latchBinding("hang", /var ([A-Za-z_$][\w$]*)=new Promise\(\(\)=>\{\}\);function ([A-Za-z_$][\w$]*)\(\)\{return \1\}/, 2),
         declare: (name, owned) => `function ${name}(){return ${owned}()}`,
-        coverage: ["sigterm-mid-turn"],
+        coverage: [],
+        darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+        darkReason:
+          "dark for the commit's reason and downstream of it: the hang is only ever awaited behind `isShuttingDown() && !aborted`, so a " +
+          "commit nothing can observe makes a hang nothing can reach. Measured the same way — a twin that RESOLVES instead of never " +
+          "settling, so any continuation upstream meant to abandon would run and ask for a second turn, driven over both signal paths on " +
+          "both engines. Neither moved, and the request count stayed at one. Graded instead by `strangle/hooks-parity.test.ts`, which " +
+          "drives upstream's own shutdown wrapper with this module bound in and requires the non-settling verdict — the same bounded " +
+          "drive that suite already uses for the six events upstream hangs.",
       },
     ],
     // Nothing. The `[]` is the positive claim, machine-checked: chunk.ts refuses

@@ -41,6 +41,10 @@ import * as textDelta from "../../strangle/modules/text-delta/reference.js";
 import * as sessionMaterialize from "../../strangle/modules/session-materialize/reference.js";
 import * as globDescription from "../../strangle/modules/glob-description/reference.js";
 import * as processLifecycle from "../../strangle/modules/process-lifecycle/reference.js";
+import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/reference.js";
+import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
+import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
+import * as twnShutdownSync from "../../strangle/modules/twn-shutdown-sync/reference.js";
 import * as readDescription from "../../strangle/modules/read-description/reference.js";
 import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
 import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
@@ -312,6 +316,14 @@ const OWNED: [string, string, unknown][] = [
   // is not the loop — but the executor children (C10.7/C10.8) can now consume
   // `isShuttingDown`/`hang` from an owned module instead of stubbing them.
   ["process-lifecycle", "subsystem/query-loop", processLifecycle.isShuttingDown],
+  // …and the shutdown coordinator's own methods around it. Four of `TWn`'s 44
+  // members: the in-progress claim's reader, its two writers, and the
+  // synchronous shutdown entry point that commits the latch. The other 40 stay
+  // upstream's, each with a verdict in the ledger row.
+  ["twn-is-shutting-down", "subsystem/query-loop", twnIsShuttingDown.twnIsShuttingDown],
+  ["twn-claim-shutdown", "subsystem/query-loop", twnClaimShutdown.twnClaimShutdown],
+  ["twn-release-shutdown-claim", "subsystem/query-loop", twnReleaseShutdownClaim.twnReleaseShutdownClaim],
+  ["twn-shutdown-sync", "subsystem/query-loop", twnShutdownSync.twnShutdownSync],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

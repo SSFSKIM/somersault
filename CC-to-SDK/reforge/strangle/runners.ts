@@ -25,7 +25,11 @@ const NON_CORPUS: Record<string, string[]> = {
   // signal to the engine process, and the corpus runner drives through
   // `sdk.mjs`, which owns the spawn and exposes no pid. A scenario cannot ask
   // for a signal it has no way to send, so the lane that CAN send one grades it.
-  "sigterm-mid-turn": ["w13/sigterm.ts"],
+  // Two tags, one driver and one cassette: the signal chooses which of the
+  // engine's two shutdown handlers answers, and only one of them leaves the
+  // shutdown latch observable (w13/signals.ts).
+  "sigterm-mid-turn": ["w13/signals.ts", "--plan", "sigterm-mid-turn"],
+  "sighup-mid-turn": ["w13/signals.ts", "--plan", "sighup-mid-turn"],
 };
 
 /** The argv (after `npx tsx`) that grades one coverage tag against `engineB`. */
