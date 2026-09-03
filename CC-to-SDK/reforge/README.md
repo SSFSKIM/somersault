@@ -4428,6 +4428,25 @@ depends on. So the block is ordered instead — every claim about the clear stat
 then one commit on both sides, then every claim about the committed state — and it sits after every
 other consumer of the oracle's state so nothing downstream inherits it.
 
+### The gate
+
+**142 of 142 summary phases, zero FAIL** — quoted from the gate's own summary block, not from a
+log-line count (a naive `grep -c PASS` over the transcript answers 184, and the difference is exactly
+the kind of number this campaign keeps having to correct). The nine phases above the 133 baseline are
+the one new determinism fixture, five splice-liveness phases and three chunk-export liveness phases.
+
+Two of those liveness phases are RED-by-timeout, and that is the honest verdict rather than a
+weakness: `process-lifecycle:isShuttingDown` answering true from the first tick and
+`twn-shutdown-sync` doing nothing both leave the engine unable to finish, so the replay does not
+complete — which the gate reads as RED under its own liveness rule, because the faithful build
+replays the same cassette in seconds. Four rows are DARK and re-measured rather than recalled: each
+is built with its own twin and its `darkOver` population replayed, and every one came back GREEN.
+
+Attestation **478/1038 executed with 560 exclusions**, zero un-adjudicated, and the committed report
+is that run's own output. Corpus **83 cassettes / 201 request bodies** — one new recording, shared by
+all three signal plans. The W8a wave record and the C11a Revision Notes keep their 82/199, because a
+record states what was measured then; this is where the new number lives.
+
 ### Environment: the pin's binary was gone, and that will recur
 
 Mid-child, `m1/run.ts` began failing on side A — the ORACLE — with `engines not materialized`. Cause:

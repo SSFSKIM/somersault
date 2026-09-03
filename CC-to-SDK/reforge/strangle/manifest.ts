@@ -5655,8 +5655,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
         darkReason:
           "the latch commits only as the process is going down, and by then nothing observes it. Measured, not reasoned: the wave built " +
-          "a signal lane for exactly this cell (scout L17) and drove BOTH shutdown paths a headless engine has — SIGTERM, answered by the " +
-          "dispatcher's own handler, and SIGHUP, answered by the coordinator's — with this twin built, on both engines. Neither moved: " +
+          "a signal lane for exactly this cell (scout L17) and drove the two paths that BRACKET the question — SIGTERM, where the " +
+          "dispatcher's own handler commits the latch directly (one of its three call sites bundle-wide) and then aborts, and SIGHUP, " +
+          "where the coordinator commits it through `shutdown` with nothing aborting at all — with this twin built, on both engines. " +
+          "(The third handler, SIGINT, is dominated by that pair: it reaches SIGHUP's commit site and adds SIGTERM's abort, so it can " +
+          "only be less observable than either. Widening this population to it is logged in docs/tech-debt-tracker.md.) Neither moved: " +
           "same frames, same exit status, same one API request. The reason is upstream's ordering. On the SIGTERM path the handler ABORTS " +
           "the run controller in the same statement list, and every consultation of the latch in the reachable set reads " +
           "`isShuttingDown() && !signal.aborted`, so the abort short-circuits the guard the commit exists to open. On the SIGHUP path " +
@@ -5679,8 +5682,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         darkReason:
           "dark for the commit's reason and downstream of it: the hang is only ever awaited behind `isShuttingDown() && !aborted`, so a " +
           "commit nothing can observe makes a hang nothing can reach. Measured the same way — a twin that RESOLVES instead of never " +
-          "settling, so any continuation upstream meant to abandon would run and ask for a second turn, driven over both signal paths on " +
-          "both engines. Neither moved, and the request count stayed at one. Graded instead by `strangle/hooks-parity.test.ts`, which " +
+          "settling, so any continuation upstream meant to abandon would run and ask for a second turn, driven over both bracketing " +
+          "signal paths on both engines. Neither moved, and the request count stayed at one. The reason the SIGHUP path does not reach " +
+          "it either, which was this wave's own working hypothesis until it was driven: the coordinator force-exits before any in-flight " +
+          "continuation resumes, and `TWn.shutdown` kills the live shells on its way out, so the continuation the hang would have " +
+          "stopped never resumes to be stopped. Graded instead by `strangle/hooks-parity.test.ts`, which " +
           "drives upstream's own shutdown wrapper with this module bound in and requires the non-settling verdict — the same bounded " +
           "drive that suite already uses for the six events upstream hangs.",
       },

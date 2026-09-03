@@ -13,8 +13,9 @@
 // consulted once the process has decided to go down, and nothing in a healthy
 // corpus run ever decides that — the engine finishes its turn and exits. So the
 // commit and the hang are unreachable by every scenario the campaign has, which
-// makes this driver the only thing that can turn "these are live" from a claim
-// into a measurement.
+// makes this driver the only thing that can SETTLE whether they are live. The
+// answer it returned is that they are not, on any path a headless engine has;
+// see below, and the `darkReason`s on their manifest rows.
 //
 // ## THREE SIGNALS, BECAUSE THE ENGINE ANSWERS THEM WITH THREE DIFFERENT
 // ## HANDLERS AND THREE DIFFERENT EXIT STATUSES
@@ -41,23 +42,35 @@
 // latch contributes nothing a scenario can see. Sabotaging the commit and the
 // hang under SIGTERM changes nothing — measured, both twins, both engines.
 //
-// SIGHUP is the path where the latch is load-bearing, because nothing aborts:
-// the commit lands, the in-flight tool finishes inside the coordinator's own
-// shutdown window, and its continuation reaches the guard with a signal that is
-// NOT aborted. Then the hang is what stops the turn, and an owned `hang()` that
-// resolves lets it continue into a second API request. That is the red the
-// covering scenario produces, and it is why the tool call in the prompt below
-// sleeps for about a second rather than for eight: the continuation has to
-// resume inside the shutdown window, not after the process is gone.
+// SIGHUP LOOKED LIKE THE PATH WHERE THE LATCH WOULD BE LOAD-BEARING, AND IT IS
+// NOT. Nothing aborts there, so the guard the commit opens is not
+// short-circuited, and the hypothesis this driver was extended to test was that
+// the in-flight tool would finish inside the coordinator's own shutdown window
+// and its continuation would reach `await hang()`. It does not. The coordinator
+// force-exits first, and `TWn.shutdown` kills the live shells on its way out, so
+// the continuation the hang would have stopped never resumes to be stopped.
+// Measured exactly as the SIGTERM path was: both twins, both paths, both
+// engines, nothing moved.
+//
+// So the commit and the hang are corpus-dark on EVERY path, which is this
+// wave's real finding about L17. The three plans still earn their place: they
+// are what MEASURED it, they are the population the gate re-measures the
+// darkness over every run, and they cover the SIGINT handler this wave owns.
+//
+// The tool call below sleeps for about a second, and the surviving reason is not
+// the hypothesis that chose it: a second is long enough that the turn is
+// unambiguously still in flight when the signal lands on the first `assistant`
+// frame, and short enough that a recording is not eight seconds of waiting.
+// Nothing depends on the continuation resuming, because it never does.
 //
 // The chain each plan exercises, end to end:
 //
 //   the harness delivers the signal at a declared frame count       src/signal.ts
-//   SIGTERM → `br` in `ky`: commit, abort, `On(143)`
-//   SIGHUP  → the coordinator's own handler: `shutdown(129)`, no abort
-//   the coordinator shuts down and force-exits with that status     `TWn.shutdown`
-//   an in-flight continuation consults the latch                    OWNED (this wave)
-//     …and on the un-aborted path, hangs                            OWNED (this wave)
+//   SIGTERM → `br` in `ky`: commit the latch, abort, `On(143)`   OPEN (see below)
+//   SIGINT  → `Hn` in `ky`: cancel the query, abort, `On(0)`      OWNED (this wave)
+//   SIGHUP  → the coordinator's own handler: `shutdown(129)`      upstream's
+//   the coordinator shuts down and force-exits with that status   `TWn.shutdown`
+//     …committing the latch on the two paths that reach it there  OWNED (this wave)
 //
 // ## The verdict, and why the exit STATUS is the load-bearing half
 //
