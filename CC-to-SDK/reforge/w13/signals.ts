@@ -1,6 +1,6 @@
 // W13b / C16b — SIGNALS DELIVERED MID-TURN, graded on both engines.
 //
-//   cd reforge && set -a; . ../.env; set +a; npx tsx w13/signals.ts [--plan <tag>] [--engineB <name>] [--rerecord]
+//   cd reforge && set -a; . ../.env; set +a; npx tsx w13/signals.ts --engineB <name> [--plan <tag>] [--rerecord]
 //
 // Cell L17 of the W13 scout's edge matrix, and the only one of the twenty that
 // needs no synthetic response corpus and no per-event stream control: "shutdown
@@ -76,8 +76,8 @@
 // The chain each plan exercises, end to end:
 //
 //   the harness delivers the signal at a declared frame count       src/signal.ts
-//   SIGTERM → `br` in `ky`: commit the latch, abort, `On(143)`   OPEN (see below)
-//   SIGINT  → `Hn` in `ky`: cancel the query, abort, `On(0)`      OWNED (this wave)
+//   SIGTERM → `br` in `ky`: commit the latch, abort `Rn`, `On(143)`  OPEN (see above)
+//   SIGINT  → `Hn` in `ky`: abort `Qe` and `Rn`, `On(0)`         OWNED (this wave)
 //   SIGHUP  → the coordinator's own handler: `shutdown(129)`      upstream's
 //   the coordinator shuts down and force-exits with that status   `TWn.shutdown`
 //     …committing the latch on the two paths that reach it there  OWNED (this wave)
@@ -127,7 +127,25 @@ import { gateCacheCheck } from "../src/leakcheck.js";
 import { describeTrigger, driveWithSignal, shutdownViolations, typesAfterSignal, type FrameTrigger, type SignalRun } from "../src/signal.js";
 
 const args = process.argv.slice(2);
-const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
+
+/**
+ * REQUIRED, with no default. This driver is a two-engine differential whose B
+ * side is the thing under test, and the default it used to carry was
+ * `engine-extracted` — the UNSTRANGLED graph. A hand run that forgot the flag
+ * therefore graded upstream's own bytes against upstream's own bytes and read
+ * green no matter what any twin did, which is the one failure mode a sabotage
+ * check must not have. The gate always passes it (`strangle/runners.ts`), so
+ * requiring it costs nothing there and closes the hand-run hole.
+ */
+const engineB = (() => {
+  const i = args.indexOf("--engineB");
+  const v = i === -1 ? undefined : args[i + 1];
+  if (v === undefined || v.startsWith("--")) {
+    console.error("w13/signals.ts: --engineB <name> is REQUIRED — this driver grades B against the oracle, and guessing which engine B is would let a hand run grade the unstrangled graph and read green. Use --engineB engine-strangled (or engine-extracted to check the faithful build).");
+    process.exit(2);
+  }
+  return v;
+})();
 let replayStrictnessOk = true;
 
 /** ONE cassette for both plans: same argv, same prompt, therefore same request body. */

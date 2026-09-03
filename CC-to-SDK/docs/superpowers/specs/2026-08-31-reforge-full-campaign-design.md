@@ -1471,6 +1471,11 @@ Pending — written at finish.
     chunk exports. The dominance argument that justified leaving it out was sound and is now moot: the
     reviewer measured both twins inert on that path, standard and hooked. The tech-debt entry that
     logged the gap is REMOVED rather than marked paid, because the debt was the omission itself.
+  - **A DEFAULT THAT MADE A HAND-RUN SABOTAGE CHECK READ GREEN.** `w13/signals.ts` defaulted
+    `--engineB` to `engine-extracted`, so running it by hand without the flag graded the UNSTRANGLED
+    graph against the oracle — a twin-sabotage check that cannot fail. The flag is now REQUIRED (exit
+    2 with the reason) rather than re-defaulted: a driver whose whole purpose is to grade one engine
+    against another should not guess which one, and the gate already passes it from `strangle/runners.ts`.
 
 - 2026-09-03 (**C16b / W13b — the process lifecycle, LANDED**): the first of the seven W13 children,
   cut to land before the loop it belongs to because the hook-executor children reciprocally need what
