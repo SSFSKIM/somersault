@@ -4730,6 +4730,35 @@ codes. C12d owns the fence and inherits the decision.
   signal paths to all three. Their darkness rests on the claim that no headless path takes the claim,
   and SIGINT is a headless path — measuring over two of three left the third asserting nothing.
 
+### The fix round (2026-09-03), and the one finding that was load-bearing
+
+Two reviews — a doctrine-boundary review and an independent Codex review — converged on the same
+thing: **`read-only-store` was an exported fault with no caller, and it did not fire under the usage
+its own contract documented.** `applyFault` chmodded the TARGET FILE `0o500` while the comment
+directly above it said "the DIRECTORY, not the file", and `FsFault.target` said "the seeded file the
+fault damages". With the file read-only the engine can still CREATE a session file in the project
+directory — which is the act the store performs — so the fault grades nothing. And nothing anywhere
+passed `kind: "read-only-store"`: the scenario and the control both reached an unwritable directory
+through `SeedFile.dirMode: 0o500`, around the fault rather than through it. So the sentence three
+paragraphs up — "three named filesystem faults, each watched doing what its name says" — was true of
+two of them. The fault now chmods `dirname(target)`, `SeedFile.dirMode` is deleted because it was the
+bypass, and both the scenario and the control go through the kind, with the control asserting the
+absence direction too: the same file creation succeeds without the fault. `store-read-only` was
+re-recorded once, deliberately, because its declaration changed.
+
+Five minor items landed with it. The wipe's permission restore and both census walks used `statSync`
+and so followed a directory symlink out of the tree — chmodding somebody else's directory `0o700` and
+tallying its contents as config-dir writes; all three now `lstat` and treat a link as a leaf. The
+inventory's `why` column was written by generation and read by nobody, so an `UNEXPLAINED` placeholder
+passed `--check`; the check now refuses it, compares the committed reason against the map, and refuses
+a declared floor of zero. The precondition sidecar recorded the DECLARATION only, while the applied
+state is the declaration on top of a pin-dependent baseline seed; it now carries that seed's hash too,
+is written for every cassette, and 63 sidecars were backfilled. An uncleanly-killed engine child left
+`sessions/10747.json` in the census, which the inventory check then failed on: the census was repaired
+and the family declared with its provenance, projection deferred to the tech-debt tracker. And three
+prose corrections, each already applied above: `ENAMETOOLONG` is reachable, the D8 cycle is healed
+rather than never walked, and the timer arm's record count is multi-valued.
+
 ### Seam notes
 
 - **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
