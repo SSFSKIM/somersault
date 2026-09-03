@@ -5,10 +5,11 @@
 // designed to defeat it.
 //
 //   npx tsx src/precondition.test.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPrecondition, baselineConfigJson, projectKeyFor, wipeConfigDir } from "./precondition.js";
+import { censusConfigDir } from "./observed.js";
 
 let pass = 0;
 const failures: string[] = [];
@@ -101,6 +102,34 @@ try {
     check("…and the wipe still empties the directory afterwards", readdirSync(c).length === 0);
   }
 
+  // ---- a symlink is a LEAF: neither the wipe nor the census goes through one --
+  // Both walks used `statSync`, which resolves the link. The wipe would then
+  // chmod 0o700 down a tree it does not own (it restores write permission on
+  // the way down so the read-only fault cannot defeat the reset), and the census
+  // would tally another directory's contents as config-dir writes — or, for a
+  // link to an ancestor, throw ELOOP and take the reset with it.
+  {
+    const c = join(box, "link");
+    const outside = join(box, "outside");
+    mkdirSync(join(outside, "sub"), { recursive: true });
+    writeFileSync(join(outside, "sub", "keepme"), "external");
+    chmodSync(join(outside, "sub"), 0o500);
+    mkdirSync(c, { recursive: true });
+    symlinkSync(outside, join(c, "elsewhere"));
+    writeFileSync(join(c, "own.txt"), "x");
+    const censusPath = join(box, "census.json");
+    censusConfigDir(c, censusPath, PIN);
+    const entries = Object.keys((JSON.parse(readFileSync(censusPath, "utf8")) as { entries: Record<string, unknown> }).entries);
+    check("the census records a directory symlink as a leaf and nothing beneath it",
+      entries.includes("elsewhere") && entries.includes("own.txt") && !entries.some((k) => k.startsWith("elsewhere/")),
+      entries.join(", "));
+    wipeConfigDir(c);
+    check("…and the wipe removes the link itself", readdirSync(c).length === 0);
+    check("…leaving the external tree it pointed at untouched, mode and contents",
+      (lstatSync(join(outside, "sub")).mode & 0o777) === 0o500 && readFileSync(join(outside, "sub", "keepme"), "utf8") === "external",
+      `mode ${(lstatSync(join(outside, "sub")).mode & 0o777).toString(8)}`);
+  }
+
   // ---- the wipe is total, and the seed comes back on top ---------------------
   {
     const c = join(box, "wipe");
@@ -115,6 +144,7 @@ try {
   }
 } finally {
   try {
+    chmodSync(join(box, "outside", "sub"), 0o700);
     chmodSync(join(box, "ro", "projects", "-box-sandbox"), 0o700);
   } catch {
     // already restored by the wipe control above

@@ -22,7 +22,7 @@
 // The file lives in `build/` (a derived directory, gitignored) and is keyed by
 // the engine pin: a pin bump discards it rather than mixing two engines'
 // populations into one claim.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
 export interface ConfigCensus {
@@ -108,10 +108,15 @@ export function censusConfigDir(configDir: string, censusPath: string, engineVer
   } catch {
     doc = EMPTY(engineVersion);
   }
+  // BOTH WALKS BELOW USE `lstat` AND NEVER FOLLOW A LINK. A symlink is a leaf of
+  // this tree: censusing through one would tally another directory's contents as
+  // config-dir writes, and a link to an ancestor (`loop -> .`) makes the walk
+  // throw ELOOP — loud rather than silent, but a reset that dies is still a
+  // reset that did not happen.
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const abs = join(dir, name);
-      const isDir = statSync(abs).isDirectory();
+      const isDir = lstatSync(abs).isDirectory();
       const key = generalizePath(relative(configDir, abs));
       const row = doc.entries[key] ?? { kind: isDir ? "dir" : "file", seen: 0 };
       row.seen++;
@@ -141,7 +146,7 @@ function tallyIdShapes(configDir: string, doc: ConfigCensus): void {
   const find = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const abs = join(dir, name);
-      if (statSync(abs).isDirectory()) find(abs);
+      if (lstatSync(abs).isDirectory()) find(abs);
       else if (name.endsWith(".jsonl")) files.push(abs);
     }
   };

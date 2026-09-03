@@ -27,7 +27,7 @@
 // this authors a FILESYSTEM the model cannot be asked for. Both are applied
 // deterministically and identically to every engine, and both are named — a
 // fault that is not named cannot be re-measured.
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** The engine's project key for a working directory: every non-alphanumeric byte becomes `-`. */
@@ -202,7 +202,13 @@ function restoreWritable(dir: string): void {
     chmodSync(dir, 0o700);
     for (const name of readdirSync(dir)) {
       const abs = join(dir, name);
-      if (statSync(abs).isDirectory()) restoreWritable(abs);
+      // `lstat`, and NEVER through the link. A directory symlink under
+      // CONFIG_DIR resolves to a tree the reset does not own, and `statSync`
+      // here would chmod that tree 0o700 — a write to somebody else's
+      // filesystem performed by a function whose whole job is to make OUR
+      // directory removable. `rmSync` unlinks the link itself, which is all the
+      // wipe needs; the target is not the harness's to touch.
+      if (lstatSync(abs).isDirectory()) restoreWritable(abs);
     }
   } catch {
     // Unreadable or already gone: rmSync's `force` handles the rest.
