@@ -4759,6 +4759,37 @@ and the family declared with its provenance, projection deferred to the tech-deb
 prose corrections, each already applied above: `ENAMETOOLONG` is reachable, the D8 cycle is healed
 rather than never walked, and the timer arm's record count is multi-valued.
 
+**A seventh came out of the round's own first gate, and it is the one worth keeping.** That gate read
+**146 PASS / 1 FAIL**, the failure being `coverage attestation`: "the instrumented build is not
+equivalent (hooks-memory went red)". The faithful equivalence phase passed in the same run with
+`hooks-memory` among its greens, so the scenario was red only under instrumentation — and the log
+could say nothing further, because `strangle/attest.ts` captures each covering scenario's stdout and
+prints the TAG alone, and `strangle/gate.ts` then filtered even the surviving lines to verdict shapes.
+One tag was the whole record: not which of the four surfaces moved, not by how much. That is precisely
+the defect the gate spells out for the EQUIVALENCE phase fifteen lines below it — *a phase that can
+fail has to say what failed, or its failure is a rumour* — surviving in the phase whose failure nobody
+had yet had to read. Both layers relay through `m2/relay.ts` now, the module that exists so every
+layer between a failure and the log agrees on what a failure looks like.
+
+The redness itself was diagnosed the only way left: a fresh instrumented build and six replays of
+`hooks-memory`, **green every time, all four surfaces identical on every take** — including this
+wave's own config root (`state (1 sandbox, 6 config entry, engine completed): identical`). So it is
+not a memory-file byte the new root now sees, which would have been deterministic, and not a field
+owing a projection: the scenario's working directory is not a registered root, and nothing under
+`projects/<slug>/memory/` is an admitted FILE — the directory is only descended into, incidentally,
+because it matches the ancestor of the subagent-transcript rule. A sensitivity, recorded as one. It
+did not recur.
+
+**The close-out numbers.** `store-read-only` was re-recorded once, deliberately, on the fifth attempt
+after four server-side throttles: 2 API exchanges, state, events and requests all identical, `ALL
+PASS`. Its state line reads **5 config entries** where an unfaulted scenario reads 6 — the engine
+could not create its session file in the read-only project directory, which is F1's fault firing in
+the corpus and not only in a control. Second gate: **147 of 147 summary phases, zero FAIL** (`GATE
+PASS — every splice is live AND the faithful build is equivalent`). Attestation **478/1038 executed
+with 560 exclusions, zero un-adjudicated**. The filesystem-faults phase at **20 checks**, against 15
+before this round. The config-dir inventory at **26 patterns over 3,449 resets, 17 admitted**, and the
+eager-flush control still firing in both directions.
+
 ### Seam notes
 
 - **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
