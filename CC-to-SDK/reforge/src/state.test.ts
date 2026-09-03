@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer } from "./differ.js";
-import { configInclude, engineOutcome, projectTranscript, rootEntriesOf, treeOf } from "./state.js";
+import { configDescend, configInclude, engineOutcome, projectTranscript, rootEntriesOf, treeOf } from "./state.js";
 
 let pass = 0;
 const failures: string[] = [];
@@ -134,7 +134,7 @@ try {
     writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript);
     writeFileSync(join(cfg, "projects", slug, "sess-1", "subagents", "child.jsonl"), line({ type: "user", uuid: "c1-aaaaaaaa", agentId: "a0123456789abcdef" }));
 
-    const root = { name: "config", path: cfg, include: configInclude };
+    const root = { name: "config", path: cfg, include: configInclude, descend: configDescend };
     const entries = rootEntriesOf(root);
     const paths = entries.map((e) => e.path);
     check("the include-list admits the six §4.2 families",

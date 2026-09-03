@@ -134,6 +134,15 @@ export interface StateRoot {
    * read the way the rule says.
    */
   include?: (relPath: string) => ReadAs | null;
+  /**
+   * Which directories the walk descends into. Declared per root rather than
+   * derived, because it cannot be derived from `include` — and it is a SEPARATE
+   * field rather than a hard-coded companion of the config list so that the
+   * third root (C15a's) registers its own instead of silently inheriting this
+   * subsystem's. Absent means "descend everywhere the include-list might
+   * admit", which for a root without an include-list is everywhere.
+   */
+  descend?: (relPath: string) => boolean;
 }
 
 // ---- the CONFIG root's include-list (W9 scout §4.2) -------------------------
@@ -436,7 +445,7 @@ export function rootEntriesOf(root: StateRoot): StateEntry[] {
   const rootEntry = entryOf(".", root.path, "hash");
   const out: StateEntry[] = [rootEntry];
   const admits = root.include;
-  const descend = admits === undefined ? () => true : (rel: string) => configDescend(rel);
+  const descend = root.descend ?? (() => true);
   const walk = (dir: string): void => {
     // Two passes over one directory: build every child entry in readdir order,
     // then permute the transcript entries AMONG THEMSELVES by creation order
@@ -490,7 +499,7 @@ export const treeOf = (root: string): StateEntry[] => rootEntriesOf({ name: "san
 export function defaultStateRoots(sandbox: string, configDir: string): StateRoot[] {
   return [
     { name: "sandbox", path: sandbox },
-    { name: "config", path: configDir, include: configInclude },
+    { name: "config", path: configDir, include: configInclude, descend: configDescend },
   ];
 }
 
@@ -561,6 +570,7 @@ function fingerprint(roots: readonly StateRoot[]): string {
   const parts: string[] = [];
   for (const root of roots) {
     const admits = root.include;
+    const descend = root.descend ?? (() => true);
     const walk = (dir: string): void => {
       let names: string[];
       try {
@@ -578,7 +588,7 @@ function fingerprint(roots: readonly StateRoot[]): string {
           continue;
         }
         if (st.isDirectory()) {
-          if (admits === undefined || configDescend(rel)) {
+          if (descend(rel)) {
             parts.push(`${root.name}/${rel}|dir`);
             walk(abs);
           }
