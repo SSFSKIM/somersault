@@ -47,7 +47,30 @@ interface Row {
   seenAtLeast: number;
   /** what the state surface's include-list does with it */
   graded: "admitted" | "not-admitted";
+  /** why a `not-admitted` row is out — carried HERE, next to the pattern, not only in the include-list's comment */
+  why?: string;
 }
+
+/**
+ * The reason each excluded family is excluded, keyed by pattern. A row that says
+ * only `not-admitted` records a decision without recording who made it or why;
+ * these are the sentences a later wave needs in order to disagree.
+ */
+const NOT_ADMITTED_REASONS: Record<string, string> = {
+  ".last-cleanup": "a maintenance stamp — a clock in a file, with no claim about behaviour in it",
+  backups: "the engine's own backup of .claude.json, in a directory whose entries are named by epoch-ms",
+  "backups/.claude.json.backup.<ms>": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded",
+  "projects/<slug>/.keep": "the harness's OWN seed for the store-read-only fault, not an engine write",
+  "projects/<slug>/<uuid>/auto-mode-classifier-error.txt": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's",
+  "session-env": "per-process scratch; the corpus leaves one empty directory per session and no content",
+  "session-env/<uuid>": "as above, and named by a run-scoped uuid",
+  "shell-snapshots":
+    "THE BASH EXECUTOR'S artifact, not storage's: a shell snapshot is minted per shell spawn and named by a clock. " +
+    "If it is ever graded it belongs to C13d's root, which is where the executor's own state lives.",
+  "shell-snapshots/snapshot-zsh-<ms>-<rand>.sh":
+    "as above — clock plus a random suffix in the filename. This is the row that failed a gate: it is written on some runs " +
+    "and not others, so a census that did not see it dropped it from the declared set and the next run reddened on a file that is not new.",
+};
 
 interface Fixture {
   engineVersion: string;
@@ -98,8 +121,29 @@ for (const [raw, e] of Object.entries(doc.entries)) {
   const prior = merged.get(key);
   merged.set(key, { kind: e.kind, seen: (prior?.seen ?? 0) + e.seen });
 }
+// GENERATION UNIONS WITH THE COMMITTED FIXTURE, because this population is
+// SAMPLED and the sample is a corpus run. A pattern the engine writes rarely —
+// `shell-snapshots/snapshot-zsh-<ms>-<rand>.sh` is written on some runs and not
+// others — drops out of a census that did not happen to see it, and regenerating
+// from that census would silently narrow the declared population and then FAIL
+// the very next run for a file that is not new. Measured: exactly that, one gate
+// run wasted on it. So the declared set only grows; `--check` still refuses
+// anything undeclared, which is the tripwire this fixture exists to be, and a
+// pattern that has genuinely stopped being written is reported as a note rather
+// than removed by an accident of sampling.
+const priorRows: Row[] = existsSync(FIXTURE) ? (JSON.parse(readFileSync(FIXTURE, "utf8")) as Fixture).entries : [];
+for (const r of priorRows) if (!merged.has(r.pattern)) merged.set(r.pattern, { kind: r.kind, seen: 0 });
+const priorSeen = new Map(priorRows.map((r) => [r.pattern, r.seenAtLeast]));
 const rows: Row[] = [...merged]
-  .map(([pattern, e]) => ({ pattern, kind: e.kind, seenAtLeast: e.seen, graded: (admits(pattern, e.kind) ? "admitted" : "not-admitted") as Row["graded"] }))
+  .map(([pattern, e]) => ({
+    pattern,
+    kind: e.kind,
+    // The floor is the largest census this population has been observed over,
+    // not the latest one — a shorter run must not lower a recorded floor.
+    seenAtLeast: Math.max(e.seen, priorSeen.get(pattern) ?? 0),
+    graded: (admits(pattern, e.kind) ? "admitted" : "not-admitted") as Row["graded"],
+    ...(admits(pattern, e.kind) ? {} : { why: NOT_ADMITTED_REASONS[pattern] ?? "UNEXPLAINED — an excluded pattern with no recorded reason is a decision nobody made" }),
+  }))
   .sort((a, b) => a.pattern.localeCompare(b.pattern));
 
 const fx: Fixture = {
@@ -108,6 +152,9 @@ const fx: Fixture = {
   note:
     "Every path present in CONFIG_DIR at reset time, generalized to a pattern and observed by resetSandbox()'s census — the state a run LEAVES, " +
     "which is engine writes plus whatever the previous scenario's precondition seeded (projects/<slug>/.keep is store-read-only's seed, not an engine write). " +
+    "PROVENANCE: the declared set is the UNION of every census taken at this pin, not the latest one. The census is a SAMPLE — one corpus run — and some " +
+    "families are written on some runs and not others, so regenerating from a single census narrows the population and reddens the next run for a file that " +
+    "is not new. `resetsObserved` is the census this generation read; `seenAtLeast` is the largest count any census has recorded for that pattern. " +
     "`graded` says what src/state.ts's include-list does with it: a `not-admitted` row is invisible to the state surface BY DECISION, " +
     "and a pattern that is not in this list at all is invisible by ACCIDENT — which is what --check refuses.",
   counts: {
