@@ -4348,7 +4348,7 @@ race.
 The scout's L17 reads "`xo()` true → `await pm()`". **On the SIGTERM path that never happens**, and
 finding out took building the lane for it:
 
-Every consultation of the hang in the reachable set is written `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own SIGTERM handler runs `commitShutdown(), killShells(), runController.abort(), requestShutdown(143)` — **the abort short-circuits the very guard the commit exists to open.** So the latch contributes nothing a scenario can see on that path. SIGHUP is the path where nothing aborts, and it does not help either: the coordinator force-exits before any in-flight continuation resumes, and `killShells()` has already killed the tool the continuation was waiting on.
+Every consultation of the hang in the reachable set is written `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own SIGTERM handler runs `commitShutdown(), killShells(), runController.abort(), requestShutdown(143)` — **the abort short-circuits the very guard the commit exists to open.** So the latch contributes nothing a scenario can see on that path. SIGHUP is the path where nothing aborts, and it does not help either: the coordinator force-exits before any in-flight continuation resumes, and `TWn.shutdown`'s own shell kill has already taken the tool that continuation was waiting on.
 
 Both twins were built and driven over both paths on both engines. Neither moved: same frames, same
 exit status, same one request. So `commitShutdown` and `hang` are adjudicated **corpus-DARK with a
