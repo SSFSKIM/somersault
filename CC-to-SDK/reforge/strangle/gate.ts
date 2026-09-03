@@ -557,11 +557,13 @@ for (const [label, argv] of [
   //
   // EIGHT TAKES PER ARM, and the number is a probability rather than a taste.
   // The control's evidence is that the unforced arm DISAGREES WITH ITSELF, and
-  // that arm lands on one of two outcomes per take (49 records when the
-  // transcript compactor's rewrite wins the race against the drain, 71 when it
-  // does not) at roughly even odds. Three takes would report a false failure
-  // about a quarter of the time — a flaky gate phase teaches people to ignore
-  // red, which costs more than the ninety seconds eight takes cost.
+  // that arm's record count is MULTI-VALUED across takes — 49, 50, 53 and 71
+  // observed: 49 when the transcript compactor's rewrite wins the race against
+  // the drain, 71 when it does not, and the counts in between when the drain
+  // reads a rewrite in progress. (An earlier draft of this comment binarised it
+  // as two outcomes at even odds.) Three takes would report a false failure a
+  // good fraction of the time — a flaky gate phase teaches people to ignore red,
+  // which costs more than the ninety seconds eight takes cost.
   ["the eager-flush knob still buys what it claims", ["w9/measure.ts", "--phase", "flush", "--runs", "8"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
