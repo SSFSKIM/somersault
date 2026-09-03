@@ -27,6 +27,7 @@
 // this authors a FILESYSTEM the model cannot be asked for. Both are applied
 // deterministically and identically to every engine, and both are named — a
 // fault that is not named cannot be re-measured.
+import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -138,6 +139,32 @@ export function baselineConfigJson(engineVersion: string): string {
 export const emptyPreconditionFor = (engineVersion: string): ConfigPrecondition => ({
   seed: [{ path: ".claude.json", content: baselineConfigJson(engineVersion) }],
 });
+
+/**
+ * The applied precondition is the DECLARED one on top of the baseline, and only
+ * the declared half was ever recorded beside a cassette. The baseline is a
+ * function of the engine pin (`firstStartVersion`) and of this file's own
+ * contents, so two runs whose declarations match byte for byte can still have
+ * been made against different filesystems — silently, because nothing compared
+ * the half nobody wrote down.
+ *
+ * A HASH rather than the bytes: the seed is 700-odd bytes of JSON that would be
+ * repeated in every one of the corpus's sidecars, and the sidecar's job is to
+ * detect a change, not to reconstruct the old world. It cannot reconstruct it
+ * anyway — `baselineConfigJson` only knows how to produce TODAY's baseline — so
+ * a mismatch is reported as a finding and the scenario re-records deliberately.
+ */
+export function baselineSeedHash(engineVersion: string): string {
+  const seed = emptyPreconditionFor(engineVersion).seed ?? [];
+  return createHash("sha256").update(seed.map((f) => `${f.path}\0${f.content}\0${f.dirMode ?? ""}`).join("\0")).digest("hex");
+}
+
+/** What the runner writes beside a cassette: the declaration AND the baseline it was applied on top of. */
+export interface RecordedPrecondition {
+  declared: ConfigPrecondition;
+  /** `baselineSeedHash(engineVersion)` at record time */
+  baselineSha256: string;
+}
 
 // ---- application ------------------------------------------------------------
 

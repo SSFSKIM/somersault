@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
-import { EMPTY_PRECONDITION, resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { baselineSeedHash, EMPTY_PRECONDITION, resetSandbox, type ConfigPrecondition, type RecordedPrecondition, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { ENGINE_VERSION } from "../src/pin.js";
 import { deriveFaultCassette } from "../src/faults.js";
 import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
 import { gateCacheCheck } from "../src/leakcheck.js";
@@ -259,13 +260,34 @@ for (const s of SCENARIOS) {
   // When the two disagree the scenario FAILS by name — the wave that changed the
   // declaration re-records deliberately, with the reason stated, rather than
   // discovering later that a green run graded the wrong world.
+  //
+  // AND THE APPLIED PRECONDITION IS NOT THE DECLARED ONE. `applyPrecondition`
+  // prepends `emptyPreconditionFor(pin)` — the baseline `.claude.json` with its
+  // pinned identity — under every declaration, and only the declared half was
+  // ever written down. So the sidecar records BOTH: the declaration, and a hash
+  // of the baseline seed that was applied beneath it. A sidecar written before
+  // this fix carries no hash; that is a FINDING named as such, not a silent
+  // equality, and the corpus's sidecars were backfilled in the same commit that
+  // introduced the field.
   const declared = s.precondition ?? EMPTY_PRECONDITION;
+  const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
   const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
-  const recordedPre: ConfigPrecondition = existsSync(preFile)
-    ? (JSON.parse(readFileSync(preFile, "utf8")) as ConfigPrecondition)
-    : EMPTY_PRECONDITION;
-  const preconditionDrift =
-    existsSync(cassette) && !rerecord && JSON.stringify(recordedPre) !== JSON.stringify(declared);
+  const recorded: RecordedPrecondition | undefined = existsSync(preFile)
+    ? (JSON.parse(readFileSync(preFile, "utf8")) as RecordedPrecondition)
+    : undefined;
+  const recordedPre: ConfigPrecondition = recorded?.declared ?? EMPTY_PRECONDITION;
+  const driftReason = !existsSync(cassette) || rerecord
+    ? null
+    : recorded === undefined
+      ? "no precondition sidecar was recorded beside this cassette"
+      : typeof recorded.baselineSha256 !== "string"
+        ? "the sidecar records a declaration but not the baseline seed it was applied on top of (a pre-F4 sidecar)"
+        : recorded.baselineSha256 !== baselineSha256
+          ? `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`
+          : JSON.stringify(recordedPre) !== JSON.stringify(declared)
+            ? "the DECLARED precondition is not the one the cassette was recorded against"
+            : null;
+  const preconditionDrift = driftReason !== null;
   const applied = preconditionDrift ? recordedPre : declared;
 
   if (!existsSync(cassette) || rerecord) {
@@ -320,15 +342,17 @@ for (const s of SCENARIOS) {
       console.log(`  derived the '${s.deriveFault}' fault into the cassette before promoting it`);
     }
     renameSync(staged, cassette);
-    if (JSON.stringify(declared) === JSON.stringify(EMPTY_PRECONDITION)) rmSync(preFile, { force: true });
-    else writeFileSync(preFile, JSON.stringify(declared, null, 2) + "\n");
+    // ALWAYS written, including for the empty declaration: the empty declaration
+    // is still a filesystem — the baseline seed — and a cassette with no sidecar
+    // records nothing about the world it was recorded against.
+    writeFileSync(preFile, JSON.stringify({ declared, baselineSha256 } satisfies RecordedPrecondition, null, 2) + "\n");
   } else {
     console.log("  cassette exists — reusing");
   }
   if (preconditionDrift) {
     console.log(
-      "    FINDING: this scenario's DECLARED config precondition is not the one its cassette was recorded against — " +
-        "replaying the recorded one. Re-record deliberately (--rerecord) with the reason stated.",
+      `    FINDING: ${driftReason} — replaying the recorded declaration. ` +
+        "Re-record deliberately (--rerecord) with the reason stated.",
     );
   }
 
