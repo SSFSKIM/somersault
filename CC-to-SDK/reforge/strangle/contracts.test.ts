@@ -649,6 +649,117 @@ const content = (block: { content?: unknown }) => block.content;
   process.exitCode = savedExitCode;
 }
 
+// ---- the headless dispatcher's SIGINT handler (C16b / W13b) ----------------
+// Three arms, and the covering plan renders exactly one path through them: a
+// first interrupt during a live turn. The other arms are the ones an operator
+// actually meets — a SECOND Ctrl-C while the shutdown is already running, and an
+// interrupt when no query is in flight — and neither is recordable, because a
+// scenario delivers one signal to one turn. The attestation excludes them by
+// name and points here.
+//
+// The PORT TRACE is the assertion, not the return value: the handler returns
+// nothing, and its three arms differ from each other in nothing but which ports
+// ran and in what order. That is the same argument W6's permission refusals and
+// W4's compaction guards make, and it is why each case below compares a log.
+{
+  const sigint = (await load("ky-sigint-handler/reference.js")).kySigintHandler;
+
+  const ports = (claimed: boolean, query: { signal: { aborted: boolean }; abort(r: unknown): void } | undefined) => {
+    const log: string[] = [];
+    return {
+      log,
+      args: [
+        (level: string, event: string, payload: { signal: string }) => log.push(`logEvent:${level}:${event}:${payload.signal}`),
+        () => {
+          log.push("coordinatorIsShuttingDown");
+          return claimed;
+        },
+        () => log.push("resetTerminal"),
+        query,
+        (reason: string) => {
+          log.push(`abortReason:${reason}`);
+          return { reason };
+        },
+        { abort: () => log.push("runController.abort") },
+        (code: number) => log.push(`requestShutdown:${code}`),
+      ] as const,
+    };
+  };
+  const liveQuery = (aborted: boolean, log: string[]) => ({
+    signal: { aborted },
+    abort: (r: unknown) => log.push(`query.abort:${(r as { reason: string }).reason}`),
+  });
+
+  // ARM 1 — a repeat interrupt: the coordinator's claim is already taken.
+  {
+    const p = ports(true, undefined);
+    sigint(...p.args);
+    eq("a repeat interrupt logs, resets the terminal and stops there", p.log, [
+      "logEvent:info:shutdown_signal:SIGINT",
+      "coordinatorIsShuttingDown",
+      "resetTerminal",
+    ]);
+    ok("…and asks for no second shutdown", !p.log.some((l) => l.startsWith("requestShutdown")));
+    ok("…and aborts nothing", !p.log.some((l) => l.includes("abort")));
+  }
+
+  // ARM 2 — the covering path: a first interrupt with a live turn.
+  {
+    const log: string[] = [];
+    const p = ports(false, liveQuery(false, log));
+    sigint(...p.args);
+    eq("a first interrupt cancels the turn, aborts the run and exits ZERO", p.log, [
+      "logEvent:info:shutdown_signal:SIGINT",
+      "coordinatorIsShuttingDown",
+      "abortReason:user-cancel",
+      "runController.abort",
+      "resetTerminal",
+      "requestShutdown:0",
+    ]);
+    eq("…and the cancellation reaches the query with upstream's own reason", log, ["query.abort:user-cancel"]);
+  }
+
+  // ARM 3 — no query in flight. The abort is skipped and the shutdown is not.
+  {
+    const p = ports(false, undefined);
+    sigint(...p.args);
+    eq("an interrupt between turns skips the query abort and still shuts down", p.log, [
+      "logEvent:info:shutdown_signal:SIGINT",
+      "coordinatorIsShuttingDown",
+      "runController.abort",
+      "resetTerminal",
+      "requestShutdown:0",
+    ]);
+  }
+
+  // ARM 3b — the `&&`'s second operand: a query that is ALREADY aborted is not
+  // re-aborted. Upstream's guard, and the arm a copy that wrote `if (query)`
+  // would lose.
+  {
+    const log: string[] = [];
+    const p = ports(false, liveQuery(true, log));
+    sigint(...p.args);
+    eq("an already-aborted query is not aborted again", log, []);
+    eq("…and the rest of the handler runs unchanged", p.log, [
+      "logEvent:info:shutdown_signal:SIGINT",
+      "coordinatorIsShuttingDown",
+      "runController.abort",
+      "resetTerminal",
+      "requestShutdown:0",
+    ]);
+  }
+
+  // THE TELEMETRY IS OUTSIDE THE BRANCH, which upstream expresses with a comma
+  // operator inside the `if` condition. Stated as its own claim because it is
+  // the one detail of this handler a faithful-looking rewrite would drop: put
+  // the log inside the branch and repeat interrupts stop being recorded.
+  {
+    const p = ports(true, undefined);
+    sigint(...p.args);
+    eq("the signal is logged on EVERY arm, including the one that returns early", p.log[0], "logEvent:info:shutdown_signal:SIGINT");
+  }
+}
+
 console.log(`=== owned-implementation contracts: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 if (pass === 0) {

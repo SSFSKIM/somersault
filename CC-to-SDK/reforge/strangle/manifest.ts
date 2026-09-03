@@ -5291,6 +5291,73 @@ export const SPLICES: Splice[] = [
     coverage: ["perm-plan-mode"],
   },
 
+  // ---- process lifecycle: the headless dispatcher's SIGINT handler ----------
+  {
+    // `Hn` in `chunk-dvbbv89q.js` — the ONE of the graph's six lifecycle signal
+    // handlers that fits a target shape. The fixture
+    // `research/fixtures/process-lifecycle-<pin>.json` records the excisability
+    // of all six as a measurement: its SIGTERM sibling writes back to the
+    // once-guard declared beside it, and the coordinator's four are inline
+    // arguments with nothing to replace. See the module header.
+    //
+    // Anchored on `("user-cancel"));` — `research/tools/anchor-enum.ts`'s
+    // mechanical answer for this body, and the only one available: the obvious
+    // anchor, the `{signal:"SIGINT"}` telemetry payload, occurs in TWO chunks
+    // because the coordinator logs the same event from its own handler.
+    name: "ky-sigint-handler",
+    target: "arrow-initializer",
+    signature: { params: 0, ancestry: ["FunctionDeclaration", "SourceFile"], declarator: 0 },
+    anchor: '("user-cancel"));',
+    fn: "kySigintHandler",
+    captures: [
+      {
+        as: "logEvent",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "logEvent", new RegExp(`\\{if\\((${ID})\\("info","shutdown_signal"`)),
+      },
+      {
+        // the coordinator's CLAIM reader, not the shutdown latch — this wave
+        // owns the method behind it (`twn-is-shutting-down`), and it still
+        // crosses as the graph's own binding.
+        as: "coordinatorIsShuttingDown",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "coordinatorIsShuttingDown", new RegExp(`\\{signal:"SIGINT"\\}\\),(${ID})\\(\\)\\)\\{`)),
+      },
+      {
+        as: "resetTerminal",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "resetTerminal", new RegExp(`\\)\\{(${ID})\\(\\);return\\}`)),
+      },
+      {
+        // a VALUE, not a function: the in-flight query handle, re-read from the
+        // graph's own `let` at every invocation because the delegation is an
+        // expression in that scope.
+        as: "currentQuery",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "currentQuery", new RegExp(`;return\\}if\\((${ID})&&!\\1\\.signal\\.aborted\\)`)),
+      },
+      {
+        as: "abortReason",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "abortReason", new RegExp(`\\.abort\\((${ID})\\("user-cancel"\\)\\)`)),
+      },
+      {
+        as: "runController",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "runController", new RegExp(`\\("user-cancel"\\)\\);(${ID})\\.abort\\(\\)`)),
+      },
+      {
+        // `On` — the shutdown facade, called with ZERO. SIGTERM's sibling calls
+        // the same facade with 143, and the difference is the whole reason the
+        // covering plans grade the exit status rather than "it stopped".
+        as: "requestShutdown",
+        kind: "effectful-port",
+        derive: pick("ky-sigint-handler", "requestShutdown", new RegExp(`\\.abort\\(\\),${ID}\\(\\),(${ID})\\(0\\)`)),
+      },
+    ],
+    coverage: ["sigint-mid-turn"],
+  },
+
   // ---- process lifecycle: the shutdown COORDINATOR (subsystem/query-loop) ----
   // C16b / W13b. The latch itself is a whole chunk (see CHUNK_REPLACEMENTS);
   // these four are the coordinator methods around it. `TWn` is 8,919 B across 44

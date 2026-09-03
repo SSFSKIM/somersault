@@ -16,8 +16,8 @@
 // makes this driver the only thing that can turn "these are live" from a claim
 // into a measurement.
 //
-// ## TWO SIGNALS, BECAUSE THE ENGINE HAS TWO SHUTDOWN PATHS AND ONLY ONE OF THEM
-// ## CAN SEE THE LATCH
+// ## THREE SIGNALS, BECAUSE THE ENGINE ANSWERS THEM WITH THREE DIFFERENT
+// ## HANDLERS AND THREE DIFFERENT EXIT STATUSES
 //
 // The graph registers two families of signal handler and this wave's fixture
 // enumerates both. The headless dispatcher installs its own SIGINT/SIGTERM pair;
@@ -27,6 +27,9 @@
 // the two do materially different things:
 //
 //   SIGTERM  `br` in `ky`:  commit the latch, ABORT the run controller, exit 143
+//   SIGINT   `Hn` in `ky`:  cancel the in-flight query, abort, exit 0 — OWNED by
+//                           this wave (`modules/ky-sigint-handler`), and the one
+//                           handler of the graph's six that fits a target shape
 //   SIGHUP   the coordinator: shut down and exit 129 — and never abort anything
 //
 // That difference decides what is observable, and it is the correction this
@@ -200,6 +203,18 @@ const PLANS: SignalPlan[] = [
     signal: "SIGHUP",
     expectedExit: 129,
     handler: "the coordinator's own handler, registered by install() and not suppressed in print mode: shut down with 129, aborting nothing",
+    expectedRequests: 1,
+  },
+  {
+    // The third plan, and the one whose expected status is ZERO — which is why
+    // `expectedRequests` is doing load-bearing work here rather than
+    // corroborating. An engine that never received the signal and simply
+    // finished its turn ALSO exits 0; what it cannot do is finish the turn on
+    // one API request, because the tool result would need a second.
+    tag: "sigint-mid-turn",
+    signal: "SIGINT",
+    expectedExit: 0,
+    handler: "the headless dispatcher's own handler (OWNED — `ky-sigint-handler`): cancel the in-flight query, abort the run controller, shut down with 0",
     expectedRequests: 1,
   },
 ];

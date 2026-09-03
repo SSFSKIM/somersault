@@ -528,6 +528,16 @@ export const ATTESTED: AttestedModule[] = [
     row: "twn-shutdown-sync",
     scenarios: ["plain"],
   },
+  {
+    // Three branch sites, and the covering plan renders exactly one path through
+    // them: a first interrupt during a live turn. The others are the arms an
+    // operator meets — a second Ctrl-C while a shutdown is running, an interrupt
+    // between turns, an already-aborted query — and a scenario delivers one
+    // signal to one turn, so none of them is recordable.
+    module: "ky-sigint-handler",
+    row: "ky-sigint-handler",
+    scenarios: ["sigint-mid-turn"],
+  },
 ];
 
 export interface Exclusion {
@@ -3936,6 +3946,30 @@ export const EXCLUSIONS: Exclusion[] = [
   },
 
   // ---- C16b / W13b ----------------------------------------------------------
+  {
+    branch: "ky-sigint-handler#kySigintHandler@0:T",
+    reason:
+      "THE REPEAT INTERRUPT — a second Ctrl-C while the coordinator's claim is already taken. A scenario delivers ONE signal to ONE turn, " +
+      "so a second is not a recording away: it is a second stimulus the driver would have to sequence against a shutdown already in " +
+      "flight, which is C16a's repeat-delivery capability and not this child's. The arm matters because it is the quiet one — it resets " +
+      "the terminal and returns, asking for no second shutdown and aborting nothing twice. Graded by `strangle/contracts.test.ts`, which " +
+      "drives it with the claim taken and compares the whole PORT TRACE, since this arm differs from the others in nothing else.",
+  },
+  {
+    branch: "ky-sigint-handler#kySigintHandler@1:F",
+    reason:
+      "AN INTERRUPT WITH NO TURN IN FLIGHT. The covering plan exists to land the signal MID-TURN — that is the cell of the scout's matrix " +
+      "it fills — so by construction it cannot also render the between-turns arm, and a scenario that interrupted an idle session would " +
+      "be grading nothing else. The arm skips the query cancellation and still aborts and shuts down with zero. Graded by " +
+      "`strangle/contracts.test.ts` over both of its causes: no query at all, and a query whose signal is already aborted.",
+  },
+  {
+    branch: "ky-sigint-handler#kySigintHandler@2:F",
+    reason:
+      "the `&&`'s first operand false — the same between-turns condition as @1:F, reported separately because the instrumenter records " +
+      "short-circuit operands as their own outcomes. Same reason, same oracle: `strangle/contracts.test.ts` drives the undefined-query " +
+      "case explicitly, which is what distinguishes it from the already-aborted case that renders @2:T with @1:F.",
+  },
   {
     branch: "twn-shutdown-sync#twnShutdownSync@0:F",
     reason:

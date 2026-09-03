@@ -45,6 +45,7 @@ import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/
 import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
 import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
 import * as twnShutdownSync from "../../strangle/modules/twn-shutdown-sync/reference.js";
+import * as kySigintHandler from "../../strangle/modules/ky-sigint-handler/reference.js";
 import * as readDescription from "../../strangle/modules/read-description/reference.js";
 import * as grepDescription from "../../strangle/modules/grep-description/reference.js";
 import * as webFetchDescription from "../../strangle/modules/webfetch-description/reference.js";
@@ -324,6 +325,11 @@ const OWNED: [string, string, unknown][] = [
   ["twn-claim-shutdown", "subsystem/query-loop", twnClaimShutdown.twnClaimShutdown],
   ["twn-release-shutdown-claim", "subsystem/query-loop", twnReleaseShutdownClaim.twnReleaseShutdownClaim],
   ["twn-shutdown-sync", "subsystem/query-loop", twnShutdownSync.twnShutdownSync],
+  // …and the headless dispatcher's SIGINT handler — the one of the graph's six
+  // lifecycle signal handlers that fits a target shape, measured rather than
+  // chosen (research/fixtures/process-lifecycle-<pin>.json records the
+  // excisability of all six).
+  ["ky-sigint-handler", "subsystem/query-loop", kySigintHandler.kySigintHandler],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {
