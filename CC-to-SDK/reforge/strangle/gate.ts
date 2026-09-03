@@ -473,6 +473,12 @@ console.log("\n━━━ attestation: every branch of the wave's owned modules i
 {
   const r = run("npx", ["tsx", "strangle/attest.ts", "--check"]);
   for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
+  // …AND THE REASONS, which this filter used to drop. The line shapes it passes
+  // are verdicts and headers; a covering scenario's own diff lines are neither,
+  // so a red attestation named the tag and stopped. That is the same defect the
+  // equivalence phase below documents at length, one phase up, and it survived
+  // because this phase's failure had never been read in anger.
+  if (r.status !== 0) for (const w of relayOutput(r.stdout ?? "").reasons) console.log(`    ${w.trim()}`);
   results.push({ label: "coverage attestation", pass: r.status === 0 });
 }
 

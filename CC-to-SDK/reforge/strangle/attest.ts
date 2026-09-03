@@ -31,6 +31,7 @@ import { adjudicate } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
+import { relayOutput } from "../m2/relay.js";
 
 const checkOnly = process.argv.includes("--check");
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
@@ -92,7 +93,22 @@ for (const tag of scenarios) {
   const r = run("npx", ["tsx", ...runnerFor(tag, "engine-strangled")]);
   const ok = r.status === 0;
   console.log(`  ${tag}: ${ok ? "GREEN" : "RED"}`);
-  if (!ok) red.push(tag);
+  if (!ok) {
+    // A PHASE THAT CAN FAIL HAS TO SAY WHAT FAILED, and this one did not. The
+    // child's stdout was captured and dropped, so a covering scenario that
+    // reddened on the instrumented build was reported as a TAG and nothing
+    // more — not which of the four surfaces moved, not by how much. Measured:
+    // one such report cost a full gate cycle and a manual rebuild, and the
+    // answer turned out to be that the difference did not reproduce at all.
+    //
+    // Relayed through `m2/relay.ts` rather than a regex of its own, for the
+    // reason that file's own header gives: the rule only holds if every layer
+    // between the failure and the log agrees on what a failure looks like.
+    const { fails, reasons } = relayOutput(r.stdout ?? "");
+    for (const f of fails) console.log(`    ${f.trim()}`);
+    for (const w of reasons) console.log(`    ${w.trim()}`);
+    red.push(tag);
+  }
 }
 if (red.length > 0) {
   console.log(`FAIL — the instrumented build is not equivalent (${red.join(", ")} went red); coverage measured on it would describe a different engine`);
