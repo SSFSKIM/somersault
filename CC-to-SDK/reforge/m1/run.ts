@@ -29,9 +29,10 @@ import { W3_SCENARIOS } from "../w3/scenarios.js";
 import { W4_SCENARIOS } from "../w4/scenarios.js";
 import { W5_SCENARIOS } from "../w5/scenarios.js";
 import { W6_SCENARIOS } from "../w6/scenarios.js";
+import { W9_SCENARIOS } from "../w9/scenarios.js";
 import { SCENARIOS as M1_SCENARIOS } from "./scenarios.js";
 
-const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS, ...W1_SCENARIOS, ...W2_SCENARIOS, ...W3_SCENARIOS, ...W4_SCENARIOS, ...W5_SCENARIOS, ...W6_SCENARIOS];
+const SCENARIOS = [...M1_SCENARIOS, ...M2C_SCENARIOS, ...M3_SCENARIOS, ...W1_SCENARIOS, ...W2_SCENARIOS, ...W3_SCENARIOS, ...W4_SCENARIOS, ...W5_SCENARIOS, ...W6_SCENARIOS, ...W9_SCENARIOS];
 
 const args = process.argv.slice(2);
 // `--scenario` with no value used to leave `only` undefined, which silently ran
