@@ -474,6 +474,60 @@ export const ATTESTED: AttestedModule[] = [
     noBranchesReason:
       "one template literal with two interpolated tool names and no arm.",
   },
+  // ---- C16b / W13b: the process lifecycle ----------------------------------
+  // Four of these five modules have NO branches, and that is the shape of the
+  // subsystem rather than an under-report: a latch is a boolean with a reader
+  // and a one-way setter, a hang is a promise returned by identity, and the
+  // coordinator's claim pair is two unconditional statements each. Listing them
+  // with a reason is the alternative to leaving five owned modules unattested,
+  // which is what "attested by omission" means and what the empty-inventory
+  // refusal above exists to prevent.
+  {
+    module: "process-lifecycle",
+    row: "process-lifecycle (S-chunk)",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "the whole module is a boolean field, a reader, a one-way setter and a promise built with an empty executor — 165 bytes of upstream " +
+      "with no conditional in it, so its AST inventory is legitimately empty. What grades it instead is stronger than branch coverage " +
+      "would be, because the domain is finite: `strangle/hooks-parity.test.ts` runs this module against upstream's own chunk bytes over " +
+      "the whole partition (clear, committed, and the identity of the hang promise across calls and across a second import), driving " +
+      "upstream's shutdown wrapper with each side bound in turn and requiring the same verdict — including the non-settling one, which " +
+      "no output comparison can make. The per-export sabotage loop adds the differential half for the reader; the commit and the hang " +
+      "carry measured `darkReason`s with a population the gate re-measures every run.",
+  },
+  {
+    module: "twn-is-shutting-down",
+    row: "twn-is-shutting-down",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "one statement: `return self.shutdownInProgress`. Graded by the differential — its twin answers true and both signal scenarios go " +
+      "red, with the engine producing no frames at all — and by `strangle/contracts.test.ts`'s coordinator fixture, which drives the " +
+      "claim pair this predicate reads.",
+  },
+  {
+    module: "twn-claim-shutdown",
+    row: "twn-claim-shutdown",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "two unconditional statements, and upstream has no guard on either — a second claim disarms the orphan check a second time, which " +
+      "`strangle/contracts.test.ts` asserts rather than smooths over. Corpus-dark (both call sites unmount or re-exec a terminal UI), so " +
+      "that contract test and the build's own derivation are what grade it.",
+  },
+  {
+    module: "twn-release-shutdown-claim",
+    row: "twn-release-shutdown-claim",
+    scenarios: ["plain"],
+    noBranchesReason:
+      "the inverse of the claim, two unconditional statements, and graded by the same contract test — which asserts the ROUND TRIP, " +
+      "because being an inverse is exactly what distinguishes this pair from the one-way latch one module over.",
+  },
+  {
+    // The one module here with a real branch: the re-entry guard around the two
+    // things that must happen synchronously.
+    module: "twn-shutdown-sync",
+    row: "twn-shutdown-sync",
+    scenarios: ["plain"],
+  },
 ];
 
 export interface Exclusion {
@@ -3879,5 +3933,17 @@ export const EXCLUSIONS: Exclusion[] = [
   {
     branch: "schedule-wakeup-description#scheduleWakeupDescription@1:F",
     reason: WAKEUP_CACHE_TTL,
+  },
+
+  // ---- C16b / W13b ----------------------------------------------------------
+  {
+    branch: "twn-shutdown-sync#twnShutdownSync@0:F",
+    reason:
+      "THE RE-ENTRANT ARM: a second SYNCHRONOUS shutdown request while the first is still running. A headless run shuts down exactly once — " +
+      "it finishes its turn and exits, or a signal handler asks once — so no corpus scenario and neither signal plan can create a second " +
+      "caller, and unlike most unreachable arms this one is unreachable by the SHAPE of a `--print` session rather than by a gate. " +
+      "Graded by `strangle/contracts.test.ts`, which drives both arms against a recording coordinator and asserts the thing the arm is " +
+      "actually about: the guard covers only the exit-status stamp and the latch commit, so a re-entrant call still enters the async half " +
+      "and still parks a promise — upstream's shape, and one an owned copy that guarded the whole body would have quietly broken.",
   },
 ];

@@ -528,6 +528,127 @@ const content = (block: { content?: unknown }) => block.content;
   eq("claiming twice disarms twice — upstream has no guard and neither does this", twice.calls, ["disarmOrphanCheck", "disarmOrphanCheck"]);
 }
 
+// ---- the coordinator's SYNCHRONOUS shutdown entry point (C16b / W13b) ------
+// One branch, and the corpus renders one of its two arms: a headless run shuts
+// down exactly once, so the re-entry arm — a second synchronous request while
+// the first is still running — is unreachable by construction. The attestation
+// excludes it by name and points here, which is §2.4's bargain: an arm no
+// scenario renders is graded against upstream's own shape instead.
+//
+// `process.exitCode` IS THE POINT AND IS ALSO THIS PROCESS'S EXIT CODE. The
+// method's whole synchronous half is that assignment plus the latch commit, so
+// the assertions have to observe it for real; the original value is restored
+// afterwards, because a contract test that left the suite exiting 143 would be
+// a spectacular way to grade nothing.
+{
+  const shutdownSync = (await load("twn-shutdown-sync/reference.js")).twnShutdownSync;
+  const savedExitCode = process.exitCode;
+
+  /** A recording stand-in for the coordinator, with `shutdown` scripted per case. */
+  const coordinator = (shutdownInProgress: boolean, shutdown: () => Promise<void>) => {
+    const calls: string[] = [];
+    return {
+      shutdownInProgress,
+      pendingShutdown: undefined as Promise<void> | undefined,
+      calls,
+      shutdown(code: number, reason: string) {
+        calls.push(`shutdown(${code},${reason})`);
+        return shutdown();
+      },
+      printResumeHint() {
+        calls.push("printResumeHint");
+      },
+      async armFailsafeAndDrainStdout(code: number) {
+        calls.push(`armFailsafeAndDrainStdout(${code})`);
+      },
+      forceExit(code: number) {
+        calls.push(`forceExit(${code})`);
+      },
+    };
+  };
+  const ports = () => {
+    const log: string[] = [];
+    return {
+      log,
+      commitShutdown: () => log.push("commitShutdown"),
+      logError: (msg: string) => log.push(`logError:${String(msg)}`),
+      resetTerminal: () => log.push("resetTerminal"),
+    };
+  };
+
+  // --- the T arm: no shutdown in flight --------------------------------------
+  {
+    process.exitCode = 0;
+    const p = ports();
+    const c = coordinator(false, async () => {});
+    shutdownSync(c, 143, "signal", p.commitShutdown, p.logError, p.resetTerminal);
+    eq("a first request stamps the exit status", process.exitCode, 143);
+    eq("…and commits the shutdown latch", p.log, ["commitShutdown"]);
+    eq("…and hands the rest to the async half", c.calls, ["shutdown(143,signal)"]);
+    ok("…parking it on the instance for callers that await one", c.pendingShutdown instanceof Promise);
+    await c.pendingShutdown;
+  }
+
+  // --- the F arm: a shutdown is already in flight ------------------------------
+  // THE ARM NO SCENARIO RENDERS, and the interesting part is what it does NOT
+  // skip: the guard covers only the status stamp and the commit, so the async
+  // half is entered a SECOND time. That is upstream's shape and not a defect to
+  // tidy — `shutdown` has its own re-entry guard on the same flag and returns
+  // immediately — and an owned copy that wrapped the whole body in the guard
+  // would stop parking a promise the second caller may already be awaiting.
+  {
+    process.exitCode = 7;
+    const p = ports();
+    const c = coordinator(true, async () => {});
+    shutdownSync(c, 143, "signal", p.commitShutdown, p.logError, p.resetTerminal);
+    eq("a re-entrant request leaves the exit status alone", process.exitCode, 7);
+    eq("…and does not commit the latch a second time", p.log, []);
+    eq("…but still enters the async half, because the guard covers only the two synchronous statements", c.calls, ["shutdown(143,signal)"]);
+    await c.pendingShutdown;
+  }
+
+  // --- the catch chain, which is two deep --------------------------------------
+  {
+    process.exitCode = 0;
+    const p = ports();
+    const c = coordinator(false, async () => {
+      throw new Error("hooks hung");
+    });
+    shutdownSync(c, 143, "signal", p.commitShutdown, p.logError, p.resetTerminal);
+    await c.pendingShutdown;
+    eq("a graceful shutdown that rejects is logged, and carries upstream's own sentence with the error interpolated", p.log, [
+      "commitShutdown",
+      "logError:Graceful shutdown failed: Error: hooks hung",
+      "resetTerminal",
+    ]);
+    eq("…and the brutal version runs in its place, in order", c.calls, [
+      "shutdown(143,signal)",
+      "printResumeHint",
+      "armFailsafeAndDrainStdout(143)",
+      "forceExit(143)",
+    ]);
+  }
+
+  // …and the SECOND catch, which is what stops a failure during teardown from
+  // becoming an unhandled rejection on the way out.
+  {
+    process.exitCode = 0;
+    const p = ports();
+    const c = coordinator(false, async () => {
+      throw new Error("first");
+    });
+    c.forceExit = () => {
+      throw new Error("and the failsafe threw too");
+    };
+    shutdownSync(c, 143, "signal", p.commitShutdown, p.logError, p.resetTerminal);
+    let settled = "pending";
+    await c.pendingShutdown!.then(() => (settled = "resolved"), () => (settled = "rejected"));
+    eq("a throw inside the failure handler is swallowed by the second catch", settled, "resolved");
+  }
+
+  process.exitCode = savedExitCode;
+}
+
 console.log(`=== owned-implementation contracts: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 if (pass === 0) {
