@@ -288,6 +288,29 @@ for (const [key, mutate, defect] of [
   check(`${key}: deleting the rule from the map makes two healthy runs DIFFER (the rule is load-bearing)`, withoutKey(key, stored(P), stored(Q)));
 }
 
+// THE `slug` RULE'S VALUE GUARD. Upstream overloads the property name: in the
+// message envelope it is the project key, in the artifact records it is the
+// NAME of an artifact — and a name is behaviour. Found by the run-id-shapes
+// census (124 values in no known lexeme, next to 2,531 project keys).
+check(
+  "an ARTIFACT slug is not a project key, so it is not mapped and still discriminates",
+  differs(
+    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: P.session }],
+    [{ type: "artifact-changed", slug: "annual-report", sessionId: Q.session }],
+  ),
+);
+check(
+  "…while two runs touching the SAME artifact still agree",
+  !differs(
+    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: P.session }],
+    [{ type: "artifact-changed", slug: "quarterly-report", sessionId: Q.session }],
+  ),
+);
+check(
+  "…and the project key, which begins with the flattened separator, is still mapped",
+  !differs([{ type: "user", slug: P.slug, sessionId: P.session }], [{ type: "user", slug: Q.slug, sessionId: Q.session }]),
+);
+
 // MUST-SURVIVE NEIGHBOURS. Each is the same lexeme as a mapped key, under a key
 // the map does NOT carry, and each must still discriminate — this is what makes
 // the rules key-scoped rather than a licence to erase every uuid-shaped string.

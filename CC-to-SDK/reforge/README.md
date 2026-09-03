@@ -4497,3 +4497,190 @@ refusal, because exactly one of them is then wrong. `strangle/prepare.ts` hashes
 `engine-ts/check-reachability.ts` now names `~/.local/share/claude/versions` as a forbidden root
 EXPLICITLY rather than as a side effect of where the pin happened to live, and nothing under
 `~/.local/share/claude` — including the operator's own `claude` symlink — is written or moved.
+
+---
+
+## W9a — storage oracle machinery: the fourth surface learns to see a second root (2026-09-03)
+
+C12a, the machinery child of the W9 cut, and the one that had to land before any storage module: the
+three oracle capabilities the scout said do not exist are ones only this subsystem needs, so a wave
+that owned something else would carry them as overhead and be tempted to skip them. No splices. What
+it ships is the ability to grade what a run leaves in `reforge/config/` — and, more than that, the
+ability to DECLARE what was there before it started.
+
+The charter's five items all landed. Three of them landed differently from how they were written,
+and each difference is a measurement.
+
+### The state surface is a list of roots, and the config root is read differently from the sandbox
+
+`src/state.ts` used to snapshot one tree. It now snapshots a LIST — two registered today
+(`defaultStateRoots`), a third named and deliberately absent: the dispatched-agent output directory
+at `/private/tmp/claude-501/<slug>/<uuid>/tasks/` is the subagent subsystem's artifact rather than
+storage's, so C15a registers it by appending one `StateRoot` (the run-id map already covers the
+`<session-uuid>` in its path).
+
+The two roots are read differently and the asymmetry is the design. The sandbox is walked whole,
+because it is wiped before every run and everything in it is the engine's. The config dir is walked
+through the scout's §4.2 INCLUDE-LIST, because the engine keeps bookkeeping there that is not a claim
+about behaviour — `backups/<name>.backup.<epoch-ms>` puts a clock in its own filename, `session-env/`
+and `shell-snapshots/` are per-process scratch. And a transcript is PROJECTED PER RECORD rather than
+hashed, because its bytes carry a fresh session uuid, a fresh `promptId` and a millisecond clock on
+every line: hashing it makes the file either always-different or excluded.
+
+The projection is the point of the whole item. `m2/cross-resume`'s `{type, role, sorted keys}` shape
+diff — the only store claim the repo had — passes a record chained to the wrong parent, and
+`src/state.test.ts` now demonstrates BOTH halves of that: the old shape diff passing it, and the
+projection catching it, before and after the run-id map.
+
+### Six run-id rules, keyed on property name, each with a mutation of itself
+
+`parentUuid`, `logicalParentUuid`, `leafUuid`, `promptId`, `sessionId` and the project-key `slug`
+join the differ's map. Keyed on PROPERTY NAME because the lexemes are ambiguous by value: an agent id
+and a task id are both `a`+16 hex, and four envelope ids are all RFC-4122. A shape-keyed rule would
+either bind a task id as an agent id — the wrong-match direction §3.4 calls the unsafe one — or map
+every uuid-shaped string anywhere, erasing the `tool_use_id`s the cassette replays identically.
+
+Each rule got the three checks §3.4 asks for, and the third needed new machinery. "Deleting this rule
+changes an answer" cannot be shown from outside a module whose key set is a constant, so
+`makeRunNormalizerOver` takes the set as a parameter and the battery deletes one rule at a time. The
+first version of that battery passed all six controls **by construction**: it compared through
+`diffTranscripts`, which re-normalizes with the full set and silently restored every deleted rule.
+
+The fixture underneath it (`run-id-shapes-2.1.251.json`, the ELEVENTH pin-keyed one) exists for
+C15a3, whose cut says so in as many words: enumerate the id SHAPES before the first nesting scenario.
+Its `collisions` list is the fact it is for.
+
+### The flush schedule: (a) refuted, (b) insufficient, (c) adopted with its control
+
+The cut said decide by measurement, in a fixed order. The order was followed to its end.
+
+**(a) Byte-stable, no mechanism.** `w9/measure.ts --phase flush --scenario resume`: five replays,
+same byte length, same record count, identical projected snapshot. On that evidence the answer was
+(a) — and one scenario was not the population. `compact-continue` produced **33,175 / 33,175 / 33,166
+/ 34,220 bytes and 49, 50 or 71 records** across replays of the same engine, while its **29 SDK
+messages and 8 results were byte-identical every time** and the proxy served zero fallbacks. The
+engine's observable behaviour is deterministic; what it leaves on disk is not.
+
+**(b) Observed quiesce.** Implemented and insufficient. The variance survived it unchanged, because
+it is not a sampling error: the scenario COMPACTS, and the transcript compactor rewrites the file in
+place while the 100 ms drain is still appending. The timer arm lands on 49 records (the rewrite won)
+or 71 (it did not). Waiting longer cannot decide a race that has already been decided.
+
+**(c) `CLAUDE_CODE_EAGER_FLUSH` enters X6**, ON by default — the one determinism knob that is a
+property of the measurement regime rather than of a scenario, so it stands with the four telemetry
+switches rather than with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. Six sites in `chunk-dvbbv89q.js` read it
+and `await flushSessionStorage()` after each record. Its negative control is a gate phase:
+`w9/measure.ts --phase flush` runs both arms and REQUIRES the contrast, because a determinism knob
+whose absence changes nothing is grading nothing.
+
+What it costs, stated where C12c will pay it: the write QUEUE's batching is out of every graded run,
+so a reimplementation that dropped or reordered entries INSIDE the queue would leave the same file.
+That wave's mutation battery already lists "dropped `pendingEntries` replay" and "queue item resolved
+before its bytes landed"; they are now load-bearing rather than belt-and-braces.
+
+**`awaitQuiesce` is kept anyway.** It is what turns "the file was still moving when I read it" from an
+invisible sampling error into a named failing outcome, and the next root in line — a backgrounded
+agent's output directory, which legitimately outlives its turn — has no such knob.
+
+### The reset: wipe everything, seed what is declared, and census what was there
+
+`resetSandbox()` wiped `sandbox/` and `config/plans`. Its own comment already carried the principle —
+"engine state a run creates has to be reset with the sandbox, wherever the engine happens to keep it"
+— and `plans/` was the only place anyone had checked. The rest had been accumulating since W0: 1,087
+task directories, 3,939 `session-env/` directories, 412 transcripts, 247 shell snapshots, and a
+`skillUsage` counter that had reached **299** because nothing ever reset it.
+
+**`skillUsage` is reset, not scrubbed**, and the reset is the wipe rather than a special case: a
+differ scrub would hide a real counter defect on the one surface that can see it. The cost is stated
+where it lands — a scenario that wants a non-zero counter seeds it through the precondition, which is
+C14a's inheritance.
+
+**The empty precondition is a statement, not an absence**, and that is measured. Against a genuinely
+empty config dir, two runs of the SAME engine differ on `firstStartTime`, `machineID` and `userID` —
+the engine mints a per-install identity and writes a clock-named backup. With the baseline seed it
+preserves all three byte for byte and writes no backup at all. So the seed is a necessity with its own
+negative control, and because the identity is now a DECLARED INPUT the projection GRADES it rather
+than hiding it: an engine that re-mints one diffs.
+
+Every reset censuses the tree before deleting it (`src/observed.ts` → `build/config-observed.json`),
+and `config-dir-inventory-2.1.251.json` (the TENTH fixture) holds that census against the pin. The
+census exists because the include-list has one silent failure mode: a pin that starts writing a
+seventh family is seen by nothing — not by the surface, not by the reset, not by the corpus. It
+accumulates across resets deliberately; taken at the end of a corpus run it would see one scenario's
+writes.
+
+### What the new surface found on the identical-code pair
+
+Five corpus scenarios went red the first time the config root was graded, and **none of them was a
+cassette that depended on accumulated config state** — the risk item 7 flagged. All five were
+calibration:
+
+| finding | fix |
+|---|---|
+| `.claude.json`'s per-project block carries a clock, four durations and a cost; `skillUsage` carries `lastUsedAt` next to the count | enumerated scrubs, NOT a pattern — any pattern broad enough also eats `firstStartTime`, which this wave made a graded declared input |
+| parallel tool results are written to the store in COMPLETION order | the same canonicalization the differ already applies to the SDK transcript, one artifact over, with the same justification |
+| session files are named after a random uuid, so `/clear` listed two of them in a coin-flip order (50 meaningless differences) | ordered by session CREATION — the clock used as an ordering key and never recorded |
+| the config snapshot was not byte-stable | the flush decision above |
+| two runs against an empty config dir mint different identities | the baseline seed above |
+
+### Three damaged filesystems, and the one the harness cannot build
+
+`store-seeded-resume` (the intact control), `store-torn-tail` (D7), `store-parent-cycle` (D8) and
+`store-read-only` (the `{EACCES, EPERM}` arm). Each declares its precondition; the runner records it
+beside the cassette and replays against it, and a scenario whose declaration has drifted from its
+recording FAILS by name rather than replaying a different world.
+
+Two measurements came out of the cycle scenario and both are worth more than the scenario. With ONE
+exchange the fault graded nothing: the chain walk collects both records and then sees the repeat, so
+the cycled seed and the healthy one produced byte-identical requests. With two exchanges — so the
+cycle has something to cost — **it still costs nothing**. `src/precondition.test.ts` walks the seeded
+file and proves the first exchange is off the chain; the engine sends it anyway. So at this pin the
+headless resume path does not rebuild its history by walking `parentUuid`, whatever D8's
+`tengu_chain_parent_cycle` belongs to. The scenario is kept to pin that measurement, and C12b — which
+owns the chain walk and can reach it from a synthetic corpus with no engine at all — inherits a
+measured boundary instead of an assumption.
+
+**ENOSPC is not among them, and the omission is declared.** The store fence latches on `{ENOSPC,
+EROFS, EDQUOT, ENAMETOOLONG}` and none of the four can be raised against a chosen path by an
+unprivileged process on a normal filesystem. The two mechanisms that would reach it — a mounted disk
+image (a machine fact, not a harness fact) and an fs shim preloaded into the engine child (which
+changes the binary under test and collides with the BUNFS reachability rule) — are named in
+`src/precondition.ts` with why neither is bought here. `store-read-only` grades the store's OTHER
+latching errno family and is honest about the difference: it reaches the error path and the
+writer-health record, and it does not reach the fence's stickiness across the four ENOSPC-family
+codes. C12d owns the fence and inherits the decision.
+
+### The riders
+
+- **The ledger's session-storage row** had an EMPTY edge array while three spliced rows pointed edges
+  at it. Four symmetric edges now (→ compaction, → moat-tools for both the shared `queue-operation`
+  record and the session-keyed task/registry directories, → subagent-dispatch, → query-loop). Its
+  artifact list was one 723-byte method — 0.4 % of a 172 KB subsystem, so §5 could not stale the row
+  when the other 99.6 % moved — and is now the derived 235-name public surface
+  (`session-storage-surface-2.1.251.json`, the TWELFTH fixture). It reproduces the scout's consumer
+  table exactly and corrects it twice: **13** `*ForTesting` exports, not 12
+  (`dropPrecautionarySuppressionForTesting`), and **42** importing chunks, not 43.
+- **`chunk-d78hxkfm.js`** leaves through §1.2's pin-conditional door on `tengu_hover_rest` — the
+  second row to use the `gateDead` kind C11a-fix introduced, and the first to use it for a BACKEND of
+  a row that stays canonical rather than for a whole tool. It carries a second, independent reason
+  that does not depend on the gate: when v5 IS on, the flag is handed to children as the string
+  `"1"`, the child's `rEt` warns and pins v5 off, so it does not survive a process boundary.
+- **C16b's rider**: `twn-claim-shutdown` and `twn-release-shutdown-claim` widen `darkOver` from two
+  signal paths to all three. Their darkness rests on the claim that no headless path takes the claim,
+  and SIGINT is a headless path — measuring over two of three left the third asserting nothing.
+
+### Seam notes
+
+- **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
+  needs no engine, and `projectRecord`/`projectTranscript` are the shape its oracle expectations
+  should be written against — including the torn-tail marker, which is a property of the FILE and not
+  of any record. Its D8 arm has a measured boundary now: whatever walks `parentUuid`, the headless
+  resume does not.
+- **C14a** inherits the `skillUsage` decision: the counter is RESET by the config wipe, so a scenario
+  that wants a non-zero one seeds it through `ConfigPrecondition.seed` — `.claude.json` with a
+  `skillUsage` block, which the projection grades in full.
+- **C15a** gets the third root for one line: append a `StateRoot` for
+  `/private/tmp/claude-501/<slug>/<uuid>/tasks/` to `defaultStateRoots`. The run-id map already binds
+  the `<session-uuid>` in that path, and the include-list mechanism is generic. Note that the
+  eager-flush knob does NOT cover that directory: a backgrounded agent writes it after its parent's
+  result frame, which is exactly the case `awaitQuiesce` was kept for.

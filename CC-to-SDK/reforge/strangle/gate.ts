@@ -101,6 +101,14 @@ for (const [label, argv] of [
   // a normalizer that could otherwise blind the surface it normalizes.
   ["differ run-id map + its negative controls", ["src/differ.test.ts"]],
   ["state surface catches what it claims", ["src/state.test.ts"]],
+  // C12a/W9a's other half. The state surface grew a second root over the config
+  // dir, and everything that made that root gradeable is an input the harness
+  // now DECLARES rather than inherits: a per-scenario config precondition and
+  // three named filesystem faults. A fault that damages nothing is a scenario
+  // that grades nothing while looking like evidence, so each transformation is
+  // watched doing what its name says — and the wipe is watched surviving the one
+  // fault built to defeat it (a project directory with the write bit off).
+  ["config precondition + fs faults do what they name", ["src/precondition.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
   // The hook wave's population under test, and the third pin-keyed fixture. W5
   // enumerated "the events that exist" by judgment twice and was wrong twice —
@@ -183,6 +191,15 @@ for (const [label, argv] of [
   // splice forwards captures by value, so a handler that writes back to one is a
   // mechanical refusal and the fixture is where that is recorded.
   ["process-lifecycle fixture matches the pin", ["research/tools/extract-process-lifecycle.ts", "--check"]],
+  // C12a/W9a's population, and the TENTH pin-keyed fixture. `subsystem/session-storage`
+  // carried ONE 723-byte method as its artifact list — 0.4 % of a 172 KB
+  // subsystem — so §5 could not stale the row when the other 99.6 % moved, and
+  // the three children queued behind this one each own a slice of it. The barrel
+  // chunk's export map gives the 235 public names; who imports each name's LOCAL
+  // out of the engine chunk gives the fact that decides the port cut, which the
+  // barrel cannot (it is reached only dynamically and is not a seam). It
+  // reproduced the scout's consumer table and corrected it twice.
+  ["session-storage public surface matches the pin", ["research/tools/extract-storage-surface.ts", "--check"]],
   ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so
@@ -512,6 +529,32 @@ for (const [label, argv] of [
   // rebuild leaves a sabotaged emission behind, and the tool refuses those by
   // variant rather than reading them.
   ["ledger captures match this build, rebased upstream (§5)", ["ledger/backfill-captures.ts", "--check"]],
+  // C12a/W9a's two CENSUS-fed checks. Both read `build/config-observed.json`,
+  // which `resetSandbox()` accumulates across every reset of the run above, so
+  // they belong here for the same reason the backfill check does: the artifact
+  // they grade only exists after the corpus has run.
+  //
+  // The inventory is the tripwire for the state surface's own blind spot. Its
+  // config root is an INCLUDE-LIST, so a pin that starts writing a seventh
+  // family would be seen by nothing — not by the surface (not admitted), not by
+  // the reset (deleted either way), not by the corpus (the file never reaches a
+  // transcript). An undeclared path fails here with the include-list named.
+  ["config-dir inventory matches the pin and the census", ["research/tools/extract-config-inventory.ts", "--check"]],
+  // And the ELEVENTH fixture: the differ's run-id map, keyed on property name,
+  // with the lexeme each key is observed to carry. The key set is exact against
+  // src/differ.ts in both directions — a rule added without a population reddens
+  // — and an observed lexeme the fixture does not declare is the pin re-lexing
+  // an id, which is what C15a3 must not discover the hard way when it nests
+  // agent ids and task ids that share the same `a`+16-hex shape.
+  ["run-id shapes match the differ and the corpus", ["research/tools/extract-run-id-shapes.ts", "--check"]],
+  // THE EAGER-FLUSH KNOB'S NEGATIVE CONTROL (X6, C12a/W9a). The transcript drain
+  // is forced synchronous for every graded run, which is a change to the
+  // measurement regime and therefore owes a control: this runs the same scenario
+  // both ways and REQUIRES the contrast — stable with the knob, unstable without
+  // it. A determinism knob whose absence changes nothing is grading nothing, and
+  // a pin that made the 100 ms drain deterministic on its own should retire the
+  // knob rather than keep it out of habit.
+  ["the eager-flush knob still buys what it claims", ["w9/measure.ts", "--phase", "flush", "--runs", "3"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));

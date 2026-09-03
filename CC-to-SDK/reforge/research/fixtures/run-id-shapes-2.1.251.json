@@ -1,0 +1,323 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-run-id-shapes.ts",
+  "note": "The differ's run-id map, keyed on property name, with the lexeme each key is observed to carry. `collisions` is the fact this fixture exists to state: those keys are indistinguishable by value, so a shape-keyed rule would bind them wrongly.",
+  "counts": {
+    "keys": 20,
+    "arrayKeys": 2,
+    "observedKeys": 19,
+    "lexemeClasses": 7,
+    "collisions": 2
+  },
+  "keys": [
+    {
+      "key": "agentId",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "a+16hex",
+          "observedAtLeast": 37,
+          "from": [
+            "stored-envelope",
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "all_uuids",
+      "arrayValued": true,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 27,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "anchor_uuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 30,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "head_uuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 15,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "hook_id",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 6,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "leafUuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 190,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "logicalParentUuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 10,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "logical_parent_uuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 15,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "message_id",
+      "arrayValued": false,
+      "lexemes": []
+    },
+    {
+      "key": "new_conversation_id",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 3,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "parentUuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 1481,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "promptId",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 451,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "request_id",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "harness-literal",
+          "observedAtLeast": 20,
+          "from": [
+            "transcripts"
+          ]
+        },
+        {
+          "class": "req_*",
+          "observedAtLeast": 2,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "sessionId",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 2531,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "session_id",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 1929,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "slug",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "other",
+          "observedAtLeast": 124,
+          "from": [
+            "stored-envelope"
+          ]
+        },
+        {
+          "class": "path-slug",
+          "observedAtLeast": 2531,
+          "from": [
+            "stored-envelope"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "tail_uuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 15,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "task_id",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "a+16hex",
+          "observedAtLeast": 30,
+          "from": [
+            "transcripts"
+          ]
+        },
+        {
+          "class": "b+8base36",
+          "observedAtLeast": 6,
+          "from": [
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "uuid",
+      "arrayValued": false,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 3598,
+          "from": [
+            "stored-envelope",
+            "transcripts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "uuids",
+      "arrayValued": true,
+      "lexemes": [
+        {
+          "class": "uuid-v4",
+          "observedAtLeast": 45,
+          "from": [
+            "stored-envelope",
+            "transcripts"
+          ]
+        }
+      ]
+    }
+  ],
+  "collisions": [
+    {
+      "lexeme": "a+16hex",
+      "keys": [
+        "agentId",
+        "task_id"
+      ]
+    },
+    {
+      "lexeme": "uuid-v4",
+      "keys": [
+        "all_uuids",
+        "anchor_uuid",
+        "head_uuid",
+        "hook_id",
+        "leafUuid",
+        "logicalParentUuid",
+        "logical_parent_uuid",
+        "new_conversation_id",
+        "parentUuid",
+        "promptId",
+        "sessionId",
+        "session_id",
+        "tail_uuid",
+        "uuid",
+        "uuids"
+      ]
+    }
+  ],
+  "sources": {
+    "transcriptFiles": 213,
+    "censusResets": 169
+  }
+}

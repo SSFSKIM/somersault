@@ -31,7 +31,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENGINE_VERSION } from "../../src/pin.js";
 import { REFORGE_ROOT } from "../../src/runTurn.js";
-import { configInclude } from "../../src/state.js";
+import { configDescend, configInclude } from "../../src/state.js";
+import { generalizePath } from "../../src/observed.js";
 import type { ConfigCensus } from "../../src/observed.js";
 
 const CENSUS = join(REFORGE_ROOT, "build", "config-observed.json");
@@ -69,27 +70,44 @@ function census(): ConfigCensus {
   return doc;
 }
 
-/** A generalized pattern, run through the include-list by substituting a concrete-looking segment. */
-const admits = (pattern: string): boolean =>
-  configInclude(
+/**
+ * A generalized pattern, run through the include-list by substituting a
+ * concrete-looking segment. A DIRECTORY is admitted when the walk descends into
+ * it — the surface records it as an entry, so calling it "not graded" because it
+ * is not a file would have understated what the include-list covers.
+ */
+const admits = (pattern: string, kind: "file" | "dir"): boolean => {
+  const concrete = 
     pattern
       .replace(/<slug>/g, "-box-sandbox")
       .replace(/<uuid>/g, "00000000-0000-4000-8000-000000000000")
       .replace(/<agent-id>/g, "a0123456789abcdef")
       .replace(/<ms>/g, "1788415170183")
-      .replace(/<hex>/g, "0123456789abcdef"),
-  ) !== null;
+      .replace(/<rand>/g, "abc123")
+      .replace(/<hex>/g, "0123456789abcdef");
+  return kind === "dir" ? configDescend(concrete) : configInclude(concrete) !== null;
+};
 
 const doc = census();
-const rows: Row[] = Object.entries(doc.entries)
-  .map(([pattern, e]) => ({ pattern, kind: e.kind, seenAtLeast: e.seen, graded: (admits(pattern) ? "admitted" : "not-admitted") as Row["graded"] }))
+// The census's keys are re-generalized on the way in, so a census written by an
+// older `generalizePath` collapses into today's patterns instead of arriving as
+// a pile of undeclared ones.
+const merged = new Map<string, { kind: "file" | "dir"; seen: number }>();
+for (const [raw, e] of Object.entries(doc.entries)) {
+  const key = generalizePath(raw);
+  const prior = merged.get(key);
+  merged.set(key, { kind: e.kind, seen: (prior?.seen ?? 0) + e.seen });
+}
+const rows: Row[] = [...merged]
+  .map(([pattern, e]) => ({ pattern, kind: e.kind, seenAtLeast: e.seen, graded: (admits(pattern, e.kind) ? "admitted" : "not-admitted") as Row["graded"] }))
   .sort((a, b) => a.pattern.localeCompare(b.pattern));
 
 const fx: Fixture = {
   engineVersion: ENGINE_VERSION,
   generatedBy: "research/tools/extract-config-inventory.ts",
   note:
-    "Every path the engine wrote into CONFIG_DIR, generalized to a pattern and observed by resetSandbox()'s census. " +
+    "Every path present in CONFIG_DIR at reset time, generalized to a pattern and observed by resetSandbox()'s census — the state a run LEAVES, " +
+    "which is engine writes plus whatever the previous scenario's precondition seeded (projects/<slug>/.keep is store-read-only's seed, not an engine write). " +
     "`graded` says what src/state.ts's include-list does with it: a `not-admitted` row is invisible to the state surface BY DECISION, " +
     "and a pattern that is not in this list at all is invisible by ACCIDENT — which is what --check refuses.",
   counts: {

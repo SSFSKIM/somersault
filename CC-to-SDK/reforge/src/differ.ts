@@ -157,7 +157,8 @@ export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
   //    mapped because it is a fact about THIS MACHINE that would otherwise put an
   //    operator's home directory into every state-surface finding, and because
   //    `src/state.ts` lifts it out of the entry path deliberately so this map can
-  //    reach the path string too.
+  //    reach the path string too. IT IS THE ONE KEY WITH A VALUE GUARD (below),
+  //    because the property name is OVERLOADED upstream.
   "parentUuid",
   "logicalParentUuid",
   "leafUuid",
@@ -174,6 +175,24 @@ export const RUN_ID_ARRAY_KEYS: ReadonlySet<string> = new Set(["uuids", "all_uui
 
 const isRunId = (v: unknown): v is string => typeof v === "string" && v.length >= 6;
 
+/**
+ * Per-key VALUE guards. Empty except for one entry, and that entry is a measured
+ * correction to the rule above rather than a precaution.
+ *
+ * `slug` is two different fields upstream. In the message envelope it is the
+ * project key — the cwd with its separators flattened, so it always begins with
+ * a separator-turned-dash. In the artifact records it is an ARTIFACT slug
+ * (`artifactRead:{slug,ver}`, the `artifact-changed` queue events), which is a
+ * NAME and therefore behaviour: two engines naming different artifacts must
+ * diff. Found by the run-id-shapes census, which reported 124 `slug` values in
+ * no known lexeme class alongside 2,531 project keys.
+ *
+ * Without the guard the map would bind those names and an engine that touched a
+ * DIFFERENT artifact would grade identical — the wrong-match direction §3.4
+ * calls the unsafe one, arriving through a key rather than a shape.
+ */
+const RUN_ID_VALUE_GUARDS: Record<string, RegExp> = { slug: /^-[A-Za-z0-9]/ };
+
 function collectRunIds(v: unknown, into: Map<string, string>, keys: ReadonlySet<string> = RUN_ID_KEYS): void {
   if (Array.isArray(v)) {
     for (const x of v) collectRunIds(x, into, keys);
@@ -181,7 +200,7 @@ function collectRunIds(v: unknown, into: Map<string, string>, keys: ReadonlySet<
   }
   if (v === null || typeof v !== "object") return;
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (keys.has(k) && isRunId(val) && !into.has(val)) {
+    if (keys.has(k) && isRunId(val) && (RUN_ID_VALUE_GUARDS[k]?.test(val) ?? true) && !into.has(val)) {
       into.set(val, `<id${into.size}>`);
     } else if (RUN_ID_ARRAY_KEYS.has(k) && Array.isArray(val)) {
       for (const id of val) if (isRunId(id) && !into.has(id)) into.set(id, `<id${into.size}>`);

@@ -174,8 +174,16 @@ if (!check) {
     const d = committed.keys.find((x) => x.key === r.key);
     if (d === undefined) continue; // already reported above
     for (const l of r.lexemes) {
-      if (l.class === "other") problems.push(`${r.key}: ${l.observedAtLeast} value(s) fall in no known lexeme class — extend lexemeClass() in src/observed.ts`);
-      else if (!d.lexemes.some((x) => x.class === l.class)) problems.push(`${r.key}: observed lexeme '${l.class}' (${l.observedAtLeast}×) is not declared for this key`);
+      // An UNDECLARED class is drift, including `other`: a value under a mapped
+      // key that falls in no known lexeme is the map binding something nobody
+      // has looked at. A DECLARED `other` is a recorded fact — `slug` has one,
+      // and the guard in src/differ.ts is what makes it safe.
+      if (!d.lexemes.some((x) => x.class === l.class))
+        problems.push(
+          l.class === "other"
+            ? `${r.key}: ${l.observedAtLeast} value(s) fall in no known lexeme class — classify them in lexemeClass() (src/observed.ts) or declare the class here with a reason`
+            : `${r.key}: observed lexeme '${l.class}' (${l.observedAtLeast}×) is not declared for this key`,
+        );
     }
   }
   const unobserved = committed.keys.filter((r) => r.lexemes.length > 0 && (rows.find((x) => x.key === r.key)?.lexemes.length ?? 0) === 0).map((r) => r.key);

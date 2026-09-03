@@ -152,6 +152,11 @@ const CONFIG_INCLUDE: [pattern: string, read: ReadAs, why: string][] = [
   // The session transcripts. This is the subsystem.
   ["projects/*/*.jsonl", "transcript", "session transcripts, one per session"],
   ["projects/*/*/subagents/*.jsonl", "transcript", "subagent transcripts (route-by-agent policy; C15/W12's edge)"],
+  // ADDED BY THE INVENTORY, not by the scout: the census found a `.meta.json`
+  // beside every subagent transcript, six times over the corpus. It is the
+  // sibling record of a file the list already admits, so admitting the
+  // transcript and not its metadata would have graded half of a pair.
+  ["projects/*/*/subagents/*.meta.json", "hash", "subagent transcript metadata (found by the config-dir census, not the §4.2 list)"],
   // The peer/session registry: three subsystems share this directory (the
   // cross-session peer record, the UDS auth key file, FleetView's heartbeat),
   // and on the non-v5 path the write is unlink-then-write, so a TORN peer record
@@ -187,7 +192,7 @@ export const configInclude = (rel: string): ReadAs | null => {
   return null;
 };
 
-const configDescend = (rel: string): boolean => {
+export const configDescend = (rel: string): boolean => {
   const segs = split(rel);
   return CONFIG_INCLUDE.some(([pattern]) => matches(split(pattern), segs, true) || matches(split(pattern), segs, false));
 };
@@ -285,7 +290,22 @@ function canonicalizeToolResultRuns(records: Record<string, unknown>[]): Record<
     let j = i;
     while (j < records.length && typeof records[j].toolUseId === "string") j++;
     const run = records.slice(i, j);
-    if (run.length > 1) run.sort((a, b) => String(a.toolUseId).localeCompare(String(b.toolUseId)));
+    if (run.length > 1) {
+      run.sort((a, b) => String(a.toolUseId).localeCompare(String(b.toolUseId)));
+      // THE RACE LEAKS ONE RECORD PAST THE RUN. The record that FOLLOWS a batch
+      // is chained to whichever member landed last, so sorting the run alone
+      // left `parallel-tools` with exactly one difference —
+      // `records[13].parentUuid`, an attachment naming one of three results.
+      // What survives is the claim that it chains INTO the batch; which member
+      // is the completion order again. A successor chained OUTSIDE the batch
+      // still diffs, because only a parent that IS one of the run's uuids is
+      // replaced.
+      const uuids = new Set(run.map((r) => r.uuid).filter((u): u is string => typeof u === "string"));
+      const next = records[j];
+      if (next !== undefined && typeof next.parentUuid === "string" && uuids.has(next.parentUuid)) {
+        records[j] = { ...next, parentUuid: "<parallel-batch-member>" };
+      }
+    }
     out.push(...run);
     i = j;
   }

@@ -55,6 +55,15 @@ export function lexemeClass(v: string): string {
   if (/^a[0-9a-f]{16}$/.test(v)) return "a+16hex";
   if (/^-[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)) return "path-slug";
   if (/^(req|msg|toolu)_[A-Za-z0-9]+$/.test(v)) return `${v.split("_")[0]}_*`;
+  // The BACKGROUND task id, `b` + 8 base36 — a second task-id shape, distinct
+  // from the Agent tool's `a`+16 hex and sharing its property name. Recorded
+  // because C15a3 has to nest these and the cut says to enumerate the shapes
+  // before the first nesting scenario, not after.
+  if (/^b[0-9a-z]{8}$/.test(v)) return "b+8base36";
+  // A request id the HARNESS chose, not the engine: the raw driver names its own
+  // control requests `reforge-<what>`. Classified so it stops arriving as an
+  // unclassified value under a mapped key.
+  if (/^reforge-[a-z0-9_-]+$/.test(v)) return "harness-literal";
   if (/^[0-9a-f]{64}$/.test(v)) return "sha256";
   return "other";
 }
@@ -74,7 +83,12 @@ export function generalizePath(rel: string): string {
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
     .replace(/\ba[0-9a-f]{16}\b/g, "<agent-id>")
     .replace(/([.-])\d{13}\b/g, "$1<ms>")
-    .replace(/([.-])[0-9a-f]{16,}\b/g, "$1<hex>");
+    .replace(/([.-])[0-9a-f]{16,}\b/g, "$1<hex>")
+    // The random tail the shell-snapshot name carries after its clock. Anchored
+    // on `<ms>-` so it cannot eat a literal six-character name anywhere else —
+    // without it every snapshot is its OWN pattern, and the inventory check
+    // would fail on the next run for a file that is not new.
+    .replace(/<ms>-[a-z0-9]{6}\b/g, "<ms>-<rand>");
 }
 
 /** Record everything currently under `configDir`, then leave the file for the fixture check. */

@@ -1,0 +1,157 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-config-inventory.ts",
+  "note": "Every path present in CONFIG_DIR at reset time, generalized to a pattern and observed by resetSandbox()'s census — the state a run LEAVES, which is engine writes plus whatever the previous scenario's precondition seeded (projects/<slug>/.keep is store-read-only's seed, not an engine write). `graded` says what src/state.ts's include-list does with it: a `not-admitted` row is invisible to the state surface BY DECISION, and a pattern that is not in this list at all is invisible by ACCIDENT — which is what --check refuses.",
+  "counts": {
+    "patterns": 24,
+    "admitted": 15,
+    "notAdmitted": 9,
+    "resetsObserved": 169
+  },
+  "entries": [
+    {
+      "pattern": ".claude.json",
+      "kind": "file",
+      "seenAtLeast": 169,
+      "graded": "admitted"
+    },
+    {
+      "pattern": ".last-cleanup",
+      "kind": "file",
+      "seenAtLeast": 4,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "backups",
+      "kind": "dir",
+      "seenAtLeast": 4,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "backups/.claude.json.backup.<ms>",
+      "kind": "file",
+      "seenAtLeast": 4,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "projects",
+      "kind": "dir",
+      "seenAtLeast": 169,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>",
+      "kind": "dir",
+      "seenAtLeast": 169,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/.keep",
+      "kind": "file",
+      "seenAtLeast": 2,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>",
+      "kind": "dir",
+      "seenAtLeast": 9,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>.jsonl",
+      "kind": "file",
+      "seenAtLeast": 171,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>/auto-mode-classifier-error.txt",
+      "kind": "file",
+      "seenAtLeast": 2,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>/subagents",
+      "kind": "dir",
+      "seenAtLeast": 7,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.jsonl",
+      "kind": "file",
+      "seenAtLeast": 7,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.meta.json",
+      "kind": "file",
+      "seenAtLeast": 7,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "projects/<slug>/memory",
+      "kind": "dir",
+      "seenAtLeast": 12,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "session-env",
+      "kind": "dir",
+      "seenAtLeast": 49,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "session-env/<uuid>",
+      "kind": "dir",
+      "seenAtLeast": 49,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "sessions",
+      "kind": "dir",
+      "seenAtLeast": 169,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "shell-snapshots",
+      "kind": "dir",
+      "seenAtLeast": 53,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "shell-snapshots/snapshot-zsh-<ms>-<rand>.sh",
+      "kind": "file",
+      "seenAtLeast": 3,
+      "graded": "not-admitted"
+    },
+    {
+      "pattern": "tasks",
+      "kind": "dir",
+      "seenAtLeast": 6,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "tasks/<uuid>",
+      "kind": "dir",
+      "seenAtLeast": 6,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "tasks/<uuid>/.lock",
+      "kind": "file",
+      "seenAtLeast": 6,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "tasks/<uuid>/1.json",
+      "kind": "file",
+      "seenAtLeast": 6,
+      "graded": "admitted"
+    },
+    {
+      "pattern": "tasks/<uuid>/2.json",
+      "kind": "file",
+      "seenAtLeast": 2,
+      "graded": "admitted"
+    }
+  ]
+}

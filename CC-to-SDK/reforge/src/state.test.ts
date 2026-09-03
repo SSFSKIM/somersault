@@ -180,6 +180,28 @@ try {
     check("…while a genuine re-run with different uuids does NOT diff",
       !differs(mapped(transcript), mapped(transcript.split("aaaaaaaa").join("bbbbbbbb"))));
 
+    // PARALLEL TOOL RESULTS, and the record after them. Both halves watched:
+    // the run's own order is discarded, the successor's link into the batch is
+    // discarded, and a successor chained OUTSIDE the batch still diffs.
+    {
+      const res = (id: string, uuid: string, parent: string) =>
+        line({ type: "user", uuid, parentUuid: parent, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id }] } });
+      const batch = (order: [string, string][], tail: string) =>
+        line({ type: "assistant", uuid: "call", parentUuid: null, message: { role: "assistant" } }) +
+        order.map(([id, uuid]) => res(id, uuid, "call")).join("") +
+        line({ type: "attachment", uuid: "after", parentUuid: tail });
+      const abc: [string, string][] = [["toolu_a", "ua"], ["toolu_b", "ub"]];
+      const bac: [string, string][] = [["toolu_b", "ub"], ["toolu_a", "ua"]];
+      check("parallel results arriving in either order canonicalize alike, including the record after them",
+        !differs(projectTranscript(batch(abc, "ua")).records, projectTranscript(batch(bac, "ub")).records));
+      check("…while a result chained to the WRONG call still diffs",
+        differs(projectTranscript(batch(abc, "ua")).records, projectTranscript(line({ type: "assistant", uuid: "call", parentUuid: null, message: { role: "assistant" } }) + res("toolu_a", "ua", "call") + res("toolu_b", "ub", "ua") + line({ type: "attachment", uuid: "after", parentUuid: "ua" })).records));
+      check("…and a record chained OUTSIDE the batch still diffs",
+        differs(projectTranscript(batch(abc, "ua")).records, projectTranscript(batch(abc, "call")).records));
+      check("…and a MISSING result still diffs",
+        differs(projectTranscript(batch(abc, "ua")).records, projectTranscript(line({ type: "assistant", uuid: "call", parentUuid: null, message: { role: "assistant" } }) + res("toolu_a", "ua", "call") + line({ type: "attachment", uuid: "after", parentUuid: "ua" })).records));
+    }
+
     // TWO SESSIONS IN ONE PROJECT — the `/clear` shape, and the one that made
     // `hooks-session-end` report fifty meaningless differences: the file names
     // are random uuids, so listing them alphabetically is a coin flip. Ordered
