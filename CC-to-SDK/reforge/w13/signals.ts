@@ -58,7 +58,8 @@
 // signal — and none of the 30 `Rn` references in the dispatcher chunk links the
 // two. The ONE handler that does abort `Qe` is SIGINT's `Hn`
 // (`if(Qe&&!Qe.signal.aborted)Qe.abort(Su("user-cancel"));Rn.abort(),wU(),On(0)`),
-// so the abort argument is true of SIGINT and of nothing else.
+// so among the three signal handlers the abort argument is true of SIGINT alone (two non-signal
+// sites also abort `Qe`: the `end_session` control request and the parked-question stream-close).
 //
 // The scout's cell L17 therefore stands as written and is simply UNREACHABLE:
 // "shutdown during a turn (`xo()` true → `await pm()`)" is not refuted, its hang

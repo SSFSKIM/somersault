@@ -5666,7 +5666,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "the guard. It does not. `br` aborts `Rn = gr(500)`, the DISPATCHER's run controller, while the guards read " +
           "`xo() && !<ctx>.abortController.signal.aborted` over the QUERY controller `Qe = gr()` that `ky` passes as `abortController: Qe`; " +
           "`gr` builds an independent `AbortController` (its argument is a `setMaxListeners` count, not a parent signal) and none of the " +
-          "30 `Rn` references links the two. Only SIGINT's `Hn` aborts `Qe`. So L17's premise is not refuted — its hang is UNOBSERVABLE by " +
+          "30 `Rn` references links the two. Of the three signal handlers only SIGINT's `Hn` aborts `Qe` (two non-signal sites do too: `end_session`, the parked-question stream-close). So L17's premise is not refuted — its hang is UNOBSERVABLE by " +
           "any headless stimulus this wave could apply, which is a weaker and truer claim. " +
           "Graded instead by `strangle/hooks-parity.test.ts`, which runs this owned module against upstream's own chunk bytes over the " +
           "whole partition — a three-function module whose domain is enumerable, which makes the oracle stronger than a differential.",
