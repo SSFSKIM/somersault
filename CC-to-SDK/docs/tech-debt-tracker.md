@@ -705,3 +705,29 @@ twin, and the dark verdict should be INCONCLUSIVE — an outcome the gate alread
 variant, if ordering makes that awkward: report which SURFACE reddened, so a state-only red is legible
 as one. Not fixed in C12a because the phase ordering puts equivalence after the liveness loop and
 reordering it is a change to the gate's own shape, which is not a storage-machinery wave's to make.
+
+## 2026-09-03 — the `sessions/<pid>` family is declared but not projected
+
+**Source:** the C12a / W9a fix wave (F5) · `reforge/src/observed.ts` (`generalizePath`),
+`reforge/research/tools/extract-config-inventory.ts` (`PATTERN_REASONS`),
+`reforge/research/fixtures/config-dir-inventory-2.1.251.json`.
+
+**What.** A reviewer killed a standalone `attest --check` mid-run. Its orphaned engine child left
+`config/sessions/10747.json` and `config/sessions/10747.<hex>.key` behind, and the next reset censused
+both into `build/config-observed.json` — where they then failed `extract-config-inventory.ts --check` as
+undeclared patterns. The census was repaired (the two rows removed; `build/` is derived and gitignored)
+and the family declared honestly in the inventory: `sessions/<pid>.json` and `sessions/<pid>.<hex>.key`,
+`graded: admitted` because `src/state.ts` hashes `sessions/**` raw, each carrying the provenance —
+0 of 1,768 clean resets produce one.
+
+**What is NOT done.** `generalizePath` has no `<pid>` token, so it cannot mint those patterns: a real
+`sessions/12345.json` would arrive undeclared and red the tripwire by name. That is the safe direction,
+and it is why the projection was not bought — a `<pid>` substitution over bare digits is the broadest
+generalization in the file (any 1–7 digit segment anywhere), and buying it for a family no clean run
+writes would weaken the tripwire in exchange for nothing.
+
+**Cost if nobody pays it.** A scenario that deliberately leaves a peer-registry entry — C11d's edge is
+the candidate — reds the inventory check once and needs the projection written before it can be
+declared. One `generalizePath` rule anchored on `sessions/`, plus a fixture regeneration.
+
+**Fix when:** a scenario reaches the family on purpose.

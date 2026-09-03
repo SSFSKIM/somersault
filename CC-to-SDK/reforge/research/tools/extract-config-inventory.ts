@@ -69,6 +69,26 @@ const PATTERN_REASONS: Record<string, string> = {
   "backups/.claude.json.backup.<ms>": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded",
   "projects/<slug>/.keep": "the harness's OWN seed for the store-read-only fault, not an engine write",
   "projects/<slug>/<uuid>/auto-mode-classifier-error.txt": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's",
+  // THE ONE FAMILY DECLARED FROM AN INCIDENT RATHER THAN FROM A CLEAN RUN. A
+  // reviewer killed a standalone `attest --check` mid-run; its orphaned engine
+  // child left `sessions/10747.json` and its `.key` behind, and the next reset
+  // censused both. `sessions/` itself has been censused 1,768 times and has been
+  // EMPTY every one of them but that: the engine removes its own peer-registry
+  // file on a clean exit, so the family exists only as the residue of an
+  // unclean kill.
+  //
+  // Note what these rows are NOT: `generalizePath` has no `<pid>` token, so it
+  // cannot MINT one of these patterns — a real `sessions/12345.json` would
+  // arrive undeclared and red the tripwire. That is the safe direction and it is
+  // deliberate. The projection is deferred (CC-to-SDK/docs/tech-debt-tracker.md)
+  // until a scenario reaches the family on purpose; until then these two rows
+  // record what was seen and why it is not a population.
+  "sessions/<pid>.json":
+    "the peer/session registry entry, left only by an UNCLEANLY killed engine child — 0 of 1,768 clean resets produce one. " +
+    "src/state.ts hashes `sessions/**` raw, so a run that ever leaves one reds loudly on a pid-named path (the safe direction); " +
+    "project the family into a <pid> pattern when a scenario reaches it deliberately.",
+  "sessions/<pid>.<hex>.key":
+    "the registry entry's key file, same provenance and same disposition as `sessions/<pid>.json` above.",
   "session-env": "per-process scratch; the corpus leaves one empty directory per session and no content",
   "session-env/<uuid>": "as above, and named by a run-scoped uuid",
   "shell-snapshots":

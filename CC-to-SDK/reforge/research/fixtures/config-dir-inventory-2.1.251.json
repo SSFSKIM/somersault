@@ -3,163 +3,177 @@
   "generatedBy": "research/tools/extract-config-inventory.ts",
   "note": "Every path present in CONFIG_DIR at reset time, generalized to a pattern and observed by resetSandbox()'s census — the state a run LEAVES, which is engine writes plus whatever the previous scenario's precondition seeded (projects/<slug>/.keep is store-read-only's seed, not an engine write). PROVENANCE: the declared set is the UNION of every census taken at this pin, not the latest one. The census is a SAMPLE — one corpus run — and some families are written on some runs and not others, so regenerating from a single census narrows the population and reddens the next run for a file that is not new. `resetsObserved` is the census this generation read; `seenAtLeast` is the largest count any census has recorded for that pattern. `graded` says what src/state.ts's include-list does with it: a `not-admitted` row is invisible to the state surface BY DECISION, and a pattern that is not in this list at all is invisible by ACCIDENT — which is what --check refuses.",
   "counts": {
-    "patterns": 24,
-    "admitted": 15,
+    "patterns": 26,
+    "admitted": 17,
     "notAdmitted": 9,
-    "resetsObserved": 833
+    "resetsObserved": 1773
   },
   "entries": [
     {
       "pattern": ".claude.json",
       "kind": "file",
-      "seenAtLeast": 833,
+      "seenAtLeast": 1773,
       "graded": "admitted"
     },
     {
       "pattern": ".last-cleanup",
       "kind": "file",
-      "seenAtLeast": 27,
+      "seenAtLeast": 63,
       "graded": "not-admitted",
       "why": "a maintenance stamp — a clock in a file, with no claim about behaviour in it"
     },
     {
       "pattern": "backups",
       "kind": "dir",
-      "seenAtLeast": 20,
+      "seenAtLeast": 46,
       "graded": "not-admitted",
       "why": "the engine's own backup of .claude.json, in a directory whose entries are named by epoch-ms"
     },
     {
       "pattern": "backups/.claude.json.backup.<ms>",
       "kind": "file",
-      "seenAtLeast": 20,
+      "seenAtLeast": 46,
       "graded": "not-admitted",
       "why": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded"
     },
     {
       "pattern": "projects",
       "kind": "dir",
-      "seenAtLeast": 827,
+      "seenAtLeast": 1760,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>",
       "kind": "dir",
-      "seenAtLeast": 827,
+      "seenAtLeast": 1760,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/.keep",
       "kind": "file",
-      "seenAtLeast": 2,
+      "seenAtLeast": 4,
       "graded": "not-admitted",
       "why": "the harness's OWN seed for the store-read-only fault, not an engine write"
     },
     {
       "pattern": "projects/<slug>/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 53,
+      "seenAtLeast": 110,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>.jsonl",
       "kind": "file",
-      "seenAtLeast": 842,
+      "seenAtLeast": 1793,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/auto-mode-classifier-error.txt",
       "kind": "file",
-      "seenAtLeast": 11,
+      "seenAtLeast": 24,
       "graded": "not-admitted",
       "why": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents",
       "kind": "dir",
-      "seenAtLeast": 42,
+      "seenAtLeast": 86,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.jsonl",
       "kind": "file",
-      "seenAtLeast": 42,
+      "seenAtLeast": 86,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.meta.json",
       "kind": "file",
-      "seenAtLeast": 42,
+      "seenAtLeast": 86,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/memory",
       "kind": "dir",
-      "seenAtLeast": 104,
+      "seenAtLeast": 207,
       "graded": "admitted"
     },
     {
       "pattern": "session-env",
       "kind": "dir",
-      "seenAtLeast": 150,
+      "seenAtLeast": 338,
       "graded": "not-admitted",
       "why": "per-process scratch; the corpus leaves one empty directory per session and no content"
     },
     {
       "pattern": "session-env/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 150,
+      "seenAtLeast": 338,
       "graded": "not-admitted",
       "why": "as above, and named by a run-scoped uuid"
     },
     {
       "pattern": "sessions",
       "kind": "dir",
-      "seenAtLeast": 831,
+      "seenAtLeast": 1768,
       "graded": "admitted"
+    },
+    {
+      "pattern": "sessions/<pid>.<hex>.key",
+      "kind": "file",
+      "seenAtLeast": 1,
+      "graded": "admitted",
+      "why": "the registry entry's key file, same provenance and same disposition as `sessions/<pid>.json` above."
+    },
+    {
+      "pattern": "sessions/<pid>.json",
+      "kind": "file",
+      "seenAtLeast": 1,
+      "graded": "admitted",
+      "why": "the peer/session registry entry, left only by an UNCLEANLY killed engine child — 0 of 1,768 clean resets produce one. src/state.ts hashes `sessions/**` raw, so a run that ever leaves one reds loudly on a pid-named path (the safe direction); project the family into a <pid> pattern when a scenario reaches it deliberately."
     },
     {
       "pattern": "shell-snapshots",
       "kind": "dir",
-      "seenAtLeast": 175,
+      "seenAtLeast": 385,
       "graded": "not-admitted",
       "why": "THE BASH EXECUTOR'S artifact, not storage's: a shell snapshot is minted per shell spawn and named by a clock. If it is ever graded it belongs to C13d's root, which is where the executor's own state lives."
     },
     {
       "pattern": "shell-snapshots/snapshot-zsh-<ms>-<rand>.sh",
       "kind": "file",
-      "seenAtLeast": 22,
+      "seenAtLeast": 41,
       "graded": "not-admitted",
       "why": "as above — clock plus a random suffix in the filename. This is the row that failed a gate: it is written on some runs and not others, so a census that did not see it dropped it from the declared set and the next run reddened on a file that is not new."
     },
     {
       "pattern": "tasks",
       "kind": "dir",
-      "seenAtLeast": 34,
+      "seenAtLeast": 70,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 34,
+      "seenAtLeast": 70,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>/.lock",
       "kind": "file",
-      "seenAtLeast": 34,
+      "seenAtLeast": 70,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>/1.json",
       "kind": "file",
-      "seenAtLeast": 34,
+      "seenAtLeast": 70,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>/2.json",
       "kind": "file",
-      "seenAtLeast": 14,
+      "seenAtLeast": 28,
       "graded": "admitted"
     }
   ]
