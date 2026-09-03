@@ -4460,7 +4460,16 @@ replays the same cassette in seconds. Four rows are DARK and re-measured rather 
 is built with its own twin and its `darkOver` population replayed, and every one came back GREEN.
 
 Attestation **478/1038 executed with 560 exclusions**, zero un-adjudicated, and the committed report
-is that run's own output. Corpus **83 cassettes / 201 request bodies** — one new recording, shared by
+is that run's own output.
+
+**The boundary review's fix round re-gated the same 142** — `142 of 142 summary phases, zero FAIL`,
+`GATE PASS — every splice is live AND the faithful build is equivalent`, attestation unchanged at
+**478/1038 with 560 exclusions**. No phase was added or removed. Two things inside it changed and are
+worth reading off the summary block: the two dark chunk exports now report `liveness
+process-lifecycle export commitShutdown (dark over 3 scenario(s))` and the same for `hang`, because
+`sigint-mid-turn` joined the population and came back GREEN with both twins built; and the §3.5
+auxiliary phase is now `oracle + runtime pins are the bytes`, grown from 8 checks to 13 by the oracle
+pin's own two-way control. Corpus **83 cassettes / 201 request bodies** — one new recording, shared by
 all three signal plans. The W8a wave record and the C11a Revision Notes keep their 82/199, because a
 record states what was measured then; this is where the new number lives.
 
