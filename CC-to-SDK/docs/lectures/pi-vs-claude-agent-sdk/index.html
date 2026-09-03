@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pi Agent Harness vs Claude Agent SDK — 에이전트 프레임워크 심층 비교</title>
+<style>
+  :root {
+    --bg:#0d1117; --bg2:#161b22; --bg3:#1c2333; --fg:#d6dde6; --fg-dim:#8b96a5;
+    --pi:#4cc9a6;          /* pi: teal */
+    --sdk:#d97757;         /* anthropic clay */
+    --blue:#6ca0f6; --green:#57ab5a; --yellow:#d4a72c; --red:#e5534b; --purple:#b083f0;
+    --border:#2d333b;
+    --mono:"SF Mono",ui-monospace,"Cascadia Code",Menlo,monospace;
+    --sans:-apple-system,"Segoe UI",Inter,"Apple SD Gothic Neo","Noto Sans KR",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box} html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.7;word-break:keep-all}
+  #sidebar{position:fixed;top:0;left:0;bottom:0;width:290px;background:var(--bg2);border-right:1px solid var(--border);overflow-y:auto;padding:18px 14px 40px;font-size:13.5px}
+  #sidebar h1{font-size:14px;margin:4px 6px 14px;line-height:1.4}
+  #sidebar h1 .pi{color:var(--pi)} #sidebar h1 .sdk{color:var(--sdk)}
+  #sidebar a{display:block;color:var(--fg-dim);text-decoration:none;padding:4px 8px;border-radius:6px;margin:1px 0}
+  #sidebar a:hover{background:var(--bg3);color:var(--fg)} #sidebar a.active{background:var(--bg3);color:var(--fg)}
+  main{margin-left:290px;max-width:1080px;padding:40px 56px 120px}
+  @media(max-width:900px){#sidebar{display:none}main{margin-left:0;padding:24px 18px 80px}}
+  h1.title{font-size:40px;line-height:1.2;margin:10px 0 6px}
+  h1.title .pi{color:var(--pi)} h1.title .sdk{color:var(--sdk)} h1.title .thin{font-weight:300;color:var(--fg-dim)}
+  h2{font-size:29px;margin:90px 0 6px;padding-top:24px;border-top:1px solid var(--border)}
+  h2 .no{color:var(--fg-dim);font-family:var(--mono);font-size:18px;display:block;margin-bottom:4px}
+  h3{font-size:20px;margin:40px 0 10px;color:#e8eef5}
+  h4{font-size:16px;margin:26px 0 8px;color:var(--blue)}
+  p{margin:12px 0} a{color:var(--blue)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--bg3);padding:1.5px 5px;border-radius:4px;color:#dbe6f2}
+  pre{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.6px;line-height:1.55;margin:16px 0}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+  th{text-align:left;color:var(--fg-dim);font-weight:600;border-bottom:2px solid var(--border);padding:8px 10px;vertical-align:bottom}
+  td{border-bottom:1px solid var(--border);padding:8px 10px;vertical-align:top}
+  th.pi,td.pi{border-left:3px solid var(--pi)} th.sdk,td.sdk{border-left:3px solid var(--sdk)}
+  .cite{font-family:var(--mono);font-size:11.5px;color:var(--fg-dim)}
+  .lead{font-size:19px;line-height:1.65;color:#e8eef5}
+  .big{font-size:22px;line-height:1.5;color:#fff;margin:20px 0}
+  .callout{background:var(--bg2);border:1px solid var(--border);border-left:4px solid var(--blue);border-radius:10px;padding:14px 18px;margin:20px 0}
+  .callout.warn{border-left-color:var(--yellow)} .callout.pi{border-left-color:var(--pi)} .callout.sdk{border-left-color:var(--sdk)}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  /* figure / diagram primitives */
+  figure{margin:26px 0;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px 22px 14px}
+  figcaption{color:var(--fg-dim);font-size:13px;margin-top:12px;line-height:1.5}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .col h5{margin:0 0 10px;font-size:15px;letter-spacing:.02em;text-transform:uppercase}
+  .col.pi h5{color:var(--pi)} .col.sdk h5{color:var(--sdk)}
+  .box{border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin:8px 0;background:var(--bg3);font-size:13.5px;line-height:1.45}
+  .box b{display:block;font-size:14px;margin-bottom:2px;color:#fff}
+  .box.pi{border-color:var(--pi)} .box.sdk{border-color:var(--sdk)}
+  .box.dark{background:#0a0d12;border-style:dashed;color:var(--fg-dim)}
+  .box.black{background:#000;border-color:#444;color:#aaa}
+  .box.black b{color:#ddd}
+  .arrow{text-align:center;color:var(--fg-dim);font-size:20px;line-height:1;margin:2px 0}
+  .stack{display:flex;flex-direction:column}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row .box{flex:1 1 120px;margin:4px 0}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--fg-dim);margin:2px 3px 2px 0}
+  .tag.ok{border-color:var(--green);color:var(--green)} .tag.no{border-color:var(--red);color:var(--red)}
+  .tag.ext{border-color:var(--yellow);color:var(--yellow)} .tag.part{border-color:var(--blue);color:var(--blue)}
+  .bigstat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}
+  .stat{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .stat .n{font-size:30px;font-weight:700;line-height:1.1;color:#fff;font-family:var(--mono)}
+  .stat.pi .n{color:var(--pi)} .stat.sdk .n{color:var(--sdk)}
+  .stat .l{font-size:12.5px;color:var(--fg-dim);margin-top:4px;line-height:1.35}
+  /* bars */
+  .bars{display:grid;grid-template-columns:200px 1fr 60px;gap:6px 10px;align-items:center;font-size:13px}
+  .bars .lbl{color:var(--fg-dim);text-align:right}
+  .bar{height:14px;border-radius:4px;background:var(--pi)} .bar.sdk{background:var(--sdk)}
+  .bars .val{font-family:var(--mono);color:#fff}
+  /* verdict cards */
+  .verdict{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:22px 0}
+  @media(max-width:760px){.verdict{grid-template-columns:1fr}}
+  .vcard{border-radius:14px;padding:20px 22px;border:2px solid}
+  .vcard.pi{border-color:var(--pi);background:linear-gradient(180deg,rgba(76,201,166,.08),transparent)}
+  .vcard.sdk{border-color:var(--sdk);background:linear-gradient(180deg,rgba(217,119,87,.08),transparent)}
+  .vcard h3{margin:0 0 8px;font-size:22px} .vcard.pi h3{color:var(--pi)} .vcard.sdk h3{color:var(--sdk)}
+  .vcard .one{font-size:17px;color:#fff;margin-bottom:10px}
+  .vcard ul{margin:6px 0 0 18px;padding:0;font-size:14px} .vcard li{margin:4px 0}
+  /* wall diagram */
+  .wall{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.wall{grid-template-columns:1fr}}
+  .layer{padding:9px 12px;border-radius:8px;margin:5px 0;font-size:13.5px;border:1px solid var(--border)}
+  .layer.open{background:rgba(87,171,90,.12);border-color:var(--green)}
+  .layer.ext{background:rgba(212,167,44,.12);border-color:var(--yellow)}
+  .layer.fork{background:rgba(229,83,75,.12);border-color:var(--red)}
+  .layer.black{background:#000;border-color:#333;color:#999}
+  .legend{font-size:12.5px;color:var(--fg-dim);margin-top:10px}
+  .legend span{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;margin:0 4px 0 10px}
+  /* loop svg */
+  svg text{font-family:var(--sans)} svg .mono{font-family:var(--mono)}
+  .kbd{font-family:var(--mono);font-size:.85em;border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:0 5px}
+  .small{font-size:13.5px;color:var(--fg-dim)}
+  ul.tight li{margin:3px 0}
+</style>
+</head>
+<body>
+<nav id="sidebar">
+  <h1><span class="pi">Pi</span> vs <span class="sdk">Claude Agent SDK</span><br><span style="color:var(--fg-dim);font-weight:400">에이전트 프레임워크 심층 비교</span></h1>
+  <a href="#tldr">0. 한 줄 결론</a>
+  <a href="#arch">1. 아키텍처: 라이브러리 vs 서브프로세스</a>
+  <a href="#philosophy">2. 두 가지 철학</a>
+  <a href="#provider">3. 모델·프로바이더 레이어</a>
+  <a href="#loop">4. 에이전트 루프와 툴</a>
+  <a href="#ext">5. 확장 포인트 전수 비교</a>
+  <a href="#features">6. 기능 풍부함 체크리스트</a>
+  <a href="#ceiling">7. 커스터마이즈 천장</a>
+  <a href="#session">8. 세션·컨텍스트·컴팩션</a>
+  <a href="#iface">9. 인터페이스·운영·라이선스</a>
+  <a href="#decide">10. 선택 가이드</a>
+  <a href="#evidence">11. 근거와 유보 사항</a>
+</nav>
+
+<main>
+<p class="small">2026-09-03 · Pi <code>0.84.4</code> (earendil-works/pi 소스 체크아웃) · Claude Agent SDK <code>0.3.251</code> 설치본 + npm 최신 <code>0.3.259</code> · 근거: <a href="#evidence">§11</a></p>
+<h1 class="title"><span class="pi">Pi Agent Harness</span> <span class="thin">vs</span> <span class="sdk">Claude Agent SDK</span><br><span class="thin" style="font-size:26px">에이전트 프레임워크로서의 기능성과 커스터마이저빌리티</span></h1>
+<p class="lead">둘 다 "에이전트 프레임워크"라 불리지만 같은 종류의 물건이 아닙니다. <b>Pi는 엔진을 소유하게 해주는 라이브러리</b>이고, <b>Agent SDK는 남의 엔진을 빌려 쓰게 해주는 원격 조종기</b>입니다. 이 한 문장의 차이가 아래 모든 표의 원인입니다.</p>
+
+<!-- ============================================================ -->
+<h2 id="tldr"><span class="no">§0</span>한 줄 결론</h2>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi — 한 프로세스, 모두 열려 있음</h5>
+      <div class="stack">
+        <div class="box pi"><b>당신의 코드 / TUI / RPC / JSON / SDK 호출자</b>같은 Node 프로세스</div>
+        <div class="box pi"><b>pi-coding-agent</b>36개 이벤트, 툴·명령·UI·프로바이더 등록, 시스템 프롬프트 전면 교체</div>
+        <div class="box pi"><b>pi-agent-core</b>루프 + 9개 훅 (<code>transformContext</code>, <code>beforeToolCall</code>…)</div>
+        <div class="box pi"><b>pi-ai</b>40 프로바이더 · 1,290 모델 · 10 전송 프로토콜 · 7 OAuth 플로우</div>
+      </div>
+    </div>
+    <div class="col sdk">
+      <h5>Agent SDK — 두 프로세스, 엔진은 블랙박스</h5>
+      <div class="stack">
+        <div class="box sdk"><b>당신의 코드 (Node ≥18)</b>hooks 콜백 · canUseTool · in-process MCP 툴 · 커스텀 spawn</div>
+        <div class="box sdk"><b>sdk.mjs (1.4 MB minified)</b><code>query()</code> → CLI 플래그로 번역 → NDJSON stdio</div>
+        <div class="arrow">↓ spawn</div>
+        <div class="box black"><b>claude 네이티브 바이너리 (188 MB, Bun compile)</b>루프 · 시스템 프롬프트 27섹션 · 컴팩션 · 32~45 툴 · 권한 엔진 · 설정 157키 · 플래그·텔레메트리 — <i>모두 내부</i></div>
+      </div>
+    </div>
+  </div>
+  <figcaption>Pi의 네 층은 전부 MIT 소스로 같은 프로세스에 있고, 각 층 사이에 확장 훅이 있다. SDK는 얇은 래퍼가 클로즈드 바이너리를 자식 프로세스로 띄우고 stdio로 JSON을 주고받는다. 출처: Pi <span class="cite">packages/coding-agent/src/core/sdk.ts:306-372</span>, SDK <span class="cite">package.json optionalDependencies, manifest.json, ProcessTransport.initialize()</span>.</figcaption>
+</figure>
+
+<div class="verdict">
+  <div class="vcard pi">
+    <h3>Pi를 고르면</h3>
+    <div class="one">"프레임워크가 내 워크플로에 맞춰야 한다"는 쪽. 커스터마이저빌리티는 사실상 천장이 없다.</div>
+    <ul>
+      <li>어떤 모델이든: 40개 프로바이더, 구독 OAuth 6종(Claude Pro/Max·ChatGPT·Copilot·xAI·OpenRouter·Radius)</li>
+      <li>내장 툴 8개 중 무엇이든 <b>같은 이름으로 등록하면 교체</b>. 시스템 프롬프트는 <b>통째로 교체</b> 가능</li>
+      <li>TUI, RPC, JSON, SDK 네 가지 모드가 <b>기본 제공</b>. 세션은 트리(분기·포크)</li>
+      <li>대가: 권한 시스템·MCP·서브에이전트·플랜모드가 <b>없음</b>. 직접 만들거나 패키지 설치. 에이전트 품질은 &lt;1,000 토큰짜리 프롬프트 + 모델에 의존</li>
+    </ul>
+  </div>
+  <div class="vcard sdk">
+    <h3>Agent SDK를 고르면</h3>
+    <div class="one">"Claude Code 품질의 엔진을 그대로 빌리자"는 쪽. 기능 풍부함은 압도적이지만 엔진 안은 만질 수 없다.</div>
+    <ul>
+      <li>권한 6모드 + 룰 엔진 + 분류기, 서브에이전트, MCP 4종 전송, 스킬·플러그인, 샌드박스, 파일 체크포인트/되감기, 구조화 출력, 자동 컴팩션이 <b>내장</b></li>
+      <li>33개 훅 이벤트(헤드리스에서 25개 발화 검증), <code>canUseTool</code>, 인프로세스 MCP 툴, 커스텀 spawn 시임</li>
+      <li>대가: <b>Claude 전용</b>, 내장 툴 <b>수정 불가</b>, 시스템 프롬프트는 <b>append만</b>, 루프·컴팩션·컨텍스트 조립 <b>불가시</b>, TUI 없음, 프로프라이어터리 라이선스, 세션당 서브프로세스(권장 1 GiB RAM)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="bigstat">
+  <div class="stat pi"><div class="n">36</div><div class="l">Pi 확장 이벤트 수 (전부 동일 프로세스에서 동기 호출)</div></div>
+  <div class="stat sdk"><div class="n">33 / 25</div><div class="l">SDK 훅 이벤트 선언 / 헤드리스 발화 검증</div></div>
+  <div class="stat pi"><div class="n">40</div><div class="l">Pi 내장 프로바이더 (1,290 텍스트 모델)</div></div>
+  <div class="stat sdk"><div class="n">1</div><div class="l">SDK 모델 패밀리 (Claude; 백엔드 4종은 env로 선택)</div></div>
+  <div class="stat pi"><div class="n">~119k</div><div class="l">Pi 소스 LOC (테스트 ~118k 별도), 전부 MIT</div></div>
+  <div class="stat sdk"><div class="n">188 MB</div><div class="l">SDK가 spawn하는 클로즈드 바이너리 (darwin-arm64)</div></div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="arch"><span class="no">§1</span>아키텍처: 라이브러리 vs 서브프로세스</h2>
+<p class="lead">"확장할 수 있는가"는 결국 "그 코드가 어디서 실행되는가"의 문제입니다. Pi는 모든 것이 호출자의 프로세스 안에 있고, SDK는 의사결정 대부분이 자식 프로세스 안에서 일어납니다.</p>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi: 의존 그래프 (빌드 순서 그대로)</h5>
+      <div class="row">
+        <div class="box pi"><b>tui</b>17k LOC · 차분 렌더링</div>
+        <div class="box pi"><b>telemetry</b>스팬 계약만, 익스포터 없음</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="box pi"><b>ai</b>23k LOC · Provider/API 분리 · 스트림 이벤트 12종</div>
+      <div class="arrow">↓</div>
+      <div class="box pi"><b>agent (core)</b>13k LOC · <code>agentLoop()</code> · TypeBox 툴 · 스티어링 큐 · 기본 시스템 프롬프트 <code>""</code></div>
+      <div class="arrow">↓</div>
+      <div class="box pi"><b>coding-agent</b>61k LOC · 확장 런타임 · 세션 v3 · 컴팩션 · 8 툴 · TUI/print/JSON/RPC/SDK</div>
+      <div class="row">
+        <div class="box dark">protocol / server / client (CBOR, 실험)</div>
+        <div class="box dark">session-backends/sqlite (하네스 v4용)</div>
+      </div>
+    </div>
+    <div class="col sdk">
+      <h5>SDK: 프로세스 경계</h5>
+      <div class="box sdk"><b>부모 프로세스 (당신)</b>
+        <span class="tag ok">hooks 콜백</span><span class="tag ok">canUseTool</span><span class="tag ok">type:'sdk' MCP 서버 (in-memory)</span><span class="tag ok">onElicitation / onUserDialog</span><span class="tag ok">sessionStore 미러</span><span class="tag ok">spawnClaudeCodeProcess</span>
+      </div>
+      <div class="arrow">↕ NDJSON over stdio · 제어 프로토콜 54종 중 37종 전송 가능</div>
+      <div class="box black"><b>자식 프로세스 (claude 바이너리)</b>
+        <span class="tag no">에이전트 루프·재시도</span><span class="tag no">모든 내장 툴 구현</span><span class="tag no">시스템 프롬프트 조립</span><span class="tag no">컨텍스트 조립·컴팩션</span><span class="tag no">설정 마이그레이션·정책</span><span class="tag no">플러그인·스킬·에이전트 디스커버리</span><span class="tag no">stdio/SSE/HTTP MCP 클라이언트</span><span class="tag no">서브에이전트 (in-process)</span><span class="tag no">피처 플래그·내부 텔레메트리</span>
+      </div>
+      <div class="box dark">플랫폼별 optionalDependency 8종 · 각 197~214 MB · SHA-256 manifest · <code>sdkCompat.testedWrapperVersions</code>에 설치본 0.3.251 자신은 미포함</div>
+    </div>
+  </div>
+  <figcaption>왼쪽: <span class="cite">pi/package.json:15</span>의 빌드 순서가 곧 의존 DAG. 오른쪽: <span class="cite">01-entrypoint-bootstrap.md:5</span> "The SDK IS this entrypoint: query() spawns the CLI in --print/stream-json mode". 제어 프로토콜 측정치는 <span class="cite">coverage.md:764</span>.</figcaption>
+</figure>
+
+<h3>SDK 래퍼가 실제로 하는 일</h3>
+<p><code>query()</code>는 옵션 객체를 CLI 플래그로 번역합니다. 기본 인자는 문자 그대로 <code>["--output-format","stream-json","--verbose","--input-format","stream-json"]</code>이고, 여기에 <code>--model</code>, <code>--permission-mode</code>, <code>--mcp-config</code>, <code>--setting-sources=</code>, <code>--resume=</code>, <code>--fork-session</code> 등 약 40개 플래그가 붙습니다. <code>canUseTool</code>을 넘기면 <code>--permission-prompt-tool stdio</code>가 추가되어 권한 질문이 stdio로 돌아옵니다. 즉 SDK는 <code>claude -p --output-format stream-json</code>의 타입 있는 드라이버이며, 모델링되지 않은 플래그는 <code>extraArgs</code>로 강제 주입할 수 있습니다.</p>
+<p>중요한 정정 하나: 흔히 "번들된 <code>cli.js</code>를 spawn한다"고 알려져 있지만, <b>0.2.113부터 네이티브 바이너리</b>입니다. 설치본에는 <code>cli.js</code>도 <code>bin</code> 엔트리도 없고, <code>executable: 'bun'|'deno'|'node'</code> 옵션은 경로가 <code>.js/.ts</code>로 끝날 때만 의미가 있어 사실상 죽은 옵션입니다.</p>
+
+<h3>Pi 코딩 에이전트는 "멍청한 코어 위의 호스트"</h3>
+<p><span class="cite">sdk.ts:306-372</span>가 배선도입니다. <code>Agent</code>는 <code>systemPrompt: ""</code>로 생성되고, 확장 이벤트가 코어 훅에 1:1로 묶입니다: <code>context</code>→<code>transformContext</code>, <code>before_provider_headers</code>→<code>transformHeaders</code>, <code>before_provider_request</code>→<code>onPayload</code>, <code>tool_call</code>→<code>agent.beforeToolCall</code>, <code>tool_result</code>→<code>agent.afterToolCall</code>. 코어(<code>pi-agent-core</code>)는 시스템 프롬프트 기본값이 빈 문자열이고 <code>harness/system-prompt.ts</code>는 34줄짜리 스킬 XML 포매터 하나뿐입니다. "코딩 에이전트다움"은 전부 <code>coding-agent</code> 층이 얹는 것이라, 같은 코어 위에 전혀 다른 에이전트를 올릴 수 있습니다.</p>
+
+<div class="callout warn"><div class="t">Pi 쪽 유보 사항</div><code>packages/agent/src/harness/</code>에는 2,941줄 스펙(<code>docs/harness.md</code>)을 가진 2세대 내구성 하네스(<code>AgentHarness</code>, 레인/레코드 세션 스토어 v4)가 있지만, 구현은 거의 전부 <code>HarnessNotImplemented</code>를 던집니다(<span class="cite">harness/agent-harness.ts:347-442</span>). 이 문서의 Pi 평가는 <b>출하 중인</b> <code>Agent</code> 클래스 + coding-agent 코드 기준입니다. 또한 <code>protocol/server/client</code>(CBOR 프레이밍)는 CLI도 서비스 구현도 없는 실험 표면입니다.</div>
+
+<!-- ============================================================ -->
+<h2 id="philosophy"><span class="no">§2</span>두 가지 철학</h2>
+<p class="lead">기능 표를 보기 전에 두 프로젝트가 <i>일부러</i> 무엇을 안 만들었는지 알아야 합니다. 그렇지 않으면 "Pi에는 X가 없다"를 결함으로 오독하게 됩니다.</p>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi — "필요 없으면 만들지 않는다"</h5>
+      <div class="box pi" style="text-align:center;padding:18px"><b style="font-size:18px">최소 코어</b>툴 4개 (read·write·edit·bash) · 시스템 프롬프트 &lt;1,000 토큰 · 세션 트리 · TUI</div>
+      <div class="arrow">↑ 전부 확장/패키지로</div>
+      <div class="row">
+        <div class="box dark">MCP → <code>pi-mcp-adapter</code></div>
+        <div class="box dark">서브에이전트 → <code>pi-subagents</code></div>
+        <div class="box dark">권한 → <code>permission-gate.ts</code> 예제 / 컨테이너</div>
+        <div class="box dark">플랜모드 → <code>plan-mode</code> 예제</div>
+        <div class="box dark">TODO → TODO.md</div>
+        <div class="box dark">백그라운드 bash → tmux</div>
+      </div>
+    </div>
+    <div class="col sdk">
+      <h5>SDK — "551개 CC 기능 중 313개는 이미 제공"</h5>
+      <div class="box black" style="text-align:center;padding:18px"><b style="font-size:18px">풀스택 엔진</b>권한·서브에이전트·MCP·스킬·플러그인·샌드박스·체크포인트·컴팩션·구조화 출력·비용 추적 <i>내장</i></div>
+      <div class="arrow">↑ 바깥에서 시임(seam)으로만 접근</div>
+      <div class="row">
+        <div class="box sdk">hooks (33)</div>
+        <div class="box sdk">canUseTool</div>
+        <div class="box sdk">MCP 툴 추가</div>
+        <div class="box sdk">systemPrompt.append</div>
+        <div class="box sdk">agents 정의</div>
+        <div class="box sdk">settings 157키</div>
+      </div>
+    </div>
+  </div>
+  <figcaption>Pi의 인용은 <span class="cite">packages/coding-agent/README.md:497-509</span>와 Mario Zechner의 2025-11-30 글. SDK 수치는 <span class="cite">coverage.md:679</span>.</figcaption>
+</figure>
+
+<h3>Pi의 "No" 목록과 그 이유 (원문 인용)</h3>
+<table>
+<tr><th>없는 것</th><th>공식 근거</th><th>대신</th></tr>
+<tr><td><b>MCP</b></td><td>"MCP servers are overkill for most use cases, and they come with significant context overhead."</td><td>README가 있는 CLI 툴 + 스킬(점진적 노출), 또는 확장으로 MCP 추가. 소스 트리 <code>packages/*/src</code>에 MCP 코드 0줄</td></tr>
+<tr><td><b>서브에이전트</b></td><td>"You have zero visibility into what that sub-agent does. It's a black box within a black box."</td><td>tmux로 pi 인스턴스 스폰, 또는 <code>examples/extensions/subagent/</code> (JSON 모드 pi를 태스크별로 spawn)</td></tr>
+<tr><td><b>권한 팝업</b></td><td>"everybody is running in YOLO mode anyways" / <span class="cite">docs/security.md:35</span> "A partial in-process sandbox would be easy to misunderstand as a security boundary"</td><td>컨테이너·Gondolin 마이크로VM·OpenShell, 또는 <code>tool_call</code> 훅으로 직접 게이트</td></tr>
+<tr><td><b>플랜 모드</b></td><td>파일 기반 플랜은 공유·버전 관리가 됨</td><td><code>plan-mode</code> 예제 확장</td></tr>
+<tr><td><b>TODO 툴</b></td><td>"to-do lists generally confuse models more than they help"</td><td>TODO.md — 흥미롭게도 Claude Code 2.1.233도 신모델에서 TodoWrite/Task* 5종을 제거함</td></tr>
+<tr><td><b>백그라운드 bash</b></td><td>"Observability trumps automation"</td><td>tmux</td></tr>
+</table>
+<p>SDK 쪽의 철학은 정반대입니다. 이 저장소의 패리티 문서는 Claude Code의 551개 기능 중 <b>313개가 SDK에서 "이미 제공(provided)"</b>이라고 채점합니다(<span class="cite">coverage.md:679</span>). 즉 SDK의 가치 제안은 "Claude Code의 품질을 재구현하지 않고 상속한다"이고, 그 대가가 블랙박스입니다. Anthropic 자신의 표현으로는 gather context → take action → verify work 루프를 "컴퓨터를 준 Claude"에게 맡기는 것입니다.</p>
+
+<!-- ============================================================ -->
+<h2 id="provider"><span class="no">§3</span>모델·프로바이더 레이어</h2>
+<p class="lead">가장 비대칭이 큰 영역입니다. Pi의 <code>pi-ai</code>는 그 자체로 하나의 제품 규모이고, SDK에는 프로바이더 추상화가 <i>존재하지 않습니다</i>.</p>
+
+<figure>
+  <div class="bars">
+    <div class="lbl">Pi 내장 프로바이더</div><div><div class="bar" style="width:100%"></div></div><div class="val">40</div>
+    <div class="lbl">Pi 카탈로그 모델 (tool-call 가능만)</div><div><div class="bar" style="width:100%"></div></div><div class="val">1,290</div>
+    <div class="lbl">Pi 전송 프로토콜 (KnownApi)</div><div><div class="bar" style="width:25%"></div></div><div class="val">10</div>
+    <div class="lbl">Pi OAuth 플로우</div><div><div class="bar" style="width:17.5%"></div></div><div class="val">7</div>
+    <div class="lbl">SDK 모델 패밀리</div><div><div class="bar sdk" style="width:2.5%"></div></div><div class="val">1</div>
+    <div class="lbl">SDK 백엔드 (env로 선택)</div><div><div class="bar sdk" style="width:20%"></div></div><div class="val">8 enum</div>
+    <div class="lbl">SDK OAuth 플로우 (앱이 제공 가능)</div><div><div class="bar sdk" style="width:0.5%"></div></div><div class="val">0 (계약상 금지)</div>
+  </div>
+  <figcaption>Pi 수치: <span class="cite">providers/all.ts:89-132</span>(40), npm tarball <code>pi-ai@0.84.4</code> manifest(1,290, 2026-08-28 생성), <span class="cite">types.ts:17-27</span>(10), <span class="cite">auth/oauth/</span>(7). SDK: <span class="cite">sdk.d.ts:23-33 AccountInfo.apiProvider</span>, <span class="cite">25-service-oauth-auth.md:5</span>.</figcaption>
+</figure>
+
+<h3>Pi: Provider와 API를 분리한 이중 레지스트리</h3>
+<p>Pi는 <b>프로바이더</b>(정체성·인증·카탈로그·디스패치)와 <b>API 전송</b>(와이어 프로토콜)을 분리합니다(<span class="cite">packages/ai/README.md:232-234</span>). 10개 전송은 <code>openai-completions</code>, <code>openai-responses</code>, <code>azure-openai-responses</code>, <code>openai-codex-responses</code>, <code>anthropic-messages</code>, <code>bedrock-converse-stream</code>, <code>google-generative-ai</code>, <code>google-vertex</code>, <code>mistral-conversations</code>, 그리고 Pi 자체 프로토콜 <code>pi-messages</code>입니다. 프로바이더↔API는 다대다라서 <code>opencode</code> 하나가 4개 API를 쓰고, <code>github-copilot</code>은 3개를 씁니다.</p>
+<p>카탈로그는 models.dev, OpenRouter, Vercel AI Gateway 세 소스에서 3,078줄짜리 생성 스크립트가 만들며 <b>tool-call 가능 모델만 살아남습니다</b>(<code>if (m.tool_call !== true) continue</code>가 26곳). 평일 cron이 재생성·재배포하므로 숫자는 설계상 계속 움직입니다. 분포는 극단적으로 상위 편중: openrouter 333 + vercel-ai-gateway 225가 43%.</p>
+
+<h4>추상화가 값을 하는 곳: thinking 레벨 매핑</h4>
+<p>통일된 <code>ThinkingLevel</code>(<code>minimal|low|medium|high|xhigh|max</code>)을 각 전송에 맞게 번역하는 것이 프로바이더 추상화의 진짜 난이도입니다. Anthropic은 adaptive(<code>output_config.effort</code>)와 budget(<code>budget_tokens</code>)을 분기하고 thinking이 켜지면 <code>temperature</code>를 제거합니다(<span class="cite">anthropic-messages.ts:805-823, 1037</span>). OpenAI Responses는 <code>reasoning:{effort, summary}</code> + <code>include:["reasoning.encrypted_content"]</code>. OpenAI Completions 계열은 <code>compat.thinkingFormat</code>으로 <b>11개 분기</b>(zai, qwen, deepseek, openrouter, together, baseten…)를 가지며, 토큰 상한 필드 이름만 세 가지 철자가 있습니다(<span class="cite">openai-completions.ts:866-963, 997-1017</span>). Google은 Gemini 3의 <code>thinkingLevel</code>과 Gemini 2.x의 숫자 <code>thinkingBudget</code>을 모델별 테이블로 나눕니다. Mistral은 <code>none|high</code>로 뭉갭니다.</p>
+
+<h4>모델 전환을 가능케 하는 공통 프리플라이트</h4>
+<p><code>transform-messages.ts</code>(<span class="cite">:64-223</span>)가 모든 어댑터 앞에서 실행됩니다: 텍스트 전용 모델용 이미지 다운그레이드, 모델 간 thinking→text 변환과 서명 제거, 프로바이더별 tool-call id 정규화, 에러난 assistant 턴이나 결과 없는 tool call이 있는 히스토리 복구. 세션 도중 Claude에서 GPT로, 다시 Gemini로 바꿔도 대화가 깨지지 않는 이유입니다.</p>
+
+<h4>캐싱·비용·재시도</h4>
+<ul class="tight">
+<li><b>캐시 브레이크포인트</b>: Anthropic은 최대 3개(시스템 프롬프트, 마지막 툴 정의, 마지막 user-role 블록 — 툴 결과가 user role이므로 그것도 포함). <code>CacheRetention = none|short|long</code>이 1h TTL로 매핑. OpenAI Responses는 retention <code>none</code>이면 <code>prompt_cache_options:{mode:"explicit"}</code>로 명시적 옵트아웃. Bedrock은 <code>cachePoint</code> + 모델 allowlist.</li>
+<li><b>비용</b>: 단일 함수 <code>calculateCost()</code>(<span class="cite">models.ts:878-898</span>)가 캐시 토큰을 별도 단가로, 티어(<code>inputTokensAbove</code>)를 요청 전체에 적용. 1h 캐시 쓰기는 base input 2×.</li>
+<li><b>재시도 두 층</b>: 전송층 <code>retryProviderRequest</code>는 모든 벤더 SDK를 <code>maxRetries: 0</code>으로 호출하고 직접 감쌉니다 — <i>SDK의 백오프 타이머가 <code>AbortSignal</code>을 무시하기 때문</i>(<span class="cite">provider-retry.ts:97-104</span>). 서버가 60초 넘는 <code>retry-after</code>를 요구하면 조용히 자지 않고 즉시 실패. 턴층 <code>retryAssistantCall</code>은 에러 메시지를 정규식 분류하되 과금/쿼터 deny-list를 먼저 검사.</li>
+<li><b>에러는 스트림 밖으로 throw되지 않음</b>: 모든 어댑터가 <code>stopReason: error|aborted</code> + 터미널 <code>error</code> 이벤트로 수렴. 25개 프로바이더별 정규식으로 컨텍스트 오버플로를 판정하고, z.ai처럼 조용히 받아들이는 경우와 Xiaomi처럼 잘라서 <code>length</code>를 돌려주는 경우까지 별도 감지(<span class="cite">overflow.ts:9-63, 144-160</span>).</li>
+</ul>
+
+<h4>OAuth 7종과 자격증명 해소 순서</h4>
+<p>Anthropic(PKCE, loopback 53692), OpenAI Codex(PKCE 1455 또는 RFC 8628 device code, JWT에서 <code>chatgpt_account_id</code> 추출), GitHub Copilot(device code → Copilot 토큰 교환), Kimi, xAI, OpenRouter(영구 API 키로 교환), Radius(게이트웨이별 팩토리). 어느 모듈도 디스크에 쓰지 않고 주입된 <code>CredentialStore</code>로 저장하며, 코딩 에이전트는 <code>~/.pi/agent/auth.json</code>(0600)으로 백업합니다. 해소 순서는 "저장된 자격증명이 프로바이더를 소유한다 — 실패한 refresh 뒤에 조용히 env로 폴백하지 않는다"(<span class="cite">auth/resolve.ts:44-49</span>).</p>
+
+<h3>SDK: 프로바이더 추상화 없음, 백엔드는 env로</h3>
+<p><code>Options.model</code>은 자유 문자열이고 실제 해석은 자식 프로세스 안에서 일어납니다. 백엔드(Anthropic API / Bedrock / Vertex / Foundry / 게이트웨이)는 <code>CLAUDE_CODE_USE_BEDROCK</code>, <code>ANTHROPIC_BASE_URL</code> 같은 <b>환경변수를 자식에게 넘겨서</b> 고릅니다. SDK 옵션이 아닙니다. 비-Claude 모델 경로는 없습니다. 이 저장소의 패리티 문서도 서드파티 백엔드는 "모델링은 했으나 실제 대체 프로바이더로 라이브 테스트한 적 없음"(<span class="cite">full-potential.md:54</span>)이라고 적어 두었습니다.</p>
+<p>인증에서 가장 중요한 두 사실:</p>
+<ol>
+<li><b>앱이 claude.ai 로그인을 제공하는 것은 계약상 금지</b>: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK." 미리 발급된 <code>CLAUDE_CODE_OAUTH_TOKEN</code>을 env로 넘기는 것은 동작하며(<span class="cite">probes/28</span>), 그때 <code>ANTHROPIC_API_KEY</code>가 함께 있으면 API 키가 토큰을 가립니다.</li>
+<li><b>토큰 종류가 관측 가능한 표면을 바꿉니다</b>(probe 55, <span class="cite">clone-roadmap.md:176-200</span>): <code>claude setup-token</code>으로 만든 토큰은 <code>user:profile</code> 스코프가 없어 <code>usage().rate_limits</code>가 <code>null</code>이고, 인터랙티브 로그인 자격증명은 <code>subscription_type:"max"</code>와 rate limit 전체를 돌려줍니다. 즉 env 토큰을 export하는 관행이 오히려 기능을 <i>줄입니다</i>.</li>
+</ol>
+<p>비용 보고는 정확합니다. <code>SDKResultMessage.usage</code>는 <b>메인 루프만</b>, <code>modelUsage</code>가 서브에이전트·사이드체인·컴팩션까지 포함하며 "추정치이지 청구서가 아님"이라고 JSDoc에 명시(<span class="cite">sdk.d.ts:4770-4862</span>). <code>costBasis: 'list'|'managed'|'unknown'</code>까지 그대로 전달됩니다. 대신 가격표 자체나 캐시 제어는 만질 수 없고(<code>SYSTEM_PROMPT_DYNAMIC_BOUNDARY</code> 센티널과 <code>promptCacheTtl</code> 설정 키가 유일한 레버), 재시도 횟수·백오프도 내부입니다.</p>
+
+<div class="callout warn"><div class="t">미해결: 구독으로 SDK를 돌리면 누가 얼마를 내는가 (2026-09-03 기준 세 출처가 충돌)</div>
+① SDK 개요 문서: 서드파티 앱이 claude.ai 로그인을 <i>제공</i>하는 것 금지. ② Anthropic 헬프센터: 2026-06-15 예정이던 크레딧 분리는 <b>보류</b> 상태, "Claude Agent SDK, <code>claude -p</code>, and third-party app usage still draw from your subscription's usage limits". ③ Pi 프로바이더 문서: "Third-party harness usage draws from extra usage and is billed per token, not against Claude plan limits." ②와 ③은 과금 메커니즘에서 정면 충돌합니다. 타임라인은 2026-01 토큰 거부 → 04-04 하드 블록(OpenClaw·OpenCode) → 05-13 복원 → 06-15 직전 재보류. 이 리포트는 어느 쪽도 단정하지 않습니다.</div>
+
+<!-- ============================================================ -->
+<h2 id="loop"><span class="no">§4</span>에이전트 루프와 툴</h2>
+<p class="lead">Pi의 루프는 273줄짜리 함수이고 당신이 읽고 훅을 꽂을 수 있습니다. SDK의 루프는 바이너리 안에 있고 당신은 이벤트를 <i>관찰</i>합니다.</p>
+
+<figure>
+<svg viewBox="0 0 1000 330" width="100%" style="max-width:1000px;display:block;margin:auto">
+  <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b96a5"/></marker></defs>
+  <!-- Pi loop -->
+  <text x="20" y="28" fill="#4cc9a6" font-size="15" font-weight="700">Pi · agentLoop() — 훅이 루프 "안"에 있다</text>
+  <rect x="20" y="45" width="460" height="260" rx="12" fill="#161b22" stroke="#4cc9a6" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#d6dde6">
+    <rect x="40" y="65" width="120" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="100" y="87" text-anchor="middle">사용자 프롬프트</text>
+    <rect x="200" y="65" width="120" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="260" y="87" text-anchor="middle">컨텍스트 조립</text>
+    <rect x="360" y="65" width="100" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="410" y="87" text-anchor="middle">LLM 스트림</text>
+    <rect x="360" y="150" width="100" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="410" y="172" text-anchor="middle">툴 배치 실행</text>
+    <rect x="200" y="150" width="120" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="260" y="172" text-anchor="middle">toolResult 추가</text>
+    <rect x="40" y="150" width="120" height="36" rx="7" fill="#1c2333" stroke="#2d333b"/><text x="100" y="172" text-anchor="middle">스티어링/후속 큐</text>
+    <line x1="160" y1="83" x2="198" y2="83" stroke="#8b96a5" marker-end="url(#ah)"/>
+    <line x1="320" y1="83" x2="358" y2="83" stroke="#8b96a5" marker-end="url(#ah)"/>
+    <line x1="410" y1="101" x2="410" y2="148" stroke="#8b96a5" marker-end="url(#ah)"/>
+    <line x1="360" y1="168" x2="322" y2="168" stroke="#8b96a5" marker-end="url(#ah)"/>
+    <line x1="200" y1="168" x2="162" y2="168" stroke="#8b96a5" marker-end="url(#ah)"/>
+    <line x1="100" y1="150" x2="100" y2="103" stroke="#8b96a5" marker-end="url(#ah)"/>
+  </g>
+  <g font-size="10.5" fill="#4cc9a6" class="mono">
+    <text x="260" y="58" text-anchor="middle">transformContext / context</text>
+    <text x="410" y="58" text-anchor="middle">before_provider_request</text>
+    <text x="410" y="125" text-anchor="middle">beforeToolCall / tool_call</text>
+    <text x="260" y="200" text-anchor="middle">afterToolCall / tool_result</text>
+    <text x="100" y="200" text-anchor="middle">getSteeringMessages</text>
+    <text x="100" y="125" text-anchor="middle">before_agent_start</text>
+  </g>
+  <g font-size="10.5" fill="#8b96a5">
+    <text x="40" y="235">· 반복 상한 없음 (maxSteps 없음)  · 툴 배치 병렬, executionMode:"sequential" 하나면 전체 직렬</text>
+    <text x="40" y="255">· length stop → 배치 전체 실행 안 함 (인자 잘렸을 수 있으므로)  · 루프 내 재시도 없음 (호스트 책임)</text>
+    <text x="40" y="275">· 조기 종료는 배치 만장일치  · abort 시 부분 출력 보존</text>
+    <text x="40" y="295" class="mono">packages/agent/src/agent-loop.ts:156-273, 409-424, 497-555, 589-591</text>
+  </g>
+  <!-- SDK loop -->
+  <text x="520" y="28" fill="#d97757" font-size="15" font-weight="700">SDK · query() — 훅이 루프 "밖"에서 호출된다</text>
+  <rect x="520" y="45" width="460" height="260" rx="12" fill="#161b22" stroke="#d97757" stroke-width="1.5"/>
+  <rect x="540" y="65" width="300" height="130" rx="10" fill="#000" stroke="#444"/>
+  <text x="690" y="95" text-anchor="middle" fill="#ddd" font-size="13" font-weight="700">claude 바이너리 내부 루프</text>
+  <text x="690" y="118" text-anchor="middle" fill="#888" font-size="11.5">컨텍스트 조립 · 프롬프트 27섹션 · 재시도 · 컴팩션</text>
+  <text x="690" y="136" text-anchor="middle" fill="#888" font-size="11.5">툴 실행 · 권한 룰 엔진 · 분류기 · 서브에이전트</text>
+  <text x="690" y="154" text-anchor="middle" fill="#888" font-size="11.5">"Pipeline is engine-internal; the SDK exposes only the inputs"</text>
+  <text x="690" y="180" text-anchor="middle" fill="#666" font-size="10.5" class="mono">08-tool-base-registry.md:7</text>
+  <rect x="860" y="65" width="105" height="130" rx="10" fill="#1c2333" stroke="#d97757"/>
+  <text x="912" y="88" text-anchor="middle" fill="#d97757" font-size="12" font-weight="700">부모 프로세스</text>
+  <g font-size="10.5" fill="#d6dde6" class="mono">
+    <text x="912" y="108" text-anchor="middle">PreToolUse</text>
+    <text x="912" y="124" text-anchor="middle">canUseTool</text>
+    <text x="912" y="140" text-anchor="middle">PostToolUse</text>
+    <text x="912" y="156" text-anchor="middle">Stop / …</text>
+    <text x="912" y="172" text-anchor="middle">mcp__x__tool</text>
+  </g>
+  <line x1="840" y1="115" x2="858" y2="115" stroke="#8b96a5" marker-end="url(#ah)"/>
+  <line x1="858" y1="145" x2="842" y2="145" stroke="#8b96a5" marker-end="url(#ah)"/>
+  <text x="850" y="212" text-anchor="middle" fill="#8b96a5" font-size="10.5">제어 프로토콜 (NDJSON)</text>
+  <g font-size="10.5" fill="#8b96a5">
+    <text x="540" y="235">· 순서: PreToolUse → canUseTool → PermissionRequest(정보성)</text>
+    <text x="540" y="255">· allowedTools에 있으면 canUseTool 자체가 호출되지 않음</text>
+    <text x="540" y="275">· permissionDecision:'defer' → 실행도 결과도 없이 보류</text>
+    <text x="540" y="295" class="mono">full-potential.md:172, coverage.md:829-831</text>
+  </g>
+</svg>
+<figcaption>왼쪽의 훅 이름은 코어(<code>AgentLoopConfig</code>)와 확장 이벤트를 슬래시로 병기했다. 오른쪽에서 부모가 개입할 수 있는 지점은 제어 프로토콜이 열어 준 곳뿐이며, 그 순서와 단락(short-circuit) 규칙은 라이브 프로브로만 알 수 있었다.</figcaption>
+</figure>
+
+<h3>툴: 8개 교체 가능 vs 45개 선언·32개 런타임·교체 불가</h3>
+<table>
+<tr><th></th><th class="pi">Pi</th><th class="sdk">Agent SDK</th></tr>
+<tr><td>내장 툴</td><td class="pi"><code>read bash powershell edit write grep find ls</code> 8개, 기본 활성은 4개 (<span class="cite">core/tools/index.ts:95-105</span>). grep/find는 ripgrep/fd를 자동 다운로드해 shell-out</td><td class="sdk"><code>sdk-tools.d.ts</code>에 45개 <code>*Input</code> 선언; 라이브 <code>system/init</code>은 32개 보고. Claude Code 2.1.233이 신모델에서 Task*/TodoWrite 5종을 제거했지만 타입은 여전히 선언 (<span class="cite">since-february.md:5-11</span>)</td></tr>
+<tr><td>스키마</td><td class="pi">TypeBox. 결과는 <code>content</code>(모델용)와 <code>details</code>(UI용) 분리. 에러는 <b>throw</b>해야 함</td><td class="sdk">커스텀 툴은 Zod v4. 결과는 MCP 콘텐츠 블록</td></tr>
+<tr><td>내장 툴 교체</td><td class="pi"><span class="tag ok">같은 이름으로 registerTool → 교체</span> 렌더러는 슬롯별 상속. <code>*Operations</code> 인터페이스로 실행을 SSH/컨테이너/마이크로VM으로 라우팅. <code>--no-builtin-tools</code></td><td class="sdk"><span class="tag no">불가</span> <code>tools</code>(풀 선택), <code>allowedTools/disallowedTools</code>(게이팅), <code>toolAliases</code>(모델이 부른 이름을 MCP 툴로 단일 홉 리다이렉트)가 전부. "Built-in CC tools' baked-in checks are NOT individually overridable" (<span class="cite">09-permission-system.md:16</span>)</td></tr>
+<tr><td>커스텀 툴 추가</td><td class="pi"><code>pi.registerTool()</code> — 루프와 같은 프로세스, <code>promptSnippet/promptGuidelines</code>로 시스템 프롬프트에 자기 설명 삽입, <code>renderCall/renderResult</code>로 TUI 렌더링, <code>executionMode</code>, 동적 로딩(<code>addedToolNames</code>)</td><td class="sdk"><b>MCP로만</b>. <code>createSdkMcpServer</code> + <code>tool()</code>(in-process, in-memory 전송) 또는 stdio/SSE/HTTP. 이름은 <code>mcp__&lt;serverKey&gt;__&lt;tool&gt;</code>. <code>isReadOnly/isConcurrencySafe/isDestructive</code> 같은 내장 툴의 안전 메타데이터는 선언 불가 (<span class="cite">08-tool-base-registry.md:6</span>). 지연 로딩 노브는 <code>alwaysLoad</code>, <code>searchHint</code> 둘뿐</td></tr>
+<tr><td>툴 인자·결과 변조</td><td class="pi"><code>tool_call</code>에서 <code>event.input</code> 직접 변경(재검증 없음), <code>tool_result</code>에서 <code>content/details/isError/usage</code> 패치</td><td class="sdk"><code>PreToolUse.updatedInput</code>, <code>canUseTool → updatedInput</code>, <code>PostToolUse.updatedToolOutput</code> — 모두 제어 프로토콜 왕복</td></tr>
+<tr><td>출력 절단</td><td class="pi">50 KB / 2000줄, 확장에서 조정</td><td class="sdk">엔진 내부</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="ext"><span class="no">§5</span>확장 포인트 전수 비교</h2>
+<p class="lead">이벤트 개수는 비슷합니다(36 vs 33). 다른 것은 <b>이벤트가 무엇을 바꿀 수 있는가</b>, 그리고 <b>선언된 것이 실제로 발화하는가</b>입니다.</p>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi 36 이벤트 (전부 동일 프로세스, 문서화된 계약)</h5>
+      <div class="box pi"><b>startup/resources (2)</b><code>project_trust resources_discover</code></div>
+      <div class="box pi"><b>session (10)</b><code>session_start session_info_changed session_before_switch session_before_fork session_before_compact session_compact session_compact_failed session_shutdown session_before_tree session_tree</code></div>
+      <div class="box pi"><b>provider/context (4)</b><code>context before_provider_request before_provider_headers after_provider_response</code></div>
+      <div class="box pi"><b>agent (14)</b><code>before_agent_start agent_start agent_end agent_settled ui_prompt_start ui_prompt_end turn_start turn_end message_start message_update message_end tool_execution_start/update/end</code></div>
+      <div class="box pi"><b>model (2)</b><code>model_select thinking_level_select</code></div>
+      <div class="box pi"><b>tool/input (4)</b><code>tool_call tool_result user_bash input</code></div>
+    </div>
+    <div class="col sdk">
+      <h5>SDK 33 훅 이벤트 (헤드리스 발화 검증 25, OPEN 8)</h5>
+      <div class="box sdk"><b>tool (5)</b><code>PreToolUse PostToolUse PostToolUseFailure PostToolBatch PermissionRequest</code></div>
+      <div class="box sdk"><b>prompt/session (6)</b><code>UserPromptSubmit UserPromptExpansion SessionStart SessionEnd Stop StopFailure</code></div>
+      <div class="box sdk"><b>agents/tasks (5)</b><code>SubagentStart SubagentStop TaskCreated TaskCompleted TeammateIdle</code></div>
+      <div class="box sdk"><b>context/model (4)</b><code>PreCompact PostCompact PreModelSwitch PostModelSwitch</code></div>
+      <div class="box sdk"><b>permission/dialog (4)</b><code>PermissionDenied Elicitation ElicitationResult Notification</code></div>
+      <div class="box sdk"><b>env/misc (9)</b><code>Setup ConfigChange WorktreeCreate WorktreeRemove InstructionsLoaded CwdChanged FileChanged DirectoryAdded MessageDisplay</code></div>
+      <div class="box dark">OPEN 8 = 발화 조건을 만들지 않아 미측정 (eliciting MCP 서버, 팀메이트 세션, --worktree 등). "absence of evidence rather than a negative"</div>
+    </div>
+  </div>
+  <figcaption>Pi: <span class="cite">core/extensions/types.ts:1257-1301</span>. SDK: <span class="cite">sdk.d.ts:853 HOOK_EVENTS</span>, 측정 이력 <span class="cite">coverage.md:762, 802-843</span> — 8/30 → 17/30 → 12 → 23/33 → 24/33 → 25/33. 이 저장소의 CLAUDE.md에 적힌 "8개만 발화"는 <b>stale</b>.</figcaption>
+</figure>
+
+<h3>"무엇을 바꿀 수 있는가" 매트릭스</h3>
+<table>
+<tr><th>능력</th><th class="pi">Pi</th><th class="sdk">Agent SDK</th></tr>
+<tr><td>툴 호출 차단</td><td class="pi"><span class="tag ok">tool_call → {block, reason, terminate}</span> 핸들러가 throw해도 차단 (fail-safe)</td><td class="sdk"><span class="tag ok">PreToolUse permissionDecision:'deny' / canUseTool deny</span></td></tr>
+<tr><td>툴 인자 변조</td><td class="pi"><span class="tag ok">in-place</span></td><td class="sdk"><span class="tag ok">updatedInput</span></td></tr>
+<tr><td>툴 결과 변조</td><td class="pi"><span class="tag ok">tool_result 패치 체인</span></td><td class="sdk"><span class="tag ok">updatedToolOutput</span></td></tr>
+<tr><td>LLM에 보내는 컨텍스트 재작성</td><td class="pi"><span class="tag ok">context → 메시지 배열 교체</span> (structuredClone 전달)</td><td class="sdk"><span class="tag no">불가</span> additionalContext 주입만 (UserPromptSubmit·PreToolUse 등)</td></tr>
+<tr><td>시스템 프롬프트</td><td class="pi"><span class="tag ok">턴마다 통째로 교체</span> before_agent_start → {systemPrompt}; 또는 SYSTEM.md, --system-prompt, SDK override</td><td class="sdk"><span class="tag part">preset + append, 또는 전면 자작</span> 27개 동적 섹션 개별 편집 불가</td></tr>
+<tr><td>와이어 페이로드/헤더</td><td class="pi"><span class="tag ok">before_provider_request / headers</span></td><td class="sdk"><span class="tag no">불가</span></td></tr>
+<tr><td>완성된 메시지 교체</td><td class="pi"><span class="tag ok">message_end → {message}</span></td><td class="sdk"><span class="tag no">불가</span></td></tr>
+<tr><td>메시지 주입</td><td class="pi"><span class="tag ok">sendMessage(deliverAs: steer|followUp|nextTurn)</span> + custom_message(컨텍스트 포함) / custom(제외)</td><td class="sdk"><span class="tag ok">streamInput + SDKUserMessage(priority, isSynthetic, shouldQuery)</span></td></tr>
+<tr><td>모델·thinking 전환</td><td class="pi"><span class="tag ok">setModel / setThinkingLevel</span> 벤더 간 전환 시 히스토리 자동 변환</td><td class="sdk"><span class="tag ok">setModel / applyFlagSettings</span> Claude 내에서만. PreModelSwitch deny로 취소 가능</td></tr>
+<tr><td>슬래시 명령 등록</td><td class="pi"><span class="tag ok">registerCommand + 인자 자동완성</span></td><td class="sdk"><span class="tag part">.claude/commands 마크다운 (settingSources/plugins 경유)</span></td></tr>
+<tr><td>UI 구성요소</td><td class="pi"><span class="tag ok">select/confirm/input/editor 다이얼로그, widget, footer, header, status, 에디터 교체, 커스텀 렌더러, 테마</span></td><td class="sdk"><span class="tag no">UI 없음</span> AskUserQuestion·권한·elicitation이 제어 요청으로 오면 당신이 렌더링</td></tr>
+<tr><td>프로바이더 등록</td><td class="pi"><span class="tag ok">registerProvider(full Provider) — 자체 stream 가능</span></td><td class="sdk"><span class="tag no">불가</span></td></tr>
+<tr><td>컴팩션 커스텀</td><td class="pi"><span class="tag ok">session_before_compact → 취소 또는 커스텀 요약</span></td><td class="sdk"><span class="tag no">관찰만</span> PreCompact/PostCompact에 hookSpecificOutput 없음</td></tr>
+<tr><td>프로젝트 신뢰 판단</td><td class="pi"><span class="tag ok">project_trust</span></td><td class="sdk">—</td></tr>
+<tr><td>사용자 <code>!</code> bash 가로채기</td><td class="pi"><span class="tag ok">user_bash</span></td><td class="sdk">—</td></tr>
+<tr><td>파일 체크포인트/되감기</td><td class="pi"><span class="tag ext">git-checkpoint.ts 예제</span></td><td class="sdk"><span class="tag ok">enableFileCheckpointing + rewindFiles</span></td></tr>
+<tr><td>서브에이전트 정의</td><td class="pi"><span class="tag ext">subagent 예제 (pi를 JSON 모드로 spawn)</span></td><td class="sdk"><span class="tag ok">agents: AgentDefinition</span> 단, <code>hooks</code>/<code>isolation</code> 필드 없음 (<span class="cite">14-tool-agent-team.md:20-21</span>); 스폰이 기본 백그라운드</td></tr>
+<tr><td>권한 시스템</td><td class="pi"><span class="tag ext">permission-gate.ts 예제 / 컨테이너</span></td><td class="sdk"><span class="tag ok">6 모드 + 룰 + canUseTool + 분류기</span> 단 canUseTool은 allow/deny만, 'ask' 반환 불가; 룰 매처 미export</td></tr>
+</table>
+
+<h3>SDK 훅에서 프로브로만 알 수 있었던 함정들</h3>
+<ul class="tight">
+<li><b>SessionStart 콜백이 조용한 이유는 구조가 아니라 타이밍</b>: 디스패치가 호스트 훅 등록보다 먼저 일어남. 일부 이벤트는 프로그램 콜백만으론 무장되지 않고 <code>Options.settings</code>로 매처를 등록해야 함(<span class="cite">coverage.md:836-843</span>).</li>
+<li><b><code>bypassPermissions</code>는 룰 엔진을 건너뛰지 않음</b>: ask만 단락하고 deny 룰은 여전히 적용(13단 사전검사 중 11번째 rung).</li>
+<li><b><code>PermissionDenied</code>는 콜백/훅 거부에는 절대 발화하지 않음</b> — 분류기 거부에만.</li>
+<li><b><code>Query.setPermissionMode()</code>는 실패할 수 있음</b>: 런타임 <code>bypassPermissions</code>와 지원 모델 밖의 <code>auto</code>는 거부되고 이전 모드 유지, 조용한 폴백 없음.</li>
+<li><b><code>includeHookEvents</code>는 프로그램 훅에서 프레임을 내지 않음</b>(dead). 훅은 "보이지 않게 실행"됨.</li>
+<li>Python SDK는 33개 중 13개 이벤트가 콜백으로 불가(SessionStart/End는 settings.json 셸 훅만), <code>can_use_tool</code>은 더미 PreToolUse 훅이 있어야 제어 스트림이 열림.</li>
+</ul>
+<p>Pi 쪽 함정은 종류가 다릅니다: 이벤트 핸들러에서 <code>newSession/fork/switchSession/reload</code>를 호출하면 데드락이라 <code>ExtensionCommandContext</code>에서만 노출(<span class="cite">types.ts:355-389</span>); 같은 툴 이름은 첫 등록이 이김; 인자 변조 뒤 재검증이 없음. 전부 문서에 적혀 있고 프로세스 안이라 디버거로 볼 수 있습니다.</p>
+
+<!-- ============================================================ -->
+<h2 id="features"><span class="no">§6</span>기능 풍부함 체크리스트</h2>
+<p class="lead">"내장 / 확장·패키지 / 불가"로 나눕니다. SDK의 "내장"이 훨씬 많고, Pi의 "확장"이 훨씬 많습니다. "불가" 열이 결정적입니다.</p>
+
+<figure>
+<table>
+<tr><th>기능</th><th class="pi">Pi</th><th class="sdk">Agent SDK</th><th>비고</th></tr>
+<tr><td>다중 프로바이더·비-Claude 모델</td><td class="pi"><span class="tag ok">내장 40</span></td><td class="sdk"><span class="tag no">불가</span></td><td>SDK는 Claude only</td></tr>
+<tr><td>구독 OAuth 로그인 (앱 내)</td><td class="pi"><span class="tag ok">6종</span></td><td class="sdk"><span class="tag no">계약상 금지</span></td><td>SDK는 API 키 또는 사전 발급 토큰 env</td></tr>
+<tr><td>Bedrock / Vertex / Foundry</td><td class="pi"><span class="tag ok">내장 (Bedrock·Vertex·Azure)</span></td><td class="sdk"><span class="tag ok">env 선택</span></td><td>SDK는 Foundry 포함</td></tr>
+<tr><td>권한 시스템</td><td class="pi"><span class="tag ext">tool_call 게이트 / 컨테이너</span></td><td class="sdk"><span class="tag ok">6 모드·룰·분류기·canUseTool</span></td><td>Pi는 의도적 부재</td></tr>
+<tr><td>OS 샌드박스</td><td class="pi"><span class="tag ext">sandbox 예제 (<code>@anthropic-ai/sandbox-runtime</code>) / Gondolin VM</span></td><td class="sdk"><span class="tag ok">sandbox 옵션 (bwrap / sandbox-exec, 네트워크·FS·자격증명 마스킹)</span></td><td></td></tr>
+<tr><td>MCP</td><td class="pi"><span class="tag ext">pi-mcp-adapter</span></td><td class="sdk"><span class="tag ok">stdio/SSE/HTTP/in-process + 런타임 토폴로지 변경</span></td><td></td></tr>
+<tr><td>서브에이전트</td><td class="pi"><span class="tag ext">subagent 예제 / pi-subagents</span></td><td class="sdk"><span class="tag ok">agents + Agent 툴 (background, worktree isolation, name→SendMessage)</span></td><td>SDK는 Explore/Plan 기본 에이전트 미동봉</td></tr>
+<tr><td>스킬 (SKILL.md)</td><td class="pi"><span class="tag ok">Agent Skills 스펙 (이름≠디렉토리 허용, ~/.claude/skills 재사용)</span></td><td class="sdk"><span class="tag ok">.claude/skills + skills 필터, context:'fork'</span></td><td>SDK는 프로그램 등록 API 없음</td></tr>
+<tr><td>프롬프트 템플릿 / 슬래시 명령</td><td class="pi"><span class="tag ok">.md + $1/$@/${1:-x}/${@:N:L}</span></td><td class="sdk"><span class="tag ok">.claude/commands</span></td><td></td></tr>
+<tr><td>플러그인/패키지 배포</td><td class="pi"><span class="tag ok">pi install npm:/git:/path, pi-package 키워드 갤러리</span></td><td class="sdk"><span class="tag part">plugins: {type:'local'}만</span></td><td>SDK는 마켓플레이스 경로 불가</td></tr>
+<tr><td>플랜 모드</td><td class="pi"><span class="tag ext">plan-mode 예제</span></td><td class="sdk"><span class="tag ok">permissionMode:'plan' + planModeInstructions</span></td><td></td></tr>
+<tr><td>구조화 출력</td><td class="pi"><span class="tag ok">constrainedSampling (strict JSON schema, Lark 문법) / structured-output 예제</span></td><td class="sdk"><span class="tag ok">outputFormat json_schema (draft-7, 최종 result에만)</span></td><td></td></tr>
+<tr><td>파일 체크포인트/되감기</td><td class="pi"><span class="tag ext">git-checkpoint 예제</span></td><td class="sdk"><span class="tag ok">rewindFiles</span></td><td></td></tr>
+<tr><td>자동 컴팩션</td><td class="pi"><span class="tag ok">설정 가능 (reserve 16384 / keep 20000) + 커스텀 요약 훅</span></td><td class="sdk"><span class="tag ok">내장, 임계값 내부, env로 끄기만</span></td><td></td></tr>
+<tr><td>세션 트리/분기</td><td class="pi"><span class="tag ok">parentId 트리, /tree /fork /clone</span></td><td class="sdk"><span class="tag part">선형 + forkSession/resumeSessionAt</span></td><td></td></tr>
+<tr><td>세션 스토어 교체</td><td class="pi"><span class="tag part">v3는 inMemory만; v4 하네스 스택은 인터페이스+sqlite 백엔드</span></td><td class="sdk"><span class="tag part">sessionStore = 로컬 JSONL과 dual-write 미러 (대체 아님)</span></td><td></td></tr>
+<tr><td>비용/사용량 보고</td><td class="pi"><span class="tag ok">Usage.cost 단일 함수, 티어·캐시 분리</span></td><td class="sdk"><span class="tag ok">total_cost_usd, modelUsage, costBasis</span></td><td></td></tr>
+<tr><td>텔레메트리</td><td class="pi"><span class="tag ok">12 스팬 계약, 익스포터 자작</span></td><td class="sdk"><span class="tag part">OTel env: 4 메트릭 + 6 로그 이벤트, 트레이스 없음</span></td><td>SDK 내부 싱크는 끄기만 가능</td></tr>
+<tr><td>TUI</td><td class="pi"><span class="tag ok">pi-tui 17k LOC, 차분/alt 렌더러, 85 키바인딩, 테마 51 토큰</span></td><td class="sdk"><span class="tag no">없음</span></td><td></td></tr>
+<tr><td>헤드리스 통합 모드</td><td class="pi"><span class="tag ok">print / JSON / RPC(~30 명령) / SDK</span></td><td class="sdk"><span class="tag ok">query() 스트리밍 / 단발</span></td><td></td></tr>
+<tr><td>웹 검색/fetch 툴</td><td class="pi"><span class="tag ext">pi-web-access</span></td><td class="sdk"><span class="tag ok">WebFetch / WebSearch</span></td><td></td></tr>
+<tr><td>백그라운드 태스크·크론·푸시</td><td class="pi"><span class="tag ext">pi-background-tasks / tmux</span></td><td class="sdk"><span class="tag part">background tasks OK; CronCreate 발화·PushNotification은 헤드리스 dead</span></td><td><span class="cite">full-potential.md:321-327</span></td></tr>
+<tr><td>평가 프레임워크</td><td class="pi"><span class="tag ok">pi-evals (A/B 하네스 테이블)</span></td><td class="sdk">—</td><td></td></tr>
+<tr><td>결정적 테스트</td><td class="pi"><span class="tag ok">faux provider (캐시 히트·deferred 시뮬)</span></td><td class="sdk"><span class="tag no">실제 바이너리 필요</span></td><td></td></tr>
+</table>
+<figcaption>범례: <span class="tag ok">내장</span> <span class="tag ext">확장/패키지/예제</span> <span class="tag part">부분</span> <span class="tag no">불가</span>. Pi 예제 확장 디렉토리에는 79개 항목이 있고(권한 게이트, 플랜 모드, 서브에이전트, 샌드박스, Gondolin, 커스텀 컴팩션, git 체크포인트, 커스텀 프로바이더 2종 포함), 이들은 "가능함"의 증거이지 "동등한 성숙도"의 증거는 아니다.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="ceiling"><span class="no">§7</span>커스터마이즈 천장</h2>
+<p class="lead">두 벽의 높이가 다릅니다. Pi의 벽은 "포크해야 한다", SDK의 벽은 "포크할 소스가 없다"입니다.</p>
+
+<figure>
+  <div class="wall">
+    <div>
+      <h5 style="color:var(--pi);margin:0 0 8px">Pi — 아래로 갈수록 바꾸기 어려움</h5>
+      <div class="layer open">테마 · 키바인딩(85) · 에디터 컴포넌트 · 위젯/푸터/헤더/상태줄 · 자동완성 · 마크다운 파이프라인 · 렌더러</div>
+      <div class="layer open">툴 세트 · 각 내장 툴(이름 충돌 교체, *Operations 라우팅) · 슬래시 명령 · 플래그</div>
+      <div class="layer open">시스템 프롬프트 전체 · LLM 컨텍스트 · 와이어 페이로드/헤더</div>
+      <div class="layer open">프로바이더 (자체 stream 포함) · 컴팩션 요약 · 분기 요약 · 프로젝트 신뢰</div>
+      <div class="layer open">SDK 층: resourceLoader/sessionManager/settingsManager/modelRuntime 주입, 브랜드명(<code>piConfig.name</code>)</div>
+      <div class="layer fork">포크 필요: agentLoop의 턴 구조·배치 의미론·만장일치 종료 규칙 · TUI 셸 오케스트레이션(interactive-mode.ts 6,575줄) · v3 세션 포맷/SessionManager · RPC 명령 어휘 · JSON 이벤트 형태 · 10개 KnownApi 전송 모듈</div>
+      <div class="layer open" style="text-align:center">…하지만 전부 MIT 소스</div>
+    </div>
+    <div>
+      <h5 style="color:var(--sdk);margin:0 0 8px">SDK — 아래는 도달 불가</h5>
+      <div class="layer open">hooks 25/33 · canUseTool · MCP 툴 · agents · settings 157키 값 · outputFormat · sandbox 옵션 · sessionStore 미러 · spawnClaudeCodeProcess · systemPrompt.append</div>
+      <div class="layer ext">env 패스스루로만: 백엔드 선택 · DISABLE_AUTO_COMPACT · CLAUDE_CODE_AUTO_COMPACT_WINDOW · OTEL_* · promptCacheTtl(settings)</div>
+      <div class="layer black">에이전트 루프 · 재시도 정책 · 컨텍스트 조립 순서 · <code>&lt;system-reminder&gt;</code> 주입 · 시스템 프롬프트 27섹션 개별 편집</div>
+      <div class="layer black">컴팩션 알고리즘·임계값·마이크로컴팩션·재주입 예산(5파일/50k)·서킷브레이커</div>
+      <div class="layer black">내장 툴 구현 · 민감 경로 목록(.git/.claude/…) · acceptEdits 분류 · Bash 분류기(외부 빌드는 항상 <code>matches:false</code> 스텁)</div>
+      <div class="layer black">auto 모드 분류기(서버측) · 거부 한도(3/20) · 피처 플래그(GrowthBook, 계정별 서버 결정) · 컴파일 타임 DCE · 내부 텔레메트리 싱크</div>
+      <div class="layer black">TUI 전체 · 에이전트 팀 · Cron 발화 · Push · claude.ai 브리지 결합 표면 (58개 not-possible + ~77 non-goal)</div>
+    </div>
+  </div>
+  <div class="legend"><span style="background:rgba(87,171,90,.6)"></span>공개 API로 변경 <span style="background:rgba(212,167,44,.6)"></span>우회로만 <span style="background:rgba(229,83,75,.6)"></span>포크 필요(소스 있음) <span style="background:#000;border:1px solid #333"></span>소스 없음·도달 불가</div>
+  <figcaption>Pi: <span class="cite">01-pi-inventory.md §8</span>. SDK: <span class="cite">02-agent-sdk-inventory.md §5</span>, 원출처 <span class="cite">03/05/07/08/09/26-*.md, coverage.md:923-932, full-potential.md:321-327</span>.</figcaption>
+</figure>
+
+<h3>시스템 프롬프트: 40줄 vs 27섹션</h3>
+<div class="two">
+<div class="callout pi"><div class="t">Pi</div><code>buildSystemPrompt()</code>(<span class="cite">core/system-prompt.ts:28-169</span>)의 기본 텍스트는 약 40줄: 역할 한 문장, <code>promptSnippet</code>을 낸 툴만 나열한 Available tools, 툴 조건부 Guidelines, 그리고 pi 자신의 문서 경로. <code>customPrompt</code>를 주면 <b>전부 스킵</b>하고 append 텍스트·<code>&lt;project_context&gt;</code>·스킬 블록·cwd만 남깁니다. 경로 넷: <code>--system-prompt</code>, <code>SYSTEM.md</code>, <code>before_agent_start</code>, SDK <code>systemPromptOverride</code>.</div>
+<div class="callout sdk"><div class="t">Agent SDK</div><code>{type:'preset', preset:'claude_code', append}</code>는 문서 표현으로 "Additions only". 2.1.251 핀에서 프리셋은 <b>27개 동적 섹션 + 6개 정적 헤드</b>(<span class="cite">coverage.md:765</span>, 손으로 세어 "~20"이라 적혀 있다가 추출해 보니 틀렸던 세 번째 모집단). 문자열로 전면 대체하면 "Default tools: Lost, Built-in safety: Must be added, Environment context: Must be provided". <code>excludeDynamicSections</code>로 cwd/메모리/git 상태를 빼서 프리픽스 캐시를 사용자 간 공유하는 것이 유일한 구조적 레버.</div>
+</div>
+
+<h3>SDK의 "선언 ≠ 도달" 문제 — 이 저장소가 배운 것</h3>
+<p>SDK를 프레임워크로 평가할 때 가장 위험한 것은 <code>sdk.d.ts</code>를 믿는 것입니다. 이 저장소는 그 교훈을 세 번 비싸게 샀습니다.</p>
+<ul class="tight">
+<li>훅 발화 수는 8 → 17 → 12 → 23 → 24 → 25로 <b>여섯 번</b> 재측정됐고, 두 번째 재측정에서야 "지켜보던 이벤트 목록 자체가 손으로 쓴 것이라 생각 못 한 이벤트는 부재로 측정될 수 없었다"는 것을 발견해 업스트림 디스패처 레지스트리(33개)로 모집단을 바꿨습니다.</li>
+<li>Claude Code 2.1.233이 신모델에서 툴 5개를 제거했을 때 <b>SDK 타입은 한 글자도 안 바뀌었습니다</b>. 네 표면(Options·Query·SDKMessage·exports) 이름 diff가 세 릴리스 연속 0이었지만 본문 diff는 959줄이었습니다(<span class="cite">drift-ritual.md:62-68</span>).</li>
+<li>공식 문서는 훅 20개, 타입은 33개, 실제 발화 25개. 문서에 존재하지 않는 필드(<code>outputStyle</code>)가 실려 있기도 했습니다.</li>
+<li>제어 프로토콜은 엔진이 54종을 디스패치하고 SDK가 37종을 보낼 수 있는데, <b>래퍼가 응답을 소비해 버려서</b> initialize 응답의 ~1 KB 페이로드(명령·에이전트·모델·계정 형태)를 어떤 SDK 세션도 관측한 적이 없었습니다(<span class="cite">coverage.md:764</span>).</li>
+</ul>
+<p>Pi에는 이 문제 범주가 존재하지 않습니다. 이벤트 36개는 <code>pi.on()</code> 오버로드 시그니처 그 자체이고, 발화 조건은 같은 파일에서 <code>emit</code> 호출을 grep하면 나옵니다.</p>
+
+<!-- ============================================================ -->
+<h2 id="session"><span class="no">§8</span>세션·컨텍스트·컴팩션</h2>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi 세션 = 트리 (v3 JSONL)</h5>
+<pre style="margin:0"><code>~/.pi/agent/sessions/--Users-me-proj--/2026-09-03T…_uuid.jsonl
+L1  {type:"session", version:3, id, cwd, parentSession?}
+L2+ {type, id, parentId, timestamp, …}
+       ├ message · thinking_level_change · model_change
+       ├ compaction · branch_summary
+       ├ custom (LLM 컨텍스트 밖) · custom_message (안)
+       └ label · session_info</code></pre>
+      <div class="box pi" style="margin-top:10px"><b>분기</b>leaf 포인터 이동, 삭제 없음. /tree에서 user 메시지를 고르면 leaf가 그 <i>부모</i>로 가고 텍스트가 에디터에 복원 → 재제출 시 형제 분기. 버려진 분기는 요약 생성 가능. /fork·/clone은 새 파일. 인덱스 파일 없음(디렉토리 워크 + 1 MiB 헤더 스캔). 첫 assistant 메시지 전엔 파일 미생성.</div>
+      <div class="box pi"><b>컴팩션</b><code>contextTokens &gt; window − reserve(16384)</code>, keepRecent 20000. 이전 컴팩션의 <code>firstKeptEntryId</code>부터 <b>반복적 요약 갱신</b>(전체 재요약 아님). 컷 포인트는 절대 tool result가 아님; 턴 중간 컷이면 별도 턴-프리픽스 요약. <code>length</code> stop은 하드 실패(잘린 요약을 체크포인트로 만들지 않음). 오버플로 복구는 컴팩션 후 1회 재시도. 컴팩션 직후 <code>getContextUsage()</code>는 의도적으로 <code>tokens: null</code>.</div>
+    </div>
+    <div class="col sdk">
+      <h5>SDK 세션 = 선형 (cwd 스코프 JSONL)</h5>
+<pre style="margin:0"><code>~/.claude/projects/&lt;cwd-slug&gt;/&lt;uuid&gt;.jsonl   (CLAUDE_CONFIG_DIR로 이동)
+resume        → 같은 id 유지
+forkSession   → 새 id 발급 (원본 불변)
+resumeSessionAt / resumeDropsTurn → 특정 지점
+persistSession:false → 미저장
+sessionStore  → 로컬 JSONL과 dual-write 미러 (@alpha)
+              "Cannot be used with persistSession:false"</code></pre>
+      <div class="box sdk" style="margin-top:10px"><b>읽기 API</b><code>listSessions / getSessionInfo / getSessionMessages / getSubagentMessages / listSubagents / renameSession / tagSession / deleteSession / forkSession / foldSessionSummary</code>. resume은 <b>cwd 스코프</b>(<span class="cite">full-use-checklist.md:397-401</span>). 되감기 앵커 UUID는 라이브 스트림이 아니라 <code>getSessionMessages()</code>에서 가져와야 함.</div>
+      <div class="box black"><b>컴팩션</b>자동 임계값·마이크로컴팩션·재주입 예산(5파일/50k 토큰)·실패 서킷브레이커 전부 내부(<span class="cite">07-context-compaction.md:5-15</span>). 밖에서 보이는 것: <code>compact_boundary</code> 메시지, <code>PreCompact/PostCompact</code>(출력 없음), <code>getContextUsage()</code> 17필드 분해(단, 호출마다 21회 모델측 토큰 카운팅 — 공짜 아님). 온디맨드는 스트리밍 입력에 <code>/compact</code>를 주입해야 함(<code>Query.compact()</code> 없음).</div>
+    </div>
+  </div>
+  <figcaption>Pi: <span class="cite">docs/session-format.md:5-11, core/session-manager.ts:32-153, 845-855, core/compaction/compaction.ts:132-136, 308-321, 545-553, 750-829</span>. SDK: <span class="cite">sdk.d.ts:5394 sessionStore, coverage.md:782, 790</span>.</figcaption>
+</figure>
+
+<p>토큰 추정도 대비됩니다. Pi는 토크나이저 없이 <code>CHARS_PER_TOKEN = 4</code>, 이미지 4800자로 잡되 "마지막으로 실제 usage를 보고한 assistant 메시지를 앵커로 삼고 그 뒤만 추정"하는 앵커+테일 방식(<span class="cite">utils/estimate.ts:63-103</span>)이라 값싸고 문서화되어 있습니다. SDK는 정확하지만 비쌉니다.</p>
+
+<!-- ============================================================ -->
+<h2 id="iface"><span class="no">§9</span>인터페이스·운영·라이선스</h2>
+
+<figure>
+  <div class="two">
+    <div class="col pi">
+      <h5>Pi 실행 모드 (하나의 AgentSessionRuntime 위)</h5>
+      <div class="row">
+        <div class="box pi"><b>interactive</b>TUI, 85 키바인딩, Kitty/iTerm2 이미지</div>
+        <div class="box pi"><b>print / json</b><code>-p</code>, non-TTY 자동 감지; JSON은 델타만(선형 크기)</div>
+        <div class="box pi"><b>rpc</b>JSONL stdin/stdout, ~30 명령, 확장 UI 서브프로토콜로 승인 흐름</div>
+        <div class="box pi"><b>sdk</b><code>createAgentSession()</code>, in-memory 세션, <code>runPrintMode()</code></div>
+      </div>
+      <div class="box dark">실험: pi-protocol CBOR + PiServer(서비스·CLI 없음) · llama.cpp 통합은 숨은 인라인 확장으로 dogfooding</div>
+    </div>
+    <div class="col sdk">
+      <h5>SDK 실행 모드</h5>
+      <div class="row">
+        <div class="box sdk"><b>headless query()</b>단발 문자열 또는 <code>AsyncIterable&lt;SDKUserMessage&gt;</code> 스트리밍. <b>interrupt 외 모든 Query 제어 메서드는 스트리밍 모드 전용</b></div>
+        <div class="box sdk"><b>startup() → WarmQuery</b>init 51 ms vs 602 ms 콜드</div>
+        <div class="box sdk"><b>./browser</b>원격 세션 WebSocket/SSE 클라이언트 (서브프로세스 없음)</div>
+        <div class="box sdk"><b>Python</b>0.2.152, 바이너리 미동봉, 콜백 훅 20/33</div>
+      </div>
+      <div class="box black">TUI 없음 — 이 저장소의 <code>harness/src/tui/</code>가 존재하는 이유. 다른 언어는 <code>claude -p</code>를 직접 spawn하라고 문서가 안내</div>
+    </div>
+  </div>
+</figure>
+
+<h3>운영 지표 나란히</h3>
+<table>
+<tr><th></th><th class="pi">Pi</th><th class="sdk">Agent SDK</th></tr>
+<tr><td>라이선스</td><td class="pi"><b>MIT</b>. Earendil 인수 후에도 "It will stay MIT licensed. You can use it, fork it, build products on top of it, sell those products." (3단계 모델 계획: MIT 코어 / Fair Source / 엔터프라이즈 — 미구축)</td><td class="sdk"><b>프로프라이어터리</b>. <code>LICENSE.md</code>: "© Anthropic PBC. All rights reserved." Commercial Terms 적용, "Claude Code" 명칭 사용 금지, claude.ai 로그인 제공 금지. Python 래퍼만 MIT (엔진은 아님)</td></tr>
+<tr><td>풋프린트</td><td class="pi">단일 Node 프로세스(≥22.19) 또는 Bun 바이너리 6 타깃. 서브프로세스는 툴 shell-out뿐</td><td class="sdk">세션당 서브프로세스 1개, 바이너리 188 MB, 호스팅 문서 권장 <b>1 GiB RAM / 5 GiB 디스크 / 1 CPU per agent</b>. 상위 세션 타임아웃 없음, 장기 세션 메모리 증가 문서화</td></tr>
+<tr><td>릴리스 속도</td><td class="pi">7주에 15 릴리스(0.80.6→0.84.4). 락스텝 버전, minor = breaking, "No major releases". 명시적 changelog</td><td class="sdk">30일에 32 릴리스, 총 287 버전. breaking이 patch에 실림(0.3.211 exports 삭제, 0.3.234 제어 요청 삭제, 0.2.142 V2 API 삭제·TodoWrite→Task*). <code>@alpha</code> 9개, <code>usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()</code></td></tr>
+<tr><td>드리프트 성격</td><td class="pi">소스 diff = 실제 변화</td><td class="sdk">이름 diff 0인데 본문 959줄 변화; 엔진 변화는 타입 변화 없이 발생. "an SDK that ships faster than we probe lowers this score by existing" (<span class="cite">full-potential.md:213-217</span>)</td></tr>
+<tr><td>공급망</td><td class="pi">exact-pin, <code>min-release-age=2</code>, lockfile pre-commit 가드, shrinkwrap 배포, <code>--ignore-scripts</code> 전면, 라이프사이클 스크립트 allowlist, npm trusted publishing(OIDC), SHA256SUMS</td><td class="sdk">런타임 의존 0, 플랫폼 바이너리 SHA-256 manifest. 바이너리 내용은 검증 불가</td></tr>
+<tr><td>텔레메트리</td><td class="pi">스팬 계약 12종(프롬프트·페이로드 절대 미포함), 익스포터 없음, 설치 핑은 설정 게이트 + <code>PI_TELEMETRY</code></td><td class="sdk">내부 싱크(BigQuery·Datadog·GrowthBook)는 <b>끄기만</b> 가능. OTel env로 4 메트릭 + 6 이벤트, 트레이스 없음</td></tr>
+<tr><td>테스트 가능성</td><td class="pi">faux provider로 네트워크·키 없이 전체 세션 결정적 테스트</td><td class="sdk">실제 바이너리 + 키 필요. 이 저장소가 record/replay 차분 하네스(<code>reforge/</code>)를 만든 이유</td></tr>
+<tr><td>멀티테넌시</td><td class="pi">프로세스 = 테넌트 경계를 직접 설계</td><td class="sdk"><code>settingSources: []</code>만으론 부족 — auto-memory가 무관하게 로드되므로 <code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> + 테넌트별 <code>CLAUDE_CONFIG_DIR</code>·<code>cwd</code> 필요 (호스팅 문서)</td></tr>
+<tr><td>커뮤니티 규모</td><td class="pi">GitHub 101k★ / 12.6k fork, HN 421점 스레드, pi-package 갤러리(수치 출처 간 불일치: 2,143 ~ 8,966)</td><td class="sdk">TS 1.7k★, Python 8.0k★. 가장 큰 불만은 아키텍처가 아니라 <b>과금 정책 변경</b></td></tr>
+</table>
+
+<div class="callout"><div class="t">벤치마크 한 점 (방향성만)</div>Composio가 같은 모델(DeepSeek V4 Flash)로 8개 하네스에 30개 툴-사용 태스크를 돌린 결과: Pi 20/30, Claude Code 16/30, 태스크당 평균 토큰 559k vs 742k, 성공당 비용 $0.028 vs $0.195. 상업 MCP 벤더가 자사 라우터로 측정했으므로 절대값은 신뢰하지 말 것. 같은 글의 결론: "Most reviewers, including Pi advocates, still use Claude Code as their primary daily driver… while keeping Pi for cost-sensitive work, local models, and custom workflows."</div>
+
+<!-- ============================================================ -->
+<h2 id="decide"><span class="no">§10</span>선택 가이드</h2>
+
+<figure>
+  <div class="bars" style="grid-template-columns:230px 1fr 1fr">
+    <div></div><div style="color:var(--pi);font-weight:700">Pi</div><div style="color:var(--sdk);font-weight:700">Agent SDK</div>
+    <div class="lbl">커스터마이저빌리티 (깊이)</div><div><div class="bar" style="width:98%"></div></div><div><div class="bar sdk" style="width:45%"></div></div>
+    <div class="lbl">모델·프로바이더 자유도</div><div><div class="bar" style="width:100%"></div></div><div><div class="bar sdk" style="width:10%"></div></div>
+    <div class="lbl">즉시 쓸 수 있는 기능 풍부함</div><div><div class="bar" style="width:40%"></div></div><div><div class="bar sdk" style="width:95%"></div></div>
+    <div class="lbl">에이전트 루프 품질 (기본값)</div><div><div class="bar" style="width:55%"></div></div><div><div class="bar sdk" style="width:95%"></div></div>
+    <div class="lbl">안전·권한·샌드박스 기본 제공</div><div><div class="bar" style="width:10%"></div></div><div><div class="bar sdk" style="width:90%"></div></div>
+    <div class="lbl">관측 가능성·디버깅</div><div><div class="bar" style="width:95%"></div></div><div><div class="bar sdk" style="width:35%"></div></div>
+    <div class="lbl">API 안정성</div><div><div class="bar" style="width:65%"></div></div><div><div class="bar sdk" style="width:30%"></div></div>
+    <div class="lbl">라이선스·소유권</div><div><div class="bar" style="width:100%"></div></div><div><div class="bar sdk" style="width:15%"></div></div>
+    <div class="lbl">엔터프라이즈 배포 (Bedrock/Vertex/정책)</div><div><div class="bar" style="width:60%"></div></div><div><div class="bar sdk" style="width:85%"></div></div>
+    <div class="lbl">UI 기본 제공</div><div><div class="bar" style="width:95%"></div></div><div><div class="bar sdk" style="width:0%"></div></div>
+  </div>
+  <figcaption><b>주관적 종합 점수</b>이며 위 장들의 근거를 압축한 것. "에이전트 루프 품질"은 Pi의 루프가 나쁘다는 뜻이 아니라, SDK는 Claude Code의 27섹션 프롬프트·권한 분류기·컴팩션을 상속하는 반면 Pi는 &lt;1,000 토큰 프롬프트 + 4 툴에서 시작한다는 뜻.</figcaption>
+</figure>
+
+<h3>Pi를 고르는 경우</h3>
+<ul class="tight">
+<li>Claude 외 모델(또는 여러 벤더 혼용, 로컬 모델, 구독 OAuth 여러 개)이 요구사항일 때. 이 조건 하나면 SDK는 탈락.</li>
+<li>툴 구현·시스템 프롬프트·컨텍스트 조립·컴팩션을 <b>자기 것</b>으로 만들어야 할 때 (연구, 특수 도메인 에이전트, 프롬프트 실험).</li>
+<li>결정적 테스트(faux provider)와 소스 수준 디버깅이 필요할 때.</li>
+<li>터미널 제품을 만들되 TUI를 처음부터 쓰고 싶지 않을 때.</li>
+<li>라이선스 리스크(프로프라이어터리 엔진, 과금 정책 변동)를 받아들일 수 없을 때.</li>
+</ul>
+<h3>Agent SDK를 고르는 경우</h3>
+<ul class="tight">
+<li>Claude로 충분하고, 권한·샌드박스·서브에이전트·MCP·컴팩션을 <b>오늘</b> 검증된 품질로 써야 할 때.</li>
+<li>헤드리스 서비스이고 UI는 어차피 직접 만들 때 (웹 앱, Slack 봇, CI 에이전트).</li>
+<li>Bedrock/Vertex/Foundry 배포와 관리형 설정(<code>managedSettings</code>) 정책이 필요한 조직.</li>
+<li>세션당 1 GiB 클래스의 서브프로세스 비용과 근일 단위 릴리스 드리프트를 운영으로 흡수할 수 있을 때 (이 저장소의 drift-ritual 같은 장치가 필요).</li>
+</ul>
+
+<div class="callout"><div class="t">이 저장소(CC-to-SDK)와의 관계</div>CC-to-SDK의 북극성은 "완전히 소유 가능하고 완전히 커스터마이즈 가능한, Claude Code 품질의 하네스"입니다. 이 문서의 언어로 옮기면 <b>SDK의 §6 열(기능 풍부함)을 유지하면서 Pi의 §7 열(천장 없음)에 도달하는 것</b>입니다. <code>reforge/</code>의 스트랭글러-피그 전략(모듈 하나씩 소유 TypeScript로 바꾸고 실제 바이너리와 차분 재생으로 채점)은 정확히 두 프레임워크 사이의 빈 자리를 겨냥합니다. Pi는 그 목적지가 어떤 모양인지 보여 주는 가장 좋은 살아 있는 참조이고 — 특히 Provider/API 이중 레지스트리, <code>transform-messages</code> 프리플라이트, 두 층 재시도, 트리 세션, 확장 이벤트 계약 — SDK는 출발점의 품질 기준입니다.</div>
+
+<!-- ============================================================ -->
+<h2 id="evidence"><span class="no">§11</span>근거와 유보 사항</h2>
+<h3>이 문서의 원천 자료</h3>
+<ul class="tight">
+<li><a href="research/01-pi-inventory.md">research/01-pi-inventory.md</a> — Pi 소스 인벤토리 (<code>path:line</code> 인용, 0.84.4 체크아웃 + npm tarball 카탈로그)</li>
+<li><a href="research/02-agent-sdk-inventory.md">research/02-agent-sdk-inventory.md</a> — Agent SDK 인벤토리 (설치본 0.3.251 <code>sdk.d.ts</code>/<code>sdk.mjs</code>/바이너리 + 이 저장소의 프로브 검증 문서 <code>docs/parity/*</code>)</li>
+<li><a href="research/03-external-context.md">research/03-external-context.md</a> — 웹 출처 (pi.dev 문서, Mario Zechner 블로그, Anthropic 공식 문서·헬프센터·changelog, GitHub/npm/PyPI API, 커뮤니티 글). VERIFIED/REPORTED 구분 포함</li>
+</ul>
+<h3>단정하지 않은 것</h3>
+<ul class="tight">
+<li><b>구독 과금</b>: §3의 세 출처 충돌. 날짜와 함께 병기했으며 결론을 내리지 않았습니다.</li>
+<li><b>Pi 모델 수(1,290)</b>: 소스 트리에서 검증 불가(gitignore, 빌드 시 hydrate). npm tarball manifest(2026-08-28) 기준이며 평일 cron으로 계속 변합니다. 프로바이더 40개는 소스 검증됨.</li>
+<li><b>SDK 런타임 툴 32개의 정확한 목록</b>: 프로브 결과에 개수와 8개 샘플만 있음. 비교 시 재프로브 권장.</li>
+<li><b>Pi 하네스 v4 스택</b>: 스펙만 있고 <code>HarnessNotImplemented</code>. 로드맵으로만 취급.</li>
+<li><b>Pi 패키지 갤러리 규모</b>: 출처 간 2,143 / "5,000+" / 8,966(npm fuzzy) 불일치.</li>
+<li><b>OMP(Oh My Pi) 포크</b>의 "31 툴, Rust 코어" 주장: 저장소를 찾지 못해 미검증.</li>
+<li><b>SDK 훅 OPEN 8개</b>: 발화 조건을 만들지 않은 미측정이지 dead가 아님.</li>
+<li><b>이 저장소 문서 간 모순</b>: <code>since-february.md</code>는 Cron/Push를 "provided"(선언 표면)로, <code>coverage.md</code>는 "headless-dead"(프로브)로 채점. 프레임워크 비교에는 프로브 판정을 썼습니다.</li>
+</ul>
+<h3>버전 핀</h3>
+<p class="small">Pi: <code>earendil-works/pi@69afa10</code> (2026-09-02), 패키지 0.84.4. Agent SDK: 설치본 <code>@anthropic-ai/claude-agent-sdk@0.3.251</code>(Claude Code 2.1.251 번들, 2026-08-28 빌드), npm 최신 0.3.259(2026-09-02)에서 추가된 <code>permissionPrompts:'none'</code>, <code>ModelUsage.thinkingTokens</code>는 반영하지 않음. Python SDK 0.2.152.</p>
+</main>
+
+<script>
+  const links=[...document.querySelectorAll('#sidebar a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.classList.remove('active'));const i=secs.indexOf(e.target);if(i>=0)links[i].classList.add('active');}})},{rootMargin:'-20% 0px -70% 0px'});
+  secs.forEach(s=>s&&io.observe(s));
+</script>
+</body>
+</html>
