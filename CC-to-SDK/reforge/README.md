@@ -3765,6 +3765,45 @@ been searching 1,800; and `bge`'s `effectful-port` label is kept with its descri
 "unowned pure chain, forwarded", because re-cutting it as `pure-helper` would claim an owned copy
 this module does not have.
 
+### Two gate rounds, and what each one taught
+
+The child's first full gate run failed on five phases, and all five were one field. The seven red
+corpus scenarios were the compaction family, plan mode and the setters — the scenarios most likely,
+on any reasonable reading, to depend on accumulated config state, which is the risk the cut's item 7
+names. They did not. Every difference in all seven was
+`msg[0][4].records[37..41].slug: "curious-yawning-pebble" != "sharded-sleeping-hippo"`.
+
+The record envelope's `slug` is a per-run session name. Dumped from a real compacted transcript:
+records 0–36 carry no `slug` at all, and every record after the `compact_boundary` carries a
+three-word name minted for that run. This wave had put a VALUE GUARD on the `slug` rule two commits
+earlier, on the reading that the census's 124 unclassified values were artifact names
+(`artifactRead:{slug,ver}` — an artifact slug is a NAME, which is behaviour). That overload is real;
+it was not the one those 124 values were. The guard admitted only project keys, the session name went
+unmapped, and one field reddened seven scenarios, the coverage attestation, the eager-flush control,
+and two dark liveness rows.
+
+Three lessons, in descending generality:
+
+- **A dark row's verdict reads the whole SCENARIO.** `hooks-precompact` was red on the state surface
+  alone, and both dark rows covering it reported `NO LONGER DARK — the corpus now reaches <row>`, a
+  reachability claim resting on a verdict that is red if any of four surfaces differed. Every other
+  covering scenario stayed green in both rows, which is exactly the shape that should make the claim
+  suspect. Logged in `docs/tech-debt-tracker.md` rather than fixed here: when the faithful build is
+  itself red on a `darkOver` scenario, the dark verdict should be INCONCLUSIVE.
+- **A number that reads as a race can be a normalization gap.** "The snapshot is still unstable WITH
+  the eager drain" read as the flush decision having exhausted all three of its branches. It had not:
+  the record COUNT was already stable at 49 in that arm, and only `slug` moved. The measurement to
+  look at was the one the arm was stable on, not the one it was not.
+- **A population census over a SAMPLE is not a population.** The second gate run failed on one phase,
+  the config-dir inventory, because `shell-snapshots/snapshot-zsh-<ms>-<rand>.sh` is written on some
+  runs and not others; regenerating the fixture from a single fresh census had dropped it, and the
+  next run reddened on a file that is not new. Generation unions with the committed fixture now and
+  takes the larger floor, so the declared set only grows while `--check` still refuses anything
+  undeclared. The pattern is declared and NOT admitted — a shell snapshot is the Bash executor's
+  artifact and belongs to C13d's root if it is ever graded — and all nine excluded families gained
+  their reason next to the pattern, because a row that says only `not-admitted` records a decision
+  without recording who made it.
+
 ### Seam notes for C10.7 (Stages 2–3), measured rather than recalled
 
 **`HookSourcePort`'s consumers are three, and the third is not an executor.** `Wie` has four call
