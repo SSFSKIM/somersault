@@ -554,7 +554,15 @@ for (const [label, argv] of [
   // it. A determinism knob whose absence changes nothing is grading nothing, and
   // a pin that made the 100 ms drain deterministic on its own should retire the
   // knob rather than keep it out of habit.
-  ["the eager-flush knob still buys what it claims", ["w9/measure.ts", "--phase", "flush", "--runs", "3"]],
+  //
+  // EIGHT TAKES PER ARM, and the number is a probability rather than a taste.
+  // The control's evidence is that the unforced arm DISAGREES WITH ITSELF, and
+  // that arm lands on one of two outcomes per take (49 records when the
+  // transcript compactor's rewrite wins the race against the drain, 71 when it
+  // does not) at roughly even odds. Three takes would report a false failure
+  // about a quarter of the time — a flaky gate phase teaches people to ignore
+  // red, which costs more than the ninety seconds eight takes cost.
+  ["the eager-flush knob still buys what it claims", ["w9/measure.ts", "--phase", "flush", "--runs", "8"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));
