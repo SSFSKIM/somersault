@@ -4586,9 +4586,12 @@ agent's output directory, which legitimately outlives its turn — has no such k
 
 `resetSandbox()` wiped `sandbox/` and `config/plans`. Its own comment already carried the principle —
 "engine state a run creates has to be reset with the sandbox, wherever the engine happens to keep it"
-— and `plans/` was the only place anyone had checked. The rest had been accumulating since W0: 1,087
-task directories, 3,939 `session-env/` directories, 412 transcripts, 247 shell snapshots, and a
-`skillUsage` counter that had reached **299** because nothing ever reset it.
+— and `plans/` was the only place anyone had checked. The rest had been accumulating since W0, and
+the numbers had moved since the cut was written: measured at the start of this child, **1,497 task
+directories** (the cut says 1,087), **6,146 `session-env/` entries** (the cut says 3,939), 247 shell
+snapshots, and a `skillUsage` counter at **299** (the W11 scout measured 155 a day earlier). Nothing
+had ever reset any of it, which is why every one of those numbers is larger than the last person to
+look.
 
 **`skillUsage` is reset, not scrubbed**, and the reset is the wipe rather than a special case: a
 differ scrub would hide a real counter defect on the one surface that can see it. The cost is stated
@@ -4611,9 +4614,12 @@ writes.
 
 ### What the new surface found on the identical-code pair
 
-Five corpus scenarios went red the first time the config root was graded, and **none of them was a
-cassette that depended on accumulated config state** — the risk item 7 flagged. All five were
-calibration:
+Five corpus scenarios went red the first time the config root was graded — `parallel-tools`,
+`compact-continue`, `auto-compact-threshold`, `hooks-session-end` and `hooks-slash` — and **none of
+them was a cassette that depended on accumulated config state**, which is the risk the cut's item 7
+flagged. Every one was calibration. Three of the five rows below come from those reds; the other two
+come from the measurements above, and they are here together because they are one list of things the
+harness had to learn before the surface meant anything:
 
 | finding | fix |
 |---|---|
