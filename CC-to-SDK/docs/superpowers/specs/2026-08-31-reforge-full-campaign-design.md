@@ -1467,6 +1467,10 @@ Pending — written at finish.
     one**: L17 is not refuted, its hang is UNOBSERVABLE by any headless stimulus this wave could
     apply. Reworded in `strangle/manifest.ts` (both `darkReason`s), `w13/signals.ts`'s header, the
     `reforge/README.md` W13b section, this document's C16b bullet (3) and its C16b tracking row.
+  - **THE `darkOver` POPULATION IS NOW ALL THREE PATHS.** `sigint-mid-turn` joins the two on both dark
+    chunk exports. The dominance argument that justified leaving it out was sound and is now moot: the
+    reviewer measured both twins inert on that path, standard and hooked. The tech-debt entry that
+    logged the gap is REMOVED rather than marked paid, because the debt was the omission itself.
 
 - 2026-09-03 (**C16b / W13b — the process lifecycle, LANDED**): the first of the seven W13 children,
   cut to land before the loop it belongs to because the hook-executor children reciprocally need what

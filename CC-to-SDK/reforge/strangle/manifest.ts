@@ -5652,7 +5652,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: latchBinding("commitShutdown", /function ([A-Za-z_$][\w$]*)\(\)\{[A-Za-z_$][\w$]*\.committed=!0\}/, 1),
         declare: (name, owned) => `function ${name}(){${owned}()}`,
         coverage: [],
-        darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+        darkOver: ["sigterm-mid-turn", "sighup-mid-turn", "sigint-mid-turn"],
         darkReason:
           "the latch commits only as the process is going down, and by then nothing observes it. THE ADJUDICATION IS THE MEASUREMENT, " +
           "not a mechanism story: the wave built a signal lane for exactly this cell (scout L17) and drove ALL THREE headless signal " +
@@ -5682,7 +5682,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: latchBinding("hang", /var ([A-Za-z_$][\w$]*)=new Promise\(\(\)=>\{\}\);function ([A-Za-z_$][\w$]*)\(\)\{return \1\}/, 2),
         declare: (name, owned) => `function ${name}(){return ${owned}()}`,
         coverage: [],
-        darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
+        darkOver: ["sigterm-mid-turn", "sighup-mid-turn", "sigint-mid-turn"],
         darkReason:
           "dark for the commit's reason and downstream of it: the hang is only ever awaited behind `xo() && !aborted`, so a " +
           "commit nothing can observe makes a hang nothing can reach. Measured the same way — a twin that RESOLVES instead of never " +
