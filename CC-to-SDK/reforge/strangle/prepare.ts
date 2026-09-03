@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { BUN, BUNDLE_MODULES, BUNFS, ENGINE_VERSION, PINNED_BUN, REAL_BINARY } from "../src/pin.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { engineEnv } from "../src/env.js";
-import { assertBunPin, embeddedBunVersion } from "./toolchain.js";
+import { assertBunPin, assertEnginePin, embeddedBunVersion } from "./toolchain.js";
 
 export const BUILD_DIR = join(REFORGE_ROOT, "build");
 export const GRAPH_DIR = join(BUILD_DIR, "graph");
@@ -78,7 +78,16 @@ export function bootCheck(cmd: string[], label: string): void {
 }
 
 export function linkRealBinary(): void {
-  if (!existsSync(REAL_BINARY)) throw new Error(`pinned binary missing: ${REAL_BINARY}`);
+  // §3.5 — the ORACLE pin is its bytes. `REAL_BINARY` is now reforge's own copy
+  // under `toolchain/` rather than the auto-updater's cache, so the failure this
+  // used to produce (a dangling symlink after an update pruned the version) is
+  // gone; what replaces it is a hash check, because a copy can be stale in ways
+  // a missing file cannot.
+  try {
+    assertEnginePin(REAL_BINARY);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}\n  Provision the pinned oracle: npx tsx strangle/toolchain.ts (it never writes to ~/.local/share/claude).`);
+  }
   mkdirSync(BUILD_DIR, { recursive: true });
   if (existsSync(REAL_LINK) || lstatSync(REAL_LINK, { throwIfNoEntry: false })) unlinkSync(REAL_LINK);
   symlinkSync(REAL_BINARY, REAL_LINK);

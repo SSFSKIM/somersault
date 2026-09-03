@@ -1505,6 +1505,21 @@ Pending — written at finish.
     dynamic `import()` unforwardable, not unownable. A **lazy-import capture kind rendered on the
     GRAPH side** (the graph passes a thunk that performs the `import()` itself, leaving the specifier
     where it is already legal) would lift it. Reworded in the reach table and both record sites.
+  - **THE ENGINE PIN NOW LIVES WHERE THE AUTO-UPDATER CANNOT REACH IT** (§3.5, extended). C16b's own
+    environment note recorded that Claude Code's updater pruned `~/.local/share/claude/versions/2.1.251`
+    mid-child and left `build/real-binary` dangling; recording a hazard is not removing it. The bun
+    pin already had the right shape — provision into `reforge/toolchain/` from an upstream URL, verify
+    a pinned sha256, refuse otherwise — and the oracle now mirrors it: `toolchain/claude-<version>`,
+    pinned by `PINNED_ENGINE_SHA256` (`625869b0…`), with `REAL_BINARY` pointing at the toolchain copy
+    and `strangle/prepare.ts` hashing before it symlinks. The provisioner prefers a copy out of the
+    updater's cache when that still hashes to the pin (so the move costs no download on a machine that
+    already has the version) and otherwise downloads from Anthropic's release endpoint, cross-checking
+    the published `darwin-arm64` manifest checksum against the constant — a disagreement is a refusal,
+    because exactly one of the two is then wrong. The §3.5 phase now asserts the oracle bytes as it
+    does bun's, with the wrong-checksum negative control, and `engine-ts/check-reachability.ts` names
+    `~/.local/share/claude/versions` as a forbidden root EXPLICITLY rather than as a side effect of
+    where the pin happened to live. Nothing under `~/.local/share/claude` is written, and the
+    operator's `claude` symlink is not moved.
 
 - 2026-09-03 (**C16b / W13b — the process lifecycle, LANDED**): the first of the seven W13 children,
   cut to land before the loop it belongs to because the hook-executor children reciprocally need what

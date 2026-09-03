@@ -493,10 +493,10 @@ if (!buildAndBoot([])) {
 // Each spawns a real engine or hashes the 60 MB runtime, so neither belongs in
 // the build-free determinism block; both are cheap enough (seconds) to be
 // phases rather than a separate recipe nobody remembers to run.
-console.log("\n━━━ auxiliary: credential never reaches the engine; the runtime pin is the bytes; the ledger's captures are in the committed basis ━━━");
+console.log("\n━━━ auxiliary: credential never reaches the engine; the oracle and runtime pins are the bytes; the ledger's captures are in the committed basis ━━━");
 for (const [label, argv] of [
   ["credential leak (end-to-end, X6)", ["src/credential-leak.test.ts"]],
-  ["runtime pin is the bytes (§3.5)", ["strangle/toolchain.test.ts"]],
+  ["oracle + runtime pins are the bytes (§3.5)", ["strangle/toolchain.test.ts"]],
   // THE LEDGER'S CAPTURES, RE-DERIVED FROM THE BUILD THAT JUST RAN. `ledger/check.ts`
   // in the determinism block proves each recorded span hashes to what it
   // recorded; it cannot prove the record is the one THIS build emits, because it

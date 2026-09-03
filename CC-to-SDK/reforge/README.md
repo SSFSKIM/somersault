@@ -54,11 +54,11 @@ graph boot-checks it.
 
 ## Layout
 
-- `src/pin.ts` — the pinned version + derived paths, **and the pinned bun** (§3.5). Bumping the pin is: extract the new version, edit one constant, re-provision the runtime, re-prepare, regenerate the gate-defaults fixture, re-record cassettes, re-gate.
+- `src/pin.ts` — the pinned version + derived paths, **and both §3.5 byte pins**: `PINNED_ENGINE_SHA256` (the oracle binary) and `PINNED_BUN_SHA256` (the runtime). Bumping the pin is: extract the new version, edit two constants, re-provision both, re-prepare, regenerate the gate-defaults fixture, re-record cassettes, re-gate.
 - `src/env.ts` — **the allowlisted child environment and its record/replay credential schemas** (X6). Every engine spawn goes through it; nothing is inherited.
 - `src/canonical.ts` — **the normalization spec**, shared by the differ and the replay proxy's match hash (§3.4). Grow it only with justification, and only with a paired regression test.
 - `src/leakcheck.ts` — the gate-cache leak check run after every record and replay.
-- `strangle/toolchain.ts` — re-derives the binary's embedded bun version and installs it into `toolchain/` (gitignored).
+- `strangle/toolchain.ts` — provisions BOTH pinned artifacts into `toolchain/` (gitignored) and verifies each against its pinned sha256: the **oracle binary** `claude-<version>` (from Anthropic's release endpoint, cross-checked against the published `darwin-arm64` manifest checksum — or copied out of the auto-updater's cache when that still holds bytes hashing to the pin) and the **runtime** `bun` (whose version it re-derives from the oracle's own strings). It never writes to `~/.bun` or `~/.local/share/claude`.
 - `research/tools/extract-gate-defaults.ts` + `research/fixtures/` — the `ENGINE_VERSION`-keyed feature-gate defaults table and the per-gate env-override inventory.
 - `strangle/prepare.ts` — materializes + boot-checks the engine set (`build/graph`, `build/real-binary`).
 - `strangle/manifest.ts` — the splice manifest, in its own module so reading it never runs a build. Also the schema: target shapes + the capture taxonomy (below).
@@ -75,7 +75,7 @@ graph boot-checks it.
 
 ```sh
 cd reforge && npm install --omit=optional
-npx tsx strangle/toolchain.ts     # install the pinned bun into toolchain/ (once per pin)
+npx tsx strangle/toolchain.ts     # provision the pinned ORACLE + bun into toolchain/ (once per pin)
 npx tsx strangle/prepare.ts       # materialize + boot-check the engine set (required first)
 set -a; . ../.env; set +a         # RECORDING only — replays need no credential at all
 npx tsx m0/02-handshake.ts        # live: one turn per engine
@@ -1086,7 +1086,7 @@ lines anywhere in the run**, with the strangled build graded under the fatal
 rule.
 
 ```sh
-npx tsx strangle/toolchain.ts --check        # embedded vs external runtime
+npx tsx strangle/toolchain.ts --check        # both pins, by hash: oracle bytes + embedded vs external runtime
 npx tsx src/env.test.ts                      # X6 credential/allowlist matrix
 npx tsx src/canonical.test.ts                # per-scrub regression + strictness
 npx tsx research/tools/extract-gate-defaults.ts --check
@@ -1102,7 +1102,7 @@ combined, against a gate that builds seven times. They still run standalone:
 
 ```sh
 npx tsx src/credential-leak.test.ts          # X6 end-to-end, fake credential + stub upstream
-npx tsx strangle/toolchain.test.ts           # the runtime pin is the bytes
+npx tsx strangle/toolchain.test.ts           # both pins are the bytes, with the wrong-checksum controls
 ```
 
 ## W1 — the tool-result formatter family + the standalone-complete retrofit (2026-09-01)
@@ -4475,3 +4475,16 @@ pointing at 2.1.259 and was not touched. **This is a standing hazard for a proje
 old version of a self-updating tool**, and the repair is worth writing down: the manifest at
 `downloads.claude.ai/claude-code-releases/<version>/manifest.json` still serves the pin, so
 re-materialising is a download and a checksum rather than an archaeology problem.
+
+**REMOVED, not merely recorded (2026-09-03, the boundary review's orchestrator item).** Writing a
+hazard down is not the same as taking it away, and the pin was still living in the auto-updater's
+directory. It now lives in `reforge/toolchain/claude-<version>` — the same shape §3.5 already used
+for bun: provisioned from an upstream URL, identified by a pinned sha256 (`PINNED_ENGINE_SHA256` in
+`src/pin.ts`, `625869b0…`), refused on any other bytes. The provisioner prefers a copy out of the
+updater's cache when that still holds bytes hashing to the pin, so the move costs no download on a
+machine that already has the version, and falls back to the release endpoint with the published
+`darwin-arm64` checksum cross-checked against the constant — a disagreement between the two is a
+refusal, because exactly one of them is then wrong. `strangle/prepare.ts` hashes before it symlinks,
+`engine-ts/check-reachability.ts` now names `~/.local/share/claude/versions` as a forbidden root
+EXPLICITLY rather than as a side effect of where the pin happened to live, and nothing under
+`~/.local/share/claude` — including the operator's own `claude` symlink — is written or moved.

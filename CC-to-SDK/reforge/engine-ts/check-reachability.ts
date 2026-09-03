@@ -46,7 +46,7 @@ import { createRequire, isBuiltin } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { BUNDLE_MODULES, BUNFS, REAL_BINARY } from "../src/pin.js";
+import { BUNDLE_MODULES, BUNFS, CLAUDE_INSTALL_DIR, REAL_BINARY } from "../src/pin.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REFORGE_ROOT = dirname(HERE);
@@ -56,13 +56,19 @@ export const DEFAULT_ENTRY = join(HERE, "main.ts");
  * Roots no engine-ts file may reach into, derived from the pin so a bump
  * follows automatically:
  *  - the whole extraction bundle tree (…/claude-code-bundle)
- *  - the installed-versions dir holding the pinned real binary
+ *  - reforge/toolchain, which now holds the pinned oracle binary AND the pinned
+ *    runtime (`dirname(REAL_BINARY)` since §3.5's oracle pin)
+ *  - Claude Code's own installed-versions dir. Nothing in reforge points there
+ *    any more, which is exactly why it is named EXPLICITLY: a forbidden root
+ *    that was only forbidden as a side effect of where the pin happened to live
+ *    would have quietly stopped being forbidden when the pin moved.
  *  - reforge/build (graph, strangled, real-binary symlink) — all generated
  *    artifacts of the extracted substrate
  */
 export const FORBIDDEN_ROOTS: string[] = [
   dirname(dirname(BUNDLE_MODULES)),
   dirname(REAL_BINARY),
+  CLAUDE_INSTALL_DIR,
   join(REFORGE_ROOT, "build"),
 ];
 
