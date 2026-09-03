@@ -4345,18 +4345,35 @@ race.
 
 ### What the corpus can and cannot see, measured rather than reasoned
 
-The scout's L17 reads "`xo()` true → `await pm()`". **On the SIGTERM path that never happens**, and
-finding out took building the lane for it:
+The scout's L17 reads "`xo()` true → `await pm()`". Finding out what a headless engine can see of it
+took building the lane, and the answer is a **measurement**, stated as one:
 
-Every consultation of the hang in the reachable set is written `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own SIGTERM handler runs `commitShutdown(), killShells(), runController.abort(), requestShutdown(143)` — **the abort short-circuits the very guard the commit exists to open.** So the latch contributes nothing a scenario can see on that path. SIGHUP is the path where nothing aborts, and it does not help either: the coordinator force-exits before any in-flight continuation resumes, and `TWn.shutdown`'s own shell kill has already taken the tool that continuation was waiting on.
+> **No in-flight continuation resumes inside the shutdown window on any of the three paths.** The
+> window is **14–41 ms** hookless, from signal delivery to process exit. It is not a race the harness
+> lost: the result survives delivering the signal after the `tool_use` frame with the tool still
+> running, a `SessionEnd` hook that sleeps two seconds and widens the window to **~1.64 s**, and both
+> perturbations at once. Same four frames, same exit status, one API request, in every arm.
 
-Both twins were built and driven over both paths on both engines. Neither moved: same frames, same
-exit status, same one request. So `commitShutdown` and `hang` are adjudicated **corpus-DARK with a
-measured reason and a re-measured population** (`darkOver: ["sigterm-mid-turn", "sighup-mid-turn"]`,
-which the gate replays every run and fails loudly as "no longer dark" the day upstream's ordering
-changes). What grades them instead is stronger than a differential would be, because the domain is
-finite: the hooks-parity oracle runs the owned module against upstream's own chunk bytes over the
-whole partition.
+Both twins — a commit that no-ops and a hang that RESOLVES instead of never settling — were built and
+driven over all three paths on both engines. Nothing moved. So `commitShutdown` and `hang` are
+adjudicated **corpus-DARK with a measured reason and a re-measured population** (`darkOver:
+["sigterm-mid-turn", "sighup-mid-turn", "sigint-mid-turn"]`, which the gate replays every run and
+fails loudly as "no longer dark" the day upstream's behaviour changes). What grades them instead is
+stronger than a differential would be, because the domain is finite: the hooks-parity oracle runs the
+owned module against upstream's own chunk bytes over the whole partition.
+
+**What this wave first said, and retracted.** The original wording gave a MECHANISM: that every hang
+consultation reads `xo() && !aborted` and upstream's SIGTERM handler aborts before it exits, so the
+abort short-circuits the guard the commit exists to open. The bundle does not support that for
+SIGTERM. `br` aborts `Rn = gr(500)` — the **dispatcher's** run controller. The 25 hang guards read
+`xo() && !<ctx>.abortController.signal.aborted`, and that controller is the **query** controller
+`Qe = gr()`, which `ky` passes into `submitMessage` as `abortController: Qe`. `gr` is
+`function gr(e=c){let r=new AbortController;return setMaxListeners(e,r.signal),r}` — it constructs an
+independent controller and its argument is a listener cap, not a parent signal — and none of the 30
+`Rn` references in the dispatcher chunk links the two. The abort claim is **true of SIGINT and of
+nothing else**: `Hn` runs `if(Qe&&!Qe.signal.aborted)Qe.abort(Su("user-cancel"));Rn.abort(),wU(),On(0)`.
+So the wave does not claim "the L17 premise is wrong for SIGTERM"; it claims **L17's hang is
+unobservable by any headless stimulus this wave could apply** — weaker, and what was actually measured.
 
 ### The handler pair: one of six fits a template, and the refusals are mechanical
 

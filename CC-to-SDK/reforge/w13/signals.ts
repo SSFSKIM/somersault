@@ -27,35 +27,45 @@
 // headless engine answers SIGTERM from `ky` and SIGHUP from the coordinator, and
 // the two do materially different things:
 //
-//   SIGTERM  `br` in `ky`:  commit the latch, ABORT the run controller, exit 143
-//   SIGINT   `Hn` in `ky`:  cancel the in-flight query, abort, exit 0 — OWNED by
-//                           this wave (`modules/ky-sigint-handler`), and the one
-//                           handler of the graph's six that fits a target shape
+//   SIGTERM  `br` in `ky`:  commit the latch, abort `Rn`, exit 143
+//   SIGINT   `Hn` in `ky`:  abort the QUERY controller `Qe`, abort `Rn`, exit 0 —
+//                           OWNED by this wave (`modules/ky-sigint-handler`), and
+//                           the one handler of six that fits a target shape
 //   SIGHUP   the coordinator: shut down and exit 129 — and never abort anything
 //
-// That difference decides what is observable, and it is the correction this
-// child's premise needed. The scout's cell L17 reads "shutdown during a turn
-// (`isShuttingDown()` true → `await hang()`)", but on the SIGTERM path the hang
-// NEVER HAPPENS: every consultation of it in the reachable set is written
-// `if (isShuttingDown() && !signal.aborted) await hang()`, and upstream's own
-// handler aborts before it exits. The abort short-circuits the guard, so the
-// latch contributes nothing a scenario can see. Sabotaging the commit and the
-// hang under SIGTERM changes nothing — measured, both twins, both engines.
+// ## WHAT THE DARKNESS IS, AND WHAT IT IS NOT
 //
-// SIGHUP LOOKED LIKE THE PATH WHERE THE LATCH WOULD BE LOAD-BEARING, AND IT IS
-// NOT. Nothing aborts there, so the guard the commit opens is not
-// short-circuited, and the hypothesis this driver was extended to test was that
-// the in-flight tool would finish inside the coordinator's own shutdown window
-// and its continuation would reach `await hang()`. It does not. The coordinator
-// force-exits first, and `TWn.shutdown` kills the live shells on its way out, so
-// the continuation the hang would have stopped never resumes to be stopped.
-// Measured exactly as the SIGTERM path was: both twins, both paths, both
-// engines, nothing moved.
+// The finding is a MEASUREMENT, and it is stated here as one because an earlier
+// draft of this header stated a mechanism instead and the mechanism was wrong.
 //
-// So the commit and the hang are corpus-dark on EVERY path, which is this
-// wave's real finding about L17. The three plans still earn their place: they
-// are what MEASURED it, they are the population the gate re-measures the
-// darkness over every run, and they cover the SIGINT handler this wave owns.
+// THE MEASUREMENT: no in-flight continuation resumes inside the shutdown window
+// on any of the three paths. The window is 14-41 ms hookless (signal delivery to
+// process exit), and the result is not a race the harness lost — it survives
+// three perturbations: delivering the signal after the `tool_use` frame with the
+// tool still running; a `SessionEnd` hook that sleeps two seconds, widening the
+// window to ~1.6 s; and both at once. Nothing moved in any arm: same four frames,
+// same exit status, one API request. Both twins (a commit that no-ops, a hang
+// that RESOLVES) were built for each, on both engines.
+//
+// WHAT IS NOT CLAIMED, retracted: that upstream's SIGTERM handler aborts the
+// controller the hang guard reads, short-circuiting the guard the commit exists
+// to open. It does not. `br` aborts `Rn = gr(500)`, the DISPATCHER's run
+// controller. The 25 hang guards read `xo() && !<ctx>.abortController.signal
+// .aborted`, and that controller is `Qe = gr()`, which `ky` passes into
+// `submitMessage` as `abortController: Qe`. `gr` is
+// `function gr(e=c){let r=new AbortController;return setMaxListeners(e,r.signal),r}`
+// — an independent controller whose argument is a listener cap, not a parent
+// signal — and none of the 30 `Rn` references in the dispatcher chunk links the
+// two. The ONE handler that does abort `Qe` is SIGINT's `Hn`
+// (`if(Qe&&!Qe.signal.aborted)Qe.abort(Su("user-cancel"));Rn.abort(),wU(),On(0)`),
+// so the abort argument is true of SIGINT and of nothing else.
+//
+// The scout's cell L17 therefore stands as written and is simply UNREACHABLE:
+// "shutdown during a turn (`xo()` true → `await pm()`)" is not refuted, its hang
+// is unobservable by any headless stimulus this wave could apply. The three plans
+// earn their place regardless: they are what measured it, they are the population
+// the gate re-measures the darkness over every run, and they cover the SIGINT
+// handler this wave owns.
 //
 // The tool call below sleeps for about a second, and the surviving reason is not
 // the hypothesis that chose it: a second is long enough that the turn is

@@ -5654,16 +5654,20 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         coverage: [],
         darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
         darkReason:
-          "the latch commits only as the process is going down, and by then nothing observes it. Measured, not reasoned: the wave built " +
-          "a signal lane for exactly this cell (scout L17) and drove the two paths that BRACKET the question — SIGTERM, where the " +
-          "dispatcher's own handler commits the latch directly (one of its three call sites bundle-wide) and then aborts, and SIGHUP, " +
-          "where the coordinator commits it through `shutdown` with nothing aborting at all — with this twin built, on both engines. " +
-          "(The third handler, SIGINT, is dominated by that pair: it reaches SIGHUP's commit site and adds SIGTERM's abort, so it can " +
-          "only be less observable than either. Widening this population to it is logged in docs/tech-debt-tracker.md.) Neither moved: " +
-          "same frames, same exit status, same one API request. The reason is upstream's ordering. On the SIGTERM path the handler ABORTS " +
-          "the run controller in the same statement list, and every consultation of the latch in the reachable set reads " +
-          "`isShuttingDown() && !signal.aborted`, so the abort short-circuits the guard the commit exists to open. On the SIGHUP path " +
-          "nothing aborts, but the coordinator force-exits before any in-flight continuation resumes, so the guard is never re-reached. " +
+          "the latch commits only as the process is going down, and by then nothing observes it. THE ADJUDICATION IS THE MEASUREMENT, " +
+          "not a mechanism story: the wave built a signal lane for exactly this cell (scout L17) and drove ALL THREE headless signal " +
+          "paths — SIGTERM, where the dispatcher's own handler commits the latch directly (one of its three call sites bundle-wide); " +
+          "SIGHUP, where the coordinator commits it through `shutdown`; and SIGINT, which reaches SIGHUP's commit site — with this twin " +
+          "built, on both engines. Nothing moved on any of them: same frames, same exit status, same one API request. What was measured, " +
+          "stated as the measurement: NO IN-FLIGHT CONTINUATION RESUMES INSIDE THE SHUTDOWN WINDOW ON ANY OF THE THREE PATHS. That window " +
+          "is 14-41 ms hookless (signal to exit), and the darkness is not a race the harness lost — it survived widening the window to " +
+          "~1.6 s with a `SessionEnd` hook that sleeps, delivering the signal after the `tool_use` frame with the tool still running, and " +
+          "both perturbations together. NOT CLAIMED, and retracted from an earlier draft of this row: that SIGTERM's abort short-circuits " +
+          "the guard. It does not. `br` aborts `Rn = gr(500)`, the DISPATCHER's run controller, while the guards read " +
+          "`xo() && !<ctx>.abortController.signal.aborted` over the QUERY controller `Qe = gr()` that `ky` passes as `abortController: Qe`; " +
+          "`gr` builds an independent `AbortController` (its argument is a `setMaxListeners` count, not a parent signal) and none of the " +
+          "30 `Rn` references links the two. Only SIGINT's `Hn` aborts `Qe`. So L17's premise is not refuted — its hang is UNOBSERVABLE by " +
+          "any headless stimulus this wave could apply, which is a weaker and truer claim. " +
           "Graded instead by `strangle/hooks-parity.test.ts`, which runs this owned module against upstream's own chunk bytes over the " +
           "whole partition — a three-function module whose domain is enumerable, which makes the oracle stronger than a differential.",
       },
@@ -5680,13 +5684,14 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         coverage: [],
         darkOver: ["sigterm-mid-turn", "sighup-mid-turn"],
         darkReason:
-          "dark for the commit's reason and downstream of it: the hang is only ever awaited behind `isShuttingDown() && !aborted`, so a " +
+          "dark for the commit's reason and downstream of it: the hang is only ever awaited behind `xo() && !aborted`, so a " +
           "commit nothing can observe makes a hang nothing can reach. Measured the same way — a twin that RESOLVES instead of never " +
-          "settling, so any continuation upstream meant to abandon would run and ask for a second turn, driven over both bracketing " +
-          "signal paths on both engines. Neither moved, and the request count stayed at one. The reason the SIGHUP path does not reach " +
-          "it either, which was this wave's own working hypothesis until it was driven: the coordinator force-exits before any in-flight " +
-          "continuation resumes, and `TWn.shutdown` kills the live shells on its way out, so the continuation the hang would have " +
-          "stopped never resumes to be stopped. Graded instead by `strangle/hooks-parity.test.ts`, which " +
+          "settling, so any continuation upstream meant to abandon would run and ask for a second turn, driven over all three headless " +
+          "signal paths on both engines. Nothing moved, and the request count stayed at one. Stated as the measurement rather than as a " +
+          "mechanism: NO IN-FLIGHT CONTINUATION RESUMES INSIDE THE SHUTDOWN WINDOW ON ANY OF THE THREE PATHS — 14-41 ms hookless, and " +
+          "still inert when the window is widened to ~1.6 s by a sleeping `SessionEnd` hook and the signal lands after the `tool_use` " +
+          "frame with the tool still running. A resolving hang has nothing to release because nothing is waiting on it. " +
+          "Graded instead by `strangle/hooks-parity.test.ts`, which " +
           "drives upstream's own shutdown wrapper with this module bound in and requires the non-settling verdict — the same bounded " +
           "drive that suite already uses for the six events upstream hangs.",
       },
