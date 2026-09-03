@@ -17,9 +17,11 @@
 // TWO ARTIFACTS, because neither alone carries the population. The SDK-side ids
 // (`session_id`, `uuid`, `agentId`, `task_id`, the compact_boundary's four)
 // appear in `transcripts/`; the STORED envelope's ids (`parentUuid`,
-// `logicalParentUuid`, `leafUuid`, `promptId`, `sessionId`, and the project-key
-// slug, which is not a record field at all) appear only in the session files the
-// reset deletes, so `src/observed.ts` tallies them on the way past.
+// `logicalParentUuid`, `leafUuid`, `promptId`, `sessionId` and the envelope's
+// own `slug` — a per-run session name the engine starts writing at the compact
+// boundary — appear only in the session files the reset deletes, so
+// `src/observed.ts` tallies them on the way past, alongside the PROJECT KEY it
+// reads off the path under the same property name.
 //
 // WHAT `--check` REFUSES, and what it tolerates. The KEY SET is exact against
 // `src/differ.ts` in both directions: a rule added to the map without a fixture
@@ -133,7 +135,10 @@ const fx: Fixture = {
   generatedBy: "research/tools/extract-run-id-shapes.ts",
   note:
     "The differ's run-id map, keyed on property name, with the lexeme each key is observed to carry. " +
-    "`collisions` is the fact this fixture exists to state: those keys are indistinguishable by value, so a shape-keyed rule would bind them wrongly.",
+    "`collisions` is the fact this fixture exists to state: those keys are indistinguishable by value, so a shape-keyed rule would bind them wrongly. " +
+    "`slug` is the converse case and the one that cost this wave a gate run: ONE property name over two run-scoped values, the `session-slug` a per-run " +
+    "name the engine starts writing into every stored record at the compact boundary and the `path-slug` the project key the state surface lifts off the " +
+    "entry path. Both are mapped; a value guard that admitted only the second left the first diffing on every scenario that compacts.",
   counts: {
     keys: rows.length,
     arrayKeys: rows.filter((r) => r.arrayValued).length,
@@ -176,8 +181,10 @@ if (!check) {
     for (const l of r.lexemes) {
       // An UNDECLARED class is drift, including `other`: a value under a mapped
       // key that falls in no known lexeme is the map binding something nobody
-      // has looked at. A DECLARED `other` is a recorded fact — `slug` has one,
-      // and the guard in src/differ.ts is what makes it safe.
+      // has looked at. A DECLARED `other` is a recorded fact, kept because a
+      // class this table cannot name yet is better declared than silently
+      // mapped — `slug` carried one until the values turned out to be per-run
+      // session names and gained their own class.
       if (!d.lexemes.some((x) => x.class === l.class))
         problems.push(
           l.class === "other"

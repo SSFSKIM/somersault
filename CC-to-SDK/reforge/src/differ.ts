@@ -128,7 +128,7 @@ export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
   "hook_id",
   "new_conversation_id",
   // C12a/W9a's six, and the reason they are KEYS rather than shapes. The stored
-  // transcript's envelope carries five ids and a project-key slug, and two of
+  // transcript's envelope carries five ids and a `slug`, and two of
   // the lexemes are AMBIGUOUS BY VALUE: an agent id and a task id are both
   // `a` + 16 hex, and `promptId`, `leafUuid`, `parentUuid` and `uuid` are all
   // RFC-4122. A shape-keyed rule cannot tell those apart, so it would either map
@@ -152,16 +152,21 @@ export const RUN_ID_KEYS: ReadonlySet<string> = new Set([
   //  - `agentId`: already mapped from the transcript surface; named again here
   //    because the STORED envelope is where the route-by-agent policy writes it.
   //  - `sessionId`: the stored spelling of `session_id`, which is already mapped.
-  //  - `slug`: the project key, which is the harness's own absolute cwd with its
-  //    separators flattened. It is not minted by the engine at all — it is
-  //    mapped because it is a fact about THIS MACHINE that would otherwise put an
-  //    operator's home directory into every state-surface finding, and because
-  //    `src/state.ts` lifts it out of the entry path deliberately so this map can
-  //    reach the path string too. THE PROPERTY NAME IS OVERLOADED: the same key
-  //    carries the project key here, a per-run three-word name in the envelope of
-  //    every record after a compaction, and an artifact name in records the
-  //    headless corpus never reaches. All three are mapped; see
-  //    `RUN_ID_VALUE_GUARDS` below for what that costs and what bounds it.
+  //  - `slug`: TWO different values under one property name, both run-scoped and
+  //    both mapped. (i) In the STORED ENVELOPE it is a per-run session name the
+  //    engine mints and starts writing at the compact boundary — records before
+  //    the boundary carry no `slug` at all, and every record after one carries
+  //    e.g. `curious-yawning-pebble`. That is what the map is for here, and
+  //    getting it wrong is what reddened seven corpus scenarios: this rule
+  //    briefly carried a value guard that admitted only project keys, and the
+  //    session name went unmapped. (ii) In the STATE SURFACE it is the project
+  //    key — the harness's own absolute cwd with its separators flattened —
+  //    which `src/state.ts` lifts out of the entry path deliberately so this map
+  //    can reach the path string too; it is not minted by the engine at all and
+  //    is mapped because it is a fact about THIS MACHINE that would otherwise put
+  //    an operator's home directory into every state-surface finding.
+  //    A THIRD meaning exists upstream and the corpus never reaches it; see
+  //    `RUN_ID_VALUE_GUARDS` below for what mapping all three costs.
   "parentUuid",
   "logicalParentUuid",
   "leafUuid",

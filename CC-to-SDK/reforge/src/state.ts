@@ -102,10 +102,15 @@ export interface StateEntry {
    */
   tornTail?: boolean;
   /**
-   * The project-key slug this entry lives under, lifted out of `path` as a
-   * PROPERTY so the differ's run-id map can bind it (see `RUN_ID_KEYS`). The
-   * slug is the absolute cwd with its separators flattened, so it is a fact
-   * about the machine the harness runs on, not about the engine.
+   * The PROJECT KEY this entry lives under, lifted out of `path` as a PROPERTY
+   * so the differ's run-id map can bind it (see `RUN_ID_KEYS`). It is the
+   * absolute cwd with its separators flattened, so it is a fact about the
+   * machine the harness runs on, not about the engine.
+   *
+   * It shares the property name `slug` with a DIFFERENT value — the per-run
+   * session name the engine writes into every stored record after a compact
+   * boundary — and that is deliberate: both are run-scoped, both go through the
+   * same rule, and the differ's justification for that rule names both.
    */
   slug?: string;
 }

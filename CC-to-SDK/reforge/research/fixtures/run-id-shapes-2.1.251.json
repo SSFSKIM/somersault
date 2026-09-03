@@ -1,7 +1,7 @@
 {
   "engineVersion": "2.1.251",
   "generatedBy": "research/tools/extract-run-id-shapes.ts",
-  "note": "The differ's run-id map, keyed on property name, with the lexeme each key is observed to carry. `collisions` is the fact this fixture exists to state: those keys are indistinguishable by value, so a shape-keyed rule would bind them wrongly.",
+  "note": "The differ's run-id map, keyed on property name, with the lexeme each key is observed to carry. `collisions` is the fact this fixture exists to state: those keys are indistinguishable by value, so a shape-keyed rule would bind them wrongly. `slug` is the converse case and the one that cost this wave a gate run: ONE property name over two run-scoped values, the `session-slug` a per-run name the engine starts writing into every stored record at the compact boundary and the `path-slug` the project key the state surface lifts off the entry path. Both are mapped; a value guard that admitted only the second left the first diffing on every scenario that compacts.",
   "counts": {
     "keys": 20,
     "arrayKeys": 2,

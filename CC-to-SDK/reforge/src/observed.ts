@@ -40,8 +40,8 @@ export interface ConfigCensus {
    * ambiguous — an agent id and a task id are both `a`+16 hex, four envelope ids
    * are all RFC-4122. That choice is only safe if the lexemes each key actually
    * carries are known, and the stored envelope is the only artifact that carries
-   * most of them (`parentUuid`, `leafUuid`, `promptId` and the project slug never
-   * appear in an SDK transcript). `research/tools/extract-run-id-shapes.ts` holds
+   * most of them (`parentUuid`, `leafUuid`, `promptId` and the envelope's
+   * per-run `slug` never appear in an SDK transcript). `research/tools/extract-run-id-shapes.ts` holds
    * this against the committed fixture.
    */
   idShapes: Record<string, Record<string, number>>;
@@ -170,6 +170,9 @@ function tallyIdShapes(configDir: string, doc: ConfigCensus): void {
       try {
         const record = JSON.parse(line) as Record<string, unknown>;
         // The project key is a fact about the PATH, not a field of any record.
+        // The PROJECT KEY, which is a fact about the path rather than a field
+        // of any record — tallied under the same property name the envelope's
+        // per-run session slug uses, because the differ maps both under it.
         note("slug", relative(projects, f).split("/")[0]);
         walkValue(record);
       } catch {
