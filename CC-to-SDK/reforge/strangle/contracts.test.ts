@@ -464,6 +464,70 @@ const content = (block: { content?: unknown }) => block.content;
   eq("anything else stringifies", session.formatError({ toString: () => "odd" }), "odd");
 }
 
+// ---- the shutdown COORDINATOR's claim pair (C16b / W13b) -------------------
+// Both halves are corpus-DARK, and their manifest rows name this file as what
+// grades them instead. The darkness is measured rather than assumed — each
+// facade's call sites were enumerated from the artifact and every one of them
+// unmounts or re-execs a terminal UI, which a headless run has none of — so what
+// is left to grade is the pair's own semantics, and there are exactly two things
+// to say about them.
+//
+// THE SECOND STATEMENT IS THE ONE THAT MATTERS. Each method is two statements,
+// and a reader who only saw the flag would call the pair a boolean setter. The
+// other statement disarms and re-arms the ORPHAN CHECK — the 30-second watchdog
+// that shuts the process down with 129 when its stdout stops being writable,
+// which is exactly what a deliberate teardown looks like from the outside. So a
+// claim that forgot to disarm would leave a shutdown racing its own watchdog,
+// and the assertions below are written against the RECEIVER's call log rather
+// than against the flag alone, because the flag is the half that cannot fail
+// quietly.
+{
+  const claim = (await load("twn-claim-shutdown/reference.js")).twnClaimShutdown;
+  const release = (await load("twn-release-shutdown-claim/reference.js")).twnReleaseShutdownClaim;
+
+  /** A recording stand-in for the coordinator instance: the flag, plus what was called on it. */
+  const coordinator = (shutdownInProgress = false) => {
+    const calls: string[] = [];
+    return {
+      shutdownInProgress,
+      calls,
+      disarmOrphanCheck() {
+        calls.push("disarmOrphanCheck");
+      },
+      armOrphanCheck() {
+        calls.push("armOrphanCheck");
+      },
+    };
+  };
+
+  const claimed = coordinator(false);
+  claim(claimed);
+  eq("claiming sets the in-progress flag", claimed.shutdownInProgress, true);
+  eq("…and disarms the orphan check, which is the half a flag setter would drop", claimed.calls, ["disarmOrphanCheck"]);
+
+  const released = coordinator(true);
+  release(released);
+  eq("releasing clears the flag", released.shutdownInProgress, false);
+  eq("…and re-arms the watchdog it took away", released.calls, ["armOrphanCheck"]);
+
+  // The pair is an INVERSE, and that is what distinguishes it from the shutdown
+  // latch one module over — which has a setter and no clearer anywhere in the
+  // bundle. Asserting the round trip is asserting the difference.
+  const roundTrip = coordinator(false);
+  claim(roundTrip);
+  release(roundTrip);
+  eq("claim then release returns the coordinator to where it started", roundTrip.shutdownInProgress, false);
+  eq("…having disarmed and re-armed exactly once each, in that order", roundTrip.calls, ["disarmOrphanCheck", "armOrphanCheck"]);
+
+  // Neither is idempotent-by-guard: upstream writes the flag unconditionally,
+  // so a second claim disarms a second time. Recorded because an owned copy
+  // that "helpfully" guarded would change how many timers the graph clears.
+  const twice = coordinator(false);
+  claim(twice);
+  claim(twice);
+  eq("claiming twice disarms twice — upstream has no guard and neither does this", twice.calls, ["disarmOrphanCheck", "disarmOrphanCheck"]);
+}
+
 console.log(`=== owned-implementation contracts: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 if (pass === 0) {

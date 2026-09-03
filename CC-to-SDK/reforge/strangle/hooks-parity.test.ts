@@ -3018,6 +3018,107 @@ const resetModuleState = (): void => {
   mustDiffer("a guard that hangs whenever the flag is clear", upstreamAwaitingGuard("PreToolUse"), true);
 }
 
+// ---- (c2) THE OWNED LATCH, on the OWNED side of the same oracle (C16b) -----
+//
+// Everything above is upstream against upstream: the shutdown module is `eval`ed
+// out of the pinned chunk once per case, which is what lets a case commit
+// shutdown without committing it for the suite. That stays exactly as it is —
+// oracle doctrine is that the upstream side binds upstream's bytes.
+//
+// What C16b adds is the other side. The shutdown latch is now an owned S-chunk
+// (`strangle/modules/process-lifecycle`), and the executor children that were
+// going to stub `isShuttingDown`/`hang` can consume it instead. So the same
+// wrapper is driven a SECOND time with the owned module bound in its place, and
+// the two runs must agree — which is the only comparison that can say the owned
+// copy reproduces a behaviour whose whole point is that it produces nothing.
+//
+// ## THE ORDER IS THE CONTRACT, and it is why this is a separate block
+//
+// The oracle resets per case. The owned module CANNOT, and must not learn how:
+// in a real process there is one latch, it is one-way, and `resetModuleState`
+// exists to serve a suite rather than to describe an engine. Making the owned
+// copy resettable to make it easier to test here would be the tail wagging the
+// dog, and would quietly delete the property every consumer depends on.
+//
+// So this block is ordered instead. Every claim about the CLEAR state is made
+// first, on both sides; then the latch is committed, once, on both sides; then
+// every claim about the committed state. The commit is terminal, which is the
+// semantics, and the block sits after every other consumer of `STATE` so that
+// nothing downstream inherits it.
+{
+  const owned = (await import("./modules/process-lifecycle/reference.js")) as {
+    isShuttingDown: () => boolean;
+    commitShutdown: () => void;
+    hang: () => Promise<never>;
+  };
+  const oracle = freshModuleState();
+
+  const g = globalThis as Record<string, unknown>;
+  const HANG_EVENTS = build<Set<string>>(
+    `function hangEvents(){return ${extract(ENGINE, "c6n", /new Set\(\["PreToolUse","PermissionRequest","UserPromptSubmit","UserPromptExpansion","TaskCompleted","TeammateIdle"\]\)/)}}`,
+  ) as unknown as () => Set<string>;
+  const streamed: unknown[] = [{ decision: "continue" }];
+  g.__p_shutdownHangEvents = HANG_EVENTS();
+  g.__p_streamingExecutor = async function* () {
+    for (const r of streamed) yield r;
+    return { executed: streamed.length };
+  };
+
+  /** Upstream's wrapper, rebuilt so each side gets its own binding of the latch. */
+  const wrapperBoundTo = (read: () => boolean, hang: () => Promise<never>) => {
+    g.__p_isShuttingDown = read;
+    g.__p_hang = hang;
+    return build<(req: unknown) => AsyncGenerator<unknown, unknown>>(
+      extract(ENGINE, "jy", /async function\*jy\([\w$]+\)\{let [\w$]+=\(\)=>xo\(\)&&![\w$]+\.signal\?\.aborted;[\s\S]*?if\([\w$]+\(\)\)await pm\(\)\}/),
+      "const xo=()=>globalThis.__p_isShuttingDown(),pm=()=>globalThis.__p_hang(),Xxt=(r)=>globalThis.__p_streamingExecutor(r),c6n=globalThis.__p_shutdownHangEvents;",
+    );
+  };
+  const request = (event: string) => ({ hookInput: { hook_event_name: event }, signal: undefined });
+
+  /** Drive one event through the wrapper with `read`/`hang` bound to one side. */
+  const driveWith = async (read: () => boolean, hang: () => Promise<never>, event: string) => {
+    const run = await drainBounded(wrapperBoundTo(read, hang)(request(event)));
+    return { yielded: run.yielded, settled: run.settled, returned: run.returned, threw: run.threw };
+  };
+
+  // --- the identity claims, which no differential can make -------------------
+  eq("the owned hang returns the SAME promise every call", owned.hang() === owned.hang(), true);
+  mustDiffer("a hang that mints a promise per call", owned.hang() === owned.hang(), false);
+  eq("…and importing the module again returns that same one", (await import("./modules/process-lifecycle/reference.js")).hang() === owned.hang(), true);
+
+  // --- the CLEAR state, both sides -------------------------------------------
+  eq("clear: the owned reader agrees with upstream's", owned.isShuttingDown(), oracle.isShuttingDown());
+  eq("…and both say false", owned.isShuttingDown(), false);
+  const clearUpstream = await driveWith(() => oracle.isShuttingDown(), () => oracle.hang(), "PreToolUse");
+  const clearOwned = await driveWith(() => owned.isShuttingDown(), () => owned.hang(), "PreToolUse");
+  eq("clear: the wrapper streams through identically on both sides", clearOwned, clearUpstream);
+  eq("…which is the transparent path", { yielded: clearOwned.yielded, settled: clearOwned.settled }, { yielded: streamed, settled: true });
+
+  // --- the commit, once, on both sides ---------------------------------------
+  oracle.commitShutdown();
+  owned.commitShutdown();
+  eq("committed: the owned reader agrees with upstream's", owned.isShuttingDown(), oracle.isShuttingDown());
+  eq("…and both say true", owned.isShuttingDown(), true);
+
+  // --- the committed state, both sides ---------------------------------------
+  const hungUpstream = await driveWith(() => oracle.isShuttingDown(), () => oracle.hang(), "PreToolUse");
+  const hungOwned = await driveWith(() => owned.isShuttingDown(), () => owned.hang(), "PreToolUse");
+  property("the owned latch reproduces the non-settling arm", nonSettling(hungOwned));
+  eq("…and does so identically to upstream's", hungOwned, hungUpstream);
+  mustDiffer("an owned hang that settles, so the arm returns instead of hanging", hungOwned.settled, true);
+
+  const silentUpstream = await driveWith(() => oracle.isShuttingDown(), () => oracle.hang(), "PostToolUse");
+  const silentOwned = await driveWith(() => owned.isShuttingDown(), () => owned.hang(), "PostToolUse");
+  eq("the silent-return arm is identical on both sides too", silentOwned, silentUpstream);
+  propertyControl("…and it must FAIL the non-settling mode, or the two arms are not being told apart", nonSettling(silentOwned));
+
+  // THE COMMIT IS TERMINAL, and saying so is the point of the ordering above.
+  // There is no clearer in the bundle and there is none here; a later reader who
+  // adds a case to this block gets the committed latch, which is the truth about
+  // the engine rather than an inconvenience of the suite.
+  eq("the owned commit does not come back", owned.isShuttingDown(), true);
+}
+
 // ============================================================================
 // 5. THE HOOK JSON CONTRACT — the layer BENEATH the dispatchers (W7.6a).
 //
