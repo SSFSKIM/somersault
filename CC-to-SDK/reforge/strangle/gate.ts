@@ -167,6 +167,22 @@ for (const [label, argv] of [
   // corpus half is a floor on counts and exact on bytes, so a later wave's
   // recordings grow it without reddening it while a drifted description does.
   ["moat-tool belt fixture matches the pin and the corpus", ["research/tools/extract-moat-tools.ts", "--check"]],
+  // C16b / W13b's population, and the SIXTH the campaign had been carrying as a
+  // hand-written number. The child's own brief opens with one — "780 B, 10
+  // importers, 3 exports" — and a literal `grep -l` for the chunk's name answers
+  // 313, because 303 chunks carry a BARE side-effect import of it for the
+  // bundler's evaluation order. Both numbers are true of different questions and
+  // only one of them is "who reads the latch". So the whole surface is derived by
+  // SHAPE and committed: the latch chunk (a class with one boolean field, a
+  // reader, a setter and a promise built to never settle), its named importers
+  // with per-export call sites, the shutdown coordinator's 44 members and the
+  // twelve a free-function facade exposes, and every `process.on("SIG…")` in the
+  // graph — including the two families the scout collapsed into one and the
+  // registrations this walk could not read, so the population has a denominator.
+  // The handlers also carry their EXCISABILITY, measured rather than recalled: a
+  // splice forwards captures by value, so a handler that writes back to one is a
+  // mechanical refusal and the fixture is where that is recorded.
+  ["process-lifecycle fixture matches the pin", ["research/tools/extract-process-lifecycle.ts", "--check"]],
   ["symbol map matches the pin", ["research/tools/symbol-map.ts", "--check"]],
   // The closure ledger is the campaign's progress metric (X2), and a metric
   // nobody validates is a metric nobody can trust. Build-free and sub-second, so

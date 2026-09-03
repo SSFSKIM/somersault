@@ -1,0 +1,1581 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-process-lifecycle.ts",
+  "latch": {
+    "chunk": "chunk-29shcjw2.js",
+    "bytes": 780,
+    "bannerBytes": 615,
+    "codeBytes": 165,
+    "sha256": "ff4867673d35a7bc8fa8ad0b6ac2e4e5af47dc3eb2783f55885986cacf2d78f1",
+    "roles": {
+      "latchClass": "t",
+      "latchInstance": "e",
+      "hangPromise": "n",
+      "isShuttingDown": "xo",
+      "commitShutdown": "S8e",
+      "hang": "pm"
+    },
+    "exportOrder": [
+      "xo",
+      "S8e",
+      "pm"
+    ],
+    "topLevel": [
+      "ClassDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "ExportDeclaration"
+    ],
+    "constructingDeclarators": [
+      {
+        "name": "e",
+        "construct": "NewExpression"
+      },
+      {
+        "name": "n",
+        "construct": "NewExpression"
+      }
+    ],
+    "anchor": {
+      "literal": "ted=!1}v",
+      "files": 1,
+      "occurrences": 1,
+      "candidates": 8
+    }
+  },
+  "importers": {
+    "named": [
+      {
+        "chunk": "chunk-89sa2r2x.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 1
+        }
+      },
+      {
+        "chunk": "chunk-cjd4a34r.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 1
+        }
+      },
+      {
+        "chunk": "chunk-dvbbv89q.js",
+        "imports": [
+          {
+            "role": "commitShutdown",
+            "local": "S8e"
+          },
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 19,
+          "commitShutdown": 1
+        }
+      },
+      {
+        "chunk": "chunk-dxy3a77e.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 1
+        }
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "imports": [
+          {
+            "role": "commitShutdown",
+            "local": "S8e"
+          },
+          {
+            "role": "hang",
+            "local": "pm"
+          },
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 14,
+          "commitShutdown": 2,
+          "hang": 15
+        }
+      },
+      {
+        "chunk": "chunk-g1qrzvef.js",
+        "imports": [
+          {
+            "role": "hang",
+            "local": "pm"
+          },
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 15,
+          "hang": 6
+        }
+      },
+      {
+        "chunk": "chunk-km4np6mj.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 1
+        }
+      },
+      {
+        "chunk": "chunk-myzsc7hx.js",
+        "imports": [
+          {
+            "role": "hang",
+            "local": "pm"
+          },
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 4,
+          "hang": 4
+        }
+      },
+      {
+        "chunk": "chunk-qfs22xxp.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 5
+        }
+      },
+      {
+        "chunk": "chunk-yt1sbjae.js",
+        "imports": [
+          {
+            "role": "isShuttingDown",
+            "local": "xo"
+          }
+        ],
+        "callSites": {
+          "isShuttingDown": 1
+        }
+      }
+    ],
+    "bareCount": 303,
+    "counts": {
+      "named": 10,
+      "bare": 303,
+      "graphModules": 1802
+    },
+    "callSiteTotals": {
+      "isShuttingDown": 62,
+      "commitShutdown": 3,
+      "hang": 25
+    },
+    "readersPerRole": {
+      "isShuttingDown": 10,
+      "commitShutdown": 2,
+      "hang": 3
+    }
+  },
+  "coordinator": {
+    "chunk": "chunk-fy12d89p.js",
+    "binding": "TWn",
+    "start": 107600,
+    "end": 116519,
+    "bytes": 8919,
+    "sha256": "c8402b2b1c903e5464eedabab1ec0eee5aa08438805ac88c2d94fcd4c13021a6",
+    "members": [
+      {
+        "name": "installed",
+        "kind": "property",
+        "bytes": 13,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "handles",
+        "kind": "property",
+        "bytes": 11,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "resumeHintPrinted",
+        "kind": "property",
+        "bytes": 21,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "printModeSignalHandlersRegistered",
+        "kind": "property",
+        "bytes": 37,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "ownsControllingTerminal",
+        "kind": "property",
+        "bytes": 27,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "uncaughtCount",
+        "kind": "property",
+        "bytes": 16,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "uncaughtWindowStart",
+        "kind": "property",
+        "bytes": 22,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "uncaughtBreakerTripped",
+        "kind": "property",
+        "bytes": 26,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "recentUncaught",
+        "kind": "property",
+        "bytes": 18,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "http2RecoveryCount",
+        "kind": "property",
+        "bytes": 21,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "http2RecoveryWindowStart",
+        "kind": "property",
+        "bytes": 27,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "recoveredDdReportCount",
+        "kind": "property",
+        "bytes": 25,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "startupActionStarted",
+        "kind": "property",
+        "bytes": 24,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "startupExpectsUiMount",
+        "kind": "property",
+        "bytes": 25,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "shutdownInProgress",
+        "kind": "property",
+        "bytes": 22,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "failsafeTimer",
+        "kind": "property",
+        "bytes": 21,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "orphanCheckInterval",
+        "kind": "property",
+        "bytes": 27,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "pendingShutdown",
+        "kind": "property",
+        "bytes": 23,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "beforeInteractiveShutdown",
+        "kind": "property",
+        "bytes": 31,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "printResumeHint",
+        "kind": "method",
+        "bytes": 347,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "forceExit",
+        "kind": "method",
+        "bytes": 226,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "markPrintModeSignalHandlersRegistered",
+        "kind": "method",
+        "bytes": 82,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "markOwnsControllingTerminal",
+        "kind": "method",
+        "bytes": 62,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "install",
+        "kind": "method",
+        "bytes": 3869,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "shutdownSync",
+        "kind": "method",
+        "bytes": 292,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "recordUncaughtAndCheckBreaker",
+        "kind": "method",
+        "bytes": 276,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "recordHttp2RecoveryAndCheckBudget",
+        "kind": "method",
+        "bytes": 196,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "markStartupActionStarted",
+        "kind": "method",
+        "bytes": 86,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "inNonUiSubcommand",
+        "kind": "method",
+        "bytes": 82,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "exitIfStartupNeverMounted",
+        "kind": "method",
+        "bytes": 178,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "scheduleStartupMountWatchdog",
+        "kind": "method",
+        "bytes": 169,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "armShutdownFailsafe",
+        "kind": "method",
+        "bytes": 261,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "isShuttingDown",
+        "kind": "method",
+        "bytes": 48,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "armOrphanCheck",
+        "kind": "method",
+        "bytes": 354,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "disarmOrphanCheck",
+        "kind": "method",
+        "bytes": 129,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "claimShutdown",
+        "kind": "method",
+        "bytes": 68,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "releaseShutdownClaim",
+        "kind": "method",
+        "bytes": 72,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "registerBeforeInteractiveShutdown",
+        "kind": "method",
+        "bytes": 70,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "clearBeforeInteractiveShutdown",
+        "kind": "method",
+        "bytes": 69,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "runBeforeInteractiveShutdown",
+        "kind": "method",
+        "bytes": 175,
+        "async": true,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "disarmTimers",
+        "kind": "method",
+        "bytes": 130,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "getPendingShutdown",
+        "kind": "method",
+        "bytes": 49,
+        "async": false,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "shutdown",
+        "kind": "method",
+        "bytes": 1096,
+        "async": true,
+        "static": false,
+        "private": false
+      },
+      {
+        "name": "armFailsafeAndDrainStdout",
+        "kind": "method",
+        "bytes": 85,
+        "async": true,
+        "static": false,
+        "private": false
+      }
+    ],
+    "counts": {
+      "members": 44,
+      "properties": 19,
+      "methods": 25,
+      "async": 3,
+      "private": 0
+    },
+    "accessor": "c_",
+    "facade": [
+      {
+        "binding": "t3e",
+        "member": "claimShutdown",
+        "bytes": 36,
+        "importers": [
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "t3e",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "t3e",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-wed15dpf.js",
+            "local": "t3e",
+            "callSites": 1
+          }
+        ],
+        "callSites": 2
+      },
+      {
+        "binding": "Bin",
+        "member": "clearBeforeInteractiveShutdown",
+        "bytes": 53,
+        "importers": [
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "Bin",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "Bin",
+            "callSites": 0
+          }
+        ],
+        "callSites": 1
+      },
+      {
+        "binding": "eCr",
+        "member": "exitIfStartupNeverMounted",
+        "bytes": 50,
+        "importers": [
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "eCr",
+            "callSites": 0
+          }
+        ],
+        "callSites": 0
+      },
+      {
+        "binding": "Fin",
+        "member": "install",
+        "bytes": 32,
+        "importers": [
+          {
+            "chunk": "chunk-bcy71wp4.js",
+            "local": "Fin",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "Fin",
+            "callSites": 0
+          }
+        ],
+        "callSites": 1
+      },
+      {
+        "binding": "Hs",
+        "member": "isShuttingDown",
+        "bytes": 43,
+        "importers": [
+          {
+            "chunk": "chunk-0pmg07b4.js",
+            "local": "Hs",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "Hs",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-7zbjgdk3.js",
+            "local": "Hs",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-cjd4a34r.js",
+            "local": "Hs",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "Hs",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-dvbbv89q.js",
+            "local": "Hs",
+            "callSites": 29
+          },
+          {
+            "chunk": "chunk-g461tywa.js",
+            "local": "Hs",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-v4j6c888.js",
+            "local": "Hs",
+            "callSites": 1
+          }
+        ],
+        "callSites": 37
+      },
+      {
+        "binding": "oNt",
+        "member": "markOwnsControllingTerminal",
+        "bytes": 50,
+        "importers": [
+          {
+            "chunk": "chunk-cjd4a34r.js",
+            "local": "oNt",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "oNt",
+            "callSites": 0
+          }
+        ],
+        "callSites": 2
+      },
+      {
+        "binding": "e3e",
+        "member": "markPrintModeSignalHandlersRegistered",
+        "bytes": 60,
+        "importers": [
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "e3e",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-dvbbv89q.js",
+            "local": "e3e",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-w7bq1qyb.js",
+            "local": "e3e",
+            "callSites": 1
+          }
+        ],
+        "callSites": 2
+      },
+      {
+        "binding": "$in",
+        "member": "markStartupActionStarted",
+        "bytes": 49,
+        "importers": [
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "$in",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-thc3f1cf.js",
+            "local": "$in",
+            "callSites": 1
+          }
+        ],
+        "callSites": 1
+      },
+      {
+        "binding": "iNt",
+        "member": "registerBeforeInteractiveShutdown",
+        "bytes": 58,
+        "importers": [
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "iNt",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "iNt",
+            "callSites": 0
+          }
+        ],
+        "callSites": 1
+      },
+      {
+        "binding": "Uin",
+        "member": "releaseShutdownClaim",
+        "bytes": 43,
+        "importers": [
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "Uin",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "Uin",
+            "callSites": 0
+          }
+        ],
+        "callSites": 1
+      },
+      {
+        "binding": "On",
+        "member": "shutdown",
+        "bytes": 63,
+        "importers": [
+          {
+            "chunk": "chunk-0ak8xf05.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-2earpeke.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-5m9xkqkf.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "On",
+            "callSites": 4
+          },
+          {
+            "chunk": "chunk-9a8k9hjy.js",
+            "local": "On",
+            "callSites": 3
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "On",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-dvbbv89q.js",
+            "local": "On",
+            "callSites": 3
+          },
+          {
+            "chunk": "chunk-e2zkn335.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-g461tywa.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-j3ty3rkz.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-kd3hsk0w.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-mfkbzdqf.js",
+            "local": "On",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-pt5wap5v.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-qfs22xxp.js",
+            "local": "On",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-rsmvjmyy.js",
+            "local": "On",
+            "callSites": 18
+          },
+          {
+            "chunk": "chunk-s115pzby.js",
+            "local": "On",
+            "callSites": 5
+          },
+          {
+            "chunk": "chunk-thc3f1cf.js",
+            "local": "On",
+            "callSites": 22
+          },
+          {
+            "chunk": "chunk-w7bq1qyb.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-wed15dpf.js",
+            "local": "On",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-xvhvv2cn.js",
+            "local": "On",
+            "callSites": 4
+          },
+          {
+            "chunk": "chunk-zvrw6wvj.js",
+            "local": "On",
+            "callSites": 1
+          }
+        ],
+        "callSites": 74
+      },
+      {
+        "binding": "Jr",
+        "member": "shutdownSync",
+        "bytes": 50,
+        "importers": [
+          {
+            "chunk": "chunk-0pmg07b4.js",
+            "local": "Jr",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-6thm48px.js",
+            "local": "Jr",
+            "callSites": 3
+          },
+          {
+            "chunk": "chunk-7zbjgdk3.js",
+            "local": "Jr",
+            "callSites": 3
+          },
+          {
+            "chunk": "chunk-bcy71wp4.js",
+            "local": "Jr",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-bsbk61wt.js",
+            "local": "Jr",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-cp3ks59d.js",
+            "local": "Jr",
+            "callSites": 0
+          },
+          {
+            "chunk": "chunk-dvbbv89q.js",
+            "local": "Jr",
+            "callSites": 32
+          },
+          {
+            "chunk": "chunk-e8ykvyax.js",
+            "local": "Jr",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-g461tywa.js",
+            "local": "Jr",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-htn3hnbs.js",
+            "local": "Jr",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-j2x316q1.js",
+            "local": "Jr",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-nv5mmf1y.js",
+            "local": "Jr",
+            "callSites": 1
+          },
+          {
+            "chunk": "chunk-thc3f1cf.js",
+            "local": "Jr",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-vt0tp84g.js",
+            "local": "Jr",
+            "callSites": 2
+          },
+          {
+            "chunk": "chunk-w1mazq5k.js",
+            "local": "Jr",
+            "callSites": 1
+          }
+        ],
+        "callSites": 54
+      }
+    ],
+    "unexposedMembers": [
+      "armFailsafeAndDrainStdout",
+      "armOrphanCheck",
+      "armShutdownFailsafe",
+      "disarmOrphanCheck",
+      "disarmTimers",
+      "forceExit",
+      "getPendingShutdown",
+      "inNonUiSubcommand",
+      "printResumeHint",
+      "recordHttp2RecoveryAndCheckBudget",
+      "recordUncaughtAndCheckBreaker",
+      "runBeforeInteractiveShutdown",
+      "scheduleStartupMountWatchdog"
+    ]
+  },
+  "signalHandlers": {
+    "handlers": [
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-21s77bk2.js",
+        "registration": "identifier",
+        "binding": "i",
+        "registeredIn": "Le",
+        "bytes": 21,
+        "sha256": "91b33036aac1084fe9afbc3b768fc90915b97c59215e106ed96be25059031c48",
+        "declaratorIndex": 0,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "r"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-21s77bk2.js",
+        "registration": "identifier",
+        "binding": "i",
+        "registeredIn": "Le",
+        "bytes": 21,
+        "sha256": "91b33036aac1084fe9afbc3b768fc90915b97c59215e106ed96be25059031c48",
+        "declaratorIndex": 0,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "r"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-5cj70w9w.js",
+        "registration": "identifier",
+        "binding": "Zt",
+        "registeredIn": "dc",
+        "bytes": 16,
+        "sha256": "c06e3566a6ce84f53ce75cbc5d775b6e392d6ce16b3a1bccbcac33ad618dc036",
+        "declaratorIndex": 9,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "Pt"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-5cj70w9w.js",
+        "registration": "identifier",
+        "binding": "Ot",
+        "registeredIn": "dc",
+        "bytes": 17,
+        "sha256": "0da7091f4e1d06b8562ded45ecf4f891d59fa71894c7b952b2f9eb26112f48c6",
+        "declaratorIndex": 8,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "Pt"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGQUIT",
+        "chunk": "chunk-60t82ke8.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "He",
+        "bytes": 59,
+        "sha256": "5f7759ff37831a09f280fa6ddf611ba32667bd53f2fa416064985b5fe738c085",
+        "declaratorIndex": null,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "I",
+          "d"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGHUP",
+        "chunk": "chunk-9magbkx1.js",
+        "registration": "identifier",
+        "binding": "bt",
+        "registeredIn": "Ti",
+        "bytes": 141,
+        "sha256": "7d09f8a51c237abf3ac79a749aade7408b3e758fe76bb3b76d4cc765ddc14a2c",
+        "declaratorIndex": 3,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "_e",
+          "ge",
+          "n",
+          "tt"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-9magbkx1.js",
+        "registration": "identifier",
+        "binding": "pt",
+        "registeredIn": "Ti",
+        "bytes": 70,
+        "sha256": "cecfd9ce0cf3d769230d37633e7fe854816f3a6d0bb06376b7fe3a40eda69c55",
+        "declaratorIndex": 1,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "n",
+          "tt"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-9magbkx1.js",
+        "registration": "identifier",
+        "binding": "gt",
+        "registeredIn": "Ti",
+        "bytes": 71,
+        "sha256": "762c293b5e8d357153a0e9e31e00f9abb5f474dd97d6381a6e062ab26a802095",
+        "declaratorIndex": 2,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "n",
+          "tt"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-at9evzf8.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "Yr",
+        "bytes": 10,
+        "sha256": "083144a5aab33e543f44a9e6cbf0669ed0957755b449548c688d9fa1d453f6cc",
+        "declaratorIndex": null,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "m"
+        ],
+        "assignedFreeIdentifiers": [
+          "m"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-at9evzf8.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "Jr",
+        "bytes": 10,
+        "sha256": "083144a5aab33e543f44a9e6cbf0669ed0957755b449548c688d9fa1d453f6cc",
+        "declaratorIndex": null,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "m"
+        ],
+        "assignedFreeIdentifiers": [
+          "m"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-at9evzf8.js",
+        "registration": "identifier",
+        "binding": "i",
+        "registeredIn": "Xo",
+        "bytes": 62,
+        "sha256": "dd34dc1b11532c4b0e8b542a1a09802be46c779926a47339f9585b841c1554f8",
+        "declaratorIndex": 2,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "N"
+        ],
+        "freeIdentifiers": [
+          "G",
+          "N",
+          "S"
+        ],
+        "assignedFreeIdentifiers": [
+          "N"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) N; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-at9evzf8.js",
+        "registration": "identifier",
+        "binding": "i",
+        "registeredIn": "Xo",
+        "bytes": 62,
+        "sha256": "dd34dc1b11532c4b0e8b542a1a09802be46c779926a47339f9585b841c1554f8",
+        "declaratorIndex": 2,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "N"
+        ],
+        "freeIdentifiers": [
+          "G",
+          "N",
+          "S"
+        ],
+        "assignedFreeIdentifiers": [
+          "N"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) N; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-dvbbv89q.js",
+        "registration": "identifier",
+        "binding": "Hn",
+        "registeredIn": "ky",
+        "bytes": 148,
+        "sha256": "77c577e6e725c1944c152d6800ac62319a625727ab878f686a106d60be739b28",
+        "declaratorIndex": 0,
+        "exitCode": 0,
+        "commitsLatch": false,
+        "touchesLifecycle": true,
+        "guardedBy": [
+          "Hs()",
+          "Y()"
+        ],
+        "freeIdentifiers": [
+          "Hs",
+          "On",
+          "Qe",
+          "Rn",
+          "Su",
+          "Y",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-dvbbv89q.js",
+        "registration": "identifier",
+        "binding": "br",
+        "registeredIn": "ky",
+        "bytes": 61,
+        "sha256": "7d5fbfa33acb5d529587d1628283815fec02700901378fa20a0f2b900840ef69",
+        "declaratorIndex": 1,
+        "exitCode": 143,
+        "commitsLatch": true,
+        "touchesLifecycle": true,
+        "guardedBy": [
+          "Hs()"
+        ],
+        "freeIdentifiers": [
+          "Gn",
+          "Hs",
+          "On",
+          "Rn",
+          "S8e",
+          "nct"
+        ],
+        "assignedFreeIdentifiers": [
+          "Gn"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) Gn; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGCONT",
+        "chunk": "chunk-dxy3a77e.js",
+        "registration": "identifier",
+        "binding": "o",
+        "registeredIn": "<top level>",
+        "bytes": 357,
+        "sha256": "2c2446058fb1bbb1f9aeefb576a10655f65b3be6dc01f7be145eac648cc1e628",
+        "declaratorIndex": 0,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "this.hasReleasedTerminal",
+          "this.isRawModeSupported",
+          "this.props"
+        ],
+        "freeIdentifiers": [
+          "VR",
+          "a",
+          "glt",
+          "o",
+          "t"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": true,
+        "notExcisableBecause": null
+      },
+      {
+        "signal": "SIGHUP",
+        "chunk": "chunk-fy12d89p.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "install",
+        "bytes": 75,
+        "sha256": "532148610d3e37bb139f1a4b9a3784fff34e7d24ea477284ad318e3c97e6cea8",
+        "declaratorIndex": null,
+        "exitCode": 129,
+        "commitsLatch": false,
+        "touchesLifecycle": true,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "Y",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGHUP",
+        "chunk": "chunk-fy12d89p.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "install",
+        "bytes": 183,
+        "sha256": "84808b1eb29b6089cc5a6b22b3879cfd4bbc7ffc164aadf447b6f1beaa1b8376",
+        "declaratorIndex": null,
+        "exitCode": 129,
+        "commitsLatch": false,
+        "touchesLifecycle": true,
+        "guardedBy": [
+          "this.ownsControllingTerminal"
+        ],
+        "freeIdentifiers": [
+          "Y",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-fy12d89p.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "install",
+        "bytes": 122,
+        "sha256": "e7acdb50280f9ea4ab6dad768804a9f560a8a496780b6a4593fc9929a5c91de3",
+        "declaratorIndex": null,
+        "exitCode": 0,
+        "commitsLatch": false,
+        "touchesLifecycle": true,
+        "guardedBy": [
+          "this.printModeSignalHandlersRegistered"
+        ],
+        "freeIdentifiers": [
+          "Y",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-fy12d89p.js",
+        "registration": "inline-arrow",
+        "binding": null,
+        "registeredIn": "install",
+        "bytes": 372,
+        "sha256": "f7ead5edb7718e66a080075ba6784b6cb6e690c0a2ccf19d4649b31110e5e1ed",
+        "declaratorIndex": null,
+        "exitCode": 143,
+        "commitsLatch": false,
+        "touchesLifecycle": true,
+        "guardedBy": [
+          "Y()",
+          "s()",
+          "this.printModeSignalHandlersRegistered",
+          "w()",
+          "wU()"
+        ],
+        "freeIdentifiers": [
+          "Y",
+          "s",
+          "t",
+          "w",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [],
+        "excisable": false,
+        "notExcisableBecause": "handed to process.on as an argument expression: there is no declaration to replace, so no target shape fits (a `variable-declarator` needs a declarator and an `arrow-initializer` needs to BE one)"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-p4c3wmbx.js",
+        "registration": "identifier",
+        "binding": "E",
+        "registeredIn": "dn",
+        "bytes": 115,
+        "sha256": "b8e064caba4a73a3bf98bc657e8e0d1cd84d1f8b5c57af5a7ed90ad70f2b1fdd",
+        "declaratorIndex": 6,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "g"
+        ],
+        "freeIdentifiers": [
+          "g",
+          "k",
+          "s"
+        ],
+        "assignedFreeIdentifiers": [
+          "g"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) g; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-p4c3wmbx.js",
+        "registration": "identifier",
+        "binding": "E",
+        "registeredIn": "dn",
+        "bytes": 115,
+        "sha256": "b8e064caba4a73a3bf98bc657e8e0d1cd84d1f8b5c57af5a7ed90ad70f2b1fdd",
+        "declaratorIndex": 6,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "g"
+        ],
+        "freeIdentifiers": [
+          "g",
+          "k",
+          "s"
+        ],
+        "assignedFreeIdentifiers": [
+          "g"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) g; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGINT",
+        "chunk": "chunk-w7bq1qyb.js",
+        "registration": "identifier",
+        "binding": "je",
+        "registeredIn": "mE",
+        "bytes": 121,
+        "sha256": "478cdb3bbcdfdfe8db6f154721471b6e7fe2b4ea3ab20b9f59123950c24f4c35",
+        "declaratorIndex": 2,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [
+          "wU()"
+        ],
+        "freeIdentifiers": [
+          "ge",
+          "re",
+          "wU"
+        ],
+        "assignedFreeIdentifiers": [
+          "ge"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) ge; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      },
+      {
+        "signal": "SIGTERM",
+        "chunk": "chunk-w7bq1qyb.js",
+        "registration": "identifier",
+        "binding": "pe",
+        "registeredIn": "mE",
+        "bytes": 116,
+        "sha256": "e0277a5fa63bf9379f6f628c9c098bb218dd5489086e218d25ea06cf2e39e880",
+        "declaratorIndex": 3,
+        "exitCode": null,
+        "commitsLatch": false,
+        "touchesLifecycle": false,
+        "guardedBy": [],
+        "freeIdentifiers": [
+          "ge",
+          "re"
+        ],
+        "assignedFreeIdentifiers": [
+          "ge"
+        ],
+        "excisable": false,
+        "notExcisableBecause": "the body assigns to the captured binding(s) ge; a splice forwards captures BY VALUE, so the delegated body could read them and never write them back"
+      }
+    ],
+    "skipped": [
+      {
+        "chunk": "chunk-dxy3a77e.js",
+        "signal": "SIGCONT",
+        "handlerKind": "PropertyAccessExpression"
+      },
+      {
+        "chunk": "chunk-wjzz3e21.js",
+        "signal": "SIGCONT",
+        "handlerKind": "PropertyAccessExpression"
+      }
+    ],
+    "counts": {
+      "registrations": 25,
+      "described": 23,
+      "skipped": 2,
+      "touchingLifecycle": 6,
+      "excisable": 1
+    }
+  }
+}
