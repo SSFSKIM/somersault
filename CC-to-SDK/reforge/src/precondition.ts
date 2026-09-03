@@ -38,8 +38,6 @@ export interface SeedFile {
   /** relative to CONFIG_DIR */
   path: string;
   content: string;
-  /** POSIX mode applied to the file's DIRECTORY after writing (the read-only-store fault) */
-  dirMode?: number;
 }
 
 /**
@@ -53,17 +51,33 @@ export interface SeedFile {
  *  - `parent-cycle` (§4.4 D8): point two records' `parentUuid` at each other, so
  *    the chain walk cannot terminate. Reaches `tengu_chain_parent_cycle` and the
  *    partial-transcript arm.
- *  - `read-only-store`: take the write permission off the project directory, so
- *    the store's append fails with EACCES — the `{EACCES, EPERM}` permission
- *    errno set (scout §4.3, the fifth of its six damaged-filesystem arms).
+ *  - `read-only-store`: take the write permission off the directory CONTAINING
+ *    the named file, so the store's write fails with EACCES — the
+ *    `{EACCES, EPERM}` permission errno set (scout §4.3, the fifth of its six
+ *    damaged-filesystem arms). THE DIRECTORY, and the distinction is measured,
+ *    not stylistic: the act the store performs on a fresh session is CREATING a
+ *    new file in the project directory, and a read-only FILE leaves that legal —
+ *    the engine writes its session and the fault grades nothing. This arm
+ *    chmodded its target FILE for one round while its own comment said
+ *    "the DIRECTORY, not the file"; nothing called it, so nothing caught it.
+ *    `src/precondition.test.ts` now creates a file through the fault (EACCES)
+ *    and creates the same file without it (succeeds).
  *
  * NOT HERE, AND WHY: `enospc`. The store fence latches on `{ENOSPC, EROFS,
- * EDQUOT, ENAMETOOLONG}`, and none of those four can be raised against a chosen
- * path by an unprivileged process on a normal filesystem — producing one needs
- * either a filesystem we can exhaust (a mounted disk image, which is a machine
- * fact rather than a harness fact) or an fs shim preloaded into the engine
- * child (which changes the binary under test and collides with the BUNFS
- * reachability rule). `read-only-store` grades the OTHER latching errno family
+ * EDQUOT, ENAMETOOLONG}`, and THREE of those four — `ENOSPC`, `EROFS`,
+ * `EDQUOT` — cannot be raised against a chosen path by an unprivileged process
+ * on a normal filesystem: producing one needs either a filesystem we can
+ * exhaust (a mounted disk image, which is a machine fact rather than a harness
+ * fact) or an fs shim preloaded into the engine child (which changes the binary
+ * under test and collides with the BUNFS reachability rule).
+ *
+ * `ENAMETOOLONG` IS THE EXCEPTION, and the first round of this wave stated the
+ * blanket claim over all four. It is reachable unprivileged on a normal
+ * filesystem — a 300-character filename returns it (measured) — so the fence
+ * has a fourth-code route that costs nothing but a pathologically deep sandbox
+ * cwd. It is not bought HERE because it is a fault of the PATH rather than of
+ * the filesystem, and the store's project path is derived from the cwd, so it
+ * belongs to whoever owns the fence: C12d inherits the route by name. `read-only-store` grades the OTHER latching errno family
  * and is honest about the difference: it reaches the store's error path and the
  * writer-health record, and it does NOT reach the fence's stickiness across the
  * four ENOSPC-family codes. C12d owns the fence and inherits this decision.
@@ -72,7 +86,14 @@ export type FsFaultKind = "torn-tail" | "parent-cycle" | "read-only-store";
 
 export interface FsFault {
   kind: FsFaultKind;
-  /** relative to CONFIG_DIR — the seeded file the fault damages */
+  /**
+   * relative to CONFIG_DIR — the seeded file the fault is ANCHORED on. Two of
+   * the three damage that file's bytes; `read-only-store` damages its
+   * CONTAINING DIRECTORY and leaves the file itself alone (see the kind's note).
+   * Either way the fault names a file that the precondition seeded, so a fault
+   * whose anchor was never seeded fails loudly instead of chmodding a path that
+   * happens to exist.
+   */
   target: string;
 }
 
@@ -156,7 +177,7 @@ export const emptyPreconditionFor = (engineVersion: string): ConfigPrecondition 
  */
 export function baselineSeedHash(engineVersion: string): string {
   const seed = emptyPreconditionFor(engineVersion).seed ?? [];
-  return createHash("sha256").update(seed.map((f) => `${f.path}\0${f.content}\0${f.dirMode ?? ""}`).join("\0")).digest("hex");
+  return createHash("sha256").update(seed.map((f) => `${f.path}\0${f.content}`).join("\0")).digest("hex");
 }
 
 /** What the runner writes beside a cassette: the declaration AND the baseline it was applied on top of. */
@@ -189,11 +210,16 @@ function applyFault(configDir: string, fault: FsFault): void {
       writeFileSync(abs, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
       break;
     }
-    case "read-only-store":
-      // The DIRECTORY, not the file: the store creates its session file inside
-      // it, and a read-only file would only fail an append to an existing one.
-      chmodSync(abs, 0o500);
+    case "read-only-store": {
+      // The DIRECTORY, not the file, and `abs` is the file: the store CREATES
+      // its session file inside the project directory, so a read-only file
+      // would only fail an append to an existing one — the case the engine does
+      // not perform. Read the anchor first so a fault pointed at a path nothing
+      // seeded fails by name rather than silently chmodding a parent.
+      readFileSync(abs);
+      chmodSync(dirname(abs), 0o500);
       break;
+    }
   }
 }
 
@@ -207,7 +233,6 @@ export function applyPrecondition(configDir: string, pre: ConfigPrecondition, en
     const abs = join(configDir, file.path);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, file.content);
-    if (file.dirMode !== undefined) chmodSync(dirname(abs), file.dirMode);
   }
   for (const fault of pre.faults ?? []) applyFault(configDir, fault);
 }

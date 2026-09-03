@@ -152,23 +152,33 @@ export const W9_SCENARIOS: Scenario[] = [
   {
     // §4.4 D8, AND A MEASURED CORRECTION TO IT. The last two chained records
     // point at each other, so a walk up from the leaf reaches a record it has
-    // already seen and everything above the cycle is unreachable — that much is
-    // asserted directly by `src/precondition.test.ts`, which walks the seeded
-    // file and proves the first exchange is off the chain.
+    // already seen and everything above the cycle is unreachable by the chain
+    // ALONE — that much is asserted directly by `src/precondition.test.ts`,
+    // which walks the seeded file and proves the first exchange is off the
+    // chain. The engine sends it anyway: the request is byte-identical to the
+    // healthy control's.
     //
-    // The engine carries both codewords anyway. So at this pin the HEADLESS
-    // resume path does not rebuild its history by walking `parentUuid`: the
-    // cycle is real, the file is damaged, and the conversation the engine sends
-    // is byte-identical to the healthy control's. The scout's D8 row expects
-    // `tengu_chain_parent_cycle` and a partial transcript; whatever reads that
-    // way, it is not the path a `--print` resume takes. The scenario is kept
-    // BECAUSE of that: it pins the measurement, so a pin bump that starts
-    // truncating on a cycle reddens here rather than silently changing what
-    // resume means, and C12b — which owns the chain walk and can reach it from a
-    // synthetic corpus with no engine at all — inherits a measured boundary
-    // instead of an assumption.
+    // WHY, and the first round of this wave got this wrong. It read the intact
+    // result as "the headless resume does not walk `parentUuid`". It does walk
+    // it — `BSe` in `chunk-fy12d89p.js` walks up from the leaf, sees the repeat,
+    // logs `Cycle detected in parentUuid chain … Returning partial transcript`
+    // and fires `tengu_chain_parent_cycle`, exactly as the scout's D8 row says.
+    // What the scout's row does not carry is the HEAL: when a parent is missing
+    // or already seen, `QVt` picks the nearest not-yet-visited record whose
+    // timestamp is within `YVt` = 5,000 ms BEFORE the current one, fires
+    // `tengu_chain_timestamp_fallback`, and the walk continues through it. The
+    // transcript comes out whole because the fallback rebuilt it, not because
+    // the cycle was harmless.
+    //
+    // WHICH MAKES THIS SEED'S BYTES LOAD-BEARING. Its records are one second
+    // apart (`00:00:0${i*2}` / `…${i*2+1}`), so every step is inside the 5 s
+    // window; at six-second spacing the fallback finds nothing and the walk
+    // recovers 2 of the 4 records. The scenario pins the seed as much as the
+    // fault, and C12b — which owns the chain walk and can reach it from a
+    // synthetic corpus with no engine at all — must reproduce BOTH the walk and
+    // the fallback, not the intact result alone.
     tag: "store-parent-cycle",
-    title: "resume a session file whose parentUuid chain is a cycle (measured: the headless path does not walk it)",
+    title: "resume a session file whose parentUuid chain is a cycle (measured: the walk detects it and the timestamp fallback heals it)",
     precondition: seeded("parent-cycle"),
     run: (ctx) =>
       drive(RESUME_PROMPT, {
@@ -189,13 +199,23 @@ export const W9_SCENARIOS: Scenario[] = [
   {
     // The store's PERMISSION errno set, `{EACCES, EPERM}` — the fifth of the
     // scout's six damaged-filesystem arms (§4.3). NOT `ENOSPC`: the store fence
-    // latches on `{ENOSPC, EROFS, EDQUOT, ENAMETOOLONG}`, and none of those four
-    // can be raised against a chosen path by an unprivileged process on a normal
-    // filesystem (see `FsFaultKind` in src/precondition.ts for the two mechanisms
-    // that would reach it and why neither is bought here).
+    // latches on `{ENOSPC, EROFS, EDQUOT, ENAMETOOLONG}`, and three of those four
+    // cannot be raised against a chosen path by an unprivileged process on a
+    // normal filesystem. `ENAMETOOLONG` can (a 300-character filename returns
+    // it) — a route into the fence through a pathologically deep cwd rather than
+    // a damaged filesystem, which C12d inherits. See `FsFaultKind` in
+    // src/precondition.ts for all of it.
     tag: "store-read-only",
     title: "the project directory is not writable when the store tries to append",
-    precondition: { seed: [{ path: `projects/${projectKeyFor(SANDBOX)}/.keep`, content: "", dirMode: 0o500 }] },
+    // THROUGH THE NAMED FAULT, not around it. The `.keep` seed exists to give
+    // the project directory something to exist for; the fault is what takes the
+    // write bit off that directory, so the arm this scenario is named for is the
+    // arm it exercises. (It used to declare the mode inline on the seed, which
+    // left `read-only-store` an exported fault kind with no caller anywhere.)
+    precondition: {
+      seed: [{ path: `projects/${projectKeyFor(SANDBOX)}/.keep`, content: "" }],
+      faults: [{ kind: "read-only-store", target: `projects/${projectKeyFor(SANDBOX)}/.keep` }],
+    },
     run: (ctx) =>
       drive("Reply with exactly the single word SELFTEST_OK and nothing else.", {
         ...baseOptions(ctx),

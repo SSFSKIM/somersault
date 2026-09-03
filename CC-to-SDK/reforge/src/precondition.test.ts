@@ -88,14 +88,33 @@ try {
   {
     const c = join(box, "ro");
     const keep = "projects/-box-sandbox/.keep";
-    applyPrecondition(c, { seed: [{ path: keep, content: "", dirMode: 0o500 }] }, PIN);
-    let denied = "";
-    try {
-      writeFileSync(join(c, "projects/-box-sandbox/new.jsonl"), "x");
-    } catch (e) {
-      denied = (e as NodeJS.ErrnoException).code ?? "";
-    }
-    check("read-only-store makes a write into the project directory fail with EACCES", denied === "EACCES", denied || "the write SUCCEEDED");
+    // THROUGH THE FAULT KIND. This control used to seed the mode inline
+    // (`dirMode: 0o500`) and never pass `kind: "read-only-store"` at all, so the
+    // fault it is named for had no caller in the repo and was inert under the
+    // usage its own contract documented — it chmodded the TARGET FILE, which
+    // leaves creating a new file in the directory legal, which is the act the
+    // store performs.
+    applyPrecondition(c, { seed: [{ path: keep, content: "" }], faults: [{ kind: "read-only-store", target: keep }] }, PIN);
+    const create = (root: string): string => {
+      try {
+        writeFileSync(join(root, "projects/-box-sandbox/new.jsonl"), "x");
+        return "";
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code ?? "?";
+      }
+    };
+    const denied = create(c);
+    check("read-only-store makes the store's own act — CREATING a session file in the project directory — fail with EACCES",
+      denied === "EACCES", denied === "" ? "the write SUCCEEDED" : denied);
+    // THE ABSENCE CONTROL: without the fault the identical write lands, so the
+    // check above is not passing on something the seed did.
+    const w = join(box, "ro-absent");
+    applyPrecondition(w, { seed: [{ path: keep, content: "" }] }, PIN);
+    check("…and with the fault ABSENT the identical write succeeds", create(w) === "", create(w) || "still denied");
+    // AND IT IS THE DIRECTORY: the file the fault names keeps its own mode.
+    check("…the fault takes the write bit off the CONTAINING DIRECTORY and leaves the named file writable",
+      (lstatSync(join(c, "projects/-box-sandbox")).mode & 0o200) === 0 && (lstatSync(join(c, keep)).mode & 0o200) !== 0,
+      `dir ${(lstatSync(join(c, "projects/-box-sandbox")).mode & 0o777).toString(8)}, file ${(lstatSync(join(c, keep)).mode & 0o777).toString(8)}`);
     // THE REASON THIS CONTROL EXISTS: the reset runs after the faulted run, and a
     // reset the previous scenario can defeat is not a reset.
     wipeConfigDir(c);
