@@ -52,11 +52,18 @@ interface Row {
 }
 
 /**
- * The reason each excluded family is excluded, keyed by pattern. A row that says
- * only `not-admitted` records a decision without recording who made it or why;
- * these are the sentences a later wave needs in order to disagree.
+ * THE REASON EACH PATTERN IS WHERE IT IS, keyed by pattern. A row that says only
+ * `not-admitted` records a decision without recording who made it or why; these
+ * are the sentences a later wave needs in order to disagree.
+ *
+ * Every `not-admitted` row MUST have one — a row without one is generated
+ * carrying the `UNEXPLAINED` sentinel, and `--check` refuses it. That refusal is
+ * the point: the sentinel was written as a placeholder and nothing read it, so a
+ * generation could mint one and the gate would still be green. An `admitted` row
+ * may have one too, when its provenance is not obvious from the pattern (see the
+ * `sessions/<pid>.…` rows).
  */
-const NOT_ADMITTED_REASONS: Record<string, string> = {
+const PATTERN_REASONS: Record<string, string> = {
   ".last-cleanup": "a maintenance stamp — a clock in a file, with no claim about behaviour in it",
   backups: "the engine's own backup of .claude.json, in a directory whose entries are named by epoch-ms",
   "backups/.claude.json.backup.<ms>": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded",
@@ -111,6 +118,15 @@ const admits = (pattern: string, kind: "file" | "dir"): boolean => {
   return kind === "dir" ? configDescend(concrete) : configInclude(concrete) !== null;
 };
 
+const UNEXPLAINED = "UNEXPLAINED — an excluded pattern with no recorded reason is a decision nobody made";
+
+/** The reason clause of a row: mandatory for an exclusion, optional for an inclusion. */
+const whyOf = (pattern: string, admitted: boolean): { why?: string } => {
+  const why = PATTERN_REASONS[pattern];
+  if (why !== undefined) return { why };
+  return admitted ? {} : { why: UNEXPLAINED };
+};
+
 const doc = census();
 // The census's keys are re-generalized on the way in, so a census written by an
 // older `generalizePath` collapses into today's patterns instead of arriving as
@@ -142,7 +158,7 @@ const rows: Row[] = [...merged]
     // not the latest one — a shorter run must not lower a recorded floor.
     seenAtLeast: Math.max(e.seen, priorSeen.get(pattern) ?? 0),
     graded: (admits(pattern, e.kind) ? "admitted" : "not-admitted") as Row["graded"],
-    ...(admits(pattern, e.kind) ? {} : { why: NOT_ADMITTED_REASONS[pattern] ?? "UNEXPLAINED — an excluded pattern with no recorded reason is a decision nobody made" }),
+    ...whyOf(pattern, admits(pattern, e.kind)),
   }))
   .sort((a, b) => a.pattern.localeCompare(b.pattern));
 
@@ -179,6 +195,8 @@ if (!check) {
   const committed = JSON.parse(readFileSync(FIXTURE, "utf8")) as Fixture;
   const declared = new Map(committed.entries.map((r) => [r.pattern, r]));
   const problems: string[] = [];
+  /** floors the census has outgrown — a note, because every corpus run raises them */
+  const stale: string[] = [];
   // (1) THE TRIPWIRE. A path the engine wrote that this pin's inventory does not
   // declare — the state surface cannot see it and nothing else would have.
   for (const r of rows) {
@@ -191,6 +209,22 @@ if (!check) {
       continue;
     }
     if (d.kind !== r.kind) problems.push(`${r.pattern}: recorded as a ${d.kind}, now a ${r.kind}`);
+    // (1b) THE REASON IS PART OF THE ROW. `why` was written by generation and
+    // read by nobody, so a `not-admitted` row could carry the UNEXPLAINED
+    // placeholder — or a hand-edited sentence that no longer matches
+    // PATTERN_REASONS — through a green gate. Measured: a scratch fixture with
+    // an UNEXPLAINED row passed --check.
+    if ((d.why ?? "").startsWith("UNEXPLAINED"))
+      problems.push(`${r.pattern}: the committed inventory records no reason for excluding it — write one in PATTERN_REASONS (extract-config-inventory.ts) and regenerate`);
+    if ((d.why ?? "") !== (r.why ?? ""))
+      problems.push(`${r.pattern}: the committed reason is not the one PATTERN_REASONS gives today — committed '${(d.why ?? "(none)").slice(0, 60)}…', now '${(r.why ?? "(none)").slice(0, 60)}…'`);
+    // (1c) THE FLOOR. `seenAtLeast` is a floor over every census taken at this
+    // pin, so the census may legitimately have outgrown it (more resets since
+    // the last generation) or fall short of it (a --scenario run). What it may
+    // NOT be is zero: a declared pattern that no census has ever contributed is
+    // a row somebody wrote by hand.
+    if (d.seenAtLeast < 1) problems.push(`${r.pattern}: declared with a floor of ${d.seenAtLeast} — no census has ever observed it`);
+    if (r.seenAtLeast > d.seenAtLeast) stale.push(`${r.pattern} (${d.seenAtLeast} → ${r.seenAtLeast})`);
     // (2) THE INCLUDE-LIST'S OWN DRIFT. `graded` is recomputed from
     // src/state.ts, so narrowing the include-list reddens here rather than
     // quietly shrinking what the fourth surface can see.
@@ -206,6 +240,8 @@ if (!check) {
     console.log("FAIL — regenerate with: npx tsx research/tools/extract-config-inventory.ts");
     process.exit(1);
   }
+  if (stale.length > 0)
+    console.log(`  note: ${stale.length} floor(s) outgrown since the inventory was generated (regenerate to record them): ${stale.slice(0, 6).join(", ")}`);
   if (missing.length > 0) console.log(`  note: ${missing.length} declared pattern(s) not written by this census (a partial corpus run): ${missing.slice(0, 6).join(", ")}`);
   console.log(`PASS — ${rows.length} observed pattern(s) over ${doc.resets} resets, all declared; ${fx.counts.admitted} admitted by the state surface`);
 }
