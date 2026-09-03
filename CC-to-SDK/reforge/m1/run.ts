@@ -19,7 +19,7 @@ import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/prox
 import { gateCacheCheck } from "../src/leakcheck.js";
 import { scrubRequestBody } from "../src/canonical.js";
 import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX, saveTranscript } from "../src/runTurn.js";
-import { stateSnapshot, type StateSnapshot } from "../src/state.js";
+import { defaultStateRoots, entriesOf, stateSnapshot, type StateSnapshot } from "../src/state.js";
 import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
@@ -86,7 +86,7 @@ async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay
   }
   // Taken BEFORE the next run resets the sandbox, and before the proxy closes —
   // nothing after this point touches the tree.
-  const state = stateSnapshot(SANDBOX, messages);
+  const state = stateSnapshot(defaultStateRoots(SANDBOX, CONFIG_DIR), messages);
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallback = mode === "replay" ? proxy.fallbackServed() : 0;
@@ -333,7 +333,7 @@ for (const s of SCENARIOS) {
   // "identical" over two EMPTY trees is visible as the weak claim it is, rather
   // than reading like the strong one.
   const sOk = report(
-    `state (${a.state.sandbox.length} sandbox entr${a.state.sandbox.length === 1 ? "y" : "ies"}, engine ${a.state.engine})`,
+    `state (${a.state.roots.map((r) => `${r.entries.length} ${r.name}`).join(", ")} entr${entriesOf(a.state, "sandbox").length === 1 ? "y" : "ies"}, engine ${a.state.engine})`,
     sFind,
     variance?.state,
   );

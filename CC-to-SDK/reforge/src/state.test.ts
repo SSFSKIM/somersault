@@ -13,8 +13,8 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { diffTranscripts } from "./differ.js";
-import { engineOutcome, treeOf } from "./state.js";
+import { diffTranscripts, makeRunNormalizer } from "./differ.js";
+import { configInclude, engineOutcome, projectTranscript, rootEntriesOf, treeOf } from "./state.js";
 
 let pass = 0;
 const failures: string[] = [];
@@ -104,6 +104,95 @@ try {
   }
 }
 
+// ---- the CONFIG root: the include-list, and what it deliberately does not see -
+// C12a/W9a. The second registered root is walked through a DECLARED list rather
+// than whole, so the list itself has to be watched admitting and refusing — an
+// include-list nobody tests is a blind spot with a comment on it.
+{
+  const cfg = mkdtempSync(join(tmpdir(), "reforge-config-"));
+  try {
+    const slug = "-private-tmp-reforge-sandbox";
+    mkdirSync(join(cfg, "projects", slug), { recursive: true });
+    mkdirSync(join(cfg, "projects", slug, "sess-1", "subagents"), { recursive: true });
+    mkdirSync(join(cfg, "sessions"), { recursive: true });
+    mkdirSync(join(cfg, "tasks", "list-1"), { recursive: true });
+    // …and the three families the list REFUSES, each present in the real config
+    // dir today and each excluded for a stated reason (see src/state.ts).
+    mkdirSync(join(cfg, "backups"), { recursive: true });
+    mkdirSync(join(cfg, "session-env", "sess-1"), { recursive: true });
+    mkdirSync(join(cfg, "shell-snapshots"), { recursive: true });
+    writeFileSync(join(cfg, "backups", ".claude.json.backup.1788415170183"), "{}");
+    writeFileSync(join(cfg, "session-env", "sess-1", "env"), "X=1");
+    writeFileSync(join(cfg, "shell-snapshots", "snapshot-zsh-1788-abc.sh"), "true");
+    writeFileSync(join(cfg, "sessions", "4711.json"), '{"pid":4711}');
+    writeFileSync(join(cfg, "tasks", "list-1", "meta"), "{}");
+    writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "m", userID: "u", firstStartTime: "t", skillUsage: {} }));
+    const line = (r: Record<string, unknown>) => JSON.stringify(r) + "\n";
+    const transcript =
+      line({ type: "user", uuid: "u1-aaaaaaaa", parentUuid: null, sessionId: "s1-aaaaaaaa", message: { role: "user" } }) +
+      line({ type: "assistant", uuid: "u2-aaaaaaaa", parentUuid: "u1-aaaaaaaa", sessionId: "s1-aaaaaaaa", message: { role: "assistant" } });
+    writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript);
+    writeFileSync(join(cfg, "projects", slug, "sess-1", "subagents", "child.jsonl"), line({ type: "user", uuid: "c1-aaaaaaaa", agentId: "a0123456789abcdef" }));
+
+    const root = { name: "config", path: cfg, include: configInclude };
+    const entries = rootEntriesOf(root);
+    const paths = entries.map((e) => e.path);
+    check("the include-list admits the six §4.2 families",
+      [".claude.json", `projects/${slug}/s1-aaaaaaaa.jsonl`, `projects/${slug}/sess-1/subagents/child.jsonl`, "sessions/4711.json", "tasks/list-1/meta"].every((p) => paths.includes(p)),
+      JSON.stringify(paths));
+    check("…and refuses backups/, session-env/ and shell-snapshots/ — including their directories",
+      !paths.some((p) => p.startsWith("backups") || p.startsWith("session-env") || p.startsWith("shell-snapshots")));
+    check("an admitted transcript is PROJECTED, never hashed",
+      (() => { const e = entries.find((x) => x.path.endsWith("s1-aaaaaaaa.jsonl"))!; return e.records?.length === 2 && e.sha256 === undefined && e.size === undefined; })());
+    check("a registry file outside the transcript families is HASHED",
+      (() => { const e = entries.find((x) => x.path === "sessions/4711.json")!; return typeof e.sha256 === "string" && e.records === undefined; })());
+    check("the project-key slug is lifted out of the path as a property the differ can map",
+      entries.filter((e) => e.path.startsWith("projects/")).every((e) => e.slug === slug));
+    check(".claude.json's per-install identity is projected away, and its presence still recorded",
+      (() => {
+        const p = (entries.find((x) => x.path === ".claude.json")!.records ?? [])[0] as Record<string, unknown>;
+        return p.machineID === undefined && p.userID === undefined && p.firstStartTime === undefined &&
+          JSON.stringify(p.keys) === JSON.stringify(["firstStartTime", "machineID", "skillUsage", "userID"]);
+      })());
+    // …and the identity fields are a blind spot ON PURPOSE, watched being blind.
+    writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "OTHER", userID: "OTHER", firstStartTime: "OTHER", skillUsage: {} }));
+    check("a re-minted machine identity is IGNORED, as the projection says", !differs(entries, rootEntriesOf(root)));
+    writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ machineID: "m", userID: "u", firstStartTime: "t", skillUsage: { probe: { usageCount: 1 } } }));
+    check("…but a changed skillUsage counter is caught", differs(entries, rootEntriesOf(root)));
+
+    // THE CLAIM THE PROJECTION EXISTS FOR (spec's C12a bullet): a wrong
+    // parentUuid, which the {type, role, sorted keys} shape diff m2/cross-resume
+    // has cannot see. Both halves demonstrated — the shape diff PASSING it is
+    // what makes the projection catching it evidence.
+    const shapeOf = (text: string) =>
+      text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>)
+        .map((r) => ({ type: r.type, role: (r.message as { role?: string })?.role, keys: Object.keys(r).sort() }));
+    const rechained = transcript.replace('"parentUuid":"u1-aaaaaaaa"', '"parentUuid":"u2-aaaaaaaa"');
+    check("THE DEFECT: the old shape diff passes a record chained to the wrong parent",
+      !differs(shapeOf(transcript), shapeOf(rechained)));
+    check("…and the semantic projection catches it",
+      differs(projectTranscript(transcript).records, projectTranscript(rechained).records));
+    // …and it survives the differ's run-id MAP, which is the point of mapping
+    // rather than scrubbing: both sides are normalized against their own map first.
+    const mapped = (t: string) => { const r = projectTranscript(t).records; return r.map(makeRunNormalizer(r)); };
+    check("…and still catches it after both sides go through the run-id map",
+      differs(mapped(transcript), mapped(rechained)));
+    check("…while a genuine re-run with different uuids does NOT diff",
+      !differs(mapped(transcript), mapped(transcript.split("aaaaaaaa").join("bbbbbbbb"))));
+
+    // The torn tail (scout §4.4 D7): a file whose last line has no newline.
+    writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript.slice(0, -20));
+    const torn = rootEntriesOf(root).find((e) => e.path.endsWith("s1-aaaaaaaa.jsonl"))!;
+    check("a torn tail is recorded as one, and its partial record is not silently dropped",
+      torn.tornTail === true && (torn.records ?? []).some((r) => (r as { malformed?: boolean }).malformed === true));
+    // …and the negative control: a WHOLE file is not reported torn.
+    writeFileSync(join(cfg, "projects", slug, "s1-aaaaaaaa.jsonl"), transcript);
+    check("a whole file is not reported torn", rootEntriesOf(root).find((e) => e.path.endsWith("s1-aaaaaaaa.jsonl"))!.tornTail === undefined);
+  } finally {
+    rmSync(cfg, { recursive: true, force: true });
+  }
+}
+
 // ---- the derived exit half --------------------------------------------------
 {
   check("a query that finished is 'completed'", engineOutcome([{ type: "result" }]) === "completed");
@@ -126,7 +215,7 @@ if (pass === 0) {
 } else {
   console.log(
     failures.length === 0
-      ? "PASS — the state surface catches content, presence and exit differences, and ignores only what it says it ignores"
+      ? "PASS — the state surface catches content, presence, chain and exit differences, and ignores only what it says it ignores"
       : `FAIL — ${failures.length} control(s) failed`,
   );
   process.exitCode = failures.length === 0 ? 0 : 1;

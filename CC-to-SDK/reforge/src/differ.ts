@@ -101,6 +101,43 @@ const RUN_ID_KEYS = new Set([
   // for two hooks, or a response answering a different start) still diffs.
   "hook_id",
   "new_conversation_id",
+  // C12a/W9a's six, and the reason they are KEYS rather than shapes. The stored
+  // transcript's envelope carries five ids and a project-key slug, and two of
+  // the lexemes are AMBIGUOUS BY VALUE: an agent id and a task id are both
+  // `a` + 16 hex, and `promptId`, `leafUuid`, `parentUuid` and `uuid` are all
+  // RFC-4122. A shape-keyed rule cannot tell those apart, so it would either map
+  // a task id as an agent id (a wrong binding, the unsafe direction §3.4 names)
+  // or map every uuid-shaped string anywhere (which erases `tool_use_id`s the
+  // cassette replays identically and that therefore MUST match literally). The
+  // property name is the disambiguator, and `research/fixtures/run-id-shapes-
+  // 2.1.251.json` enumerates the shapes each key is observed to carry so a pin
+  // that re-lexes one reddens rather than silently binding the wrong thing.
+  //
+  // What each buys, stated as the defect it must still catch:
+  //  - `parentUuid` / `logicalParentUuid`: a record chained to the WRONG parent
+  //    still diffs, because the map is one-to-one and the wrong parent's uuid is
+  //    already bound to another placeholder. Blanket-scrubbing them would have
+  //    made every chain identical — which is precisely the defect class the
+  //    storage subsystem exists to avoid.
+  //  - `leafUuid`: the resume pointer. A divergent leaf is the difference
+  //    between resuming the conversation and resuming a prefix of it.
+  //  - `promptId`: correlates every record of one turn. An engine that minted
+  //    two where the oracle minted one still diffs.
+  //  - `agentId`: already mapped from the transcript surface; named again here
+  //    because the STORED envelope is where the route-by-agent policy writes it.
+  //  - `sessionId`: the stored spelling of `session_id`, which is already mapped.
+  //  - `slug`: the project key, which is the harness's own absolute cwd with its
+  //    separators flattened. It is not minted by the engine at all — it is
+  //    mapped because it is a fact about THIS MACHINE that would otherwise put an
+  //    operator's home directory into every state-surface finding, and because
+  //    `src/state.ts` lifts it out of the entry path deliberately so this map can
+  //    reach the path string too.
+  "parentUuid",
+  "logicalParentUuid",
+  "leafUuid",
+  "promptId",
+  "sessionId",
+  "slug",
 ]);
 
 /**
