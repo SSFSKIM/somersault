@@ -760,6 +760,46 @@ const content = (block: { content?: unknown }) => block.content;
   }
 }
 
+// ---- LifecyclePort, the composed seam (C16b / W13b) ------------------------
+// The port is the thing C10.7/C10.8 import, so what it owes a contract test is
+// not the members' behaviour — each is asserted above — but the WIRING: that
+// each member reaches the implementation it claims to, and that the two flags
+// stay apart. A port that quietly bound `isShuttingDown` to the claim would pass
+// every test in this file except this one, and would then hang the executor on a
+// shutdown that was about to be released.
+{
+  const { lifecyclePort, LIFECYCLE_PORT_MEMBERS } = await load("shared/lifecycle-port.js");
+  const latch = await load("process-lifecycle/reference.js");
+
+  const coordinator = { shutdownInProgress: false, disarmOrphanCheck() {}, armOrphanCheck() {} };
+  const port = lifecyclePort(coordinator);
+
+  eq("the port ships exactly the members it declares", Object.keys(port).sort(), [...LIFECYCLE_PORT_MEMBERS].sort());
+  ok("…and every one of them is callable", LIFECYCLE_PORT_MEMBERS.every((m: string) => typeof port[m] === "function"));
+
+  // THE TWO FLAGS ARE NOT THE SAME FLAG, asserted by moving one and watching the
+  // other stay put. This is the whole reason the port has five members.
+  eq("the claim starts clear", port.shutdownClaimed(), false);
+  port.claimShutdown();
+  eq("claiming moves the CLAIM", port.shutdownClaimed(), true);
+  eq("…and does NOT move the latch, which nothing in this process has committed", latch.isShuttingDown(), false);
+  ok(
+    "a port that bound isShuttingDown to the claim would report the two equal here, and does not",
+    port.isShuttingDown() !== port.shutdownClaimed(),
+  );
+  port.releaseShutdownClaim();
+  eq("releasing moves it back — the claim is two-way where the latch is one-way", port.shutdownClaimed(), false);
+
+  // The latch half reaches the SAME module instance the strangled graph uses,
+  // which is what "one latch per process" means once two importers exist.
+  eq("the port's latch reader is the owned module's own", port.isShuttingDown(), latch.isShuttingDown());
+  // Identity, not equality: a port that minted `new Promise(() => {})` per call
+  // would satisfy every awaiter and fail this, which is the difference that
+  // matters to a caller racing two of them.
+  eq("the port's hang is the SAME promise the owned module returns", port.hang() === latch.hang(), true);
+  eq("…and the same one on every call through the port", port.hang() === port.hang(), true);
+}
+
 console.log(`=== owned-implementation contracts: ${pass} check(s) ===`);
 for (const f of failures) console.log(`  FAIL — ${f}`);
 if (pass === 0) {
