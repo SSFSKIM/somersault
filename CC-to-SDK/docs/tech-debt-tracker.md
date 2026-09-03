@@ -656,3 +656,33 @@ NOT a `primitive` — where no adapter assertion would catch it — without anyt
 oracle, duplicating the manifest's own `derive` regexes to buy a check the adapter already performs
 per request. The honest fix is documentation, which this entry is. Revisit if a prelude ever declares
 a non-`primitive` capture from an owned value — that one would be a real hole.
+
+---
+
+## C16b / W13b — the shutdown latch's `darkOver` population is two of three signal paths
+
+**Logged:** 2026-09-03, with C16b. **Blocks:** nothing. **Owner when revisited:** whichever child
+next touches `w13/signals.ts` (C16a is the natural one — it generalises this wave's signal primitive).
+
+`process-lifecycle:commitShutdown` and `process-lifecycle:hang` are adjudicated corpus-dark, and the
+adjudication has runtime teeth: `darkOver: ["sigterm-mid-turn", "sighup-mid-turn"]`, replayed under
+each row's own twin on every gate run, failing loudly as "no longer dark" if either goes red. That is
+two of the **three** paths a headless engine actually has. The third, `sigint-mid-turn`, exists — this
+wave added it — and is not in the list.
+
+**Why that is defensible rather than an omission.** The two listed paths bracket the question. SIGTERM
+is where the dispatcher's own handler commits the latch DIRECTLY (one of its three call sites
+bundle-wide) and then aborts the run controller. SIGHUP is where the coordinator commits it through
+`shutdown` with nothing aborting at all. SIGINT is dominated by that pair: it reaches the same commit
+site SIGHUP does, through `shutdown`, and adds SIGTERM's abort — so it can only be less observable
+than either, never more.
+
+**Why it was not just added.** The full gate had already started on the manifest as it stands, and the
+campaign leans hard on "the gate ran on exactly the landed code". Widening a `darkOver` list changes
+which tags two liveness phases replay, so doing it after the run would have meant either a second
+~2.5-hour gate or a quoted count that does not match the manifest.
+
+**Cost:** one of three populations goes un-re-measured, on rows whose reason is already the strongest
+kind (measured with both twins, on both engines, over both listed paths). **Fix:** add
+`"sigint-mid-turn"` to both `darkOver` arrays and let the next full gate re-measure it — a one-line
+change whose only price is gate time.
