@@ -70,6 +70,23 @@ const toolResults = (msgs: unknown[]): string[] => {
 /** The whole capture as text — for facts that arrive as an attachment rather than as a tool result. */
 const allText = (msgs: unknown[]): string => JSON.stringify(msgs);
 
+/**
+ * The `system`/`task_notification` frames the engine emits into the SDK stream.
+ *
+ * MEASURED on the corpus's existing `background-task` recording, which drives
+ * the AGENT tool's flag: the notification is not only an attachment on the next
+ * request, it is its own frame carrying `task_id`, `tool_use_id`, `status`,
+ * `output_file` and `summary`. That makes the moat claim a STRUCTURAL assertion
+ * — a frame whose `tool_use_id` is the Bash call's and whose `summary` is the
+ * sentence the engine composed — rather than a substring search over the
+ * capture, which would also match the prompt that asked for it.
+ */
+const taskNotifications = (msgs: unknown[]): { tool_use_id?: string; status?: string; summary?: string }[] =>
+  msgs.filter((m) => {
+    const mm = m as { type?: string; subtype?: string };
+    return mm.type === "system" && mm.subtype === "task_notification";
+  }) as { tool_use_id?: string; status?: string; summary?: string }[];
+
 // ---- the six that need no machinery -----------------------------------------
 
 /**
@@ -124,12 +141,18 @@ const backgroundExplicit: Scenario = {
     if (!uses.some((u) => u.input?.run_in_background === true)) {
       return `no Bash call set run_in_background — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
     }
-    if (resultsOf(msgs).length !== 2) return `expected 2 results, saw ${resultsOf(msgs).length}`;
-    // The notification is the point. It arrives as an ATTACHMENT on the second
-    // turn rather than as a tool result, so it is looked for over the whole
-    // capture; the prefix is the engine's own (`ZCe`) rather than prose.
-    if (!allText(msgs).includes(BACKGROUND_NOTIFICATION_PREFIX)) {
-      return `the backgrounded command's notification (${JSON.stringify(BACKGROUND_NOTIFICATION_PREFIX)}…) never reached the session`;
+    // The notification is the point, and it is asserted structurally: a
+    // `system`/`task_notification` frame whose `tool_use_id` is THIS Bash call's
+    // and whose `summary` is the sentence the engine composed from `ZCe`.
+    const bg = uses.find((u) => u.input?.run_in_background === true);
+    const notes = taskNotifications(msgs);
+    if (notes.length === 0) return "no task_notification frame — the backgrounded command's completion never reached the session";
+    const mine = notes.filter((n) => n.tool_use_id === bg?.id);
+    if (mine.length === 0) {
+      return `a task_notification arrived but for ${JSON.stringify(notes.map((n) => n.tool_use_id))}, not for the backgrounded Bash call ${JSON.stringify(bg?.id)}`;
+    }
+    if (!mine.some((n) => String(n.summary ?? "").startsWith(BACKGROUND_NOTIFICATION_PREFIX))) {
+      return `the notification's summary is not the engine's backgrounded-command sentence: ${JSON.stringify(mine.map((n) => n.summary))}`;
     }
     return null;
   },
@@ -201,8 +224,10 @@ const backgroundControl: Scenario = {
     if (fired.payload?.backgrounded !== true) {
       return `background_tasks answered ${JSON.stringify(fired.payload)} — the EFFECT (a real running shell) was not reached`;
     }
-    if (!allText(msgs).includes(BACKGROUND_NOTIFICATION_PREFIX)) {
-      return `the backgrounded command's notification (${JSON.stringify(BACKGROUND_NOTIFICATION_PREFIX)}…) never reached the session`;
+    const notes = taskNotifications(msgs);
+    if (notes.length === 0) return "no task_notification frame — the shell was backgrounded but its completion never reached the session";
+    if (!notes.some((n) => String(n.summary ?? "").startsWith(BACKGROUND_NOTIFICATION_PREFIX))) {
+      return `the notification's summary is not the engine's backgrounded-command sentence: ${JSON.stringify(notes.map((n) => n.summary))}`;
     }
     return null;
   },
@@ -252,9 +277,12 @@ const timeoutBackground: Scenario = {
       return `no Bash call declared timeout=2000 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
     }
     // One of the two outcomes `WMt` produces, and WHICH is engine behaviour the
-    // differ compares: an auto-backgrounded task, or the timeout sentence.
-    const text = allText(msgs);
-    if (!text.includes("timed out") && !text.includes(BACKGROUND_NOTIFICATION_PREFIX)) {
+    // differ compares: an auto-backgrounded task, or the timeout sentence. What
+    // must not happen is neither — a command that simply ran to completion means
+    // the deadline was never reached and the scenario grades nothing.
+    const backgrounded = taskNotifications(msgs).some((n) => String(n.summary ?? "").startsWith(BACKGROUND_NOTIFICATION_PREFIX));
+    const timedOut = toolResults(msgs).some((r) => /timed out/i.test(r));
+    if (!backgrounded && !timedOut) {
       return "neither the timeout sentence nor a backgrounded-task notification appeared — the deadline was never reached";
     }
     return null;
@@ -498,8 +526,12 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
     },
     check: (msgs) => {
       if (!usedTool(msgs, "Bash")) return "Bash tool never used";
-      if (!allText(msgs).includes("waiting for interactive input")) {
-        return "the stall detector never fired — no notification said the command appears to be waiting for interactive input";
+      const stalled = taskNotifications(msgs).filter((n) => String(n.summary ?? "").includes("waiting for interactive input"));
+      if (stalled.length === 0) {
+        return `the stall detector never fired — no task_notification said the command appears to be waiting for interactive input (summaries: ${JSON.stringify(taskNotifications(msgs).map((n) => n.summary))})`;
+      }
+      if (!stalled.every((n) => String(n.summary ?? "").startsWith(BACKGROUND_NOTIFICATION_PREFIX))) {
+        return `the stall notification's summary is not the engine's backgrounded-command sentence: ${JSON.stringify(stalled.map((n) => n.summary))}`;
       }
       return null;
     },
