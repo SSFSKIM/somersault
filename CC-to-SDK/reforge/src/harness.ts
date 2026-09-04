@@ -84,6 +84,23 @@ export interface Scenario {
    */
   recordInject?: RecordInjector;
   /**
+   * C13c/W10c — the children this scenario MEANS to leave running, as command
+   * substrings.
+   *
+   * The supervision surface (`src/supervision.ts`) records every process a run
+   * left behind; without a declaration it cannot tell a deliberate detachment
+   * from a leak, and "the engine left a shell running" is the correct answer
+   * for a backgrounded command and a defect for every other one. Absent means
+   * the EMPTY declaration — "this scenario leaves nothing running" — which is a
+   * statement rather than an absence, exactly as the empty precondition is.
+   *
+   * A declared survivor is still RECORDED and still diffed: the declaration
+   * says a survivor is legitimate, not that it is invisible, so an engine that
+   * failed to detach the child it was supposed to detach still differs from one
+   * that did.
+   */
+  detachedChildren?: readonly string[];
+  /**
    * The DECLARED state of the harness config dir before this scenario runs
    * (`src/precondition.ts`). Absent means `EMPTY_PRECONDITION` — which is itself
    * a declaration, not an absence: the reset seeds the documented baseline.
