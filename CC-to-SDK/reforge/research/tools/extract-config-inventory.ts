@@ -217,6 +217,35 @@ if (!check) {
   const problems: string[] = [];
   /** floors the census has outgrown — a note, because every corpus run raises them */
   const stale: string[] = [];
+  // (0) THE SUMMARY IS COMPARED AGAINST WHAT IT SUMMARISES. Generation writes a
+  // four-number `counts` block and --check only PRINTED one of them, so a
+  // hand-edited fixture — a row deleted, a `graded` flipped, a number retyped —
+  // passed green on the half nobody read. That is (1b) one field over, and the
+  // class this campaign keeps finding: a check that compares a subset of what
+  // its own generator writes.
+  //
+  // Three of the four are functions of `entries` and are compared EXACTLY.
+  // `resetsObserved` is not, and cannot be: it is the reset count of the census
+  // the last GENERATION read, while `doc` here is a different sample — larger
+  // after more corpus runs, smaller after `build/config-observed.json` is
+  // deleted and a partial run rebuilds it. So it is checked for being a real
+  // observation and REPORTED as a note when the census has moved past it, which
+  // is how the floors below are treated, for the same reason.
+  const counts = committed.counts ?? ({} as Fixture["counts"]);
+  const recomputed: Fixture["counts"] = {
+    patterns: committed.entries.length,
+    admitted: committed.entries.filter((r) => r.graded === "admitted").length,
+    notAdmitted: committed.entries.filter((r) => r.graded === "not-admitted").length,
+    resetsObserved: counts.resetsObserved,
+  };
+  for (const k of ["patterns", "admitted", "notAdmitted"] as const) {
+    if (counts[k] !== recomputed[k])
+      problems.push(`counts.${k}: the committed inventory declares ${counts[k]}, its own ${committed.entries.length} entries say ${recomputed[k]}`);
+  }
+  if (!Number.isInteger(counts.resetsObserved) || counts.resetsObserved < 1)
+    problems.push(`counts.resetsObserved: ${counts.resetsObserved} — the generation records the census it read, which is at least one reset`);
+  if (committed.engineVersion !== ENGINE_VERSION)
+    problems.push(`the inventory's own engineVersion is '${committed.engineVersion}', the pin is '${ENGINE_VERSION}'`);
   // (1) THE TRIPWIRE. A path the engine wrote that this pin's inventory does not
   // declare — the state surface cannot see it and nothing else would have.
   for (const r of rows) {
@@ -263,5 +292,7 @@ if (!check) {
   if (stale.length > 0)
     console.log(`  note: ${stale.length} floor(s) outgrown since the inventory was generated (regenerate to record them): ${stale.slice(0, 6).join(", ")}`);
   if (missing.length > 0) console.log(`  note: ${missing.length} declared pattern(s) not written by this census (a partial corpus run): ${missing.slice(0, 6).join(", ")}`);
+  if (doc.resets > counts.resetsObserved)
+    console.log(`  note: the census has reached ${doc.resets} resets since this inventory was generated at ${counts.resetsObserved}`);
   console.log(`PASS — ${rows.length} observed pattern(s) over ${doc.resets} resets, all declared; ${fx.counts.admitted} admitted by the state surface`);
 }
