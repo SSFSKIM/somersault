@@ -41,10 +41,17 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { acquireSandboxLock } from "../src/lock.js";
+import { teeToBuildLog } from "./teelog.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { combinedOutput, relayFailure, relayOutput } from "../m2/relay.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
 import { classifyReplay, darkVerdict, runnerFor, type ReplayOutcome } from "./runners.js";
+
+// THE RUN ARCHIVES ITSELF. Every count this campaign quotes comes from a gate
+// run, and until now the only copy of one lived in whatever /tmp file the
+// operator remembered to redirect into. Teed FIRST, so a refused acquire below
+// is in the archive too.
+console.log(`gate log: ${teeToBuildLog("gate")}`);
 
 // THE SANDBOX IS TAKEN FOR THE WHOLE RUN, not per phase. The gate spawns dozens
 // of suites over one to three hours, each of which resets `sandbox/`+`config/`;

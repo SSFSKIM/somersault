@@ -14,8 +14,12 @@
 //      modules (strangle/instrument.ts) — same code, plus a branch recorder;
 //   3. the covering scenarios are replayed offline against it, and must stay
 //      GREEN: an instrumented build that diverges is measuring something else;
-//   4. what ran is compared against the inventory, and every branch that did not
-//      run must carry a reviewed exclusion in strangle/attestation.ts.
+//   3b. any DIFFERENTIAL CONTRACT DRIVER a module declares is then run against
+//      the same instrumented build, in its own process, so what it executes is
+//      recorded and attributed apart from what the corpus executed (C13a);
+//   4. what ran is compared against the inventory, and every branch that neither
+//      the corpus nor a contract suite executed must carry a reviewed exclusion
+//      in strangle/attestation.ts.
 //
 // `--check` fails on an un-adjudicated branch and leaves the report alone — but
 // it also fails when the report ON DISK is not what this run would write (§5),
@@ -32,8 +36,13 @@ import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
 import { relayFailure } from "../m2/relay.js";
+import { teeToBuildLog } from "./teelog.js";
 
 const checkOnly = process.argv.includes("--check");
+// The same archive the gate keeps, for the same reason: the executed/excluded
+// counts are quoted in every wave record and the run that produced them wrote
+// to a terminal (`strangle/teelog.ts`).
+console.log(`attestation log: ${teeToBuildLog("attest")}`);
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
 // One report for every attested module, not one per wave: the inventory is
 // generated from `ATTESTED` in a single run, so a per-wave file would either
@@ -119,18 +128,61 @@ if (red.length > 0) {
   process.exit(1);
 }
 
-// ---- 4. adjudicate -----------------------------------------------------------
+// ---- 3b. contract evidence ---------------------------------------------------
+// A second executed-set, from the differential contract suites that grade what
+// the corpus cannot reach. See `AttestedModule.contract` for when a module earns
+// one and `strangle/adjudicate.ts` for why the two sets are reported apart.
+//
+// Attribution is by RECORDER FILE and by BYTE OFFSET inside it. The recorder
+// appends, one file per PID, so everything the corpus replays wrote is a prefix
+// of what is on disk when the drivers finish — and reading only the suffix means
+// a driver whose PID happens to collide with a finished engine's is still
+// attributed correctly rather than crediting the engine's work to the suite.
+const coverageFiles = (): Map<string, string> => {
+  const out = new Map<string, string>();
+  if (!existsSync(COVERAGE_DIR)) return out;
+  for (const f of readdirSync(COVERAGE_DIR)) out.set(f, readFileSync(join(COVERAGE_DIR, f), "utf8"));
+  return out;
+};
+const linesOf = (text: string): string[] => text.split("\n").filter((l) => l !== "");
+
+const beforeContract = coverageFiles();
 const executed = new Set<string>();
-if (existsSync(COVERAGE_DIR)) {
-  for (const f of readdirSync(COVERAGE_DIR)) {
-    for (const line of readFileSync(join(COVERAGE_DIR, f), "utf8").split("\n")) if (line) executed.add(line);
+for (const text of beforeContract.values()) for (const line of linesOf(text)) executed.add(line);
+
+const contract = new Set<string>();
+const contractSuites = ATTESTED.filter((a) => a.contract !== undefined);
+for (const a of contractSuites) {
+  const driver = a.contract!.driver;
+  const r = run("npx", ["tsx", driver]);
+  console.log(`  contract driver ${driver} (${a.module}): ${r.status === 0 ? "ran" : "FAILED"}`);
+  if (r.status !== 0) {
+    // A driver that did not run recorded nothing, and every branch it was going
+    // to cover would fall through to UNADJUDICATED — thousands of them, reported
+    // as a coverage gap rather than as the broken driver it is. Fail here, where
+    // the cause is still legible.
+    for (const l of relayFailure(r)) console.log(`    ${l}`);
+    console.log(`FAIL — the contract driver for '${a.module}' did not run, so its branch evidence is missing rather than absent`);
+    process.exit(1);
   }
 }
+const afterContract = coverageFiles();
+for (const [file, text] of afterContract) {
+  const already = beforeContract.get(file) ?? "";
+  const suffix = text.startsWith(already) ? text.slice(already.length) : text;
+  for (const line of linesOf(suffix)) if (!executed.has(line)) contract.add(line);
+}
+if (contractSuites.length > 0 && contract.size === 0) {
+  console.log("FAIL — the contract drivers recorded no branch outcome at all; they ran against something that is not the instrumented build");
+  process.exit(1);
+}
+
+// ---- 4. adjudicate -----------------------------------------------------------
 // The rules themselves live in strangle/adjudicate.ts — pure, so
 // strangle/attest.test.ts can put each one in front of the fixture that violates
 // it without running a build (an unexecuted branch, a stale exclusion in either
 // direction, an empty inventory).
-const verdict = adjudicate(allSites, EXCLUSIONS, executed);
+const verdict = adjudicate(allSites, EXCLUSIONS, executed, contract);
 const { rows, unadjudicated, stale } = verdict;
 const nExecuted = verdict.executedCount;
 
@@ -144,9 +196,13 @@ const lines: string[] = [
   `- modules attested: **${sites.size}** — ${[...sites.keys()].join(", ")}`,
   `- branch sites: **${[...sites.values()].flat().length}**, outcomes: **${inventory.length}**`,
   `- executed by the corpus: **${nExecuted}**`,
+  `- executed by a differential contract suite: **${verdict.contractCount}**`,
   `- reviewed exclusions: **${verdict.excludedCount}**`,
   `- un-adjudicated: **${unadjudicated.length}**`,
   `- scenarios replayed: ${scenarios.join(", ")}`,
+  ...(contractSuites.length > 0
+    ? [`- contract drivers run: ${contractSuites.map((a) => `\`${a.contract!.driver}\` (${a.module})`).join(", ")}`]
+    : []),
   ...(branchless.length > 0
     ? ["", "Modules with NO branch-forming construct, and what grades them instead:", "", ...branchless.map((b) => `- \`${b.module}\` — ${b.reason}`)]
     : []),
@@ -154,17 +210,38 @@ const lines: string[] = [
   "| branch | kind | condition | outcome | state | adjudication |",
   "|---|---|---|---|---|---|",
 ];
+// Which contract suite covers which module, so a `contract` row's adjudication
+// column names the suite that ran it rather than repeating one sentence a
+// thousand times. The reason a reader needs per row is WHICH oracle; the reason
+// they need once is why that oracle counts, and that is the section below.
+const contractDriver = new Map(ATTESTED.filter((a) => a.contract).map((a) => [a.module, a.contract!.driver]));
+const moduleOf = (branch: string): string => branch.slice(0, branch.indexOf("#"));
 for (const r of rows) {
+  const adjudication =
+    r.state === "executed"
+      ? "—"
+      : r.state === "contract"
+        ? `\`${contractDriver.get(moduleOf(r.branch)) ?? "?"}\``
+        : (r.reason ?? "**MISSING**");
   lines.push(
-    `| \`${r.branch}\` | ${r.site.kind} | \`${r.site.text.replaceAll("|", "\\|")}\` | ${r.outcome} | ${r.state} | ${r.reason ?? (r.state === "executed" ? "—" : "**MISSING**")} |`,
+    `| \`${r.branch}\` | ${r.site.kind} | \`${r.site.text.replaceAll("|", "\\|")}\` | ${r.outcome} | ${r.state} | ${adjudication} |`,
   );
 }
 lines.push(
   "",
-  "## What grades an excluded branch",
+  "## What grades a branch the corpus does not execute",
   "",
-  "Every exclusion above is a branch the CORPUS does not render, not a branch nothing checks. FIVE",
-  "upstream-differential contract tests are the oracle, one per wave's modules:",
+  "Two things, and the table above says which applies to each branch.",
+  "",
+  "A `contract` row was EXECUTED — not by a corpus replay, but by a differential suite driven against",
+  "this same instrumented build and recorded the same way. That is a measurement, not an adjudication,",
+  "and it is why those rows carry a script path rather than a sentence. It is also, for a branch no",
+  "scenario renders, the stronger of the two kinds of evidence: the suite ran the branch against",
+  "UPSTREAM'S OWN implementation of it and required the outputs to be identical, where a scenario could",
+  "only ever have compared what its transcript happened to show.",
+  "",
+  "An `excluded` row was not executed at all, and carries a reviewed reason. FIVE upstream-differential",
+  "contract tests are the oracle behind those reasons, one per wave's modules:",
   "",
   "- `strangle/description-parity.test.ts` — the four tool descriptions (W2);",
   "- `strangle/prompt-parity.test.ts` — the prompt-assembly pipeline and the compaction prompt (W3);",
@@ -179,6 +256,15 @@ lines.push(
   "arm is graded against upstream directly rather than against a scenario's rendering of it. None of",
   "them hand-writes an expectation, so none of them can encode a transcription error.",
   "",
+  ...(contractSuites.length > 0
+    ? [
+        "The sixth is the one whose coverage is measured rather than argued, and it is why the `contract`",
+        "state exists:",
+        "",
+        ...contractSuites.map((a) => `- \`${a.module}\` — ${a.contract!.why}`),
+        "",
+      ]
+    : []),
 );
 
 const body = lines.join("\n");
@@ -221,7 +307,9 @@ if (checkOnly) {
   console.log(`report → ${REPORT}`);
 }
 
-console.log(`\n=== coverage attestation: ${nExecuted}/${inventory.length} executed, ${rows.length - nExecuted - unadjudicated.length} excluded ===`);
+console.log(
+  `\n=== coverage attestation: ${nExecuted}/${inventory.length} executed, ${verdict.contractCount} by contract suite, ${verdict.excludedCount} excluded ===`,
+);
 for (const r of unadjudicated) console.log(`  FAIL  ${r.branch} — ${r.site.kind} '${r.site.text}' never took the ${r.outcome} arm and carries no reviewed exclusion`);
 for (const s of stale) console.log(`  FAIL  stale exclusion ${s.branch} — ${s.why}`);
 for (const d of drift) console.log(d);
