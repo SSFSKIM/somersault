@@ -5427,3 +5427,201 @@ expansion parsing when a construct bash and zsh would read differently is found,
 A consumer that treats a root `ERROR` as a parse failure will behave differently from one that looks
 inside it — upstream's own splitter does the latter, reading
 `root.type === "ERROR" && root.children[0]?.type === "program" ? root.children[0] : root`.
+
+## W10c — executor oracle machinery: a child that is a declaration, six deadlines that move, and a fourth thing a run leaves behind (2026-09-05)
+
+C13c, the machinery child of the W10 cut. No splices, no owned bytes, no port. What it ships is the
+three capabilities the scout said no oracle has and only this subsystem needs — and eight scenarios
+that could not be recorded without them.
+
+The wave's premise, restated as a measurement: the corpus has 63 scenarios and **every Bash command
+in it is `echo`, `mkdir`, `chmod`, `cd`, `pwd` or `sleep`**. That reaches one of `dZe`'s six result
+arms, no truncation, no backgrounding, no timeout, no compound command and no pre-spawn refusal. The
+executor's interesting arms are not hiding behind a gate; they are behind a child nobody specified,
+a deadline nobody could move, and a surface that cannot see a process.
+
+### Capability 1 — a child whose behaviour is its argv
+
+`w10/scripted-child.sh` writes exactly N bytes on a stated schedule, exits with a stated code,
+ignores `SIGTERM`, holds a descriptor open past its own exit, and emits an interactive-prompt tail.
+Pure bash, and that is a decision rather than a preference: it runs INSIDE the engine's shell under
+X6's allowlisted environment, so "whatever node or python is on `PATH`" is exactly the operator
+coupling X6 exists to remove — two engines graded against two different interpreters is a difference
+the harness would report as an engine defect.
+
+**No clock reaches the bytes.** The output is a pure function of the argv, so the same plan is
+byte-identical on every engine, every replay and every machine, and a scenario's `check` can assert
+the OUTPUT rather than that something ran. `--bytes N --chunks K` is EXACT: K−1 chunks of
+⌊N/K⌋ and a last chunk carrying the remainder, each beginning `R<i>:` so the chunk count is visible
+in the bytes themselves.
+
+**The declaration is checked differentially.** `expectedOutput` in `w10/child.ts` derives the same
+schedule in TypeScript; `scripted-child.sh` derives it in bash; neither reads the other. That is not
+decoration — the first run of the control found the TypeScript expectation wrong (`{bytes: 12,
+chunks: 2}` is `R0:..\nR1:..\n`, not the three-dot form the test asserted), which a
+record-what-it-produced fixture would have blessed.
+
+**The negative control is a MATRIX, not a perturbation.** The cut asks for "a perturbed schedule
+changes the graded output (show which field)". The helper has three independent axes, and a
+perturbation that moved four fields at once would prove nothing about which field carries which. So
+each row moves ONE axis and asserts exactly which field moves and which do not:
+
+| perturbation | field that moves | fields that must NOT move |
+|---|---|---|
+| `--bytes 100 → 101` | `bytes` (and the hash) | `elapsedMs`, `exitCode` |
+| `--chunks 4 → 5`, same byte total | `sha256`, `markers` | `bytes` — the total stays EXACT |
+| `--every 150 → 10` | `elapsedMs`, against the schedule's floor | `bytes`, `sha256`, `markers` |
+| `--exit 0 → 3` | `exitCode` | `bytes`, `sha256`, `markers` |
+
+Each row also grades the perturbed plan against ITS OWN declaration, so a helper that crashed on
+every perturbation could not pass the matrix by failing everything. `elapsedMs` is graded as a FLOOR
+— `(chunks − 1) × everyMs` is the sleeping the schedule commits to and everything above it is the
+machine — because a wall-clock equality would fail on a loaded machine while proving nothing extra.
+
+**And it is graded under the environment it actually meets.** A full plan runs under `engineEnv()`
+and must produce byte-identical output, with a control on that control: the allowlisted environment
+must be measurably narrower than the parent's, or the first check asserts nothing. A helper that
+quietly depended on something the allowlist drops would pass every contract test and fail every
+recording — and because the allowlist is applied identically to both engines, it would fail in a way
+the differ reads as agreement. **44 checks.**
+
+### Capability 2 — the six shell deadlines, derived by shape and rewritten as a checked derivation
+
+Reaching the background hint costs 2 s of wall clock per replay, the stall detector 50 s, and the
+SIGTERM→SIGKILL escalation cannot be reached at all without a child that ignores signals plus 1.5 s
+of patience. **None of the six is read from the environment at this pin** — they are `var
+NAME=<number>` declarators compiled into the graph — so "add a knob" would mean patching the engine
+to read one, which is the same edit as this one plus a fiction about where it came from. And the
+oracle is a compiled Mach-O binary: an env var the real binary could not honour would silently apply
+to one side of a differential and not the other.
+
+So timer control is a **build-time constant rewrite of the graph engines**, declared honestly for
+what it is, and a scenario that carries a profile states which engine set it runs on and why.
+
+**Nothing is found by name.** `kzt`, `$Kt`, `qKt`, `plr`, `mlr`, `WKt` and `zKt` are minified
+bindings that churn per pin exactly as the parser's did (`hui` → `q6t` inside one bump), and the
+owning chunk's file name is content-addressed. Each deadline is located by the SHAPE OF ITS USE —
+the `setTimeout`/`setInterval` call or the `Date.now()` comparison that makes it a deadline rather
+than a number — and the binding falls out of the match. Every use-site pattern matches **exactly
+once** in the chunk, every derived binding has **exactly one** numeric definition, the background
+hint's two use sites must agree on the binding, and the owning chunk is found by the conjunction of
+all seven shapes. Anything else throws.
+
+| role | binding | value | what expires |
+|---|---|---|---|
+| `background-hint` | `kzt` | 2,000 ms | the elapsed-seconds gate that arms auto-backgrounding and yields `{kind:"background_hint"}` |
+| `progress-cadence` | `$Kt` | 1,000 ms | how often the shared poller calls `pollProgress()` on every registered output handle |
+| `output-file-watchdog` | `qKt` | 5,000 ms | how often a backgrounded command re-verifies its output file |
+| `stall-poll` | `plr` | 5,000 ms | how often the stall detector samples the output file's size |
+| `stall-idle` | `mlr` | 45,000 ms | how long the output must be unchanged before a stall notification |
+| `sigterm-to-sigkill` | `WKt` | 1,500 ms | how long after SIGTERM the executor escalates to a process-group SIGKILL |
+| `post-kill-liveness-poll` | `zKt` | 100 ms | how often it re-checks whether the SIGTERMed process is gone, so it can cancel the backstop |
+
+**A measured correction to the cut's own number.** All seven constants are present, verified and
+rewritable — but they do not make six deadlines. Grouped consistently, a poll interval and its
+threshold are ONE deadline, which makes it **five deadlines over seven constants**
+(`background-hint`, `progress-cadence`, `output-file-watchdog`, `stall-detector`,
+`kill-escalation`); the scout's six comes from pairing `plr`/`mlr` while leaving `WKt`/`zKt` apart.
+The fixture commits all seven — that is the number the rewrite needs — and records the grouping so
+nobody has to re-derive it.
+
+**The rewrite re-reads what it derived before it writes.** Before replacing a value the derivation
+requires the bytes at its own offset to be literally `<binding>=<pinned value>`. That is not
+belt-and-braces: a wrong edit to an engine that is then graded applies to BOTH sides of the
+differential, so both agree and the measurement is of something nobody named — the one class of
+change a differential harness cannot catch by itself. Every control in `w10/timers.test.ts` is
+therefore about a REFUSAL: a moved use site, a second definition of the same binding, two use sites
+that disagree about the binding, bytes that are not the declarator, an unknown role, a negative or
+fractional value. **27 checks.**
+
+**The stall detector's OTHER input rides along.** The idle threshold alone does not fire it: `_lr`
+takes the last non-empty line of the accumulated output and tests it against `ylr`'s seven
+interactive-prompt regexes. So `--prompt-tail` is a bet on an upstream population, and this campaign
+derives populations rather than writing them down. The list is now located by the shape of its one
+consumer — unique across all 1,800 module files — and `research/fixtures/shell-timers-2.1.251.json`
+(the **TWELFTH** pin-keyed fixture) asserts the child's tail `"Continue? (y/n) "` satisfies **two** of
+the seven independently (`/\(y\/n\)/i` and `/Continue\?/i`), so a pin retiring either still fires the
+arm.
+
+**How a timed engine is produced.** `w10/timed-engine.ts` copies an ALREADY-MATERIALIZED graph and
+rewrites one chunk in the copy, rather than teaching `strangle/build.ts` a flag. Two reasons, both
+about not owning something twice: a `--timers` flag there would have to thread an output directory
+through ten call sites and a committed wrapper so the faithful and timed builds could coexist; and
+the copy works for BOTH graph engines with one function, because a materialized graph's specifiers
+are absolute paths into its own directory and the spliced chunks' import of a reforge-owned module
+is an absolute path OUTSIDE the graph — which is what makes a timed STRANGLED engine free. The
+directory is keyed on the profile AND on the sha256 of the base chunk it was copied from, so a
+`--sabotage` build can never be handed the faithful engine built ten minutes earlier.
+
+Measured end to end: **1,076 ms to build**, the graph boots at 2.1.251, the two rewritten constants
+read back as 400/1,800 out of the built tree, the other five are untouched, the copy's specifiers
+point at itself, and the second call is a **107 ms cache hit**.
+
+### Capability 3 — the surface that sees what a run left RUNNING
+
+Four surfaces grade every scenario — the SDK transcript, the harness events, the API requests, and
+what the run left on disk — and **none of them describes a process**. `Pde.detach()` calls
+`child.unref()` and drops the handle; `nct()` kills every live shell on SIGTERM; `CWt` reaps on
+memory pressure; `Kdt` caps a backgrounded shell. An engine that leaks a child, or kills one it
+should have detached, is invisible to all four: the files match, the transcript matches, and a
+process is still running. W9 named process supervision as its carry-over. It lands here.
+
+**A measurement moved the design before a line of it was written.** The obvious reading — walk
+`ps -o pid,ppid` down from the engine child — does not survive contact with what it measures. The
+snapshot is taken after the query resolves, so the engine has already EXITED: a walk from its pid
+finds nothing, and a leaked child has been reparented to pid 1, so it is not under the engine
+either. **The leak is precisely the case in which lineage has been destroyed.**
+
+So the surface is a DIFFERENCE — the process table before the scenario against the table after it.
+That set is attributable to the run by construction, because H1's single-writer lock guarantees no
+sibling harness is spawning engines into the same window, and it contains a leaked orphan whether or
+not its lineage survived. `findEngineChild` keeps the other half, because C16a needs to name a
+descendant while the engine is alive: it is found by three facts asserted rather than assumed — a
+descendant of this process, a command line beginning with a path THE HARNESS ITSELF CONSTRUCTED, and
+exactly one at a time, because one query drives one engine. Two is a refusal, never a first match.
+
+**The operator's machine is not quiet**, so a survivor is graded only when one of three routes ties
+it here: its lineage reaches this process, its cwd is inside the sandbox (read with `lsof`, and only
+for the handful of candidates), or its command line carries a harness-owned path or the scripted
+child's own file name. Everything else is **DROPPED rather than counted** — a count is a graded value
+the operator's browser can move, which is the same defect one level down. The census log names what
+it dropped.
+
+**The blind spot is stated, with the measurements that close the alternatives.** An orphan with no
+reforge token in its command line, whose cwd is not the sandbox and whose lineage is gone, is
+invisible. Closing it would need an environment read — and macOS restricts `ps -E` under SIP
+(measured: it prints the command line and no environment) — or a process-group discipline the engine
+does not use, since its own kill path is `process.kill(-pid, …)` and every shell is already its own
+group leader. C16f's hermetic substrate, which already inherits this snapshot, is where an exec
+audit over the descendant tree would close it.
+
+**A survivor must appear in TWO samples** 250 ms apart, because a child that is exiting as the
+snapshot is taken would otherwise make the surface flaky in the one direction a graded surface must
+never be flaky. §3.4's justification: what it hides is a child that outlived the engine by less than
+the window, which is a child that is exiting rather than one that leaked.
+
+**Every control leaks a real process.** 27 checks: an orphan carrying the child's name is named as a
+LEAK and as orphaned; the same orphan, DECLARED, is recorded but is not a leak — and is still
+recorded, so an engine that failed to detach the child it was supposed to detach still diffs;
+killing it makes the surface quiet again; an orphan with no tie to the run is dropped; a survivor
+with no marker but a live lineage is still attributed; and a child that exits between the two samples
+is not recorded at all. The first draft of two of those controls used `detached: true`, which leaves
+this process as the parent — so the ancestry route attributed them and the routes under test never
+ran.
+
+### One definition of what a live take has to survive
+
+This wave became the THIRD caller of `m1/run.ts`'s record branch, so it was lifted into
+`src/record.ts` rather than copied: the four things a take must survive (the run's own determinism
+checks, the contamination check that must REJECT rather than flag, the infrastructure-failure check,
+and the substance check) are now one definition. `docs/tech-debt-tracker.md` named exactly this lift
+as the fix for the seven cassettes outside the sidecar mechanism; this is its write half. The
+contamination reason keeps the literal token `LEAK`, because `m2/relay.ts`'s `REASON_RE` matches that
+word and a discard whose cause cannot survive the relay is a red phase with no reason under it.
+
+`w10/record.ts` records ONE tag per invocation and is deliberately not `m1/run.ts --scenario`: the
+corpus runner records any REGISTERED scenario that has no cassette, and the gate runs it, so
+registering six cassette-less scenarios would arm six live takes inside somebody else's gate, on
+somebody else's credential and throttle budget. Recording first and registering second makes "this is
+part of the corpus" a claim the repository can only make about a scenario that already has a cassette
+to answer with.
