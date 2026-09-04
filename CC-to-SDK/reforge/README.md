@@ -4684,19 +4684,29 @@ the cycled seed and the healthy one produced byte-identical requests. With two e
 cycle has something to cost — **it still costs nothing**. `src/precondition.test.ts` walks the seeded
 file and proves the first exchange is off the chain; the engine sends it anyway.
 
-**WHY it costs nothing is not what this wave first wrote down** (corrected by the C12a fix round,
-2026-09-03). The first reading was "the headless resume does not rebuild its history by walking
-`parentUuid`". It does walk it: `BSe` in `chunk-fy12d89p.js` walks up from the leaf, sees the repeat,
-logs `Cycle detected in parentUuid chain … Returning partial transcript` and fires
-`tengu_chain_parent_cycle` — the scout's D8 codeword, on the path a `--print` resume takes. What the
-scout's row does not carry is the HEAL: on a parent that is missing or already seen, `QVt` picks the
-nearest not-yet-visited record whose timestamp falls within `YVt` = **5,000 ms** before the current
-one, fires `tengu_chain_timestamp_fallback`, and the walk continues through it. The transcript is
-whole because the fallback rebuilt it. **So the seed's bytes are load-bearing**: its records are one
-second apart, inside that window; at six-second spacing the fallback finds nothing and the walk
-recovers 2 of 4 records. The scenario pins the seed as much as the fault, and C12b — which owns the
-chain walk and can reach it from a synthetic corpus with no engine at all — must reproduce the walk
-AND the fallback, not the intact result alone.
+**WHY it costs nothing took this wave two tries to write down** (round one corrected by the C12a fix
+round on 2026-09-03; that correction corrected in turn by the fix round's own verification, below).
+Round one read the intact result as "the headless resume does not rebuild its history by walking
+`parentUuid`". It does walk it: `BSe` in `chunk-fy12d89p.js` (@212659) walks up from the leaf. Round
+two then wrote that the walk "sees the repeat, logs `Cycle detected in parentUuid chain … Returning
+partial transcript` and fires `tengu_chain_parent_cycle`" — **and that arm cannot fire at 2.1.251**.
+The loop-top cycle check (`u.has(d.uuid)`, @212711) is the only site of that log and that codeword in
+the bundle, and it is unreachable: `d` is only ever assigned a record that is NOT yet visited. The
+parent-lookup guard (`if(!A||u.has(A.uuid))`, @212937) keeps `e.get(parentUuid)` only when the parent
+is unvisited, and otherwise consults `QVt` (@214473), which skips every record already in the visited
+set. The already-visited parent is therefore diverted BEFORE the cycle check can ever see it, in
+`BSe` and in all seven of its callers (@191854, @220017, @242071, @266672, @275186, @281619,
+@1391029), each of which enters with a fresh visited set. What actually carries the transcript is the
+fallback ALONE: `QVt` picks the nearest not-yet-visited record whose timestamp falls within
+`YVt` = **5,000 ms** (@214460) before the current one, fires `tengu_chain_timestamp_fallback`, and the
+walk continues through it. When the fallback finds nothing, the walk simply ends — a silent partial
+transcript, no log and no codeword. **So the seed's bytes are load-bearing**: its records are one
+second apart, inside that window. Simulated against `BSe`'s own extracted bytes with this seed and
+this fault: at one-second spacing **4 of 4 records recovered, one
+`tengu_chain_timestamp_fallback`, nothing logged**; at six-second spacing **2 of 4, no event and no
+log at all**. The scenario pins the seed as much as the fault, and C12b — which owns the chain walk
+and can reach it from a synthetic corpus with no engine at all — must reproduce the guard ORDERING
+and the fallback, and must NOT fire the cycle codeword.
 
 **ENOSPC is not among them, and the omission is declared.** The store fence latches on `{ENOSPC,
 EROFS, EDQUOT, ENAMETOOLONG}` and three of the four — `ENOSPC`, `EROFS`, `EDQUOT` — cannot be raised
@@ -4795,10 +4805,15 @@ eager-flush control still firing in both directions.
 - **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
   needs no engine, and `projectRecord`/`projectTranscript` are the shape its oracle expectations
   should be written against — including the torn-tail marker, which is a property of the FILE and not
-  of any record. Its D8 arm has a measured boundary now, and it is BINDING: the headless resume walks
-  `parentUuid` (`BSe`), detects the cycle (`tengu_chain_parent_cycle`) and heals it through `QVt`'s
-  5,000 ms timestamp-proximity fallback (`tengu_chain_timestamp_fallback`) — the reader must reproduce
-  both, and the scenario pins the seed's one-second record spacing that makes the fallback succeed.
+  of any record. Its D8 arm has a measured boundary now, and it is BINDING (restated 2026-09-03 after
+  the fix round's verification found the previous binding named an arm the engine cannot reach): the
+  headless resume walks `parentUuid` (`BSe`), and an already-visited parent is caught by the
+  PARENT-LOOKUP GUARD and diverted to `QVt`'s 5,000 ms timestamp-proximity fallback
+  (`tengu_chain_timestamp_fallback`) before the loop-top cycle check is reached. That check — and with
+  it `tengu_chain_parent_cycle` and the `Cycle detected in parentUuid chain … Returning partial
+  transcript` log — is UNREACHABLE in `BSe` at 2.1.251. The reader must reproduce the guard ordering
+  and the fallback, and must NOT fire the cycle codeword; the scenario pins the seed's one-second
+  record spacing that makes the fallback succeed.
 - **C14a** inherits the `skillUsage` decision: the counter is RESET by the config wipe, so a scenario
   that wants a non-zero one seeds it through `ConfigPrecondition.seed` — `.claude.json` with a
   `skillUsage` block, which the projection grades in full.

@@ -158,27 +158,43 @@ export const W9_SCENARIOS: Scenario[] = [
     // chain. The engine sends it anyway: the request is byte-identical to the
     // healthy control's.
     //
-    // WHY, and the first round of this wave got this wrong. It read the intact
-    // result as "the headless resume does not walk `parentUuid`". It does walk
-    // it — `BSe` in `chunk-fy12d89p.js` walks up from the leaf, sees the repeat,
-    // logs `Cycle detected in parentUuid chain … Returning partial transcript`
-    // and fires `tengu_chain_parent_cycle`, exactly as the scout's D8 row says.
-    // What the scout's row does not carry is the HEAL: when a parent is missing
-    // or already seen, `QVt` picks the nearest not-yet-visited record whose
-    // timestamp is within `YVt` = 5,000 ms BEFORE the current one, fires
-    // `tengu_chain_timestamp_fallback`, and the walk continues through it. The
-    // transcript comes out whole because the fallback rebuilt it, not because
-    // the cycle was harmless.
+    // WHY, and this wave has now got it wrong TWICE. Round one read the intact
+    // result as "the headless resume does not walk `parentUuid`". Round two
+    // corrected that to "it walks, sees the repeat, logs `Cycle detected in
+    // parentUuid chain … Returning partial transcript` and fires
+    // `tengu_chain_parent_cycle`". It walks — but that arm CANNOT FIRE. Read
+    // `BSe` (`chunk-fy12d89p.js` @212659) in order:
+    //
+    //   while(d){ if(u.has(d.uuid)){ …log…; s("tengu_chain_parent_cycle"); break }   // @212711
+    //             u.add(d.uuid); o.push(d);
+    //             let A=e.get(d.parentUuid);
+    //             if(!A||u.has(A.uuid)){ if(A=QVt(e,d,u),A) s("tengu_chain_timestamp_fallback") } // @212937
+    //             d=A }
+    //
+    // The parent-lookup guard at @212937 catches the already-visited parent and
+    // diverts it to `QVt` (@214473), which itself skips every record in `u`. So
+    // `d` is only ever assigned a not-yet-visited record, and the loop-top cycle
+    // check at @212711 is DEAD CODE at 2.1.251 — that log line and that codeword
+    // are unreachable in `BSe`, and every caller (@191854, @220017, @242071,
+    // @266672, @275186, @281619, @1391029) enters with a fresh visited set.
+    // What actually carries the transcript is the fallback alone: `QVt` picks
+    // the nearest not-yet-visited record whose timestamp is within `YVt`
+    // = 5,000 ms BEFORE the current one (@214460), fires
+    // `tengu_chain_timestamp_fallback`, and the walk continues through it. When
+    // the fallback finds nothing the walk simply ENDS — a silent partial
+    // transcript, no log and no codeword.
     //
     // WHICH MAKES THIS SEED'S BYTES LOAD-BEARING. Its records are one second
     // apart (`00:00:0${i*2}` / `…${i*2+1}`), so every step is inside the 5 s
     // window; at six-second spacing the fallback finds nothing and the walk
-    // recovers 2 of the 4 records. The scenario pins the seed as much as the
-    // fault, and C12b — which owns the chain walk and can reach it from a
-    // synthetic corpus with no engine at all — must reproduce BOTH the walk and
-    // the fallback, not the intact result alone.
+    // recovers 2 of the 4 records (simulated against `BSe`'s own bytes: 4/4 with
+    // one `tengu_chain_timestamp_fallback` at 1 s, 2/4 with NO event and NO log
+    // at 6 s). The scenario pins the seed as much as the fault, and C12b — which
+    // owns the chain walk and can reach it from a synthetic corpus with no
+    // engine at all — must reproduce the guard ORDERING and the fallback, and
+    // must NOT fire the cycle codeword, which nothing in this engine can reach.
     tag: "store-parent-cycle",
-    title: "resume a session file whose parentUuid chain is a cycle (measured: the walk detects it and the timestamp fallback heals it)",
+    title: "resume a session file whose parentUuid chain is a cycle (measured: the parent-lookup guard diverts it and the timestamp fallback heals the walk)",
     precondition: seeded("parent-cycle"),
     run: (ctx) =>
       drive(RESUME_PROMPT, {

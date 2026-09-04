@@ -49,8 +49,12 @@ export interface SeedFile {
  *    record, which is what a process killed between two 100 ms drains leaves.
  *    Reaches `sealTornTailOnNextAppend` / `setTailTorn`.
  *  - `parent-cycle` (§4.4 D8): point two records' `parentUuid` at each other, so
- *    the chain walk cannot terminate. Reaches `tengu_chain_parent_cycle` and the
- *    partial-transcript arm.
+ *    a walk up from the leaf reaches a record it has already visited. It reaches
+ *    `QVt`'s timestamp fallback and fires `tengu_chain_timestamp_fallback` — NOT
+ *    `tengu_chain_parent_cycle` and not the partial-transcript arm, which are
+ *    unreachable in `BSe` at 2.1.251 (the parent-lookup guard diverts the
+ *    already-visited parent to `QVt` before the loop-top cycle check can see it;
+ *    see the D8 comment in `w9/scenarios.ts` for the offsets).
  *  - `read-only-store`: take the write permission off the directory CONTAINING
  *    the named file, so the store's write fails with EACCES — the
  *    `{EACCES, EPERM}` permission errno set (scout §4.3, the fifth of its six
