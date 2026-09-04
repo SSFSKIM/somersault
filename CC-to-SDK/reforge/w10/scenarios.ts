@@ -67,9 +67,6 @@ const toolResults = (msgs: unknown[]): string[] => {
   return out;
 };
 
-/** The whole capture as text — for facts that arrive as an attachment rather than as a tool result. */
-const allText = (msgs: unknown[]): string => JSON.stringify(msgs);
-
 /**
  * The `system`/`task_notification` frames the engine emits into the SDK stream.
  *
@@ -498,7 +495,10 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
     // The shell is deliberately still running when the scenario ends, and
     // whether the engine reaps it on shutdown is itself what the supervision
     // surface grades here.
-    detachedChildren: [SCRIPTED_CHILD_NAME, "sleep "],
+    // DERIVED from the command this scenario actually runs, so the declaration
+    // cannot drift from it: the backgrounded shell carries the child's name, and
+    // the `sleep` it ends with is its own process once the child has exited.
+    detachedChildren: [SCRIPTED_CHILD_NAME, `sleep ${holdSeconds}`],
     run: async (ctx) => {
       seedScriptedChild(SANDBOX);
       const input = pushable<SDKUserMessage>();
@@ -620,7 +620,12 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
       if (!cmd.includes("--ignore-term")) return "the recorded command does not carry --ignore-term, so the backstop was never needed";
       if (!cmd.includes("exec ")) return `the recorded command lost its \`exec\`, so the signalled pid is bash and not the trapping script: ${JSON.stringify(cmd)}`;
       if (!/^\s*sleep\s/.test(cmd)) return `the recorded command lost its leading sleep, so \`r_r\` is true and the deadline backgrounds instead of killing: ${JSON.stringify(cmd)}`;
-      if (!/timed out|killed|terminated/i.test(allText(msgs))) return "nothing in the capture says the command was stopped";
+      // Read from the TOOL RESULT, not from the capture: the command string is
+      // echoed back in the tool_use block, so a whole-capture search for
+      // "timeout" matches the request that asked for one.
+      if (!toolResults(msgs).some((r) => /timed out|killed|terminated/i.test(r))) {
+        return `no tool_result says the command was stopped: ${JSON.stringify(toolResults(msgs)).slice(0, 200)}`;
+      }
       return null;
     },
   };
