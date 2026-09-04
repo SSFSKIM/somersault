@@ -4910,3 +4910,182 @@ the orchestrator runs the gate over the merged tree.
   the `<session-uuid>` in that path, and the include-list mechanism is generic. Note that the
   eager-flush knob does NOT cover that directory: a backgrounded agent writes it after its parent's
   result frame, which is exactly the case `awaitQuiesce` was kept for.
+
+## H1 — the re-seal, and the sandbox lock: orchestrator-level harness work between W9a's fix round and W10 (2026-09-05)
+
+Not a wave and not a subsystem: two mechanisms the fleet needs before the next
+two waves run two workers at once, plus the two riders C12a's verification round
+left named.
+
+### The cost F4 was charging, and the measurement that pays it
+
+C12a/F4 made the precondition part of the recording. Beside every cassette sits
+`m1-<tag>.precondition.json`: the declaration the scenario made, and a hash of
+the baseline `.claude.json` seed `applyPrecondition` puts underneath it. A
+declaration that drifts from its sidecar is a FINDING, and the RECORDED one is
+what gets replayed — deliberately, because a cassette answers the requests an
+engine made against a particular filesystem, and replaying it against a
+different one is a different experiment wearing the same name.
+
+The rule is right and its bill is large: **every** declaration change forces a
+LIVE re-record, including changes that provably cannot reach the model, and
+including a change to the baseline seed, which drifts all 63 sidecars at once
+(C14a will make one when it seeds a non-zero `skillUsage`). Live takes are
+throttle-bound — C12a-fix's single re-record of `store-read-only` took five
+attempts over four hours — so "re-record everything" is not a plan; it is a
+reason to leave a sidecar stale and grade the wrong world.
+
+What was missing was never the reasoning ("this seed cannot reach the model"),
+it was the evidence. The replay proxy has been measuring exactly that all along,
+per request rather than by judgment: `unmatched()` (a request no entry answers),
+`fallbackServed()` (a request answered only POSITIONALLY, i.e. it was in the
+right place in the stream but its canonical body differed) and `unserved()` (an
+entry the engine never asked for). **A replay of the DECLARED precondition, on
+the engine that RECORDED the cassette, clean on all three, is the measurement
+that the request stream did not move.**
+
+### `--reseal`
+
+`npx tsx m1/run.ts --reseal [--scenario <tag>]`. Without a tag it visits the
+scenarios whose sidecar drifts by the existing `driftReason` logic and only
+those — a census that re-ran the corpus would cost an engine replay per scenario
+to answer a question the sidecars answer on disk. With a tag, that scenario,
+drifting or not, and the output says which it was.
+
+Per scenario it replays through the SAME graded run the corpus uses
+(`src/runScenario.ts`, lifted out of `m1/run.ts` unchanged so that two callers
+cannot end up with two definitions of "a graded run"), on **engine-real** —
+the request stream the cassette answered is that engine's, so replaying the
+declaration on a strangled build would fold "did the filesystem change the
+stream?" into "does this build make the same stream?" and the answer could not
+say which it measured. It re-seals only when **all five** hold: no unmatched
+request, no positional serve, no unserved non-repeat entry, the scenario's own
+`check` passes, and the run's `ok` holds (quiesce, gate-cache, fallback
+verdict). Otherwise the sidecar is untouched.
+
+**Repeat entries are excluded from the coverage half, and only from it.** A
+`repeat` entry answers a RETRY loop (`src/faults.ts` derives one for every
+injected fault), so how many times it is served is the engine's attempt schedule
+rather than a fact the cassette fixes. Every non-repeat entry is one-to-one with
+a request that was made, so an unserved one means the engine stopped asking.
+
+**A refusal names the first failing signal with enough in it to act on.** For an
+unmatched or positionally-served request: its method, path, the first ~200 bytes
+of its canonical (scrubbed) body, and — for a positional serve — the entry it
+was handed and the byte at which the two canonical bodies stop matching. For
+unserved entries: their `seq`s.
+
+**On success the sidecar records its provenance**: `resealedFrom` carries the
+sha256 of the declaration it replaced and that sidecar's baseline hash. The
+IMMEDIATE PREDECESSOR only — a chain keeps its last link, because the field
+answers "is this the world I remember", which is a question about one step; the
+whole history belongs to the commit log, which has it. A hash rather than the
+bytes, for `baselineSha256`'s own reason: a seeded transcript is kilobytes and
+the field's job is to detect a change, not to reconstruct one. No clock and no
+absolute path.
+
+### The controls, and why the negative is the mechanism
+
+`src/reseal.test.ts` drives `resealScenario(...)` against COPIES of a real
+cassette in a temp directory — the corpus is never written to. All three use
+`store-seeded-resume`, whose declaration seeds a session transcript the engine
+RESUMES, so the seeded bytes travel into the request body and the healthy case
+and the damaged one demonstrably differ. Without that property the negative
+would be evidence of nothing.
+
+| control | declaration | outcome |
+|---|---|---|
+| positive | the real one plus an inert extra seed file under `projects/<key>/` | **RE-SEALED**; the new sidecar seals the new declaration on the current baseline and names its predecessor by hash |
+| negative (stream) | the same seed with the prior ASSISTANT text `"OK"` → `"SURE"` | **REFUSED**: `POST /v1/messages?beta=true`, served entry seq 1, canonical bodies first differ **at byte 549** — recorded `…"text":"OK"}]…`, replayed `…"text":"SURE"}]…` |
+| negative (coverage) | no seed at all, so the resumed session is not there | **REFUSED for its own reason**: entry seq 1 never requested — the engine made FEWER requests than the recording |
+
+15 checks, **three replays in 2 s measured** (the phase was budgeted at ~2 min;
+a single-exchange replay is far cheaper than that). Non-vacuity is not assumed:
+the positive control reads the observed-request byproduct beside its copy and
+requires both recorded exchanges to have been asked for — and a re-seal that
+"passed" because no engine ran would have left every entry unserved and been
+refused anyway.
+
+### A sidecar that names no world is no longer graded
+
+C12a's verification round left this: a sidecar with no `baselineSha256` (the
+pre-F4 shape), or no sidecar at all, used to replay the recorded declaration —
+an EMPTY one when the file was missing — under a FINDING. That is a seeded
+scenario graded against the wrong world while printing a reason nobody could
+act on. The corpus has none (63 of 63 carry both fields), so the legacy
+tolerance bought nothing: grading now **REFUSES before the replay** and names
+`--reseal` as the repair. Watched refusing, on a sidecar stripped of its hash
+and restored byte-identical afterwards.
+
+### The peer guard, formalised
+
+`sandbox/`, `config/` and `build/` are one machine and `resetSandbox()` wipes two
+of them at the top of every run, so two harness processes do not interleave —
+they destroy each other's world mid-measurement, and the victim reports it as an
+engine difference. This campaign has paid for that twice (a duplicated retry
+chain; a Monitor watching the wrong pid).
+
+`src/lock.ts` takes `reforge/.sandbox.lock` (gitignored, `{pid, argv}`) on the
+first `resetSandbox()` in a process. A LIVE holder that is not us is a loud
+refusal carrying the holder's pid and argv — **never a wait** (a fleet whose
+members block on each other's hour-long gates deadlocks) and **never a steal**
+(which produces the corruption the lock exists to prevent, one process later). A
+DEAD holder's record is taken over out loud, which is what a SIGKILLed gate
+leaves behind. Release happens on normal exit and on SIGINT/SIGTERM/SIGHUP,
+re-raising rather than swallowing: registering a listener at all suppresses the
+default termination, so a lock that ate the signal would turn `kill <gate>` into
+a process that stops nothing and holds forever. The gate, `m2/all.ts` and the
+coverage attestation take it for their WHOLE run — a per-child lock leaves the
+gap between two children, where the corruption lands on the next measurement
+rather than this one.
+
+**Children of a holder are not peers, and the mechanism is an ENV MARKER
+carrying the owner's pid.** The choice is decided by which spawn path each child
+takes, not by taste. Harness children — the gate's suites, `m2/all.ts`'s six,
+the attestation's replays — are spawned with `spawnSync(cmd, args, {cwd,
+encoding})` and no `env` option, so they inherit `process.env` verbatim at any
+depth. ENGINE children are the opposite: their environment is CONSTRUCTED by
+X6's allowlist (`src/env.ts`), which drops every name the schema does not list,
+so the marker cannot reach an engine even by accident — and must not, since an
+engine is not a harness process and never resets. The allowlist is not an
+obstacle to this mechanism; it is the half that keeps the marker inside the
+harness. An ancestor walk would spawn a process to answer a question the
+environment already answers, and would answer it wrongly for a detached holder
+whose child is reparented.
+
+`src/lock.test.ts` drives all three in REAL processes — two of the facts (a live
+holder refusing, a signalled holder releasing) are facts about pids and signals
+that no in-process fake has. 11 checks: a second process is refused and the
+refusal carries the holder's pid AND argv; it neither waits nor steals; a child
+carrying the owner's marker is not refused, does not take ownership, and does
+not release on exit; a SIGTERMed holder releases; a lock naming a dead pid is
+taken over. The suite scrubs the marker from its own children — as a gate phase
+it inherits the gate's, and a child carrying it would be exempted and pass the
+refusal control on the wrong mechanism.
+
+It was exercised in anger the day it landed: a sibling worker's sabotage sweep
+held the lock, and this wave's own control run was refused by name — pid, argv
+and all — instead of quietly wiping the sweep's sandbox mid-scenario.
+
+### The gate archives itself
+
+`build/gate.log` predated two waves, so every count this campaign quotes rested
+on whatever `/tmp` file the operator remembered to redirect into — re-checkable
+only by re-running an hour-long gate, which is to say checkable only in
+principle. `strangle/teelog.ts` mirrors both console streams into
+`build/<name>-<yyyymmdd-hhmm>.log` and prints the path in the header of the gate
+and of the attestation. Both streams, because a phase that dies before its
+verdict says why on stderr. The clock is in the FILENAME and the file is under
+`build/`, which is derived and gitignored: a log may carry a clock, a fixture
+may not.
+
+### What still needs a live take
+
+The re-seal answers "the declaration moved and the stream did not". It does not
+answer, and must not be asked, two things: **a change that CAN reach the model**
+(a different prompt, a seeded transcript the engine reads, a fault it sees) still
+needs a deliberate re-record with the reason stated; and **every new scenario**
+is a recording by definition. The seven primary cassettes recorded by runners
+other than `m1/run.ts` (`m2-fault-*` ×5, `m2-raw`, `w13-signals`) carry no
+sidecar at all, so they cannot be re-sealed either — that debt is logged and
+flagged on C14a, and the re-seal narrows its fix rather than closing it.

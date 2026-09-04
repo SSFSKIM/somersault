@@ -756,3 +756,11 @@ latent today because nothing has changed the baseline since it was introduced.
 through `ConfigPrecondition.seed` — reaches it. The fix is to lift the sidecar write/compare out of
 `m1/run.ts` into a helper the three other runners call, keyed by their own cassette names; the drift
 message and the re-record path already exist.
+
+**Narrowed, not closed, 2026-09-05 (H1).** `m1/run.ts --reseal` now pays the baseline change for the
+63 cassettes that DO carry a sidecar: it replays each drifted declaration against its own cassette on
+engine-real and re-seals the sidecar when the proxy's three signals come back clean, so C14a's
+`skillUsage` seed costs a re-seal rather than 63 live re-records. These seven are outside that
+mechanism for the same reason they are on this list — no sidecar to re-seal, and nothing that would
+write one — so the helper this entry asks for is still the fix, and it is now the ONLY remaining
+re-record cost of a baseline change.
