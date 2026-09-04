@@ -7,6 +7,7 @@
 //
 // Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/all.ts [--engineB <name>]
 import { spawnSync } from "node:child_process";
+import { acquireSandboxLock } from "../src/lock.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { combinedOutput, relayFallback, relayOutput } from "./relay.js";
 // Derived, not written down: the label used to carry a hardcoded scenario count,
@@ -25,6 +26,13 @@ import { W6_SCENARIOS } from "../w6/scenarios.js";
 import { W9_SCENARIOS } from "../w9/scenarios.js";
 
 const CORPUS_SIZE = M1_SCENARIOS.length + M2C_SCENARIOS.length + M3_SCENARIOS.length + W1_SCENARIOS.length + W2_SCENARIOS.length + W3_SCENARIOS.length + W4_SCENARIOS.length + W5_SCENARIOS.length + W6_SCENARIOS.length + W9_SCENARIOS.length;
+
+// Held for the whole surface, not per suite. Each child below resets the
+// sandbox, so a sibling harness process that slipped in between two of them
+// would corrupt the next measurement rather than this one — which is the shape
+// that is hardest to attribute. Under the gate this is a no-op: the gate is the
+// owner and this process carries its marker (`src/lock.ts`).
+acquireSandboxLock("the m2 acceptance surface");
 
 const args = process.argv.slice(2);
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";

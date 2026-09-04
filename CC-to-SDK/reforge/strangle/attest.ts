@@ -37,12 +37,16 @@ import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
 import { relayFailure } from "../m2/relay.js";
 import { teeToBuildLog } from "./teelog.js";
+import { acquireSandboxLock } from "../src/lock.js";
 
 const checkOnly = process.argv.includes("--check");
 // The same archive the gate keeps, for the same reason: the executed/excluded
 // counts are quoted in every wave record and the run that produced them wrote
 // to a terminal (`strangle/teelog.ts`).
 console.log(`attestation log: ${teeToBuildLog("attest")}`);
+// Held for the whole run, for the same reason the gate holds it: this replays
+// covering scenarios as child processes and each one resets the sandbox.
+acquireSandboxLock("the coverage attestation");
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
 // One report for every attested module, not one per wave: the inventory is
 // generated from `ATTESTED` in a single run, so a per-wave file would either
