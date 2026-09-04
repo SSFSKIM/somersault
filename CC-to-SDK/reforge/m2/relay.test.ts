@@ -17,7 +17,7 @@
 // control that the previous shape would have missed it.
 //
 // Run: npx tsx m2/relay.test.ts
-import { REASON_RE, VERDICT_RE, relayOutput } from "./relay.js";
+import { REASON_RE, RELAY_FALLBACK_MARKER, VERDICT_RE, combinedOutput, relayFailure, relayOutput } from "./relay.js";
 import { fallbackVerdict } from "../src/proxy.js";
 
 let pass = 0;
@@ -122,6 +122,52 @@ const aggregateRelay = (stdout: string): string => {
   check("a prose-only suite relays its trailer", relayed.verdicts.length === 0 && relayed.summary.length === 3);
   check("…and the trailer never duplicates a verdict line",
     relayOutput(corpusTranscript(59, -1)).summary.every((l) => !VERDICT_RE.test(l)));
+}
+
+// ---------------------------------------------------------------------------
+// 4. A child that dies BEFORE its verdict block says why on STDERR.
+// ---------------------------------------------------------------------------
+//
+// The third shape of the same defect, and the one that survived the first fix:
+// both relays above read `r.stdout` alone. A covering runner that throws while
+// the instrumented graph loads never reaches its verdict block, so stdout holds
+// a header and nothing else and the cause is on the stream nobody read — after
+// which the attestation phase reported a red TAG with no reason under it, which
+// is exactly the report that cost a gate cycle.
+{
+  const child = {
+    stdout: "\n━━━ hooks-memory — a title ━━━\n  replaying offline: A=engine-real, B=engine-strangled\n",
+    stderr: "file:///reforge/build/engine-strangled/instrumented/chunk-fy12d89p.js:41\n__cov[7] = 1;\n^\nReferenceError: __cov is not defined\n    at file:///reforge/build/engine-strangled/instrumented/chunk-fy12d89p.js:41:1\n",
+  };
+  // THE CONTROL. Without the change there is nothing to print: the relay saw
+  // only stdout, both arrays came back empty, and the caller printed no line.
+  const stdoutOnly = relayOutput(child.stdout);
+  check("control — a stdout-only relay names nothing for a child that died on stderr",
+    stdoutOnly.fails.length === 0 && stdoutOnly.reasons.length === 0);
+  check("…and the cause is on the stream it dropped", combinedOutput(child).includes("ReferenceError"));
+
+  const lines = relayFailure(child);
+  check("a failed child is never relayed as an empty block", lines.length > 0);
+  check("…and the cause reaches the printed line",
+    lines.some((l) => l.includes("ReferenceError: __cov is not defined")), lines.join(" / "));
+
+  // The property the marker exists for: the fallback is written by one layer
+  // and has to survive the next, which filters line by line.
+  const hop2 = relayOutput(lines.map((l) => `    ${l}`).join("\n"));
+  check("the fallback line survives the next relay hop",
+    hop2.reasons.some((l) => l.includes("ReferenceError: __cov is not defined")));
+
+  // A spawn that never ran has no output on either stream; `error` is all there
+  // is, and it is still a cause.
+  const neverRan = relayFailure({ stdout: "", stderr: "", error: { message: "spawnSync npx ENOENT" } });
+  check("a child that produced no output at all still names its process error",
+    neverRan.length === 1 && neverRan[0].includes("spawnSync npx ENOENT"), neverRan.join(" / "));
+
+  // …and a child that DID print a verdict is unaffected: the fallback is the
+  // last resort, not an extra line on every failure.
+  const normal = relayFailure({ stdout: corpusTranscript(59, 3), stderr: "" });
+  check("a child with a real verdict block gets no fallback line",
+    normal.some((l) => l.includes("scenario-03")) && normal.every((l) => !l.includes(RELAY_FALLBACK_MARKER)));
 }
 
 console.log(`=== gate relay: ${pass} check(s) ===`);

@@ -8,7 +8,7 @@
 // Run: cd reforge && set -a; . ../.env; set +a; npx tsx m2/all.ts [--engineB <name>]
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { relayOutput } from "./relay.js";
+import { combinedOutput, relayFallback, relayOutput } from "./relay.js";
 // Derived, not written down: the label used to carry a hardcoded scenario count,
 // which was already stale the first time the corpus grew (22 -> 24 at C4). A
 // number in a gate transcript that nobody recomputes is a number nobody can
@@ -53,7 +53,10 @@ for (const [name, argv] of SUITES) {
   // only view of a suite is what this loop prints — could not name it either.
   // The window was invisible on a green run and defeating on a red one, which
   // is the direction that matters.
-  const { verdicts, fails, reasons, summary } = relayOutput(r.stdout ?? "");
+  // stdout AND stderr: this is the FIRST hop, and a suite that throws before its
+  // verdict block says why on the stream a stdout-only relay drops — after which
+  // no layer above can name a cause it was never given.
+  const { verdicts, fails, reasons, summary } = relayOutput(combinedOutput(r));
   for (const l of verdicts) console.log(`  ${l.trim()}`);
   // Two of the five suites state their result as prose rather than as a verdict
   // block, so a verdict-only relay would print nothing for them on a green run.
@@ -61,11 +64,20 @@ for (const [name, argv] of SUITES) {
   // …and the lines that EXPLAIN a failure, which include the replay proxy's
   // positional-serve diagnostic — the commonest cause of a red run, and one
   // that is not itself a verdict.
-  if (r.status !== 0) for (const l of reasons) console.log(`  ${l.trim()}`);
+  if (r.status !== 0) {
+    for (const l of reasons) console.log(`  ${l.trim()}`);
+    if (verdicts.length === 0 && reasons.length === 0) console.log(`  ${relayFallback(combinedOutput(r), r.error)}`);
+  }
   results.push({
     name,
     pass: r.status === 0,
-    detail: fails.length > 0 ? `${fails.length} failing: ${fails.map((f) => f.trim().replace(/^FAIL\s+/, "")).join(", ")}` : (summary.at(-1)?.trim() ?? ""),
+    detail: fails.length > 0
+      ? `${fails.length} failing: ${fails.map((f) => f.trim().replace(/^FAIL\s+/, "")).join(", ")}`
+      // "no verdict printed" was the old answer when a suite died before it
+      // printed one, which named the suite and nothing else. The fallback line
+      // carries the cause and is itself matched by `REASON_RE`, so the gate
+      // relays it up unchanged.
+      : (summary.at(-1)?.trim() || (r.status === 0 ? "" : relayFallback(combinedOutput(r), r.error))),
   });
 }
 

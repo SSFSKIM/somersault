@@ -29,6 +29,13 @@ export const VERDICT_RE = /^\s*(PASS|FAIL)\s{2}\S/;
 export const isFailVerdict = (line: string): boolean => /^\s*FAIL\s{2}\S/.test(line);
 
 /**
+ * What a FALLBACK line says, and the reason it is a constant: the line is
+ * written by one layer and has to be relayed by the next, so it is part of the
+ * vocabulary `REASON_RE` matches rather than prose that dies at the first hop.
+ */
+export const RELAY_FALLBACK_MARKER = "no verdict or reason line";
+
+/**
  * A REASON: a line that explains a failure rather than declaring one.
  *
  * The positional-serve marker is imported from the module that WRITES it rather
@@ -40,7 +47,7 @@ export const REASON_RE = new RegExp(
   // A NON-ZERO difference count only: the runners print "0 difference(s)" on
   // every healthy surface, and a filter that matched those would bury the real
   // reasons under them.
-  ["diverge", "mismatch", "differs", "[1-9]\\d* difference\\(s\\)", "unexpected", "matched no cassette", "no cassette", "timed out", "LEAK", POSITIONAL_SERVE_MARKER].join("|"),
+  ["diverge", "mismatch", "differs", "[1-9]\\d* difference\\(s\\)", "unexpected", "matched no cassette", "no cassette", "timed out", "LEAK", POSITIONAL_SERVE_MARKER, RELAY_FALLBACK_MARKER].join("|"),
   "i",
 );
 
@@ -82,4 +89,49 @@ export function relayOutput(stdout: string, reasonLimit = 12, summaryLimit = 6):
     reasons: lines.filter((l) => !VERDICT_RE.test(l) && REASON_RE.test(l)).slice(0, reasonLimit),
     summary: lines.filter((l) => l.trim().length > 0 && !seen.has(l) && SUMMARY_RE.test(l)).slice(-summaryLimit),
   };
+}
+
+/** The shape of the `spawnSync` result every caller of this module holds. */
+export interface RelayableChild {
+  stdout?: string | null;
+  stderr?: string | null;
+  error?: { message?: string } | null;
+}
+
+/**
+ * A child's stdout AND stderr, in that order.
+ *
+ * Every relay in this harness read `stdout` alone, and a runner that dies BEFORE
+ * its verdict block — a module-load exception on the instrumented graph, a spawn
+ * that never ran — writes its whole cause to `stderr`. The relay then found
+ * nothing, and the phase reported a red TAG with no cause under it: the same
+ * defect the header above describes, surviving on the sibling path because that
+ * path's failure had never been read either.
+ */
+export const combinedOutput = (r: RelayableChild): string => `${r.stdout ?? ""}${r.stderr ?? ""}`;
+
+/**
+ * ONE line, when there is nothing else to say.
+ *
+ * A single line rather than three, because it has to survive the next hop: the
+ * layers above filter line by line, and a marked one-liner relays where a
+ * multi-line block would be cut apart. It carries `RELAY_FALLBACK_MARKER`, so
+ * `REASON_RE` matches it and every layer above relays it unchanged.
+ */
+export function relayFallback(combined: string, error?: { message?: string } | null, limit = 3): string {
+  const tail = combined.split("\n").map((l) => l.trim()).filter((l) => l.length > 0).slice(-limit);
+  const err = error?.message ? ` [process error: ${error.message}]` : "";
+  return `${RELAY_FALLBACK_MARKER} — last ${tail.length} line(s) of the child's combined stdout+stderr: ${tail.join(" | ") || "<no output at all>"}${err}`;
+}
+
+/**
+ * Every line a caller should print under a FAILED child, in order — and never
+ * an empty list, which is the whole point. A failure the vocabulary does not
+ * recognise still gets a cause printed under it rather than a bare tag.
+ */
+export function relayFailure(r: RelayableChild): string[] {
+  const combined = combinedOutput(r);
+  const { fails, reasons } = relayOutput(combined);
+  const lines = [...fails, ...reasons].map((l) => l.trim());
+  return lines.length > 0 ? lines : [relayFallback(combined, r.error)];
 }

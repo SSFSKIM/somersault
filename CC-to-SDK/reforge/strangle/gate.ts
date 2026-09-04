@@ -41,7 +41,7 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
 import { REFORGE_ROOT } from "../src/runTurn.js";
-import { relayOutput } from "../m2/relay.js";
+import { combinedOutput, relayFailure, relayOutput } from "../m2/relay.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
 import { classifyReplay, darkVerdict, runnerFor, type ReplayOutcome } from "./runners.js";
 
@@ -472,13 +472,19 @@ for (const t of TARGETS) {
 console.log("\n━━━ attestation: every branch of the wave's owned modules is executed or adjudicated (§3.1) ━━━");
 {
   const r = run("npx", ["tsx", "strangle/attest.ts", "--check"]);
-  for (const l of (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l))) console.log(`  ${l.trim()}`);
+  // stdout AND stderr, here and in every relay below: a child that dies before
+  // it prints a verdict says why on the stream this used to drop.
+  const shown = combinedOutput(r).split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l)).map((l) => l.trim());
+  for (const l of shown) console.log(`  ${l}`);
   // …AND THE REASONS, which this filter used to drop. The line shapes it passes
   // are verdicts and headers; a covering scenario's own diff lines are neither,
   // so a red attestation named the tag and stopped. That is the same defect the
   // equivalence phase below documents at length, one phase up, and it survived
   // because this phase's failure had never been read in anger.
-  if (r.status !== 0) for (const w of relayOutput(r.stdout ?? "").reasons) console.log(`    ${w.trim()}`);
+  if (r.status !== 0) {
+    const already = new Set(shown);
+    for (const l of relayFailure(r)) if (!already.has(l)) console.log(`    ${l}`);
+  }
   results.push({ label: "coverage attestation", pass: r.status === 0 });
 }
 
@@ -488,7 +494,7 @@ if (!buildAndBoot([])) {
   results.push({ label: "equivalence (faithful)", pass: false });
 } else {
   const r = run("npx", ["tsx", "m2/all.ts", "--engineB", "engine-strangled"]);
-  const { verdicts, fails, reasons } = relayOutput(r.stdout ?? "");
+  const { verdicts, fails } = relayOutput(combinedOutput(r));
   // The five SUITE verdicts are the tail; they are what a green run needs to
   // show. On a red one they are the least useful five lines in the file.
   for (const v of verdicts.slice(-5)) console.log(`  ${v.trim()}`);
@@ -506,8 +512,10 @@ if (!buildAndBoot([])) {
   // `m2/relay.ts` now, shared with the runner that prints them.
   if (r.status !== 0) {
     console.log(`  ${fails.length} failing verdict(s):`);
-    for (const f of fails) console.log(`    ${f.trim()}`);
-    for (const w of reasons) console.log(`    ${w.trim()}`);
+    // Never an empty block: a suite that died before its verdict block leaves
+    // `fails` and `reasons` both empty, and `relayFailure` answers that with the
+    // tail of the combined output and the spawn's own error.
+    for (const l of relayFailure(r)) console.log(`    ${l}`);
   }
   results.push({ label: "equivalence (faithful)", pass: r.status === 0 });
 }

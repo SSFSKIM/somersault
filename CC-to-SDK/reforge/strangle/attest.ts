@@ -31,7 +31,7 @@ import { adjudicate } from "./adjudicate.js";
 import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
-import { relayOutput } from "../m2/relay.js";
+import { relayFailure } from "../m2/relay.js";
 
 const checkOnly = process.argv.includes("--check");
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
@@ -104,9 +104,13 @@ for (const tag of scenarios) {
     // Relayed through `m2/relay.ts` rather than a regex of its own, for the
     // reason that file's own header gives: the rule only holds if every layer
     // between the failure and the log agrees on what a failure looks like.
-    const { fails, reasons } = relayOutput(r.stdout ?? "");
-    for (const f of fails) console.log(`    ${f.trim()}`);
-    for (const w of reasons) console.log(`    ${w.trim()}`);
+    //
+    // `relayFailure` and not `relayOutput`, because the first version of this
+    // fix relayed `r.stdout` alone and returned two EMPTY arrays for a runner
+    // that died before printing a verdict — a module-load throw on the
+    // instrumented graph writes to stderr, and a spawn that never ran writes
+    // nowhere at all. Same tag-and-nothing-else report, one layer over.
+    for (const l of relayFailure(r)) console.log(`    ${l}`);
     red.push(tag);
   }
 }
