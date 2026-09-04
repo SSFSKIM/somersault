@@ -506,8 +506,39 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
  * THE SIGTERM->SIGKILL ESCALATION. `#h` sends SIGTERM, arms a `sigterm-to-sigkill`
  * (1,500 ms) backstop that process-group-SIGKILLs, and polls liveness every
  * `post-kill-liveness-poll` (100 ms) so a process that died of the TERM cancels
- * the backstop. A child that IGNORES SIGTERM is the only way the backstop ever
- * fires, and the corpus has none — every command it runs dies of the first signal.
+ * the backstop before it fires. A child that IGNORES SIGTERM is the only way the
+ * backstop is ever reached, and the corpus has none — every command it runs dies
+ * of the first signal.
+ *
+ * ## The command form is a MEASUREMENT, not a preference
+ *
+ * Two upstream facts have to hold at once, and the obvious command satisfies
+ * neither pair:
+ *
+ *  1. THE TIMEOUT MUST KILL RATHER THAN BACKGROUND. `Gcr` computes
+ *     `nn = !tt && r_r(command)` and passes it as `shouldAutoBackground`; when
+ *     it is true the deadline BACKGROUNDS the shell and nothing is ever
+ *     signalled. `r_r` is false when the parse is not `kind: "simple"`, when a
+ *     subcommand is a `git` command, or when the FIRST WORD of the first
+ *     subcommand is in `$cr = ["sleep"]`. A plain `./reforge-child.sh …` is
+ *     simple, so it takes the backgrounding arm — which is what the sibling
+ *     scenario `bash-timeout-background` grades, deliberately.
+ *  2. THE SIGNALLED PROCESS MUST BE THE ONE THAT IGNORES THE SIGNAL. `#h`
+ *     signals the SHELL's pid and cancels its backstop as soon as that pid is
+ *     gone. MEASURED on this host: `bash -c '<one simple command>'` exec-
+ *     optimizes, so the shell IS the script and survives; `bash -c '<cmd> >
+ *     file'` and `bash -c '<cmd>; true'` do NOT, so bash dies of the TERM, the
+ *     liveness poll sees the pid gone, the backstop is CANCELLED — and the
+ *     script it started is orphaned and survives. That path reaches neither the
+ *     escalation nor a clean shutdown, and the supervision surface would report
+ *     it as a leak.
+ *
+ * `sleep 0 && exec ./reforge-child.sh …` satisfies both, and each half is doing
+ * one job: the leading `sleep` puts `sleep` at the head of `Ua`'s first
+ * subcommand so `r_r` is false and the deadline kills, and the explicit `exec`
+ * replaces the shell with the script unconditionally, so the pid `#h` signals is
+ * the pid that traps. Measured: it survives SIGTERM and dies of the group
+ * SIGKILL.
  *
  * The trigger is the tool's own `timeout` rather than an interrupt, because a
  * timeout is a declaration in the tool call while an interrupt is a race against
@@ -515,6 +546,9 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
  * the tool_use block produced a hard exit with no frames at all.
  */
 const killPlan: ChildPlan = { bytes: 60, chunks: 20, everyMs: 600, ignoreTerm: true };
+
+/** See the block above: both halves are load-bearing and each was measured. */
+const KILL_COMMAND = `sleep 0 && exec ${childCommand(killPlan)}`;
 
 const killEscalation = (d: EffectiveDeadlines): Scenario => {
   // Past the backstop and its liveness polling, with room for the executor to
@@ -525,13 +559,14 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
     title: "a timed-out Bash command whose child ignores SIGTERM",
     // Nothing may survive: the escalation exists precisely so that a child which
     // ignores SIGTERM is still gone. The EMPTY declaration makes any survivor a
-    // LEAK on the supervision surface — which is this scenario's second claim.
+    // LEAK on the supervision surface — which is this scenario's second claim,
+    // and the one that catches the cancelled-backstop path described above.
     detachedChildren: [],
     run: async (ctx) => {
       seedScriptedChild(SANDBOX);
       const msgs = await drive(
-        `Use the Bash tool to run exactly \`${childCommand(killPlan)}\` with the timeout parameter set to 1500. ` +
-          `Then report what the tool told you, verbatim.`,
+        `Use the Bash tool to run exactly this command, as a single call, with the timeout parameter set to 1500, ` +
+          `and then report what the tool told you, verbatim:\n${KILL_COMMAND}`,
         { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 3, permissionMode: "bypassPermissions" },
       );
       // The escalation happens AFTER the tool result is composed, so a snapshot
@@ -545,9 +580,10 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
       if (!uses.some((u) => Number(u.input?.timeout) === 1_500)) {
         return `no Bash call declared timeout=1500 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
       }
-      if (!uses.some((u) => String(u.input?.command ?? "").includes("--ignore-term"))) {
-        return "the recorded command does not carry --ignore-term, so the backstop was never needed";
-      }
+      const cmd = String(uses[0].input?.command ?? "");
+      if (!cmd.includes("--ignore-term")) return "the recorded command does not carry --ignore-term, so the backstop was never needed";
+      if (!cmd.includes("exec ")) return `the recorded command lost its \`exec\`, so the signalled pid is bash and not the trapping script: ${JSON.stringify(cmd)}`;
+      if (!/^\s*sleep\s/.test(cmd)) return `the recorded command lost its leading sleep, so \`r_r\` is true and the deadline backgrounds instead of killing: ${JSON.stringify(cmd)}`;
       if (!/timed out|killed|terminated/i.test(allText(msgs))) return "nothing in the capture says the command was stopped";
       return null;
     },
