@@ -1235,7 +1235,7 @@ wave N+1 overlaps implementation of wave N throughout (§6 note).
 | C12b | W9b | as C12a | not-dispatched — the reader (fable; ~18 KB pure: records → session projection, chain helpers, `ENTRY_APPEND_POLICY` as data) graded from a synthetic transcript corpus over all 37 record types with zero recordings; **blocked by C12a** **INHERITS from C12a (2026-09-03)**: the fault surface and `projectRecord`/`projectTranscript` as the shape its oracle expectations should be written against (including the torn-tail marker, which is a property of the FILE, not of any record). And a BINDING measured correction to the scout's §4.4 D8, restated by the C12a fix round (2026-09-03) because the first version of it was wrong: a seeded `parentUuid` cycle is real — `src/precondition.test.ts` walks the file and proves the first exchange is off the chain — and the headless resume carries it anyway because it WALKS the chain and then heals it, not because it skips the walk. `BSe` walks `parentUuid` from the leaf; the already-visited parent is caught by the PARENT-LOOKUP GUARD (`if(!A||u.has(A.uuid))`, @212937) and diverted to `QVt` (@214473), which continues from the nearest not-yet-visited record within `YVt` = 5,000 ms and fires `tengu_chain_timestamp_fallback`. The loop-top cycle check (@212711) — the only site of `tengu_chain_parent_cycle` and of the partial-transcript log — is UNREACHABLE, because `d` is only ever assigned an unvisited record; the binding written by the fix round's first pass, which required the reader to fire that codeword, is WITHDRAWN (verification round 2, 2026-09-03). The reader must reproduce the guard ORDERING and the proximity fallback with its window, and must NOT fire the cycle codeword. `store-parent-cycle` pins the seed's one-second record spacing, which is what makes the fallback succeed (simulated on `BSe`'s own bytes: 4 of 4 records and one fallback event at one-second spacing; at six-second spacing 2 of 4, no event and no log). The chain walk is gradeable from the synthetic corpus, never from a `--print` scenario. **Unblocked** |
 | C12c | W9c | as C12a | not-dispatched — the writer + lifecycle behind `SessionPort` (absorbs the C1 `session-materialize` splice); **blocked by C12b** **INHERITS from C12a**: with the drain forced, the write queue's batching is out of every differential run, so this wave's `dropped pendingEntries replay` and `queue item resolved before its bytes landed` mutations are load-bearing rather than belt-and-braces. It also inherits the SESSION TITLE claim: the differ maps the envelope's `slug` whole, which hides which prompt a session was named after, and `saveCustomTitle` / `saveAiGeneratedTitle` are this wave's to grade directly |
 | C12d | W9d | as C12a | not-dispatched — the transcript GC, remove-by-uuid, torn-tail sealing, relocation, atomicity contract asserted directly; **blocked by C12c** **INHERITS from C12a**: three of the store fence's four codes (`ENOSPC`, `EROFS`, `EDQUOT`) are declared unreachable by the current harness (accepted as a `[parent-impact]` 2026-09-03); `store-read-only` grades the `{EACCES, EPERM}` family instead. **The fourth is a route this wave owns** (C12a fix round, 2026-09-03): `ENAMETOOLONG` IS raisable unprivileged on a normal filesystem — a 300-character filename returns it — and the store's project path is derived from the cwd, so a pathologically deep sandbox cwd reaches the fence for real without a disk image or an fs shim. Closing this row means taking that route, or grading the rest through C16f's sandbox profile, or adjudicating what remains dark with the measurement |
-| C13a | W10a | scout: `reforge/research/2026-09-02-w10-bash-executor-scout.md` (cut 2026-09-02, Deferred section's "The W10 cut") | not-dispatched — the shell parser WHOLE-CHUNK (`fgwne0fb`, 62,907 B, zero I/O), contract tests over partitioned command strings, no port/scenario/engine run; riders: `tool/PowerShell` ledger row → C13, `subsystem/tool-result-validators` wave C4 → C13. **Unblocked** **RUNS UNDER H1's SANDBOX LOCK (2026-09-05)**: `resetSandbox()` refuses to run while another harness process holds `reforge/.sandbox.lock`, naming the holder's pid and argv, so this row and C13c serialize on the shared `sandbox/`+`config/`+`build/` automatically instead of by convention. Do not delete the lock file; find the pid. |
+| C13a | W10a | scout: `reforge/research/2026-09-02-w10-bash-executor-scout.md` (cut 2026-09-02, Deferred section's "The W10 cut"); wave record `reforge/README.md` "W10a" | **landed** 2026-09-05 — the shell parser owned WHOLE as `CHUNK_REPLACEMENTS[2]` (`fgwne0fb`, 62,907 B of file, 62,292 of code, seven exports, one import, zero I/O), the campaign's third S-chunk and its largest ownership by two orders of magnitude. Zero new recordings, no port, no scenario, no engine-driving oracle — exactly as the cut priced it. **The population is derived** (`research/fixtures/shell-parser-2.1.251.json`, the ELEVENTH pin-keyed fixture and a gate phase, locating the chunk by SHAPE rather than by its content-addressed name) and it corrects the cut twice: **105 declarations, not 107** (100 statements, 93 functions, 12 declarators, 99.82 % density — the scout counted statements), and four named importers is exact but **one of the four is a re-export barrel whose own consumer reaches it through `await import(...)`**, a call site no static scan sees, measured separately with a `skipped` list so the dynamic population has a denominator; 294 further modules carry a BARE side-effect import, which is why `grep -l` answers 298. **Nine constructing declarators** declared under chunk.ts rule 2b — eight `new Set` tables and `Symbol("parse-aborted")`, whose IDENTITY is the contract and is why this is a chunk rather than seven splices. **THE FINDING, which reframes what §2.4's contract-test half is for**: every export was sabotaged with a twin and driven over ALL SIXTEEN Bash-bearing corpus scenarios; **one reddens** (`parseOrAbort`, on five of the sixteen, because `dde` → `KTe` turns its sentinel into a `too-complex` verdict the recorded permission decision carries) and **the other six move nothing** — not because the twins are weak (`getParser` answers null for every input, `findCommandNode` for every tree) but because the corpus's Bash commands are `echo`, `chmod`, `mkdir`, `cd`, `pwd` and `sleep`, and the consumers those six feed cannot distinguish a correct answer from a fallback on any of them. Each dark row carries that measurement, and the gate re-measures two of the sixteen every run. **The oracle** `strangle/parser-parity.test.ts` evaluates the PINNED CHUNK'S OWN BYTES and compares parse trees node for node — type, byte range, text, children, to any depth — over seventeen partitions and 2,170 command strings, byte ranges included in the compared value because the consumers slice the command with them; each partition declares the direction a wrong parser would fail it in and the suite applies exactly that corruption, which caught two vacuous controls on its first run. **A SECOND EVIDENCE CHANNEL for the attestation** (spec-level, see the Revision Note): `adjudicate()` takes what a differential contract suite executed on the same instrumented module, driven in its own process and attributed by recorder file and byte offset, reported as its own state — because 3,644 outcomes against a corpus this narrow would otherwise have meant three thousand identical sentences claiming 'reviewed'. Eighty branches remain that no command string reaches, adjudicated in thirteen groups (25 false arms of a `while (true)`, 13 elses of a callee with no failing return, 10 arms no caller's argument selects, …), two of them resource ceilings deliberately not carried and three bought instead by two lines in the coverage driver. Riders: `tool/PowerShell` and `subsystem/tool-result-validators` were ALREADY at wave C13 (verified, not assumed); `subsystem/bash-executor` moves **unowned → spliced** with the chunk's footprint and its one capture rebased upstream, `edges` empty deliberately. Attestation **478/1038 with 560 exclusions → 985/4682 executed, 3,060 by contract suite, 637 excluded, zero un-adjudicated**; whole-chunk rows **2 → 3**; corpus unchanged at 63 scenarios. **Unblocks C13b** (parse types: node shape, the sentinel's identity, the argv/env contracts and the `zshBraceDiff` ERROR wrap — seam notes in the wave record) **RUNS UNDER H1's SANDBOX LOCK (2026-09-05)**: `resetSandbox()` refuses to run while another harness process holds `reforge/.sandbox.lock`, naming the holder's pid and argv, so this row and C13c serialize on the shared `sandbox/`+`config/`+`build/` automatically instead of by convention. Do not delete the lock file; find the pid. |
 | C13b | W10b | as C13a | not-dispatched — the command-safety chain (five engine regions, 124,832 B) + the classifier region (53,180 B) + 17 KB of flag tables owned outright; adds `bash-compound-safety` (closes W6's two live-but-dark `Fy` callers). **Unblocked** (parse types from C13a) |
 | C13c | W10c | as C13a | not-dispatched — executor oracle machinery: a scripted child process (byte schedule / exit / signal), injectable timers for the six shell deadlines, child-process SUPERVISION as `src/state.ts`'s third root; the six machinery-free recordings; (the sandbox-exclusion rider moved to C15b1 — see the W12 cut). **Unblocked**, serializes per X5 — and the serialization is now MECHANICAL: H1's sandbox lock (2026-09-05) refuses a second harness process by name, so a recording taken while a sibling replays is a loud refusal rather than a corrupted measurement. |
 | C13d | W10d | as C13a (advisory) | not-cut — the executor S-module behind `ShellProcessPort`/`ShellOutputSinkPort` (SHARED with the hook runner) + `ShellProviderPort`/`CwdTrackingPort`/`ShellTimingPort`/`ShellTelemetryPort` (Bash-only) + `SandboxPort`/`RemoteConstraintsPort` stubs; `DiskTaskOutput` lives here; cut when C13c lands |
@@ -1455,6 +1455,81 @@ initiative, not this campaign.
 Pending — written at finish.
 
 ## Revision Notes
+
+- 2026-09-05 (**C13a / W10a — the shell parser owned whole, and the measurement that the corpus
+  cannot see it**): `chunk-fgwne0fb.js` is `CHUNK_REPLACEMENTS[2]` — 62,907 B of file, 62,292 of
+  code, seven exports, one import, zero I/O — reimplemented as a reforge-owned module behind the same
+  surface. The campaign's third whole-chunk ownership and, by two orders of magnitude, its largest.
+  - **Two numbers in the cut were wrong and are now derived.** `research/fixtures/shell-parser-2.1.251.json`
+    is the ELEVENTH pin-keyed fixture and a gate phase, and it locates the chunk BY SHAPE (a top-level
+    `new Set` of bash reserved words beside an exported `Symbol` declarator, unique in 1,802 modules)
+    rather than by its content-addressed name. The chunk has **105 declarations, not 107** — 100
+    top-level statements, 93 functions and 12 declarators, at **99.82 %** density; the scout counted
+    statements. And **four named importers is exact but one of them is not a reader**: a 997-byte
+    re-export barrel, whose own consumer reaches it through `await import(...)` and destructures one
+    export inside a single function — a call site no static import scan sees, measured separately and
+    with a `skipped` list so the dynamic population has a denominator. Alongside the four, **294
+    modules carry a bare side-effect import**, which is why `grep -l` answers 298.
+  - **Nine constructing top-level declarators**, all declared as `moduleState` under chunk.ts rule 2b:
+    eight `new Set` lookup tables and `Symbol("parse-aborted")`. The ninth is why this is a chunk and
+    not seven splices — its IDENTITY is its contract (`KTe` does exactly one thing with it,
+    `if (t === w3)`), and a consumer bound to a different symbol than the producer returns
+    type-checks, reads correctly, and silently stops recognising a parse the engine gave up on.
+  - **THE FINDING, and it reframes what §2.4's contract-test half is for.** Every export was sabotaged
+    with a twin built to invert the one thing it means, and every twin driven over ALL SIXTEEN corpus
+    scenarios that carry a Bash `tool_use`. **One reddens** — `parseOrAbort`, on five of the sixteen,
+    because `dde` → `KTe` turns its sentinel into a `too-complex` verdict the recorded permission
+    decision carries. **The other six move nothing**, and not because the twins are weak: `getParser`
+    answers `null` for every input and `findCommandNode` answers `null` for every tree. The reason is
+    the corpus. Its Bash commands are `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`,
+    `pwd`, `sleep 3` and one missing binary, and the consumers those six feed — eleven safety analyses
+    with defined fallbacks, a single keyword rejection guard, an env-prefix list no command has, a
+    sentinel only compared on a path no command reaches, and an argv the permission rules do not match
+    on (they match the command STRING; argv adds a candidate only when a wrapper is stripped) — cannot
+    distinguish a correct answer from a fallback on any of it. That is a fact about the corpus, stated
+    as one, and it is the first ownership in the campaign where the differential surface is the
+    SMALLER half of the evidence.
+  - **The oracle.** `strangle/parser-parity.test.ts` evaluates the PINNED CHUNK'S OWN BYTES and
+    compares the two parse trees node for node — type, byte range, text, children, to any depth — over
+    seventeen partitions of the input domain and 2,170 command strings. Byte ranges are part of the
+    compared value because every offset this parser emits is a UTF-8 BYTE offset over a UTF-16 string
+    and the consumers slice the command with them. Each partition declares the DIRECTION a wrong
+    parser would fail it in, and the suite applies exactly that corruption to a healthy owned tree; two
+    partitions failed that control on the first run, which was the control's defect, not the parser's.
+  - **A second evidence channel for the attestation, and it is a spec-level addition.** 3,644 branch
+    outcomes against 1,038 for the whole attested set before this child. `strangle/adjudicate.ts` now
+    takes a SECOND executed-set — what a differential contract suite ran on the same instrumented
+    module, driven by `strangle/parser-coverage.ts` in its own process and attributed by recorder file
+    and byte offset — reported as its own state rather than as an exclusion. §3.1's bargain is
+    unchanged in substance and sharper in form: a branch is EXECUTED (corpus), EXECUTED BY A SUITE
+    against upstream's own implementation of itself with identity required, or carries a reviewed
+    reason. Writing the third case for three thousand branches would have claimed "reviewed" for
+    entries nobody could review. `attest.test.ts` gained four controls and a third staleness
+    direction, so the channel cannot excuse a branch by existing.
+  - **Eighty branches no command string reaches**, adjudicated in thirteen groups at the level of the
+    module's own control flow: 25 false arms of a `while (true)`, 13 elses of an `if (callee(…))` whose
+    callee has no failing return on that path, 10 arms selected by an argument value no caller passes,
+    7 defensive re-checks the only caller already made, and so on down to one empty-statement-list arm
+    that was argued and then brute-forced over every string of up to three characters in a
+    34-character metacharacter alphabet. Two are resource ceilings deliberately not carried (a 64 MiB
+    source, and a wall-clock deadline whose case would depend on machine load — the node ceiling, the
+    other half of that pair, has its own partition). Three more were bought instead of excluded, by
+    adding two commands to the coverage driver.
+  - **Riders.** Two were already done and are recorded as verified rather than assumed: `tool/PowerShell`
+    and `subsystem/tool-result-validators` both already read wave C13. The third landed:
+    `subsystem/bash-executor` moves **unowned → spliced** with the chunk's footprint and its one
+    capture rebased into the upstream basis; its `edges` stay EMPTY deliberately, because the owned
+    unit has one port and no ledger row owns telemetry, while the subsystem's real edges are consumed
+    by the executor C13b–C13e own.
+  - **Attestation 478/1038 with 560 exclusions → 985/4682 executed, 3,060 by contract suite, 637
+    excluded, zero un-adjudicated.** Manifest whole-chunk rows **2 → 3**. Corpus unchanged: zero new
+    recordings, no port, no scenario, no engine-driving oracle, exactly as the cut priced it.
+  - **One process note, because two workers shared a checkout.** `src/lock.ts` refused five
+    sabotage-measurement cells by name while the sibling replayed a scenario, which is what let a hole
+    in a measurement be diagnosed in one `tail` rather than mistaken for six dark exports — and it
+    found the one place it was not yet applied: `strangle/attest.ts` took no lock, so a second process
+    entered a gap between two of its scenario children and produced a FALSE RED that is
+    indistinguishable in the log from a real one.
 
 - 2026-09-05 (**H1 — orchestrator-level harness work between W9a's fix round and W10: a
   replay-validated RE-SEAL of the precondition sidecar, and the single-writer sandbox lock**): two

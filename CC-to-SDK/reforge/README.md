@@ -5136,3 +5136,294 @@ into `9d1c172`, and `attest.ts`'s contract-evidence section into `511820f`.
 Nothing was lost and both are on `main`; the attribution is simply wrong, and the
 lesson is to diff a shared file before staging it rather than to trust that only
 your own edit is in it.
+
+## W10a — the shell parser: 63 KB of bash grammar, and a corpus that cannot see it (2026-09-05)
+
+C13a, the first of the six W10 children, and the campaign's third whole-chunk ownership. The two
+before it were 3.4 KB of tool description and 165 bytes of shutdown latch. This one is
+`chunk-fgwne0fb.js`: a complete hand-written recursive-descent bash tokenizer and parser that emits
+tree-sitter-shaped nodes over its own UTF-8 byte-offset table, and it is now reforge's, whole, behind
+the same seven exports.
+
+The charter's numbers mostly survived measurement. The thing it did not anticipate is what this child
+is actually about: **the recorded corpus cannot tell a correct bash parser from a broadly broken
+one.** Six of the seven exports can be replaced by a twin that destroys them, and every one of the
+sixteen Bash-bearing scenarios stays green.
+
+### What was owned, and why it is a chunk rather than seven splices
+
+62,907 bytes of file, 62,292 of code, **105 declarations** at **99.82 %** density — not the 107 the
+scout carried. The chunk has 100 top-level statements plus one import and one export clause, and 105
+declarations inside them (93 functions, 12 declarators); the scout counted statements. Seven exports,
+one import, zero `process.`, zero `require`, zero filesystem. The one effect in the whole chunk is a
+telemetry call on the abort path, and it stays a port.
+
+Seven splices would not have bought this. Six of the seven exports are entry points into the same
+105-declaration body, so splicing them individually would mean splicing that body seven times or
+leaving six of the seven reading upstream's. The seventh is `Symbol("parse-aborted")`, and its
+IDENTITY is its contract: `KTe` does exactly one thing with it, `if (t === w3)`, and a consumer bound
+to a different symbol than the producer returns type-checks, reads correctly, and silently stops
+recognising a parse the engine gave up on. That is the argument C16b made for the latch, and it is
+what §2.2's whole-chunk unit is for.
+
+### The population, and the reader a static scan cannot see
+
+`research/fixtures/shell-parser-2.1.251.json` is the **eleventh pin-keyed fixture** and a gate phase,
+derived entirely by shape — the chunk is located by a top-level `new Set` of bash reserved words next
+to an exported `Symbol` declarator, unique in 1,802 modules, never by its content-addressed name.
+
+**Four named importers is exact, and one of them is not a reader.** `chunk-2y9zbj6b.js` is 997 bytes
+and imports only to re-export: it forwards five of the seven under their pre-minification names
+(`parseCommand`, `parseCommandRaw`, `PARSE_ABORTED`, `findCommandNode`, `extractCommandArguments`),
+which corroborates five of the seven shape derivations and was recorded AFTER those derivations
+closed rather than used to make them. Alongside the four, **294 modules carry a bare side-effect
+import** of the same file for the bundler's evaluation order — the same 1-of-N distinction C16b had
+to make, and why a `grep -l` answers 298.
+
+And the fixture found a call site no static import scan can see: the barrel's only consumer,
+`chunk-fy12d89p.js`, reaches it through `await import(...)` and destructures `parseCommand` inside one
+function. The fixture measures that second path, scoped to the enclosing function because the alias
+lands in a one-letter local inside a four-megabyte module, and keeps a `skipped` list for dynamic
+shapes the walk cannot read, so that population has a denominator too.
+
+Call sites per role, direct named imports: `getParser` 12, `parseOrAbort` 4, `findCommandNode` 4,
+`commandArgv` 3, `parseCommandWithEnv` 2 (plus one through the dynamic path), and zero each for the
+keyword Set and the sentinel — which are read rather than called, at 1 and 5 references. A call count
+alone would have reported two of the seven exports as unused.
+
+The anchor is `backtick_escape_unsupported`, a node type this parser emits when a backtick body
+carries an escape it refuses to model: one occurrence, one file, graph-wide. The fixture records that
+the chunk carries **16 such 1-of-1 literals out of 71 considered**, and what the mechanical rule in
+`research/tools/anchor-enum.ts` would have picked instead — the nine-character punctuation run
+`,"$","@"` out of 2,964 candidates. Both are unique; preferring the one a human can recognise is a
+choice, and the fixture is where the choice is visible.
+
+### Nine constructions, and the one where identity is the semantics
+
+`chunk.ts` rule 2b refuses any constructing top-level declarator a whole-chunk replacement would
+drop. This chunk has nine: eight `new Set` lookup tables and one `Symbol`. Eight are declared as
+module state on the ordinary ground — nothing mutates them, every read is a `.has`, none is reachable
+from outside the module. The ninth is the sentinel, and its `why` is the row's whole argument for
+being a row.
+
+### The transliteration, and the one defect the decomposition would have shipped
+
+The owned module is a transliteration, not a redesign: upstream's control flow, evaluation order and
+recovery shapes ARE the specification, including the arms that are structurally unreachable and the
+half-dozen places where upstream does something that reads like a mistake. Each of those carries a
+comment saying so, and keeps doing it.
+
+Nine regions were translated in parallel and each author verified their own against upstream before
+assembly, with harnesses ranging from 22,000 hand-built cases to 275,000. One author found a real
+defect that way. Inside the regex arm of the `${…}` operand parser, upstream honours a backslash
+escape inside SINGLE quotes as well as double — unlike the four neighbouring quote loops, every one of
+which guards on `"`. The first translation pattern-matched the neighbours and wrote the guard in. A
+token-level diff caught it; that region's own first corpus did not, because it contained no
+single-quoted run with a backslash in a pattern position. It is the one place the parallel
+decomposition would have shipped a defect, and it is worth naming because what caught it was not a
+differential test but **reading the two texts against each other**.
+
+### What grades it: seventeen partitions, 2,170 strings, node for node
+
+`strangle/parser-parity.test.ts` evaluates the PINNED CHUNK'S OWN BYTES — the 62,907-byte upstream
+module with its one import stubbed and its export clause removed — and compares the two parse trees
+node for node: type, byte range, text, children, to any depth.
+
+Byte ranges are part of the compared value, not metadata about it. Every offset this parser emits is
+a UTF-8 BYTE offset over a string JavaScript stores as UTF-16, maintained by two mechanisms that have
+to agree (an incremental counter in the scanner, a lazily built `Uint32Array` for random access), and
+the consumers downstream slice the original command with those offsets. A tree that is structurally
+right and numerically wrong hands the safety chain a correct shape pointing at the wrong bytes.
+
+The partitions are regions of the input domain with a stated reason, not a bag of interesting
+strings, and each declares its RED DIRECTION — the shape of wrongness a bad parser would show there.
+The suite applies exactly that corruption to a healthy owned tree and requires the comparator to catch
+it. Two partitions failed that on the first run, and the failure was the control's rather than the
+parser's: reversing a one-element child array is a no-op, and the corruption had been applied to the
+deepest node rather than to one that could carry it. It now searches for a node that can, and reports
+a partition where none exists as vacuous.
+
+### The finding: the corpus observes this module through exactly one door
+
+Every export was sabotaged with a twin built to invert the one thing it means, and every twin was
+driven over **all sixteen** corpus scenarios that carry a Bash `tool_use` — read off the recorded
+cassettes rather than off the scenario prompts.
+
+**One export reddens.** `parseOrAbort`, twinned to abort on every command, turns `dde` → `KTe`'s
+`if (t === PARSE_ABORTED)` into a `too-complex` verdict with `reason: "Parser aborted (timeout,
+resource limit, or over-length)"`, and five of the sixteen carry it into the transcript:
+`perm-rule-deny`, `perm-accept-edits`, `perm-bypass-deny-rule`, `perm-broker-updates`,
+`hooks-permission`. Two are listed as coverage, because the gate requires EVERY covering tag to
+redden and each extra one buys a second replay of the same mechanism.
+
+**The other six move nothing**, and not because the twins are weak: `getParser` returns a handle whose
+`parse` answers `null` for every input, and `findCommandNode` answers `null` for every tree, which is
+as destructive as a shape-preserving twin can be. The reason is what the corpus contains. Its Bash
+commands are `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p …`, `cd moved`, `pwd`, `sleep 3`
+and one deliberately missing binary. That is the whole population, and the consumers those six
+exports feed cannot distinguish a correct answer from a fallback on any of it:
+
+- **`getParser`** feeds eleven analyses in the engine chunk — the command splitter, the read-only
+  classifier, the redirection analyser, the destructive detector, two sed-edit detectors, the prefix
+  extractor, the git-activity detector. Every one has a defined answer for an unparseable command,
+  and for these commands that answer is the one the real parse produces. Upstream documents one of
+  them as "Client-facing — lets clients render git activity without re-parsing stdout; not surfaced
+  to the model", which is a fair summary of the set's transcript visibility.
+- **`shellKeywords`** is consulted in exactly one place bundle-wide, a rejection guard reading
+  `Shell keyword '<name>' as command name — tree-sitter mis-parse`. An empty set can only turn a
+  rejection into an acceptance, and no corpus command's name is a keyword, so there is no rejection to
+  lose.
+- **`parseCommandWithEnv`** adds one thing to a plain parse: the `VAR=value` assignments preceding
+  the command. No corpus Bash command has one. Its twin returns the real tree, the real command node
+  and the real text with `envVars` emptied, so its green is a fact about the assignment list rather
+  than about the parser.
+- **`parseAborted`** is only ever compared against, and only where a parse gave up. The corpus's
+  longest Bash command is 31 characters.
+- **`findCommandNode`** and **`commandArgv`** feed argv extraction, and the permission rules the
+  corpus records match on the command STRING: the candidates are the raw command and the
+  command-without-redirections, and argv only ever adds a further candidate when a wrapper (`sudo`,
+  `env`, `xargs`) has been stripped and the stripped first word differs. No corpus command is wrapped.
+
+That is not a complaint about the corpus. It is the measurement that says why §2.4's other half
+exists: a 63 KB grammar cannot be graded by six `echo`s, and this is the first ownership in the
+campaign where the differential surface is the smaller half of the evidence rather than the primary
+one.
+
+### The attestation grew a second evidence channel
+
+3,644 branch outcomes, against 1,038 for the entire attested set before this child. Writing the
+unreached ones as reviewed exclusions would have meant thousands of identical sentences claiming
+"reviewed" for entries nobody could review — and, worse, saying `excluded` about branches a suite in
+this repository provably executes on every run.
+
+So `strangle/adjudicate.ts` takes a SECOND executed-set. `strangle/parser-coverage.ts` drives the same
+partition corpus through the same instrumented module the scenarios ran through, in its own process,
+so the recorder writes its own file and `attest.ts` attributes by file and by byte offset inside it.
+A branch that suite executed is reported as `contract`, not `excluded`, and the report names the
+driver that ran it.
+
+The two are not interchangeable and the report keeps them apart. Corpus evidence is end-to-end: the
+branch ran inside a real engine replay whose whole transcript was compared. Contract evidence is
+narrower and, for an unrendered branch, stronger: the branch ran against upstream's own
+implementation of itself with identity required. What contract evidence cannot say is that anything
+downstream would have noticed — which, for this module, is precisely what the section above measured.
+
+`strangle/attest.test.ts` gained four controls for the channel and a third staleness direction: a
+branch a suite executed is adjudicated rather than missing; a branch BOTH channels cover is reported
+as `executed`, because end-to-end is the stronger claim; an EMPTY contract set adjudicates nothing, so
+the channel cannot excuse a branch by existing; and an exclusion for a branch a suite now executes
+fails as stale and says WHICH channel overtook it, because the fix differs.
+
+### The eighty that no command string reaches
+
+The corpus replays execute 507 of the parser's outcomes end to end; the contract driver executes
+3,057 more. Eighty were left, and each is argued at the level of the module's own control flow rather
+than at the level of "no scenario does that" — 25 false arms of a `while (true)`, 13 elses of an
+`if (callee(…))` whose callee has no failing return on that path (`parseDollar` has no `return null`
+in 412 lines), 10 arms selected by an argument value no caller passes, 7 defensive re-checks the only
+caller has already made, 4 `??`s whose left side is never nullish, 4 tests the statement before them
+has already made impossible, 3 argv arms its own producers cannot build, 3 "the inner run consumed
+nothing" arms of two-level scanners, 2 upstream arms an earlier upstream arm already claims, 2 halves
+of the heredoc handoff's record guard, 1 abort flag read after a normal return when all six writers
+throw, and 1 empty statement list at a position that is not end of input — that last one argued and
+then brute-forced over every one-, two- and three-character string in a 34-character metacharacter
+alphabet.
+
+Two are resource ceilings deliberately not carried: the 67,108,864-byte source guard, which would
+mean holding 64 MiB in the partition table for one outcome, and the wall-clock deadline, whose case
+would depend on machine load — which is the one thing a byte-compared attestation report must not
+contain. The other half of that pair IS driven: the node ceiling has its own partition, `node-budget`,
+with a case either side of it.
+
+Three more were on that list and are not excluded. They are reachable only through
+`parseCommandWithEnv`, whose arguments the corpus does not choose, and two commands added to the
+coverage driver buy all three. Two lines is the better trade against a paragraph.
+
+**Attestation: 985/4,682 executed by the corpus, 3,060 by the contract suite, 637 excluded, zero
+un-adjudicated** — against **478/1,038 with 560 exclusions** before this child. The denominator grew
+by the chunk's 3,644 outcomes exactly.
+
+### The riders
+
+Two of the three were already done, and saying so is the rider. `tool/PowerShell`'s ledger row already
+reads wave **C13** (C11a moved it, with the measurement that PowerShell is INSERTED at sorted index 10
+rather than substituted for Read), and `subsystem/tool-result-validators` already reads **C13** as
+well. Neither needed touching, and both were verified rather than assumed.
+
+The third is real: `subsystem/bash-executor` moves **unowned → spliced**, with the chunk's footprint
+(the whole 62,967-character materialized span, hashed over upstream's own bytes) and its one capture —
+the telemetry import — rebased into the upstream basis by `ledger/backfill-captures.ts`. Its `edges`
+stay EMPTY, deliberately: the owned unit has exactly one port and no ledger row owns telemetry, while
+the subsystem's real edges (permissions for `canUseTool`, sandboxing for the seatbelt wrap,
+session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the
+executor, which this child did not touch. Recording them now would be claiming a cut C13a did not
+make.
+
+### Two things about running two workers in one checkout
+
+**The lock earned its keep on the first day.** Five sabotage-measurement cells in the first round came
+back with no verdict at all, and the cause was not a hang: `src/lock.ts` had refused them by name,
+because the sibling worker was replaying `store-seeded-resume` at that moment. The refusal is loud and
+it names the holder's pid and argv, which is exactly what let a five-cell hole in a measurement be
+diagnosed in one `tail` rather than mistaken for six dark exports.
+
+**And it found the place it was not yet applied.** `strangle/attest.ts` was not taking the lock, so its
+scenario children each acquired and released and left a gap between every pair of them. A second
+harness process took the sandbox in one of those gaps and `perm-broker-updates` came back with five
+state differences — reported as "the instrumented build is not equivalent", which was not true; the
+same scenario passed on the same build a minute later. A false RED there costs a whole attestation
+cycle and is indistinguishable, in the log, from a real one. The sibling worker landed the fix
+concurrently; the measurement is recorded next to it.
+
+### Seam notes for C13b
+
+C13b owns the command-safety chain and the classifier region, both of which consume this module's
+output. What it is consuming, stated once:
+
+**The node.** Exactly five keys, in this order: `type`, `text`, `startIndex`, `endIndex`, `children`.
+`startIndex`/`endIndex` are UTF-8 BYTE offsets, not UTF-16 indices; `text` is already the corresponding
+slice, so a consumer should read `text` rather than re-slicing the command unless it needs a
+sub-range, and if it does re-slice it must convert. The parser emits **89 distinct node types**,
+including seven that exist only to record a recovery: `ERROR`, `test_rhs_missing`,
+`backtick_escape_unsupported`, `backtick_body_overrun`, `heredoc_body`, `heredoc_content`,
+`heredoc_end`.
+
+**The sentinel.** `PARSE_ABORTED` is a module-scope `Symbol("parse-aborted")` and its identity is the
+contract. C13b must IMPORT it from `strangle/modules/shell-parser/reference.js` when it owns `KTe`,
+never mint its own — a second symbol with the same description is the exact defect the row's own
+sabotage twin demonstrates. Note the asymmetry between the two async entry points on the same three
+causes: `parseOrAbort` returns the sentinel and emits `tengu_tree_sitter_parse_abort`;
+`parseCommandWithEnv` returns `null` and emits nothing.
+
+**The three abort causes**, in the order `parseOrAbort` tests them: over the 10,000-character cap
+(`panic: false`), a parse that returned `null` (`panic: false`), a parse that THREW (`panic: true`).
+The third is unreachable from any string — `parse` catches everything it can raise — and is reached
+only by a caller passing a non-string with a `length`, which is the shape the parity suite drives it
+with.
+
+**Two caps with the same value and separate declarations.** `MAX_COMMAND_LENGTH` is `1e4` in this
+chunk; `SS` is `1e4` in the engine chunk, and C13b will own that one. They are not the same
+declaration and a pin can move one without the other, so a shared constant would be a claim the
+artifact does not support.
+
+**The argv contract** (`commandArgv`), which is more than a `map`: a `declaration_command` returns
+`[keyword]` when its first child's text is one of the seven declaration keywords and `[]` otherwise; a
+`concatenation` containing a `command_substitution` or `process_substitution` is kept as RAW TEXT
+rather than joined; a BARE substitution argument STOPS the walk, so everything after it is
+deliberately absent; `word` nodes are unescaped with `\(.)` → `$1`, and the other literal types have
+one layer of surrounding quotes stripped.
+
+**The env contract** (`parseCommandWithEnv`): the `variable_assignment` children of the command node,
+in order, as raw `text`, stopping at the first `command_name` or `word`.
+
+**The walk** (`findCommandNode`): returns the first `command` or `declaration_command`. A
+`variable_assignment` node with a parent looks for a sibling of a command type that starts AFTER it; a
+`pipeline` descends into its children in order and returns the first hit; a `redirected_statement`
+takes its first command-typed CHILD rather than descending. Everything else is a pre-order walk.
+
+**The `zshBraceDiff` flag**, which C13b will meet in its own classifier: it is set deep in word and
+expansion parsing when a construct bash and zsh would read differently is found, and it makes
+`parseProgram` wrap the whole program in an `ERROR` node spanning the same range rather than failing.
+A consumer that treats a root `ERROR` as a parse failure will behave differently from one that looks
+inside it — upstream's own splitter does the latter, reading
+`root.type === "ERROR" && root.children[0]?.type === "program" ? root.children[0] : root`.
