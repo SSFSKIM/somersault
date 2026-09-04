@@ -37,7 +37,7 @@
 // questions ("did the filesystem change the stream?" and "does this build make
 // the same stream?") into one answer that cannot say which it measured.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { canonicalizeForHash, scrubRequestBody } from "./canonical.js";
+import { canonicalizeForHash } from "./canonical.js";
 import { ENGINE_VERSION } from "./pin.js";
 import { baselineSeedHash, declarationSha256, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "./harness.js";
 import { firstCanonicalDifference } from "./proxy.js";
@@ -51,8 +51,12 @@ export interface ResealResult {
   written?: RecordedPrecondition;
 }
 
-/** ~200 bytes of a request body, canonicalized and scrubbed — never a raw credential. */
-const bodyExcerpt = (body: string): string => canonicalizeForHash(scrubRequestBody(body)).slice(0, 200);
+/**
+ * ~200 bytes of a request body in the form the MATCHER compares — which is also
+ * the form with the credentials, clocks and ids already scrubbed out of it, so a
+ * refusal can be printed into a gate log without printing a secret.
+ */
+const bodyExcerpt = (body: string): string => canonicalizeForHash(body).slice(0, 200);
 
 /**
  * Replay `scenario` against `cassette` under the DECLARED precondition and, if
@@ -108,11 +112,20 @@ export async function resealScenario(opts: {
   const fb = run.fallbacks[0];
   if (fb !== undefined) {
     const { offset, near } = firstCanonicalDifference(fb.requestBody, fb.entryRequestBody);
+    // OFFSET -1 IS A DIFFERENT DIAGNOSIS, not a missing one. The match hash is
+    // taken over method, path and the canonical body, so a request whose
+    // canonical body EQUALS the entry's would have matched exactly — unless
+    // that entry was already consumed, which means the engine sent the same
+    // request more times than the recording did.
+    const where =
+      offset < 0
+        ? "whose canonical body is IDENTICAL to it, so the entry that would have matched was already consumed — the engine repeated a request the recording made once"
+        : `whose canonical body first differs at byte ${offset} (${near})`;
     return {
       resealed: false,
       reason:
         `${run.fallbacks.length} request(s) were answered only POSITIONALLY under this declaration — the first is ` +
-        `${fb.method} ${fb.path}, served entry seq ${fb.seq}, whose canonical body first differs at byte ${offset} (${near}). ` +
+        `${fb.method} ${fb.path}, served entry seq ${fb.seq}, ${where}. ` +
         `Replayed body: ${bodyExcerpt(fb.requestBody)}`,
     };
   }
