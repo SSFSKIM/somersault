@@ -1456,6 +1456,128 @@ Pending — written at finish.
 
 ## Revision Notes
 
+- 2026-09-05 (**C13c / W10c — executor oracle machinery: a declared child, five deadlines that move,
+  and a fourth thing a run leaves behind**): the machinery child of the W10 cut. No splices, no owned
+  bytes, no port — the three capabilities of scout §5.2, each with the negative control the cut
+  named, plus the eight scenarios that cannot exist without them.
+  - **The premise, as a measurement.** Every Bash command in the 63-scenario corpus is `echo`,
+    `mkdir`, `chmod`, `cd`, `pwd` or `sleep`. That reaches one of `dZe`'s six result arms, no
+    truncation, no backgrounding, no timeout, no compound command and no pre-spawn refusal. The
+    executor's unreached arms are not behind a gate; they are behind a child nobody specified, a
+    deadline nobody could move, and a surface that cannot see a process.
+  - **Capability 1 — a child whose behaviour is its argv.** `w10/scripted-child.sh`: exact byte
+    schedule, chosen exit status, `trap '' TERM`, a grandchild that holds stdout open past the
+    child's own exit, and an interactive-prompt tail. PURE BASH by decision, not preference — it runs
+    inside the engine's shell under X6's allowlist, so "whatever node or python is on `PATH`" is the
+    operator coupling X6 exists to remove, and two engines graded against two interpreters is a
+    difference the harness would call an engine defect. NO CLOCK REACHES THE BYTES, so the same plan
+    is byte-identical on every engine and a scenario's `check` can assert the OUTPUT. The declaration
+    is checked DIFFERENTIALLY — `expectedOutput` derives the schedule in TypeScript, the script
+    derives it in bash, neither reads the other, and the first run found the TypeScript expectation
+    wrong, which a record-what-it-produced fixture would have blessed. The cut's control ("a
+    perturbed schedule changes the graded output — show which field") is a MATRIX rather than one
+    perturbation, because the helper has three independent axes and a perturbation moving four fields
+    at once proves nothing about which field carries which: `--bytes` moves the length and the hash,
+    `--chunks` moves the hash and the `R<i>` markers while holding the byte total EXACT, `--every`
+    moves only the schedule's FLOOR with byte-identical output, `--exit` moves only the status — and
+    each row also grades the perturbed plan against its own declaration, so a helper that crashed on
+    every perturbation could not pass by failing everything. It is also graded under `engineEnv()`
+    itself, with a control asserting that environment is measurably narrower than the parent's.
+    **44 checks.**
+  - **Capability 2 — timer control as a BUILD-TIME CONSTANT REWRITE, and the reason it cannot be an
+    env var.** None of the six deadlines is read from the environment at this pin — they are `var
+    NAME=<number>` declarators compiled into the graph — so "add a knob" is the same edit plus a
+    fiction about where it came from; and the oracle is a compiled Mach-O binary, so a variable it
+    cannot honour would silently apply to one side of a differential. NOTHING IS FOUND BY NAME: each
+    deadline is located by the SHAPE OF ITS USE (the `setTimeout`/`setInterval` call or the
+    `Date.now()` comparison that makes it a deadline rather than a number), every use-site pattern
+    matches exactly once, every derived binding has exactly one numeric definition, the background
+    hint's two use sites must AGREE on the binding, and the owning chunk is found by the conjunction
+    of all seven shapes. The rewrite then re-reads the bytes at its own derived offset and refuses
+    unless they are literally `<binding>=<pinned value>` — because a wrong edit to an engine that is
+    then graded applies to BOTH sides, so both agree and the measurement is of something nobody
+    named. Every control is therefore about a refusal. **27 checks.**
+  - **`[parent-impact]` — the six deadlines are FIVE, over seven constants.** All seven are present,
+    verified and rewritable (`kzt` 2,000 / `$Kt` 1,000 / `qKt` 5,000 / `plr` 5,000 / `mlr` 45,000 /
+    `WKt` 1,500 / `zKt` 100, each with its byte offset in `chunk-fy12d89p.js`). But grouped
+    consistently — a poll interval and its threshold are ONE deadline — they make five:
+    `background-hint`, `progress-cadence`, `output-file-watchdog`, `stall-detector` (`plr`+`mlr`) and
+    `kill-escalation` (`WKt`+`zKt`). The scout's six comes from pairing `plr`/`mlr` while leaving
+    `WKt`/`zKt` apart. Nothing downstream depends on the count; the fixture commits all seven, which
+    is the number the rewrite needs, and records the grouping so nobody re-derives it.
+  - **The stall detector's OTHER input is a derived population.** It fires only when the last output
+    line matches one of `ylr`'s seven interactive-prompt regexes, so `--prompt-tail` was a bet on an
+    upstream list. `research/fixtures/shell-timers-2.1.251.json` is the **TWELFTH** pin-keyed fixture
+    and a gate phase: it derives the list from the shape of its one consumer (unique across all 1,800
+    module files) and asserts the child's tail satisfies TWO of the seven independently, so a pin
+    retiring either still fires the arm.
+  - **Capability 3 — process supervision, and the measurement that moved its design.** The obvious
+    reading is a `ps -o pid,ppid` walk down from the engine child. It does not survive contact with
+    what it measures: the snapshot is taken after the query resolves, so the engine has EXITED and a
+    leaked child has been reparented to pid 1 — **the leak is precisely the case in which lineage has
+    been destroyed**. So the surface is a DIFFERENCE over the process table, before against after,
+    which is attributable to the run by construction because H1's lock guarantees no sibling harness
+    is spawning engines into the same window. A survivor is graded only when one of three routes ties
+    it here (lineage to this process, a cwd inside the sandbox, a harness-owned token in its command
+    line); everything else is DROPPED rather than counted, because a count is a graded value the
+    operator's browser can move. A survivor must appear in TWO samples 250 ms apart, so a child that
+    is exiting cannot make the surface flaky. `findEngineChild` keeps the live half C16a needs — a
+    descendant of this process whose command line begins with a path the harness itself constructed,
+    and exactly one at a time; two is a refusal, never a first match. **27 checks, every one leaking a
+    real process**; the first draft of two of them used `detached: true`, which leaves this process as
+    the parent, so the ancestry route attributed them and the routes under test never ran.
+  - **The blind spot, with the measurements that close the alternatives.** An orphan with no reforge
+    token in its command line, whose cwd is not the sandbox and whose lineage is gone, is invisible.
+    `ps -E` is restricted under SIP on macOS (measured: command line, no environment), and a
+    process-group discipline would buy nothing because the engine's own kill path is
+    `process.kill(-pid, …)` and every shell is already its own group leader. **C16f inherits it**: its
+    hermetic substrate already shares this snapshot, and an exec audit over the descendant tree is
+    where it closes.
+  - **The kill-escalation command form is a measurement, not a preference** — and it is the sharpest
+    thing the wave learned about the executor. Two upstream facts must hold at once. The deadline
+    only KILLS when `r_r(command)` is false, because otherwise `Gcr` passes `shouldAutoBackground` and
+    the timeout BACKGROUNDS the shell without signalling anything. And the process that ignores
+    SIGTERM must BE the pid `#h` signals, because the backstop is cancelled the moment that pid is
+    gone. Measured: `bash -c '<one simple command>'` exec-optimizes, so the shell IS the script and
+    survives; the same command with a redirect, or followed by `; true`, does NOT, so bash dies of the
+    TERM, the liveness poll sees the pid gone, the backstop is CANCELLED — and the script it started
+    is orphaned and survives, reaching neither the escalation nor a clean shutdown.
+    `sleep 0 && exec ./reforge-child.sh --ignore-term …` satisfies both: the leading `sleep` puts
+    `sleep` at the head of `Ua`'s first subcommand so `r_r` is false, and the explicit `exec` replaces
+    the shell unconditionally. That also makes the two timeout scenarios a matched pair on ONE
+    predicate — `bash-timeout-background` is simple and takes the backgrounding arm,
+    `bash-kill-escalation` is sleep-guarded and takes the killing one.
+  - **Which scenario runs on which engine set, and why.** Six run on the corpus's own pair
+    (`engine-real` as oracle, `engine-extracted` under test): none needs a deadline moved. The two
+    that do cannot be graded against the oracle at all — the rewrite is of the graph's own bytes — so
+    they run on the identical-code GRAPH pair (`engine-extracted` vs `engine-strangled`) through
+    `w10/timed.ts`, where any difference is a harness or splice defect, which is exactly how the
+    corpus reads its own pair. The stall detector is RECORDED ONCE at the pin's 45 s (the trade the
+    scout allowed) and REPLAYED at 1.8 s; the cassette still matches because the notification's
+    content is a function of the command and the summary rather than of when the deadline expired.
+    The timed scenarios are therefore FACTORIES over the deadlines in force, not fixed bodies: a
+    hard-coded wait would either cost 56 s per replay or send the second turn before the notification
+    existed, and the second failure is silent because a turn carrying no attachment still looks like a
+    turn.
+  - **`src/record.ts`** — this wave is the THIRD caller of `m1/run.ts`'s record branch, so it was
+    lifted rather than copied, which is the write half of the tech-debt item that named exactly this
+    shape. `w10/record.ts` records ONE tag per invocation and is deliberately not the corpus runner:
+    registering six cassette-less scenarios would arm six live takes inside somebody else's gate run,
+    on somebody else's credential and throttle budget.
+  - **The sandbox rows stay OPEN, as the charter says.** The OS-boundary capability — a host assertion
+    a scenario can require — is C15b1's, and nothing here builds it.
+  - **Ledger.** `subsystem/bash-executor`'s empty edge array becomes four edges, each named by what it
+    is a port into: → `subsystem/permissions` (a compound command is decided per subcommand and
+    aggregated), → `subsystem/control-protocol` (`background_tasks` reaches into the shell registry;
+    W7 fired the ARM against an empty registry), → `subsystem/hook-dispatch` (the hook runner calls
+    `B2` and `jx` directly and never touches `LG` — which IS C13d's port cut), → `subsystem/moat-tools`
+    (this row composes the notification, C11c's queue and task store deliver it).
+  - **Gate phases added, and NOT run here.** Four build-free phases in the determinism block:
+    `src/supervision.test.ts`, `w10/child.test.ts`, `w10/timers.test.ts` and
+    `research/tools/extract-shell-timers.ts --check`. Per the dispatch's gate policy a sibling child
+    (C13a) owns the full gate for this pair, so these were measured individually — 27 + 44 + 27 checks
+    green, fixture matching the pin — and the orchestrator grades them over the merged tree.
+
 - 2026-09-05 (**C13a / W10a — the shell parser owned whole, and the measurement that the corpus
   cannot see it**): `chunk-fgwne0fb.js` is `CHUNK_REPLACEMENTS[2]` — 62,907 B of file, 62,292 of
   code, seven exports, one import, zero I/O — reimplemented as a reforge-owned module behind the same
