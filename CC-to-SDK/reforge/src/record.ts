@@ -113,7 +113,10 @@ export async function recordCassette(opts: RecordOptions): Promise<RecordOutcome
 
   if (existsSync(staged)) {
     const hits = contaminationIn(staged);
-    if (hits.length > 0) return discard(`the cassette contains ${hits.join(", ")} — config isolation is not holding`);
+    // "LEAK" verbatim, because `m2/relay.ts`'s REASON_RE looks for that word:
+    // a discard whose cause cannot survive the relay to the gate's log is a red
+    // phase with no reason under it, which is the defect that module exists for.
+    if (hits.length > 0) return discard(`LEAK: the cassette contains ${hits.join(", ")} — config isolation is not holding`);
   }
   if (capturedInfraFailure(rec.messages)) {
     return discard(`the recording captured an infrastructure failure (not engine behaviour)${existsSync(cassette) ? " — the previous cassette is kept" : ""}`);
