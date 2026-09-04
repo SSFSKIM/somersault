@@ -184,11 +184,41 @@ export function baselineSeedHash(engineVersion: string): string {
   return createHash("sha256").update(seed.map((f) => `${f.path}\0${f.content}`).join("\0")).digest("hex");
 }
 
+/**
+ * A declaration's identity, for the one job a sidecar's PROVENANCE has: naming
+ * the world this cassette used to be sealed against without carrying it. The
+ * same argument as `baselineSeedHash` — a seeded transcript is kilobytes, and a
+ * predecessor that cannot be reconstructed is not worth storing whole.
+ */
+export function declarationSha256(declared: ConfigPrecondition): string {
+  return createHash("sha256").update(JSON.stringify(declared)).digest("hex");
+}
+
 /** What the runner writes beside a cassette: the declaration AND the baseline it was applied on top of. */
 export interface RecordedPrecondition {
   declared: ConfigPrecondition;
   /** `baselineSeedHash(engineVersion)` at record time */
   baselineSha256: string;
+  /**
+   * H1 — set when this sidecar was written by a RE-SEAL rather than by a
+   * recording: the identity of the sidecar it replaced, proven redundant by a
+   * clean strict replay of the new declaration against the same cassette
+   * (`src/reseal.ts`).
+   *
+   * THE IMMEDIATE PREDECESSOR ONLY. Re-sealing a re-sealed sidecar overwrites
+   * this rather than appending to it, so a chain keeps its last link and nothing
+   * else: the field answers "what did this cassette answer before, and is that
+   * the world I remember", which is a question about one step. The whole history
+   * belongs to the commit log, which has it.
+   *
+   * No clock and no absolute path, here or anywhere in a sidecar: a fixture that
+   * carries either cannot be compared across machines or across days.
+   */
+  resealedFrom?: {
+    declaredSha256: string;
+    /** absent when the replaced sidecar was a pre-F4 one, which recorded no baseline */
+    baselineSha256?: string;
+  };
 }
 
 // ---- application ------------------------------------------------------------

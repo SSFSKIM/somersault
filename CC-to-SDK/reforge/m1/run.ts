@@ -9,18 +9,19 @@
 // engine-ts exists, every diff is a reimplementation defect.
 //
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
+//       npx tsx m1/run.ts --reseal [--scenario <tag>]   # H1: re-seal drifted sidecars, offline
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
-import { baselineSeedHash, EMPTY_PRECONDITION, resetSandbox, type ConfigPrecondition, type RecordedPrecondition, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { runScenarioOnce, type ScenarioRun } from "../src/runScenario.js";
+import { resealScenario } from "../src/reseal.js";
+import { baselineSeedHash, EMPTY_PRECONDITION, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "../src/harness.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { deriveFaultCassette } from "../src/faults.js";
-import { fallbackVerdict, startRecordProxy, startReplayProxy } from "../src/proxy.js";
-import { gateCacheCheck } from "../src/leakcheck.js";
 import { scrubRequestBody } from "../src/canonical.js";
-import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX, saveTranscript } from "../src/runTurn.js";
-import { awaitQuiesce, defaultStateRoots, entriesOf, stateSnapshot, type StateSnapshot } from "../src/state.js";
+import { REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
+import { entriesOf } from "../src/state.js";
 import { requireRecordCredential } from "../src/env.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
@@ -47,70 +48,27 @@ if (scenarioIdx >= 0 && (scenarioArg === undefined || scenarioArg.startsWith("--
 }
 const only = scenarioArg;
 const rerecord = args.includes("--rerecord");
+// H1 — re-seal instead of grade: prove by replay that the DECLARED precondition
+// is the world this cassette already answers, and rewrite the sidecar if it is.
+const reseal = args.includes("--reseal");
 // engine under test (side B). A is always engine-real, the oracle.
 const engineB = args.includes("--engineB") ? args[args.indexOf("--engineB") + 1] : "engine-extracted";
 
 // Only RECORDING needs a credential. Replays are served offline by the proxy
 // under a non-secret placeholder, so an unauthenticated operator can still grade
 // the whole corpus — which is the property that makes the replay lane free.
-const willRecord = rerecord || SCENARIOS.some((s) => (only ? s.tag === only : true) && !existsSync(join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`)));
+const willRecord = !reseal && (rerecord || SCENARIOS.some((s) => (only ? s.tag === only : true) && !existsSync(join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`))));
 if (willRecord) requireRecordCredential();
 mkdirSync(join(REFORGE_ROOT, "cassettes"), { recursive: true });
 
-interface RunResult {
-  messages: unknown[];
-  events: unknown[];
-  observedFile: string;
-  /** §3.2's fourth surface: what the run left on disk, and how it ended. */
-  state: StateSnapshot;
-  /** false when this run hit a fatal positional fallback or a gate-cache leak. */
-  ok: boolean;
-}
-
-async function runOnce(s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string, precondition: ConfigPrecondition): Promise<RunResult> {
-  const observedFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}-observed-${side}.jsonl`);
-  rmSync(observedFile, { force: true });
-  const proxy =
-    mode === "record" ? await startRecordProxy(cassette, undefined, undefined, s.recordInject ?? null) : await startReplayProxy(cassette, observedFile);
-  const events: unknown[] = [];
-  const ctx: ScenarioContext = {
-    engine: enginePath(engineName),
-    baseUrl: `http://127.0.0.1:${proxy.port}`,
-    collect: (event, payload) => events.push({ event, payload }),
-    mode, // X6: record passes the one selected credential; replay passes the placeholder
-  };
-  resetSandbox(precondition);
-  let messages: unknown[];
-  try {
-    messages = await s.run(ctx);
-  } catch (e) {
-    messages = [{ type: "reforge-exception", name: (e as Error).name, message: String((e as Error).message).slice(0, 200) }];
-  }
-  // Taken BEFORE the next run resets the sandbox, and before the proxy closes —
-  // nothing after this point touches the tree. AFTER AN OBSERVED QUIESCE: the
-  // engine's transcript is written on a 100 ms timer and a long scenario's file
-  // is still moving when the query resolves (measured; see src/state.ts's flush
-  // header). The wait changes nothing the engine does and is applied identically
-  // to every engine; a run that never settles fails rather than being snapshotted
-  // mid-drain.
-  const roots = defaultStateRoots(SANDBOX, CONFIG_DIR);
-  const quiesce = await awaitQuiesce(roots);
-  if (!quiesce.settled) console.log(`    WARN ${side}: the state roots never stopped changing (${quiesce.waitedMs} ms) — the snapshot would be of a moving file`);
-  const state = stateSnapshot(roots, messages);
-  const unmatched = mode === "replay" ? proxy.unmatched() : [];
-  const unserved = mode === "replay" ? proxy.unserved() : [];
-  const fallback = mode === "replay" ? proxy.fallbackServed() : 0;
-  await proxy.close();
-  if (unmatched.length > 0) console.log(`    WARN ${side}: ${unmatched.length} request(s) matched no cassette entry`);
-  if (unserved.length > 0) console.log(`    WARN ${side}: ${unserved.length} cassette entr(ies) never served`);
-  // §3.4: a positional fallback is a warning only on the identical-code pair;
-  // for any other engineB it fails the scenario.
-  const fallbackOk = fallbackVerdict(engineB, side, fallback);
-  // §3.3: the gate caches must never appear in the harness config dir, after
-  // EITHER mode — a record writes config, and so does a replay.
-  const gateOk = gateCacheCheck(CONFIG_DIR, `${s.tag}/${side}`);
-  return { messages, events, observedFile, state, ok: fallbackOk && gateOk && quiesce.settled };
-}
+/**
+ * One graded run, THROUGH THE SHARED DEFINITION (`src/runScenario.ts`). The
+ * body used to live here; H1's re-seal needs the identical run — same quiesce,
+ * same gate-cache check, same fallback verdict — so it moved rather than being
+ * copied. `engineB` is bound here because it is this runner's argument.
+ */
+const runOnce = (s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string, precondition: ConfigPrecondition): Promise<ScenarioRun> =>
+  runScenarioOnce({ scenario: s, engineName, mode, cassette, side, precondition, engineB });
 
 /**
  * H1 regression gate. Cassettes are recordings of real prompts; if the engine's
@@ -222,7 +180,7 @@ function report(label: string, findings: DiffFinding[], variance?: OracleVarianc
 async function oracleVariance(
   s: Scenario,
   cassette: string,
-  a: RunResult,
+  a: ScenarioRun,
   applied: ConfigPrecondition,
 ): Promise<{ transcripts: OracleVariance; events: OracleVariance; requests: OracleVariance; state: OracleVariance; total: number }> {
   const a2 = await runOnce(s, "engine-real", "replay", cassette, "A2", applied);
@@ -235,6 +193,92 @@ async function oracleVariance(
   );
   const state = varianceOf(diffTranscripts([a.state], [a2.state]));
   return { transcripts, events, requests, state, total: transcripts.size + events.size + requests.size + state.size };
+}
+
+/**
+ * THE PRECONDITION IS PART OF THE RECORDING (C12a/W9a). The scenario DECLARES
+ * one; the cassette carries the one that was actually applied when it was
+ * recorded; a replay applies the recorded one, because a cassette answers the
+ * requests an engine made against a particular filesystem and replaying it
+ * against a different one is a different experiment wearing the same name.
+ * When the two disagree the scenario FAILS by name — the wave that changed the
+ * declaration re-records deliberately (or RE-SEALS, H1: see `src/reseal.ts`),
+ * rather than discovering later that a green run graded the wrong world.
+ *
+ * AND THE APPLIED PRECONDITION IS NOT THE DECLARED ONE. `applyPrecondition`
+ * prepends `emptyPreconditionFor(pin)` — the baseline `.claude.json` with its
+ * pinned identity — under every declaration, and only the declared half was
+ * ever written down. So the sidecar records BOTH: the declaration, and a hash
+ * of the baseline seed that was applied beneath it. A sidecar with no hash, or
+ * no sidecar at all, cannot say what world its cassette answers; that is
+ * MALFORMED rather than tolerable, and the caller refuses to grade it.
+ * BACKFILLED LOCALLY, not committed: `cassettes/` is gitignored, so the corpus
+ * is per-checkout state and a fresh clone has no sidecars at all. What the
+ * repository carries is this rule, not the artifacts it graded.
+ *
+ * One function, because `--reseal` and the grading loop must not be able to
+ * disagree about which sidecars drift.
+ */
+function sidecarState(s: Scenario): {
+  cassette: string;
+  preFile: string;
+  declared: ConfigPrecondition;
+  baselineSha256: string;
+  recorded: RecordedPrecondition | undefined;
+  recordedPre: ConfigPrecondition;
+  /** null when this sidecar seals THIS declaration on THIS baseline */
+  driftReason: string | null;
+} {
+  const declared = s.precondition ?? EMPTY_PRECONDITION;
+  const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
+  const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
+  const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
+  const recorded: RecordedPrecondition | undefined = existsSync(preFile)
+    ? (JSON.parse(readFileSync(preFile, "utf8")) as RecordedPrecondition)
+    : undefined;
+  const recordedPre: ConfigPrecondition = recorded?.declared ?? EMPTY_PRECONDITION;
+  const driftReason =
+    recorded === undefined
+      ? "no precondition sidecar was recorded beside this cassette"
+      : typeof recorded.baselineSha256 !== "string"
+        ? "the sidecar records a declaration but not the baseline seed it was applied on top of (a pre-F4 sidecar)"
+        : recorded.baselineSha256 !== baselineSha256
+          ? `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`
+          : JSON.stringify(recordedPre) !== JSON.stringify(declared)
+            ? "the DECLARED precondition is not the one the cassette was recorded against"
+            : null;
+  return { cassette, preFile, declared, baselineSha256, recorded, recordedPre, driftReason };
+}
+
+// ---- `--reseal`: re-seal the sidecars whose declaration provably did not move
+// Visits the DRIFTING scenarios and only those, unless a tag names one — a
+// census that re-ran the whole corpus would cost an engine replay per scenario
+// to answer a question the sidecars already answer on disk.
+if (reseal) {
+  const targets = SCENARIOS.filter((s) => (only ? s.tag === only : true));
+  const drifting = targets.filter((s) => sidecarState(s).driftReason !== null);
+  console.log(`━━━ re-seal: ${targets.length} scenario(s) in scope, ${drifting.length} whose sidecar drifts ━━━`);
+  let sealed = 0;
+  const refused: string[] = [];
+  const visited = only ? targets : drifting;
+  for (const s of visited) {
+    const st = sidecarState(s);
+    console.log(`\n━━━ re-seal ${s.tag} — ${s.title} ━━━`);
+    console.log(st.driftReason === null ? "  this sidecar does NOT drift — re-sealing it because you named it" : `  drift: ${st.driftReason}`);
+    const r = await resealScenario({ scenario: s, declared: st.declared, cassette: st.cassette, sidecar: st.preFile });
+    if (r.resealed) {
+      sealed++;
+      const from = r.written?.resealedFrom;
+      console.log(`  RE-SEALED — the replay was clean on all three proxy signals, the check passed, and the run held.`);
+      console.log(`    provenance: ${from ? `resealedFrom declared ${from.declaredSha256.slice(0, 12)}, baseline ${from.baselineSha256?.slice(0, 12) ?? "<pre-F4: none recorded>"}` : "no predecessor sidecar to name"}`);
+    } else {
+      refused.push(s.tag);
+      console.log(`  REFUSED — the sidecar is UNTOUCHED. ${r.reason}`);
+    }
+  }
+  console.log(`\n=== re-seal: visited ${visited.length}, re-sealed ${sealed}, refused ${refused.length}${refused.length > 0 ? ` (${refused.join(", ")})` : ""} ===`);
+  console.log(refused.length === 0 ? "RESEAL OK" : "RESEAL REFUSED — a refused scenario changed the request stream and needs a live re-record");
+  process.exit(refused.length === 0 ? 0 : 1);
 }
 
 const verdicts: { tag: string; pass: boolean }[] = [];
@@ -252,47 +296,23 @@ for (const s of SCENARIOS) {
   console.log(`\n━━━ ${s.tag} — ${s.title} ━━━`);
   const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
 
-  // THE PRECONDITION IS PART OF THE RECORDING (C12a/W9a). The scenario DECLARES
-  // one; the cassette carries the one that was actually applied when it was
-  // recorded; a replay applies the recorded one, because a cassette answers the
-  // requests an engine made against a particular filesystem and replaying it
-  // against a different one is a different experiment wearing the same name.
-  // When the two disagree the scenario FAILS by name — the wave that changed the
-  // declaration re-records deliberately, with the reason stated, rather than
-  // discovering later that a green run graded the wrong world.
-  //
-  // AND THE APPLIED PRECONDITION IS NOT THE DECLARED ONE. `applyPrecondition`
-  // prepends `emptyPreconditionFor(pin)` — the baseline `.claude.json` with its
-  // pinned identity — under every declaration, and only the declared half was
-  // ever written down. So the sidecar records BOTH: the declaration, and a hash
-  // of the baseline seed that was applied beneath it. A sidecar written before
-  // this fix carries no hash; that is a FINDING named as such, not a silent
-  // equality, and the corpus's 63 sidecars were backfilled when the field landed.
-  // BACKFILLED LOCALLY, not committed: `cassettes/` is gitignored, so the corpus
-  // is per-checkout state and a fresh clone has no sidecars at all. What the
-  // repository carries is this rule, not the artifacts it graded — a checkout
-  // that re-records gets hashed sidecars from the recording itself, and one that
-  // replays somebody else's cassettes gets the pre-F4 finding by name, which is
-  // the honest answer for a world nobody wrote down.
-  const declared = s.precondition ?? EMPTY_PRECONDITION;
-  const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
-  const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
-  const recorded: RecordedPrecondition | undefined = existsSync(preFile)
-    ? (JSON.parse(readFileSync(preFile, "utf8")) as RecordedPrecondition)
-    : undefined;
-  const recordedPre: ConfigPrecondition = recorded?.declared ?? EMPTY_PRECONDITION;
-  const driftReason = !existsSync(cassette) || rerecord
-    ? null
-    : recorded === undefined
-      ? "no precondition sidecar was recorded beside this cassette"
-      : typeof recorded.baselineSha256 !== "string"
-        ? "the sidecar records a declaration but not the baseline seed it was applied on top of (a pre-F4 sidecar)"
-        : recorded.baselineSha256 !== baselineSha256
-          ? `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`
-          : JSON.stringify(recordedPre) !== JSON.stringify(declared)
-            ? "the DECLARED precondition is not the one the cassette was recorded against"
-            : null;
+  const { preFile, declared, baselineSha256, recorded, recordedPre } = sidecarState(s);
+  // A cassette that is about to be recorded has no sidecar to disagree with.
+  const driftReason = !existsSync(cassette) || rerecord ? null : sidecarState(s).driftReason;
   const preconditionDrift = driftReason !== null;
+  // A MALFORMED SIDECAR IS NOT GRADED AT ALL. Until H1 a sidecar with no
+  // baseline hash — or no sidecar — replayed the recorded declaration (an EMPTY
+  // one when the file was missing) under a FINDING, which is a seeded scenario
+  // graded against the wrong world while printing a reason nobody could act on.
+  // The corpus has none of these (all 63 sidecars carry both fields), so the
+  // legacy tolerance buys nothing and costs a wrong measurement: refuse before
+  // the replay, and name the repair.
+  if (preconditionDrift && (recorded === undefined || typeof recorded.baselineSha256 !== "string")) {
+    console.log(`    REFUSING TO GRADE: ${driftReason}. A cassette whose world was never written down cannot be replayed against it.`);
+    console.log(`    Repair: 'npx tsx m1/run.ts --reseal --scenario ${s.tag}' seals the DECLARED precondition if the replay proves the request stream is unchanged; otherwise re-record with --rerecord.`);
+    verdicts.push({ tag: s.tag, pass: false });
+    continue;
+  }
   const applied = preconditionDrift ? recordedPre : declared;
 
   if (!existsSync(cassette) || rerecord) {
@@ -355,9 +375,18 @@ for (const s of SCENARIOS) {
     console.log("  cassette exists — reusing");
   }
   if (preconditionDrift) {
+    // TWO EXITS, and which one applies is a question about the CHANGE. A
+    // declaration that can reach the model (a different seeded transcript, a
+    // fault the engine sees) needs a live take, deliberately, with the reason
+    // stated. One that cannot (an inert seed file, a renamed fixture, a baseline
+    // seed the model never reads) needs no take at all: `--reseal` REPLAYS the
+    // new declaration and re-seals the sidecar only if the request stream comes
+    // back byte-identical, which is the evidence a re-record would have produced
+    // at four hours and a throttle.
     console.log(
       `    FINDING: ${driftReason} — replaying the recorded declaration. ` +
-        "Re-record deliberately (--rerecord) with the reason stated.",
+        `Either re-record deliberately ('--rerecord --scenario ${s.tag}') with the reason stated, ` +
+        `or, when the change cannot reach the model, re-seal ('--reseal --scenario ${s.tag}') and let the replay prove it.`,
     );
   }
 

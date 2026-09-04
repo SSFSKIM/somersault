@@ -209,6 +209,17 @@ for (const [label, argv] of [
   // splice forwards captures by value, so a handler that writes back to one is a
   // mechanical refusal and the fixture is where that is recorded.
   ["process-lifecycle fixture matches the pin", ["research/tools/extract-process-lifecycle.ts", "--check"]],
+  // C13a / W10a's population, and the ELEVENTH pin-keyed fixture. The parser is
+  // the campaign's largest single ownership and its brief opened with three
+  // numbers: 62,907 bytes, 107 declarations, 4 named importers. Two of them were
+  // wrong or incomplete and the fixture is how that stopped being a matter of
+  // which command someone ran — there are 105 declarations, not 107, and the
+  // four named importers include a re-export BARREL whose own consumer reaches
+  // it through `await import(...)`, a reader no static import scan can see. The
+  // fixture measures both populations, keeps a `skipped` list for the dynamic
+  // shapes its walk cannot read, and locates the chunk by SHAPE rather than by
+  // its content-addressed name, so a pin that moves the parser fails here.
+  ["shell-parser fixture matches the pin", ["research/tools/extract-shell-parser.ts", "--check"]],
   // C12a/W9a's population, and the TENTH pin-keyed fixture. `subsystem/session-storage`
   // carried ONE 723-byte method as its artifact list — 0.4 % of a 172 KB
   // subsystem — so §5 could not stale the row when the other 99.6 % moved, and
@@ -334,6 +345,20 @@ for (const [label, script] of [
   // own resolveAnchor/selectExcision/assertSignature, so an oracle and a build
   // cannot grade different functions.
   ["permission-subsystem parity vs the pinned bundle", "strangle/permissions-parity.test.ts"],
+  // The same oracle for C13a/W10a's bash parser, where the corpus/domain gap is
+  // no longer a matter of degree: the module is a complete bash grammar and the
+  // corpus issues `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt` and `pwd`. So the
+  // suite evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse
+  // trees node for node — type, byte range, text and children, to any depth —
+  // over sixteen partitions of the input domain. Byte ranges are part of the
+  // compared value and not metadata about it: every offset this parser emits is
+  // a UTF-8 byte offset over a UTF-16 string, and the consumers downstream slice
+  // the original command with them, so a tree that is structurally right and
+  // numerically wrong is a defect. Each partition also declares the direction a
+  // wrong parser would fail it in, and the suite applies exactly that corruption
+  // to a healthy owned tree — a partition that could not have seen a defect
+  // fails rather than passes.
+  ["shell-parser parity vs the pinned bundle", "strangle/parser-parity.test.ts"],
   // The same oracle for W7's control-protocol handlers. The corpus/domain gap
   // here has a shape none of the five before it had: the raw driver DOES send
   // ten control requests now, so this subsystem is not unrecordable — it is
@@ -597,6 +622,16 @@ for (const [label, argv] of [
   // good fraction of the time — a flaky gate phase teaches people to ignore red,
   // which costs more than the ninety seconds eight takes cost.
   ["the eager-flush knob still buys what it claims", ["w9/measure.ts", "--phase", "flush", "--runs", "8"]],
+  // H1'S RE-SEAL, and it is here rather than in the build-free block because
+  // each control is a real engine replay — which is the whole point. The
+  // mechanism says "this declaration changed and the request stream did not, so
+  // the cassette still answers it", and that sentence is only worth what its
+  // negative is worth: a declaration the model CAN see (a resumed transcript
+  // whose prior assistant text differs) must be refused by name, or the re-seal
+  // is a rubber stamp on the exact case the sidecar exists to catch. One
+  // positive and two negatives with distinct reasons, all against a COPY of a
+  // real cassette in a temp directory.
+  ["a re-seal proves the stream is unchanged, and refuses when it is not", ["src/reseal.test.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));

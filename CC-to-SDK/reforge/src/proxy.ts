@@ -66,6 +66,41 @@ export interface ProxyHandle {
    * Callers must surface this.
    */
   fallbackServed(): number;
+  /**
+   * …and WHICH ones, with the entry each was handed. The count alone says a
+   * cassette drifted; it cannot say from what, and "some request's body changed"
+   * is not something an operator can act on. H1's re-seal reads this to name the
+   * request that refused a re-seal and the byte at which it stopped matching
+   * what the cassette answers.
+   */
+  fallbacks(): FallbackServe[];
+}
+
+/** One positionally-served request, beside the entry the fallback gave it. */
+export interface FallbackServe {
+  method: string;
+  path: string;
+  requestBody: string;
+  /** the entry served, and the body it was recorded against */
+  seq: number;
+  entryRequestBody: string;
+}
+
+/**
+ * The first byte at which two request bodies differ, in their CANONICAL form —
+ * the same form the match hash is taken over, so an offset here is an offset in
+ * the text that decided the miss rather than in an id or a clock the matcher
+ * never looked at. `-1` when the canonical forms are equal (the miss was in
+ * method or path).
+ */
+export function firstCanonicalDifference(a: string, b: string): { offset: number; near: string } {
+  const ca = canonicalizeForHash(a);
+  const cb = canonicalizeForHash(b);
+  const n = Math.min(ca.length, cb.length);
+  let i = 0;
+  while (i < n && ca[i] === cb[i]) i++;
+  if (i === n && ca.length === cb.length) return { offset: -1, near: "" };
+  return { offset: i, near: `recorded …${cb.slice(Math.max(0, i - 40), i + 60)}… vs replayed …${ca.slice(Math.max(0, i - 40), i + 60)}…` };
 }
 
 /**
@@ -276,6 +311,7 @@ export async function startRecordProxy(
     unserved: () => [],
     unmatched: () => [],
     fallbackServed: () => 0,
+    fallbacks: () => [],
   };
 }
 
@@ -297,7 +333,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
   const consumed = new Set<number>();
   const served = new Set<number>();
   const unmatched: { method: string; path: string; requestBody: string }[] = [];
-  let fallbackServed = 0;
+  const fallbacks: FallbackServe[] = [];
 
   const server = http.createServer(async (req, res) => {
     const requestBody = (await readBody(req)).toString("utf8");
@@ -309,7 +345,8 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     let entry = entries.find((e) => !consumed.has(e.seq) && bodyHash(e.method, e.path, e.requestBody) === hash);
     if (!entry) {
       entry = entries.find((e) => !consumed.has(e.seq) && e.method === method && e.path === path); // positional fallback
-      if (entry && requestBody.length > 0) fallbackServed++; // bodyless probes (HEAD) are not a signal
+      // bodyless probes (HEAD) are not a signal
+      if (entry && requestBody.length > 0) fallbacks.push({ method, path, requestBody, seq: entry.seq, entryRequestBody: entry.requestBody });
     }
     if (!entry) {
       unmatched.push({ method, path, requestBody });
@@ -341,6 +378,7 @@ export async function startReplayProxy(cassettePath: string, observedPath?: stri
     close: () => new Promise((r) => server.close(() => r())),
     unserved: () => entries.filter((e) => !served.has(e.seq)),
     unmatched: () => unmatched,
-    fallbackServed: () => fallbackServed,
+    fallbackServed: () => fallbacks.length,
+    fallbacks: () => fallbacks,
   };
 }

@@ -13,7 +13,7 @@ import type { EngineEnvKnobs, EnvMode } from "./env.js";
 import type { FaultKind } from "./faults.js";
 import type { RecordInjector } from "./proxy.js";
 
-export { baselineSeedHash, EMPTY_PRECONDITION, emptyPreconditionFor, projectKeyFor, type ConfigPrecondition, type FsFault, type FsFaultKind, type RecordedPrecondition, type SeedFile } from "./precondition.js";
+export { baselineSeedHash, declarationSha256, EMPTY_PRECONDITION, emptyPreconditionFor, projectKeyFor, type ConfigPrecondition, type FsFault, type FsFaultKind, type RecordedPrecondition, type SeedFile } from "./precondition.js";
 
 // H1 — reforge-owned config dir; defined in runTurn.ts so both entry points
 // share one definition (runTurn was silently NOT isolated until a review caught
