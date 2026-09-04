@@ -290,7 +290,11 @@ const largeOutput: Scenario = {
     if (biggest > BASH_MAX_OUTPUT_DEFAULT + 5_000) {
       return `the largest tool_result is ${biggest} bytes — past the ${BASH_MAX_OUTPUT_DEFAULT}-byte default with no truncation applied`;
     }
-    if (!results.some((r) => /truncated/i.test(r))) {
+    // The notice upstream writes, quoted from the pin rather than guessed:
+    // `\n... [output truncated - ${n}KB removed]`, where n is the rounded
+    // kilobytes past `cye()`'s effective cap. 40,000 declared bytes against the
+    // measured 30,000-byte default leaves ~10 KB removed.
+    if (!results.some((r) => /\[output truncated[^\]]*\]/.test(r))) {
       return `no tool_result carries a truncation notice, so the ladder was not reached (largest ${biggest} bytes of a declared ${LARGE_PLAN.bytes})`;
     }
     // The child's output is derived, so the FIRST bytes are known: a truncation
