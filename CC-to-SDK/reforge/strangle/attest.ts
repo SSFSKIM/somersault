@@ -36,8 +36,9 @@ import { ATTESTED, EXCLUSIONS } from "./attestation.js";
 import { COVERAGE_DIR, SOURCE_MODULES } from "./instrument.js";
 import { runnerFor } from "./runners.js";
 import { relayFailure } from "../m2/relay.js";
-import { teeToBuildLog } from "./teelog.js";
 import { acquireSandboxLock } from "../src/lock.js";
+import { teeToBuildLog } from "./teelog.js";
+
 
 const checkOnly = process.argv.includes("--check");
 // The same archive the gate keeps, for the same reason: the executed/excluded
@@ -46,6 +47,14 @@ const checkOnly = process.argv.includes("--check");
 console.log(`attestation log: ${teeToBuildLog("attest")}`);
 // Held for the whole run, for the same reason the gate holds it: this replays
 // covering scenarios as child processes and each one resets the sandbox.
+//
+// MEASURED, on the run that made this line load-bearing rather than prudent: a
+// second harness process took the sandbox between two of this run's scenarios and
+// `perm-broker-updates` came back with five state differences, which this file
+// correctly reported as "the instrumented build is not equivalent" — and which was
+// not true. The same scenario passed on the same build a minute later. A false RED
+// here costs a whole attestation cycle and is indistinguishable, in the log, from
+// a real one.
 acquireSandboxLock("the coverage attestation");
 const REPORT_DIR = join(REFORGE_ROOT, "attestation");
 // One report for every attested module, not one per wave: the inventory is

@@ -603,6 +603,21 @@ export interface Exclusion {
 }
 
 /**
+ * One reviewed exclusion per branch id, sharing one reason (C13a / W10a).
+ *
+ * The shell parser's inventory is 3,644 outcomes — three and a half times the
+ * whole attested set before it — and its unreachable arms come in FAMILIES: a
+ * `while (true)` whose false arm has no input, a defensive re-check the only
+ * caller has already made, an argument value nothing passes. Repeating one
+ * paragraph twenty-five times would not make it twenty-five reviews; it would
+ * make it one review pretending to be twenty-five. So the reason is written once
+ * and the ids it covers are listed under it, in full, in source — which keeps
+ * both halves of "exclusions listed and reviewed" honest, and keeps the
+ * adjudicator's stale-in-either-direction rule working per id.
+ */
+const shellParser = (reason: string, ...ids: string[]): Exclusion[] => ids.map((id) => ({ branch: `shell-parser#${id}`, reason }));
+
+/**
  * Reviewed exclusions. Two families, and neither is "we did not get to it":
  *
  *  - **gate-pinned arms.** §3.3 pins the engine's feature-gate state to
@@ -4036,4 +4051,204 @@ export const EXCLUSIONS: Exclusion[] = [
       "actually about: the guard covers only the exit-status stamp and the latch commit, so a re-entrant call still enters the async half " +
       "and still parks a promise — upstream's shape, and one an owned copy that guarded the whole body would have quietly broken.",
   },
+
+  // ---- C13a / W10a: the shell parser -----------------------------------------
+  // Seventy-seven outcomes of 3,644, and the shape of the list is the point.
+  // Everything the CORPUS does not reach here is covered by the `contract`
+  // channel instead (strangle/adjudicate.ts) — 3,057 outcomes on the run that
+  // generated the committed report — so what is left is only what NO command
+  // string can reach at all. Each group below says why, at the level of the
+  // module's own control flow rather than at the level of 'no scenario does that'.
+  //
+  // Two of the fourteen groups the corpus author proposed are absent from this
+  // list on purpose: three outcomes reachable only through `parseCommandWithEnv`
+  // were bought by adding two commands to `strangle/parser-coverage.ts`, which is
+  // the right trade when the fix is two lines and the alternative is a paragraph.
+
+  ...shellParser(
+    "STRUCTURALLY UNREACHABLE: the loop's condition is the literal `true`. Upstream writes `while (!0)` and the " +
+    "transliteration keeps it, because these loops exit by `break` or `return` and rewriting one to carry a real condition " +
+    "would be changing the measured code to suit the instrument. The instrumenter records a loop's condition as a two-outcome " +
+    "site — `T` is 'the body ran', `F` is 'the loop was skipped' — so a `while (true)` contributes an `F` no input can take. " +
+    "It is reported rather than suppressed: an inventory that quietly dropped the arms it knew were impossible would be the " +
+    "partial inventory §3.1 exists to refuse, and this is what the honest version of that looks like.",
+    "parseRoot@0:F",
+    "parseStatements@0:F",
+    "parseAndOrList@1:F",
+    "skipNewlines@0:F",
+    "parsePipeline@1:F",
+    "parseSimpleCommand@0:F",
+    "parseSimpleCommand@32:F",
+    "attachRedirects@0:F",
+    "parseVariableAssignment@14:F",
+    "parseRedirect@72:F",
+    "parseRedirect@83:F",
+    "parseRedirect@119:F",
+    "parseBacktick@9:F",
+    "parseIf@0:F",
+    "parseFor@21:F",
+    "parseCase@1:F",
+    "parseCaseItem@1:F",
+    "parseDeclarationCommand@0:F",
+    "parseUnsetCommand@0:F",
+    "parseTestOr@1:F",
+    "parseTestAnd@1:F",
+    "skipTestSpace@1:F",
+    "parseTestPatternWords@10:F",
+    "parseArithmeticList@0:F",
+    "parseArithmeticBinary@1:F",
+  ),
+
+  ...shellParser(
+    "the false arm of an `if (callee(...))` whose callee has no failing return on this path. `parseDollar` contains no " +
+    "`return null` anywhere in its 412 lines — every arm builds a node — so every `if (const node = parseDollar(p))` in the " +
+    "module has a dead else. `parseProcessSubstitution` returns null only through its own two-character-opener guard, and all " +
+    "four call sites test exactly that guard first. `parseBraceGroupWords` returns null only when the cursor is not on `{`, " +
+    "and is called only inside `if (ch === \"{\")`. `parseWord` returns null only when it collected no parts, and the one call " +
+    "site here is guarded on a character that always produces one. Each is upstream's own defensive shape, kept verbatim; " +
+    "what grades the LIVE arm is strangle/parser-parity.test.ts over 2,170 command strings.",
+    "parseWord@21:F",
+    "parseWord@46:F",
+    "parseExpansionOperand@137:F",
+    "parseExpansionOperand@147:F",
+    "parseDoubleQuoted@11:F",
+    "parseHeredocBody@10:F",
+    "parseTestPatternWords@39:F",
+    "parseArithmeticPrimary@24:F",
+    "parseWord@14:F",
+    "parseExpansionOperand@156:F",
+    "parseTestPatternWords@47:F",
+    "parseWord@35:F",
+    "parseDeclarationCommand@14:F",
+  ),
+
+  ...shellParser(
+    "a defensive re-check of a condition the function's only callers have already established, with no cursor movement in " +
+    "between. `parseProcessSubstitution` re-tests the `<(`/`>(` opener its callers tested; `parseBraceRange` and " +
+    "`parseBraceGroupWords` re-test the `{` they are called under; `parseArithmeticPrimary` re-runs the closer test " +
+    "`parseArithmeticUnary` ran at its own top; `byteOffsetOf`'s memo-hit arm is guarded by `if (!scan.byteTable)` at both of " +
+    "its call sites; `isHeredocDelimiterChar`'s `ch !== \"\"` clause sits inside a loop already bounded by `pos < len`, so " +
+    "`peek` cannot answer with the empty string there. Upstream wrote each of them and the transliteration keeps them, " +
+    "because a reimplementation that dropped the re-check would be a different program that happens to agree.",
+    "parseProcessSubstitution@0:T",
+    "parseProcessSubstitution@1:T",
+    "parseBraceRange@0:T",
+    "parseBraceGroupWords@0:T",
+    "parseArithmeticPrimary@0:T",
+    "byteOffsetOf@0:T",
+    "isHeredocDelimiterChar@13:F",
+  ),
+
+  ...shellParser(
+    "a `??` whose left side is never nullish. Two are `peek(scan, n) ?? \"\"`, and `peek` already answers `\"\"` past the end of " +
+    "input rather than `undefined`. Two are `token.value[0] ?? \"\"`, and `nextToken` never emits a WORD or NUMBER with an " +
+    "empty value — the bare-word arm is entered only when the scanner advanced, and the single-character fallback emits " +
+    "exactly one character. The instrumenter records the nullish arm as `T`, so these are the outcome that says 'the default " +
+    "was used', and nothing can use it.",
+    "parseTestOperand@3:T",
+    "parseTestOperand@8:T",
+    "parseFor@18:T",
+    "parseDeclarationCommand@19:T",
+  ),
+
+  ...shellParser(
+    "an arm selected by an argument value no caller passes. `skipToArithmeticClose` is called from exactly two places, with " +
+    "`\"))\"` and `\"]\"`, which leaves its `\")\"` arm and the tail of its ladder unreachable. `atArithmeticClose`'s five live " +
+    "closers each return from an earlier line, so its final `return ch === \"\" || ch === \"\\n\"` is never evaluated. " +
+    "`parseArithmeticBinary`'s missing-precedence guard needs an operator absent from `ARITHMETIC_PRECEDENCE`, and all thirty " +
+    "`readArithmeticOperator` can return are keys of it. `parseExpansionOperand`'s `stopAtSlash` is true only for `kind === " +
+    "\"regex\"`, which returns from the regex arm above the default one. Reaching any of these would mean adding a caller, " +
+    "which is a change to the module rather than a case for the corpus.",
+    "skipToArithmeticClose@7:T",
+    "skipToArithmeticClose@8:F",
+    "skipToArithmeticClose@12:T",
+    "skipToArithmeticClose@12:F",
+    "atArithmeticClose@7:F",
+    "atArithmeticClose@9:T",
+    "atArithmeticClose@9:F",
+    "parseArithmeticBinary@6:T",
+    "parseExpansionOperand@129:T",
+    "parseExpansionOperand@130:T",
+  ),
+
+  ...shellParser(
+    "the 'the inner run consumed nothing' arm of a two-level scanner. In each case the OUTER loop has already excluded, or " +
+    "already skipped, every character the inner loop stops on, so the inner loop always advances at least once and its " +
+    "no-progress break is unreachable. The owned module says so at the third of them in upstream's own terms — the command's " +
+    "child list always holds at least the command name, so its `length > 0` fallback never fires — and keeps the branch " +
+    "rather than folding it away.",
+    "parseExpansionOperand@42:F",
+    "parseBraceGroupWords@31:F",
+    "parseSimpleCommand@65:F",
+  ),
+
+  ...shellParser(
+    "an arm upstream carries that its own earlier arm has already claimed: inside the `{name[subscript]}` file-descriptor " +
+    "walker, a bare-backslash test consumes every backslash that has any character after it, so the later " +
+    "backslash-and-newline test below it can never be reached. Transliterated verbatim with the observation next to it, " +
+    "because deleting an upstream arm is a change to the program and the campaign's rule is to extend the instrument rather " +
+    "than the owned code.",
+    "parseRedirect@28:T",
+    "parseRedirect@29:T",
+  ),
+
+  ...shellParser(
+    "a test the statement immediately before it has already made impossible. Two are `peek() === \"\\\\\" && peek(1) === \"\\n\"` " +
+    "run straight after a `skipBlanks`, which itself consumes backslash-newline pairs. Two are token-type tests for EOF or " +
+    "BACKTICK inside a loop that has already broken when `peek()` answered a backtick or the empty string, and `nextToken` — " +
+    "which re-skips only blanks — can return neither there.",
+    "parseCaseItem@8:T",
+    "parseCaseItem@9:T",
+    "parseBacktick@12:T",
+    "parseBacktick@13:T",
+  ),
+
+  ...shellParser(
+    "`if (p.aborted) return null` after the root parse returns NORMALLY. All six sites that set `aborted` are immediately " +
+    "followed by a `throw`, and there is no `try` between any of them and `parseProgram`'s own, so an aborted parse always " +
+    "arrives at the catch rather than at this line. It is upstream's belt-and-braces mirror of the catch, kept because a " +
+    "reimplementation that removed it would be relying on an invariant nothing states.",
+    "parseProgram@3:T",
+  ),
+
+  ...shellParser(
+    "the heredoc handoff's `record &&` guard, false. The pending record is pushed by the same `parseRedirect` call that " +
+    "produced the `heredoc_redirect` node, nothing between them removes it — `mark`/`reset` save only the two cursors, and " +
+    "the backtick parser's stack swap is balanced — and a `heredoc_redirect` always carries at least its operator and its " +
+    "delimiter. So the guard cannot fail while the node exists.",
+    "parseSimpleCommand@67:F",
+    "parseSimpleCommand@68:F",
+  ),
+
+  ...shellParser(
+    "`stuck.type === \"EOF\"` after the statement list came back empty. `parseStatements` returns an empty list only from its " +
+    "first iteration, and every way it can do that — a token it resets and breaks on, or the first command unit failing at " +
+    "the position the iteration started from — leaves the cursor on the same non-blank character, so the token read next is " +
+    "not EOF. Brute-forced as well as argued: every one-, two- and three-character string over a 34-character metacharacter " +
+    "alphabet, and the same over ten construct prefixes, without reaching it.",
+    "parseRoot@8:T",
+  ),
+
+  ...shellParser(
+    "a resource ceiling deliberately not carried by the corpus. The source-size guard fires at 67,108,864 bytes, so driving " +
+    "it means holding a 64 MiB string in the partition table and walking it with `utf8Length` on both sides — the whole " +
+    "suite's memory for one outcome. The wall-clock deadline is nondeterministic by construction, and BOTH the parity suite " +
+    "and the coverage driver pass a 20-second budget precisely to keep the clock out of the measurement; a case that tripped " +
+    "it would be a case whose result depends on machine load, which is the one thing a byte-compared attestation report must " +
+    "not contain. The other half of that pair IS driven: the node ceiling has its own partition, `node-budget`, with a case " +
+    "either side of it.",
+    "parseProgram@0:T",
+    "chargeNode@1:T",
+  ),
+
+  ...shellParser(
+    "the argv extractor's three arms that its own producers make impossible. Two need a `declaration_command` whose first " +
+    "child's text is not one of the seven declaration keywords — but such a node is built only by the declaration and unset " +
+    "parsers, whose keyword is one of those seven and is always the first child. The third needs a bare `word` in " +
+    "command-name position with no child of its own, and the two places that build a `command` node give it either a " +
+    "`command_name` (which always wraps its word) or nothing but assignments and redirections.",
+    "commandArgv@1:F",
+    "commandArgv@2:F",
+    "commandArgv@8:T",
+  ),
 ];

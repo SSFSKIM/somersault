@@ -85,7 +85,30 @@ for (const { command } of LENGTH_CAP_CASES(10000)) {
   await mod.parseCommandWithEnv(command);
   await mod.parseOrAbort(command, swallow);
 }
-for (const command of ["A=1 cmd", "A=1 B=2 cmd", "A=1", "cmd A=1", "A=$(x) cmd", "A='v' cmd", "export A=1", "", "ls -la"]) {
+for (const command of [
+  "A=1 cmd",
+  "A=1 B=2 cmd",
+  "A=1",
+  "cmd A=1",
+  "A=$(x) cmd",
+  "A='v' cmd",
+  "export A=1",
+  "",
+  "ls -la",
+  // The two below are here for branches only THIS entry point can reach, because
+  // the corpus does not choose the arguments `parseCommandWithEnv` is called with
+  // — it is called by the engine, on a command the model wrote.
+  //
+  // A command whose parse returns null, so the `!rootNode` arm is taken rather
+  // than adjudicated. Same string the abort block below hands `parseOrAbort`: a
+  // heredoc delimiter carrying a `$` inside double quotes is one of the three
+  // shapes the parser refuses to guess about.
+  'cat <<"E$F"\nbody\nE$F',
+  // A command node whose first child is neither an assignment nor a command name
+  // — `A=1 > out` is one `variable_assignment` and one `file_redirect` — which is
+  // the only way the environment walk reaches its loop's non-breaking arm.
+  "A=1 > out",
+]) {
   await mod.parseCommandWithEnv(command);
   await mod.parseOrAbort(command, swallow);
 }
