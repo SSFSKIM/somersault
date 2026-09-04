@@ -28,7 +28,7 @@ import { join } from "node:path";
 import { baseOptions, drive, pushable, resultsOf, resultText, usedTool, userMessage, type Scenario } from "../src/harness.js";
 import { SANDBOX } from "../src/runTurn.js";
 import { childCommand, expectedOutput, seedScriptedChild, SCRIPTED_CHILD_NAME, type ChildPlan } from "./child.js";
-import type { TimerProfile } from "./timers.js";
+import type { DeadlineRole, TimerProfile } from "./timers.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -409,129 +409,166 @@ export const W10_SCENARIOS: Scenario[] = [
 
 // ---- the two that need the machinery ----------------------------------------
 
-/** A corpus scenario plus the deadlines it rewrites, and the reason it cannot run on the oracle. */
-export interface TimedScenario {
-  scenario: Scenario;
+/**
+ * The deadlines actually in force for a run, in milliseconds — the pinned
+ * values with a profile's overrides applied.
+ *
+ * A timed scenario is BUILT against these rather than against a fixed sleep,
+ * and that is not a convenience. The stall detector fires 45 s after the output
+ * stops at this pin and 1.8 s after it under the profile, so a scenario with
+ * one hard-coded wait would either take 56 s on every replay or send its second
+ * turn before the notification existed — and the second failure is silent, because
+ * a turn that carries no attachment still looks like a turn.
+ */
+export type EffectiveDeadlines = Record<DeadlineRole, number>;
+
+/** A scenario that cannot be graded against the compiled oracle, and the reason. */
+export interface TimedScenarioSpec {
+  tag: string;
+  title: string;
+  /** what the graded (replay) lane rewrites */
   timers: TimerProfile;
   /** why this scenario cannot be graded against `engine-real` */
   why: string;
+  /** the scenario, built against the deadlines actually in force */
+  make(effective: EffectiveDeadlines): Scenario;
 }
 
 /**
- * THE STALL DETECTOR. `kWt` polls the output file every `plr` (5,000 ms) and
- * fires when the file has been unchanged for `mlr` (45,000 ms) AND the last
- * line matches one of `ylr`'s seven interactive-prompt regexes. Fifty seconds
- * of wall clock per replay is not a corpus scenario; rewritten to 400 ms and
- * 1,800 ms it is two seconds.
+ * THE STALL DETECTOR. `kWt` polls the output file every `stall-poll` (5,000 ms
+ * at this pin) and fires when the file has been unchanged for `stall-idle`
+ * (45,000 ms) AND the last line matches one of `ylr`'s seven interactive-prompt
+ * regexes — the list `research/tools/extract-shell-timers.ts` derives.
  *
  * The command is the scripted child's prompt tail followed by a plain `sleep`,
  * which is what a command blocked on a prompt actually looks like: output that
- * stops with a question on the last line and a process that does not exit.
+ * stops with a question on the last line and a process that has not exited.
  */
 const stallPlan: ChildPlan = { bytes: 40, chunks: 1, promptTail: true };
-const STALL_COMMAND = `${childCommand(stallPlan)}; sleep 12`;
 
-const stallDetect: Scenario = {
-  tag: "bash-stall-detect",
-  title: "a backgrounded command that stops producing output on an interactive prompt",
-  // The shell is deliberately still running when the scenario ends: `sleep 12`
-  // outlives the two turns, and whether the engine reaps it on shutdown is
-  // itself the thing the supervision surface grades.
-  detachedChildren: [SCRIPTED_CHILD_NAME, "sleep 12"],
-  run: async (ctx) => {
-    seedScriptedChild(SANDBOX);
-    const input = pushable<SDKUserMessage>();
-    const messages: unknown[] = [];
-    input.push(
-      userMessage(
-        `Use the Bash tool to run exactly \`${STALL_COMMAND}\` with run_in_background set to true and the description ` +
-          `"reforge stall probe". Do not wait for it. Reply with exactly REFORGE_STALL_STARTED.`,
-      ),
-    );
-    let results = 0;
-    for await (const m of query({
-      prompt: input,
-      options: { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 4, permissionMode: "bypassPermissions" },
-    })) {
-      messages.push(m);
-      if ((m as { type?: string }).type !== "result") continue;
-      results++;
-      if (results === 1) {
-        await sleep(5_000);
-        input.push(userMessage("Reply with exactly REFORGE_STALL_DONE."));
-      } else input.end();
-    }
-    return messages;
-  },
-  check: (msgs) => {
-    if (!usedTool(msgs, "Bash")) return "Bash tool never used";
-    if (!allText(msgs).includes("waiting for interactive input")) {
-      return "the stall detector never fired — no notification said the command appears to be waiting for interactive input";
-    }
-    return null;
-  },
+const stallDetect = (d: EffectiveDeadlines): Scenario => {
+  // Long enough for the detector to sample an already-idle file at least twice
+  // after the threshold expires, plus a margin for the notification to reach
+  // the queue. Derived, so the RECORDING pays the pin's 45 s once and every
+  // replay pays the profile's 1.8 s.
+  const holdSeconds = Math.ceil((d["stall-idle"] + d["stall-poll"] * 3 + 4_000) / 1_000);
+  const waitMs = d["stall-idle"] + d["stall-poll"] * 2 + 3_000;
+  const command = `${childCommand(stallPlan)}; sleep ${holdSeconds}`;
+  return {
+    tag: "bash-stall-detect",
+    title: "a backgrounded command that stops producing output on an interactive prompt",
+    // The shell is deliberately still running when the scenario ends, and
+    // whether the engine reaps it on shutdown is itself what the supervision
+    // surface grades here.
+    detachedChildren: [SCRIPTED_CHILD_NAME, "sleep "],
+    run: async (ctx) => {
+      seedScriptedChild(SANDBOX);
+      const input = pushable<SDKUserMessage>();
+      const messages: unknown[] = [];
+      input.push(
+        userMessage(
+          `Use the Bash tool to run exactly \`${command}\` with run_in_background set to true and the description ` +
+            `"reforge stall probe". Do not wait for it. Reply with exactly REFORGE_STALL_STARTED.`,
+        ),
+      );
+      let results = 0;
+      for await (const m of query({
+        prompt: input,
+        options: { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 4, permissionMode: "bypassPermissions" },
+      })) {
+        messages.push(m);
+        if ((m as { type?: string }).type !== "result") continue;
+        results++;
+        if (results === 1) {
+          await sleep(waitMs);
+          input.push(userMessage("Reply with exactly REFORGE_STALL_DONE."));
+        } else input.end();
+      }
+      return messages;
+    },
+    check: (msgs) => {
+      if (!usedTool(msgs, "Bash")) return "Bash tool never used";
+      if (!allText(msgs).includes("waiting for interactive input")) {
+        return "the stall detector never fired — no notification said the command appears to be waiting for interactive input";
+      }
+      return null;
+    },
+  };
 };
 
 /**
- * THE SIGTERM->SIGKILL ESCALATION. `#h` sends SIGTERM, arms a `WKt` (1,500 ms)
- * backstop that process-group-SIGKILLs, and polls liveness every `zKt`
- * (100 ms) so a process that died of the TERM cancels the backstop. A child
- * that ignores SIGTERM is the only way the backstop ever fires, and the corpus
- * has none — every command it runs dies of the first signal.
+ * THE SIGTERM->SIGKILL ESCALATION. `#h` sends SIGTERM, arms a `sigterm-to-sigkill`
+ * (1,500 ms) backstop that process-group-SIGKILLs, and polls liveness every
+ * `post-kill-liveness-poll` (100 ms) so a process that died of the TERM cancels
+ * the backstop. A child that IGNORES SIGTERM is the only way the backstop ever
+ * fires, and the corpus has none — every command it runs dies of the first signal.
  *
  * The trigger is the tool's own `timeout` rather than an interrupt, because a
- * timeout is a declaration in the tool call and an interrupt is a race against
- * the engine's dispatch (measured in `m3`'s interrupt scenario).
+ * timeout is a declaration in the tool call while an interrupt is a race against
+ * the engine's dispatch — measured in `m3`'s interrupt scenario, where firing on
+ * the tool_use block produced a hard exit with no frames at all.
  */
 const killPlan: ChildPlan = { bytes: 60, chunks: 20, everyMs: 600, ignoreTerm: true };
 
-const killEscalation: Scenario = {
-  tag: "bash-kill-escalation",
-  title: "a timed-out Bash command whose child ignores SIGTERM",
-  // Nothing may survive: the escalation exists precisely so that a child which
-  // ignores SIGTERM is still gone. An empty declaration makes any survivor a
-  // LEAK on the supervision surface.
-  detachedChildren: [],
-  run: (ctx) => {
-    seedScriptedChild(SANDBOX);
-    return drive(
-      `Use the Bash tool to run exactly \`${childCommand(killPlan)}\` with the timeout parameter set to 1500. ` +
-        `Then report what the tool told you, verbatim.`,
-      { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 3, permissionMode: "bypassPermissions" },
-    );
-  },
-  check: (msgs) => {
-    const uses = toolUses(msgs, "Bash");
-    if (uses.length === 0) return "Bash tool never used";
-    if (!uses.some((u) => Number(u.input?.timeout) === 1_500)) {
-      return `no Bash call declared timeout=1500 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
-    }
-    if (!uses.some((u) => String(u.input?.command ?? "").includes("--ignore-term"))) {
-      return "the recorded command does not carry --ignore-term, so the backstop was never needed";
-    }
-    const text = allText(msgs);
-    if (!/timed out|killed|terminated/i.test(text)) return "nothing in the capture says the command was stopped";
-    return null;
-  },
+const killEscalation = (d: EffectiveDeadlines): Scenario => {
+  // Past the backstop and its liveness polling, with room for the executor to
+  // finish composing the result.
+  const waitMs = d["sigterm-to-sigkill"] + d["post-kill-liveness-poll"] * 5 + 3_000;
+  return {
+    tag: "bash-kill-escalation",
+    title: "a timed-out Bash command whose child ignores SIGTERM",
+    // Nothing may survive: the escalation exists precisely so that a child which
+    // ignores SIGTERM is still gone. The EMPTY declaration makes any survivor a
+    // LEAK on the supervision surface — which is this scenario's second claim.
+    detachedChildren: [],
+    run: async (ctx) => {
+      seedScriptedChild(SANDBOX);
+      const msgs = await drive(
+        `Use the Bash tool to run exactly \`${childCommand(killPlan)}\` with the timeout parameter set to 1500. ` +
+          `Then report what the tool told you, verbatim.`,
+        { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 3, permissionMode: "bypassPermissions" },
+      );
+      // The escalation happens AFTER the tool result is composed, so a snapshot
+      // taken the instant the query resolves would grade a kill still in flight.
+      await sleep(waitMs);
+      return msgs;
+    },
+    check: (msgs) => {
+      const uses = toolUses(msgs, "Bash");
+      if (uses.length === 0) return "Bash tool never used";
+      if (!uses.some((u) => Number(u.input?.timeout) === 1_500)) {
+        return `no Bash call declared timeout=1500 — inputs were ${JSON.stringify(uses.map((u) => u.input))}`;
+      }
+      if (!uses.some((u) => String(u.input?.command ?? "").includes("--ignore-term"))) {
+        return "the recorded command does not carry --ignore-term, so the backstop was never needed";
+      }
+      if (!/timed out|killed|terminated/i.test(allText(msgs))) return "nothing in the capture says the command was stopped";
+      return null;
+    },
+  };
 };
 
-export const W10_TIMED_SCENARIOS: TimedScenario[] = [
+export const W10_TIMED_SCENARIOS: TimedScenarioSpec[] = [
   {
-    scenario: stallDetect,
-    // `stall-poll` down from 5,000 and `stall-idle` down from 45,000. Both, and
-    // only both: leaving the poll at 5 s would make a 1.8 s idle threshold
+    tag: "bash-stall-detect",
+    title: "a backgrounded command that stops producing output on an interactive prompt",
+    // `stall-poll` down from 5,000 and `stall-idle` down from 45,000. BOTH, and
+    // only both: a 1.8 s idle threshold left behind a 5 s poll would be
     // unobservable, because the detector cannot notice an idle file it does not
     // sample.
     timers: { "stall-poll": 400, "stall-idle": 1_800 },
-    why: "the stall detector needs 45 s of unchanged output at this pin; the oracle is a compiled binary whose constants cannot be moved, so the pair is extracted-vs-strangled",
+    why: "the stall detector needs 45 s of unchanged output at this pin, which is affordable ONCE for the recording and not on every replay; the oracle is a compiled binary whose constants cannot be moved, so the graded pair is extracted-vs-strangled",
+    make: stallDetect,
   },
   {
-    scenario: killEscalation,
-    // The backstop, from 1,500 ms down to 400 ms, and the liveness poll from
-    // 100 ms to 40 ms so the cancel path still has several samples inside it —
-    // a poll left at 100 ms inside a 400 ms window grades a coarser race than
-    // the pinned one does.
+    tag: "bash-kill-escalation",
+    title: "a timed-out Bash command whose child ignores SIGTERM",
+    // The backstop from 1,500 ms to 400 ms, and the liveness poll from 100 ms to
+    // 40 ms so the CANCEL path still has several samples inside the shorter
+    // window — a poll left at 100 ms inside a 400 ms backstop grades a coarser
+    // race than the pinned pair does.
     timers: { "sigterm-to-sigkill": 400, "post-kill-liveness-poll": 40 },
-    why: "the escalation is only reachable with a child that ignores SIGTERM plus the backstop's full wait; the rewrite is of the graph's own bytes, which the oracle does not share",
+    why: "the escalation is only reachable with a child that ignores SIGTERM plus the backstop's full wait; the rewrite is of the graph's own bytes, which the compiled oracle does not share",
+    make: killEscalation,
   },
 ];

@@ -14,7 +14,16 @@ import { BUN } from "./pin.js";
 
 export const REFORGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const SANDBOX = join(REFORGE_ROOT, "sandbox");
-export const enginePath = (name: string) => join(REFORGE_ROOT, "engines", name);
+/**
+ * The engine wrapper for a NAME under `engines/`, or an absolute path as given.
+ *
+ * The absolute arm is C13c's: a timer-rewritten engine is generated under
+ * `build/timers/<profile>/` rather than committed to `engines/`, because its
+ * identity is a profile and a base build rather than a name somebody chose. A
+ * caller that already holds a path should not have to route around the one
+ * function every other caller uses to name an engine.
+ */
+export const enginePath = (name: string) => (name.startsWith("/") ? name : join(REFORGE_ROOT, "engines", name));
 
 /**
  * Reforge-owned config dir. Lives here (not in harness.ts) so BOTH entry points
