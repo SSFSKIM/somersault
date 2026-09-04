@@ -5115,10 +5115,12 @@ the sandbox lock for one to three hours, which would have refused the very
 `attest.ts` run that regenerates the report. Taking the lock at that moment
 produces a red phase that the lock itself makes unfixable. So the gate is ARMED
 instead: a detached launcher polls the checkout and fires once, when no harness
-process is running, the lock is free, and no tracked file under `reforge/` is
-modified — which is the only reliable signal that a sibling's artifacts agree
-with each other. It writes `build/gate-<yyyymmdd-hhmm>.log` through this unit's
-own archive rider.
+process is running, the lock is free, no tracked file under `reforge/` is
+modified — a sibling's wave being COMMITTED is the only reliable signal that its
+artifacts agree with each other — and no gate archive written since the launcher
+started already carries a verdict, because if the sibling gated the merged tree
+first then a second three-hour run measures the same thing twice. It writes
+`build/gate-<yyyymmdd-hhmm>.log` through this unit's own archive rider.
 
 **The count that run must show** is **158** inside the `=== strangler gate ===`
 block: the F7 baseline of 147, plus 9 from C13a (seven chunk-export liveness rows
