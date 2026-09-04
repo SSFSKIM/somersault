@@ -134,6 +134,13 @@ export interface ScriptedChildRun {
 }
 
 export interface RunChildOptions {
+  /**
+   * The environment to run under. Absent inherits this process's, which is what
+   * a contract test wants by default; the X6 control passes the allowlisted
+   * child environment instead, because that — not the operator's shell — is
+   * what the helper actually meets when the engine runs it.
+   */
+  env?: Record<string, string>;
   /** deliver this signal after the child has been alive for `signalAfterMs` */
   signal?: NodeJS.Signals;
   signalAfterMs?: number;
@@ -154,7 +161,7 @@ export interface RunChildOptions {
  */
 export function runScriptedChild(script: string, plan: ChildPlan, opts: RunChildOptions = {}): Promise<ScriptedChildRun> {
   const started = Date.now();
-  const child = spawn(script, childArgv(plan), { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(script, childArgv(plan), { stdio: ["ignore", "pipe", "pipe"], ...(opts.env !== undefined ? { env: opts.env } : {}) });
   const chunks: Buffer[] = [];
   let stderr = "";
   child.stdout.on("data", (c: Buffer) => chunks.push(c));

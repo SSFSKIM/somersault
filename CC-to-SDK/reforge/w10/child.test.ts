@@ -22,6 +22,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { engineEnv } from "../src/env.js";
+import { BUN } from "../src/pin.js";
+import { CONFIG_DIR } from "../src/runTurn.js";
 import { childCommand, childViolations, expectedOutput, runScriptedChild, seedScriptedChild, SCRIPTED_CHILD_NAME, type ChildPlan } from "./child.js";
 
 let pass = 0;
@@ -118,6 +121,32 @@ try {
     check("…and the bytes it wrote before exiting are still all there", run.bytes === 24, String(run.bytes));
     const none = await runScriptedChild(script, { ...plan, holdFdSeconds: undefined }, { timeoutMs: 20_000 });
     check("…and without it the reader sees EOF immediately", none.elapsedMs < 1_000, `${none.elapsedMs} ms`);
+  }
+
+  // ---- THE X6 ENVIRONMENT, which is the one the helper actually meets -------
+  //
+  // The helper does not run in the operator's shell; it runs inside the
+  // ENGINE's, whose environment is CONSTRUCTED by `src/env.ts`'s allowlist —
+  // nine platform variables, the harness's own knobs, one placeholder
+  // credential, and nothing else. A helper that quietly depended on anything
+  // the allowlist drops would work here and fail in every recording, which is
+  // the failure mode X6 exists to remove; and since the allowlist is applied
+  // identically to both engines, it would fail in a way the differ reads as
+  // agreement.
+  {
+    const env = engineEnv({ mode: "replay", bun: BUN, configDir: CONFIG_DIR });
+    const plan: ChildPlan = { bytes: 200, chunks: 4, everyMs: 80, promptTail: true };
+    const under = await runScriptedChild(script, plan, { env, timeoutMs: 30_000 });
+    const bad = childViolations(under, plan);
+    check("the helper produces the same declared bytes under the X6 allowlisted environment", bad.length === 0, `${bad.join("; ")} [env: ${Object.keys(env).sort().join(",")}]`);
+    const inherited = await runScriptedChild(script, plan, { timeoutMs: 30_000 });
+    check("…byte-identical to the same plan under the operator's own environment", under.sha256 === inherited.sha256, `${under.sha256.slice(0, 12)} vs ${inherited.sha256.slice(0, 12)}`);
+    // …and the control on that control: the allowlist really is narrow. If it
+    // were passing the whole parent environment through, the check above would
+    // be asserting nothing.
+    check("…and that environment really is the narrow one (no operator variable rode along)",
+      Object.keys(env).length < Object.keys(process.env).length && !("REFORGE_NOT_IN_THE_ALLOWLIST" in env),
+      `${Object.keys(env).length} vars vs the parent's ${Object.keys(process.env).length}`);
   }
 
   // ---- the rendered command, which is what a prompt contains ---------------
