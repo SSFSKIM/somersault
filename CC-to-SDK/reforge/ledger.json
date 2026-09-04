@@ -6983,7 +6983,12 @@
       "title": "Bash executor (exec/timeout/background) + command-safety AST",
       "wave": "C13",
       "state": "spliced",
-      "edges": [],
+      "edges": [
+        "subsystem/permissions",
+        "subsystem/control-protocol",
+        "subsystem/hook-dispatch",
+        "subsystem/moat-tools"
+      ],
       "footprint": [
         {
           "chunk": "chunk-fgwne0fb.js",
@@ -7020,9 +7025,23 @@
         "research/fixtures/shell-parser-2.1.251.json",
         "research/2026-09-02-w10-bash-executor-scout.md",
         "scenario:bash-tool",
-        "scenario:perm-rule-deny"
+        "scenario:perm-rule-deny",
+        "w10/scripted-child.sh",
+        "w10/child.ts",
+        "w10/child.test.ts",
+        "w10/timers.ts",
+        "w10/timers.test.ts",
+        "w10/timed-engine.ts",
+        "w10/scenarios.ts",
+        "w10/timed.ts",
+        "w10/record.ts",
+        "w10/measure.ts",
+        "src/supervision.ts",
+        "src/supervision.test.ts",
+        "src/record.ts",
+        "research/fixtures/shell-timers-2.1.251.json"
       ],
-      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain."
+      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain.\n\nC13c/W10c adds no splice and four EDGES, each of which is a typed port into a subsystem this row does not own and cannot close without. -> subsystem/permissions: a compound Bash command is decided per SUBCOMMAND and aggregated (`drn`), so every Bash denial the corpus carries is really a permission answer about a parse this row produced; `bash-compound-safety` is the recording that exercises the aggregate, and C13b consumes it. -> subsystem/control-protocol: `background_tasks` is a control_request subtype whose handler reaches into the shell registry, so backgrounding a running command is an act of the control protocol performed on this row's state; W7 fired the ARM against an EMPTY registry (answered success without touching a shell) and `bash-background-control` is the EFFECT. -> subsystem/hook-dispatch: the hook runner calls `B2` and `jx` directly and never touches `LG`, so the process-handle and output-sink ports are SHARED and the shell-provider layer above them is not -- C13d's port cut is that sentence, and the edge is what records it. -> subsystem/moat-tools: a backgrounded command's completion notification is composed here (`x$e`/`M$e`, prefix `Background command `) and DELIVERED by C11c's queue and task store, so this row owns what the notification says and when, and not where it is kept.\n\nThe machinery those edges are graded through is this child's, and it is oracle machinery rather than ownership: a scripted child whose behaviour is its argv (no clock in the bytes, so the same argv is byte-identical on every engine), a build-time rewrite of the six shell deadlines derived by the SHAPE OF EACH USE rather than by a minified name, and a third member of the state snapshot that sees what a run left RUNNING -- the blind spot W9 named as its carry-over and the one W10 cannot be graded without."
     },
     {
       "id": "subsystem/mcp-adapter",
