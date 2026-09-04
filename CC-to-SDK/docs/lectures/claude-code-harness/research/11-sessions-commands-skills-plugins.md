@@ -266,8 +266,13 @@ A compaction writes a `system` line with `subtype: "compact_boundary"`:
    for; counting them again would double-charge the context estimate.
 5. Delete every message positioned before the boundary that is not in the preserved set (419083).
 
-A `parentUuid` cycle is detected and reported (`tengu_chain_parent_cycle`, 419129), returning a
-partial transcript rather than hanging.
+A `parentUuid` cycle does not hang the walk — but the detection arm is dead code at this pin. The
+loop-top check that logs `Cycle detected in parentUuid chain` and fires `tengu_chain_parent_cycle`
+(419129) is unreachable: the parent-lookup guard just below it keeps a parent only when it is not yet
+visited and otherwise diverts to the timestamp fallback (`tengu_chain_timestamp_fallback`, nearest
+unvisited record within 5,000 ms), and a failed fallback ends the walk with a silent partial
+transcript. **CORRECTED 2026-09-05** — measured by executing the walker's own bytes against a seeded
+cycle in the reforge campaign (`CC-to-SDK/reforge/README.md`, W9a fix round 2).
 
 ### 2.5 Reading a transcript cheaply
 
