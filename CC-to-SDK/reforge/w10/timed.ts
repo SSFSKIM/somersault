@@ -27,15 +27,16 @@
 // own wait moves with them; a fixed wait would either cost 56 s per replay or
 // send the second turn before the notification existed, and the second failure
 // is silent because a turn with no attachment still looks like a turn.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue } from "../src/differ.js";
 import { scrubRequestBody } from "../src/canonical.js";
 import { requireRecordCredential } from "../src/env.js";
 import { baselineSeedHash, EMPTY_PRECONDITION, type RecordedPrecondition, type Scenario } from "../src/harness.js";
+import { recordCassette } from "../src/record.js";
 import { ENGINE_VERSION } from "../src/pin.js";
 import { runScenarioOnce } from "../src/runScenario.js";
-import { REFORGE_ROOT, enginePath, saveTranscript } from "../src/runTurn.js";
+import { REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
 import { entriesOf } from "../src/state.js";
 import { W10_TIMED_SCENARIOS, type EffectiveDeadlines } from "./scenarios.js";
 import { timedEngine } from "./timed-engine.js";
@@ -104,46 +105,20 @@ for (const spec of specs) {
   if (record) {
     // THE PIN'S OWN DEADLINES. A recording made against a rewritten engine
     // would be a cassette of a build nothing else runs; the corpus's oracle is
-    // the real binary and this take is the closest thing this scenario has to
-    // one.
+    // the real binary, and this take is the closest thing this scenario has to
+    // one. It therefore pays the pin's real wait — 45 s for the stall detector —
+    // exactly once, which is the trade the scout allowed.
     const s: Scenario = spec.make(PINNED);
-    const waitFor = Object.entries(spec.timers).map(([role]) => `${role}=${PINNED[role as DeadlineRole]}ms`).join(", ");
-    console.log(`  recording live via engine-real at the PINNED deadlines (${waitFor}) — this take pays the real wait, once ...`);
-    const staged = `${cassette}.recording`;
-    rmSync(staged, { force: true });
-    const rec = await runScenarioOnce({ scenario: s, engineName: "engine-real", mode: "record", cassette: staged, side: "record", precondition: declared, engineB: "engine-strangled" });
-    if (!rec.ok) {
-      rmSync(staged, { force: true });
-      console.log("    DISCARDED: the recording failed its determinism checks — nothing promoted");
+    const paying = Object.keys(spec.timers).map((role) => `${role}=${PINNED[role as DeadlineRole]}ms`).join(", ");
+    console.log(`  recording live via engine-real at the PINNED deadlines (${paying}) — this take pays the real wait, once ...`);
+    const out = await recordCassette({ scenario: s, declared, cassette, sidecar, engineB: "engine-strangled" });
+    if (!out.ok) {
+      console.log(`    DISCARDED: ${out.reason} — nothing promoted`);
       verdicts.push({ tag: spec.tag, pass: false });
-      continue;
+    } else {
+      console.log(`  recorded ${out.exchanges} API exchange(s); sidecar written`);
+      verdicts.push({ tag: spec.tag, pass: true });
     }
-    const infra = rec.messages.some((m) => {
-      const t = (m as { type?: string }).type;
-      return t === "reforge-exception" && /rate limit|temporarily limiting|overloaded|502|503|504/i.test(String((m as { message?: unknown }).message ?? ""));
-    });
-    if (infra) {
-      rmSync(staged, { force: true });
-      console.log("    DISCARDED: the recording captured an infrastructure failure, not engine behaviour");
-      verdicts.push({ tag: spec.tag, pass: false });
-      continue;
-    }
-    const substance = s.check?.(rec.messages, rec.events) ?? null;
-    if (substance !== null) {
-      // A take in which the DEADLINE never fired is not a recording of this
-      // scenario. Promoting it would freeze a cassette that answers a
-      // conversation where nothing happened, and every replay after it would
-      // grade that.
-      rmSync(staged, { force: true });
-      console.log(`    DISCARDED: the live take did not exercise the behaviour — ${substance}`);
-      verdicts.push({ tag: spec.tag, pass: false });
-      continue;
-    }
-    saveTranscript(`m1-${spec.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
-    renameSync(staged, cassette);
-    writeFileSync(sidecar, JSON.stringify({ declared, baselineSha256 } satisfies RecordedPrecondition, null, 2) + "\n");
-    console.log(`  recorded ${readFileSync(cassette, "utf8").split("\n").filter(Boolean).length} API exchange(s); sidecar written`);
-    verdicts.push({ tag: spec.tag, pass: true });
     continue;
   }
 

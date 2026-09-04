@@ -26,7 +26,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { diffTranscripts } from "../src/differ.js";
-import { baseOptions, resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
+import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harness.js";
 import { startReplayProxy } from "../src/proxy.js";
 import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX } from "../src/runTurn.js";
 import { awaitQuiesce, defaultStateRoots } from "../src/state.js";
@@ -41,6 +41,7 @@ import { W4_SCENARIOS } from "../w4/scenarios.js";
 import { W5_SCENARIOS } from "../w5/scenarios.js";
 import { W6_SCENARIOS } from "../w6/scenarios.js";
 import { W9_SCENARIOS } from "../w9/scenarios.js";
+import { W10_SCENARIOS } from "./scenarios.js";
 import { timedEngine } from "./timed-engine.js";
 import { DEADLINES, describeProfile, locateTimerChunk, type TimerProfile } from "./timers.js";
 
@@ -55,6 +56,9 @@ const CORPUS: Scenario[] = [
   ...W5_SCENARIOS,
   ...W6_SCENARIOS,
   ...W9_SCENARIOS,
+  // This wave's own, so the census covers them the moment they are recorded and
+  // the timer control can name one whose Bash command outlives the hint.
+  ...W10_SCENARIOS,
 ];
 
 const args = process.argv.slice(2);
@@ -134,7 +138,7 @@ if (phase === "supervision") {
     process.exit(2);
   }
   if (!existsSync(cassetteFor(tag))) {
-    console.error(`ABORT: no cassette for '${tag}' — record it first: npx tsx m1/run.ts --scenario ${tag}`);
+    console.error(`ABORT: no cassette for '${tag}' — record it first: npx tsx w10/record.ts --scenario ${tag}`);
     process.exit(2);
   }
   const pinned = DEADLINES.find((d) => d.role === "background-hint")!;
@@ -164,9 +168,6 @@ if (phase === "supervision") {
     return msgs;
   };
 
-  // `baseOptions` is referenced so a future reader sees the arms share the
-  // corpus's own options; the scenario builds them itself.
-  void baseOptions;
   const a = await arm("control", CONTROL);
   const b = await arm("perturbed", PERTURBED);
 
