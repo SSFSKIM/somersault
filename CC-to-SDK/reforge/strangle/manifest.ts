@@ -5732,6 +5732,236 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
       },
     ],
   },
+
+  {
+    // C13a / W10a — THE SHELL PARSER, owned whole. 62,907 bytes of file, 62,292
+    // of code at 99.8 % declaration density, seven exports, one import, four
+    // named importers and 294 bare ones. The campaign's third whole-chunk
+    // ownership and, by two orders of magnitude, its largest: a complete
+    // hand-written recursive-descent bash tokenizer and parser, emitting
+    // tree-sitter-shaped nodes over its own UTF-8 byte-offset table.
+    //
+    // It is a chunk rather than seven splices for the reason §2.2 exists: the
+    // seven exports are one machine. Six of them are entry points into the same
+    // 105-declaration body — splicing them individually would mean splicing that
+    // body seven times or leaving six of the seven reading upstream's — and the
+    // seventh is a `Symbol` whose IDENTITY is its contract, which no splice can
+    // preserve across two modules.
+    //
+    // The population is derived rather than recalled:
+    // research/fixtures/shell-parser-2.1.251.json, checked against the pin by a
+    // gate phase. It corrected the scout twice — the declaration count is 105 and
+    // not 107, and one of the four named importers is a re-export barrel whose
+    // own consumer reaches it through `await import(...)`, a call site no static
+    // import scan sees.
+    name: "shell-parser",
+    module: "shell-parser",
+    // `backtick_escape_unsupported` — a node type this parser emits when a
+    // backtick body carries an escape it refuses to model. One occurrence, in one
+    // file, graph-wide. Chosen from a population rather than found by luck: the
+    // chunk carries sixteen 1-of-1 literals out of 71 candidates, and the fixture
+    // records both that count and what the mechanical rule in
+    // research/tools/anchor-enum.ts would have picked instead (a nine-character
+    // punctuation run, unique but unreadable). Preferring a literal a human can
+    // recognise is a choice, and the fixture is where the choice is visible.
+    anchor: "backtick_escape_unsupported",
+    exports: [
+      {
+        // `function ZE(){return Re}` where `var Re={parse:ze}` — the memoized
+        // parser handle. Twelve references across two importers; the engine
+        // chunk's parse cache reaches every parse through it.
+        as: "getParser",
+        kind: "pure-helper",
+        owned: "getParser",
+        derive: pick("shell-parser", "getParser", new RegExp(`var ${ID}=\\{parse:${ID}\\};function (${ID})\\(\\)\\{return ${ID}\\}`)),
+        // A direct alias rather than a wrapper: upstream's handle is one object
+        // returned by identity on every call, and an alias is the only form that
+        // keeps that true without re-stating it.
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: ["bash-tool", "perm-rule-deny"],
+      },
+      {
+        // `z_n=new Set(["if","then","elif",…])` — the fifteen bash reserved
+        // words. One importer, the command classifier.
+        as: "shellKeywords",
+        kind: "primitive",
+        owned: "SHELL_KEYWORDS",
+        derive: pick("shell-parser", "shellKeywords", new RegExp(`(${ID})=new Set\\(\\["if","then","elif"`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: [],
+        // The population the darkness was measured over: every corpus scenario
+        // that issues a Bash command at all. None of them issues a COMPOUND one,
+        // which is the only shape this set can change the reading of.
+        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
+        darkReason:
+          "the set is consulted only where a command's first word might be a shell KEYWORD rather than a command name, and the corpus issues no compound command: " +
+          "read as an artifact, the seventeen scenarios that carry a Bash tool_use issue `echo`, `pwd`, `ls`, `cd`, `mkdir`, `chmod` and `sleep` — not one `if`, `for`, `while` or `case`. " +
+          "An empty-set twin therefore changes no recorded decision, which is a fact about the CORPUS and not about the export. " +
+          "What grades it instead is stronger than a differential would be: strangle/parser-parity.test.ts compares the owned set element by element against the pinned chunk's own declaration, " +
+          "so any change at all fails, where a differential could only ever see a keyword some scenario happened to render.",
+      },
+      {
+        // `async function e9t(e)` — parse plus environment-prefix extraction,
+        // returning `{rootNode, envVars, commandNode, originalCommand}`.
+        as: "parseCommandWithEnv",
+        kind: "pure-helper",
+        owned: "parseCommandWithEnv",
+        derive: pick("shell-parser", "parseCommandWithEnv", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\|\\|${ID}\\.length>`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: [],
+        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
+        darkReason:
+          "this export adds exactly one thing to a plain parse — the list of `VAR=value` assignments that PRECEDE the command — and no Bash command in the corpus has one. " +
+          "The twin is built to isolate that: it returns the real tree, the real command node and the real text, with `envVars` emptied, so a red would prove the assignment list is read " +
+          "rather than proving the parser is live. Measured over the four scenarios above and nothing moved, which is the honest reading of a corpus whose Bash commands are `echo REFORGE_TOOL_OK` and `chmod 600 perm.txt`. " +
+          "Graded instead by strangle/parser-parity.test.ts, which drives this entry point against the pinned chunk's own bytes over nine env-prefixed commands and the three length-cap boundary cases.",
+      },
+      {
+        // `var w3=Symbol("parse-aborted")` — the sentinel every consumer
+        // compares with `===`. Five references across three importers.
+        as: "parseAborted",
+        kind: "primitive",
+        owned: "PARSE_ABORTED",
+        derive: pick("shell-parser", "parseAborted", new RegExp(`var (${ID})=Symbol\\("parse-aborted"\\)`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: [],
+        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
+        darkReason:
+          "the sentinel is only ever COMPARED against, and only on the path where a parse gave up — over the 10,000-character cap, out of node budget, past the 50 ms deadline, or on a delimiter the parser refuses to guess about. " +
+          "The corpus's longest Bash command is 31 characters and parses in microseconds, so no recorded scenario reaches an abort and a second symbol with the same description is unobservable. " +
+          "THE ADJUDICATION IS THE MEASUREMENT: a twin that mints its own `Symbol(\"parse-aborted\")` was built and driven over the four scenarios above, and nothing moved. " +
+          "Graded instead by strangle/parser-parity.test.ts, which drives all three of upstream's abort causes — over-length, a null parse and a thrown parse — and requires that each side answer with ITS OWN sentinel by identity, " +
+          "plus the telemetry each abort emits, field for field.",
+      },
+      {
+        // `async function pEe(e)` — parse or abort, and the chunk's ONE effectful
+        // edge: it reports `tengu_tree_sitter_parse_abort` through the imported
+        // telemetry binding. Four call sites across three importers.
+        as: "parseOrAbort",
+        kind: "effectful-port",
+        owned: "parseOrAbort",
+        // Not an alias: this is the one export that takes a port. The wrapper is
+        // deliberately not `async` — it returns the owned async function's own
+        // promise rather than a promise of it, so an awaiting caller sees the
+        // same number of microtasks upstream's does.
+        declare: (name, owned, port) => `function ${name}(command){return ${owned}(command,${port("parseAbortTelemetry")})}`,
+        derive: pick("shell-parser", "parseOrAbort", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\)return null;if\\(${ID}\\.length>`)),
+        coverage: ["bash-tool", "perm-rule-deny"],
+      },
+      {
+        // `function wV(e,L)` — the walk from a program node to the command inside
+        // it, through pipelines, redirections and assignment prefixes. Four call
+        // sites across three importers, and the input to everything below.
+        as: "findCommandNode",
+        kind: "pure-helper",
+        owned: "findCommandNode",
+        derive: pick("shell-parser", "findCommandNode", new RegExp(`function (${ID})\\(${ID},${ID}\\)\\{let\\{type:${ID},children:${ID}\\}=`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: ["bash-tool", "perm-rule-deny"],
+      },
+      {
+        // `function fEe(e)` — argv extraction: the words a permission rule
+        // matches against. Three call sites across three importers.
+        as: "commandArgv",
+        kind: "pure-helper",
+        owned: "commandArgv",
+        derive: pick("shell-parser", "commandArgv", new RegExp(`function (${ID})\\(${ID}\\)\\{if\\(${ID}\\.type==="declaration_command"\\)`)),
+        declare: (name, owned) => `var ${name}=${owned};`,
+        coverage: ["bash-tool", "perm-rule-deny"],
+      },
+    ],
+    imports: [
+      {
+        // The one import, and the one effect the chunk has: the telemetry
+        // function `pEe` calls on each of its three abort causes. Derived from
+        // the import clause itself, because a chunk with exactly one import
+        // declaration has nothing else the binding could be.
+        as: "parseAbortTelemetry",
+        kind: "effectful-port",
+        derive: pick("shell-parser", "parseAbortTelemetry", new RegExp(`^import\\{(${ID})\\}from"`, "m")),
+      },
+    ],
+    // Rule 2b (chunk.ts). NINE top-level declarators construct — eight `new Set`
+    // and one `Symbol` — and the default audit refuses every one of them,
+    // correctly, because replacing a file whole normally drops what its body did.
+    // Here every construction is a value the owned module re-declares at module
+    // scope, where ESM's once-per-URL evaluation gives it the same
+    // one-instance-per-process identity upstream's `var x = new Set(...)` has.
+    //
+    // Eight of the nine are frozen-by-convention lookup tables: nothing in the
+    // graph mutates them, and every read is a `.has`. The ninth is the one where
+    // identity IS the semantics, and it is the reason this row cannot be seven
+    // splices — see `parseAborted` above.
+    moduleState: [
+      {
+        as: "specialVariableNames",
+        derive: pick("shell-parser", "specialVariableNames", new RegExp(`(${ID})=new Set\\(\\["\\?","\\$","@","\\*","#","-","!","_"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "SPECIAL_VARIABLE_NAMES",
+        why: "the eight characters that name a special shell variable (`$?`, `$$`, `$@`, `$*`, `$#`, `$-`, `$!`, `$_`). Read-only: every use is a `.has`, and nothing in the graph can reach it to mutate it, because it is not exported.",
+      },
+      {
+        as: "declarationCommands",
+        derive: pick("shell-parser", "declarationCommands", new RegExp(`(${ID})=new Set\\(\\["export","declare","typeset","readonly","local"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "DECLARATION_COMMANDS",
+        why: "the five words that make a command a DECLARATION rather than an invocation, consulted by the command-unit dispatcher. Read-only, not exported. Distinct from `declarationKeywords` below, which is the same five plus `unset` and `unsetenv` — two sets that would be easy to conflate and that upstream deliberately keeps apart.",
+      },
+      {
+        as: "shellKeywords",
+        derive: pick("shell-parser", "shellKeywords", new RegExp(`(${ID})=new Set\\(\\["if","then","elif"`)),
+        construct: "NewExpression",
+        reproducedBy: "SHELL_KEYWORDS",
+        why: "the fifteen bash reserved words. The only one of the nine that is also an EXPORT, so it is both module state and part of the surface; the export's own row grades its contents against the pinned chunk element by element.",
+      },
+      {
+        as: "rightAssociativeOperators",
+        derive: pick("shell-parser", "rightAssociativeOperators", new RegExp(`(${ID})=new Set\\(\\["=","\\+=","-=","\\*=","/=","%=","<<=",">>=","&=","\\^=","\\|=","\\*\\*"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "RIGHT_ASSOCIATIVE_OPERATORS",
+        why: "the arithmetic operators that recurse at their OWN precedence rather than one higher — the eleven assignments and `**`. Read-only, not exported, and consulted once per binary operator in the precedence climb.",
+      },
+      {
+        as: "declarationKeywords",
+        derive: pick("shell-parser", "declarationKeywords", new RegExp(`(${ID})=new Set\\(\\["export","declare","typeset","readonly","local","unset","unsetenv"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "DECLARATION_KEYWORDS",
+        why: "the seven words `commandArgv` accepts as the whole argv of a declaration command. Read-only, not exported.",
+      },
+      {
+        as: "literalArgumentTypes",
+        derive: pick("shell-parser", "literalArgumentTypes", new RegExp(`(${ID})=new Set\\(\\["word","string","raw_string","number"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "LITERAL_ARGUMENT_TYPES",
+        why: "the four node types `commandArgv` reads as a literal argument word. Read-only, not exported.",
+      },
+      {
+        as: "substitutionTypes",
+        derive: pick("shell-parser", "substitutionTypes", new RegExp(`(${ID})=new Set\\(\\["command_substitution","process_substitution"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "SUBSTITUTION_TYPES",
+        why: "the two node types that make an argument un-extractable — a substitution's value is not known until it runs, so `commandArgv` stops walking rather than reporting text that is not the argument. Read-only, not exported.",
+      },
+      {
+        as: "commandNodeTypes",
+        derive: pick("shell-parser", "commandNodeTypes", new RegExp(`(${ID})=new Set\\(\\["command","declaration_command"\\]\\)`)),
+        construct: "NewExpression",
+        reproducedBy: "COMMAND_NODE_TYPES",
+        why: "the two node types `findCommandNode` is looking for. Read-only, not exported.",
+      },
+      {
+        as: "parseAborted",
+        derive: pick("shell-parser", "parseAborted", new RegExp(`var (${ID})=Symbol\\("parse-aborted"\\)`)),
+        construct: "CallExpression",
+        reproducedBy: "PARSE_ABORTED",
+        why:
+          "the abort sentinel, and the one construction here where IDENTITY is the whole semantics: it carries no data, it is never inspected, and every consumer does exactly one thing with it — `result === PARSE_ABORTED`. " +
+          "A per-call `Symbol(\"parse-aborted\")` would have the same type and the same description and would answer false at every one of those five comparison sites, silently, in the direction where a parse the engine gave up on is treated as a parse tree. " +
+          "The owned module constructs it once at module scope, which is where upstream's `var` puts it and where ESM's once-per-URL evaluation keeps it. " +
+          "Graded by strangle/parser-parity.test.ts, which requires each side's `parseOrAbort` to answer with ITS OWN sentinel by identity on all three abort causes, and by the `parseAborted` twin, which mints a second one.",
+      },
+    ],
+  },
 ];
 
 /**

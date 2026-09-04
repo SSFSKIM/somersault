@@ -1,0 +1,613 @@
+{
+  "engineVersion": "2.1.251",
+  "generatedBy": "research/tools/extract-shell-parser.ts",
+  "parser": {
+    "chunk": "chunk-fgwne0fb.js",
+    "bytes": 62907,
+    "bannerBytes": 615,
+    "codeBytes": 62292,
+    "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573",
+    "topLevel": [
+      "ImportDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "VariableStatement",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "FunctionDeclaration",
+      "ExportDeclaration"
+    ],
+    "exportOrder": [
+      "ZE",
+      "z_n",
+      "e9t",
+      "w3",
+      "pEe",
+      "wV",
+      "fEe"
+    ],
+    "counts": {
+      "statements": 100,
+      "declarations": 105,
+      "functions": 93,
+      "declarators": 12,
+      "imports": 1,
+      "exports": 1
+    },
+    "declarationBytes": 62179,
+    "declarationDensity": 0.9982,
+    "constructingDeclarators": [
+      {
+        "name": "H",
+        "construct": "NewExpression",
+        "bytes": 44
+      },
+      {
+        "name": "Ae",
+        "construct": "NewExpression",
+        "bytes": 61
+      },
+      {
+        "name": "z_n",
+        "construct": "NewExpression",
+        "bytes": 118
+      },
+      {
+        "name": "fn",
+        "construct": "NewExpression",
+        "bytes": 74
+      },
+      {
+        "name": "hn",
+        "construct": "NewExpression",
+        "bytes": 80
+      },
+      {
+        "name": "xn",
+        "construct": "NewExpression",
+        "bytes": 51
+      },
+      {
+        "name": "be",
+        "construct": "NewExpression",
+        "bytes": 59
+      },
+      {
+        "name": "pe",
+        "construct": "NewExpression",
+        "bytes": 45
+      },
+      {
+        "name": "w3",
+        "construct": "CallExpression",
+        "bytes": 26
+      }
+    ]
+  },
+  "roles": [
+    {
+      "role": "getParser",
+      "binding": "ZE",
+      "exportedAs": "ZE",
+      "kind": "function",
+      "bytes": 24,
+      "async": false,
+      "parameters": 0,
+      "detail": {
+        "returnsDeclarator": "Re",
+        "properties": [
+          "parse"
+        ],
+        "parseImplementation": "ze"
+      },
+      "reexportedAs": []
+    },
+    {
+      "role": "shellKeywords",
+      "binding": "z_n",
+      "exportedAs": "z_n",
+      "kind": "declarator",
+      "bytes": 118,
+      "async": false,
+      "parameters": 0,
+      "detail": {
+        "members": [
+          "if",
+          "then",
+          "elif",
+          "else",
+          "fi",
+          "while",
+          "until",
+          "for",
+          "in",
+          "do",
+          "done",
+          "case",
+          "esac",
+          "function",
+          "select"
+        ],
+        "memberCount": 15
+      },
+      "reexportedAs": []
+    },
+    {
+      "role": "parseCommandWithEnv",
+      "binding": "e9t",
+      "exportedAs": "e9t",
+      "kind": "function",
+      "bytes": 200,
+      "async": true,
+      "parameters": 1,
+      "detail": {
+        "returnKeys": [
+          "rootNode",
+          "envVars",
+          "commandNode",
+          "originalCommand"
+        ]
+      },
+      "reexportedAs": [
+        "parseCommand"
+      ]
+    },
+    {
+      "role": "parseAborted",
+      "binding": "w3",
+      "exportedAs": "w3",
+      "kind": "declarator",
+      "bytes": 26,
+      "async": false,
+      "parameters": 0,
+      "detail": {
+        "symbolDescription": "parse-aborted"
+      },
+      "reexportedAs": [
+        "PARSE_ABORTED"
+      ]
+    },
+    {
+      "role": "parseOrAbort",
+      "binding": "pEe",
+      "exportedAs": "pEe",
+      "kind": "function",
+      "bytes": 332,
+      "async": true,
+      "parameters": 1,
+      "detail": {
+        "telemetryEvent": "tengu_tree_sitter_parse_abort",
+        "telemetryCalls": 3,
+        "viaImport": "s"
+      },
+      "reexportedAs": [
+        "parseCommandRaw"
+      ]
+    },
+    {
+      "role": "findCommandNode",
+      "binding": "wV",
+      "exportedAs": "wV",
+      "kind": "function",
+      "bytes": 375,
+      "async": false,
+      "parameters": 2,
+      "detail": {
+        "commandNodeTypes": [
+          "command",
+          "declaration_command"
+        ],
+        "viaSet": "pe"
+      },
+      "reexportedAs": [
+        "findCommandNode"
+      ]
+    },
+    {
+      "role": "commandArgv",
+      "binding": "fEe",
+      "exportedAs": "fEe",
+      "kind": "function",
+      "bytes": 589,
+      "async": false,
+      "parameters": 1,
+      "detail": {
+        "wordTokenTypes": [
+          "word",
+          "string",
+          "raw_string",
+          "number"
+        ],
+        "viaSet": "xn"
+      },
+      "reexportedAs": [
+        "extractCommandArguments"
+      ]
+    }
+  ],
+  "import": {
+    "declarations": 1,
+    "specifier": "/$bunfs/root/chunk-qw5jhqey.js",
+    "imported": "s",
+    "local": "s",
+    "callSites": 3,
+    "references": 3
+  },
+  "importers": {
+    "named": [
+      {
+        "chunk": "chunk-2y9zbj6b.js",
+        "bytes": 997,
+        "imports": [
+          {
+            "role": "commandArgv",
+            "local": "fEe"
+          },
+          {
+            "role": "findCommandNode",
+            "local": "wV"
+          },
+          {
+            "role": "parseAborted",
+            "local": "w3"
+          },
+          {
+            "role": "parseCommandWithEnv",
+            "local": "e9t"
+          },
+          {
+            "role": "parseOrAbort",
+            "local": "pEe"
+          }
+        ],
+        "callSites": {
+          "parseCommandWithEnv": 0,
+          "parseAborted": 0,
+          "parseOrAbort": 0,
+          "findCommandNode": 0,
+          "commandArgv": 0
+        },
+        "references": {
+          "parseCommandWithEnv": 0,
+          "parseAborted": 0,
+          "parseOrAbort": 0,
+          "findCommandNode": 0,
+          "commandArgv": 0
+        },
+        "reexports": [
+          {
+            "role": "commandArgv",
+            "as": "extractCommandArguments"
+          },
+          {
+            "role": "findCommandNode",
+            "as": "findCommandNode"
+          },
+          {
+            "role": "parseAborted",
+            "as": "PARSE_ABORTED"
+          },
+          {
+            "role": "parseCommandWithEnv",
+            "as": "parseCommand"
+          },
+          {
+            "role": "parseOrAbort",
+            "as": "parseCommandRaw"
+          }
+        ]
+      },
+      {
+        "chunk": "chunk-9e2ns8ty.js",
+        "bytes": 243672,
+        "imports": [
+          {
+            "role": "parseAborted",
+            "local": "w3"
+          },
+          {
+            "role": "parseOrAbort",
+            "local": "pEe"
+          },
+          {
+            "role": "shellKeywords",
+            "local": "z_n"
+          }
+        ],
+        "callSites": {
+          "shellKeywords": 0,
+          "parseAborted": 0,
+          "parseOrAbort": 1
+        },
+        "references": {
+          "shellKeywords": 1,
+          "parseAborted": 1,
+          "parseOrAbort": 1
+        },
+        "reexports": []
+      },
+      {
+        "chunk": "chunk-fy12d89p.js",
+        "bytes": 3995555,
+        "imports": [
+          {
+            "role": "commandArgv",
+            "local": "fEe"
+          },
+          {
+            "role": "findCommandNode",
+            "local": "wV"
+          },
+          {
+            "role": "getParser",
+            "local": "ZE"
+          },
+          {
+            "role": "parseAborted",
+            "local": "w3"
+          },
+          {
+            "role": "parseCommandWithEnv",
+            "local": "e9t"
+          },
+          {
+            "role": "parseOrAbort",
+            "local": "pEe"
+          }
+        ],
+        "callSites": {
+          "getParser": 11,
+          "parseCommandWithEnv": 2,
+          "parseAborted": 0,
+          "parseOrAbort": 3,
+          "findCommandNode": 3,
+          "commandArgv": 2
+        },
+        "references": {
+          "getParser": 11,
+          "parseCommandWithEnv": 2,
+          "parseAborted": 4,
+          "parseOrAbort": 3,
+          "findCommandNode": 3,
+          "commandArgv": 2
+        },
+        "reexports": []
+      },
+      {
+        "chunk": "chunk-sp2f2w2e.js",
+        "bytes": 61585,
+        "imports": [
+          {
+            "role": "commandArgv",
+            "local": "fEe"
+          },
+          {
+            "role": "findCommandNode",
+            "local": "wV"
+          },
+          {
+            "role": "getParser",
+            "local": "ZE"
+          }
+        ],
+        "callSites": {
+          "getParser": 1,
+          "findCommandNode": 1,
+          "commandArgv": 1
+        },
+        "references": {
+          "getParser": 1,
+          "findCommandNode": 1,
+          "commandArgv": 1
+        },
+        "reexports": []
+      }
+    ],
+    "bareCount": 294,
+    "counts": {
+      "named": 4,
+      "bare": 294,
+      "graphModules": 1802
+    },
+    "callSiteTotals": {
+      "getParser": 12,
+      "shellKeywords": 0,
+      "parseCommandWithEnv": 2,
+      "parseAborted": 0,
+      "parseOrAbort": 4,
+      "findCommandNode": 4,
+      "commandArgv": 3
+    },
+    "referenceTotals": {
+      "getParser": 12,
+      "shellKeywords": 1,
+      "parseCommandWithEnv": 2,
+      "parseAborted": 5,
+      "parseOrAbort": 4,
+      "findCommandNode": 4,
+      "commandArgv": 3
+    },
+    "readersPerRole": {
+      "getParser": 2,
+      "shellKeywords": 1,
+      "parseCommandWithEnv": 2,
+      "parseAborted": 3,
+      "parseOrAbort": 3,
+      "findCommandNode": 3,
+      "commandArgv": 3
+    },
+    "reexport": {
+      "barrels": [
+        {
+          "chunk": "chunk-2y9zbj6b.js",
+          "aliases": [
+            {
+              "role": "commandArgv",
+              "as": "extractCommandArguments"
+            },
+            {
+              "role": "findCommandNode",
+              "as": "findCommandNode"
+            },
+            {
+              "role": "parseAborted",
+              "as": "PARSE_ABORTED"
+            },
+            {
+              "role": "parseCommandWithEnv",
+              "as": "parseCommand"
+            },
+            {
+              "role": "parseOrAbort",
+              "as": "parseCommandRaw"
+            }
+          ],
+          "staticNamedImporters": [],
+          "dynamicImporters": [
+            "chunk-fy12d89p.js"
+          ]
+        }
+      ],
+      "dynamicReaders": [
+        {
+          "chunk": "chunk-fy12d89p.js",
+          "via": "chunk-2y9zbj6b.js",
+          "alias": "parseCommand",
+          "role": "parseCommandWithEnv",
+          "local": "t",
+          "scope": "ynn",
+          "callSites": 1
+        }
+      ],
+      "skipped": [],
+      "callSiteTotals": {
+        "parseCommandWithEnv": 1
+      }
+    }
+  },
+  "anchor": {
+    "literal": "backtick_escape_unsupported",
+    "occurrences": 1,
+    "files": 1,
+    "unique": true,
+    "otherUniqueLiterals": [
+      "DOLLAR_BRACE",
+      "DOLLAR_DPAREN",
+      "DOLLAR_PAREN",
+      "GT_PAREN",
+      "LT_PAREN",
+      "ambiguous heredoc terminator (<<- tab-prefixed delim)",
+      "ambiguous heredoc terminator (shell_eof_token)",
+      "backtick_body_overrun",
+      "case_item",
+      "heredoc delimiter contains astral/surrogate code unit",
+      "heredoc delimiter contains substitution/escape chars",
+      "heredoc delimiter word continues past scanned segment",
+      "parse-aborted",
+      "postfix_expression",
+      "replword"
+    ],
+    "counts": {
+      "otherUniqueLiterals": 15,
+      "literalsConsidered": 71
+    },
+    "shortestUntainted": {
+      "literal": ",\"$\",\"@\"",
+      "files": 1,
+      "occurrences": 1,
+      "candidates": 2964
+    }
+  }
+}
