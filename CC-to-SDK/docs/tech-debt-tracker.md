@@ -731,3 +731,28 @@ the candidate — reds the inventory check once and needs the projection written
 declared. One `generalizePath` rule anchored on `sessions/`, plus a fixture regeneration.
 
 **Fix when:** a scenario reaches the family on purpose.
+
+## 2026-09-03 — seven cassettes are recorded against the baseline seed and record no hash of it
+
+**Source:** the C12a / W9a fix wave, verification round · `reforge/m1/run.ts` (the sidecar),
+`reforge/src/precondition.ts` (`baselineSeedHash`), `reforge/m2/faults.ts`,
+`reforge/m2/raw-protocol.ts`, `reforge/w13/signals.ts`.
+
+**What.** F4 made the precondition sidecar record BOTH halves of the applied world — the scenario's
+declaration and a hash of the baseline `.claude.json` seed that `applyPrecondition` puts underneath it
+— so that a baseline change without a pin bump is a named FINDING at replay time rather than a silent
+re-grading. Only `m1/run.ts` writes and reads that sidecar. Seven primary cassettes are recorded by
+other runners: `m2-fault-malformed-event`, `m2-fault-overloaded`, `m2-fault-rate-limited`,
+`m2-fault-server-error`, `m2-fault-truncated-stream` (`m2/faults.ts`), `m2-raw`
+(`m2/raw-protocol.ts`) and `w13-signals` (`w13/signals.ts`). All three runners call `resetSandbox()`,
+so all seven ARE recorded against the baseline seed — they simply write nothing down about it.
+
+**Cost if nobody pays it.** For those seven, a change to `baselineConfigJson` that is not accompanied
+by an engine-pin bump replays green against a filesystem that is not the one the cassette answers.
+That is exactly the failure F4 exists to prevent, on 7 of the corpus's 70 primary cassettes. It is
+latent today because nothing has changed the baseline since it was introduced.
+
+**Fix when:** the wave that changes the baseline seed — C14a, which seeds a non-zero `skillUsage`
+through `ConfigPrecondition.seed` — reaches it. The fix is to lift the sidecar write/compare out of
+`m1/run.ts` into a helper the three other runners call, keyed by their own cassette names; the drift
+message and the re-record path already exist.
