@@ -25,7 +25,7 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { baseOptions, drive, pushable, resultsOf, resultText, usedTool, userMessage, type Scenario } from "../src/harness.js";
+import { baseOptions, drive, pushable, resultsOf, usedTool, userMessage, type Scenario } from "../src/harness.js";
 import { SANDBOX } from "../src/runTurn.js";
 import { childCommand, expectedOutput, seedScriptedChild, SCRIPTED_CHILD_NAME, type ChildPlan } from "./child.js";
 import type { DeadlineRole, TimerProfile } from "./timers.js";
@@ -385,14 +385,20 @@ const prespawnError: Scenario = {
     return messages;
   },
   check: (msgs, events) => {
-    if (!events.some((e) => (e as { event?: string }).event === "cwd-removed")) return "the scenario never removed the working directory";
-    if (toolUses(msgs, "Bash").length < 2) return `expected two Bash calls, saw ${toolUses(msgs, "Bash").length}`;
-    const text = allText(msgs);
-    // Either the executor refuses before spawning, or it recovers to one of its
-    // three roots — WHICH is engine behaviour the differ compares. What must not
-    // happen is a second `pwd` that silently reports the deleted directory.
-    if (!/no such file|does not exist|restart Claude|shell|directory/i.test(text)) {
-      return "the second call neither refused nor mentioned the missing directory";
+    const removed = events.find((e) => (e as { event?: string }).event === "cwd-removed") as { payload?: { stillThere?: unknown } } | undefined;
+    if (removed === undefined) return "the scenario never removed the working directory";
+    if (removed.payload?.stillThere !== false) return "the scenario tried to remove the working directory and it is still there";
+    const results = toolResults(msgs);
+    if (toolUses(msgs, "Bash").length < 2 || results.length < 2) {
+      return `expected two Bash calls with two results, saw ${toolUses(msgs, "Bash").length} call(s) and ${results.length} result(s)`;
+    }
+    // THE SHARP CLAIM, and it is a negative one. Either the executor refuses
+    // before spawning or it recovers to one of its three roots — WHICH of the
+    // two is engine behaviour the differ compares, so neither is asserted here.
+    // What must not happen is a second `pwd` that reports the deleted directory
+    // as though it were still the working directory.
+    if (results[1].includes(`/${DOOMED}`)) {
+      return `the second call reported the deleted directory as its cwd: ${JSON.stringify(results[1].slice(0, 160))}`;
     }
     return null;
   },

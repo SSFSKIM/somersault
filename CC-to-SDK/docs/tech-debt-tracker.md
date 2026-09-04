@@ -793,3 +793,32 @@ INCONCLUSIVE, and `m2/relay.ts` learns the line so the gate still names it. It i
 because the vocabulary is read by four layers (`m1/run.ts`, `m2/all.ts`, `strangle/gate.ts`,
 `strangle/attest.ts`) and changing it under a sibling worker's in-flight wave is a worse trade than
 recording it.
+
+## 2026-09-05 — the P2 lesson regressed: five wave directories and `research/` are outside `tsc`
+
+**Source:** found by C13c while adding `w10/` to the include list · `reforge/tsconfig.json`.
+
+**What.** `reforge/README.md`'s P2 entry records the fix for exactly this: "`tsconfig.json` covered
+only `src/` and `m0/`, so `npx tsc --noEmit` passed green while never checking `m1 m2 m2c m3
+strangle` — a real TS2339 sat hidden in `m3/probe-origin.ts` (tsx transpiles without checking)". The
+include list was widened then and has not been widened since. `w2/`, `w3/`, `w4/`, `w5/`, `w6/`,
+`w7/`, `w9/`, `w13/` and `research/` have all been added to the tree without being added to it, so
+the same green-while-checking-nothing state is back for nine directories.
+
+**Measured, not inferred.** Widening the list to include them was tried and reverted: it surfaces a
+real `TS2322` at `reforge/w5/probe-hook-events.ts:316` — a `Record<string, unknown[]>` passed as
+`Options.settings.hooks`, which the SDK types as a structured hook map. `tsx` transpiles without
+checking, so the probe runs; nothing else has ever looked at it. `w10/` was added alone, and it type-
+checks clean.
+
+**Cost if nobody pays it.** Every wave directory added from here inherits the same blind spot, and a
+type error in a probe or a scenario is found by a failing run rather than by a compile. There is no
+`tsc` phase in the gate either, so the check is a recipe somebody remembers to run — which is the
+same vacuity the gate's own phases exist to refuse.
+
+**Fix when:** the next wave that touches `w5/probe-hook-events.ts`, or any wave with room to fix one
+cast. The shape is: type the settings hook map properly (or cast it at the one site), widen the
+include list to every wave directory plus `research/`, and consider a `tsc --noEmit` phase in the
+determinism block, which is build-free and takes a few seconds. Not taken here because it means
+editing another wave's probe while two workers are in flight in one checkout, and the fix is worth
+less than the conflict.
