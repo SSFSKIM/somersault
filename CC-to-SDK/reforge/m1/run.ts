@@ -296,9 +296,10 @@ for (const s of SCENARIOS) {
   console.log(`\n━━━ ${s.tag} — ${s.title} ━━━`);
   const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
 
-  const { preFile, declared, baselineSha256, recorded, recordedPre } = sidecarState(s);
+  const sidecar = sidecarState(s);
+  const { preFile, declared, baselineSha256, recorded, recordedPre } = sidecar;
   // A cassette that is about to be recorded has no sidecar to disagree with.
-  const driftReason = !existsSync(cassette) || rerecord ? null : sidecarState(s).driftReason;
+  const driftReason = !existsSync(cassette) || rerecord ? null : sidecar.driftReason;
   const preconditionDrift = driftReason !== null;
   // A MALFORMED SIDECAR IS NOT GRADED AT ALL. Until H1 a sidecar with no
   // baseline hash — or no sidecar — replayed the recorded declaration (an EMPTY
