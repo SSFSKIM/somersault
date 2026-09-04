@@ -41,6 +41,7 @@ import * as textDelta from "../../strangle/modules/text-delta/reference.js";
 import * as sessionMaterialize from "../../strangle/modules/session-materialize/reference.js";
 import * as globDescription from "../../strangle/modules/glob-description/reference.js";
 import * as processLifecycle from "../../strangle/modules/process-lifecycle/reference.js";
+import * as shellParser from "../../strangle/modules/shell-parser/reference.js";
 import * as twnIsShuttingDown from "../../strangle/modules/twn-is-shutting-down/reference.js";
 import * as twnClaimShutdown from "../../strangle/modules/twn-claim-shutdown/reference.js";
 import * as twnReleaseShutdownClaim from "../../strangle/modules/twn-release-shutdown-claim/reference.js";
@@ -330,6 +331,15 @@ const OWNED: [string, string, unknown][] = [
   // chosen (research/fixtures/process-lifecycle-<pin>.json records the
   // excisability of all six).
   ["ky-sigint-handler", "subsystem/query-loop", kySigintHandler.kySigintHandler],
+  // C13a / W10a — the bash parser, the campaign's THIRD S-chunk and its largest
+  // ownership: 62,907 upstream bytes reimplemented behind the same seven
+  // exports. Registered under the Bash executor because that is the subsystem
+  // whose row it belongs to, and because everything else in W10 reads its
+  // nodes — the command-safety chain, the destructive classifier and the
+  // per-subcommand permission aggregate all start from a tree this module built.
+  // The row does not close on it: the executor, the spawn, the sandbox wrap and
+  // the backgrounding are all still upstream's, and are C13b through C13e's.
+  ["shell-parser", "subsystem/bash-executor", shellParser.parseOrAbort],
 ];
 
 for (const [name, subsystem, entry] of OWNED) {

@@ -35,6 +35,27 @@ export interface AttestedModule {
    * INSTEAD of branch coverage.
    */
   noBranchesReason?: string;
+  /**
+   * A DIFFERENTIAL CONTRACT SUITE whose execution of this module's branches
+   * counts as evidence in its own right (C13a / W10a).
+   *
+   * Added for the shell parser, and only justified where its shape holds: a
+   * module whose domain is so much wider than the corpus that per-branch
+   * exclusions would be thousands of identical sentences, AND whose grading
+   * oracle is upstream's own pinned implementation rather than a hand-written
+   * expectation. Under those two conditions a branch the suite executes is
+   * better evidenced than one a scenario happened to render — the suite ran it
+   * against upstream and required identity, where the scenario only ever compared
+   * what the transcript showed.
+   *
+   * `driver` is a script `attest.ts` spawns AFTER the corpus replays, against the
+   * same instrumented build, so its coverage lands in its own recorder file and
+   * is attributed separately. It must not assert; it exists to execute.
+   *
+   * `why` is the adjudication, printed in the report: what the suite compares
+   * against, and why executing a branch there is evidence about it.
+   */
+  contract?: { driver: string; why: string };
 }
 
 export const ATTESTED: AttestedModule[] = [
@@ -537,6 +558,41 @@ export const ATTESTED: AttestedModule[] = [
     module: "ky-sigint-handler",
     row: "ky-sigint-handler",
     scenarios: ["sigint-mid-turn"],
+  },
+
+  // ---- C13a / W10a: the shell parser ---------------------------------------
+  // The largest attested module in the campaign by a factor of twenty, and the
+  // first with a `contract` channel. 3,646 branch outcomes of bash grammar
+  // against a corpus that issues `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`,
+  // `mkdir -p`, `cd`, `pwd` and `sleep`.
+  //
+  // The scenarios listed are the corpus's Bash-bearing ones, read off the
+  // recorded cassettes rather than off the scenario prompts: those are the
+  // replays in which this module runs inside a real engine at all. What they
+  // cover is the walk from a program node to an argv — which is the whole of
+  // what the corpus can exercise, and roughly a fifth of the module.
+  //
+  // The rest is covered by `strangle/parser-coverage.ts` driving
+  // `strangle/parser-corpus.ts` against the same instrumented build, and it is
+  // reported as its own state rather than as an exclusion. See the `contract`
+  // field's own documentation for the two conditions that justify that channel,
+  // and `strangle/adjudicate.ts` for why the two kinds of evidence are kept
+  // apart in the report.
+  {
+    module: "shell-parser",
+    row: "shell-parser (S-chunk)",
+    scenarios: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
+    contract: {
+      driver: "strangle/parser-coverage.ts",
+      why:
+        "`strangle/parser-parity.test.ts` is the oracle and `strangle/parser-coverage.ts` is the same corpus driven for measurement. " +
+        "The suite evaluates the PINNED CHUNK'S OWN BYTES — the 62,907-byte upstream parser, with its one import stubbed and its export " +
+        "clause removed — and compares the two parse trees node for node: type, byte range, text and children, to any depth, over sixteen " +
+        "partitions of the input domain and 1,891 command strings. A branch executed there was executed against upstream's own " +
+        "implementation of itself with identity required, which is why it is reported as evidence rather than as an exclusion. " +
+        "Each partition also declares the direction a wrong parser would fail it in, and the suite applies exactly that corruption to a " +
+        "healthy owned tree and requires the comparator to catch it, so a partition that could not have seen a defect fails rather than passes.",
+    },
   },
 ];
 

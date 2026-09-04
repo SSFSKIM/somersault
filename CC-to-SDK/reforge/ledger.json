@@ -6982,9 +6982,47 @@
       "kind": "subsystem",
       "title": "Bash executor (exec/timeout/background) + command-safety AST",
       "wave": "C13",
-      "state": "unowned",
+      "state": "spliced",
       "edges": [],
-      "footprint": null
+      "footprint": [
+        {
+          "chunk": "chunk-fgwne0fb.js",
+          "target": {
+            "start": 0,
+            "end": 62967,
+            "sha256": "d7981d2711b5595fed15df3a933c314150d822b7eeb0ff67f80b48acdf081573"
+          },
+          "captures": [
+            {
+              "name": "s",
+              "as": "parseAbortTelemetry",
+              "kind": "effectful-port",
+              "declKind": "import",
+              "declStart": 622,
+              "declEnd": 623,
+              "sha256": "043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89",
+              "from": {
+                "chunk": "chunk-qw5jhqey.js",
+                "exportedAs": "s",
+                "declStart": 1332,
+                "declEnd": 1449,
+                "sha256": "06595e467f1ac955f8b81113e32cdb5b2e84936c11c78c1cd0eecbd6956d84f5"
+              }
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        "strangle/manifest.ts:shell-parser",
+        "strangle/modules/shell-parser/reference.js",
+        "strangle/parser-parity.test.ts",
+        "strangle/parser-corpus.ts",
+        "research/fixtures/shell-parser-2.1.251.json",
+        "research/2026-09-02-w10-bash-executor-scout.md",
+        "scenario:bash-tool",
+        "scenario:perm-rule-deny"
+      ],
+      "note": "C13a/W10a owns ONE unit of this row outright: chunk-fgwne0fb.js, the bash tokenizer and parser, as the campaign's third whole-chunk replacement (62,907 upstream bytes, 105 declarations at 99.8 % density, seven exports, one import, four named importers and 294 bare ones -- enumerated from the artifact in research/fixtures/shell-parser-2.1.251.json, which corrected the scout's declaration count and found a reader no static import scan sees). It is the SUBSTRATE of the row rather than a slice of it: the command-safety chain, the destructive classifier, the read-only classifier, the redirection analysis and the per-subcommand permission aggregate all begin with a tree this module built. `spliced`, and a long way from closing. The executor itself is untouched -- the ShellCommand handle, the TaskOutput buffer, the spawn, the shell snapshot, the cwd write-back, the sandbox wrap and the four backgrounding arms are all still upstream's, and are C13b through C13e's. The 179 KB of pure, unblocked surface the W10 scout measured is what this child took the first 63 KB of. EDGES stay empty, deliberately: the owned unit has exactly ONE port -- the telemetry function it calls on an abort -- and no ledger row owns telemetry. The subsystem's real edges (permissions for canUseTool, sandboxing for the seatbelt wrap, session-storage for output persistence, subagent-dispatch for the task registry) are consumed by the executor, which this child did not touch; recording them here would be claiming a cut C13a did not make. WHAT GRADES IT: the corpus observes this module through exactly one door. Measured, per export, with a twin built for each: only `parseOrAbort` reddens a scenario, because `dde` -> `KTe` turns its abort sentinel into a `too-complex` verdict that the recorded permission decision carries. The other six exports feed analyses whose fallbacks the corpus's commands (`echo REFORGE_TOOL_OK`, `chmod 600 perm.txt`, `mkdir -p`, `cd`, `pwd`, `sleep`) cannot distinguish from their real answers. That is a fact about the corpus, not about the exports, and it is why this unit shipped with a contract test rather than with more scenarios: strangle/parser-parity.test.ts evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse trees node for node over sixteen partitions of the input domain."
     },
     {
       "id": "subsystem/mcp-adapter",

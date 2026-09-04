@@ -5503,6 +5503,17 @@ export const SPLICES: Splice[] = [
  * the STATE is the contract, the module is the unit, and that is what §2.2's
  * whole-chunk row buys that three S-method splices cannot.
  */
+/**
+ * The sentence every C13a dark row opens with. Written once because it is the
+ * same measurement each time and the rows differ in what comes AFTER it — which
+ * consumer the export feeds, and why that consumer's fallback is indistinguishable
+ * from its real answer on the commands the corpus happens to contain.
+ */
+const C13A_MEASURED =
+  "MEASURED, not reasoned: a twin was built for this export and driven over ALL SIXTEEN corpus scenarios that carry a Bash `tool_use` " +
+  "— read off the recorded cassettes rather than off the scenario prompts — and every one stayed GREEN. The full table is in the C13a wave record. " +
+  "The two below are what the gate RE-MEASURES every run, on the rule that a reason nothing re-runs is an assertion. ";
+
 export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
   {
     name: "glob-description",
@@ -5778,7 +5789,17 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         // returned by identity on every call, and an alias is the only form that
         // keeps that true without re-stating it.
         declare: (name, owned) => `var ${name}=${owned};`,
-        coverage: ["bash-tool", "perm-rule-deny"],
+        coverage: [],
+        darkOver: ["bash-tool", "perm-auto-classifier-deny"],
+        darkReason:
+          "this handle is how ELEVEN analyses in the engine chunk reach a parse tree — the command splitter, the read-only classifier, the redirection " +
+          "analyser, the destructive detector, the sed-edit detectors, the prefix extractor, the git-activity detector — and every one of them has a defined " +
+          "answer for a command it cannot parse. For the commands the corpus issues, that answer is the same one the real parse produces: a twin whose `parse` " +
+          "returns `null` for every input changes no transcript, no event, no request and no state entry on any of the sixteen. " +
+          "One of the eleven says so about itself, in upstream's own comment: `Client-facing — lets clients render git activity without re-parsing stdout; not " +
+          "surfaced to the model`. " + C13A_MEASURED +
+          "Graded instead by strangle/parser-parity.test.ts, which drives this handle over 2,166 command strings in sixteen partitions and compares every node " +
+          "it builds against the pinned chunk's own.",
       },
       {
         // `z_n=new Set(["if","then","elif",…])` — the fifteen bash reserved
@@ -5789,14 +5810,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: pick("shell-parser", "shellKeywords", new RegExp(`(${ID})=new Set\\(\\["if","then","elif"`)),
         declare: (name, owned) => `var ${name}=${owned};`,
         coverage: [],
-        // The population the darkness was measured over: every corpus scenario
-        // that issues a Bash command at all. None of them issues a COMPOUND one,
-        // which is the only shape this set can change the reading of.
-        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
+        darkOver: ["bash-tool", "perm-auto-classifier-deny"],
         darkReason:
-          "the set is consulted only where a command's first word might be a shell KEYWORD rather than a command name, and the corpus issues no compound command: " +
-          "read as an artifact, the seventeen scenarios that carry a Bash tool_use issue `echo`, `pwd`, `ls`, `cd`, `mkdir`, `chmod` and `sleep` — not one `if`, `for`, `while` or `case`. " +
-          "An empty-set twin therefore changes no recorded decision, which is a fact about the CORPUS and not about the export. " +
+          "the set is consulted in EXACTLY ONE place bundle-wide, and it is a rejection guard: `if (SHELL_KEYWORDS.has(name)) return {ok:false, reason: \"Shell keyword '<name>' as command name — tree-sitter mis-parse\"}`. " +
+          "An empty set can therefore only turn a rejection into an acceptance, and no corpus command's name is a shell keyword — the sixteen Bash-bearing scenarios issue " +
+          "`echo`, `pwd`, `ls`, `cd`, `mkdir`, `chmod`, `sleep` and one deliberately missing binary, not one `if`, `for`, `while` or `case`. There is no rejection to lose. " + C13A_MEASURED +
           "What grades it instead is stronger than a differential would be: strangle/parser-parity.test.ts compares the owned set element by element against the pinned chunk's own declaration, " +
           "so any change at all fails, where a differential could only ever see a keyword some scenario happened to render.",
       },
@@ -5809,11 +5827,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: pick("shell-parser", "parseCommandWithEnv", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\|\\|${ID}\\.length>`)),
         declare: (name, owned) => `var ${name}=${owned};`,
         coverage: [],
-        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
-        darkReason:
+        darkOver: ["bash-tool", "perm-rule-deny"],
+        darkReason: C13A_MEASURED +
           "this export adds exactly one thing to a plain parse — the list of `VAR=value` assignments that PRECEDE the command — and no Bash command in the corpus has one. " +
           "The twin is built to isolate that: it returns the real tree, the real command node and the real text, with `envVars` emptied, so a red would prove the assignment list is read " +
-          "rather than proving the parser is live. Measured over the four scenarios above and nothing moved, which is the honest reading of a corpus whose Bash commands are `echo REFORGE_TOOL_OK` and `chmod 600 perm.txt`. " +
+          "rather than proving the parser is live — and nothing moved, which is the honest reading of a corpus whose Bash commands are `echo REFORGE_TOOL_OK` and `chmod 600 perm.txt`. " +
           "Graded instead by strangle/parser-parity.test.ts, which drives this entry point against the pinned chunk's own bytes over nine env-prefixed commands and the three length-cap boundary cases.",
       },
       {
@@ -5825,11 +5843,11 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         derive: pick("shell-parser", "parseAborted", new RegExp(`var (${ID})=Symbol\\("parse-aborted"\\)`)),
         declare: (name, owned) => `var ${name}=${owned};`,
         coverage: [],
-        darkOver: ["bash-tool", "perm-rule-deny", "perm-rule-ask", "hooks-command"],
-        darkReason:
+        darkOver: ["bash-tool", "perm-rule-deny"],
+        darkReason: C13A_MEASURED +
           "the sentinel is only ever COMPARED against, and only on the path where a parse gave up — over the 10,000-character cap, out of node budget, past the 50 ms deadline, or on a delimiter the parser refuses to guess about. " +
           "The corpus's longest Bash command is 31 characters and parses in microseconds, so no recorded scenario reaches an abort and a second symbol with the same description is unobservable. " +
-          "THE ADJUDICATION IS THE MEASUREMENT: a twin that mints its own `Symbol(\"parse-aborted\")` was built and driven over the four scenarios above, and nothing moved. " +
+          "THE ADJUDICATION IS THE MEASUREMENT: a twin that mints its own `Symbol(\"parse-aborted\")` was built and driven over all sixteen, and nothing moved. " +
           "Graded instead by strangle/parser-parity.test.ts, which drives all three of upstream's abort causes — over-length, a null parse and a thrown parse — and requires that each side answer with ITS OWN sentinel by identity, " +
           "plus the telemetry each abort emits, field for field.",
       },
@@ -5846,7 +5864,21 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         // same number of microtasks upstream's does.
         declare: (name, owned, port) => `function ${name}(command){return ${owned}(command,${port("parseAbortTelemetry")})}`,
         derive: pick("shell-parser", "parseOrAbort", new RegExp(`async function (${ID})\\(${ID}\\)\\{if\\(!${ID}\\)return null;if\\(${ID}\\.length>`)),
-        coverage: ["bash-tool", "perm-rule-deny"],
+        // THE ONE DOOR the corpus can see this module through, and the reason is
+        // legible in upstream's own code: `dde` awaits this function and hands the
+        // result to `KTe`, whose first act is `if (result === PARSE_ABORTED) return
+        // {kind:"too-complex", reason:"Parser aborted (timeout, resource limit, or
+        // over-length)"}`. A twin that aborts on every command therefore rewrites the
+        // `decisionReason` every Bash permission decision carries.
+        //
+        // Measured: of the sixteen Bash-bearing scenarios, FIVE go red under that twin
+        // — `perm-rule-deny`, `perm-accept-edits`, `perm-bypass-deny-rule`,
+        // `perm-broker-updates`, `hooks-permission`. Two of the five are listed, not all
+        // five: the gate requires EVERY covering tag to redden, so each extra one buys a
+        // second replay of the same mechanism and nothing else. These two are the pair
+        // that differ in HOW the decision is reached — a settings rule and a permission
+        // hook — rather than in which command was run.
+        coverage: ["perm-rule-deny", "hooks-permission"],
       },
       {
         // `function wV(e,L)` — the walk from a program node to the command inside
@@ -5857,7 +5889,17 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         owned: "findCommandNode",
         derive: pick("shell-parser", "findCommandNode", new RegExp(`function (${ID})\\(${ID},${ID}\\)\\{let\\{type:${ID},children:${ID}\\}=`)),
         declare: (name, owned) => `var ${name}=${owned};`,
-        coverage: ["bash-tool", "perm-rule-deny"],
+        coverage: [],
+        darkOver: ["bash-tool", "hooks-cwd-change"],
+        darkReason: C13A_MEASURED +
+          "the walker is the input to argv extraction, and argv is NOT what the corpus's permission decisions are made of. Upstream matches a Bash rule against the command STRING: " +
+          "the candidates are the raw command and the command-without-redirections, and argv only ever adds a FURTHER candidate, when a wrapper (`sudo`, `env`, `xargs`) has been stripped and " +
+          "the stripped first word differs. No corpus command is wrapped, so that candidate is never added and a twin returning `null` for every tree removes nothing the transcript carries. " +
+          "Its other consumers are the sed-edit analysers, the safe-flag table lookup and the cd/git detectors, all of which answer the same way for `echo`, `chmod`, `mkdir`, `cd` and `pwd` whether " +
+          "they get a command node or nothing. " +
+          "Graded instead by strangle/parser-parity.test.ts, which runs this walker over the tree of every one of 2,166 command strings and compares the node it selects — including the three " +
+          "cases the recursion is actually about: a `variable_assignment` whose command is a later sibling, a `pipeline` descended member by member, and a `redirected_statement` whose command is " +
+          "found by a direct child search rather than by descent.",
       },
       {
         // `function fEe(e)` — argv extraction: the words a permission rule
@@ -5867,7 +5909,15 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
         owned: "commandArgv",
         derive: pick("shell-parser", "commandArgv", new RegExp(`function (${ID})\\(${ID}\\)\\{if\\(${ID}\\.type==="declaration_command"\\)`)),
         declare: (name, owned) => `var ${name}=${owned};`,
-        coverage: ["bash-tool", "perm-rule-deny"],
+        coverage: [],
+        darkOver: ["bash-tool", "hooks-cwd-change"],
+        darkReason: C13A_MEASURED +
+          "downstream of `findCommandNode` and dark for its reason: permission rules match on the command STRING, and argv contributes only the wrapper-stripped candidate that no corpus command " +
+          "produces. The twin is the sharper of the two — it returns a real array of real strings, truncated after the command NAME — precisely so a red would mean the ARGUMENTS are read rather " +
+          "than that the walk happened; nothing moved on any of the sixteen. " +
+          "Graded instead by strangle/parser-parity.test.ts, which compares the extracted argv against upstream's for every command string in the corpus that has a command node at all, " +
+          "including the two rules that make this function more than a `map`: a concatenation containing a substitution is kept as RAW TEXT rather than joined, and a bare substitution argument " +
+          "STOPS the walk, so everything after it is deliberately absent.",
       },
     ],
     imports: [
