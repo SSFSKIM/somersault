@@ -267,8 +267,13 @@ for (const s of SCENARIOS) {
   // ever written down. So the sidecar records BOTH: the declaration, and a hash
   // of the baseline seed that was applied beneath it. A sidecar written before
   // this fix carries no hash; that is a FINDING named as such, not a silent
-  // equality, and the corpus's sidecars were backfilled in the same commit that
-  // introduced the field.
+  // equality, and the corpus's 63 sidecars were backfilled when the field landed.
+  // BACKFILLED LOCALLY, not committed: `cassettes/` is gitignored, so the corpus
+  // is per-checkout state and a fresh clone has no sidecars at all. What the
+  // repository carries is this rule, not the artifacts it graded — a checkout
+  // that re-records gets hashed sidecars from the recording itself, and one that
+  // replays somebody else's cassettes gets the pre-F4 finding by name, which is
+  // the honest answer for a world nobody wrote down.
   const declared = s.precondition ?? EMPTY_PRECONDITION;
   const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
   const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
