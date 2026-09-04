@@ -142,8 +142,30 @@ try {
     check("the census records a directory symlink as a leaf and nothing beneath it",
       entries.includes("elsewhere") && entries.includes("own.txt") && !entries.some((k) => k.startsWith("elsewhere/")),
       entries.join(", "));
+
+    // …AND SO IS A SYMLINKED `.jsonl`, in the SECOND walk — the transcript
+    // census under `projects/`, which read `isDirectory()` alone. A link to a
+    // file is not a directory, so it fell through to the queue and
+    // `readFileSync` FOLLOWED it: another file's ids tallied as this config
+    // dir's. A dangling one threw, inside a reset. The first round of this fix
+    // took the directory walk only, and its commit claimed the census "no
+    // longer walks through one" — true of directory links alone.
+    const proj = join(c, "projects", "-box-sandbox-links");
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(outside, "elsewhere.jsonl"), JSON.stringify({ type: "user", linkedOnly: "cafebabecafebabe" }) + "\n");
+    symlinkSync(join(outside, "elsewhere.jsonl"), join(proj, "linked.jsonl"));
+    symlinkSync(join(outside, "never-existed.jsonl"), join(proj, "dangling.jsonl"));
+    writeFileSync(join(proj, "own.jsonl"), JSON.stringify({ type: "user", ownOnly: "0123456789ab" }) + "\n");
+    const linkCensus = join(box, "census-links.json");
+    censusConfigDir(c, linkCensus, PIN);
+    const shapes = Object.keys((JSON.parse(readFileSync(linkCensus, "utf8")) as { idShapes: Record<string, unknown> }).idShapes);
+    check("a symlinked .jsonl is neither read through by the transcript census nor fatal when it dangles",
+      shapes.includes("ownOnly") && !shapes.includes("linkedOnly"), shapes.join(", "));
+
     wipeConfigDir(c);
     check("…and the wipe removes the link itself", readdirSync(c).length === 0);
+    check("…including the linked transcript, whose target survives the wipe",
+      readFileSync(join(outside, "elsewhere.jsonl"), "utf8").includes("linkedOnly"));
     check("…leaving the external tree it pointed at untouched, mode and contents",
       (lstatSync(join(outside, "sub")).mode & 0o777) === 0o500 && readFileSync(join(outside, "sub", "keepme"), "utf8") === "external",
       `mode ${(lstatSync(join(outside, "sub")).mode & 0o777).toString(8)}`);

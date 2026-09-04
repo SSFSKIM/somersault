@@ -146,7 +146,19 @@ function tallyIdShapes(configDir: string, doc: ConfigCensus): void {
   const find = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const abs = join(dir, name);
-      if (lstatSync(abs).isDirectory()) find(abs);
+      const st = lstatSync(abs);
+      // A SYMLINK IS A LEAF IN THIS WALK TOO. `lstat().isDirectory()` is false
+      // for one, so a symlinked `.jsonl` fell to the branch below, was queued,
+      // and `readFileSync` FOLLOWED it — tallying another file's ids as this
+      // config dir's, and throwing inside the reset if the link dangled. The
+      // directory walk above already states the rule; the two walks must not
+      // disagree about what a link is.
+      //
+      // Nothing creates one here today: the engine writes no links into its
+      // config dir and `SeedFile` has no link kind, so this is a guard on a
+      // shape the harness could grow rather than a fault anything has produced.
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) find(abs);
       else if (name.endsWith(".jsonl")) files.push(abs);
     }
   };

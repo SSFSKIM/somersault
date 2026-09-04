@@ -4758,7 +4758,10 @@ re-recorded once, deliberately, because its declaration changed.
 
 Five minor items landed with it. The wipe's permission restore and both census walks used `statSync`
 and so followed a directory symlink out of the tree — chmodding somebody else's directory `0o700` and
-tallying its contents as config-dir writes; all three now `lstat` and treat a link as a leaf. The
+tallying its contents as config-dir writes; all three now `lstat` and treat a link as a leaf. (Only
+for DIRECTORY links, as the verification round found: the transcript walk tested `isDirectory()`
+alone, which is false for a link to a file, so a symlinked `.jsonl` was still read through and a
+dangling one still threw. Fix round 2 makes a symlink a leaf there too.) The
 inventory's `why` column was written by generation and read by nobody, so an `UNEXPLAINED` placeholder
 passed `--check`; the check now refuses it, compares the committed reason against the map, and refuses
 a declared floor of zero. The precondition sidecar recorded the DECLARATION only, while the applied

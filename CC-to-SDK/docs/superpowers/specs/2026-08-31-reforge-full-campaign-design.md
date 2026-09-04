@@ -1488,6 +1488,10 @@ Pending — written at finish.
     Two controls: a symlink to a scratch external directory survives the wipe with its mode and
     contents untouched, and the census records the link and nothing beneath it. Driven red: the census
     reported `elsewhere/sub`, `elsewhere/sub/keepme`, and the external directory came back mode `700`.
+    *(Half true when written, corrected by the verification round — see the fix-round-2 note: the
+    transcript walk switched to `lstat` but still tested only `isDirectory()`, so a symlinked `.jsonl`
+    was queued and READ THROUGH, and a dangling one threw inside the reset. A symlink is a leaf of
+    that walk now too, with a third control.)*
   - **F3 — the inventory's `why` column was written and never read** (the C11a class, one artifact
     over). `extract-config-inventory.ts` generated `why: … ?? "UNEXPLAINED — …"` for every excluded
     pattern, and `--check` compared only `kind` and `graded`. Demonstrated: a fixture row carrying the
