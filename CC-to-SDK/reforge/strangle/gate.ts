@@ -134,6 +134,34 @@ for (const [label, argv] of [
   // holder refusing by name, a signalled holder releasing — are facts about
   // pids and signals that no in-process fake has.
   ["one writer at a time over sandbox/ + config/", ["src/lock.test.ts"]],
+  // C13c/W10c's third graded surface, and it belongs in this block for the same
+  // reason the two above it do: it is a claim about the state a run leaves, and
+  // a surface that could not tell a deliberate detachment from a leak — or that
+  // picked up the operator's browser — would redden scenarios for a reason that
+  // is not behaviour. Every control leaks a REAL process rather than a fake,
+  // because two of the facts under test (an orphan whose lineage is gone, a
+  // child that exits between two samples) have no in-process equivalent.
+  ["process supervision names a leak and drops a stranger", ["src/supervision.test.ts"]],
+  // …and the child those scenarios are graded against. Its output is a pure
+  // function of its argv, which is what lets a scenario assert the OUTPUT rather
+  // than that something ran; the control matrix is what says each axis moves the
+  // field it owns and no other, including under the X6 allowlisted environment
+  // the engine actually gives its shells.
+  ["the scripted child does what its argv declares", ["w10/child.test.ts"]],
+  // The rewrite that makes the 45 s stall detector and the 1.5 s kill backstop
+  // affordable. It edits an engine that is then GRADED, which is the one class
+  // of change a differential harness cannot catch by itself — a wrong edit
+  // applies to both sides and both agree — so every control here is about a
+  // REFUSAL: a moved use site, a second definition of the same binding, two use
+  // sites that disagree, and bytes that are not the declarator the derivation
+  // reported.
+  ["shell-deadline derivation refuses rather than guessing", ["w10/timers.test.ts"]],
+  // C13c/W10c's population under test, and the TWELFTH pin-keyed fixture: the
+  // six shell deadlines across seven constants, each located by the SHAPE OF ITS
+  // USE rather than by a minified name, plus the seven interactive-prompt
+  // patterns the stall detector's other input is made of — so the scripted
+  // child's `--prompt-tail` is checked against the artifact instead of believed.
+  ["shell-timers fixture matches the pin", ["research/tools/extract-shell-timers.ts", "--check"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
   // The hook wave's population under test, and the third pin-keyed fixture. W5
   // enumerated "the events that exist" by judgment twice and was wrong twice —
