@@ -92,6 +92,19 @@ Replays are fully offline — record once, grade forever at zero API cost. That
 property is what makes a long-running reimplementation fleet affordable: the
 fleet loops against cassettes; only new workload recordings spend tokens.
 
+**One writer at a time.** `sandbox/`, `config/` and `build/` are one machine, and
+every suite calls `resetSandbox()`, which wipes two of them. So the first reset in
+a process takes `reforge/.sandbox.lock` (gitignored) and a second harness process
+is REFUSED, by name: `the reforge sandbox is held by pid <n> — <argv>`. That
+refusal means a sibling is running — find it (`ps -p <n> -o pid,etime,command`)
+and wait for it or stop it. **Do not delete the lock file by hand while that pid
+is alive**; deleting it does not stop the other writer, it only removes the thing
+that was telling you about it. A pid that is *gone* needs no help either: the next
+acquirer takes the lock over and says so, which is what a SIGKILLed gate leaves
+behind. The gate takes the lock for its whole run and its suite children inherit
+the owner's pid through the environment, so they are the gate's own serialized
+work rather than second writers (`src/lock.ts`).
+
 ## M0 status (2026-08-24)
 
 | cell | claim | status |

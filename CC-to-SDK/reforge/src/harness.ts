@@ -3,6 +3,7 @@
 // before sending the next user message), sandbox reset, and a query driver.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { ENGINE_VERSION } from "./pin.js";
+import { acquireSandboxLock } from "./lock.js";
 import { censusConfigDir } from "./observed.js";
 import { applyPrecondition, EMPTY_PRECONDITION, wipeConfigDir, type ConfigPrecondition } from "./precondition.js";
 import { join } from "node:path";
@@ -152,6 +153,12 @@ export function baseOptions(ctx: ScenarioContext): Options {
  * input, and the config half of the state surface (§3.2) cannot grade a
  * directory whose contents are three days of history.
  *
+ * AND IT IS THE HARNESS'S ONE CHOKE POINT, which is why the single-writer lock
+ * is taken here (`src/lock.ts`). Every suite in the tree resets before it runs,
+ * so a process that has reset is a process that has already destroyed whatever
+ * a sibling was measuring. The lock refuses that before the wipe rather than
+ * reporting it afterwards as an engine difference.
+ *
  * The wipe is total because CONFIG_DIR is entirely derived — nothing is
  * committed there and the engine creates what it needs. What the ENGINE writes
  * is nonetheless a measured population rather than an assumption: every reset
@@ -162,6 +169,7 @@ export function baseOptions(ctx: ScenarioContext): Options {
  * a seventh family would otherwise be seen by nothing.
  */
 export function resetSandbox(precondition: ConfigPrecondition = EMPTY_PRECONDITION): void {
+  acquireSandboxLock("resetSandbox (sandbox/ + config/)");
   mkdirSync(SANDBOX, { recursive: true });
   for (const entry of readdirSync(SANDBOX)) rmSync(join(SANDBOX, entry), { recursive: true, force: true });
   censusConfigDir(CONFIG_DIR, CONFIG_CENSUS_PATH, ENGINE_VERSION);

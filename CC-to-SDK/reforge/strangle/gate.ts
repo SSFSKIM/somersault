@@ -40,10 +40,20 @@
 //
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx strangle/gate.ts
 import { spawnSync } from "node:child_process";
+import { acquireSandboxLock } from "../src/lock.js";
 import { REFORGE_ROOT } from "../src/runTurn.js";
 import { combinedOutput, relayFailure, relayOutput } from "../m2/relay.js";
 import { CHUNK_REPLACEMENTS, SPLICES } from "./manifest.js";
 import { classifyReplay, darkVerdict, runnerFor, type ReplayOutcome } from "./runners.js";
+
+// THE SANDBOX IS TAKEN FOR THE WHOLE RUN, not per phase. The gate spawns dozens
+// of suites over one to three hours, each of which resets `sandbox/`+`config/`;
+// a sibling harness process that slipped in between two phases would corrupt a
+// measurement nobody was watching. Acquiring here means the refusal happens at
+// second zero rather than at minute ninety, and the marker this sets in
+// `process.env` is what tells every suite below that it is the gate's own work
+// rather than a second writer (`src/lock.ts`).
+acquireSandboxLock("the strangler gate");
 
 // build.ts boot-checks the graph it writes, so a build that exits 0 has already
 // proven it boots at the pinned version; the gate only has to relay the failure.
@@ -109,6 +119,14 @@ for (const [label, argv] of [
   // watched doing what its name says — and the wipe is watched surviving the one
   // fault built to defeat it (a project directory with the write bit off).
   ["config precondition + fs faults do what they name", ["src/precondition.test.ts"]],
+  // H1's single-writer lock, and it belongs beside the precondition for the
+  // same reason: both are about the DECLARED state a run starts from, and a
+  // sibling harness process wiping `sandbox/`+`config/` mid-measurement
+  // destroys that declaration exactly as surely as a wrong seed would. The
+  // controls run in real processes because two of the three facts — a live
+  // holder refusing by name, a signalled holder releasing — are facts about
+  // pids and signals that no in-process fake has.
+  ["one writer at a time over sandbox/ + config/", ["src/lock.test.ts"]],
   ["gate-defaults fixture matches the pin", ["research/tools/extract-gate-defaults.ts", "--check"]],
   // The hook wave's population under test, and the third pin-keyed fixture. W5
   // enumerated "the events that exist" by judgment twice and was wrong twice —
