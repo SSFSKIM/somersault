@@ -1,0 +1,111 @@
+{
+  "engineVersion": "2.1.251",
+  "chunk": {
+    "name": "chunk-fy12d89p.js",
+    "bytes": 3995555
+  },
+  "deadlineGroups": [
+    "background-hint",
+    "progress-cadence",
+    "output-file-watchdog",
+    "stall-detector",
+    "kill-escalation"
+  ],
+  "deadlines": [
+    {
+      "role": "background-hint",
+      "deadline": "background-hint",
+      "binding": "kzt",
+      "value": 2000,
+      "valueOffset": 3831064,
+      "useOffsets": [
+        3854665,
+        3853301
+      ],
+      "effect": "the elapsed-seconds gate after which the executor arms auto-backgrounding and yields `{kind:\"background_hint\", toolUseId}` on the progress channel"
+    },
+    {
+      "role": "progress-cadence",
+      "deadline": "progress-cadence",
+      "binding": "$Kt",
+      "value": 1000,
+      "valueOffset": 96613,
+      "useOffsets": [
+        96865
+      ],
+      "effect": "the interval on which the shared poller calls `pollProgress()` on every registered output handle"
+    },
+    {
+      "role": "output-file-watchdog",
+      "deadline": "output-file-watchdog",
+      "binding": "qKt",
+      "value": 5000,
+      "valueOffset": 100833,
+      "useOffsets": [
+        103218
+      ],
+      "effect": "the interval on which a backgrounded command re-verifies its output file, killing the shell when it was replaced or removed"
+    },
+    {
+      "role": "stall-poll",
+      "deadline": "stall-detector",
+      "binding": "plr",
+      "value": 5000,
+      "valueOffset": 3790001,
+      "useOffsets": [
+        3791142
+      ],
+      "effect": "how often the stall detector samples the output file's size"
+    },
+    {
+      "role": "stall-idle",
+      "deadline": "stall-detector",
+      "binding": "mlr",
+      "value": 45000,
+      "valueOffset": 3790010,
+      "useOffsets": [
+        3790560
+      ],
+      "effect": "how long the output must be unchanged before a last line matching the interactive-prompt patterns raises `task_local_shell_stall_detected` and a task notification"
+    },
+    {
+      "role": "sigterm-to-sigkill",
+      "deadline": "kill-escalation",
+      "binding": "WKt",
+      "value": 1500,
+      "valueOffset": 100498,
+      "useOffsets": [
+        104980
+      ],
+      "effect": "how long after SIGTERM the executor escalates to a process-group SIGKILL"
+    },
+    {
+      "role": "post-kill-liveness-poll",
+      "deadline": "kill-escalation",
+      "binding": "zKt",
+      "value": 100,
+      "valueOffset": 100507,
+      "useOffsets": [
+        105151
+      ],
+      "effect": "how often the executor re-checks whether the SIGTERMed process is gone, so it can cancel the SIGKILL backstop"
+    }
+  ],
+  "promptPatterns": {
+    "binding": "ylr",
+    "patterns": [
+      "/\\(y\\/n\\)/i",
+      "/\\[y\\/n\\]/i",
+      "/\\(yes\\/no\\)/i",
+      "/\\b(?:Do you|Would you|Shall I|Are you sure|Ready to)\\b.*\\? *$/i",
+      "/Press (any key|Enter)/i",
+      "/Continue\\?/i",
+      "/Overwrite\\?/i"
+    ],
+    "childTail": "Continue? (y/n) ",
+    "childTailMatches": [
+      "/\\(y\\/n\\)/i",
+      "/Continue\\?/i"
+    ]
+  }
+}
