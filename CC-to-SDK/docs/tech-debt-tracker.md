@@ -764,3 +764,32 @@ engine-real and re-seals the sidecar when the proxy's three signals come back cl
 mechanism for the same reason they are on this list — no sidecar to re-seal, and nothing that would
 write one — so the helper this entry asks for is still the fix, and it is now the ONLY remaining
 re-record cost of a baseline change.
+
+## 2026-09-05 — a corpus scenario that REFUSES TO GRADE is read by the liveness loop as a sabotage observed
+
+**Source:** found in passing by H1 (the precondition re-seal) · `reforge/m1/run.ts` (the refusal and the
+verdict block), `reforge/strangle/runners.ts` (`classifyReplay`), `reforge/strangle/gate.ts` (the
+per-target liveness loop).
+
+**What.** `classifyReplay` reads a runner's own verdict line: `FAIL  <tag>` is RED, `PASS  <tag>` is
+GREEN, anything else is INCONCLUSIVE — a three-outcome rule C9 introduced precisely so that "the
+runner died" could not be mistaken for evidence. But a corpus scenario can now print `FAIL  <tag>`
+for a HARNESS reason rather than a behavioural one: a drifted precondition sidecar has failed the
+scenario by name since C12a, and H1 added a refusal-before-replay for a MALFORMED one (no
+`baselineSha256`, or no sidecar at all). In the LIVE direction the liveness loop requires RED, so a
+scenario that refused to grade would satisfy the row without any sabotage having been observed at
+all. The DARK direction is safe — it requires GREEN, so a refusal fails the row loudly, which is the
+correct outcome.
+
+**Cost if nobody pays it.** A row could report "this target is live" on a scenario that graded
+nothing. It is latent rather than live today: the drift census is 0 of 63 (measured 2026-09-05), and
+a refusal is loud in the log — but the gate's own summary would read PASS, which is the direction
+that matters. The vacuity is the same shape as the one the three-outcome rule was written for, one
+layer in.
+
+**Fix when:** the next wave that touches the verdict vocabulary. The shape is small — the runner
+prints a THIRD verdict (a refusal is neither PASS nor FAIL for the tag), `classifyReplay` maps it to
+INCONCLUSIVE, and `m2/relay.ts` learns the line so the gate still names it. It is not taken here
+because the vocabulary is read by four layers (`m1/run.ts`, `m2/all.ts`, `strangle/gate.ts`,
+`strangle/attest.ts`) and changing it under a sibling worker's in-flight wave is a worse trade than
+recording it.
