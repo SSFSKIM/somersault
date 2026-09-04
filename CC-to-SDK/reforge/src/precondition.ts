@@ -200,6 +200,18 @@ export interface RecordedPrecondition {
   /** `baselineSeedHash(engineVersion)` at record time */
   baselineSha256: string;
   /**
+   * C13c/W10c — the children the scenario DECLARED it would leave running when
+   * this cassette was recorded (`Scenario.detachedChildren`).
+   *
+   * Recorded beside the cassette for the same reason the config declaration is:
+   * a replay reproduces the world the recording was made against, and "what the
+   * engine was allowed to leave running" is part of that world. Absent means the
+   * cassette predates the declaration or the scenario declared nothing — which
+   * are the same statement, "this run leaves nothing behind", and neither drifts
+   * against a scenario that still declares nothing.
+   */
+  detached?: string[];
+  /**
    * H1 — set when this sidecar was written by a RE-SEAL rather than by a
    * recording: the identity of the sidecar it replaced, proven redundant by a
    * clean strict replay of the new declaration against the same cassette
