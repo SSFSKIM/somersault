@@ -4972,8 +4972,12 @@ a request that was made, so an unserved one means the engine stopped asking.
 **A refusal names the first failing signal with enough in it to act on.** For an
 unmatched or positionally-served request: its method, path, the first ~200 bytes
 of its canonical (scrubbed) body, and — for a positional serve — the entry it
-was handed and the byte at which the two canonical bodies stop matching. For
-unserved entries: their `seq`s.
+was handed and the byte at which the two canonical bodies stop matching. When
+those bodies are IDENTICAL the refusal says so instead, because that is a
+different finding: the match hash covers method, path and the canonical body, so
+a request that fell through to the fallback with an identical body did not drift
+— the entry that would have matched it was already consumed, i.e. the engine
+repeated a request the recording made once. For unserved entries: their `seq`s.
 
 **On success the sidecar records its provenance**: `resealedFrom` carries the
 sha256 of the declaration it replaced and that sidecar's baseline hash. The
@@ -5089,3 +5093,44 @@ is a recording by definition. The seven primary cassettes recorded by runners
 other than `m1/run.ts` (`m2-fault-*` ×5, `m2-raw`, `w13-signals`) carry no
 sidecar at all, so they cannot be re-sealed either — that debt is logged and
 flagged on C14a, and the re-seal narrows its fix rather than closing it.
+
+### What was measured, and the gate that is armed rather than run
+
+The **build-free determinism block was run phase by phase**, driven from the
+gate's own argv list rather than a hand-copied one: **24 of 24 PASS, zero FAIL**,
+including this unit's `one writer at a time over sandbox/ + config/` and the
+sibling wave's `shell-parser fixture matches the pin`. The **re-seal control
+phase** is 15 checks green in 2 s. The **corpus drift census** is 0 of 63. The
+**tagged re-seal** was exercised against a real corpus sidecar
+(`store-read-only`), which re-sealed and now carries provenance; the
+**malformed-sidecar refusal** was watched refusing on a sidecar stripped of its
+hash and restored byte-identical.
+
+**The full gate was not run inline, and the reason is a measurement rather than a
+preference.** A sibling worker (C13a) landed a seven-export chunk replacement
+during this unit and was still mid-wave in the same checkout: its attestation
+registration was uncommitted and `attestation/coverage.md` on disk was three days
+old, so `attest --check` would have been red for its reason — and the gate holds
+the sandbox lock for one to three hours, which would have refused the very
+`attest.ts` run that regenerates the report. Taking the lock at that moment
+produces a red phase that the lock itself makes unfixable. So the gate is ARMED
+instead: a detached launcher polls the checkout and fires once, when no harness
+process is running, the lock is free, and no tracked file under `reforge/` is
+modified — which is the only reliable signal that a sibling's artifacts agree
+with each other. It writes `build/gate-<yyyymmdd-hhmm>.log` through this unit's
+own archive rider.
+
+**The count that run must show** is **158** inside the `=== strangler gate ===`
+block: the F7 baseline of 147, plus 9 from C13a (seven chunk-export liveness rows
+and two phases — the shell-parser fixture and its parity oracle), plus 2 from
+here (the lock's controls in the determinism block, the re-seal's in the
+auxiliary block). 24 + 3 + 9 + 1 + 112 + 1 + 1 + 7, counted from the phase lists
+and the manifest.
+
+**One artefact of the shared checkout, recorded because the commit log will
+otherwise mislead:** `git add` stages a path's CURRENT contents, so two of
+C13a's in-flight edits were swept into H1 commits — the two gate phases above
+into `9d1c172`, and `attest.ts`'s contract-evidence section into `511820f`.
+Nothing was lost and both are on `main`; the attribution is simply wrong, and the
+lesson is to diff a shared file before staging it rather than to trust that only
+your own edit is in it.

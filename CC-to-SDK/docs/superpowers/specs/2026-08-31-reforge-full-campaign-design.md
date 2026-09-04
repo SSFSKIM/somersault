@@ -1524,6 +1524,31 @@ Pending — written at finish.
     model, and every new scenario. And the seven primary cassettes written by runners other than
     `m1/run.ts` carry no sidecar, so they cannot be re-sealed — the re-seal NARROWS that debt (logged,
     flagged on C14a) rather than closing it.
+  - **What was measured, and the gate that is ARMED rather than run.** The build-free determinism
+    block was run phase by phase from the gate's own argv list: **24 of 24 PASS, zero FAIL**,
+    including this unit's lock phase and the sibling wave's shell-parser fixture. The re-seal control
+    phase is 15 checks green in 2 s; the tagged re-seal was exercised against a real corpus sidecar
+    (`store-read-only`, re-sealed with provenance) and the malformed-sidecar refusal was watched
+    refusing. **The full gate was not run inline for a measured reason**: C13a landed a seven-export
+    chunk replacement mid-unit and was still uncommitted in the same checkout, with
+    `attestation/coverage.md` three days stale — so `attest --check` would have been red for its
+    reason, and a gate holding the sandbox lock for one to three hours would have refused the very
+    `attest.ts` run that fixes it. The gate is armed on a detached launcher that fires once the
+    checkout is quiet AND clean (no harness process, no lock, no modified tracked file under
+    `reforge/`), and archives itself through this unit's own rider. **The count that run must show is
+    158**: the F7 baseline of 147 + 9 from C13a (seven chunk-export liveness rows, the shell-parser
+    fixture, its parity oracle) + 2 from H1. A `[parent-impact]` on the brief's gate item, which was
+    written against a 147 baseline that a concurrent worker had already moved.
+  - **A shared-checkout artefact, recorded because the commit log misleads without it:** `git add`
+    stages a path's current contents, so two of C13a's in-flight edits were swept into H1 commits —
+    the two gate phases into `9d1c172`, `attest.ts`'s contract-evidence section into `511820f`.
+    Nothing lost, both on `main`, attribution wrong. Diff a shared file before staging it.
+  - **One debt found in passing and logged** (`CC-to-SDK/docs/tech-debt-tracker.md`, 2026-09-05): a
+    corpus scenario that REFUSES TO GRADE prints `FAIL  <tag>`, and `classifyReplay` reads that as
+    RED — so in the liveness loop's LIVE direction a row could be satisfied by a scenario that graded
+    nothing. Latent (drift census 0 of 63), loud in the log, and safe in the DARK direction, which
+    requires GREEN. The fix is a third verdict word, which is read by four layers and was not worth
+    changing under a sibling's in-flight wave.
 
 - 2026-09-03 (**C12a / W9a FIX ROUND 2 — a verification of the fix round; the load-bearing finding is
   that the round corrected a wrong mechanism by writing a different wrong one**): the fix round below
