@@ -4803,6 +4803,78 @@ with 560 exclusions, zero un-adjudicated**. The filesystem-faults phase at **20 
 before this round. The config-dir inventory at **26 patterns over 3,449 resets, 17 admitted**, and the
 eager-flush control still firing in both directions.
 
+### Fix round 2 (2026-09-03) — what a verification of the fix round found
+
+The fix round above was verified against the bundle and against its own artifacts. Five findings, and
+the first of them is the reason this section exists.
+
+**X1 — the round corrected a wrong mechanism claim by writing a different wrong one.** F6(b) replaced
+"the headless resume does not walk `parentUuid`" with "it walks, sees the repeat, logs `Cycle detected
+in parentUuid chain … Returning partial transcript` and fires `tengu_chain_parent_cycle`", and BOUND
+C12b to reproduce that event. The walk is real; the event is not. `BSe`'s loop-top cycle check
+(@212711) is the only site of that log and that codeword in the bundle, and `d` is only ever assigned
+a not-yet-visited record — the parent-lookup guard (@212937) keeps `e.get(parentUuid)` only when the
+parent is unvisited, and otherwise hands over to `QVt` (@214473), which skips everything already
+visited. The already-visited parent is diverted before the cycle check can see it, in `BSe` and in
+each of its seven callers, all of which enter with a fresh visited set. Simulated on `BSe`'s own
+extracted bytes with this scenario's seed and fault: one-second spacing recovers 4 of 4 and fires
+`tengu_chain_timestamp_fallback` once, logging nothing; six-second spacing recovers 2 of 4 with no
+event and no log at all. Everything else the round measured — `YVt` = 5,000 ms, the
+nearest-not-yet-visited rule, the 2-of-4 number, the seed's load-bearing spacing — holds. Corrected at
+the six places that asserted the dead arm, and the C12b binding is restated: the reader reproduces the
+guard ORDERING and the fallback, and does NOT fire the cycle codeword.
+
+**And the pattern, which is what to carry forward.** This is the second wave in two whose record gave
+a MECHANISM the pinned bytes do not support, and both failed the same way: a correct OBSERVATION was
+explained by the first mechanism that fit it, and the explanation was written down with the confidence
+the observation had earned. C16b claimed the headless SIGTERM handler's abort short-circuits the hang
+guard — true of SIGINT and of nothing else, because the two paths abort different controllers. C12a
+claimed a cycle-detection event fires — true of the walk, false of the event, because a guard one
+branch earlier makes that branch unreachable. In both cases the OUTCOME was measured and right (the
+scenario grades nothing; the transcript survives) and the causal story attached to it was never read
+back out of the bundle. A measured outcome does not license an unmeasured mechanism: the two are
+separate claims, and only one of them was tested. The wave that writes "X happens because the engine
+does Y" owes Y its own offsets, and where the mechanism is a NEGATIVE — a branch that cannot be
+reached — it owes the guard that makes it so, not just the absence of a log line.
+
+**X2 — the F7 relay fix read `stdout` alone**, so a covering runner that dies before its verdict block
+(a module-load throw on the instrumented graph writes to stderr; a spawn that never ran writes nowhere)
+still produced a red tag with nothing under it. All four relays — `strangle/attest.ts`,
+`strangle/gate.ts`'s attestation and equivalence phases, and `m2/all.ts`, which is the first hop and
+had the identical defect — now read stdout AND stderr, and when the vocabulary recognises nothing they
+print one marked fallback line: the last three non-empty lines of the combined output plus the spawn's
+own error. Marked, because it has to survive the next hop — `RELAY_FALLBACK_MARKER` is part of
+`REASON_RE`, so every layer above relays it unchanged. `m2/relay.test.ts` 20 → **26 checks**, the new
+six driven by a `ReferenceError` on stderr; reverting the combined read fails 3 of them.
+
+**X3 — F2's "a symlink is a leaf" held for directory links only.** The transcript census
+(`tallyIdShapes`) lstats and then tests `isDirectory()`, which is false for a link to a FILE — so a
+symlinked `.jsonl` under `projects/` was queued and `readFileSync` followed it, and a dangling one
+threw ENOENT inside the reset. A symlink is a leaf of that walk now too, with the comment stating that
+nothing creates one here today. `src/precondition.test.ts` 20 → **22 checks**; with the guard removed
+the dangling link crashes the census and the live link's ids are tallied as this config dir's.
+
+**X4 — the inventory's `counts` block was written and never compared**, which is F3 one field over and
+the class this campaign keeps finding: a check comparing a subset of what its own generator writes.
+The three counts that are functions of `entries` are recomputed from the committed entries and compared
+exactly; `resetsObserved` cannot be (it records the census the last GENERATION read, 1,773, against the
+3,465 the check reads today) and is checked for being a real observation and reported as a note. Four
+mutations proved it, each restored: a retyped count, a flipped `graded`, a zeroed `resetsObserved`, a
+hand-edited `engineVersion`.
+
+**X5 — one comment.** F4's sidecar note read as a repository fact; `cassettes/` is gitignored, so the
+63-sidecar backfill was local state and what the repository carries is the rule.
+
+**And one debt** (`CC-to-SDK/docs/tech-debt-tracker.md`, flagged on the spec's C14a row): the sidecar
+is written and compared by `m1/run.ts` alone, so the seven primary cassettes recorded by other runners
+(`m2-fault-*` ×5, `m2-raw`, `w13-signals`) are recorded against the baseline seed — all three runners
+call `resetSandbox()` — and record no hash of it. For those 7 of 70, a baseline change without a pin
+bump would replay green against a world the cassette does not answer. C14a is the wave that changes the
+baseline.
+
+No gate run in this round: it changes prose, two logging paths, one census guard and one `--check`, and
+the orchestrator runs the gate over the merged tree.
+
 ### Seam notes
 
 - **C12b (the reader)** gets the fault surface and the projection. Its synthetic transcript corpus
