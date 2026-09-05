@@ -5094,7 +5094,7 @@ other than `m1/run.ts` (`m2-fault-*` ×5, `m2-raw`, `w13-signals`) carry no
 sidecar at all, so they cannot be re-sealed either — that debt is logged and
 flagged on C14a, and the re-seal narrows its fix rather than closing it.
 
-### What was measured, and the gate that is armed rather than run
+### What was measured, and the gate
 
 The **build-free determinism block was run phase by phase**, driven from the
 gate's own argv list rather than a hand-copied one: **24 of 24 PASS, zero FAIL**,
@@ -5106,28 +5106,73 @@ phase** is 15 checks green in 2 s. The **corpus drift census** is 0 of 63. The
 **malformed-sidecar refusal** was watched refusing on a sidecar stripped of its
 hash and restored byte-identical.
 
-**The full gate was not run inline, and the reason is a measurement rather than a
-preference.** A sibling worker (C13a) landed a seven-export chunk replacement
+**The gate ran, but not when this unit was ready for it, and the delay is a
+measurement rather than a preference.** A sibling worker (C13a) landed a seven-export chunk replacement
 during this unit and was still mid-wave in the same checkout: its attestation
 registration was uncommitted and `attestation/coverage.md` on disk was three days
 old, so `attest --check` would have been red for its reason — and the gate holds
 the sandbox lock for one to three hours, which would have refused the very
 `attest.ts` run that regenerates the report. Taking the lock at that moment
-produces a red phase that the lock itself makes unfixable. So the gate is ARMED
-instead: a detached launcher polls the checkout and fires once, when no harness
-process is running, the lock is free, no tracked file under `reforge/` is
-modified — a sibling's wave being COMMITTED is the only reliable signal that its
-artifacts agree with each other — and no gate archive written since the launcher
-started already carries a verdict, because if the sibling gated the merged tree
-first then a second three-hour run measures the same thing twice. It writes
-`build/gate-<yyyymmdd-hhmm>.log` through this unit's own archive rider.
+produces a red phase that the lock itself makes unfixable. So the gate was ARMED
+rather than launched: a detached launcher polled the checkout and fired once, on
+four conditions — no harness process running, the lock free, no tracked file
+under `reforge/` modified (a sibling's wave being COMMITTED is the only reliable
+signal that its artifacts agree with each other), and no gate archive written
+since the launcher started already carrying a verdict, because if the sibling
+gated the merged tree first then a second three-hour run measures the same thing
+twice. **It fired at 08:16**, ninety minutes after this unit was ready, on the
+first tree that satisfied all four.
 
-**The count that run must show** is **158** inside the `=== strangler gate ===`
-block: the F7 baseline of 147, plus 9 from C13a (seven chunk-export liveness rows
-and two phases — the shell-parser fixture and its parity oracle), plus 2 from
-here (the lock's controls in the determinism block, the re-seal's in the
-auxiliary block). 24 + 3 + 9 + 1 + 112 + 1 + 1 + 7, counted from the phase lists
-and the manifest.
+### The gate
+
+`build/gate-20260905-0816.log` — the first run archived by this unit's own rider —
+**158 phases inside the `=== strangler gate ===` block, 157 PASS, 1 FAIL**, in 75
+minutes over a tree carrying both this unit and two sibling waves. The count is
+exactly the 158 predicted above.
+
+Both new phases passed in situ: `one writer at a time over sandbox/ + config/`
+and `a re-seal proves the stream is unchanged, and refuses when it is not`.
+
+**The result that matters most for the lock is not its own phase.** The gate held
+the sandbox lock for the whole run and spawned 112 liveness targets' worth of
+covering-scenario replays inside that hold; every one of them called
+`resetSandbox()` and every one was recognised as the holder's own work. **Zero
+INCONCLUSIVE across all 112 targets** (13 of them dark rows, graded in the
+opposite direction). Had the environment marker not propagated through
+`spawnSync`, each of those runners would have aborted on a refused acquire and
+graded nothing — which the three-outcome rule reports as INCONCLUSIVE, not RED.
+The mechanism is proven by the absence.
+
+`equivalence (faithful)` is green, and that is where the extracted
+`src/runScenario.ts` is verified corpus-wide: the phase only passes when all six
+of `m2/all.ts`'s suites pass, the first of which is the 63-scenario corpus under
+the strangled build. `coverage attestation` is green too — 985/4682 executed,
+3060 by contract suite, 637 excluded. It moved from the last recorded numbers,
+but for the sibling wave's reasons (a new attested module and a second evidence
+channel), not for this unit's: H1 touches no splice and no attested module.
+
+**The one FAIL, and what it was.** `config-dir inventory matches the pin and the
+census` named three undeclared paths. Two were `sessions/<pid>.json` and its
+`.key` — the tripwire doing exactly what its own comment promises, since
+`generalizePath` has no `<pid>` token ON PURPOSE so a literal pid arrives
+undeclared and reds loudly. They are the residue of an engine child killed
+uncleanly (this session killed a corpus run to hand the lock back to a sibling).
+The census accumulates across every reset ever taken, so an operator's kill would
+otherwise red every future gate in this checkout: the two incident entries were
+dropped from the derived `build/config-observed.json` rather than declared,
+because declaring a literal pid is the thing the un-mintable pattern exists to
+refuse. The third was ours — the inert file the re-seal's positive control seeds
+— and it is now a declared row following the `projects/<slug>/.keep` precedent,
+with a `why` that says outright that the engine never writes it. The phase is
+green on re-run: **27 patterns over 4,979 resets, all declared, 17 admitted by
+the state surface**. The remaining 157 phases were unaffected by any of it.
+
+**The count and where it comes from**: **158** — the F7 baseline of 147, plus 9
+from C13a (seven chunk-export liveness rows and two phases, the shell-parser
+fixture and its parity oracle), plus 2 from here (the lock's controls in the
+determinism block, the re-seal's in the auxiliary block). 24 + 3 + 9 + 1 + 112 +
+1 + 1 + 7, counted from the phase lists and the manifest before the run, and
+matched by it.
 
 **One artefact of the shared checkout, recorded because the commit log will
 otherwise mislead:** `git add` stages a path's CURRENT contents, so two of

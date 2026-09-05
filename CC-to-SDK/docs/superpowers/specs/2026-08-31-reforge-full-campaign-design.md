@@ -1721,7 +1721,30 @@ Pending — written at finish.
     model, and every new scenario. And the seven primary cassettes written by runners other than
     `m1/run.ts` carry no sidecar, so they cannot be re-sealed — the re-seal NARROWS that debt (logged,
     flagged on C14a) rather than closing it.
-  - **What was measured, and the gate that is ARMED rather than run.** The build-free determinism
+  - **THE GATE RAN: 158 phases inside the block, 157 PASS, 1 FAIL, 75 minutes**
+    (`reforge/build/gate-20260905-0816.log`, the first run archived by this unit's own rider). The
+    count is exactly the 158 predicted from the phase lists and the manifest before the run: 147 + 9
+    (C13a) + 2 (H1). Both new phases green in situ. **The lock's real result is not its own phase but
+    an absence**: the gate held the sandbox lock for the whole run, spawned 112 liveness targets'
+    worth of covering replays inside that hold, every one of which calls `resetSandbox()`, and
+    returned ZERO INCONCLUSIVE — had the env marker not propagated through `spawnSync`, each runner
+    would have aborted on a refused acquire and graded nothing, which the three-outcome rule reports
+    as INCONCLUSIVE rather than RED. `equivalence (faithful)` green is where `src/runScenario.ts` is
+    verified corpus-wide (the phase passes only when all six `m2/all.ts` suites do, the first being
+    the 63-scenario corpus). `coverage attestation` green at 985/4682 executed, 3060 by contract
+    suite, 637 excluded — moved from the last recorded numbers for C13a's reasons (a new attested
+    module and a second evidence channel), not for H1's, which touches no splice and no attested
+    module. **The one FAIL was the config-dir tripwire, and all three of its paths were true
+    positives.** Two were `sessions/<pid>.json` and its `.key`: `generalizePath` has no `<pid>` token
+    ON PURPOSE, so a literal pid arrives undeclared and reds — the residue of an engine child killed
+    uncleanly when this session handed the lock back to a sibling. The census accumulates across every
+    reset ever taken, so those two entries were dropped from the derived
+    `build/config-observed.json` rather than declared; declaring a literal pid is what the
+    un-mintable pattern exists to refuse. The third was H1's own: the inert file the re-seal's
+    positive control seeds, now a declared row on the `projects/<slug>/.keep` precedent with a `why`
+    stating that the engine never writes it. Green on re-run: 27 patterns over 4,979 resets, all
+    declared, 17 admitted.
+  - **Why it ran at 08:16 rather than when the unit was ready.** The build-free determinism
     block was run phase by phase from the gate's own argv list: **24 of 24 PASS, zero FAIL**,
     including this unit's lock phase and the sibling wave's shell-parser fixture. The re-seal control
     phase is 15 checks green in 2 s; the tagged re-seal was exercised against a real corpus sidecar
@@ -1730,12 +1753,11 @@ Pending — written at finish.
     chunk replacement mid-unit and was still uncommitted in the same checkout, with
     `attestation/coverage.md` three days stale — so `attest --check` would have been red for its
     reason, and a gate holding the sandbox lock for one to three hours would have refused the very
-    `attest.ts` run that fixes it. The gate is armed on a detached launcher that fires once the
-    checkout is quiet AND clean (no harness process, no lock, no modified tracked file under
-    `reforge/`), and archives itself through this unit's own rider. **The count that run must show is
-    158**: the F7 baseline of 147 + 9 from C13a (seven chunk-export liveness rows, the shell-parser
-    fixture, its parity oracle) + 2 from H1. A `[parent-impact]` on the brief's gate item, which was
-    written against a 147 baseline that a concurrent worker had already moved.
+    `attest.ts` run that fixes it. So the gate was ARMED on a detached launcher rather than launched, and fired ninety minutes later
+    on the first checkout that was quiet AND clean (no harness process, no lock, no modified tracked
+    file under `reforge/`, no verdict already archived by a sibling's own run). A `[parent-impact]`
+    on the brief's gate item stands regardless of the outcome: it was written against a 147 baseline
+    that a concurrent worker had already moved to 156, and the arithmetic is 158.
   - **A shared-checkout artefact, recorded because the commit log misleads without it:** `git add`
     stages a path's current contents, so two of C13a's in-flight edits were swept into H1 commits —
     the two gate phases into `9d1c172`, `attest.ts`'s contract-evidence section into `511820f`.
