@@ -30,7 +30,7 @@ import { resetSandbox, type Scenario, type ScenarioContext } from "../src/harnes
 import { startReplayProxy } from "../src/proxy.js";
 import { CONFIG_DIR, enginePath, REFORGE_ROOT, SANDBOX } from "../src/runTurn.js";
 import { awaitQuiesce, defaultStateRoots } from "../src/state.js";
-import { leaksIn, processBaseline, processSnapshot, type ProcessSnapshot } from "../src/supervision.js";
+import { leaksIn, processBaseline, processSnapshot, reapSurvivors, type ProcessSnapshot } from "../src/supervision.js";
 import { SCENARIOS as M1_SCENARIOS } from "../m1/scenarios.js";
 import { M2C_SCENARIOS } from "../m2c/scenarios.js";
 import { M3_SCENARIOS } from "../m3/scenarios.js";
@@ -74,7 +74,7 @@ const cassetteFor = (tag: string) => join(REFORGE_ROOT, "cassettes", `m1-${tag}.
  * measurement flag through the graded runner would have made the census depend
  * on the thing it is measuring.
  */
-async function replayWithSupervision(s: Scenario, engine: string): Promise<{ snap: ProcessSnapshot; threw: string | null }> {
+async function replayWithSupervision(s: Scenario, engine: string): Promise<{ snap: ProcessSnapshot; threw: string | null; reaped: number }> {
   const cassette = cassetteFor(s.tag);
   const proxy = await startReplayProxy(cassette, join(REFORGE_ROOT, "cassettes", "w10-measure-observed-A.jsonl"));
   const ctx: ScenarioContext = {
@@ -94,8 +94,12 @@ async function replayWithSupervision(s: Scenario, engine: string): Promise<{ sna
   const q = await awaitQuiesce(defaultStateRoots(SANDBOX, CONFIG_DIR));
   if (!q.settled) console.log("    (never quiesced)");
   const snap = await processSnapshot(baseline, { detached: s.detachedChildren, label: s.tag });
+  // Reaped after the snapshot, so the NEXT scenario's baseline is the same world
+  // this one started from — and so the census cannot leave an engine child whose
+  // `sessions/<pid>` files redden a later config-dir inventory.
+  const reaped = reapSurvivors(snap);
   await proxy.close();
-  return { snap, threw };
+  return { snap, threw, reaped };
 }
 
 if (phase === "supervision") {
@@ -107,7 +111,7 @@ if (phase === "supervision") {
 
   const rows: { tag: string; survivors: number; leaks: number; detail: string }[] = [];
   for (const s of targets) {
-    const { snap, threw } = await replayWithSupervision(s, enginePath("engine-real"));
+    const { snap, threw, reaped } = await replayWithSupervision(s, enginePath("engine-real"));
     const leaks = leaksIn(snap);
     rows.push({
       tag: s.tag,
@@ -116,7 +120,7 @@ if (phase === "supervision") {
       detail: snap.survivors.map((x) => `${x.declared === null ? "LEAK" : "declared"} ${x.command.slice(0, 70)}`).join(" | "),
     });
     const mark = leaks.length > 0 ? "LEAK" : snap.survivors.length > 0 ? "declared" : "clean";
-    console.log(`  ${mark.padEnd(9)} ${s.tag.padEnd(28)} ${snap.survivors.length} survivor(s)${threw ? ` [run threw: ${threw}]` : ""}`);
+    console.log(`  ${mark.padEnd(9)} ${s.tag.padEnd(28)} ${snap.survivors.length} survivor(s)${reaped > 0 ? `, ${reaped} reaped` : ""}${threw ? ` [run threw: ${threw}]` : ""}`);
     for (const x of snap.survivors) console.log(`      ${x.declared === null ? "LEAK    " : "declared"} ${x.orphaned ? "orphan " : "child  "} ${x.command.slice(0, 110)}`);
   }
 

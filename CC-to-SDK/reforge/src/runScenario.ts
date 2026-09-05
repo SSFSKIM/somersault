@@ -16,7 +16,7 @@ import { fallbackVerdict, startRecordProxy, startReplayProxy, type CassetteEntry
 import { resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "./harness.js";
 import { CONFIG_DIR, enginePath, SANDBOX } from "./runTurn.js";
 import { awaitQuiesce, defaultStateRoots, stateSnapshot, type StateSnapshot } from "./state.js";
-import { processBaseline, processSnapshot } from "./supervision.js";
+import { processBaseline, processSnapshot, reapSurvivors } from "./supervision.js";
 
 export interface ScenarioRun {
   messages: unknown[];
@@ -91,6 +91,14 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // being a leak.
   const processes = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
   const state = stateSnapshot(roots, messages, processes);
+  // REAPED AFTER THE SNAPSHOT, and this is a correctness requirement rather
+  // than tidiness: side A runs first, so a child it leaves is already running
+  // when side B takes its baseline and B does not see it as new — the two sides
+  // would then diff on a leak BOTH engines produce. Reaping makes each side's
+  // baseline the same world. (It also keeps a leaked engine child from writing
+  // `sessions/<pid>` files that redden a later config-dir inventory.)
+  const reaped = reapSurvivors(processes);
+  if (reaped > 0) console.log(`    supervision ${side}: reaped ${reaped} process(es) the run left behind`);
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallbacks = mode === "replay" ? proxy.fallbacks() : [];

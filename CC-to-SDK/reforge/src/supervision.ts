@@ -249,6 +249,45 @@ export async function processSnapshot(baseline: ProcessBaseline, opts: Supervisi
 /** The survivors nothing declared — the leaks, for a caller that wants to report rather than diff. */
 export const leaksIn = (snap: ProcessSnapshot): Survivor[] => snap.survivors.filter((s) => s.declared === null);
 
+/**
+ * Kill everything the snapshot attributed to this run, and report how many.
+ *
+ * ## Why the graded path must do this, and it is not tidiness
+ *
+ * The surface is a DIFFERENCE against a baseline taken at the start of a run.
+ * Side A runs first; if it leaves a child, that child is ALREADY RUNNING when
+ * side B takes its baseline, so B does not see it as new — and the two sides
+ * diff on a leak that BOTH engines produce. Reaping after the snapshot is what
+ * makes each side's baseline the same world, which is the condition the
+ * comparison was built on.
+ *
+ * ## And the second reason, which is measured
+ *
+ * A leaked ENGINE child writes `sessions/<pid>` files into the harness config
+ * dir, and the config-dir inventory census reads what a reset saw before wiping
+ * it. One uncleanly-ended engine child therefore reddens a later gate phase
+ * that has nothing to do with the run that leaked it — observed on the
+ * merged-tree gate of 2026-09-05.
+ *
+ * Only ATTRIBUTED survivors are killed: the same three routes that decide what
+ * is graded decide what is reaped, so a process the surface refused to grade is
+ * also a process this refuses to signal.
+ */
+export function reapSurvivors(snap: ProcessSnapshot, table: Map<number, ProcessRow> = processTable()): number {
+  const wanted = new Set(snap.survivors.map((s) => s.command));
+  let killed = 0;
+  for (const row of table.values()) {
+    if (row.pid === process.pid || !wanted.has(canonicalCommand(row.command))) continue;
+    try {
+      process.kill(row.pid, "SIGKILL");
+      killed++;
+    } catch {
+      // already gone between the snapshot and now, which is the outcome anyway
+    }
+  }
+  return killed;
+}
+
 // ---- the other half: naming the engine child while it is alive --------------
 
 /**

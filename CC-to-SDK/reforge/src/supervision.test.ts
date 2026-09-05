@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { seedScriptedChild } from "../w10/child.js";
 import {
   canonicalCommand,
+  reapSurvivors,
   descendantsOf,
   findEngineChild,
   leaksIn,
@@ -128,6 +129,37 @@ try {
     const after = await processSnapshot(baseline, { settleMs: 200, label: "quiet-control" });
     check("once the child is gone the surface is quiet again",
       !after.survivors.some((s) => s.command.includes("reforge-child.sh")), JSON.stringify(after.survivors).slice(0, 200));
+  }
+
+  // ---- THE REAP, which the graded path depends on for CORRECTNESS ----------
+  //
+  // Side A runs first, so a child it leaves is already running when side B takes
+  // its baseline and B does not see it as new — the two sides would then diff on
+  // a leak BOTH engines produce. Reaping after the snapshot is what makes each
+  // side's baseline the same world. The second half of the control matters as
+  // much: what the surface refused to GRADE it must also refuse to SIGNAL.
+  {
+    const baseline = processBaseline();
+    const minePid = orphan(`${script} --bytes 40 --chunks 40 --every 900`, "/");
+    orphans.push(minePid);
+    const strangerPid = orphan("/bin/sleep 22", "/");
+    orphans.push(strangerPid);
+    await sleep(400);
+    const snap = await processSnapshot(baseline, { settleMs: 200, label: "reap-control" });
+    const killed = reapSurvivors(snap);
+    await sleep(300);
+    check("the reap kills what the snapshot attributed", killed >= 1 && !(() => { try { process.kill(minePid, 0); return true; } catch { return false; } })(),
+      `killed=${killed}, attributed survivor still alive=${(() => { try { process.kill(minePid, 0); return true; } catch { return false; } })()}`);
+    check("…and leaves the process it refused to grade alone",
+      (() => { try { process.kill(strangerPid, 0); return true; } catch { return false; } })(),
+      "the unattributed process was signalled — the reap is wider than the surface");
+    try {
+      process.kill(strangerPid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    const after = await processSnapshot(processBaseline(), { settleMs: 150, label: "reap-after" });
+    check("…and a reaped run leaves the next baseline the same world it started from", after.survivors.length === 0, JSON.stringify(after.survivors).slice(0, 200));
   }
 
   // ---- ATTRIBUTION: an unrelated new process is DROPPED ---------------------
