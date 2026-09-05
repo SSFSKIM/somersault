@@ -978,3 +978,43 @@ chunk's own file name is content-addressed and changes on any content change, so
 down." Generalising that into one shared locator the parity suites call, keyed by a shape per chunk
 rather than a filename, moves these 24 sites back behind the one constant the README already claims
 they are behind.
+
+---
+
+## 2026-09-05 — the two argv rows re-measure a scenario that does not read argv past the command name
+
+**Source:** the C13a fix round (review of the shell-parser whole-chunk ownership) ·
+`reforge/strangle/manifest.ts`, the `findCommandNode` and `commandArgv` rows of
+`CHUNK_REPLACEMENTS`'s `shell-parser` entry.
+
+**What:** both rows are dark, and both carry `darkOver: ["bash-tool", "hooks-cwd-change"]` — the two
+scenarios the gate re-runs to re-measure that the dark reason still holds. But the one consumer in
+the bundle that reads the argv array PAST its first element is the auto-classifier's prefix
+extractor, `jz` at `chunk-fy12d89p.js` @2098641: it awaits `e9t` (`parseCommandWithEnv`), calls
+`fEe` (`commandArgv`) at @2098810, destructures `[name, ...rest]`, and then uses `rest` four times —
+`rest[0]` against the subcommand table, and the whole of it into both prefix builders. Every other
+consumer of these two exports needs the command NAME and nothing after it. The scenario that drives
+`jz` is `perm-auto-classifier-deny`, and it appears in the `darkOver` pair of the two rows that do
+NOT live in the argv path (`getParser`, the handle, and `shellKeywords`, the Set) rather than in
+these two.
+
+**Cost if nobody pays it.** The re-measurement is weaker than it reads. A future change that got the
+command name right and the arguments after it wrong would be re-measured, every gate, against two
+scenarios that cannot distinguish those two outcomes — and the reason text on both rows is
+specifically about what argv contributes, which is the wrapper-stripped candidate that only exists
+when there are arguments to strip.
+
+**Why deferred.** The measurement the rows already carry is not weakened by the tag choice: the
+sabotage twin for `commandArgv` truncates argv after the command name, it was driven over ALL
+SIXTEEN Bash-bearing scenarios including `perm-auto-classifier-deny`, and every one stayed green —
+because no corpus command is wrapped in `sudo`, `env` or `xargs`, so the candidate argv contributes
+is never added to the match set. Swapping `hooks-cwd-change` for `perm-auto-classifier-deny` would
+therefore buy a scenario that is CLOSER to the mechanism without buying a red, and adding it rather
+than swapping costs one further replay per row on every gate run. The honest reading is that no
+recorded scenario can see this export's contribution at all, which is why the rows are dark and why
+`strangle/parser-parity.test.ts` is what actually grades them.
+
+**Fix when:** the corpus gains a Bash command whose first word is a wrapper (`sudo`, `env`, `xargs`,
+`nice`, `timeout`) — at that point argv's extra candidate becomes observable, the twin's green
+becomes a red, and the pair should become `bash-tool` + that scenario. C13b owns the classifier
+region these rows feed and is the natural place to notice it.
