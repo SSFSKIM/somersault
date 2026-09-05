@@ -692,6 +692,17 @@ for (const [label, argv] of [
   // positive and two negatives with distinct reasons, all against a COPY of a
   // real cassette in a temp directory.
   ["a re-seal proves the stream is unchanged, and refuses when it is not", ["src/reseal.test.ts"]],
+  // C13c/W10c's timed lane, and it is in the AUXILIARY block rather than the
+  // determinism one because it drives two engines: the graph pair with their
+  // shell deadlines rewritten. It cannot live in the corpus runner at all —
+  // `m1/run.ts` grades everything against `engine-real`, and the oracle is a
+  // compiled binary whose constants nothing here can move — so these two
+  // scenarios have no oracle in that lane and are graded on the identical-code
+  // GRAPH pair instead, where any difference is a harness or splice defect.
+  // The cassettes were recorded ONCE at the pin's own deadlines (the stall
+  // detector's 45 s among them) and are replayed at the profile's, which is the
+  // trade the W10 scout allowed.
+  ["the graph pair agrees at the rewritten shell deadlines", ["w10/timed.ts"]],
 ] as [string, string[]][]) {
   const r = run("npx", ["tsx", ...argv]);
   const lines = (r.stdout ?? "").split("\n").filter((l) => /^(PASS|FAIL|===|\s+FAIL)/.test(l));
