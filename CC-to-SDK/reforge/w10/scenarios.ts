@@ -697,7 +697,20 @@ const stallDetect = (d: EffectiveDeadlines): Scenario => {
  * the engine's dispatch — measured in `m3`'s interrupt scenario, where firing on
  * the tool_use block produced a hard exit with no frames at all.
  */
-const killPlan: ChildPlan = { bytes: 60, chunks: 20, everyMs: 600, ignoreTerm: true };
+/**
+ * THE SECOND CHUNK IS FAR BEYOND ANY PLAUSIBLE KILL TIME, and that is the fix
+ * for a race this scenario had until it was measured.
+ *
+ * With `--chunks 20 --every 600` against a 1,500 ms timeout, the child's writes
+ * land at 0, 600, 1200 and 1800 ms — and the third of those is 300 ms from the
+ * deadline, so whether it arrives before the kill is jitter. The recorded tool
+ * result read `R0:R1:` and a replay produced `R0:R1:R2:`, which is a difference
+ * in the GRADED output produced by nothing but scheduling.
+ *
+ * One chunk at t=0 and the next 30 s later makes the killed output a constant:
+ * the deadline can only ever fall in the gap.
+ */
+const killPlan: ChildPlan = { bytes: 60, chunks: 2, everyMs: 30_000, ignoreTerm: true };
 
 /** See the block above: both halves are load-bearing and each was measured. */
 const KILL_COMMAND = `sleep 0 && exec ${childCommand(killPlan)}`;

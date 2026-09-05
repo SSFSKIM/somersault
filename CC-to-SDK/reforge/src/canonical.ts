@@ -133,11 +133,30 @@ export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
   // cassette depends on, the replay REFUSES TO START rather than misroutes.
   [/(Command running in background with ID: )b[0-9a-z]{8}\b/g, "$1<shell-task-id>"],
   [/(Command was manually backgrounded by user with ID: )b[0-9a-z]{8}\b/g, "$1<shell-task-id>"],
+  // BOTH SPELLINGS, and the difference is not cosmetic: the tool's own
+  // retrieval envelope writes `<task_id>` with an UNDERSCORE, while the
+  // task-notification attachment writes `<task-id>` with a HYPHEN. The first
+  // pass covered only the underscore, and the hyphenated one kept the hash
+  // missing on every turn after a notification — found by canonicalizing the
+  // observed bodies against the cassette and reading the first differing byte,
+  // which is a cheaper way to answer this than another live take.
   [/<task_id>b[0-9a-z]{8}<\/task_id>/g, "<task_id><shell-task-id></task_id>"],
+  [/<task-id>b[0-9a-z]{8}<\/task-id>/g, "<task-id><shell-task-id></task-id>"],
   [/\/tasks\/b[0-9a-z]{8}\.output\b/g, "/tasks/<shell-task-id>.output"],
+  // …and the AUTO-backgrounding sentence, which is a different one from the
+  // manual one above: `WMt`'s timeout arm writes "was moved to the background
+  // (ID: <id>)" where the control-request arm writes "was manually backgrounded
+  // by user with ID: <id>". Two arms, two sentences, and a rule that covered one
+  // left `bash-timeout-background` missing the hash on every turn after the
+  // deadline.
+  [/(was moved to the background \(ID: )b[0-9a-z]{8}(\))/g, "$1<shell-task-id>$2"],
   // …and the persisted tool-result file, whose id `src/differ.ts` maps out of the
   // same path on the differential side (`RUN_ID_TEXT_PATTERNS`).
   [/\/tool-results\/b[0-9a-z]{8}\.(txt|json)\b/g, "/tool-results/<tool-result-id>.$1"],
+  // …whose DIRECTORY carries the session uuid, exactly as the `/tasks/` rule
+  // above already handles for the agent path. The differ maps this uuid through
+  // `session_id`; the hash has no map and must scrub it.
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/tool-results\/)/g, "<uuid>$1"],
 ];
 
 /**
