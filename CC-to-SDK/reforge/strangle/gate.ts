@@ -51,7 +51,12 @@ import { classifyReplay, darkVerdict, runnerFor, type ReplayOutcome } from "./ru
 // run, and until now the only copy of one lived in whatever /tmp file the
 // operator remembered to redirect into. Teed FIRST, so a refused acquire below
 // is in the archive too.
-console.log(`gate log: ${teeToBuildLog("gate")}`);
+// BOUND FIRST, PRINTED SECOND: `console.log(f())` resolves its callee before it
+// evaluates its argument, so the tee f() installs cannot be relied on to catch
+// the very call that installed it — and the archive's own header, the one line
+// that says which run this is, was the one line missing from it.
+const GATE_LOG = teeToBuildLog("gate");
+console.log(`gate log: ${GATE_LOG}`);
 
 // THE SANDBOX IS TAKEN FOR THE WHOLE RUN, not per phase. The gate spawns dozens
 // of suites over one to three hours, each of which resets `sandbox/`+`config/`;
@@ -144,6 +149,13 @@ for (const [label, argv] of [
   // holder refusing by name, a signalled holder releasing — are facts about
   // pids and signals that no in-process fake has.
   ["one writer at a time over sandbox/ + config/", ["src/lock.test.ts"]],
+  // …and the archive that would have to CARRY a lock refusal. The refusal above
+  // is a throw one line into this file, so the run it stops produces a header,
+  // a stack, and no verdict — and until the tee moved below `console` the stack
+  // was the half that reached the terminal and nothing else. Every count this
+  // campaign quotes is checkable only against an archive that survives the ways
+  // a run can end, so the control ends one on purpose.
+  ["the run archive keeps the header and the ending", ["strangle/teelog.test.ts"]],
   // C13c/W10c's third graded surface, and it belongs in this block for the same
   // reason the two above it do: it is a claim about the state a run leaves, and
   // a surface that could not tell a deliberate detachment from a leak — or that

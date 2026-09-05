@@ -44,7 +44,10 @@ const checkOnly = process.argv.includes("--check");
 // The same archive the gate keeps, for the same reason: the executed/excluded
 // counts are quoted in every wave record and the run that produced them wrote
 // to a terminal (`strangle/teelog.ts`).
-console.log(`attestation log: ${teeToBuildLog("attest")}`);
+// Bound before it is printed, for the reason `strangle/gate.ts` gives: the
+// header line belongs IN the archive it names.
+const ATTEST_LOG = teeToBuildLog("attest");
+console.log(`attestation log: ${ATTEST_LOG}`);
 // Held for the whole run, for the same reason the gate holds it: this replays
 // covering scenarios as child processes and each one resets the sandbox.
 //
