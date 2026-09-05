@@ -5810,3 +5810,40 @@ decide what is graded decide what is signalled — with a control on both halves
 **The timed engines.** All four build and boot: `bash-stall-detect` and `bash-kill-escalation`, each
 over `engine-extracted` and `engine-strangled`, 1.0–1.7 s to build and ~100 ms on a cache hit, with
 the rewritten constants read back out of the built tree and the other five untouched.
+
+### The recordings: eight written, zero taken — the account throttle, with its own words
+
+All eight scenarios are written, and each one's command was chosen against a measured property of
+the executor rather than by taste. None has a cassette yet, because every live take so far has been
+refused by an account-level throttle:
+
+> `API Error: Server is temporarily limiting requests (not your usage limit) · This request would
+> exceed your account's rate limit. Please try again later.`
+
+The harness did the right thing with it: `capturedInfraFailure` recognised it, the take was
+DISCARDED and nothing was promoted, because a cassette that froze that response would make every
+engine replay the same failure and the scenario would silently measure nothing.
+
+| scenario | graded pair | what it buys | cassette |
+|---|---|---|---|
+| `bash-compound-safety` | real vs extracted | `drn`'s per-subcommand aggregate and the two live-but-dark `Fy` callers W6 left open; C13b consumes it | throttled |
+| `bash-background-explicit` | real vs extracted | THE moat: `run_in_background`, `Kee`, and the completion notification as its own `system`/`task_notification` frame | throttled |
+| `bash-background-control` | real vs extracted | the `background_tasks` EFFECT — W7 fired the arm against an empty registry | throttled |
+| `bash-large-output` | real vs extracted | `cye()`'s measured 30,000-byte default and the `[output truncated - NKB removed]` ladder | throttled |
+| `bash-timeout-background` | real vs extracted | `WMt`/`r_r`/`Kdt` and `timedOutAfterMs` — the arm `r_r` sends to backgrounding | throttled |
+| `bash-prespawn-error` | real vs extracted | `rw` and `yi.call`'s two refusals, with the harness deleting the tracked cwd between turns | throttled |
+| `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | `Pde.#h`'s backstop — the arm `r_r` sends to killing | throttled |
+| `bash-stall-detect` | extracted vs strangled @ `stall-poll=400ms, stall-idle=1800ms` | `kWt` and the notification `_lr` composes | throttled |
+
+Two detached recorders are armed and chained, with a peer guard so only ONE live take is ever in
+flight (X5) and an hourly retry on a throttle: the six corpus scenarios first, then the two timed
+ones through `w10/timed.ts --record`, which pays the pin's real 45 s stall once. A discard for any
+NON-throttle reason stops the walk instead of retrying, because a substance failure is a finding to
+read rather than a budget to spend again.
+
+**The W10 scenarios are deliberately NOT registered in `m1/run.ts`,** and that is the same argument
+`w10/record.ts` exists for: the corpus runner records any REGISTERED scenario that has no cassette,
+and the gate runs it, so registering them now would arm eight live takes inside somebody else's gate
+run. Registration is one import and one spread, and it is owed the moment the cassettes exist.
+For the same reason `w10/timed.ts` is NOT yet a gate phase: with no cassette it refuses to grade and
+would redden a gate for a recording nobody could take.
