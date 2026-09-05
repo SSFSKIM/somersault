@@ -1788,6 +1788,15 @@ Pending — written at finish.
     stages a path's current contents, so two of C13a's in-flight edits were swept into H1 commits —
     the two gate phases into `9d1c172`, `attest.ts`'s contract-evidence section into `511820f`.
     Nothing lost, both on `main`, attribution wrong. Diff a shared file before staging it.
+    **It happened again in the fix round, from the other end, and the first telling was too narrow to
+    prevent it.** `2bdd67e` swept six of C13a's `strangle/` files plus their README and tech-debt
+    edits — the H1 worker staged only its own two paths, but `git commit` commits the whole INDEX,
+    and a sibling had staged its work into that same index seconds earlier. Diffing before staging
+    cannot catch this: the foreign content was never in the worker's `git add`. The rule that does is
+    `git commit -- <paths>`, which commits the named paths and leaves every other index entry alone.
+    Nothing lost, all on `main`, attribution wrong again, and `npx tsc --noEmit` clean over the
+    result. **Generalizing: in a shared checkout the index is shared state like any other, so a commit
+    has to name its scope the way a lock names its holder.**
 
 - 2026-09-05 (**H1-fix — the fix round on the re-seal + sandbox lock unit**): two independent reviews
   read the unit after it landed and raised eight findings between them. The two that mattered were
