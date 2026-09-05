@@ -1565,7 +1565,10 @@ Pending — written at finish.
     registering six cassette-less scenarios would arm six live takes inside somebody else's gate run,
     on somebody else's credential and throttle budget.
   - **The sandbox rows stay OPEN, as the charter says.** The OS-boundary capability — a host assertion
-    a scenario can require — is C15b1's, and nothing here builds it.
+    a scenario can require — is NOT built here. Its primitive belongs to **C15b1** (which already owns
+    "the host-capability requirement primitive: a scenario declares `needs /usr/bin/sandbox-exec` and
+    is skipped-with-reason elsewhere") and **C16f** inherits it for the hermetic substrate. C13c
+    builds neither, and the sandbox exclusions stay where the W12 cut put them.
   - **Ledger.** `subsystem/bash-executor`'s empty edge array becomes four edges, each named by what it
     is a port into: → `subsystem/permissions` (a compound command is decided per subcommand and
     aggregated), → `subsystem/control-protocol` (`background_tasks` reaches into the shell registry;
