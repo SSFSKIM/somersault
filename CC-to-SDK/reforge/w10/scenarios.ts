@@ -1,7 +1,7 @@
 // W10 corpus scenarios — the executor's unreached surface, recorded.
 //
-// The corpus has 63 scenarios and its Bash calls are `echo`, `mkdir`, `chmod`
-// and `sleep`. That reaches ONE of `dZe`'s six result arms, no truncation, no
+// The corpus has 63 scenarios and its Bash calls are `echo`, `mkdir`, `chmod`,
+// `cd`, `pwd` and `sleep`. That reaches ONE of `dZe`'s six result arms, no truncation, no
 // backgrounding, no timeout, no compound command and no pre-spawn refusal
 // (scout §4.2). These are the six recordings that buy the rest of it, plus the
 // two that need C13c's machinery.
@@ -25,7 +25,7 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { baseOptions, drive, pushable, resultsOf, usedTool, userMessage, type Scenario } from "../src/harness.js";
+import { baseOptions, drive, pushable, usedTool, userMessage, type Scenario } from "../src/harness.js";
 import { SANDBOX } from "../src/runTurn.js";
 import { childCommand, expectedOutput, seedScriptedChild, SCRIPTED_CHILD_NAME, type ChildPlan } from "./child.js";
 import type { DeadlineRole, TimerProfile } from "./timers.js";
