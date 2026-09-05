@@ -1018,3 +1018,46 @@ recorded scenario can see this export's contribution at all, which is why the ro
 `nice`, `timeout`) — at that point argv's extra candidate becomes observable, the twin's green
 becomes a red, and the pair should become `bash-tool` + that scenario. C13b owns the classifier
 region these rows feed and is the natural place to notice it.
+
+## 2026-09-05 — a scenario's `check` cannot see the request bodies, so an attachment-only behaviour has to be quoted back by the model
+
+**Source:** C13c/W10c's `bash-stall-detect` · `reforge/src/harness.ts` (`Scenario.check`),
+`reforge/src/runScenario.ts` (which already holds `observedFile`).
+
+**What.** `check(messages, events)` receives the SDK message stream and the harness's own events. It
+does not receive the API REQUESTS the engine made. That is usually fine, because most behaviour
+surfaces as a message — but the stall detector's notification does not: measured, a COMPLETION
+notification arrives as a `system`/`task_notification` frame while a STALL notification arrives only
+as an ATTACHMENT on the next turn. The attachment is in the request body, which the requests surface
+diffs between engines, but no substance check can see it. So `bash-stall-detect` asks the model to
+quote the notification back and asserts on the quote.
+
+**Cost if nobody pays it.** The check is model-mediated: it asserts that the model SAID it received
+the sentence, not that the engine sent it. Under replay that is deterministic (the cassette fixes the
+reply), so the check is stable — but it is strictly weaker than the campaign's norm, and any future
+attachment-only behaviour inherits the same workaround. C13e owns the notification surface and will
+meet this immediately.
+
+**Fix when:** the next wave that touches `runScenarioOnce`'s return, which already carries
+`observedFile`. The shape is small — widen `Scenario.check` to a third argument (the normalized
+observed requests, which `m1/run.ts` already loads) and let a scenario assert on an attachment
+directly. Not taken here because widening a signature that 69 scenarios implement is a change to
+share with the waves that own them, not one to make from inside a machinery child.
+
+## 2026-09-05 — the timer-rewritten engine cache grows without bound
+
+**Source:** C13c/W10c · `reforge/w10/timed-engine.ts` (`timedEngine`, `clearTimedEngines`).
+
+**What.** Each timer profile materializes its own copy of a graph engine — ~55 MB — keyed on the
+profile and on the sha256 of the base chunk it was copied from. Four exist after this wave (two
+scenarios over two base engines) and the directory is **237 MB**. The key is correct and deliberate:
+a `--sabotage` build must never be handed the faithful engine built ten minutes earlier. But it also
+means a new entry per sabotage variant per profile, and nothing prunes them. `clearTimedEngines()`
+exists and has no caller.
+
+**Cost if nobody pays it.** Bounded but unattended: `build/` is gitignored derived state, so the
+worst case is disk. A gate that ran the timed lane under several sabotage variants would multiply it.
+
+**Fix when:** the wave that puts the timed lane under sabotage (C13d, which will want exactly that).
+The shape is an LRU or a prune-on-boot in `timedEngine` keyed on last use. Not taken here because
+four entries is not a problem and a cache policy invented before its access pattern exists is a guess.
