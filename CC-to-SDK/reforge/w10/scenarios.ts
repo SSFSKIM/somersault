@@ -261,7 +261,29 @@ const backgroundControl: Scenario = {
         // entry answered. Waiting past the child makes both lanes agree by
         // construction.
         await sleep(BG_CONTROL_RUNTIME_MS + 6_000);
-        input.push(userMessage("Reply with exactly REFORGE_BGC_DONE."));
+        // AND IT MUST NOT RETRIEVE THE TASK, which is the second thing this
+        // scenario had to learn. A backgrounded task's id is minted PER RUN. The
+        // first recording's model chose to call the retrieval tool with the id
+        // it had just been given, and that call is now frozen in the cassette —
+        // so on replay the engine mints a different id, the recorded call asks
+        // for a task that does not exist, the tool answers
+        // `<tool_use_error>No task found with ID: …</tool_use_error>`, and the
+        // conversation diverges from there (measured: 16 requests against a
+        // five-entry cassette).
+        //
+        // No scrub can fix that: the id is not merely a value in a body, it is
+        // an ARGUMENT the recorded turn depends on existing. A recorded response
+        // that names an engine-minted id can only replay if the scenario keeps
+        // the model from naming it — so the turn says so. The claim is
+        // untouched: what this scenario grades is that the control request
+        // backgrounded a RUNNING shell and that its completion notification
+        // arrived, both of which are asserted without the retrieval.
+        input.push(
+          userMessage(
+            "Reply with exactly REFORGE_BGC_DONE and nothing else. Do not use any tool, and do not " +
+              "retrieve or inspect the background task.",
+          ),
+        );
       } else input.end();
     }
     return messages;
