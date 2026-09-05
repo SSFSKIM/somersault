@@ -5747,3 +5747,66 @@ registering six cassette-less scenarios would arm six live takes inside somebody
 somebody else's credential and throttle budget. Recording first and registering second makes "this is
 part of the corpus" a claim the repository can only make about a scenario that already has a cassette
 to answer with.
+
+### The measurements
+
+**The supervision surface's first pass over the whole corpus.** `w10/measure.ts --phase supervision`
+replays all 63 scenarios offline through the surface WITHOUT grading it, because switching a new
+member on before measuring it would have turned a measurement into 63 red scenarios.
+
+> **63 scenarios measured: 0 leak a child, 0 leave a declared one. 187 unattributable new processes
+> were dropped across the 63.**
+
+That last number is the one that says whether the drop rule is load-bearing or decorative. On this
+machine it is load-bearing by a wide margin: browsers, other agents' shells, a playwright run and
+`sshd` sessions all appeared during scenarios they had nothing to do with, and a surface that counted
+them would have reddened the corpus for a reason that is not behaviour. It is REPORTED and never
+GRADED — `processSnapshot` returns a `ProcessObservation` whose snapshot is the survivors and nothing
+else, because a count of what the machine happened to be doing has no business inside a diffed value.
+
+**The census's FIRST run found exactly one leak, and it was a false positive** — `perm-dont-ask`
+"leaking" `/bin/zsh -c source …shell-snapshots…`, which is this session's own shell running a command
+in the reforge directory during the measurement. The cause was an attribution marker one token too
+wide: `<reforge>`, the repository root, matches every harness process in the checkout. It cost a real
+casualty before it was found — a `timedEngine()` boot check running alongside the census was
+attributed to a scenario and REAPED, and the single-writer lock does not cover that case because it
+guards `resetSandbox()` and a build calls neither. The markers are now the sandbox, the config dir
+and the scripted child's own file name, all of which are specific to a RUN's world rather than to the
+checkout; nothing is lost, because a leaked engine child or shell runs with the sandbox as its cwd
+and the cwd route attributes it whatever its command line says.
+
+**The corpus, graded through the wired path.** Two full runs of `m1/run.ts`, and the honest result is
+not 63/63:
+
+| run | verdicts | the one red | in isolation |
+|---|---|---|---|
+| first (process snapshot taken BEFORE the tree) | 62 PASS / 1 FAIL | `background-task`, 44 differences in the config transcript's record ordering | PASS ×3 |
+| second (tree read restored to its original instant) | 62 PASS / 1 FAIL | `hooks`, SDK message count 5 against 7 | PASS ×2 |
+
+**The state surface — the one this wave changed — was IDENTICAL in both failures**, and each red
+scenario passes in isolation. The machine's load average during these runs was 12, with 36 to 46
+unattributable new processes appearing inside a single scenario. Reported as two load flakes on
+surfaces this wave did not touch rather than as 63/63, because the second number would be a claim and
+the first is what was observed.
+
+The first run's red did teach something, and it is the reason for a commit: taking the process
+snapshot first pushed the FILESYSTEM read ~600 ms further past the quiesce, since `processSnapshot`
+samples twice. That is a change to the measurement regime with nothing behind it, and the corpus has
+scenarios whose tree read sits inside a race — `background-task`'s own `substanceOnly` exemption
+names that race on the other three surfaces. **A new surface may add an observation; it may not move
+an existing one.** The tree is now read at exactly the instant it was read before this member
+existed. (Measured before changing anything: the failure was not deterministic, so the delay shifted
+a race's odds rather than breaking something.)
+
+**REAPING IS A CORRECTNESS REQUIREMENT, not hygiene**, and the wiring is what showed it. The surface
+is a difference against a baseline taken at the start of a run, and side A runs first — so a child A
+leaves is already running when side B takes its baseline, B does not see it as new, and the two sides
+diff on a leak BOTH engines produce. Reaping after the snapshot is what makes each side's baseline the
+same world. It also keeps a leaked engine child from writing `sessions/<pid>` files into the config
+dir, which is not hypothetical: the merged-tree gate of this date went red on its config-dir
+inventory for exactly that residue. Only ATTRIBUTED survivors are reaped — the same three routes that
+decide what is graded decide what is signalled — with a control on both halves.
+
+**The timed engines.** All four build and boot: `bash-stall-detect` and `bash-kill-escalation`, each
+over `engine-extracted` and `engine-strangled`, 1.0–1.7 s to build and ~100 ms on a cache hit, with
+the rewritten constants read back out of the built tree and the other five untouched.
