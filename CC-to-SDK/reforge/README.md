@@ -6071,6 +6071,16 @@ ones through `w10/timed.ts --record`, which pays the pin's real 45 s stall once.
 NON-throttle reason stops the walk instead of retrying, because a substance failure is a finding to
 read rather than a budget to spend again.
 
+After three hourly attempts (09:46, 10:50, 11:53) the message has been identical every time, and no
+cassette anywhere in this checkout has been written in that window — so it is the account rather than
+anything about these scenarios. **One hypothesis is worth writing down because it is actionable and
+was not tested:** the recordings and the operator's own interactive session bill the same
+subscription, and that session was making continuous large requests throughout. A burst limiter that
+still refuses on the third hourly attempt is odd unless something is holding the account's rate
+budget open, and the operator's own session is the obvious candidate. It is stated as a hypothesis,
+not a finding — proving it needs a window in which nothing else on the account is talking, which is
+the one thing a working session cannot arrange for itself.
+
 **The W10 scenarios are deliberately NOT registered in `m1/run.ts`,** and that is the same argument
 `w10/record.ts` exists for: the corpus runner records any REGISTERED scenario that has no cassette,
 and the gate runs it, so registering them now would arm eight live takes inside somebody else's gate
