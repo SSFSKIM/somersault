@@ -164,7 +164,19 @@ const backgroundExplicit: Scenario = {
  * `q.backgroundTasks(toolUseId)` is the installed SDK's own sender, so the
  * frame is the one a host would send rather than one the harness hand-built.
  */
-const BG_CONTROL_PLAN: ChildPlan = { bytes: 80, chunks: 8, everyMs: 700 };
+/**
+ * Long enough that the WINDOW cannot be the reason this fails.
+ *
+ * MEASURED, from the take that did not survive its own substance check: with an
+ * 8 x 700 ms schedule and the control request fired 1,500 ms after the
+ * `tool_use` BLOCK, `backgroundTasks` answered `{backgrounded: false}` while the
+ * transcript showed the command running to completion in the FOREGROUND — a
+ * `task_started` and a `completed` notification for the same `tool_use_id`, and
+ * a `tool_result` carrying all 80 declared bytes. The assistant frame is not a
+ * clock: how long after it a consumer sees it is not a property this scenario
+ * controls, so the fix is to stop depending on it, and to leave slack besides.
+ */
+const BG_CONTROL_PLAN: ChildPlan = { bytes: 180, chunks: 12, everyMs: 1_000 };
 
 const backgroundControl: Scenario = {
   tag: "bash-background-control",
@@ -189,19 +201,26 @@ const backgroundControl: Scenario = {
     for await (const m of q) {
       messages.push(m);
       if (!sent) {
-        const use = toolUses([m], "Bash")[0];
-        if (use?.id !== undefined) {
+        // THE TRIGGER IS `task_started`, NOT THE `tool_use` BLOCK. The engine
+        // emits `system`/`task_started` carrying the shell's `tool_use_id` when
+        // it REGISTERS the task, which is exactly when there is something in the
+        // registry for `background_tasks` to act on and the earliest moment its
+        // answer can be anything but false. Firing on the assistant block means
+        // guessing how long after it the shell starts, and the take that guessed
+        // 1,500 ms answered `{backgrounded: false}` against a command that had
+        // already run to completion.
+        //
+        // Measured incidentally, and it matters for C13e: `task_started` is
+        // emitted for a FOREGROUND Bash too, so its presence is not evidence of
+        // backgrounding. The control request's own answer is the evidence.
+        const frame = m as { type?: string; subtype?: string; tool_use_id?: string };
+        const started = frame.type === "system" && frame.subtype === "task_started" ? frame.tool_use_id : undefined;
+        if (started !== undefined) {
           sent = true;
-          const id = use.id;
-          // Once the tool is actually RUNNING, not the instant the block
-          // appears: the same race `m3`'s interrupt scenario measured, where
-          // firing on the block produced a hard exit with no frames.
-          setTimeout(() => {
-            void q
-              .backgroundTasks(id)
-              .then((ok) => ctx.collect("background_tasks", { toolUseId: id, backgrounded: ok }))
-              .catch((e) => ctx.collect("background_tasks", { toolUseId: id, error: String((e as Error).message).slice(0, 120) }));
-          }, 1_500);
+          void q
+            .backgroundTasks(started)
+            .then((ok) => ctx.collect("background_tasks", { toolUseId: started, backgrounded: ok }))
+            .catch((e) => ctx.collect("background_tasks", { toolUseId: started, error: String((e as Error).message).slice(0, 120) }));
         }
       }
       if ((m as { type?: string }).type !== "result") continue;
@@ -302,9 +321,14 @@ const largeOutput: Scenario = {
   run: (ctx) => {
     seedScriptedChild(SANDBOX);
     return drive(
-      `Use the Bash tool to run exactly \`${childCommand(LARGE_PLAN)}\`. Do not print its output back to me. ` +
-        `Reply with exactly REFORGE_LARGE_OK followed by nothing else.`,
-      { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 3, permissionMode: "bypassPermissions" },
+      `Use the Bash tool to run exactly \`${childCommand(LARGE_PLAN)}\`, then reply with exactly REFORGE_LARGE_OK.`,
+      // SIX TURNS, and the number came from a discarded take: at three the run
+      // ended `Reached maximum number of turns (3)` and threw, so the capture
+      // was the exception alone and the substance check reported "Bash tool
+      // never used" — true of the capture, and misleading about the cause. A
+      // 40,000-byte result is the largest thing the corpus asks a model to
+      // handle, and the headroom costs nothing on a take that does not need it.
+      { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 6, permissionMode: "bypassPermissions" },
     );
   },
   check: (msgs) => {
