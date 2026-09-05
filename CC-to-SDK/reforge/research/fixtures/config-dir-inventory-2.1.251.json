@@ -6,46 +6,46 @@
     "patterns": 27,
     "admitted": 17,
     "notAdmitted": 10,
-    "resetsObserved": 4979
+    "resetsObserved": 5072
   },
   "entries": [
     {
       "pattern": ".claude.json",
       "kind": "file",
-      "seenAtLeast": 4979,
+      "seenAtLeast": 5072,
       "graded": "admitted"
     },
     {
       "pattern": ".last-cleanup",
       "kind": "file",
-      "seenAtLeast": 209,
+      "seenAtLeast": 213,
       "graded": "not-admitted",
       "why": "a maintenance stamp — a clock in a file, with no claim about behaviour in it"
     },
     {
       "pattern": "backups",
       "kind": "dir",
-      "seenAtLeast": 122,
+      "seenAtLeast": 126,
       "graded": "not-admitted",
       "why": "the engine's own backup of .claude.json, in a directory whose entries are named by epoch-ms"
     },
     {
       "pattern": "backups/.claude.json.backup.<ms>",
       "kind": "file",
-      "seenAtLeast": 122,
+      "seenAtLeast": 126,
       "graded": "not-admitted",
       "why": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded"
     },
     {
       "pattern": "projects",
       "kind": "dir",
-      "seenAtLeast": 4942,
+      "seenAtLeast": 5035,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>",
       "kind": "dir",
-      "seenAtLeast": 4942,
+      "seenAtLeast": 5035,
       "graded": "admitted"
     },
     {
@@ -58,44 +58,44 @@
     {
       "pattern": "projects/<slug>/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 311,
+      "seenAtLeast": 317,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>.jsonl",
       "kind": "file",
-      "seenAtLeast": 5023,
+      "seenAtLeast": 5118,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/auto-mode-classifier-error.txt",
       "kind": "file",
-      "seenAtLeast": 81,
+      "seenAtLeast": 83,
       "graded": "not-admitted",
       "why": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents",
       "kind": "dir",
-      "seenAtLeast": 230,
+      "seenAtLeast": 234,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.jsonl",
       "kind": "file",
-      "seenAtLeast": 230,
+      "seenAtLeast": 234,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/<uuid>/subagents/agent-<agent-id>.meta.json",
       "kind": "file",
-      "seenAtLeast": 230,
+      "seenAtLeast": 234,
       "graded": "admitted"
     },
     {
       "pattern": "projects/<slug>/memory",
       "kind": "dir",
-      "seenAtLeast": 544,
+      "seenAtLeast": 553,
       "graded": "admitted"
     },
     {
@@ -108,21 +108,21 @@
     {
       "pattern": "session-env",
       "kind": "dir",
-      "seenAtLeast": 1102,
+      "seenAtLeast": 1128,
       "graded": "not-admitted",
       "why": "per-process scratch; the corpus leaves one empty directory per session and no content"
     },
     {
       "pattern": "session-env/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 1102,
+      "seenAtLeast": 1128,
       "graded": "not-admitted",
       "why": "as above, and named by a run-scoped uuid"
     },
     {
       "pattern": "sessions",
       "kind": "dir",
-      "seenAtLeast": 4967,
+      "seenAtLeast": 5060,
       "graded": "admitted"
     },
     {
@@ -130,19 +130,19 @@
       "kind": "file",
       "seenAtLeast": 1,
       "graded": "admitted",
-      "why": "the registry entry's key file, same provenance and same disposition as `sessions/<pid>.json` above."
+      "why": "the registry entry's key file, same provenance, same projection and same disposition as `sessions/<pid>.json` above."
     },
     {
       "pattern": "sessions/<pid>.json",
       "kind": "file",
       "seenAtLeast": 1,
       "graded": "admitted",
-      "why": "the peer/session registry entry, left only by an UNCLEANLY killed engine child — 0 of 1,768 clean resets produce one. src/state.ts hashes `sessions/**` raw, so a run that ever leaves one reds loudly on a pid-named path (the safe direction); project the family into a <pid> pattern when a scenario reaches it deliberately."
+      "why": "the peer/session registry entry, left only by an UNCLEANLY killed engine child; no clean exit leaves one, which is why this row's floor is a handful against the `sessions` directory's thousands. MINTED BY THE PROJECTION since H1's gate-inventory fix, so an operator's kill no longer reds this cross-wave tripwire until somebody hand-edits the census. The loud red did not go away, it moved to the surface that can carry it per run: src/state.ts's include-list admits `sessions/**`, hashes it and records the path verbatim, so a graded run that leaves one still fails on a pid-named path."
     },
     {
       "pattern": "shell-snapshots",
       "kind": "dir",
-      "seenAtLeast": 1219,
+      "seenAtLeast": 1245,
       "graded": "not-admitted",
       "why": "THE BASH EXECUTOR'S artifact, not storage's: a shell snapshot is minted per shell spawn and named by a clock. If it is ever graded it belongs to C13d's root, which is where the executor's own state lives."
     },
@@ -156,25 +156,25 @@
     {
       "pattern": "tasks",
       "kind": "dir",
-      "seenAtLeast": 184,
+      "seenAtLeast": 187,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>",
       "kind": "dir",
-      "seenAtLeast": 184,
+      "seenAtLeast": 187,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>/.lock",
       "kind": "file",
-      "seenAtLeast": 184,
+      "seenAtLeast": 187,
       "graded": "admitted"
     },
     {
       "pattern": "tasks/<uuid>/1.json",
       "kind": "file",
-      "seenAtLeast": 184,
+      "seenAtLeast": 187,
       "graded": "admitted"
     },
     {

@@ -732,6 +732,29 @@ declared. One `generalizePath` rule anchored on `sessions/`, plus a fixture rege
 
 **Fix when:** a scenario reaches the family on purpose.
 
+**CLOSED 2026-09-05 (H1 gate-inventory fix, commit `5cd90df`).** Paid before a scenario reached the
+family, because the second incident showed the deferral's cost was not the one written above. The
+entry priced the debt as "reds the inventory check once" for the wave that reaches the family
+deliberately. What it actually costs is paid by everyone else: the census is an ACCUMULATOR shared by
+every wave in a checkout, so an unclean kill *anywhere* reds the tripwire on *every later gate* until
+an operator hand-deletes rows from `build/config-observed.json`. That happened twice — the C12a
+incident above, and again during H1's gate (`157 PASS / 1 FAIL` over 158 phases), where a corpus run
+killed to hand the sandbox lock to a sibling left `sessions/70765.json` and its `.key` behind.
+
+The generalization is narrower than the entry feared. It is not "any 1–7 digit segment anywhere" but
+`^sessions\/\d+(?=\.)` — the digits must be the first dot-component of a name directly under
+`sessions/`, the only place the engine writes one — so `projects/<slug>/12345.jsonl`,
+`tasks/12345/1.json` and `sessions/12345/peer.json` keep their digits, each with a control in
+`reforge/src/observed.test.ts` (a new gate phase, 15 checks; dropping the anchor fails four of them).
+
+And the property the deferral was protecting is kept, at its proper scope: the loud red for a run that
+leaves a peer-registry entry belongs on the PER-RUN state surface, not on the cross-wave tripwire.
+`reforge/src/state.ts:179` admits `sessions/**` and hashes it, and `entryOf` records the path verbatim,
+so a graded run that leaves one still fails on a pid-named path. Second half of the fix:
+`regeneralizeEntries` in `reforge/src/observed.ts`, shared by the reset that writes the census and the
+tool that checks it, re-generalizes stored keys on load and sums the counts of rows that fold together
+— so a row written under an older rule heals at the next reset instead of in an editor.
+
 ## 2026-09-03 — seven cassettes are recorded against the baseline seed and record no hash of it
 
 **Source:** the C12a / W9a fix wave, verification round · `reforge/m1/run.ts` (the sidecar),
