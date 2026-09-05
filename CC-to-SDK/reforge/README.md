@@ -6116,3 +6116,65 @@ The six corpus scenarios were held OUT of `m1/run.ts` until each had a cassette,
 `w10/record.ts` exists: the corpus runner records any REGISTERED scenario without one, and the gate
 runs it, so registering earlier would have armed six live takes inside somebody else's gate on
 somebody else's throttle budget. They are registered now — **the corpus is 63 → 69 scenarios**.
+
+### What it took to make the recordings REPLAY, which was most of the work
+
+Recording eight scenarios took twenty minutes. Making them replay took the rest of the afternoon,
+and every obstacle was a fact about the executor or about this harness that nobody had written down.
+
+**The instrument mattered more than the guesses.** After two rounds of adding a scrub and re-running
+a live take, the cheap move turned out to be offline: canonicalize each OBSERVED request body against
+each cassette entry, find the nearest match, and print the first byte at which they differ. That
+answers "why did the hash miss" in one second and without spending a throttle budget, and it found
+every remaining cause in three runs.
+
+**Five scrubs, and each names a sentence the engine writes.** The executor's run-scoped ids are
+`b` + 8 base36 — not the Agent tool's `a` + 16 hex, which is the only shape the replay hash knew.
+C12a's census recorded that second shape when nothing rendered it; these recordings render it, in
+four different sentences:
+
+| where | what missed |
+|---|---|
+| `Command running in background with ID: <id>` | the explicit-background arm |
+| `Command was manually backgrounded by user with ID: <id>` | the `background_tasks` control arm |
+| `was moved to the background (ID: <id>)` | `WMt`'s TIMEOUT arm — a *different* sentence from the one above |
+| `<task_id>…</task_id>` vs `<task-id>…</task-id>` | the retrieval envelope uses an UNDERSCORE, the notification attachment a HYPHEN |
+| `…/<session-uuid>/tool-results/<id>.txt` | the persisted result's file AND the session uuid in its directory |
+
+Each is anchored on the sentence rather than on the bare shape — a naked `b[0-9a-z]{8}` would match
+ordinary prose — and the proxy's collision guard is the backstop: a scrub that erased a distinction a
+cassette depends on makes the replay REFUSE TO START rather than misroute. This is the tech-debt item
+of 2026-08-31 ("the proxy scrubs less than its differ") meeting a scenario that could not be recorded
+around it: `bash-background-control` exhausted a five-entry cassette with sixteen requests, which is
+not a degraded measurement but no measurement at all.
+
+**On the differential side the same ids are MAPPED, not scrubbed.** `src/differ.ts` gains
+`RUN_ID_TEXT_PATTERNS` — ids collected out of free text by a declared shape — because the persisted
+tool-result id is a bare property value exactly ZERO times (measured) and the property-keyed map can
+never reach it. C12a met this from the other side and solved it by LIFTING the id into a property;
+that is not available here, because the string is the engine's own output rather than a snapshot the
+harness builds. A map rather than a scrub, because erasure loses the consistency claim: an engine
+that used two ids where the oracle used one still diffs, and one that persisted under a different
+DIRECTORY still diffs. Both are controls, with the must-catch that shows the rule is load-bearing at
+all. The differ suite goes 40 → 44 checks and the pin-keyed run-id fixture still matches.
+
+**Two problems were NOT normalization, and they are the ones worth carrying forward.**
+
+1. **A recorded turn may not name an engine-minted id.** A backgrounded task's id is minted per run.
+   The first cassette's model called the retrieval tool with the id it had just been handed, and that
+   call is frozen in the recording — so on replay the engine mints a different id, the recorded call
+   asks for a task that does not exist, the tool answers `<tool_use_error>No task found with ID: …`,
+   and the conversation diverges from there. **No scrub can fix it**: the id is not a value in a body,
+   it is an ARGUMENT the recorded turn depends on EXISTING. A recorded response that names one can
+   only replay if the scenario keeps the model from naming it. And the instruction has to be in the
+   turn where the temptation arises — the retrieval happens in the SAME turn as the tool call, so an
+   instruction on turn two arrives a turn late — because `allowedTools: ["Bash"]` does not remove the
+   task-retrieval tools from the catalog (measured, from the recorded `init` frame).
+2. **A graded output must not straddle a deadline.** `bash-kill-escalation` wrote a chunk every
+   600 ms against a 1,500 ms timeout, so its writes landed at 0, 600, 1200 and 1800 — and the third
+   is 300 ms from the kill. The recording captured `R0:R1:` and a replay produced `R0:R1:R2:`: a
+   difference in the graded output produced by nothing but scheduling. One chunk at t=0 and the next
+   30 s later makes the killed output a constant, because the deadline can only fall in the gap.
+
+**The result: all eight cassettes hash-match with ZERO positional serves** — W0c's bar, on the
+scenarios most likely to miss it.
