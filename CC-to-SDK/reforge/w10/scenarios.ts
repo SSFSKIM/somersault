@@ -35,6 +35,28 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** The Bash tool's own truncation threshold at this pin: `xin = 30000`, the default `BASH_MAX_OUTPUT_LENGTH`. */
 export const BASH_MAX_OUTPUT_DEFAULT = 30_000;
 
+/**
+ * The envelope a too-large tool result is REPLACED BY at this pin, and the
+ * preview budget inside it — both quoted from the bundle (`Kte`/`sfn`, `$De`).
+ *
+ * MEASURED, and it corrects the scout's §4.5 #4 before a line of C13b or C13d
+ * is written. A 40,000-byte Bash stdout does NOT arrive as `dZe`'s
+ * `... [output truncated - NKB removed]`: the RESULT-PERSISTENCE layer above the
+ * executor (`D9`/`rue`, reached through `mapToolResultToToolResultBlockParam`)
+ * intercepts first, writes the whole output to a file, and replaces the result
+ * with `<persisted-output>` carrying the original size, the path, and a preview
+ * of the first `$De` = 2,000 characters. The size it reports was 39.1 KB — the
+ * FULL 40,000 bytes — so `cye()`'s 30,000-character clamp did not shorten what
+ * reached it either.
+ *
+ * That is a fact about which layer owns a large result, and it belongs to the
+ * waves that will own both: C13d gets the executor's own ladder, and whether
+ * any output size reaches `dZe`'s notice through a tool result in this lane is
+ * an open question this recording hands it rather than answers.
+ */
+export const PERSISTED_OUTPUT_OPEN = "<persisted-output>";
+export const PERSISTED_OUTPUT_PREVIEW_CHARS = 2_000;
+
 /** The notification prefix the engine builds every backgrounded-command summary from (`ZCe`). */
 export const BACKGROUND_NOTIFICATION_PREFIX = "Background command ";
 
@@ -336,20 +358,28 @@ const largeOutput: Scenario = {
     const results = toolResults(msgs);
     if (results.length === 0) return "no tool_result at all";
     const biggest = Math.max(...results.map((r) => r.length));
-    if (biggest > BASH_MAX_OUTPUT_DEFAULT + 5_000) {
-      return `the largest tool_result is ${biggest} bytes — past the ${BASH_MAX_OUTPUT_DEFAULT}-byte default with no truncation applied`;
+    // WHAT THE PIN ACTUALLY DOES with 40,000 bytes (see the constants above):
+    // the result is replaced by a `<persisted-output>` envelope naming the
+    // original size and the file it was written to, plus a 2,000-character
+    // preview. The result must be SMALL, and it must say why.
+    const envelope = results.find((r) => r.includes(PERSISTED_OUTPUT_OPEN));
+    if (envelope === undefined) {
+      return `no tool_result carries the ${PERSISTED_OUTPUT_OPEN} envelope, so the large-output path was not reached (largest ${biggest} bytes of a declared ${LARGE_PLAN.bytes})`;
     }
-    // The notice upstream writes, quoted from the pin rather than guessed:
-    // `\n... [output truncated - ${n}KB removed]`, where n is the rounded
-    // kilobytes past `cye()`'s effective cap. 40,000 declared bytes against the
-    // measured 30,000-byte default leaves ~10 KB removed.
-    if (!results.some((r) => /\[output truncated[^\]]*\]/.test(r))) {
-      return `no tool_result carries a truncation notice, so the ladder was not reached (largest ${biggest} bytes of a declared ${LARGE_PLAN.bytes})`;
+    if (!/Output too large \([^)]+\)\. Full output saved to: \S+/.test(envelope)) {
+      return `the envelope does not name the original size and the file it was saved to: ${JSON.stringify(envelope.slice(0, 160))}`;
     }
-    // The child's output is derived, so the FIRST bytes are known: a truncation
-    // that dropped the head instead of the middle would still say "truncated".
-    if (!results.some((r) => r.includes(expectedOutput(LARGE_PLAN).slice(0, 24)))) {
-      return "the surviving output does not begin with the bytes the declared schedule produces";
+    if (!envelope.includes(`Preview (first `)) return `the envelope carries no preview header: ${JSON.stringify(envelope.slice(0, 160))}`;
+    // The child's bytes are DERIVED, so the head is known before the recording
+    // exists: a preview that sampled the tail, or a different command's output,
+    // would still be an envelope.
+    if (!envelope.includes(expectedOutput(LARGE_PLAN).slice(0, 24))) {
+      return "the preview does not begin with the bytes the declared schedule produces";
+    }
+    // …and the whole point of the envelope is that it is SHORT. A result still
+    // carrying the 40,000 bytes would mean the interception did not happen.
+    if (envelope.length > PERSISTED_OUTPUT_PREVIEW_CHARS + 1_000) {
+      return `the envelope is ${envelope.length} chars — the preview budget is ${PERSISTED_OUTPUT_PREVIEW_CHARS}, so the result was not actually replaced`;
     }
     return null;
   },
