@@ -120,8 +120,25 @@ export interface Survivor {
 
 /** The third member of the state snapshot: what this run left running. */
 export interface ProcessSnapshot {
-  /** attributable survivors, canonicalized and sorted — the graded value */
+  /** attributable survivors, canonicalized and sorted — the graded value, and ALL of it */
   survivors: Survivor[];
+}
+
+/**
+ * The snapshot, plus what the surface refused to grade.
+ *
+ * TWO OBJECTS RATHER THAN TWO FIELDS, and the split is load-bearing. The
+ * snapshot goes into `StateSnapshot` and is DIFFED; `dropped` is a count of new
+ * processes that could not be tied to this run, which is a fact about how busy
+ * the operator's machine was. Carrying it inside the snapshot would put it on
+ * the graded surface and redden a scenario whenever a browser opened a tab
+ * during one side and not the other — the exact defect the drop rule exists to
+ * prevent, reintroduced one field down. It is here so a census can say how
+ * load-bearing that rule is instead of asserting it.
+ */
+export interface ProcessObservation {
+  snapshot: ProcessSnapshot;
+  dropped: number;
 }
 
 /** How a run states which children it means to leave behind (see `Scenario.detachedChildren`). */
@@ -223,7 +240,7 @@ function sampleSurvivors(baseline: ProcessBaseline, table: Map<number, ProcessRo
  * Two samples `settleMs` apart; a survivor must be in both, with the same
  * command, to be recorded.
  */
-export async function processSnapshot(baseline: ProcessBaseline, opts: SupervisionOptions = {}): Promise<ProcessSnapshot> {
+export async function processSnapshot(baseline: ProcessBaseline, opts: SupervisionOptions = {}): Promise<ProcessObservation> {
   const settleMs = opts.settleMs ?? 250;
   const first = processTable();
   const firstSet = new Map(sampleSurvivors(baseline, first).map((r) => [r.pid, r.command]));
@@ -261,7 +278,7 @@ export async function processSnapshot(baseline: ProcessBaseline, opts: Supervisi
   // Sorted, because two engines' children start in whatever order the OS
   // scheduled them and the ORDER is not a claim; the SET is.
   survivors.sort((a, b) => a.command.localeCompare(b.command) || Number(a.orphaned) - Number(b.orphaned));
-  return { survivors };
+  return { snapshot: { survivors }, dropped: dropped.length };
 }
 
 /** The survivors nothing declared — the leaks, for a caller that wants to report rather than diff. */

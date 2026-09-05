@@ -89,7 +89,7 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   // still in flight the instant the query resolves — and against the scenario's
   // DECLARED detachments, so a deliberate background shell is recorded without
   // being a leak.
-  const processes = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
+  const { snapshot: processes } = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
   const state = stateSnapshot(roots, messages, processes);
   // REAPED AFTER THE SNAPSHOT, and this is a correctness requirement rather
   // than tidiness: side A runs first, so a child it leaves is already running

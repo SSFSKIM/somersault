@@ -98,7 +98,7 @@ try {
     orphans.push(leakedPid);
     await sleep(400);
 
-    const snap = await processSnapshot(baseline, { settleMs: 200, label: "leak-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "leak-control" });
     const mine = snap.survivors.filter((s) => s.command.includes("reforge-child.sh"));
     check("a leaked child appears in the survivor set", mine.length >= 1, JSON.stringify(snap.survivors).slice(0, 200));
     check("…recorded as a LEAK, because nothing declared it", mine.every((s) => s.declared === null));
@@ -110,7 +110,7 @@ try {
     // …and the SAME run, declared, is not a leak. This is the pair the wave
     // needs: "left a child running" and "left the child it said it would" must
     // be different verdicts over identical process tables.
-    const declaredSnap = await processSnapshot(baseline, { settleMs: 200, detached: ["reforge-child.sh"], label: "declared-control" });
+    const { snapshot: declaredSnap } = await processSnapshot(baseline, { settleMs: 200, detached: ["reforge-child.sh"], label: "declared-control" });
     const declaredMine = declaredSnap.survivors.filter((s) => s.command.includes("reforge-child.sh"));
     check("the same survivor, DECLARED, is not a leak", declaredMine.length >= 1 && declaredMine.every((s) => s.declared === "reforge-child.sh"),
       JSON.stringify(declaredMine));
@@ -126,7 +126,7 @@ try {
       // already gone
     }
     await sleep(400);
-    const after = await processSnapshot(baseline, { settleMs: 200, label: "quiet-control" });
+    const { snapshot: after } = await processSnapshot(baseline, { settleMs: 200, label: "quiet-control" });
     check("once the child is gone the surface is quiet again",
       !after.survivors.some((s) => s.command.includes("reforge-child.sh")), JSON.stringify(after.survivors).slice(0, 200));
   }
@@ -145,7 +145,7 @@ try {
     const strangerPid = orphan("/bin/sleep 22", "/");
     orphans.push(strangerPid);
     await sleep(400);
-    const snap = await processSnapshot(baseline, { settleMs: 200, label: "reap-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "reap-control" });
     const killed = reapSurvivors(snap);
     await sleep(300);
     check("the reap kills what the snapshot attributed", killed >= 1 && !(() => { try { process.kill(minePid, 0); return true; } catch { return false; } })(),
@@ -158,7 +158,7 @@ try {
     } catch {
       // already gone
     }
-    const after = await processSnapshot(processBaseline(), { settleMs: 150, label: "reap-after" });
+    const { snapshot: after } = await processSnapshot(processBaseline(), { settleMs: 150, label: "reap-after" });
     check("…and a reaped run leaves the next baseline the same world it started from", after.survivors.length === 0, JSON.stringify(after.survivors).slice(0, 200));
   }
 
@@ -172,7 +172,7 @@ try {
     const strangerPid = orphan("/bin/sleep 20", "/");
     orphans.push(strangerPid);
     await sleep(400);
-    const snap = await processSnapshot(baseline, { settleMs: 200, label: "drop-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "drop-control" });
     check("a new process with no tie to this run is DROPPED, not graded",
       !snap.survivors.some((s) => /\/bin\/sleep 20$/.test(s.command)), JSON.stringify(snap.survivors).slice(0, 240));
     try {
@@ -196,7 +196,7 @@ try {
     const pid = orphan(`/usr/bin/env REFORGE_MARKER=${REFORGE_ROOT}/build/whatever /bin/sleep 23`, "/");
     orphans.push(pid);
     await sleep(400);
-    const snap = await processSnapshot(baseline, { settleMs: 200, label: "repo-root-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "repo-root-control" });
     check("a process whose command carries the REPOSITORY ROOT but not a run's own world is dropped",
       !snap.survivors.some((x) => x.command.includes("/bin/sleep 23")), JSON.stringify(snap.survivors).slice(0, 240));
     try {
@@ -214,7 +214,7 @@ try {
     const mine = spawn("/bin/sleep", ["21"], { stdio: "ignore", cwd: "/" });
     started.push(mine);
     await sleep(300);
-    const snap = await processSnapshot(baseline, { settleMs: 200, label: "ancestry-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 200, label: "ancestry-control" });
     check("a survivor with no marker is still attributed when its lineage reaches this process",
       snap.survivors.some((s) => /\/bin\/sleep 21$/.test(s.command)), JSON.stringify(snap.survivors).slice(0, 240));
     check("…and it is NOT recorded as orphaned, because its parent is alive",
@@ -231,7 +231,7 @@ try {
     const briefPid = orphan(`${script} --bytes 0 --chunks 2 --every 300`, "/");
     orphans.push(briefPid);
     await sleep(120);
-    const snap = await processSnapshot(baseline, { settleMs: 600, label: "settle-control" });
+    const { snapshot: snap } = await processSnapshot(baseline, { settleMs: 600, label: "settle-control" });
     check("a child that exits between the two samples is not recorded as a survivor",
       !snap.survivors.some((s) => s.command.includes("--every 300")), JSON.stringify(snap.survivors).slice(0, 240));
   }

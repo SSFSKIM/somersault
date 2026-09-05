@@ -74,7 +74,7 @@ const cassetteFor = (tag: string) => join(REFORGE_ROOT, "cassettes", `m1-${tag}.
  * measurement flag through the graded runner would have made the census depend
  * on the thing it is measuring.
  */
-async function replayWithSupervision(s: Scenario, engine: string): Promise<{ snap: ProcessSnapshot; threw: string | null; reaped: number }> {
+async function replayWithSupervision(s: Scenario, engine: string): Promise<{ snap: ProcessSnapshot; threw: string | null; reaped: number; dropped: number }> {
   const cassette = cassetteFor(s.tag);
   const proxy = await startReplayProxy(cassette, join(REFORGE_ROOT, "cassettes", "w10-measure-observed-A.jsonl"));
   const ctx: ScenarioContext = {
@@ -93,13 +93,13 @@ async function replayWithSupervision(s: Scenario, engine: string): Promise<{ sna
   }
   const q = await awaitQuiesce(defaultStateRoots(SANDBOX, CONFIG_DIR));
   if (!q.settled) console.log("    (never quiesced)");
-  const snap = await processSnapshot(baseline, { detached: s.detachedChildren, label: s.tag });
+  const { snapshot: snap, dropped } = await processSnapshot(baseline, { detached: s.detachedChildren, label: s.tag });
   // Reaped after the snapshot, so the NEXT scenario's baseline is the same world
   // this one started from — and so the census cannot leave an engine child whose
   // `sessions/<pid>` files redden a later config-dir inventory.
   const reaped = reapSurvivors(snap);
   await proxy.close();
-  return { snap, threw, reaped };
+  return { snap, threw, reaped, dropped };
 }
 
 if (phase === "supervision") {
@@ -109,20 +109,28 @@ if (phase === "supervision") {
   console.log(`=== supervision census: ${targets.length} scenario(s) with a cassette${missing > 0 ? `, ${missing} skipped for having none` : ""} ===`);
   console.log("  (offline replays on engine-real; every survivor is a process the run left behind)\n");
 
-  const rows: { tag: string; survivors: number; leaks: number; detail: string }[] = [];
+  const rows: { tag: string; survivors: number; leaks: number; dropped: number; detail: string }[] = [];
   for (const s of targets) {
-    const { snap, threw, reaped } = await replayWithSupervision(s, enginePath("engine-real"));
+    const { snap, threw, reaped, dropped } = await replayWithSupervision(s, enginePath("engine-real"));
     const leaks = leaksIn(snap);
     rows.push({
       tag: s.tag,
       survivors: snap.survivors.length,
       leaks: leaks.length,
+      dropped,
       detail: snap.survivors.map((x) => `${x.declared === null ? "LEAK" : "declared"} ${x.command.slice(0, 70)}`).join(" | "),
     });
     const mark = leaks.length > 0 ? "LEAK" : snap.survivors.length > 0 ? "declared" : "clean";
     console.log(`  ${mark.padEnd(9)} ${s.tag.padEnd(28)} ${snap.survivors.length} survivor(s)${reaped > 0 ? `, ${reaped} reaped` : ""}${threw ? ` [run threw: ${threw}]` : ""}`);
     for (const x of snap.survivors) console.log(`      ${x.declared === null ? "LEAK    " : "declared"} ${x.orphaned ? "orphan " : "child  "} ${x.command.slice(0, 110)}`);
   }
+
+  // HOW NOISY THE MACHINE WAS, which is what says whether the drop rule is
+  // load-bearing or decorative. Counted from the surface's own reports rather
+  // than asserted: every one of these is a process that appeared during a
+  // scenario and could not be tied to it by lineage, cwd or command.
+  const droppedTotal = rows.reduce((n, r) => n + r.dropped, 0);
+  console.log(`  (${droppedTotal} unattributable new process(es) were dropped across the ${rows.length} scenario(s) — the drop rule's load on this machine)`);
 
   const leaking = rows.filter((r) => r.leaks > 0);
   console.log(`\n=== ${rows.length} scenario(s) measured: ${leaking.length} leak a child, ${rows.filter((r) => r.survivors > 0 && r.leaks === 0).length} leave a DECLARED one ===`);
