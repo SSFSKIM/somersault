@@ -822,3 +822,32 @@ include list to every wave directory plus `research/`, and consider a `tsc --noE
 determinism block, which is build-free and takes a few seconds. Not taken here because it means
 editing another wave's probe while two workers are in flight in one checkout, and the fix is worth
 less than the conflict.
+
+---
+
+## The shell-parser attestation's `contract.why` quotes the corpus size it had before it was widened (C13a, 2026-09-05)
+
+`strangle/attestation.ts`'s `shell-parser` entry describes its oracle as comparing parse trees "over
+sixteen partitions of the input domain and 1,891 command strings". Both numbers were true when the
+sentence was written and are not now: the corpus was widened later in the same wave to **seventeen
+partitions and 2,170 command strings**, which is what `strangle/parser-parity.test.ts` prints on
+every run (8,040 checks) and what the gate archive records.
+
+**Why it was not fixed in place.** That sentence is printed verbatim into `attestation/coverage.md`,
+so correcting it makes the committed report differ from what a run would write, and `attest --check`
+— a gate phase — compares those bytes. Fixing the number therefore requires regenerating the report,
+which replays 40-odd scenarios under the sandbox lock. It was attempted and failed for a reason that
+had nothing to do with the number: a second worker had `src/observed.ts` modified in the shared
+checkout at that moment, and four scenarios came back with state differences that were the edit's,
+not the engine's. Retrying would have meant racing another worker's uncommitted change to the state
+surface, and the fix is worth less than that race.
+
+**Cost if nobody pays it.** A reader of `attestation/coverage.md` sees a corpus size 279 strings and
+one partition smaller than the one that produced the coverage below it. Nothing is graded wrong — the
+counts, the states and the adjudications are all this run's own output — but the sentence that
+explains WHY 3,060 branches count as evidence understates the evidence.
+
+**Fix when:** the next wave that regenerates the attestation for any other reason. The shape is two
+edits in `strangle/attestation.ts` (`sixteen` → `seventeen`, `1,891` → `2,170`) and one
+`npx tsx strangle/attest.ts` on a quiet checkout. Better still, write the sentence without the
+numbers — the suite prints its own — so it cannot go stale a second time.

@@ -5798,7 +5798,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "returns `null` for every input changes no transcript, no event, no request and no state entry on any of the sixteen. " +
           "One of the eleven says so about itself, in upstream's own comment: `Client-facing — lets clients render git activity without re-parsing stdout; not " +
           "surfaced to the model`. " + C13A_MEASURED +
-          "Graded instead by strangle/parser-parity.test.ts, which drives this handle over 2,166 command strings in sixteen partitions and compares every node " +
+          "Graded instead by strangle/parser-parity.test.ts, which drives this handle over 2,170 command strings in seventeen partitions and compares every node " +
           "it builds against the pinned chunk's own.",
       },
       {
@@ -5897,7 +5897,7 @@ export const CHUNK_REPLACEMENTS: ChunkReplacement[] = [
           "the stripped first word differs. No corpus command is wrapped, so that candidate is never added and a twin returning `null` for every tree removes nothing the transcript carries. " +
           "Its other consumers are the sed-edit analysers, the safe-flag table lookup and the cd/git detectors, all of which answer the same way for `echo`, `chmod`, `mkdir`, `cd` and `pwd` whether " +
           "they get a command node or nothing. " +
-          "Graded instead by strangle/parser-parity.test.ts, which runs this walker over the tree of every one of 2,166 command strings and compares the node it selects — including the three " +
+          "Graded instead by strangle/parser-parity.test.ts, which runs this walker over the tree of every one of 2,170 command strings and compares the node it selects — including the three " +
           "cases the recursion is actually about: a `variable_assignment` whose command is a later sibling, a `pipeline` descended member by member, and a `redirected_statement` whose command is " +
           "found by a direct child search rather than by descent.",
       },
