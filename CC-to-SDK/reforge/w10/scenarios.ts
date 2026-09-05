@@ -645,7 +645,13 @@ const killEscalation = (d: EffectiveDeadlines): Scenario => {
       const msgs = await drive(
         `Use the Bash tool to run exactly this command, as a single call, with the timeout parameter set to 1500, ` +
           `and then report what the tool told you, verbatim:\n${KILL_COMMAND}`,
-        { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 3, permissionMode: "bypassPermissions" },
+        // SIX, for the reason `bash-large-output` found: at three this take
+        // ended `Reached maximum number of turns (3)` and threw, so the capture
+        // was the exception alone and the substance check reported "Bash tool
+        // never used" — true of the capture and misleading about the cause. A
+        // command the engine KILLS gives the model something to explain, and
+        // explaining costs a turn.
+        { ...baseOptions(ctx), allowedTools: ["Bash"], maxTurns: 6, permissionMode: "bypassPermissions" },
       );
       // The escalation happens AFTER the tool result is composed, so a snapshot
       // taken the instant the query resolves would grade a kill still in flight.
