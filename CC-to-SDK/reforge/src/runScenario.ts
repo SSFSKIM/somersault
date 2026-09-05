@@ -16,6 +16,7 @@ import { fallbackVerdict, startRecordProxy, startReplayProxy, type CassetteEntry
 import { resetSandbox, type ConfigPrecondition, type Scenario, type ScenarioContext } from "./harness.js";
 import { CONFIG_DIR, enginePath, SANDBOX } from "./runTurn.js";
 import { awaitQuiesce, defaultStateRoots, stateSnapshot, type StateSnapshot } from "./state.js";
+import { processBaseline, processSnapshot } from "./supervision.js";
 
 export interface ScenarioRun {
   messages: unknown[];
@@ -63,6 +64,10 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
     mode, // X6: record passes the one selected credential; replay passes the placeholder
   };
   resetSandbox(precondition);
+  // BEFORE the run, and after the reset: the supervision surface is a DIFFERENCE
+  // over the process table (see src/supervision.ts), so what was already running
+  // has to be recorded while it is still the only thing running.
+  const processesBefore = processBaseline();
   let messages: unknown[];
   try {
     messages = await s.run(ctx);
@@ -79,7 +84,13 @@ export async function runScenarioOnce(opts: ScenarioRunOptions): Promise<Scenari
   const roots = defaultStateRoots(SANDBOX, CONFIG_DIR);
   const quiesce = await awaitQuiesce(roots);
   if (!quiesce.settled) console.log(`    WARN ${side}: the state roots never stopped changing (${quiesce.waitedMs} ms) — the snapshot would be of a moving file`);
-  const state = stateSnapshot(roots, messages);
+  // The third member of the snapshot: what this run left RUNNING. Taken after
+  // the quiesce for the same reason the tree is — the engine's own teardown is
+  // still in flight the instant the query resolves — and against the scenario's
+  // DECLARED detachments, so a deliberate background shell is recorded without
+  // being a leak.
+  const processes = await processSnapshot(processesBefore, { detached: s.detachedChildren, label: side });
+  const state = stateSnapshot(roots, messages, processes);
   const unmatched = mode === "replay" ? proxy.unmatched() : [];
   const unserved = mode === "replay" ? proxy.unserved() : [];
   const fallbacks = mode === "replay" ? proxy.fallbacks() : [];

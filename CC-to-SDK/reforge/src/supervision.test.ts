@@ -243,6 +243,21 @@ try {
       // already gone
     }
   }
+  // EVERY CHILD IS REAPED BEFORE THIS PROCESS EXITS, and the sweep is by the
+  // test's OWN temp directory rather than by a program name. Two reasons: the
+  // orphan helper's background `sleep` is a GRANDCHILD whose pid this file never
+  // saw, and a name-based sweep (`pkill -f reforge-child.sh`) would reach a
+  // sibling worker's processes in a shared checkout. The measured cost of not
+  // doing this is on the record: a leaked engine child's `sessions/<pid>` files
+  // reddened a later gate's config-dir inventory.
+  for (const row of processTable().values()) {
+    if (!row.command.includes(box)) continue;
+    try {
+      process.kill(row.pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
   rmSync(box, { recursive: true, force: true });
 }
 

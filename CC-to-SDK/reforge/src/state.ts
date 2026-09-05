@@ -78,6 +78,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join, relative } from "node:path";
+import type { ProcessSnapshot } from "./supervision.js";
 
 export interface StateEntry {
   /** relative to its root; "." is the root itself */
@@ -125,6 +126,18 @@ export interface StateSnapshot {
   roots: RootSnapshot[];
   /** how the engine process ended, as far as the runner can observe (see header) */
   engine: string;
+  /**
+   * C13c/W10c — what the run left RUNNING (`src/supervision.ts`).
+   *
+   * A THIRD MEMBER rather than a third `StateRoot`, and the distinction is not
+   * cosmetic: a `StateRoot` is a filesystem path with an include-list and a
+   * descend rule, and a process table has none of those. The header above
+   * already reserves "the third root" for C15a's dispatched-agent output
+   * DIRECTORY, which really is one. Optional because the snapshot is also taken
+   * by callers that measure a tree rather than grade a scenario
+   * (`w9/measure.ts`); the graded path always sets it.
+   */
+  processes?: ProcessSnapshot;
 }
 
 /** How one file under a root is read. `null` from an `include` means "not part of the surface". */
@@ -529,8 +542,12 @@ export function engineOutcome(messages: readonly unknown[]): string {
   return `error:${thrown.name ?? "Error"}`;
 }
 
-export function stateSnapshot(roots: readonly StateRoot[], messages: readonly unknown[]): StateSnapshot {
-  return { roots: roots.map((r) => ({ name: r.name, entries: rootEntriesOf(r) })), engine: engineOutcome(messages) };
+export function stateSnapshot(roots: readonly StateRoot[], messages: readonly unknown[], processes?: ProcessSnapshot): StateSnapshot {
+  return {
+    roots: roots.map((r) => ({ name: r.name, entries: rootEntriesOf(r) })),
+    engine: engineOutcome(messages),
+    ...(processes !== undefined ? { processes } : {}),
+  };
 }
 
 /** The entries of one registered root, by name — for reporting, never for grading a subset. */
