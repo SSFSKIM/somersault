@@ -46,6 +46,15 @@ if (scenarioIdx >= 0 && (scenarioArg === undefined || scenarioArg.startsWith("--
   process.exit(2);
 }
 const only = scenarioArg;
+// …AND VALIDATED HERE, before any mode reads it. This check used to sit below
+// the `--reseal` block, which meant `--reseal --scenario <typo>` selected no
+// scenarios, refused none, and printed RESEAL OK — a green verdict over an empty
+// set, which is the same vacuity `[].every(...)` gave the grading path before
+// this check existed. A filter that names nothing is a typo, in every mode.
+if (only !== undefined && !SCENARIOS.some((s) => s.tag === only)) {
+  console.error(`ABORT: unknown scenario '${only}'. Known tags:\n  ${SCENARIOS.map((s) => s.tag).join(", ")}`);
+  process.exit(2);
+}
 const rerecord = args.includes("--rerecord");
 // H1 — re-seal instead of grade: prove by replay that the DECLARED precondition
 // is the world this cassette already answers, and rewrite the sidecar if it is.
@@ -261,14 +270,6 @@ if (reseal) {
 }
 
 const verdicts: { tag: string; pass: boolean }[] = [];
-
-// A misspelled or valueless --scenario used to select nothing, leaving verdicts
-// empty — and `[].every(...)` is vacuously true, so the runner printed ALL PASS
-// with exit 0 having executed nothing. Fail loudly instead.
-if (only !== undefined && !SCENARIOS.some((s) => s.tag === only)) {
-  console.error(`ABORT: unknown scenario '${only}'. Known tags:\n  ${SCENARIOS.map((s) => s.tag).join(", ")}`);
-  process.exit(2);
-}
 
 for (const s of SCENARIOS) {
   if (only && s.tag !== only) continue;
