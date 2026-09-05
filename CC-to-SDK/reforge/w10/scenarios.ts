@@ -481,12 +481,30 @@ export interface TimedScenarioSpec {
  */
 const stallPlan: ChildPlan = { bytes: 40, chunks: 1, promptTail: true };
 
+/**
+ * How long the backgrounded shell stays quiet, in seconds — a CONSTANT, and it
+ * has to be.
+ *
+ * The first version derived this from the deadlines in force, which is wrong in
+ * a way that would have cost a live take: the hold is part of the COMMAND, the
+ * command is inside the recorded `tool_use` block and inside the request body,
+ * and a replay that asked for `sleep 7` against a cassette recorded with
+ * `sleep 64` misses the body hash and is served POSITIONALLY — fatal under
+ * §3.4 for this pair. Only the HARNESS's own wait may move with the profile;
+ * everything the engine sees must be byte-identical in both lanes.
+ *
+ * The value is the PIN's: long enough for the detector to sample an already-idle
+ * file three times past a 45,000 ms threshold, plus a margin for the
+ * notification to reach the queue. A replay finishes long before it and leaves
+ * the shell running, which is what `detachedChildren` declares.
+ */
+const STALL_HOLD_SECONDS = 64;
+
 const stallDetect = (d: EffectiveDeadlines): Scenario => {
-  // Long enough for the detector to sample an already-idle file at least twice
-  // after the threshold expires, plus a margin for the notification to reach
-  // the queue. Derived, so the RECORDING pays the pin's 45 s once and every
-  // replay pays the profile's 1.8 s.
-  const holdSeconds = Math.ceil((d["stall-idle"] + d["stall-poll"] * 3 + 4_000) / 1_000);
+  // Only the harness's wait moves with the profile: the RECORDING waits out the
+  // pin's 45 s once, every replay waits out the profile's 1.8 s, and the command
+  // is the same string in both.
+  const holdSeconds = STALL_HOLD_SECONDS;
   const waitMs = d["stall-idle"] + d["stall-poll"] * 2 + 3_000;
   const command = `${childCommand(stallPlan)}; sleep ${holdSeconds}`;
   return {
