@@ -35,10 +35,24 @@
 // that the module it loaded is the INSTRUMENTED one — a driver that silently
 // exercised the committed module would report contract coverage no recorder ever
 // saw, which is the false-green shape this whole mechanism exists to refuse.
+//
+// ## THE RULE THIS DRIVER LIVES UNDER: NO PRIVATE INPUTS
+//
+// Every input executed here is also a parity case, and this file writes down no
+// input of its own. That is what makes the `contract` state mean what the
+// attestation says it means. The two files divide labour — one executes for
+// measurement, the other compares against upstream — and the division only holds
+// while they run the SAME inputs. A string only the driver had would light up a
+// branch in the coverage recorder, be reported as covered by a differential
+// contract suite, and have been compared against nothing: evidence-shaped, and
+// not evidence. So every input comes from `strangle/parser-corpus.ts`
+// (`PARTITIONS`, `LENGTH_CAP_CASES`, `ENTRY_POINT_CASES`,
+// `ENTRY_POINT_NON_STRING`), which the parity suite imports the same way. A
+// branch that needs a new input to reach it gets that input added THERE.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { INSTRUMENTED_MODULES } from "./instrument.js";
-import { PARTITIONS, LENGTH_CAP_CASES } from "./parser-corpus.js";
+import { PARTITIONS, LENGTH_CAP_CASES, ENTRY_POINT_CASES, ENTRY_POINT_NON_STRING } from "./parser-corpus.js";
 
 const MODULE = join(INSTRUMENTED_MODULES, "shell-parser", "reference.js");
 
@@ -77,46 +91,27 @@ for (const partition of PARTITIONS) {
   }
 }
 
-// The two async entry points, and every abort cause the parity test drives. These
-// reach code no `parse` call can: the length cap, the telemetry port, and the
-// three ways `parseOrAbort` decides to give up.
+// The two async entry points, over the corpus's own entry-point lists. These reach
+// code no `parse` call can: the environment walk, the length cap's two different
+// answers, the telemetry port, and the three ways `parseOrAbort` decides to give
+// up. Every string below is a parity case; see the rule in this file's header.
 const swallow = (): void => {};
+let driven = 0;
 for (const { command } of LENGTH_CAP_CASES(10000)) {
+  driven++;
   await mod.parseCommandWithEnv(command);
   await mod.parseOrAbort(command, swallow);
 }
-for (const command of [
-  "A=1 cmd",
-  "A=1 B=2 cmd",
-  "A=1",
-  "cmd A=1",
-  "A=$(x) cmd",
-  "A='v' cmd",
-  "export A=1",
-  "",
-  "ls -la",
-  // The two below are here for branches only THIS entry point can reach, because
-  // the corpus does not choose the arguments `parseCommandWithEnv` is called with
-  // — it is called by the engine, on a command the model wrote.
-  //
-  // A command whose parse returns null, so the `!rootNode` arm is taken rather
-  // than adjudicated. Same string the abort block below hands `parseOrAbort`: a
-  // heredoc delimiter carrying a `$` inside double quotes is one of the three
-  // shapes the parser refuses to guess about.
-  'cat <<"E$F"\nbody\nE$F',
-  // A command node whose first child is neither an assignment nor a command name
-  // — `A=1 > out` is one `variable_assignment` and one `file_redirect` — which is
-  // the only way the environment walk reaches its loop's non-breaking arm.
-  "A=1 > out",
-]) {
+for (const command of ENTRY_POINT_CASES) {
+  driven++;
   await mod.parseCommandWithEnv(command);
   await mod.parseOrAbort(command, swallow);
 }
-// A parse that returns null (a heredoc delimiter the parser refuses to guess
-// about) and a parse that THROWS (a caller that passes a non-string with a
-// `length`) — upstream's second and third abort causes.
-await mod.parseOrAbort('cat <<"E$F"\nbody\nE$F', swallow);
-await mod.parseOrAbort({ length: 5 }, swallow);
-await mod.parseCommandWithEnv({ length: 5 });
+// The parse that THROWS — a caller that passes a non-string with a `length`. It is
+// upstream's third abort cause on `parseOrAbort` and the catch arm on
+// `parseCommandWithEnv`, and no string reaches either.
+driven++;
+await mod.parseOrAbort(ENTRY_POINT_NON_STRING, swallow);
+await mod.parseCommandWithEnv(ENTRY_POINT_NON_STRING);
 
-console.log(`PASS — drove the instrumented shell-parser over ${parsed} partition case(s) plus the async entry points and all three abort causes`);
+console.log(`PASS — drove the instrumented shell-parser over ${parsed} partition case(s) and ${driven} entry-point case(s), every one of them a parity case`);

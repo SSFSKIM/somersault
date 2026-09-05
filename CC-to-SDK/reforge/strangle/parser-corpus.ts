@@ -164,6 +164,67 @@ export const LENGTH_CAP_CASES = (cap: number): { label: string; command: string 
 ];
 
 /**
+ * The strings driven through the two ASYNC ENTRY POINTS — `parseCommandWithEnv`
+ * and `parseOrAbort` — rather than through `parse`.
+ *
+ * A list of its own because those two reach code no `parse` call can: the
+ * environment-prefix walk, the length cap's two different answers, and the three
+ * ways a caller is told the parser gave up. `PARTITIONS` is a partition of the
+ * strings a MODEL can write; this is the small set of strings that select ARMS
+ * of the entry points, and the two are different claims.
+ *
+ * It lives here, and not in either of its two consumers, because both of them
+ * have to drive exactly it. `strangle/parser-coverage.ts` executes it for
+ * attestation credit and `strangle/parser-parity.test.ts` compares it against
+ * upstream; an input only the driver had would earn `contract` credit for a
+ * branch nobody ever compared, which is evidence-shaped and not evidence.
+ */
+export const ENTRY_POINT_CASES: readonly string[] = [
+  // The environment prefix itself: none, one, several, one that is the whole
+  // command, one that follows the command name instead of preceding it, one
+  // whose value is a substitution, one quoted, one introduced by `export`.
+  "A=1 cmd",
+  "A=1 B=2 cmd",
+  "A=1",
+  "A=1 B=2",
+  "cmd A=1",
+  "A=$(x) cmd",
+  "A='v' cmd",
+  "export A=1",
+  "A=1 ls -la",
+  // The env walk's NON-BREAKING arm, which is the only shape that reaches it: a
+  // command node whose children are one `variable_assignment` and one
+  // `file_redirect`, so the loop's second iteration matches neither the
+  // assignment arm nor the `command_name`/`word` arm that would break it.
+  "A=1 > out",
+  // `parseCommandWithEnv` refuses an empty command before it parses anything,
+  // and `parseOrAbort` answers null for it rather than aborting.
+  "",
+  // A command that parses cleanly, and one that carries a substitution, so the
+  // healthy path through both entry points is compared too.
+  "ls -la",
+  "echo $(ls) | grep x",
+  // A parse that returns NULL: a heredoc delimiter carrying a `$` inside double
+  // quotes is one of the shapes the parser refuses to guess about. It reaches
+  // `parseCommandWithEnv`'s `!rootNode` arm and `parseOrAbort`'s second abort
+  // cause.
+  'cat <<"E$F"\nbody\nE$F',
+];
+
+/**
+ * The one NON-STRING input both async entry points are driven with, and the only
+ * way to reach the arm each keeps for a parse that THREW: `parse` catches
+ * everything a string can raise, so the throw is reachable only from a caller
+ * that passes something with a `length` and no string behaviour. That is not
+ * hypothetical — both entry points are called on a `command` field the engine
+ * read off a tool-use block.
+ *
+ * Exported for the same reason as `ENTRY_POINT_CASES`: the coverage driver and
+ * the parity suite must drive the same value.
+ */
+export const ENTRY_POINT_NON_STRING: unknown = { length: 5 };
+
+/**
  * A command that is one word followed by `count` argument words, and therefore
  * roughly `count` nodes. Built rather than written because the `node-budget`
  * partition below needs tens of thousands of them and a 180,000-character

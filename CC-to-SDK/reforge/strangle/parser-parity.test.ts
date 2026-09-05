@@ -48,7 +48,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUNDLE_MODULES, ENGINE_VERSION } from "../src/pin.js";
-import { PARTITIONS, LENGTH_CAP_CASES, type Partition } from "./parser-corpus.js";
+import { PARTITIONS, LENGTH_CAP_CASES, ENTRY_POINT_CASES, ENTRY_POINT_NON_STRING, type Partition } from "./parser-corpus.js";
 import {
   getParser as ownedGetParser,
   SHELL_KEYWORDS as ownedShellKeywords,
@@ -387,10 +387,10 @@ console.log(`  ${PARTITIONS.length} partitions, ${cases} command strings, each c
    * `commandNode`, so a side that answers `null` where the other answers a node
    * is a named difference rather than a skipped check.
    */
-  const withEnv = async (label: string, command: string): Promise<void> => {
+  const withEnv = async (label: string, command: unknown): Promise<void> => {
     checks++;
     const u = await upstream.parseCommandWithEnv(command);
-    const o = await ownedWithEnv(command);
+    const o = await ownedWithEnv(command as string);
     eq(`parseCommandWithEnv ${label}`, u === null ? null : { envVars: u.envVars, originalCommand: u.originalCommand }, o === null ? null : { envVars: o.envVars, originalCommand: o.originalCommand });
     if (u === null || o === null) return;
     const dRoot = diffTree(u.rootNode, o.rootNode);
@@ -404,11 +404,17 @@ console.log(`  ${PARTITIONS.length} partitions, ${cases} command strings, each c
       await withEnv(`at ${label} (len ${command.length})`, command);
     }
 
-    // The env-var extraction, over the strings that carry assignments.
-    for (const command of ["A=1 cmd", "A=1 B=2 cmd", "A=1", "A=1 B=2", "cmd A=1", "A=$(x) cmd", "A='v' cmd", "export A=1", "A=1 ls -la"]) {
+    // Every entry-point case, from the corpus file the coverage driver reads the
+    // same list out of. That sharing is the point: a string only the driver had
+    // would earn `contract` attestation credit for a branch this suite never
+    // compared, so `strangle/parser-corpus.ts` owns the list and both consumers
+    // import it.
+    for (const command of ENTRY_POINT_CASES) {
       await withEnv(JSON.stringify(command), command);
     }
-    await withEnv("an empty command", "");
+    // The non-string caller, which is how `parseCommandWithEnv` reaches its catch
+    // arm — `parse` throws on it and the entry point answers `null`.
+    await withEnv("a caller that passes a non-string with a `length`", ENTRY_POINT_NON_STRING);
 
     // The RED DIRECTION for the `commandNode` comparison, applied the way the
     // partitions' controls are: a healthy owned result with exactly that key
@@ -453,29 +459,34 @@ console.log(`  ${PARTITIONS.length} partitions, ${cases} command strings, each c
       }
     };
 
-    await both("a healthy command", "ls -la");
-    await both("a command with a substitution", "echo $(ls) | grep x");
-    await both("an empty command", "");
-    // Cause 1 of 3: over the length cap. Reported with panic:false.
-    await both("over the length cap", "echo " + "a".repeat(capFromChunk));
-    // Cause 2 of 3: the parse returned null. Reached by a heredoc delimiter the
-    // parser refuses to guess about, which aborts inside `parse` and is caught
-    // there — so the caller sees null, not a throw. Also panic:false.
-    await both("a parse that returns null", 'cat <<"E$F"\nbody\nE$F');
+    // The same shared list, through the other entry point. It carries the healthy
+    // commands, the empty command, and cause 2 of 3 — a parse that returned null,
+    // reached by a heredoc delimiter the parser refuses to guess about, which
+    // aborts inside `parse` and is caught there, so the caller sees null rather
+    // than a throw. panic:false.
+    for (const command of ENTRY_POINT_CASES) {
+      await both(JSON.stringify(command), command);
+    }
+    // Cause 1 of 3: over the length cap, reported with panic:false — driven at the
+    // boundary rather than well past it, so the side that refuses one character
+    // early is a red.
+    for (const { label, command } of LENGTH_CAP_CASES(capFromChunk)) {
+      await both(`at ${label} (len ${command.length})`, command);
+    }
     // Cause 3 of 3: the parse THREW. Unreachable from any string, because `parse`
     // catches everything it can raise — so it is reached the only way it can be,
     // by a caller that passes a non-string with a `length`. That is not a
     // hypothetical shape: `parseOrAbort` is called on a `command` field that the
     // engine has already read off a tool-use block, and this is the arm that
     // decides what happens when that field is not what it should be. panic:true.
-    await both("a parse that throws", { length: 5 } as unknown as string);
+    await both("a parse that throws", ENTRY_POINT_NON_STRING);
 
     checks++;
     if (upstreamTelemetry.length === 0) fail("parseOrAbort telemetry", "no telemetry was recorded by any case — the port trace comparison is vacuous");
 
     // The control: a recorder that drops the `panic` flag must be seen.
     upstreamTelemetry.length = 0;
-    await upstream.parseOrAbort({ length: 5 } as unknown as string);
+    await upstream.parseOrAbort(ENTRY_POINT_NON_STRING);
     mustDiffer("telemetry without the panic flag", upstreamTelemetry, upstreamTelemetry.map((t) => ({ event: t.event, fields: { cmdLength: 5 } })));
   };
 
