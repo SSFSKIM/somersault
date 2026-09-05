@@ -68,6 +68,17 @@ const PATTERN_REASONS: Record<string, string> = {
   backups: "the engine's own backup of .claude.json, in a directory whose entries are named by epoch-ms",
   "backups/.claude.json.backup.<ms>": "clock in the FILENAME, so two engines can never agree on it; the file it backs up is graded",
   "projects/<slug>/.keep": "the harness's OWN seed for the store-read-only fault, not an engine write",
+  // The SECOND harness-authored path in this inventory, and it is here because
+  // the tripwire caught it rather than because anyone remembered to declare it:
+  // H1's re-seal control seeds one inert file under the project directory to
+  // prove that a declaration the model cannot see re-seals, and the next reset
+  // censused it. Named for what it is, so that it reads as ours at a glance —
+  // an inventory whose job is "the engine started writing a new family" must not
+  // make a reader wonder which of its rows the engine wrote.
+  "projects/<slug>/reforge-reseal-control.txt":
+    "the harness's OWN seed, and the whole point of it: `src/reseal.test.ts`'s positive control adds one file that nothing reads, " +
+    "so a re-seal that succeeds under it is evidence that an unreachable declaration change leaves the request stream identical. " +
+    "The engine never writes this path.",
   "projects/<slug>/<uuid>/auto-mode-classifier-error.txt": "the auto-mode classifier's error dump — C9/W6's artifact, not the session store's",
   // THE ONE FAMILY DECLARED FROM AN INCIDENT RATHER THAN FROM A CLEAN RUN. A
   // reviewer killed a standalone `attest --check` mid-run; its orphaned engine
