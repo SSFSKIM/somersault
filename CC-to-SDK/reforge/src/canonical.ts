@@ -113,6 +113,31 @@ export const RUN_ID_SHAPE_SCRUBS: [RegExp, string][] = [
     /(read the full transcript at: \S*\/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.jsonl)/g,
     "$1<session-uuid>$2",
   ],
+  // C13c/W10c — the LOCAL SHELL's own run-scoped ids, which are `b` + 8 base36
+  // rather than the Agent tool's `a` + 16 hex. C12a's census recorded that
+  // second shape and nothing rendered it; the executor recordings do, in four
+  // sentences the engine writes straight into a tool result and therefore into
+  // the NEXT request body.
+  //
+  // WHY THIS IS LOAD-BEARING RATHER THAN TIDY. Without these, the replay hash
+  // misses on every turn after a backgrounded command and the proxy falls back
+  // to positional serving — and `bash-background-control` exhausted a 5-entry
+  // cassette with 16 requests, which is not a degraded measurement but no
+  // measurement at all. This is the tech-debt item of 2026-08-31 ("the proxy
+  // scrubs less than its differ") meeting a scenario that cannot be recorded
+  // around it.
+  //
+  // Each is anchored on the sentence the engine writes, never on the bare shape:
+  // a naked `b[0-9a-z]{8}` would also match ordinary prose. The proxy's own
+  // collision guard is the backstop — if any of these erased a distinction a
+  // cassette depends on, the replay REFUSES TO START rather than misroutes.
+  [/(Command running in background with ID: )b[0-9a-z]{8}\b/g, "$1<shell-task-id>"],
+  [/(Command was manually backgrounded by user with ID: )b[0-9a-z]{8}\b/g, "$1<shell-task-id>"],
+  [/<task_id>b[0-9a-z]{8}<\/task_id>/g, "<task_id><shell-task-id></task_id>"],
+  [/\/tasks\/b[0-9a-z]{8}\.output\b/g, "/tasks/<shell-task-id>.output"],
+  // …and the persisted tool-result file, whose id `src/differ.ts` maps out of the
+  // same path on the differential side (`RUN_ID_TEXT_PATTERNS`).
+  [/\/tool-results\/b[0-9a-z]{8}\.(txt|json)\b/g, "/tool-results/<tool-result-id>.$1"],
 ];
 
 /**
