@@ -1653,6 +1653,28 @@ Pending — written at finish.
     entered a gap between two of its scenario children and produced a FALSE RED that is
     indistinguishable in the log from a real one.
 
+- 2026-09-05 (**H1 gate-inventory fix — the merged-tree gate's one red, and C12a/F5's deferral
+  closed by the surface that should have held it**): the gate ran 158 phases, **157 PASS / 1 FAIL**
+  (attestation green at 985/4682 executed, 3060 by contract suite, 637 excluded), and the FAIL was
+  `config-dir inventory` naming three undeclared paths — the re-seal control's own harness seed, now
+  a declared row whose `not-admitted` is computed from `src/state.ts` rather than chosen, and two
+  `sessions/<pid>` files left by an uncleanly killed engine child. H1 closed both by hand (declaring
+  the seed, DELETING the two literal rows from the derived census); this round removes the hand step.
+  F5 withheld a `<pid>` token because a literal pid "reds loudly (the safe direction)" — right about
+  the alarm, wrong about the surface: the census is an ACCUMULATOR shared by every wave, so the red it
+  produces is "some run, in some wave, ever left one", repeated on every later gate until an operator
+  edits a derived file. The per-run red is kept where it belongs (`src/state.ts:179` admits
+  `sessions/**`, hashes it and records the path verbatim, so a graded run that leaves one still
+  fails), the projection is anchored at `^sessions\/\d+(?=\.)` so it eats no other numeric name, and
+  `regeneralizeEntries` — shared by the reset that writes the census and the tool that checks it —
+  folds stored literal rows on load with their counts summed, so the file heals itself. New gate phase
+  `src/observed.test.ts` (15 controls, three mutations shown to bite; the block is 159 now); the
+  `sessions/<pid>` tech-debt entry is CLOSED with its own cost estimate corrected, and one opened in
+  its place: the census records no per-run provenance, so a residue row still cannot name the run that
+  left it. **Generalizing: an alarm is only as safe as the surface it lands on — a tripwire that
+  accumulates across waves cannot carry a per-run fact, because the run it names is gone by the time
+  anybody reads it.**
+
 - 2026-09-05 (**H1 — orchestrator-level harness work between W9a's fix round and W10: a
   replay-validated RE-SEAL of the precondition sidecar, and the single-writer sandbox lock**): two
   mechanisms the fleet needs before the waves that run two workers at once, plus the two riders

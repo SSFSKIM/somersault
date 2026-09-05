@@ -5182,6 +5182,81 @@ Nothing was lost and both are on `main`; the attribution is simply wrong, and th
 lesson is to diff a shared file before staging it rather than to trust that only
 your own edit is in it.
 
+### The one red, closed twice — by hand, then by the projection (2026-09-05)
+
+The merged-tree gate is `build/gate-20260905-0816.log`, and its summary block is
+**158 phases: 157 PASS, 1 FAIL**, `GATE FAIL`. The attestation inside it is
+green — **985/4682 executed, 3060 by contract suite, 637 excluded** (line 531).
+The single FAIL is `config-dir inventory matches the pin and the census`, and it
+named three paths (lines 548–551) for two unrelated reasons.
+
+**Cause one: a harness seed nobody had declared.**
+`projects/<slug>/reforge-reseal-control.txt` is the inert file the re-seal's
+positive control plants (`src/reseal.test.ts`), and the inventory's own note
+already defines its population as engine writes *plus whatever the previous
+precondition seeded* — which is the basis `projects/<slug>/.keep` is declared on.
+It is now a declared row whose `why` says outright that the engine never writes
+it. Its `graded` value is computed by the tool from `src/state.ts`, not chosen:
+`configInclude("projects/-box-sandbox/reforge-reseal-control.txt")` returns
+`null`, because the include-list admits only `projects/*/*.jsonl` and the two
+subagent patterns under a project. So it is **not-admitted**, and that is right —
+a scenario that seeded it would not carry it in its state line, and it could not
+usefully: the seed is declared by the harness and applied identically to both
+engines, so a graded row for it can never differ. No corpus scenario declares it
+in any case; only the re-seal control does, against a copy of a cassette.
+
+**Cause two: a pid, and the wrong surface holding the red.**
+`sessions/70765.json` and `sessions/70765.<hex>.key` are the peer-registry
+residue of an engine child killed uncleanly — this session killed a corpus run to
+hand the sandbox lock to a sibling, and the exact origin of that pid is not
+recoverable from the artifact, only from the shell history, which is the debt X5
+now records. C12a's F5 had deliberately withheld a `<pid>` token from
+`generalizePath` on the argument that a literal pid "reds loudly (the safe
+direction)". **The gate showed what the direction costs.** The census is an
+ACCUMULATOR shared by every wave in a checkout, so one kill anywhere reds the
+tripwire on every later gate until somebody hand-edits a derived file. Both times
+it has happened, that is exactly how it was closed: the two literal rows were
+**dropped from `build/config-observed.json` by hand**, which is the step this
+note exists to retire.
+
+**The fix, and where the loud red went.** `generalizePath` gains a `<pid>` token
+anchored on `^sessions\/\d+(?=\.)` — the digits must be the first dot-component
+of a name directly under `sessions/`, the only place the engine writes one — so
+`projects/<slug>/12345.jsonl`, `tasks/12345/1.json` and `sessions/12345/peer.json`
+keep their digits. Order against the `<hex>` rule is irrelevant, measured rather
+than argued: the spans are disjoint, and each rule is watched firing on a path
+the other has already generalized. `regeneralizeEntries` is the second half, and
+it is what removes the HAND step: shared by the reset that writes the census and
+the tool that checks it, it re-generalizes stored keys on load and sums the counts
+of rows that fold together, so a literal row heals at the next reset instead of in
+an editor. Measured on a copy of the live census (a sibling was writing to it):
+the two 70765 rows fold into `sessions/<pid>.json` and `sessions/<pid>.<hex>.key`,
+both already declared, counts intact.
+
+The property F5 was protecting is kept, at its proper scope. A graded run that
+leaves a peer-registry entry still reds — `src/state.ts:179` admits `sessions/**`
+and hashes it, and `entryOf` records the path verbatim, so a pid-named path
+appears in the state line and two runs cannot agree on it. What moved is only
+which surface carries the alarm: per-run state, not the cross-wave tripwire.
+
+`src/observed.test.ts` is new, 15 controls, and a phase in the determinism block
+(`census projection folds what it names and nothing else`) — so the next gate's
+block is **159**, not 158. Each rule is watched folding what it names *and*
+leaving the nearest literal alone, because a rule that folds too much buys its
+silence out of the tripwire's own width. Three mutations, each restored: dropping
+the `sessions/` anchor fails four controls, removing the rule fails seven,
+removing the loader's fold fails exactly the three fold controls. `--check` after
+regeneration: **PASS — 27 observed pattern(s) over 5,072 resets, all declared; 17
+admitted by the state surface**, and the fixture diff is the two rewritten `why`
+sentences plus floor bumps from a census still growing under a sibling's run —
+no pattern added, none removed, `counts` unchanged at 27/17/10.
+
+The tech-debt entry that deferred the projection is **closed**, with its own
+pricing corrected: it predicted the cost falls on the wave that reaches the
+family deliberately, and the cost is in fact paid by every unrelated wave that
+gates after somebody's kill. One entry opened in its place — the census records
+no per-run provenance, so a residue row still cannot name the run that left it.
+
 ## W10a — the shell parser: 63 KB of bash grammar, and a corpus that cannot see it (2026-09-05)
 
 C13a, the first of the six W10 children, and the campaign's third whole-chunk ownership. The two
