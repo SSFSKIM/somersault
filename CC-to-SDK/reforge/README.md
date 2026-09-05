@@ -6178,3 +6178,25 @@ all. The differ suite goes 40 → 44 checks and the pin-keyed run-id fixture sti
 
 **The result: all eight cassettes hash-match with ZERO positional serves** — W0c's bar, on the
 scenarios most likely to miss it.
+
+### The numbers this wave closes on
+
+| | |
+|---|---|
+| corpus | **69 of 69 PASS, 0 FAIL, ZERO positional serves** (63 → 69 scenarios) |
+| timed lane | **2 of 2 PASS** on `engine-extracted` vs `engine-strangled` at the rewritten deadlines |
+| supervision census | 63 scenarios, **0 leaks**, 0 declared survivors, 187 unattributable processes dropped |
+| timer negative control | **PASS** — `background-hint` 2,000 → 300 ms moves 29 fields, and the one it owns is an extra `task_started` (the command auto-backgrounds sooner) |
+| scripted child | 44 checks | 
+| shell deadlines | 27 checks, every one a refusal |
+| process supervision | 31 checks, each leaking a real process |
+| differ run-id map | 40 → 44 checks |
+| canonicalization | 99 checks |
+| re-seal | 15 → 17 checks |
+| pin-keyed fixtures | **twelfth**: `shell-timers-2.1.251.json` (5 deadlines / 7 constants / 7 prompt patterns) |
+| gate phases added | **five** — four build-free in the determinism block, one in auxiliary |
+| ledger | `subsystem/bash-executor`'s empty edge array becomes four edges |
+| splices | **none** — this is oracle machinery, not ownership |
+
+The four surfaces are now five in everything but name: transcripts, harness events, API requests,
+what a run left on DISK, and what it left RUNNING.
