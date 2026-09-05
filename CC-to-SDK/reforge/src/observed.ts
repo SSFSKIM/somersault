@@ -95,7 +95,58 @@ export function generalizePath(rel: string): string {
     // on `<ms>-` so it cannot eat a literal six-character name anywhere else —
     // without it every snapshot is its OWN pattern, and the inventory check
     // would fail on the next run for a file that is not new.
-    .replace(/<ms>-[a-z0-9]{6}\b/g, "<ms>-<rand>");
+    .replace(/<ms>-[a-z0-9]{6}\b/g, "<ms>-<rand>")
+    // THE PEER-REGISTRY FAMILY, and the only rule here anchored on a literal
+    // directory name rather than on a separator. A pid is a bare run of digits,
+    // which is the broadest thing this file could substitute — `12345` is a
+    // sequence number in a transcript name and a list id under `tasks/` — so the
+    // anchor is the whole guard: the digits must be the FIRST dot-component of a
+    // name directly under `sessions/`, which is the only place the engine writes
+    // one. `sessions/70765.json` and `sessions/70765.<hex>.key` fold;
+    // `projects/<slug>/12345.jsonl` and `tasks/12345/1.json` do not.
+    //
+    // ORDER IS IRRELEVANT against the `<hex>` rule above, and the two tests that
+    // say so are in `src/observed.test.ts`: the spans are disjoint by
+    // construction — this rule only ever consumes digits that follow
+    // `sessions/`, and the `<hex>` rule only ever consumes a run that follows a
+    // `.` or `-` separator, which the pid does not have. It is written last for
+    // reading order, not for correctness.
+    //
+    // WHY THE `.` IS REQUIRED. Both known members carry one. A name under
+    // `sessions/` that is digits followed by anything else is a shape nobody has
+    // observed, and the tripwire should still fire on it rather than be
+    // pre-generalized into silence — which is the property the whole family was
+    // withheld for, kept here at its proper width.
+    .replace(/^sessions\/\d+(?=\.)/, "sessions/<pid>");
+}
+
+/**
+ * Every key of a stored census, run back through `generalizePath`, with the
+ * counts of two keys that fold into one pattern SUMMED.
+ *
+ * The census is an ACCUMULATOR shared by every wave in a checkout, so its rows
+ * outlive the rule that generalized them. Without this, a row written under an
+ * older `generalizePath` — or a literal path a new rule now projects — stays
+ * literal forever, and the only way to retire it is to hand-edit
+ * `build/config-observed.json`. Measured: an unclean kill left two literal
+ * `sessions/<pid>` rows behind and every subsequent gate in that checkout
+ * reddened on them until an operator deleted the rows by hand.
+ *
+ * Applied by BOTH readers — the reset that appends to the census
+ * (`censusConfigDir` below) and the tool that checks it against the fixture
+ * (`research/tools/extract-config-inventory.ts`) — from here rather than from
+ * two loops, because a writer and a checker that disagree about what a row means
+ * disagree silently. Idempotent: `generalizePath` is, so re-loading a census
+ * this function already wrote is a no-op.
+ */
+export function regeneralizeEntries(entries: ConfigCensus["entries"]): ConfigCensus["entries"] {
+  const out: ConfigCensus["entries"] = {};
+  for (const [raw, e] of Object.entries(entries)) {
+    const key = generalizePath(raw);
+    const prior = out[key];
+    out[key] = { kind: prior?.kind ?? e.kind, seen: (prior?.seen ?? 0) + e.seen };
+  }
+  return out;
 }
 
 /** Record everything currently under `configDir`, then leave the file for the fixture check. */
@@ -108,6 +159,10 @@ export function censusConfigDir(configDir: string, censusPath: string, engineVer
   } catch {
     doc = EMPTY(engineVersion);
   }
+  // The stored rows are re-generalized on the way IN, so today's rules apply to
+  // yesterday's observations and the file heals itself at the next reset instead
+  // of at an operator's editor. See `regeneralizeEntries`.
+  doc.entries = regeneralizeEntries(doc.entries);
   // BOTH WALKS BELOW USE `lstat` AND NEVER FOLLOW A LINK. A symlink is a leaf of
   // this tree: censusing through one would tally another directory's contents as
   // config-dir writes, and a link to an ancestor (`loop -> .`) makes the walk

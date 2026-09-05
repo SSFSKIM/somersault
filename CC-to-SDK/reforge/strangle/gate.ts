@@ -126,6 +126,16 @@ for (const [label, argv] of [
   // watched doing what its name says — and the wipe is watched surviving the one
   // fault built to defeat it (a project directory with the write bit off).
   ["config precondition + fs faults do what they name", ["src/precondition.test.ts"]],
+  // …and the PROJECTION the census records those writes through, which is the
+  // half of C12a/W9a the auxiliary block's inventory check cannot grade. That
+  // check reads a census; it cannot say whether the rule that generalized a path
+  // bought its silence out of the tripwire's own width. Every rule here folds a
+  // family into one pattern, and the cost of a rule that folds too much is a pin
+  // writing a new family into a pattern that already exists — invisible, which
+  // is the exact blind spot the inventory exists to close. So each rule is
+  // watched folding what it names AND leaving the nearest literal alone, and the
+  // loader is watched healing a stored row without losing its count.
+  ["census projection folds what it names and nothing else", ["src/observed.test.ts"]],
   // H1's single-writer lock, and it belongs beside the precondition for the
   // same reason: both are about the DECLARED state a run starts from, and a
   // sibling harness process wiping `sandbox/`+`config/` mid-measurement

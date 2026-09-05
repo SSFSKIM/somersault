@@ -32,7 +32,7 @@ import { join } from "node:path";
 import { ENGINE_VERSION } from "../../src/pin.js";
 import { REFORGE_ROOT } from "../../src/runTurn.js";
 import { configDescend, configInclude } from "../../src/state.js";
-import { generalizePath } from "../../src/observed.js";
+import { regeneralizeEntries } from "../../src/observed.js";
 import type { ConfigCensus } from "../../src/observed.js";
 
 const CENSUS = join(REFORGE_ROOT, "build", "config-observed.json");
@@ -161,13 +161,10 @@ const whyOf = (pattern: string, admitted: boolean): { why?: string } => {
 const doc = census();
 // The census's keys are re-generalized on the way in, so a census written by an
 // older `generalizePath` collapses into today's patterns instead of arriving as
-// a pile of undeclared ones.
-const merged = new Map<string, { kind: "file" | "dir"; seen: number }>();
-for (const [raw, e] of Object.entries(doc.entries)) {
-  const key = generalizePath(raw);
-  const prior = merged.get(key);
-  merged.set(key, { kind: e.kind, seen: (prior?.seen ?? 0) + e.seen });
-}
+// a pile of undeclared ones. The fold is `src/observed.ts`'s, shared with the
+// reset that writes the file, because a writer and a checker with two copies of
+// this loop would disagree silently.
+const merged = new Map(Object.entries(regeneralizeEntries(doc.entries)));
 // GENERATION UNIONS WITH THE COMMITTED FIXTURE, because this population is
 // SAMPLED and the sample is a corpus run. A pattern the engine writes rarely —
 // `shell-snapshots/snapshot-zsh-<ms>-<rand>.sh` is written on some runs and not
