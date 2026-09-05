@@ -31,6 +31,26 @@ if (mode === "--hold") {
   acquireSandboxLock("lock control: the holder", argPath);
   console.log(`HELD ${process.pid}`);
   setTimeout(() => process.exit(0), 30_000);
+} else if (mode === "--recheck") {
+  // THE INHERITED CHILD THAT OUTLIVES ITS HOLDER. It calls the lock TWICE, the
+  // way a real suite does — `resetSandbox()` runs at the top of every scenario —
+  // and between the two calls the world changes underneath it: the record its
+  // marker names is replaced by another LIVE pid. The first call is the
+  // holder's own work and must be exempt; the second is a stranger inside
+  // somebody else's run and must be refused BY NAME.
+  acquireSandboxLock("lock control: the inherited child, first call", argPath);
+  console.log(`EXEMPT ${process.pid}`);
+  const go = `${argPath}.go`;
+  const until = Date.now() + 30_000;
+  while (!existsSync(go) && Date.now() < until) await new Promise((r) => setTimeout(r, 5));
+  try {
+    acquireSandboxLock("lock control: the inherited child, second call", argPath);
+    console.log(`ACQUIRED-AGAIN holder=${sandboxLockHolder(argPath)?.pid}`);
+    process.exit(0);
+  } catch (e) {
+    console.log(`REFUSED ${(e as Error).message}`);
+    process.exit(1);
+  }
 } else if (mode === "--acquire") {
   // The SECOND ACQUIRER. Its verdict is its exit status; its stdout/stderr is
   // what the parent reads to check the refusal names somebody findable.
@@ -105,6 +125,45 @@ if (mode === "--hold") {
     check("a child carrying the owner's marker is NOT refused", child.status === 0, `exit ${child.status}: ${childOut.slice(0, 200)}`);
     check("…and it does not take ownership: the lock still names the owner", held()?.pid === holderPid, JSON.stringify(held()));
     check("…and its exit does not release the lock the owner still holds", existsSync(lockPath));
+
+    // ---- …but the exemption is re-decided on EVERY call ----------------------
+    // The one an in-process fake cannot show: a child that was rightly exempt
+    // when it started, still carrying the marker, after the lock has changed
+    // hands. Cached, its first answer would stand for the rest of its life and
+    // it would keep resetting the sandbox inside the new owner's run.
+    {
+      const holderRecord = readFileSync(lockPath, "utf8");
+      const go = `${lockPath}.go`;
+      rmSync(go, { force: true });
+      const orphanEnv = cleanEnv();
+      orphanEnv[OWNER_ENV] = String(holderPid);
+      const orphan = spawn("npx", ["tsx", SELF, "--recheck", lockPath], { cwd: REFORGE_ROOT, env: orphanEnv });
+      const orphanOut: string[] = [];
+      orphan.stdout.on("data", (b: Buffer) => orphanOut.push(b.toString("utf8")));
+      orphan.stderr.on("data", (b: Buffer) => orphanOut.push(b.toString("utf8")));
+      const orphanExit = new Promise<number | null>((r) => orphan.on("exit", (code) => r(code)));
+      try {
+        await waitFor(orphan, /EXEMPT \d+/, 60_000);
+        check("an inherited child is exempt on its FIRST call", orphanOut.join("").includes("EXEMPT"));
+        // The new gate, standing in for itself: a live pid that is not the one
+        // the orphan's marker names. This process is the most honestly live pid
+        // available to write there.
+        writeFileSync(lockPath, JSON.stringify({ pid: process.pid, argv: "npx tsx strangle/gate.ts (the new holder)" } satisfies LockRecord) + "\n");
+        writeFileSync(go, "");
+        const code = await orphanExit;
+        const out = orphanOut.join("");
+        check("…and REFUSED on the next one, once the lock has changed hands", code === 1, `exit ${code}: ${out.slice(0, 200)}`);
+        check("…naming the pid that holds it NOW, not the marker it inherited", out.includes(`pid ${process.pid}`), out.slice(0, 300));
+        check("…and it did not take the new holder's lock", held()?.pid === process.pid, JSON.stringify(held()));
+      } finally {
+        orphan.kill("SIGKILL");
+        rmSync(go, { force: true });
+        // Give the holder its record back: the release control below asks
+        // whether a SIGTERMed holder deletes ITS OWN lock, and it will not
+        // delete one that names somebody else.
+        writeFileSync(lockPath, holderRecord);
+      }
+    }
 
     // ---- the release path, driven by the signal the gate is killed with ------
     holder.kill("SIGTERM");

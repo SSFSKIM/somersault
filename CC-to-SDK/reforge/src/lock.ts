@@ -55,7 +55,12 @@ export interface LockRecord {
 /** Signals the harness may be stopped by. `nohup` + `kill` sends the first. */
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-/** The lock path this process has settled, and whether it is the OWNER of it. */
+/**
+ * The lock path this process OWNS, and the flag that says so.
+ *
+ * ONLY OWNERSHIP IS CACHED. An inherited child's exemption is deliberately not
+ * memoised: see `acquireSandboxLock`.
+ */
 let settled: string | null = null;
 let owned = false;
 
@@ -99,20 +104,32 @@ function releaseNow(path: string): void {
  * because the stored `argv` is the fact an operator can act on.
  */
 export function acquireSandboxLock(purpose: string, lockPath: string = LOCK_PATH): void {
-  if (settled === lockPath) return;
+  // ONLY TRUE OWNERSHIP SHORT-CIRCUITS. An owner cannot lose the lock without
+  // knowing (it deletes its own record and nobody else may), so caching that is
+  // caching a fact. An INHERITED EXEMPTION is not a fact, it is a reading of a
+  // file that another process is free to change, and it was cached here — which
+  // made the exemption permanent for the life of the child. The shape that
+  // costs: a gate is SIGKILLed, one of its `m1/run.ts` children survives the
+  // signal, a new gate finds the dead holder's record and takes the lock over,
+  // and the orphan — still carrying the dead gate's marker, still holding a
+  // decision it made before any of that — goes on calling `resetSandbox()`
+  // inside the new owner's run. Two writers, with the second one silent.
+  if (settled === lockPath && owned) return;
 
   const marked = process.env[OWNER_ENV];
   if (marked !== undefined && Number(marked) !== process.pid) {
     const held = readLock(lockPath);
     if (held !== null && held.pid === Number(marked) && alive(held.pid)) {
       // A child of the holder, doing the holder's own work in its turn. It
-      // neither acquires nor releases: the lock outlives it.
-      settled = lockPath;
-      owned = false;
+      // neither acquires nor releases: the lock outlives it. AND IT DECIDES
+      // AGAIN NEXT TIME — the exemption is worth exactly one call, because the
+      // two facts it rests on (the lock still names the marker's pid; that pid
+      // is still alive) are facts about right now.
       return;
     }
     // The marker names a process that is gone, or a lock somebody else now
-    // holds. An inherited name is not a right; fall through and acquire.
+    // holds. An inherited name is not a right; fall through, which acquires when
+    // nothing holds the lock and REFUSES BY NAME below when something does.
   }
 
   // Three attempts, because the only reason to go round again is that a DEAD
