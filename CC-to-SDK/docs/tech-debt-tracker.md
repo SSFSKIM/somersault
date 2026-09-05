@@ -874,3 +874,28 @@ explains WHY 3,060 branches count as evidence understates the evidence.
 edits in `strangle/attestation.ts` (`sixteen` → `seventeen`, `1,891` → `2,170`) and one
 `npx tsx strangle/attest.ts` on a quiet checkout. Better still, write the sentence without the
 numbers — the suite prints its own — so it cannot go stale a second time.
+
+## 2026-09-05 — the config-dir census records no per-run provenance, so a residue row cannot be traced to the run that left it
+
+**Source:** H1's gate-inventory fix (X5) · `reforge/src/observed.ts` (`ConfigCensus`,
+`censusConfigDir`), `reforge/research/tools/extract-config-inventory.ts`.
+
+**What.** The census is an ACCUMULATOR by design: it is written at every `resetSandbox()` and keyed
+only by the engine pin, so it sees the whole population instead of one scenario's 1/83rd. What it
+records per pattern is a kind and a count, and nothing about WHO. A row therefore cannot answer the
+first question anyone asks of a surprising one — which run wrote this, and was it a corpus scenario,
+a standalone tool, or an operator's kill?
+
+**Cost if nobody pays it.** Diagnosis is archaeology, and the blast radius is every later wave. The
+`sessions/<pid>` family has now been diagnosed twice from commit logs and shell history rather than
+from the artifact (C12a's `attest --check` kill, and H1's corpus run killed to hand the sandbox lock
+to a sibling), and in both cases a kill in wave X surfaced as a red in wave Y's gate — a phase failing
+in a wave that did not cause it and cannot see why. The projection landed for that family, so this is
+no longer acute; the next new family found this way will pay it again.
+
+**Fix when:** a third residue row needs tracing, or the next wave that touches the census format. The
+shape is one field: the census records, per pattern, the first run that observed it. `resetSandbox()`
+takes no tag today, but the reset runs inside the process that is doing the work, so its own
+`process.argv` already names the run without a signature change — a row could say `first seen by
+m1/run.ts --scenario store-read-only` rather than only `seen 1×`. First-observer rather than a full
+list, because the point is to name an origin, not to keep a log.
