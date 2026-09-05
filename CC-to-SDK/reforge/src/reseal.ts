@@ -111,21 +111,20 @@ export async function resealScenario(opts: {
   }
   const fb = run.fallbacks[0];
   if (fb !== undefined) {
+    // A POSITIONAL SERVE ALWAYS HAS A BYTE. Both of the proxy's `find`s skip
+    // consumed entries, and the positional one additionally requires equal
+    // method and path — while the match hash is taken over method, path AND the
+    // canonical body. So an entry reached positionally with a canonical body
+    // equal to the request's would have satisfied the exact find first, and the
+    // fallback would never have been consulted. `firstCanonicalDifference`
+    // cannot return -1 here, and a branch for it would be a diagnosis printed
+    // by nothing.
     const { offset, near } = firstCanonicalDifference(fb.requestBody, fb.entryRequestBody);
-    // OFFSET -1 IS A DIFFERENT DIAGNOSIS, not a missing one. The match hash is
-    // taken over method, path and the canonical body, so a request whose
-    // canonical body EQUALS the entry's would have matched exactly — unless
-    // that entry was already consumed, which means the engine sent the same
-    // request more times than the recording did.
-    const where =
-      offset < 0
-        ? "whose canonical body is IDENTICAL to it, so the entry that would have matched was already consumed — the engine repeated a request the recording made once"
-        : `whose canonical body first differs at byte ${offset} (${near})`;
     return {
       resealed: false,
       reason:
         `${run.fallbacks.length} request(s) were answered only POSITIONALLY under this declaration — the first is ` +
-        `${fb.method} ${fb.path}, served entry seq ${fb.seq}, ${where}. ` +
+        `${fb.method} ${fb.path}, served entry seq ${fb.seq}, whose canonical body first differs at byte ${offset} (${near}). ` +
         `Replayed body: ${bodyExcerpt(fb.requestBody)}`,
     };
   }

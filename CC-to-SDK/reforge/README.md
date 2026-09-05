@@ -4972,12 +4972,13 @@ a request that was made, so an unserved one means the engine stopped asking.
 **A refusal names the first failing signal with enough in it to act on.** For an
 unmatched or positionally-served request: its method, path, the first ~200 bytes
 of its canonical (scrubbed) body, and — for a positional serve — the entry it
-was handed and the byte at which the two canonical bodies stop matching. When
-those bodies are IDENTICAL the refusal says so instead, because that is a
-different finding: the match hash covers method, path and the canonical body, so
-a request that fell through to the fallback with an identical body did not drift
-— the entry that would have matched it was already consumed, i.e. the engine
-repeated a request the recording made once. For unserved entries: their `seq`s.
+was handed and the byte at which the two canonical bodies stop matching. That
+byte always exists, which is why there is no second spelling of the diagnosis:
+both of the proxy's lookups skip consumed entries and the positional one
+additionally requires equal method and path, while the match hash covers method,
+path AND the canonical body — so an entry reached positionally with a canonical
+body identical to the request's would have satisfied the exact lookup first and
+the fallback would never have run. For unserved entries: their `seq`s.
 
 **On success the sidecar records its provenance**: `resealedFrom` carries the
 sha256 of the declaration it replaced and that sidecar's baseline hash. The
