@@ -407,7 +407,10 @@ for (const [label, script] of [
   // corpus issues `echo REFORGE_TOOL_OK`, `chmod 600 perm.txt` and `pwd`. So the
   // suite evaluates the PINNED CHUNK'S OWN BYTES and compares the two parse
   // trees node for node — type, byte range, text and children, to any depth —
-  // over sixteen partitions of the input domain. Byte ranges are part of the
+  // over every partition of the input domain `strangle/parser-corpus.ts` declares
+  // — the count is not written down here, because the suite prints its own and a
+  // number copied into a comment goes stale the first time the corpus is widened.
+  // Byte ranges are part of the
   // compared value and not metadata about it: every offset this parser emits is
   // a UTF-8 byte offset over a UTF-16 string, and the consumers downstream slice
   // the original command with them, so a tree that is structurally right and

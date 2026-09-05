@@ -5579,7 +5579,7 @@ The corpus replays execute 507 of the parser's outcomes end to end; the contract
 3,057 more. Eighty were left, and each is argued at the level of the module's own control flow rather
 than at the level of "no scenario does that" — 25 false arms of a `while (true)`, 13 elses of an
 `if (callee(…))` whose callee has no failing return on that path (`parseDollar` has no `return null`
-in 412 lines), 10 arms selected by an argument value no caller passes, 7 defensive re-checks the only
+on any arm), 10 arms selected by an argument value no caller passes, 7 defensive re-checks the only
 caller has already made, 4 `??`s whose left side is never nullish, 4 tests the statement before them
 has already made impossible, 3 argv arms its own producers cannot build, 3 "the inner run consumed
 nothing" arms of two-level scanners, 2 upstream arms an earlier upstream arm already claims, 2 halves
