@@ -913,3 +913,51 @@ takes no tag today, but the reset runs inside the process that is doing the work
 `process.argv` already names the run without a signature change — a row could say `first seen by
 m1/run.ts --scenario store-read-only` rather than only `seen 1×`. First-observer rather than a full
 list, because the point is to name an origin, not to keep a log.
+
+## 2026-09-05 — the pin is TWO surfaces: `src/pin.ts`, and 24 content-addressed chunk filenames
+
+**Source:** found by H1's fix round while reading the parity suites · `reforge/README.md` ~10-12 (the
+claim), `reforge/src/pin.ts` (the constant), and the sites listed below.
+
+**What.** The README says the pin "lives in `src/pin.ts` alone — one constant; everything else
+derives from it". That is true of `ENGINE_VERSION` and of every path built from it, and it is not
+true of the pinned bundle's CHUNK FILENAMES. Those names are content-addressed — `chunk-fy12d89p.js`,
+`chunk-04aem4bh.js`, `chunk-bsdtxcdc.js` and the rest — so a pin bump renames essentially all of
+them, and 24 lines of code name one directly.
+
+**Counted 2026-09-05.** `grep -rn "chunk-[a-z0-9]\{8\}\.js" strangle/*.ts research/tools/*.ts | wc -l`
+returns **38**: **24 code lines** and 14 prose comments. All 24 are by-name lookups into the pinned
+bundle, and they are the ones that break:
+
+| file | code sites |
+| --- | --- |
+| `strangle/description-parity.test.ts` | 8 |
+| `strangle/hooks-parity.test.ts` | 6 (incl. `ENGINE` ~212 and `PREDICATE_CHUNK` ~214) |
+| `strangle/prompt-parity.test.ts` | 3 |
+| `research/tools/symbol-map.ts` | 2 |
+| `research/tools/extract-storage-surface.ts` | 2 (`BARREL`, `ENGINE_CHUNK`) |
+| `strangle/permissions-parity.test.ts` | 1 |
+| `strangle/parser-parity.test.ts` | 1 (the `CHUNK` constant) |
+| `strangle/compaction-parity.test.ts` | 1 |
+
+Widening the same grep to every `*.ts` in the tree gives **30** code lines; the extra 6 are not bundle
+lookups — prose inside ledger row strings (`ledger/rows.ts`, 3) and synthetic fixture data
+(`ledger/check.test.ts` 2, `engine-ts/reachability.test.ts` 1) — so they are noise for this entry but
+are still sentences a bump makes false.
+
+**Cost if nobody pays it.** A pin bump turns 24 `readFileSync` calls into ENOENT at once, in eight
+files, and the failure arrives as eight red parity phases rather than as one line saying "the chunk
+names moved". Worse in the other direction: a chunk whose CONTENT moved to a differently-named chunk
+while the old name survived would read the wrong file and grade parity against it. The README's "one
+constant" claim is what makes this a debt rather than a known cost — it tells the next person doing a
+bump that step 2 of `src/pin.ts`'s own checklist is the whole job.
+
+**Fix when:** the next pin bump, or the next wave that touches more than one parity suite. The shape
+already exists in the tree and is not speculative: `research/tools/extract-shell-parser.ts` locates
+its subject BY SHAPE — `locateChunk()` scans the bundle's modules for the conjunction of two
+top-level shapes and REFUSES if the match is not unique ("the shell parser chunk is not unique by
+shape: N modules…") — precisely so that nothing is found by name. Its own header says why: "the
+chunk's own file name is content-addressed and changes on any content change, so neither is written
+down." Generalising that into one shared locator the parity suites call, keyed by a shape per chunk
+rather than a filename, moves these 24 sites back behind the one constant the README already claims
+they are behind.
