@@ -213,8 +213,17 @@ const backgroundControl: Scenario = {
     const messages: unknown[] = [];
     input.push(
       userMessage(
-        `Use the Bash tool to run exactly \`${childCommand(BG_CONTROL_PLAN)}\` and then report its output. ` +
-          `Do not set run_in_background.`,
+        `Use the Bash tool to run exactly \`${childCommand(BG_CONTROL_PLAN)}\`. Do not set run_in_background. ` +
+          // THE INSTRUCTION BELONGS IN TURN ONE, and that is where the third
+          // take put it. The retrieval the previous cassette froze happens in
+          // the SAME turn as the tool call — the moment the tool result says the
+          // command was backgrounded and names an output file, the model reaches
+          // for it — so an instruction on turn two arrives an entire turn late.
+          // `allowedTools: ["Bash"]` does not help: the task-retrieval tools are
+          // in the catalog regardless (measured, from the recorded `init` frame).
+          `The command may be backgrounded while it runs. If that happens, do NOT retrieve, read or ` +
+          `inspect the background task or its output file — that would name an id that only exists in ` +
+          `this run. Reply with exactly REFORGE_BGC_STARTED and nothing else.`,
       ),
     );
     const q = query({
