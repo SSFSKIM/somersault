@@ -371,27 +371,64 @@ console.log(`  ${PARTITIONS.length} partitions, ${cases} command strings, each c
   const capFromChunk = Number(derive("length cap", /var ([A-Za-z_$][\w$]*)=1e4,/) && source.match(/var [A-Za-z_$][\w$]*=(1e4),/)![1].replace("1e4", "10000"));
   eq("the length cap is read from the pinned chunk, not written down", capFromChunk, 10000);
 
+  /**
+   * One `parseCommandWithEnv` result, compared in FULL — all four keys of the
+   * record it returns.
+   *
+   * `commandNode` is the key that used to be left out, and it is the one the
+   * consumers of this entry point actually read: the classifier wants the
+   * command inside the tree, not the tree. The export is corpus-dark (its
+   * manifest row is `darkOver: bash-tool, perm-rule-deny`), so this suite is the
+   * ONLY grading it gets, and a returned key nobody compares is a key nobody
+   * grades — a reimplementation could hand back the right root, the right
+   * assignments and the wrong command node and pass.
+   *
+   * `diffTree` carries the nullity comparison itself, on both `rootNode` and
+   * `commandNode`, so a side that answers `null` where the other answers a node
+   * is a named difference rather than a skipped check.
+   */
+  const withEnv = async (label: string, command: string): Promise<void> => {
+    checks++;
+    const u = await upstream.parseCommandWithEnv(command);
+    const o = await ownedWithEnv(command);
+    eq(`parseCommandWithEnv ${label}`, u === null ? null : { envVars: u.envVars, originalCommand: u.originalCommand }, o === null ? null : { envVars: o.envVars, originalCommand: o.originalCommand });
+    if (u === null || o === null) return;
+    const dRoot = diffTree(u.rootNode, o.rootNode);
+    if (dRoot) fail(`parseCommandWithEnv rootNode ${label}`, dRoot);
+    const dCommand = diffTree(u.commandNode, o.commandNode);
+    if (dCommand) fail(`parseCommandWithEnv commandNode ${label}`, dCommand);
+  };
+
   const run = async (): Promise<void> => {
     for (const { label, command } of LENGTH_CAP_CASES(capFromChunk)) {
-      checks++;
-      const u = await upstream.parseCommandWithEnv(command);
-      const o = await ownedWithEnv(command);
-      eq(`parseCommandWithEnv at ${label} (len ${command.length})`, u === null ? null : { envVars: u.envVars, originalCommand: u.originalCommand }, o === null ? null : { envVars: o.envVars, originalCommand: o.originalCommand });
-      if (u !== null && o !== null) {
-        const d = diffTree(u.rootNode, o.rootNode);
-        if (d) fail(`parseCommandWithEnv rootNode at ${label}`, d);
-      }
+      await withEnv(`at ${label} (len ${command.length})`, command);
     }
 
     // The env-var extraction, over the strings that carry assignments.
     for (const command of ["A=1 cmd", "A=1 B=2 cmd", "A=1", "A=1 B=2", "cmd A=1", "A=$(x) cmd", "A='v' cmd", "export A=1", "A=1 ls -la"]) {
+      await withEnv(JSON.stringify(command), command);
+    }
+    await withEnv("an empty command", "");
+
+    // The RED DIRECTION for the `commandNode` comparison, applied the way the
+    // partitions' controls are: a healthy owned result with exactly that key
+    // blinded, which the comparison must report AND must name. A twin that
+    // returns `commandNode: null` is not hypothetical — it is what an owned
+    // module that forgot to call the walker would return, and it is the sabotage
+    // shape `findCommandNode`'s own twin already uses one level down.
+    {
       checks++;
+      const command = "A=1 ls -la";
       const u = await upstream.parseCommandWithEnv(command);
       const o = await ownedWithEnv(command);
-      eq(`parseCommandWithEnv envVars ${JSON.stringify(command)}`, u === null ? null : u.envVars, o === null ? null : o.envVars);
+      if (u === null || o === null || u.commandNode === null) {
+        fail("CONTROL parseCommandWithEnv commandNode", `${JSON.stringify(command)} produced no command node on the upstream side, so blinding the owned one compares equal and the control is vacuous`);
+      } else {
+        const d = diffTree(u.commandNode, { ...o, commandNode: null }.commandNode);
+        if (d === null) fail("CONTROL parseCommandWithEnv commandNode", "an owned twin returning `commandNode: null` compared EQUAL — this comparison cannot see the defect it exists to see");
+        else if (!d.includes("owned null")) fail("CONTROL parseCommandWithEnv commandNode", `the difference was seen but not named as a missing command node: ${d}`);
+      }
     }
-    checks++;
-    eq("parseCommandWithEnv refuses an empty command", await upstream.parseCommandWithEnv(""), await ownedWithEnv(""));
 
     // ---- parseOrAbort: three abort causes, and the telemetry each emits ----
     // Upstream's three call sites are three DIFFERENT reasons, and only the last
