@@ -127,7 +127,11 @@ if (mode === "--hold") {
     });
 
   const holder = spawn("npx", ["tsx", SELF, "--hold", lockPath], { cwd: REFORGE_ROOT, env: cleanEnv() });
-  const exited = new Promise<void>((r) => holder.on("exit", () => r()));
+  // HOW it ended, not just that it did: the release control below turns on the
+  // difference between a signal re-raised and a signal swallowed.
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((r) =>
+    holder.on("exit", (code, signal) => r({ code, signal })),
+  );
   try {
     const holderPid = Number((await waitFor(holder, /HELD (\d+)/, 60_000))[1]);
     check("a holder writes a lock naming its own pid and its argv", held()?.pid === holderPid && (held()?.argv ?? "").includes("--hold"), JSON.stringify(held()));
@@ -189,9 +193,29 @@ if (mode === "--hold") {
     }
 
     // ---- the release path, driven by the signal the gate is killed with ------
+    const killedAt = Date.now();
     holder.kill("SIGTERM");
-    await exited;
+    const ending = await exited;
+    const releasedIn = Date.now() - killedAt;
     check("a SIGTERMed holder releases the lock instead of leaving it behind", !existsSync(lockPath));
+    // AND IT DIED OF THE SIGNAL. "The lock is gone and the child is gone" is
+    // equally true of a handler that SWALLOWED SIGTERM — the `--hold` child
+    // self-exits at 30 s and the `exit` hook releases on that path too, so the
+    // check above alone would pass against exactly the bug the re-raise exists
+    // to prevent (registering a listener suppresses the default termination, so
+    // `kill <gate>` would stop nothing). What separates them is the ENDING, and
+    // the clock beside it.
+    //
+    // EITHER SHAPE, because the holder is reached through `npx`. The re-raise
+    // happens in the innermost node process; the wrapper above it survives its
+    // child and reports the death in the 128+signal convention instead of dying
+    // of it. Measured, on this suite: re-raised → `code 143, signal null` at
+    // ~30 ms; swallowed → `code 0, signal null` at ~28.5 s. So both spellings of
+    // "SIGTERM killed it" are accepted and neither spelling of "it ignored the
+    // signal and ran to its own timer" is.
+    const SIGTERM_ENDING = ending.signal === "SIGTERM" || ending.code === 128 + 15;
+    check("…and it DIED OF the signal rather than swallowing it", SIGTERM_ENDING, `code ${ending.code}, signal ${ending.signal}`);
+    check("…at once, so the release is the handler's rather than the self-exit's", releasedIn < 2_000, `${releasedIn} ms after SIGTERM`);
   } finally {
     holder.kill("SIGKILL");
   }
