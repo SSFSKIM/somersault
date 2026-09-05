@@ -5700,6 +5700,84 @@ A consumer that treats a root `ERROR` as a parse failure will behave differently
 inside it — upstream's own splitter does the latter, reading
 `root.type === "ERROR" && root.children[0]?.type === "program" ? root.children[0] : root`.
 
+### The fix round (2026-09-05) — two seam-note mechanism claims the bytes contradict, and two ungraded spots in the oracle
+
+This wave's record and artifacts were reviewed twice against the pinned bundle. Six items landed as
+six commits. Two of them are the reason this section exists.
+
+**The pattern, third and fourth time.** The C12a fix round 2 note above names it: *a measured outcome
+does not license an unmeasured mechanism.* Both of this round's load-bearing findings are that shape
+again, and both were in the SEAM NOTES — the part of a wave record another child is going to build
+on.
+
+**Third — the argv contract's substitution rule is positional, and the note stated it globally.**
+`fEe` @62086 decides what a `concatenation` carrying a `command_substitution` or
+`process_substitution` means in two different arms of the same loop: in command-name position it is
+kept as raw source text and the walk continues, in argument position it `break`s exactly as a bare
+substitution argument does. The note said the raw-text retention was the rule and the stopping was
+about bare substitutions only. The OBSERVATION behind it was right — both behaviours exist and both
+are in upstream — and the explanation attached to them was never read back out of the bytes. C13b
+would have inherited it: it owns the classifier region that consumes this argv, and a
+reimplementation built from the note as written returns `["echo", "c"]` where upstream returns
+`["echo"]`. Re-derived, both sites reworded, and three strings added to the corpus so the rule is now
+a graded fact rather than a sentence: `"echo a$(x)b c"` → `["echo"]`, `"$(x)y foo bar"` →
+`["$(x)y","foo","bar"]`, `"a"$(x) z` → `["\"a\"$(x)","z"]`. Three rather than two because the
+command-name arm makes two claims and `$(x)y` cannot separate them — it joins to the same bytes it
+slices. Each is red under its own sabotage of the owned extractor.
+
+**Fourth — three of the "seven node types that exist only to record a recovery" are on the normal
+path.** A well-formed `cat <<EOF` with a body and a closing `EOF` emits `heredoc_body` and
+`heredoc_end`; a body carrying `$USER` emits `heredoc_content`. Recovery-only is four: `ERROR`,
+`test_rhs_missing`, `backtick_escape_unsupported`, `backtick_body_overrun`. Same failure mode — the
+four recovery types were read correctly and the heredoc three were assumed to be more of them. And
+the `89` beside it was two different numbers wearing one label: it counts the type names written as
+string literals at the primary node constructor, while the parser emits 166 distinct type strings
+over the corpus. Both stated now.
+
+**The oracle had two ungraded spots on a corpus-dark export.** `parseCommandWithEnv` returns four
+keys and the parity suite compared three; `commandNode` — the key the classifier actually reads — was
+not compared at all, on an export whose only grading this suite is. It is compared with `diffTree`
+everywhere now, with a control that blinds exactly that key and requires the failure to name it. And
+the coverage driver had PRIVATE INPUTS: `A=1 > out` was written down in `strangle/parser-coverage.ts`
+and nowhere else, so the environment walk's non-breaking arm was earning `contract` attestation
+credit for a branch nobody had compared against upstream. Enumerating the driver's inputs against the
+suite's found two more of the same kind. `strangle/parser-corpus.ts` now owns `ENTRY_POINT_CASES` and
+`ENTRY_POINT_NON_STRING` and both files import them, and the driver's header states the rule: every
+input it executes is a parity case, and it writes down no input of its own.
+
+**What else changed.** Eight stale numbers and descriptions, each re-measured before it was
+rewritten — including the four file headers that described a corpus of `ls`, `cat`, `git status` and
+a pipe. The recorded corpus issues nineteen distinct commands across sixteen Bash-bearing scenarios,
+named `echo`, `mkdir`, `chmod`, `cd`, `pwd`, `sleep` and one deliberately missing binary; one is
+compound and the other eighteen are a command name and at most two literal arguments, with no
+quoting, expansion, substitution, redirection or pipe anywhere in the population. Those nineteen are
+now the first group of the `corpus-shapes` partition, which had been claiming that `cat README.md`
+and `ls | head` parse on every replay of their scenario. Three of the review's own numbers did not
+reproduce and were re-derived rather than copied: the sentinel compare is `KTe`'s tenth guard behind
+eight regex refusals and an empty-command check (not four), and `parseDollar` spans 413 lines (not
+357, and not the 412 the text said) — a count now dropped in favour of the property it was standing
+in for.
+
+**Parity after the round: 8,171 checks over 2,191 command strings in 17 partitions, PASS.**
+`attest.test.ts` 16 checks PASS, `extract-shell-parser --check` PASS, `tsc` clean.
+
+**One artifact is owed a regeneration.** `attestation/coverage.md` prints the attestation's
+`contract.why` and its exclusion reasons verbatim, and three of those strings were corrected here, so
+the committed report differs from what a run would now write and `attest --check` will say so. That
+is one `npx tsx strangle/attest.ts` on a quiet checkout — it needs the sandbox lock, so it is the
+orchestrator's run and not this round's. **No coverage NUMBER moves**, and that is measured rather
+than assumed: `strangle/parser-corpus.ts` was read back out of git at its pre-round commit, an
+instrumented copy of `reference.js` was driven over the old input set and over the new, and both
+cover exactly the same 3,567 branch outcomes — zero added, zero lost, so no branch changes channel
+and no exclusion goes stale. What the regeneration owes is prose.
+
+**A process note, because it happened again.** "Two things about running two workers in one checkout"
+above describes `git add`-less commits sweeping another worker's staged edits. It recurred during
+this round in the same direction: the stale-numbers commit's eight files were staged and a concurrent
+H1 close-out committed the index first, so that diff lives in `2bdd67e` under an H1 message. Nothing
+was lost; the account was, and it is recorded as an empty commit (`C13a-fix E`). The mitigation that
+worked for the other five is mechanical — stage and commit in one shell invocation, never two.
+
 ## W10c — executor oracle machinery: a child that is a declaration, six deadlines that move, and a fourth thing a run leaves behind (2026-09-05)
 
 C13c, the machinery child of the W10 cut. No splices, no owned bytes, no port. What it ships is the
