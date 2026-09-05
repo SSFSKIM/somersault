@@ -92,6 +92,22 @@ try {
     check("…and carries the provenance of the sidecar it replaced",
       after.resealedFrom?.declaredSha256 === declarationSha256(before.declared),
       JSON.stringify(after.resealedFrom));
+    // C13c/W10c — the DETACHMENT declaration survives the re-seal. A sidecar
+    // that dropped it would reintroduce the drift it exists to remove: the
+    // runner compares `recorded.detached` against the scenario's, and a
+    // scenario declaring `[]` against a sidecar declaring nothing is a
+    // difference. Both directions are asserted, because "absent stays absent"
+    // is what keeps every pre-C13c sidecar from drifting.
+    check("…and a scenario that declares NO detachments still writes none",
+      !("detached" in after), JSON.stringify(after).slice(0, 200));
+    {
+      const declaring = { ...scenario, detachedChildren: ["reforge-child.sh"] as const };
+      const r2 = await quietly("control 1b (a declared detachment)", () => resealScenario({ scenario: declaring, declared: inert, cassette, sidecar }));
+      const sealed = JSON.parse(readFileSync(sidecar, "utf8"));
+      check("…while a scenario that DOES declare one seals it beside the precondition",
+        r2.resealed && JSON.stringify(sealed.detached) === JSON.stringify(["reforge-child.sh"]),
+        `${r2.reason ?? ""} ${JSON.stringify(sealed.detached)}`);
+    }
     // NON-VACUITY, stated rather than implied. A re-seal that "passed" because
     // the engine never ran would have left every entry unserved and been refused
     // — so a clean re-seal already proves the traffic happened. The byproduct

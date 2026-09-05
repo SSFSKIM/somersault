@@ -11,14 +11,13 @@
 // Run:  cd reforge && set -a; . ../.env; set +a; npx tsx m1/run.ts [--scenario <tag>] [--rerecord]
 //       npx tsx m1/run.ts --reseal [--scenario <tag>]   # H1: re-seal drifted sidecars, offline
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffTranscripts, makeRunNormalizer, normalizeValue, type DiffFinding } from "../src/differ.js";
 import { runScenarioOnce, type ScenarioRun } from "../src/runScenario.js";
 import { resealScenario } from "../src/reseal.js";
 import { baselineSeedHash, EMPTY_PRECONDITION, type ConfigPrecondition, type RecordedPrecondition, type Scenario } from "../src/harness.js";
 import { ENGINE_VERSION } from "../src/pin.js";
-import { deriveFaultCassette } from "../src/faults.js";
+import { recordCassette } from "../src/record.js";
 import { scrubRequestBody } from "../src/canonical.js";
 import { REFORGE_ROOT, saveTranscript } from "../src/runTurn.js";
 import { entriesOf } from "../src/state.js";
@@ -69,34 +68,6 @@ mkdirSync(join(REFORGE_ROOT, "cassettes"), { recursive: true });
  */
 const runOnce = (s: Scenario, engineName: string, mode: "record" | "replay", cassette: string, side: string, precondition: ConfigPrecondition): Promise<ScenarioRun> =>
   runScenarioOnce({ scenario: s, engineName, mode, cassette, side, precondition, engineB });
-
-/**
- * H1 regression gate. Cassettes are recordings of real prompts; if the engine's
- * config dir leaks, they capture the operator's identity, memory index, and
- * personal commands — a privacy problem and a determinism problem (the
- * recording would change whenever that state changes). Checked at record time.
- */
-function cassetteIsClean(cassette: string): boolean {
-  const text = readFileSync(cassette, "utf8");
-  // The sandbox path legitimately sits under $HOME, so bare-home is not a
-  // marker; the operator's real config dir and identity are.
-  const markers: [string, string][] = [
-    [join(homedir(), ".claude"), "operator config dir"],
-    ["Memory index", "operator memory index"],
-    ["@gmail.com", "operator email"],
-  ];
-  const hits = markers.filter(([m]) => text.includes(m)).map(([, label]) => label);
-  if (hits.length > 0) {
-    // Must REJECT, not just flag: setting process.exitCode here was overwritten
-    // by the final verdict assignment, and the contaminated take was promoted
-    // and reused anyway — a leaking run could exit 0. Caller discards the
-    // staged file and fails the scenario.
-    console.log(`    LEAK: cassette contains ${hits.join(", ")} — config isolation is not holding`);
-    return false;
-  }
-  console.log("    leak check: clean");
-  return true;
-}
 
 function loadObservedRequests(file: string): unknown[] {
   if (!existsSync(file)) return [];
@@ -230,6 +201,7 @@ function sidecarState(s: Scenario): {
   driftReason: string | null;
 } {
   const declared = s.precondition ?? EMPTY_PRECONDITION;
+  const declaredDetached = s.detachedChildren === undefined ? null : [...s.detachedChildren];
   const baselineSha256 = baselineSeedHash(ENGINE_VERSION);
   const cassette = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.jsonl`);
   const preFile = join(REFORGE_ROOT, "cassettes", `m1-${s.tag}.precondition.json`);
@@ -246,7 +218,14 @@ function sidecarState(s: Scenario): {
           ? `the baseline seed has changed since the recording (${recorded.baselineSha256.slice(0, 12)} → ${baselineSha256.slice(0, 12)})`
           : JSON.stringify(recordedPre) !== JSON.stringify(declared)
             ? "the DECLARED precondition is not the one the cassette was recorded against"
-            : null;
+            // C13c/W10c: the detachment declaration is part of the world the
+            // cassette was recorded against, so a change to it is a finding for
+            // the same reason a changed seed is. Absent on BOTH sides — every
+            // pre-C13c sidecar, and every scenario that declares nothing —
+            // compares equal, so no existing cassette drifts.
+            : JSON.stringify(recorded.detached ?? null) !== JSON.stringify(declaredDetached)
+              ? "the DECLARED detached children are not the ones the cassette was recorded against"
+              : null;
   return { cassette, preFile, declared, baselineSha256, recorded, recordedPre, driftReason };
 }
 
@@ -317,61 +296,20 @@ for (const s of SCENARIOS) {
   const applied = preconditionDrift ? recordedPre : declared;
 
   if (!existsSync(cassette) || rerecord) {
-    // Record to a temp path and only promote on success: a re-record that hits
-    // an outage must not destroy the good cassette it was refreshing. (Measured:
-    // `--rerecord` during an API outage deleted a working `plain` cassette and
-    // left the scenario ungradable until the outage cleared.)
-    const staged = `${cassette}.recording`;
-    rmSync(staged, { force: true });
+    // ONE DEFINITION of what a live take has to survive (`src/record.ts`): the
+    // run's own determinism checks, the contamination check that must REJECT
+    // rather than flag, the infrastructure-failure check, the substance check,
+    // and the fault derivation before promotion. This runner was the only
+    // caller until C13c added two more, and three copies of that list would
+    // have been three answers to "is this a recording of this scenario".
     console.log("  recording live via engine-real ...");
-    const rec = await runOnce(s, "engine-real", "record", staged, "record", declared);
-    if (!rec.ok) {
-      rmSync(staged, { force: true });
-      console.log("    DISCARDED: recording failed its determinism checks — nothing promoted");
+    const out = await recordCassette({ scenario: s, declared, cassette, sidecar: preFile, engineB });
+    if (!out.ok) {
+      console.log(`    DISCARDED: ${out.reason} — nothing promoted`);
       verdicts.push({ tag: s.tag, pass: false });
       continue;
     }
-    saveTranscript(`m1-${s.tag}-record`, { engine: "engine-real", messages: rec.messages, durationMs: 0 });
-    const entries = existsSync(staged) ? readFileSync(staged, "utf8").split("\n").filter(Boolean).length : 0;
-    console.log(`  recorded ${entries} API exchange(s)`);
-    if (existsSync(staged) && !cassetteIsClean(staged)) {
-      rmSync(staged, { force: true });
-      console.log("    DISCARDED: contaminated recording rejected — fix config isolation before re-recording");
-      verdicts.push({ tag: s.tag, pass: false });
-      continue;
-    }
-    // A recording that captured an infrastructure failure (rate limit, gateway
-    // error) is not a cassette — replaying it grades every engine against the
-    // same failure and the scenario silently measures nothing. Discard it so the
-    // next run re-records, rather than freezing the bad take.
-    const infraFail = rec.messages.some((m) => {
-      const t = (m as { type?: string }).type;
-      const msg = String((m as { message?: unknown }).message ?? "");
-      return t === "reforge-exception" && /rate limit|temporarily limiting|overloaded|502|503|504/i.test(msg);
-    });
-    if (infraFail) {
-      rmSync(staged, { force: true });
-      const kept = existsSync(cassette);
-      console.log(
-        `    DISCARDED: recording captured an infrastructure failure (not engine behavior)${kept ? " — previous cassette kept" : " — rerun to re-record"}`,
-      );
-      verdicts.push({ tag: s.tag, pass: false });
-      continue;
-    }
-    // A scenario whose firing condition is an API FAILURE authors it here (see
-    // `Scenario.deriveFault`): the live take is a real recording, and the
-    // derivation rewrites its first exchange into the fault both engines then
-    // replay. Done before promotion so the committed cassette IS the graded one
-    // and a re-record cannot quietly promote the healthy take.
-    if (s.deriveFault) {
-      deriveFaultCassette(staged, staged, s.deriveFault);
-      console.log(`  derived the '${s.deriveFault}' fault into the cassette before promoting it`);
-    }
-    renameSync(staged, cassette);
-    // ALWAYS written, including for the empty declaration: the empty declaration
-    // is still a filesystem — the baseline seed — and a cassette with no sidecar
-    // records nothing about the world it was recorded against.
-    writeFileSync(preFile, JSON.stringify({ declared, baselineSha256 } satisfies RecordedPrecondition, null, 2) + "\n");
+    console.log(`  recorded ${out.exchanges} API exchange(s); sidecar written`);
   } else {
     console.log("  cassette exists — reusing");
   }

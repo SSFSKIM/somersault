@@ -156,6 +156,14 @@ export async function resealScenario(opts: {
   const written: RecordedPrecondition = {
     declared,
     baselineSha256: baselineSeedHash(engineVersion),
+    // C13c/W10c — the detachment declaration is part of the world the sidecar
+    // records, so a re-seal that dropped it would REINTRODUCE the drift it
+    // exists to remove: the runner compares `recorded.detached` against the
+    // scenario's, and a scenario declaring `[]` against a sidecar declaring
+    // nothing is a difference. Written from the SCENARIO, like the config
+    // declaration beside it, because a re-seal seals what the scenario says
+    // today — that is the whole mechanism.
+    ...(scenario.detachedChildren !== undefined ? { detached: [...scenario.detachedChildren] } : {}),
     ...(previous === undefined
       ? {}
       : {
