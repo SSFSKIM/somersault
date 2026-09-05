@@ -6041,49 +6041,78 @@ decide what is graded decide what is signalled — with a control on both halves
 over `engine-extracted` and `engine-strangled`, 1.0–1.7 s to build and ~100 ms on a cache hit, with
 the rewritten constants read back out of the built tree and the other five untouched.
 
-### The recordings: eight written, zero taken — the account throttle, with its own words
+### The recordings: eight taken, and four of them corrected something first
 
-All eight scenarios are written, and each one's command was chosen against a measured property of
-the executor rather than by taste. None has a cassette yet, because every live take so far has been
-refused by an account-level throttle:
+The throttle held for three hours and four attempts, refusing with the same sentence every time; it
+cleared at 12:56 and all eight landed inside twenty minutes.
 
-> `API Error: Server is temporarily limiting requests (not your usage limit) · This request would
-> exceed your account's rate limit. Please try again later.`
-
-The harness did the right thing with it: `capturedInfraFailure` recognised it, the take was
-DISCARDED and nothing was promoted, because a cassette that froze that response would make every
-engine replay the same failure and the scenario would silently measure nothing.
-
-| scenario | graded pair | what it buys | cassette |
+| scenario | graded pair | cassette | exchanges |
 |---|---|---|---|
-| `bash-compound-safety` | real vs extracted | `drn`'s per-subcommand aggregate and the two live-but-dark `Fy` callers W6 left open; C13b consumes it | throttled |
-| `bash-background-explicit` | real vs extracted | THE moat: `run_in_background`, `Kee`, and the completion notification as its own `system`/`task_notification` frame | throttled |
-| `bash-background-control` | real vs extracted | the `background_tasks` EFFECT — W7 fired the arm against an empty registry | throttled |
-| `bash-large-output` | real vs extracted | `cye()`'s measured 30,000-byte default and the `[output truncated - NKB removed]` ladder | throttled |
-| `bash-timeout-background` | real vs extracted | `WMt`/`r_r`/`Kdt` and `timedOutAfterMs` — the arm `r_r` sends to backgrounding | throttled |
-| `bash-prespawn-error` | real vs extracted | `rw` and `yi.call`'s two refusals, with the harness deleting the tracked cwd between turns | throttled |
-| `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | `Pde.#h`'s backstop — the arm `r_r` sends to killing | throttled |
-| `bash-stall-detect` | extracted vs strangled @ `stall-poll=400ms, stall-idle=1800ms` | `kWt` and the notification `_lr` composes | throttled |
+| `bash-compound-safety` | real vs extracted | 170,469 B | 3 |
+| `bash-background-explicit` | real vs extracted | 339,413 B | 5 |
+| `bash-background-control` | real vs extracted | 350,872 B | 5 |
+| `bash-large-output` | real vs extracted | 170,441 B | 3 |
+| `bash-timeout-background` | real vs extracted | 440,337 B | 6 |
+| `bash-prespawn-error` | real vs extracted | 336,533 B | 5 |
+| `bash-kill-escalation` | extracted vs strangled @ `sigterm-to-sigkill=400ms, post-kill-liveness-poll=40ms` | 170,163 B | 3 |
+| `bash-stall-detect` | extracted vs strangled @ `stall-poll=400ms, stall-idle=1800ms` | 469,058 B | 6 |
 
-Two detached recorders are armed and chained, with a peer guard so only ONE live take is ever in
-flight (X5) and an hourly retry on a throttle: the six corpus scenarios first, then the two timed
-ones through `w10/timed.ts --record`, which pays the pin's real 45 s stall once. A discard for any
-NON-throttle reason stops the walk instead of retrying, because a substance failure is a finding to
-read rather than a budget to spend again.
+**W7's row is closed.** `background_tasks` fired against an empty registry when W7 measured it —
+FIRED arm, UNREACHED effect. The recording carries the effect: a `task_started`, then a tool result
+reading `Command was manually backgrounded by user with ID: bg2upqib7. Output is being written to:
+…`, then a notification whose summary is `Background command "Run reforge-child.sh with specified
+args" completed (exit code 0)` — exactly the `ZCe` + `x$e` composition predicted from the bundle
+before the take existed — and finally a second tool result in which the model retrieves
+`<task_type>local_bash</task_type> <status>completed</status> <exit_code>0</exit_code>` with the
+child's declared bytes inside it.
 
-After three hourly attempts (09:46, 10:50, 11:53) the message has been identical every time, and no
-cassette anywhere in this checkout has been written in that window — so it is the account rather than
-anything about these scenarios. **One hypothesis is worth writing down because it is actionable and
-was not tested:** the recordings and the operator's own interactive session bill the same
-subscription, and that session was making continuous large requests throughout. A burst limiter that
-still refuses on the third hourly attempt is odd unless something is holding the account's rate
-budget open, and the operator's own session is the obvious candidate. It is stated as a hypothesis,
-not a finding — proving it needs a window in which nothing else on the account is talking, which is
-the one thing a working session cannot arrange for itself.
+**Four takes were discarded, and every one of them corrected something.** The discard rule is what
+made that possible: a take in which the behaviour did not happen is not a recording of the scenario,
+so it is never promoted, and the walk stops rather than retrying.
 
-**The W10 scenarios are deliberately NOT registered in `m1/run.ts`,** and that is the same argument
-`w10/record.ts` exists for: the corpus runner records any REGISTERED scenario that has no cassette,
-and the gate runs it, so registering them now would arm eight live takes inside somebody else's gate
-run. Registration is one import and one spread, and it is owed the moment the cassettes exist.
-For the same reason `w10/timed.ts` is NOT yet a gate phase: with no cassette it refuses to grade and
-would redden a gate for a recording nobody could take.
+1. **`bash-background-control` — the trigger was a guess.** Fired 1,500 ms after the `tool_use`
+   BLOCK, `backgroundTasks` answered `{backgrounded: false}` while the transcript showed the command
+   running to completion in the FOREGROUND. The assistant frame is not a clock: how long after it a
+   consumer sees it is not a property the scenario controls. The trigger is now
+   `system`/`task_started`, which carries the shell's `tool_use_id` and is emitted when the engine
+   REGISTERS the task. **Measured incidentally, and it matters for C13e: `task_started` is emitted
+   for a FOREGROUND Bash too**, so its presence is not evidence of backgrounding — the control
+   request's own answer is.
+2. **`bash-large-output` and `bash-kill-escalation` — three turns was not enough.** Both ended
+   `Reached maximum number of turns (3)` and threw, so the capture was the exception alone and the
+   substance check reported "Bash tool never used" — true of the capture and misleading about the
+   cause.
+3. **`bash-large-output` again — and this one corrects the scout.** The take ran the command
+   correctly and the check still failed, which is the useful direction. **A 40,000-byte Bash stdout
+   does not arrive as `dZe`'s `... [output truncated - NKB removed]`.** The result-persistence layer
+   ABOVE the executor (`D9`/`rue`, reached through `mapToolResultToToolResultBlockParam`) intercepts
+   first: it writes the whole output to a file and replaces the result with a `<persisted-output>`
+   envelope carrying the original size, the path, and a preview of the first `$De` = 2,000
+   characters. The size it reported was **39.1 KB — the full 40,000 bytes** — so `cye()`'s
+   30,000-character clamp did not shorten what reached it either. Scout §4.5 #4 named the wrong
+   layer, and it is corrected before a line of C13b or C13d is written. Whether ANY output size
+   reaches `dZe`'s notice through a tool result in this lane is an open question this recording hands
+   to C13d rather than answers.
+4. **`bash-kill-escalation` — the model refused, and it was right to.** In as many words: *"I'm not
+   going to run that command… `exec ./reforge-child.sh --ignore-term` replaces the shell with a
+   script that appears designed to persist."* That is a correct inference from what it was shown. The
+   fix was not to disguise the command — it still runs verbatim — but to supply context that is
+   simply TRUE: the script is a committed test fixture in the sandbox it is being asked to run in,
+   its source is readable, and the flag exists so a harness can exercise the tool's own
+   timeout-and-kill path.
+5. **`bash-stall-detect` — and the finding under it.** The first take waited 58 s against a 45 s
+   threshold and saw only the completion notification, so the wait became a MULTIPLE of the threshold
+   rather than a constant added to it (115 s at the pin, 10 s under the profile). The second take
+   then showed the real obstacle: **the stall notification is delivered as an ATTACHMENT on the next
+   turn, not as a `system`/`task_notification` frame.** The completion notification is a frame; the
+   stall one is not. A substance check sees only SDK messages and harness events, so the attachment
+   was invisible to it and no take could ever have satisfied the check as written — the model's own
+   reply was the only trace, and only because it spontaneously explained what it had been told. The
+   second turn now asks it to quote back any notification it received, which puts the sentence where
+   the check can see it; the prompt deliberately does not contain the sentence it looks for, so a
+   model that received nothing cannot pass by echoing the question.
+
+The six corpus scenarios were held OUT of `m1/run.ts` until each had a cassette, for the reason
+`w10/record.ts` exists: the corpus runner records any REGISTERED scenario without one, and the gate
+runs it, so registering earlier would have armed six live takes inside somebody else's gate on
+somebody else's throttle budget. They are registered now — **the corpus is 63 → 69 scenarios**.
