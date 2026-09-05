@@ -5505,10 +5505,16 @@ output. What it is consuming, stated once:
 **The node.** Exactly five keys, in this order: `type`, `text`, `startIndex`, `endIndex`, `children`.
 `startIndex`/`endIndex` are UTF-8 BYTE offsets, not UTF-16 indices; `text` is already the corresponding
 slice, so a consumer should read `text` rather than re-slicing the command unless it needs a
-sub-range, and if it does re-slice it must convert. The parser emits **89 distinct node types**,
-including seven that exist only to record a recovery: `ERROR`, `test_rhs_missing`,
-`backtick_escape_unsupported`, `backtick_body_overrun`, `heredoc_body`, `heredoc_content`,
-`heredoc_end`.
+sub-range, and if it does re-slice it must convert. **89** counts the type names written as string
+literals at the module's primary node constructor; it is not the size of the emitted vocabulary. Over
+the 2,173-string parity corpus the parser emits **166 distinct type strings**, every one of the 89
+among them — the other 77 are the operator and keyword token nodes whose type IS their source text
+(`;;`, `<<-`, `>|`, `esac`, `then`, …) plus four the code chooses by expression rather than by
+literal: `comment`, `expansion`, `arithmetic_expansion`, `extglob_pattern`. **Four** node types exist
+only to record a recovery: `ERROR`, `test_rhs_missing`, `backtick_escape_unsupported` and
+`backtick_body_overrun`. The three heredoc types are NOT among them — a well-formed `cat <<EOF` with
+a body and a closing `EOF` emits `heredoc_body` and `heredoc_end` on the normal path, and
+`heredoc_content` appears whenever a heredoc body carries an expansion.
 
 **The sentinel.** `PARSE_ABORTED` is a module-scope `Symbol("parse-aborted")` and its identity is the
 contract. C13b must IMPORT it from `strangle/modules/shell-parser/reference.js` when it owns `KTe`,
